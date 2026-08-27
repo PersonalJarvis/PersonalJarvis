@@ -37,6 +37,7 @@ import {
   ollamaRuntimeStart,
 } from "@/hooks/useProviders";
 import {
+  canonicalModelName,
   getOverview,
   modelPullStatus,
   setAutostart,
@@ -48,15 +49,6 @@ import {
   type RoleRow,
   type VerifyResponse,
 } from "@/hooks/useLocalModels";
-
-/** The five slots the flow writes, in the order the rows show them. */
-export const SETUP_ROLES: readonly LocalModelRole[] = [
-  "chat",
-  "voice",
-  "tools_screen",
-  "deep",
-  "embedding",
-];
 
 export type SetupStep =
   | {
@@ -105,9 +97,7 @@ export interface RunLocalSetupOptions {
 }
 
 /** "qwen3.5" and "qwen3.5:latest" are the same download. */
-export function canonical(name: string): string {
-  return name.endsWith(":latest") ? name.slice(0, -":latest".length) : name;
-}
+export const canonical = canonicalModelName;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -203,16 +193,15 @@ export function planRoles(overview: OverviewResponse): {
   const installed = new Set(
     overview.inventory.models.map((m) => canonical(m.name)),
   );
-  const byId = new Map<string, RoleRow>(
-    overview.roles.roles.map((r) => [r.id, r]),
-  );
   const assign: Array<{ role: LocalModelRole; model: string }> = [];
   const kept: SetupSummary["kept"] = [];
   const skipped: SetupSummary["skipped"] = [];
   const pulls: string[] = [];
-  for (const role of SETUP_ROLES) {
-    const row = byId.get(role);
-    if (!row || !row.writable) continue;
+  // The writable roles, in the backend's own order: the one list, so a role
+  // added there is set up here without a second list to keep in step.
+  const rows: RoleRow[] = overview.roles.roles.filter((r) => r.writable);
+  for (const row of rows) {
+    const role = row.id as LocalModelRole;
     // Served by something other than this server (the note says what):
     // that is a choice the user made elsewhere, not a gap to fill.
     if (row.note && !row.current) {

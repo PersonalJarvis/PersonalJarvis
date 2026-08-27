@@ -1,14 +1,17 @@
 /**
  * Local models — the section for the models that run on this machine (or on
  * a server the user names): the Ollama runtime, the installed models, the
- * public catalogue and, later, Hugging Face.
+ * public catalogue and Hugging Face.
  *
- * The column runs the full window width (a catalogue is browsed, not read), the header carries a Simple |
- * Advanced switch (persisted per browser) and a rail of tabs. Simple shows
- * Overview (server facts + the four roles), Catalogue and Server; Advanced
- * adds Models (the installed ledger with the Tune sheet) and Hugging Face.
- * "Tune" from a role row opens the Tune sheet for that model right under the
- * overview, so a non-developer never has to find the model in the ledger.
+ * The column runs the full window width (a catalogue is browsed, not read)
+ * and the header carries a rail of tabs: Overview (what sits in memory, the
+ * jobs, the server button), Models (the installed ledger with the Tune
+ * sheet), Browse models, Hugging Face and Server. Every tab is always
+ * there — the Simple/Advanced switch that used to hide two of them is gone,
+ * because a control that is hidden is a control that is searched for.
+ * "Tune" from a job card opens the Tune sheet for that model right under
+ * the overview, so a non-developer never has to find the model in the
+ * ledger.
  *
  * Everything is gated on the capability `supports_model_pull`, never on a
  * provider name — a second pull-capable server later gets the same section.
@@ -46,37 +49,8 @@ import { TuneSheet } from "@/views/local-models/TuneSheet";
 import { useEventStore } from "@/store/events";
 import { useLocaleChunk, useT } from "@/i18n";
 
-export type LocalModelsMode = "simple" | "advanced";
 export type LocalModelsTab =
   "overview" | "models" | "catalogue" | "huggingface" | "server";
-
-/** Browser-local preference; a private window simply starts on Simple. */
-export const LOCAL_MODELS_MODE_KEY = "jarvis.localModels.mode";
-
-const ADVANCED_ONLY: ReadonlySet<LocalModelsTab> = new Set([
-  "models",
-  "huggingface",
-]);
-
-function readStoredMode(): LocalModelsMode {
-  try {
-    return window.localStorage.getItem(LOCAL_MODELS_MODE_KEY) === "advanced"
-      ? "advanced"
-      : "simple";
-  } catch {
-    // Storage can be blocked (privacy mode, embedded WebView policies); the
-    // preference is a convenience, so the default is the honest answer.
-    return "simple";
-  }
-}
-
-function storeMode(mode: LocalModelsMode): void {
-  try {
-    window.localStorage.setItem(LOCAL_MODELS_MODE_KEY, mode);
-  } catch {
-    // Same as above: nothing to recover, the in-memory state still applies.
-  }
-}
 
 /**
  * The Tune sheet opened from a role row. The sheet wants the inventory row
@@ -140,21 +114,16 @@ export function LocalModelsView() {
   }, [loading, descriptor]);
   const providerId: string | null = descriptor?.id ?? (loading ? seed : null);
 
-  const [mode, setMode] = useState<LocalModelsMode>(readStoredMode);
   const [tab, setTab] = useState<LocalModelsTab>("overview");
   // The model whose Tune sheet is open under the overview ("" = none).
   const [tuneModel, setTuneModel] = useState<string>("");
   const openBrowse = useCallback(() => setTab("catalogue"), []);
+  const openManage = useCallback(() => setTab("models"), []);
   const openApiKeys = useCallback(
     () => setActiveSection("apikeys"),
     [setActiveSection],
   );
   const closeTune = useCallback(() => setTuneModel(""), []);
-
-  const changeMode = useCallback((next: LocalModelsMode) => {
-    setMode(next);
-    storeMode(next);
-  }, []);
 
   // Refresh: drops the painted snapshot and every cached answer, then reads
   // the server again. The one recovery from a snapshot taken while the
@@ -166,31 +135,18 @@ export function LocalModelsView() {
     setReloading(true);
     void reload().finally(() => setReloading(false));
   }, [reload, reloading]);
-  // "Manage" on the overview's installed list: the full ledger lives on the
-  // Advanced-only Models tab, so the switch flips along with the tab.
-  const openManage = useCallback(() => {
-    changeMode("advanced");
-    setTab("models");
-  }, [changeMode]);
 
-  // Leaving Advanced while on an Advanced-only tab must not strand the user on
-  // a tab the rail no longer shows.
-  useEffect(() => {
-    if (mode === "simple" && ADVANCED_ONLY.has(tab)) setTab("overview");
-  }, [mode, tab]);
-
-  const tabs = useMemo(() => {
-    const all: { id: LocalModelsTab; label: string }[] = [
-      { id: "overview", label: t("local_models.tab_overview") },
-      { id: "models", label: t("local_models.tab_models") },
-      { id: "catalogue", label: t("local_models.tab_catalogue") },
-      { id: "huggingface", label: t("local_models.tab_huggingface") },
-      { id: "server", label: t("local_models.tab_server") },
-    ];
-    return mode === "advanced"
-      ? all
-      : all.filter((o) => !ADVANCED_ONLY.has(o.id));
-  }, [mode, t]);
+  const tabs = useMemo(
+    () =>
+      [
+        { id: "overview", label: t("local_models.tab_overview") },
+        { id: "models", label: t("local_models.tab_models") },
+        { id: "catalogue", label: t("local_models.tab_catalogue") },
+        { id: "huggingface", label: t("local_models.tab_huggingface") },
+        { id: "server", label: t("local_models.tab_server") },
+      ] as { id: LocalModelsTab; label: string }[],
+    [t],
+  );
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
@@ -204,9 +160,6 @@ export function LocalModelsView() {
           subtitle={t("local_models.subtitle")}
         />
 
-        {/* The rail and the detail level belong together: the switch adds two
-            areas to this very row (and detail to the rows below), so it sits
-            beside what it changes instead of alone in the header. */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SegmentedFilter<LocalModelsTab>
             label={t("local_models.tabs_label")}
@@ -214,33 +167,19 @@ export function LocalModelsView() {
             onChange={setTab}
             options={tabs}
           />
-          <div className="flex items-center gap-2">
-            <SoftButton
-              onClick={onReload}
-              disabled={!providerId || reloading}
-              ariaLabel={t("local_models.reload")}
-              className="h-8"
-            >
-              {reloading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
-              {t("local_models.reload")}
-            </SoftButton>
-            <span className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-              {t("local_models.mode_label")}
-            </span>
-            <SegmentedFilter<LocalModelsMode>
-              label={t("local_models.mode_label")}
-              value={mode}
-              onChange={changeMode}
-              options={[
-                { id: "simple", label: t("local_models.mode_simple") },
-                { id: "advanced", label: t("local_models.mode_advanced") },
-              ]}
-            />
-          </div>
+          <SoftButton
+            onClick={onReload}
+            disabled={!providerId || reloading}
+            ariaLabel={t("local_models.reload")}
+            className="h-8"
+          >
+            {reloading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+            {t("local_models.reload")}
+          </SoftButton>
         </div>
       </div>
 
@@ -268,7 +207,6 @@ export function LocalModelsView() {
                 onOpenApiKeys={openApiKeys}
                 onBrowse={openBrowse}
                 onManage={openManage}
-                advanced={mode === "advanced"}
               />
               {tuneModel && (
                 <RoleTuneDrawer

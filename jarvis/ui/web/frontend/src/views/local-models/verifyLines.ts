@@ -15,6 +15,10 @@ function stepLabel(step: VerifyStep, t: T): string {
       return t("local_models.verify.server");
     case "chat":
       return t("local_models.verify.chat");
+    case "voice":
+      return t("local_models.verify.voice");
+    case "tools_screen":
+      return t("local_models.verify.tools_screen");
     case "embedding":
       return t("local_models.verify.embedding");
     default:

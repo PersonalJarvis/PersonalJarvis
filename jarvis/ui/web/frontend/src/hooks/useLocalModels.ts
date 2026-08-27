@@ -56,10 +56,26 @@ export interface RunningModelRow {
   expires_at: string;
   context_length: number | null;
   digest: string;
+  /** The download this entry's weights belong to (an alias folded back). */
+  base_tag?: string;
+  /** "model" | "tune_profile" | "voice_profile". */
+  kind?: string;
 }
 
 export interface LocalModelRow {
   name: string;
+  /**
+   * Readable parts from the backend's `ollama_names.describe`: the model
+   * line ("Qwen 3.5"), the line with its size ("Qwen 3.5 4B"), the size
+   * ("4B"), the quantisation ("Q4_K_M"), the source namespace of an import
+   * ("hf.co/unsloth") and the tag's variant markers ("it-qat").
+   */
+  display_name?: string;
+  display_label?: string;
+  params_label?: string;
+  quant_label?: string;
+  source?: string;
+  variant?: string;
   size_bytes: number;
   digest: string;
   modified_at: string;
@@ -74,8 +90,12 @@ export interface LocalModelRow {
   /** False when /api/show failed for this row — "unknown", not "none". */
   probed: boolean;
   used_by: LocalModelRole[];
+  /** The download or one of its aliases sits in memory; `loaded_as` names which. */
   loaded: boolean;
+  loaded_as?: string;
   size_vram_bytes: number;
+  /** What /api/ps reports as the loaded size (weights + context). */
+  loaded_size_bytes?: number;
   expires_at: string;
   running_context_length: number | null;
 }
@@ -114,20 +134,53 @@ export interface DeleteResponse {
 // Wire types — roles
 // ---------------------------------------------------------------------------
 
+/** The backend's ONE verdict on a model doing a job (`ollama_roles.FITS`). */
+export type RoleFit = "fits" | "slow" | "unfit" | "unknown";
+
+/** One installed download judged for one job — the picker's row. */
+export interface RoleChoice {
+  tag: string;
+  fit: RoleFit | string;
+  /** Short clause saying why; "" when it fits. */
+  reason: string;
+}
+
+/** A shortlist entry that would do the job here and is not on disk. */
+export interface RoleDownload {
+  tag: string;
+  label: string;
+  size_gb: number;
+  /** "comfortable" | "tight" | "unknown" — the shortlist's own verdict. */
+  fit: string;
+  note: string;
+}
+
 export interface RoleRow {
   id: LocalModelRoleId;
   /** i18n key, e.g. "local_models.role_chat". */
   label_key: string;
   /** Dotted config path for the footnote. */
   config_key: string;
+  /** "card" | "row" | "footnote" — where the section shows the role. */
+  layout?: "card" | "row" | "footnote" | string;
   /** Configured tag; "" = the plugin discovers one. */
   current: string;
   /** `current` is on the server right now. */
   installed: boolean;
+  /**
+   * The verdict on `current`: a RoleFit, "absent" when configured but not on
+   * the server, "" when nothing is set.
+   */
+  current_fit?: RoleFit | "absent" | "" | string;
+  current_reason?: string;
   required: string[];
   recommended_capabilities: string[];
-  /** Installed tags declaring every required capability. */
+  /** Installed tags that can do the job (fits or slow). */
   qualifying: string[];
+  /** Every installed download with its verdict, inventory order. */
+  choices?: RoleChoice[];
+  /** Shortlist downloads that would do the job on this machine. */
+  downloads?: RoleDownload[];
   /**
    * The pick for this machine: the best qualifying INSTALLED download, or
    * the shortlist's download when nothing installed qualifies; "" when
@@ -149,6 +202,8 @@ export interface RoleRow {
    * a call answers within a breath); null/absent when the job has none.
    */
   max_size_gb?: number | null;
+  /** The smallest native context that can do the job; null = no floor. */
+  min_context_tokens?: number | null;
 }
 
 export interface IdleReleaseResponse {
@@ -156,10 +211,32 @@ export interface IdleReleaseResponse {
   minutes: number;
 }
 
+/** One distinct download across the roles, with what it costs loaded. */
+export interface ResidentItem {
+  tag: string;
+  display_label: string;
+  roles: LocalModelRole[];
+  weights_gb: number;
+  context_gb: number;
+  context_tokens: number | null;
+  loaded: boolean;
+}
+
+/** What graphics memory holds when every job is loaded at once. */
+export interface ResidentPayload {
+  items: ResidentItem[];
+  /** Kept free beside the voice brain for local speech in/out. */
+  reserve_gb: number;
+  total_gb: number;
+  accelerator_gb: number;
+  over: boolean;
+}
+
 export interface RolesResponse {
   provider: string;
   server: string;
   roles: RoleRow[];
+  resident?: ResidentPayload;
   error: string | null;
 }
 
@@ -175,7 +252,7 @@ export interface AutostartResponse {
 
 /** One step of `POST …/verify`; `ok: null` = not run (role unset / server down). */
 export interface VerifyStep {
-  id: "server" | "chat" | "embedding" | string;
+  id: "server" | "chat" | "voice" | "tools_screen" | "embedding" | string;
   ok: boolean | null;
   model: string;
   detail: string;

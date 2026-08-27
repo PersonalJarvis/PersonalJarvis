@@ -13,7 +13,22 @@
       "memory_over": "Mayor que los {gb} GB de memoria gráfica: se ejecuta en parte en el procesador",
       "memory_unknown": "Memoria gráfica desconocida",
       "memory_aria": "Ocupa el {percent} % de la memoria gráfica",
-      "switch_to": "Cambiar a {model}"
+      "switch_to": "Cambiar a {model}",
+      "fit_fits": "Sirve para esta tarea.",
+      "fit_slow": "Funciona, pero {reason}.",
+      "fit_unfit": "No puede con esta tarea — {reason}.",
+      "fit_unknown": "Jarvis no pudo leer qué sabe hacer este modelo.",
+      "fit_alternative": "Elige {model} en su lugar.",
+      "shared_with": "Compartido con {roles} — se carga una vez.",
+      "memory_line": "{weights} + {context} de contexto = {percent} % de {gb} GB de memoria gráfica",
+      "memory_line_voice": "{weights} + {context} de contexto + {reserve} para voz = {percent} % de {gb} GB",
+      "context_of": "{context} de {native} de contexto",
+      "loaded_now": "cargado ahora",
+      "details": "Detalles",
+      "details_config": "Ajuste",
+      "details_required": "Necesita",
+      "details_loaded_as": "En memoria como",
+      "details_recommended": "Sugerencia"
     },
     "launch": {
       "aria": "Configurar el servidor",
@@ -33,9 +48,6 @@
     "title": "Modelos locales",
     "subtitle": "Modelos que se ejecutan en esta máquina o en un servidor que tú indiques.",
     "back": "Claves API",
-    "mode_label": "Nivel de detalle",
-    "mode_simple": "Sencillo",
-    "mode_advanced": "Avanzado",
     "reload": "Actualizar",
     "tabs_label": "Áreas de modelos locales",
     "tab_overview": "Resumen",
@@ -253,7 +265,14 @@
       "setup_brain_hint": "{server} está configurado, pero {brain} sigue respondiendo.",
       "setup_brain_button": "Hacer de {server} el cerebro activo",
       "setup_brain_switched": "{server} es ahora el cerebro activo.",
-      "setup_brain_failed": "No se pudo cambiar el cerebro: {message}"
+      "setup_brain_failed": "No se pudo cambiar el cerebro: {message}",
+      "resident_title": "Si todas las tareas se cargan a la vez",
+      "resident_fits": "{total} de {gb} GB",
+      "resident_over": "{total} de {gb} GB — más de lo que cabe en la tarjeta; Ollama alternará entre llamada y chat",
+      "resident_unknown": "{total} en total — memoria gráfica desconocida",
+      "resident_context": "Contexto (estimación)",
+      "resident_context_short": "contexto",
+      "resident_reserve": "Reserva para voz"
     },
     "installed": {
       "title": "Modelos instalados",
@@ -282,7 +301,9 @@
       "skipped": "sin probar",
       "result_ok": "Todo respondió.",
       "result_problem": "Problema: {reason}",
-      "ms": "{ms} ms"
+      "ms": "{ms} ms",
+      "voice": "Voz",
+      "tools_screen": "Herramientas y pantalla"
     },
     "roles": {
       "title": "Roles",
@@ -318,7 +339,16 @@
       "readback_defaults": "Corre con los valores propios del modelo.",
       "tune_skipped": "Asignado; los ajustes se quedan en los valores del modelo.",
       "voice_context_auto": "Funciona con un contexto de {context}, dimensionado según la memoria de este equipo. Ajústalo tú en «Ajustar».",
-      "voice_context_manual": "Funciona con un contexto de {context}, fijado por ti en «Ajustar»."
+      "voice_context_manual": "Funciona con un contexto de {context}, fijado por ti en «Ajustar».",
+      "pick_group_slow": "Funciona, pero más lento",
+      "pick_group_unknown": "Capacidades desconocidas",
+      "pick_group_unfit": "No para esta tarea",
+      "pick_group_downloads": "Descargar una sugerencia para esta tarea",
+      "pick_search": "Buscar modelos instalados…",
+      "pick_empty": "Nada coincide.",
+      "pick_download": "Descargar",
+      "pick_current": "actual",
+      "pick_fits": "sirve"
     },
     "server": {
       "host_eyebrow": "Host",

@@ -92,10 +92,7 @@ vi.mock("@/hooks/useLocalModels", () => ({
   useReloadLocalModels: () => mockReload,
 }));
 
-import {
-  LOCAL_MODELS_MODE_KEY,
-  LocalModelsView,
-} from "@/views/LocalModelsView";
+import { LocalModelsView } from "@/views/LocalModelsView";
 import { LOCAL_MODELS_SEED_KEY } from "@/lib/localModelsSeed";
 
 const OLLAMA = {
@@ -106,7 +103,6 @@ const OLLAMA = {
 };
 
 beforeEach(() => {
-  window.localStorage.removeItem(LOCAL_MODELS_MODE_KEY);
   window.localStorage.removeItem(LOCAL_MODELS_SEED_KEY);
   mockState.setActiveSection = vi.fn();
   mockProviders.providers = [OLLAMA];
@@ -119,7 +115,7 @@ afterEach(() => {
 });
 
 describe("LocalModelsView", () => {
-  it("renders the header, the Simple rail and the overview by default", () => {
+  it("renders the header, every tab and the overview by default", () => {
     render(<LocalModelsView />);
 
     expect(screen.getByText("local_models.title")).toBeDefined();
@@ -132,13 +128,13 @@ describe("LocalModelsView", () => {
     expect(
       screen.getByRole("tab", { name: "local_models.tab_server" }),
     ).toBeDefined();
-    // Simple hides the Advanced-only tabs.
+    // No detail level: the ledger and Hugging Face are always one click away.
     expect(
-      screen.queryByRole("tab", { name: "local_models.tab_models" }),
-    ).toBeNull();
+      screen.getByRole("tab", { name: "local_models.tab_models" }),
+    ).toBeDefined();
     expect(
-      screen.queryByRole("tab", { name: "local_models.tab_huggingface" }),
-    ).toBeNull();
+      screen.getByRole("tab", { name: "local_models.tab_huggingface" }),
+    ).toBeDefined();
     expect(screen.getByTestId("local-models-overview")).toBeDefined();
   });
 
@@ -176,19 +172,8 @@ describe("LocalModelsView", () => {
     expect(mockState.setActiveSection).toHaveBeenCalledWith("apikeys");
   });
 
-  it("reveals Models in Advanced and remembers the choice", () => {
+  it("mounts the Models ledger and Hugging Face from their tabs", () => {
     render(<LocalModelsView />);
-
-    fireEvent.click(
-      screen.getByRole("tab", { name: "local_models.mode_advanced" }),
-    );
-    expect(
-      screen.getByRole("tab", { name: "local_models.tab_models" }),
-    ).toBeDefined();
-    expect(
-      screen.getByRole("tab", { name: "local_models.tab_huggingface" }),
-    ).toBeDefined();
-    expect(window.localStorage.getItem(LOCAL_MODELS_MODE_KEY)).toBe("advanced");
 
     fireEvent.click(
       screen.getByRole("tab", { name: "local_models.tab_models" }),
@@ -199,17 +184,7 @@ describe("LocalModelsView", () => {
       screen.getByRole("tab", { name: "local_models.tab_huggingface" }),
     );
     expect(screen.getByTestId("huggingface-panel")).toBeDefined();
-
-    // Back to Simple: the rail drops Models and the view falls back to Overview.
-    fireEvent.click(
-      screen.getByRole("tab", { name: "local_models.mode_simple" }),
-    );
-    expect(
-      screen.queryByRole("tab", { name: "local_models.tab_models" }),
-    ).toBeNull();
-    expect(screen.getByTestId("local-models-overview")).toBeDefined();
   });
-
   it("goes back to API Keys and says so when no server can pull models", () => {
     mockProviders.providers = [{ id: "openai", label: "OpenAI" }];
     render(<LocalModelsView />);

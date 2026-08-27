@@ -1,13 +1,15 @@
 /**
- * The two writes a model card can make, and the progress line they report.
+ * The writes a model card can make, and the progress line they report.
  *
- * Picking a model is one PUT. "Use recommended" is a small flow — download
- * the pick when it is missing, assign it, then write the suggested options
- * silently and read back one sentence — and it has to survive the card
- * unmounting mid-download, so it lives here rather than inside the card.
+ * Picking an installed model is one PUT. Installing one for a job — the
+ * recommended pick, or a download the picker offered — is a small flow:
+ * download it when it is missing, assign it, then write the suggested
+ * options silently and read back one sentence. That flow has to survive
+ * the card unmounting mid-download, so it lives here rather than inside
+ * the card.
  *
- * Extracted from the old roles ledger unchanged in behaviour: the cards
- * replaced the rows, the writes did not change.
+ * Whether a role may be written is the row's own `writable` flag, never a
+ * list kept here: the backend is the one place a role is declared.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -40,15 +42,6 @@ export interface RoleProgress {
 
 export const IDLE: RoleProgress = { phase: "idle" };
 
-/** The roles a user may write from a card. */
-const WRITABLE: readonly LocalModelRole[] = [
-  "chat",
-  "voice",
-  "tools_screen",
-  "deep",
-  "embedding",
-];
-
 export interface RoleActions {
   /** Progress per role id; missing means idle. */
   progress: Record<string, RoleProgress>;
@@ -58,6 +51,8 @@ export interface RoleActions {
   pick: (roleId: string, model: string) => void;
   /** Download the shortlist's pick when missing, assign it, tune it. */
   useRecommended: (row: RoleRow) => void;
+  /** Download `model` when missing, assign it to the row's job, tune it. */
+  install: (row: RoleRow, model: string) => void;
   /** A failed PUT, as one sentence; "" when the last write went through. */
   writeError: string;
 }
@@ -98,10 +93,9 @@ export function useRoleActions(
     [setRoleMutation],
   );
 
-  const useRecommended = useCallback(
-    (row: RoleRow) => {
-      const model = row.recommended;
-      if (!model || !WRITABLE.includes(row.id as LocalModelRole)) return;
+  const install = useCallback(
+    (row: RoleRow, model: string) => {
+      if (!model || !row.writable) return;
       void (async () => {
         try {
           if (!isInstalled(model)) {
@@ -132,6 +126,11 @@ export function useRoleActions(
     [alive, invalidate, isInstalled, patch, providerId, tuneSilently],
   );
 
+  const useRecommended = useCallback(
+    (row: RoleRow) => install(row, row.recommended),
+    [install],
+  );
+
   const isBusy = useCallback(
     (roleId: string) => {
       const phase = progress[roleId]?.phase;
@@ -150,5 +149,5 @@ export function useRoleActions(
       : String(setRoleMutation.error)
     : "";
 
-  return { progress, isBusy, pick, useRecommended, writeError };
+  return { progress, isBusy, pick, useRecommended, install, writeError };
 }

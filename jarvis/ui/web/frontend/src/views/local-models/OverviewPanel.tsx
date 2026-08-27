@@ -1,27 +1,29 @@
 /**
- * Local models, front page: a grid of jobs, then the server that runs them.
+ * Local models, front page: what sits in memory, the jobs, the server.
  *
- * The page answers one question — "which model does what on my machine" —
- * and it answers it the way the machine is actually shaped. Chat, speech,
- * tools & screen and deep & coding are four PEERS, not four steps: you can
- * fill them in any order, and a number beside each would claim a sequence
- * that does not exist. So they are a grid of equal cards (`ModelCard`), each
- * carrying its own model, its own memory bar and its own picker.
+ * The page answers one question — "which model does what on my machine,
+ * and does it actually work" — and it answers it the way the machine is
+ * actually shaped. Chat, voice, tools & screen and deep & coding are PEERS,
+ * not steps: you can fill them in any order, and a number beside each would
+ * claim a sequence that does not exist. So they are a grid of equal cards
+ * (`ModelCard`), each carrying its own model, its own verdict and its own
+ * picker.
  *
- * All four answer the user directly, which is what earns a card. Embeddings
- * does not — it indexes the wiki in the background, is picked once and then
- * forgotten — so it keeps its picker in the side row below instead of taking
- * a quarter of the page.
+ * Which roles are cards, which one is the quiet row below (embeddings:
+ * picked once, then forgotten) and which are footnotes (the read-only
+ * consumers) is the backend's `layout` per role — the page iterates what
+ * the server sends instead of keeping a second list of role ids to sync by
+ * hand, so a role added there lands here by construction.
  *
- * Under the grid, `ServerLaunch` adds up what the picks cost and offers the
- * one button that puts a working server behind them.
+ * Above the grid, `MemoryStrip` adds up what every job costs loaded at
+ * once — the question the per-card bar cannot answer. Under the grid,
+ * `ServerLaunch` offers the one button that puts a working, tested,
+ * autostarting server behind the picks.
  *
- * `advanced` adds capability badges, per-model Tune and the read-only jobs.
- * It never removes a control — the picker is on every card at every detail
- * level, which is half of what BUG-188 was about.
- *
- * Props take `providerId` — the id of the card that declares
- * `supports_model_pull` — never a provider name.
+ * There is no Simple/Advanced switch any more: every control is on the
+ * card at every time (the picker, Tune), and the plumbing sits behind a
+ * "Details" fold on each card. Advanced never removed a control (BUG-188);
+ * now nothing hides one either.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -44,7 +46,9 @@ import { cn } from "@/lib/utils";
 import { InstalledPanel } from "./InstalledPanel";
 import { canonical } from "./localSetup";
 import type { SetupStep, SetupSummary } from "./localSetup";
+import { MemoryStrip } from "./MemoryStrip";
 import { ModelCard } from "./ModelCard";
+import { labelFor, modelLabel, findModel } from "./modelNames";
 import { RolePicker } from "./RolePicker";
 import { ServerLaunch } from "./ServerLaunch";
 import { useLocalSetup } from "./useLocalSetup";
@@ -60,30 +64,17 @@ export interface OverviewPanelProps {
   onOpenApiKeys?: () => void;
   /** Opens the catalogue ("Browse models"); the link hides without it. */
   onBrowse?: () => void;
-  /** Opens the full installed ledger (Advanced → Models). */
+  /** Opens the full installed ledger (Models tab). */
   onManage?: () => void;
-  /** Adds capability badges, Tune and the read-only jobs. */
-  advanced?: boolean;
 }
 
-/**
- * The jobs the grid shows, in the order you meet them: type, talk, let it
- * work the screen, hand it something long.
- *
- * All four answer YOU. Embeddings does not — it indexes the wiki in the
- * background, is picked once and then forgotten — so it sits in the side row
- * below with its own picker rather than taking a quarter of the page.
- * `ack`/`polish` follow other cards and are read-only.
- */
-export const GRID_JOBS: readonly LocalModelRole[] = [
-  "chat",
-  "voice",
-  "tools_screen",
-  "deep",
-];
-
-/** The jobs below the grid: set here too, just not part of the conversation. */
-export const SIDE_JOBS: readonly LocalModelRole[] = ["embedding"];
+/** Where a role lands when an older payload carries no `layout`. */
+function layoutOf(row: RoleRow): "card" | "row" | "footnote" {
+  if (row.layout === "card" || row.layout === "row" || row.layout === "footnote")
+    return row.layout;
+  if (!row.writable || row.advanced) return "footnote";
+  return row.id === "embedding" ? "row" : "card";
+}
 
 /** Bytes to a short gigabyte figure ("12.4 GB"); "0 GB" below a megabyte. */
 export function formatGigabytes(bytes: number): string {
@@ -99,7 +90,6 @@ export function OverviewPanel({
   onOpenApiKeys,
   onBrowse,
   onManage,
-  advanced = false,
 }: OverviewPanelProps) {
   const t = useT();
   const overview = useOverview(providerId);
@@ -110,6 +100,7 @@ export function OverviewPanel({
   const inventory = overview.data?.inventory;
   const models = useMemo(() => inventory?.models ?? [], [inventory]);
   const acceleratorGb = overview.data?.recommended?.accelerator_gb ?? 0;
+  const resident = overview.data?.roles.resident;
   const serverSilent = Boolean(inventory?.error);
 
   const marked = useRef(false);
@@ -126,23 +117,13 @@ export function OverviewPanel({
   }, [models]);
   const actions = useRoleActions(providerId, installedNames);
 
-  const allRows = overview.data?.roles.roles ?? [];
-  const byId = useMemo(() => {
-    const map = new Map<string, RoleRow>();
-    for (const row of allRows) map.set(row.id, row);
-    return map;
-  }, [allRows]);
-  const gridRows = useMemo(
-    () => GRID_JOBS.map((id) => byId.get(id)).filter((r): r is RoleRow => !!r),
-    [byId],
+  const allRows = useMemo(() => overview.data?.roles.roles ?? [], [overview.data]);
+  const cardRows = useMemo(() => allRows.filter((r) => layoutOf(r) === "card"), [allRows]);
+  const sideRows = useMemo(() => allRows.filter((r) => layoutOf(r) === "row"), [allRows]);
+  const footnoteRows = useMemo(
+    () => allRows.filter((r) => layoutOf(r) === "footnote"),
+    [allRows],
   );
-  const sideRows = useMemo(
-    () => SIDE_JOBS.map((id) => byId.get(id)).filter((r): r is RoleRow => !!r),
-    [byId],
-  );
-  // Whatever is advanced follows another card's pick and belongs in the quiet
-  // list at the bottom.
-  const followerRows = allRows.filter((r) => r.advanced);
 
   const serverLabel =
     providers.find((p) => p.id === providerId)?.label ||
@@ -153,8 +134,20 @@ export function OverviewPanel({
     activeBrain !== null && activeBrain.id !== providerId;
 
   const roleLabel = useCallback(
-    (role: LocalModelRole) => t(byId.get(role)?.label_key ?? `local_models.role_${role}`),
-    [byId, t],
+    (role: LocalModelRole) =>
+      t(allRows.find((r) => r.id === role)?.label_key ?? `local_models.role_${role}`),
+    [allRows, t],
+  );
+
+  // Which other cards share a card's download — loaded once, said once.
+  const sharedWith = useCallback(
+    (row: RoleRow) =>
+      row.current
+        ? cardRows
+            .filter((r) => r.id !== row.id && r.current && canonical(r.current) === canonical(row.current))
+            .map((r) => t(r.label_key))
+        : [],
+    [cardRows, t],
   );
 
   const checking = overview.isFetching && overview.data?.source === "cache";
@@ -211,31 +204,37 @@ export function OverviewPanel({
         </div>
       )}
 
-      {/* The grid. Four peers, two columns on a wide pane. */}
+      <MemoryStrip resident={resident} roleLabel={roleLabel} />
+
+      {/* The grid. Peers, two columns on a wide pane. */}
       <div
         className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4"
         data-testid="model-card-grid"
       >
-        {gridRows.length === 0 && overview.isLoading
-          ? GRID_JOBS.map((id) => <CardSkeleton key={id} />)
-          : gridRows.map((row) => (
+        {cardRows.length === 0 && overview.isLoading
+          ? ["chat", "voice", "tools_screen", "deep"].map((id) => <CardSkeleton key={id} />)
+          : cardRows.map((row) => (
               <ModelCard
                 key={row.id}
                 row={row}
                 models={models}
                 acceleratorGb={acceleratorGb}
+                reserveGb={row.id === "voice" ? (resident?.reserve_gb ?? 0) : 0}
+                sharedWith={sharedWith(row)}
                 progress={actions.progress[row.id] ?? IDLE}
                 busy={actions.isBusy(row.id)}
                 onPick={(model) => actions.pick(row.id, model)}
                 onUseRecommended={() => actions.useRecommended(row)}
+                onInstall={(model) => actions.install(row, model)}
                 onTune={onTune}
-                advanced={advanced}
               />
             ))}
       </div>
 
       {actions.writeError && (
-        <p className="text-sm text-destructive">{actions.writeError}</p>
+        <p className="text-sm text-destructive" data-testid="role-write-error">
+          {actions.writeError}
+        </p>
       )}
 
       {/* Set here, but not part of the conversation. */}
@@ -246,13 +245,18 @@ export function OverviewPanel({
           models={models}
           busy={actions.isBusy(row.id)}
           onPick={(model) => actions.pick(row.id, model)}
-          onTune={advanced ? onTune : undefined}
+          onInstall={(model) => actions.install(row, model)}
+          onTune={onTune}
           t={t}
         />
       ))}
 
+      {footnoteRows.length > 0 && (
+        <FootnoteJobs rows={footnoteRows} models={models} t={t} />
+      )}
+
       <ServerLaunch
-        rows={gridRows}
+        rows={[...cardRows, ...sideRows]}
         models={models}
         acceleratorGb={acceleratorGb}
         server={s}
@@ -283,10 +287,6 @@ export function OverviewPanel({
         onManage={onManage}
         onBrowse={onBrowse}
       />
-
-      {advanced && followerRows.length > 0 && (
-        <FollowerJobs rows={followerRows} t={t} />
-      )}
     </div>
   );
 }
@@ -295,7 +295,7 @@ export function OverviewPanel({
 function CardSkeleton() {
   return (
     <div
-      className="h-[15rem] animate-pulse rounded-2xl border border-dashed border-border bg-card/30"
+      className="h-[17rem] animate-pulse rounded-2xl border border-dashed border-border bg-card/30"
       data-testid="model-card-skeleton"
     />
   );
@@ -314,6 +314,7 @@ function SideJobRow({
   models,
   busy,
   onPick,
+  onInstall,
   onTune,
   t,
 }: {
@@ -321,14 +322,16 @@ function SideJobRow({
   models: LocalModelRow[];
   busy: boolean;
   onPick: (model: string) => void;
+  onInstall?: (model: string) => void;
   onTune?: (model: string) => void;
   t: (key: string) => string;
 }) {
   const missing = row.current !== "" && !row.installed;
   const blocked = !row.writable || (row.note !== "" && row.current === "");
+  const current = findModel(models, row.current);
   return (
     <div
-      className="grid gap-3 rounded-xl border border-border/70 bg-card/40 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)_auto] lg:items-center"
+      className="grid gap-3 rounded-xl border border-border/70 bg-card/40 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)_auto] lg:items-center"
       data-testid={`side-job-${row.id}`}
     >
       <div className="min-w-0">
@@ -337,6 +340,11 @@ function SideJobRow({
         </p>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {row.note || t(`local_models.jobs.${row.id}_purpose`)}
+          {current && (
+            <span className="ml-2 text-foreground/80">
+              {modelLabel(current)} · {formatGigabytes(current.size_bytes)}
+            </span>
+          )}
         </p>
       </div>
       <div className="min-w-0">
@@ -350,6 +358,7 @@ function SideJobRow({
             models={models}
             disabled={busy}
             onPick={onPick}
+            onInstall={onInstall}
           />
         )}
       </div>
@@ -358,6 +367,9 @@ function SideJobRow({
           <span className="text-xs text-amber-700 dark:text-amber-400">
             {t("local_models.jobs.not_on_disk")}
           </span>
+        )}
+        {row.current_fit === "unfit" && row.current_reason && (
+          <span className="text-xs text-destructive">{row.current_reason}</span>
         )}
         {onTune && row.current && row.installed && (
           <SoftButton onClick={() => onTune(row.current)} className="h-8">
@@ -369,37 +381,31 @@ function SideJobRow({
   );
 }
 
-/** The jobs that follow another card's pick; read-only, Advanced only. */
-function FollowerJobs({
+/** The jobs that follow another pick or run elsewhere; read-only, one line each. */
+function FootnoteJobs({
   rows,
+  models,
   t,
 }: {
   rows: RoleRow[];
+  models: LocalModelRow[];
   t: (key: string) => string;
 }) {
   return (
-    <div
-      className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border/70 bg-card/40"
-      data-testid="roles-more"
-    >
-      {rows.map((row) => (
-        <div
-          key={row.id}
-          className="grid gap-1 px-4 py-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] sm:items-center"
-        >
-          <span className="text-sm text-foreground">{t(row.label_key)}</span>
-          <span className="text-sm text-muted-foreground">
-            {row.current ? (
-              <span className="font-mono text-xs text-foreground/85">
-                {row.current}
-              </span>
-            ) : (
-              row.note || t("local_models.roles.follows_chat")
-            )}
-          </span>
-        </div>
+    <p className="text-xs text-muted-foreground" data-testid="roles-more">
+      {rows.map((row, i) => (
+        <span key={row.id}>
+          {i > 0 && " · "}
+          <span className="text-foreground/80">{t(row.label_key)}</span>
+          {": "}
+          {row.current ? (
+            <span title={row.current}>{labelFor(models, row.current)}</span>
+          ) : (
+            row.note || t("local_models.roles.follows_chat")
+          )}
+        </span>
       ))}
-    </div>
+    </p>
   );
 }
 

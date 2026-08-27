@@ -23,8 +23,9 @@ import type { LocalModelRow, RoleRow } from "@/hooks/useLocalModels";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
-import { formatGb } from "./localModelsFormat";
+import { formatContext, formatGb } from "./localModelsFormat";
 import { canonical } from "./localSetup";
+import { modelLabel } from "./modelNames";
 
 export interface InstalledPanelProps {
   models: LocalModelRow[];
@@ -176,15 +177,21 @@ export function InstalledPanel({
                     <StatusDot
                       tone={row.loaded ? "ok" : "off"}
                       label={
-                        <span className="font-mono text-xs text-foreground/85">
-                          {row.name}
+                        <span className="text-sm text-foreground">
+                          {modelLabel(row)}
                         </span>
                       }
                     />
                     <div className="ml-4 mt-0.5 text-[11px] text-muted-foreground">
-                      {[row.parameter_size, formatGb(row.size_bytes)]
+                      <span className="font-mono text-foreground/70">{row.name}</span>
+                      {[
+                        row.quant_label || row.quantization_level,
+                        formatGb(row.size_bytes),
+                        row.context_length ? formatContext(row.context_length) : "",
+                      ]
                         .filter(Boolean)
-                        .join(" · ")}
+                        .map((part) => ` · ${part}`)
+                        .join("")}
                       {row.loaded ? ` · ${k("loaded")}` : ""}
                     </div>
                   </div>

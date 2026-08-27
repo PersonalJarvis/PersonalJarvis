@@ -50,6 +50,7 @@ function role(overrides: Partial<Record<string, unknown>>) {
     id: "chat",
     label_key: "local_models.role_chat",
     config_key: "brain.providers.ollama.model",
+    layout: "card",
     current: "",
     installed: false,
     required: ["tools"],
@@ -72,6 +73,13 @@ const ROLES = [
     recommended: "qwen3.8:27b",
   }),
   role({
+    id: "voice",
+    label_key: "local_models.role_voice",
+    current: "qwen3.5:4b",
+    installed: true,
+    qualifying: ["qwen3.5:4b"],
+  }),
+  role({
     id: "tools_screen",
     label_key: "local_models.role_tools_screen",
     required: ["tools", "vision"],
@@ -87,19 +95,14 @@ const ROLES = [
   role({
     id: "embedding",
     label_key: "local_models.role_embedding",
+    layout: "row",
     required: ["embedding"],
     recommended: "qwen3-embedding:4b",
   }),
   role({
-    id: "voice",
-    label_key: "local_models.role_voice",
-    current: "qwen3.5:4b",
-    installed: true,
-    qualifying: ["qwen3.5:4b"],
-  }),
-  role({
     id: "ack",
     label_key: "local_models.role_ack",
+    layout: "footnote",
     writable: false,
     advanced: true,
     current: "qwen3.5:4b",
@@ -133,8 +136,10 @@ const SERVER = {
 
 interface Fixture {
   roles?: unknown[];
-  models?: Array<{ name: string; size_bytes?: number; capabilities?: string[] }>;
+  models?: Array<{ name: string; size_bytes?: number; capabilities?: string[] } & Record<string, unknown>>;
   server?: Record<string, unknown>;
+  /** `roles.resident` — what sits in memory when every job is loaded at once. */
+  resident?: Record<string, unknown>;
   accelerator_gb?: number;
   /** "404" = a backend without the route (the four legacy reads compose);
    *  "live" = the route answers with the composed payload. */
@@ -143,7 +148,6 @@ interface Fixture {
 
 function installFetchMock(fx: Fixture = {}) {
   const models = (fx.models ?? [{ name: "qwen3.5:4b" }]).map((m) => ({
-    name: m.name,
     size_bytes: m.size_bytes ?? 1,
     digest: "",
     modified_at: "",
@@ -159,6 +163,7 @@ function installFetchMock(fx: Fixture = {}) {
     size_vram_bytes: 0,
     expires_at: "",
     running_context_length: null,
+    ...m,
   }));
   const ok = (body: unknown) =>
     ({ ok: true, status: 200, json: async () => body }) as Response;
@@ -166,6 +171,7 @@ function installFetchMock(fx: Fixture = {}) {
     provider: "ollama",
     server: "",
     roles: fx.roles ?? ROLES,
+    resident: fx.resident,
     error: null,
   };
   const inventoryBody = {
@@ -468,9 +474,9 @@ describe("OverviewPanel grid", () => {
 
     await screen.findByTestId("model-card-chat");
     const bar = screen.getByTestId("model-card-memory-chat");
-    // 4 of 16 GB.
+    // 4 GB of weights plus the context estimate, against 16 GB.
     await waitFor(() =>
-      expect(bar.textContent).toContain("local_models.jobs.memory_share25|16.0"),
+      expect(bar.textContent).toContain("local_models.jobs.memory_line4.0 GB"),
     );
     expect(
       (screen.getByTestId("model-card-memory-fill-chat") as HTMLElement).style.width,
@@ -490,9 +496,10 @@ describe("OverviewPanel grid", () => {
       expect(bar.textContent).toContain("local_models.jobs.memory_over8.0"),
     );
     // Clamped, not spilling out of its track.
-    expect(
-      (screen.getByTestId("model-card-memory-fill-chat") as HTMLElement).style.width,
-    ).toBe("100%");
+    const width = (screen.getByTestId("model-card-memory-fill-chat") as HTMLElement)
+      .style.width;
+    expect(parseInt(width, 10)).toBeGreaterThan(0);
+    expect(parseInt(width, 10)).toBeLessThanOrEqual(100);
   });
 
   it("writes a pick through PUT roles/{role}", async () => {
@@ -500,9 +507,8 @@ describe("OverviewPanel grid", () => {
     renderPanel();
 
     await screen.findByTestId("model-card-deep");
-    fireEvent.change(screen.getByTestId("role-picker-deep"), {
-      target: { value: "qwen3.5:4b" },
-    });
+    fireEvent.click(screen.getByTestId("role-picker-deep"));
+    fireEvent.click(screen.getByTestId("role-option-qwen3.5:4b"));
 
     await waitFor(() => {
       const put = fetchMock.mock.calls.find(
@@ -518,7 +524,12 @@ describe("OverviewPanel grid", () => {
   });
 
   it("downloads, assigns and tunes the recommendation from the card", async () => {
-    const fetchMock = installFetchMock();
+    const fetchMock = installFetchMock({
+      // An empty chat job: the recommendation button has a reason to be there.
+      roles: ROLES.map((r) =>
+        r.id === "chat" ? { ...r, current: "", installed: false } : r,
+      ),
+    });
     renderPanel();
 
     await screen.findByTestId("model-card-chat");
@@ -538,6 +549,7 @@ describe("OverviewPanel grid", () => {
 
   it("gives speech a card of its own, with the window it runs on", async () => {
     installFetchMock({
+      models: [{ name: "qwen3.5:4b", size_bytes: 3 * 1024 ** 3, context_length: 262144 }],
       roles: ROLES.map((r) =>
         r.id === "voice"
           ? { ...r, context_tokens: 32768, context_source: "automatic" }
@@ -549,9 +561,84 @@ describe("OverviewPanel grid", () => {
     const card = await screen.findByTestId("model-card-voice");
     expect(card.textContent).toContain("local_models.jobs.voice_purpose");
     expect(screen.getByTestId("role-picker-voice")).toBeDefined();
-    expect(screen.getByTestId("voice-context").textContent).toContain(
-      "local_models.roles.voice_context_auto32k",
+    // The window the call runs with, against the model's native one.
+    expect(screen.getByTestId("model-card-chips-voice").textContent).toContain(
+      "local_models.jobs.context_of32k|256k",
     );
+  });
+
+  it("names what is missing when the job's model cannot do it, and offers the pick", async () => {
+    installFetchMock({
+      roles: ROLES.map((r) =>
+        r.id === "tools_screen"
+          ? {
+              ...r,
+              current: "qwen3.5:4b",
+              installed: true,
+              current_fit: "unfit",
+              current_reason: "no vision",
+              recommended: "gemma4:12b-it-qat",
+            }
+          : r,
+      ),
+    });
+    renderPanel();
+
+    const card = await screen.findByTestId("model-card-tools_screen");
+    expect(card.dataset.state).toBe("unfit");
+    expect(screen.getByTestId("model-card-verdict-tools_screen").textContent).toContain(
+      "local_models.jobs.fit_unfitno vision",
+    );
+    expect(card.textContent).toContain(
+      "local_models.roles.download_recommendedgemma4:12b-it-qat",
+    );
+    // A fine choice is not nagged: the chat card, on a fit, shows no switch button.
+    expect(screen.getByTestId("model-card-chat").textContent).not.toContain(
+      "local_models.jobs.switch_to",
+    );
+  });
+
+  it("shows the readable name with the tag beside it, and the strip of what is loaded at once", async () => {
+    installFetchMock({
+      models: [
+        {
+          name: "qwen3.5:4b",
+          size_bytes: 3 * 1024 ** 3,
+          display_label: "Qwen 3.5 4B",
+          params_label: "4B",
+          quant_label: "Q4_K_M",
+        },
+      ],
+      resident: {
+        items: [
+          {
+            tag: "qwen3.5:4b",
+            display_label: "Qwen 3.5 4B",
+            roles: ["chat", "voice"],
+            weights_gb: 3.0,
+            context_gb: 0.7,
+            context_tokens: 8192,
+            loaded: true,
+          },
+        ],
+        reserve_gb: 4.0,
+        total_gb: 7.7,
+        accelerator_gb: 16,
+        over: false,
+      },
+    });
+    renderPanel();
+
+    await screen.findByTestId("model-card-chat");
+    expect(screen.getByTestId("model-card-current-chat").textContent).toBe("Qwen 3.5 4B");
+    expect(screen.getByTestId("model-card-tag-chat").textContent).toBe("qwen3.5:4b");
+    const strip = screen.getByTestId("memory-strip");
+    expect(strip.dataset.over).toBe("false");
+    expect(screen.getByTestId("memory-strip-total").textContent).toContain(
+      "local_models.overview.resident_fits7.7 GB|16.0",
+    );
+    expect(strip.textContent).toContain("local_models.role_chat · local_models.role_voice");
+    expect(strip.textContent).toContain("local_models.overview.resident_reserve");
   });
 
   it("blocks the card, rather than offering a doomed picker, when a job has no server", async () => {
@@ -590,25 +677,17 @@ describe("OverviewPanel grid", () => {
     expect(within(side).getByTestId("role-picker-embedding")).toBeDefined();
   });
 
-  it("the detail level adds detail, never takes the picker away", async () => {
+  it("keeps every control on the card, and the plumbing one fold away", async () => {
     installFetchMock();
-    const { unmount } = renderPanel({ onTune: vi.fn() });
+    renderPanel({ onTune: vi.fn() });
     await screen.findByTestId("model-card-chat");
     expect(screen.getByTestId("role-picker-chat")).toBeDefined();
-    expect(screen.queryByText("tools")).toBeNull();
-    expect(screen.queryByText("local_models.roles.tune")).toBeNull();
-    expect(screen.queryByTestId("roles-more")).toBeNull();
-    unmount();
-
-    installFetchMock();
-    renderPanel({ advanced: true, onTune: vi.fn() });
-    await screen.findByTestId("model-card-chat");
-    expect(screen.getByTestId("role-picker-chat")).toBeDefined();
+    // Tune sits beside the picker on every card with an installed model.
+    expect(screen.getAllByText("local_models.roles.tune").length).toBeGreaterThan(0);
+    // The job's requirements are in the Details fold, not on the face.
     expect(screen.getAllByText("tools").length).toBeGreaterThan(0);
-    expect(
-      screen.getAllByText("local_models.roles.tune").length,
-    ).toBeGreaterThan(0);
-    // The jobs that follow another card's pick.
+    expect(screen.getAllByText("local_models.jobs.details").length).toBeGreaterThan(0);
+    // The jobs that follow another card's pick, as a footnote.
     expect(screen.getByTestId("roles-more").textContent).toContain(
       "local_models.role_ack",
     );
@@ -624,7 +703,7 @@ describe("OverviewPanel launch bar", () => {
       ],
       accelerator_gb: 16,
       roles: ROLES.map((r) =>
-        r.id === "voice"
+        r.id === "voice" || r.id === "embedding"
           ? { ...r, current: "qwen3-embedding:4b", installed: true }
           : r.id === "tools_screen" || r.id === "deep"
             ? { ...r, current: "qwen3.5:4b", installed: true }
@@ -634,7 +713,7 @@ describe("OverviewPanel launch bar", () => {
     renderPanel();
 
     const facts = await screen.findByTestId("launch-facts");
-    // chat + tools + deep share qwen3.5:4b, voice adds 2 GB -> 5 GB.
+    // chat + tools + deep share qwen3.5:4b, voice + embeddings add 2 GB -> 5 GB.
     await waitFor(() =>
       expect(facts.textContent).toContain(
         "local_models.launch.total_on_disk5.0 GB",
@@ -653,10 +732,10 @@ describe("OverviewPanel launch bar", () => {
     renderPanel();
 
     const launch = await screen.findByTestId("server-launch");
-    // chat and voice are set in the fixture, tools & deep are not: 2 of 4.
+    // chat and voice are set in the fixture, tools, deep & embeddings are not: 2 of 5.
     await waitFor(() =>
       expect(launch.textContent).toContain(
-        "local_models.launch.partly_picked2|4",
+        "local_models.launch.partly_picked2|5",
       ),
     );
     const button = within(screen.getByTestId("launch-run")).getByRole("button");

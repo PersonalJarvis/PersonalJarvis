@@ -13,7 +13,22 @@
       "memory_over": "Larger than the {gb} GB graphics memory — runs partly on the processor",
       "memory_unknown": "Graphics memory unknown",
       "memory_aria": "Uses {percent} % of the graphics memory",
-      "switch_to": "Switch to {model}"
+      "switch_to": "Switch to {model}",
+      "fit_fits": "Fits this job.",
+      "fit_slow": "Works, but {reason}.",
+      "fit_unfit": "Can’t do this job — {reason}.",
+      "fit_unknown": "Jarvis could not read what this model can do.",
+      "fit_alternative": "Pick {model} instead.",
+      "shared_with": "Shared with {roles} — loaded once.",
+      "memory_line": "{weights} + {context} context = {percent} % of {gb} GB graphics memory",
+      "memory_line_voice": "{weights} + {context} context + {reserve} for speech in/out = {percent} % of {gb} GB",
+      "context_of": "{context} of {native} ctx",
+      "loaded_now": "loaded now",
+      "details": "Details",
+      "details_config": "Setting",
+      "details_required": "Needs",
+      "details_loaded_as": "In memory as",
+      "details_recommended": "Pick"
     },
     "launch": {
       "aria": "Set up the server",
@@ -33,9 +48,6 @@
     "title": "Local models",
     "subtitle": "Models that run on this machine or on a server you name.",
     "back": "API Keys",
-    "mode_label": "Detail level",
-    "mode_simple": "Simple",
-    "mode_advanced": "Advanced",
     "reload": "Refresh",
     "tabs_label": "Local model areas",
     "tab_overview": "Overview",
@@ -253,7 +265,14 @@
       "setup_brain_hint": "{server} is set up, but {brain} still answers.",
       "setup_brain_button": "Make {server} the active brain",
       "setup_brain_switched": "{server} is now the active brain.",
-      "setup_brain_failed": "Could not switch the brain: {message}"
+      "setup_brain_failed": "Could not switch the brain: {message}",
+      "resident_title": "If every job is loaded at once",
+      "resident_fits": "{total} of {gb} GB",
+      "resident_over": "{total} of {gb} GB — more than the card holds; Ollama will swap between a call and a chat",
+      "resident_unknown": "{total} in total — graphics memory unknown",
+      "resident_context": "Context (estimate)",
+      "resident_context_short": "context",
+      "resident_reserve": "Speech in/out reserve"
     },
     "installed": {
       "title": "Installed models",
@@ -282,7 +301,9 @@
       "skipped": "not tested",
       "result_ok": "Everything answered.",
       "result_problem": "Problem: {reason}",
-      "ms": "{ms} ms"
+      "ms": "{ms} ms",
+      "voice": "Voice",
+      "tools_screen": "Tools & screen"
     },
     "roles": {
       "title": "Roles",
@@ -318,7 +339,16 @@
       "readback_defaults": "Runs with the model's own defaults.",
       "tune_skipped": "Assigned; the settings stay at the model's defaults.",
       "voice_context_auto": "Runs with a {context} context — sized from this machine's memory. Tune to set it yourself.",
-      "voice_context_manual": "Runs with a {context} context — set by you in Tune."
+      "voice_context_manual": "Runs with a {context} context — set by you in Tune.",
+      "pick_group_slow": "Works, but slower",
+      "pick_group_unknown": "Capabilities unknown",
+      "pick_group_unfit": "Not for this job",
+      "pick_group_downloads": "Download a pick for this job",
+      "pick_search": "Search installed models…",
+      "pick_empty": "Nothing matches.",
+      "pick_download": "Download",
+      "pick_current": "current",
+      "pick_fits": "fits"
     },
     "server": {
       "host_eyebrow": "Host",
