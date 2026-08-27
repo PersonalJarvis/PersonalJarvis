@@ -31,6 +31,7 @@ import type {
 } from "@/lib/thinkingSteps";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
+import { LiveCore } from "@/components/LiveCore";
 
 /** Rows visible in the live card — older ones collapse into a "+N" row. */
 const VISIBLE_STEPS = 5;
@@ -165,17 +166,6 @@ function StepRail({
   );
 }
 
-/** Pulsing gold core in the card header — two expanding rings + glow dot. */
-function CoreOrb() {
-  return (
-    <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden>
-      <span className="thinking-ring absolute inline-flex h-full w-full rounded-full bg-primary/50" />
-      <span className="thinking-ring absolute inline-flex h-full w-full rounded-full bg-primary/50 [animation-delay:0.9s]" />
-      <span className="thinking-core relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
-    </span>
-  );
-}
-
 /** The live card rendered in the transcript while `chatThinking` is true. */
 export function ThinkingTrace() {
   const t = useT();
@@ -202,7 +192,7 @@ export function ThinkingTrace() {
         />
 
         <div className="relative flex items-center gap-2">
-          <CoreOrb />
+          <LiveCore />
           <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
             {assistantName}
           </span>

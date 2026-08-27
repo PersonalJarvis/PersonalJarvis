@@ -1,4 +1,4 @@
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, Check, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PaneActivity } from "@/lib/agenticIdeApi";
 
@@ -49,18 +49,25 @@ import type { PaneActivity } from "@/lib/agenticIdeApi";
  *
  * The two states a person scans this list for — still grinding vs. finished —
  * are told apart by SHAPE first, not by hue: a pane that is working shows a
- * turning spinner, and a pane that has stopped shows a still dot. That reads at
- * a glance, survives every colour-blindness, and it is why the working state is
- * no longer a pulsing dot: a slow throb and a steady dot are the same silhouette
- * at 8 pixels, so the difference lived entirely in a colour the eye had to
- * compare against its neighbours to judge.
+ * turning spinner, and a pane that has finished shows a check mark. That reads
+ * at a glance, survives every colour-blindness, and it is why the working state
+ * is no longer a pulsing dot: a slow throb and a steady dot are the same
+ * silhouette at 8 pixels, so the difference lived entirely in a colour the eye
+ * had to compare against its neighbours to judge.
+ *
+ * The finished state is a CHECK and not a still dot for the same reason. A dot
+ * is what every list uses for "online", and beside a row of amber spinners an
+ * amber dot read as "also busy, just not animated right now" — the maintainer
+ * asked for an indicator that says working or done, looking at a list that
+ * already had one (2026-08-27). A check says finished the way a spinner says
+ * busy: on its own, without a neighbour to compare against.
  *
  * Colour then carries the second question — is this pane's stillness news? Amber
- * is the app's own accent and marks a pane holding something for you: filled for
- * a finished job, hollow for one that is merely ready and has done nothing yet.
- * Blue is spent on the one state that wants an action from you right now, a pane
- * stopped on a question. Grey is for a pane with nothing to report, red for a
- * broken one.
+ * is the app's own accent and marks a pane holding something for you: a check
+ * for a finished job, a hollow ring for one that is merely ready and has done
+ * nothing yet. Blue is spent on the one state that wants an action from you
+ * right now, a pane stopped on a question. Grey is for a pane with nothing to
+ * report, red for a broken one.
  */
 
 /**
@@ -87,9 +94,9 @@ type Look = {
   state: PaneActivityState;
   label: string;
   className: string;
-  icon: "spinner" | "dot" | "ring" | "alert" | "beacon";
+  icon: "spinner" | "dot" | "ring" | "alert" | "beacon" | "check";
   /**
-   * A soft halo of the dot's own colour. Spent on exactly one state — a
+   * A soft halo of the mark's own colour. Spent on exactly one state — a
    * finished job — so the one row holding something for you glows and the
    * grey ones (exited, a plain shell) stay matte.
    */
@@ -156,18 +163,19 @@ const DONE: Look = {
   state: "done",
   label: "done",
   className: "text-amber-400",
-  icon: "dot",
+  icon: "check",
   glow: true,
   hint: "Finished and waiting at its prompt. That it stopped, not that the work is right.",
 };
 
 /**
- * Ready, but holding nothing — the same amber, drawn hollow.
+ * Ready, but holding nothing — the same amber, drawn as an empty ring.
  *
  * A ring rather than a second colour because this is the SAME piece of news as
  * `done` with one part missing: the pane is quiet and yours to talk to, it just
- * has no finished job behind it. Reading "empty" out of an unfilled shape is
- * what a fuel gauge does, and it keeps the accent colour meaning one thing.
+ * has no finished job behind it. Reading "nothing here yet" out of an unfilled
+ * shape is what a fuel gauge does, and it keeps the accent colour meaning one
+ * thing.
  */
 const IDLE: Look = {
   state: "idle",
@@ -286,12 +294,22 @@ export function durationLabel(since: number, now: number): string {
   return hours === 1 ? "1 hour" : `${hours} hours`;
 }
 
-/** The soft self-coloured halo a dot that holds something for you wears. */
+/** The soft self-coloured halo a mark that holds something for you wears. */
 const GLOW = "shadow-[0_0_5px_currentColor]";
+/** The same halo for a stroked icon, where a box shadow would draw a square. */
+const GLOW_STROKE = "drop-shadow-[0_0_3px_currentColor]";
 
 function Icon({ look }: { look: Look }) {
   if (look.icon === "spinner")
     return <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />;
+  if (look.icon === "check")
+    return (
+      <Check
+        className={cn("h-3.5 w-3.5", look.glow && GLOW_STROKE)}
+        strokeWidth={3}
+        aria-hidden="true"
+      />
+    );
   if (look.icon === "dot")
     return (
       <span

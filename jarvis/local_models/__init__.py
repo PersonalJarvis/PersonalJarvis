@@ -1,10 +1,9 @@
-"""The local-models setup assistant: test runner, benchmarks, tools and prompt.
+"""The local-models self-check: the health monitor behind the section badge.
 
-Everything the "Help me set up" panel of the Local models section runs on,
-kept apart from :mod:`jarvis.brain.ollama_*` (which own the server, the
-inventory and the roles) and from :mod:`jarvis.agent_chat` (which owns the
-chat surface). Nothing here runs at import time (AP-26); every module
-imports its heavy neighbours lazily inside the function that needs them.
+Kept apart from :mod:`jarvis.brain.ollama_*` (which own the server, the
+inventory and the roles). Nothing here runs at import time (AP-26); the
+module imports its heavy neighbours lazily inside the function that needs
+them.
 """
 
 from __future__ import annotations

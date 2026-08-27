@@ -29,7 +29,6 @@ const keysFor = (loc: Record<string, unknown>): Set<string> =>
 
 const SRC = join(__dirname, "..");
 const PANEL_DIR = join(SRC, "views", "local-models");
-const ASSISTANT_DIR = join(SRC, "components", "local-models");
 const sources = (dir: string) =>
   readdirSync(dir)
     .filter((f) => f.endsWith(".tsx") && !f.endsWith(".test.tsx"))
@@ -37,7 +36,6 @@ const sources = (dir: string) =>
 const SOURCE_FILES = [
   join(SRC, "views", "LocalModelsView.tsx"),
   ...sources(PANEL_DIR),
-  ...sources(ASSISTANT_DIR),
 ];
 
 /** Literal keys only; template keys (`local_models.tune.${key}`) are covered
