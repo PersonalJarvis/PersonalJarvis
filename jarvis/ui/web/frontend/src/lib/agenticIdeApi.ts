@@ -800,9 +800,10 @@ export interface WorkspacePaneRow {
   last_prompt: string;
   last_prompt_at: number | null;
   /**
-   * The pane's title as its grid header last showed it — pinned, model-written,
-   * or read off the screen. Empty for a pane no header has described yet; see
-   * `sessionTitle` for what a list shows then.
+   * The pane's title — pinned, model-written, read off the screen by its grid
+   * header, the last prompt sent, or the message that opened the CLI's own
+   * conversation, in that order. Empty only for a pane asked nothing anywhere;
+   * see `sessionTitle` for what a list shows then.
    */
   recap: string;
   has_resume: boolean;

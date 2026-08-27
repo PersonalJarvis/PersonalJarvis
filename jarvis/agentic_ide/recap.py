@@ -48,6 +48,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from . import opening
 from .activity import observed
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -150,6 +151,11 @@ _MARKUP_RE = re.compile(r"^\s{0,3}(?:#{1,6}\s+|[-*+]\s+|\d{1,2}[.)]\s+|>\s+)")
 # no markdown at all.
 _EMPHASIS_RE = re.compile(r"[*_`]{1,3}")
 
+# A prompt that opens with a dropped file names it first — "@.jarvis/drops/…png
+# What is this button?" — and a title that quotes the reference quotes the one
+# part of the sentence the reader cannot use. The words after it are the job.
+_ATTACHMENT_RE = re.compile(r"^(?:@\S+\s*)+")
+
 # A raw path list is a frequent last readable row after a search command.  It
 # contains plenty of letters, so the older "three alphabetic characters" rule
 # accepted it as work and headers ended up reading `jarvis/core/bus.py",
@@ -195,6 +201,7 @@ def _job_line(text: str) -> str:
     label_seen = ""
     for raw in str(text or "").splitlines()[:12]:
         line = _EMPHASIS_RE.sub("", _MARKUP_RE.sub("", raw.strip())).strip()
+        line = _ATTACHMENT_RE.sub("", line).strip()
         if not line or line.startswith("```"):
             continue
         # A horizontal rule, a box edge, a row of dashes under a heading.
@@ -225,6 +232,13 @@ class Recap:
 
     headline: str
     detail: str
+    #: Whether ``headline`` NAMES THE WORK — the instruction sent, the request
+    #: typed, the message that opened the CLI's conversation — as opposed to
+    #: describing the pane's state ("Claude Code — running since 10:52", "Not
+    #: started"). A reader that remembers headlines for a list (the recap
+    #: engine's floor memory) keeps only the former: a state label is true for
+    #: one poll and is what a fresh title must be allowed to replace.
+    names_work: bool = False
 
 
 def condense(text: str, limit: int) -> str:
@@ -351,6 +365,22 @@ def _task(term: Any, limit: int = TASK_CHARS) -> str:
     return condense(_job_line(getattr(term, "last_prompt", "")), limit)
 
 
+def task_headline(term: Any) -> str:
+    """The instruction this pane was last sent, at the header's width — "" if none."""
+    return _task(term, HEADLINE_TASK_CHARS)
+
+
+def opening_headline(term: Any) -> str:
+    """The message that opened this pane's CLI conversation, at the header's width.
+
+    Read from the CLI's own transcript (:mod:`.opening`), so it is there after a
+    backend restart has forgotten the sent prompt and after the typed echo has
+    scrolled out of the pane — the two cases that left a working pane titled
+    "Claude Code — running since 11:29". "" until the CLI has written its file.
+    """
+    return condense(_job_line(opening.opening_for(term)), HEADLINE_TASK_CHARS)
+
+
 def idle_phrase(term: Any) -> str:
     """How long ago this pane last printed anything, in words."""
     last = getattr(term, "last_output_at", None)
@@ -451,6 +481,13 @@ def summarize(term: Any, *, lines: Sequence[str] | None = None) -> Recap:
     # behind the same marker, and titling a shell by its first command would
     # pin it forever to "git status" — its newest row is its honest headline.
     typed = "" if (task or not coding_tui) else _typed_request(term, rows)
+    # The message that opened the CLI's own conversation, for a coding pane
+    # that neither of the above can name: the sent prompt is memory and does
+    # not survive a restart, and the typed echo scrolls out of the replay
+    # buffer after a screen of output — which is exactly when a pane is deep
+    # in the work it was typed. Answered from a per-pane cache (.opening), so
+    # this costs nothing on the state read.
+    opened = "" if (task or typed or not coding_tui) else opening_headline(term)
     # One sentence about the instruction, computed once: every branch below
     # opens with it, and a plain terminal answers it differently.
     asked = (
@@ -488,6 +525,8 @@ def summarize(term: Any, *, lines: Sequence[str] | None = None) -> Recap:
             headline = _task(term, HEADLINE_TASK_CHARS)
         elif typed:
             headline = typed
+        elif opened:
+            headline = opened
         elif activity and not coding_tui:
             headline = condense(f"{ended}. Last output: {activity}", HEADLINE_CHARS)
         else:
@@ -498,6 +537,7 @@ def summarize(term: Any, *, lines: Sequence[str] | None = None) -> Recap:
                 asked,
                 f"{ended}" + (f", last printing: {activity}." if activity else "."),
             ),
+            names_work=bool(task or typed or opened),
         )
 
     # Live. The INSTRUCTION leads, and that ordering was learned the hard way:
@@ -522,6 +562,8 @@ def summarize(term: Any, *, lines: Sequence[str] | None = None) -> Recap:
         headline = _task(term, HEADLINE_TASK_CHARS)
     elif typed:
         headline = typed
+    elif opened:
+        headline = opened
     elif activity and not coding_tui:
         headline = activity
     elif activity or idle:
@@ -549,6 +591,7 @@ def summarize(term: Any, *, lines: Sequence[str] | None = None) -> Recap:
     return Recap(
         headline=condense(headline, HEADLINE_CHARS),
         detail=_sentences(asked, now),
+        names_work=bool(task or typed or opened),
     )
 
 

@@ -79,7 +79,7 @@ from loguru import logger
 from jarvis.workspace import agents as workspace_agents
 from jarvis.workspace import launch_picks
 
-from . import layout_tree, prompt_history, recap_engine, resume_store
+from . import layout_tree, opening, prompt_history, recap_engine, resume_store
 from .activity import NO_READING, Reading, has_work_behind_it, observed
 from .agent_sessions import (
     ResumeHandle,
@@ -1314,11 +1314,12 @@ class Terminal:
             "last_prompt": self.last_prompt[:200],
             "last_prompt_at": self.last_prompt_at,
             # The pane's title as its header last showed it — pinned, written by
-            # the model, or the floor read off the screen on the last header
-            # poll — from the recap engine's memory alone. Never computed here:
-            # this list must not walk a scrollback (see above). Empty for a pane
-            # no header has described yet; the list then shows the last
-            # prompt's opening, and only after that the CLI's name.
+            # the model, or the work-naming floor read off the screen on the
+            # last header poll — else the last prompt sent, else the message
+            # that opened the CLI's own conversation. From memory alone, never
+            # computed here: this list must not walk a scrollback (see above).
+            # Empty only for a pane that has been asked nothing anywhere; the
+            # list then names the CLI.
             "recap": recap_engine.known_headline(self),
             # Whether a readable conversation could exist for this pane at all.
             # Whether one is actually on disk is the transcript endpoint's
@@ -4503,6 +4504,7 @@ class Registry:
                 # (a new "Mika" in the same workspace). Dropping it here is what
                 # stops a fresh pane opening under the last one's sentence.
                 recap_engine.forget(term.key)
+                opening.forget(term.key)
                 # Its bell entries go the same way and for the same reason.
                 # Each one is a "jump to this pane" button, and the pane has
                 # just stopped existing — while its key has not, so waiting for

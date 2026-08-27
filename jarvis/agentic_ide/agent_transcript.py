@@ -396,6 +396,110 @@ def _codex_turns(session_id: str, home: Path | None) -> list[Turn] | None:
 
 
 # --------------------------------------------------------------------------- #
+# the opening — the first thing a person said
+# --------------------------------------------------------------------------- #
+#
+# A session's title is its first message, the way a chat's is. That message is
+# at the HEAD of the file, which is the one part the tail readers above never
+# look at — and reading it is the only way a pane keeps its name across a
+# backend restart (the sent prompt is memory) and past the first screen of
+# output (the typed echo scrolls out of the replay buffer). See
+# :mod:`jarvis.agentic_ide.opening` for who asks and how often.
+
+#: How much of the file's head is read to find that message. A CLI opens its
+#: file with bookkeeping — snapshots, queue rows, the harness's own reminders —
+#: and the person's first message follows within a few kilobytes; this bound
+#: only keeps a pathological file from being read whole.
+MAX_HEAD_BYTES = 512 * 1024
+
+
+def _head_rows(path: Path, *, max_bytes: int = MAX_HEAD_BYTES) -> list[dict[str, Any]]:
+    """Every JSON object in the head of ``path``, oldest first.
+
+    The last line of a bounded read is usually half an object; it fails to parse
+    and is skipped, which is the right outcome for a fragment.
+    """
+    try:
+        with path.open("rb") as handle:
+            blob = handle.read(max_bytes)
+    except OSError as exc:
+        logger.warning("Agent transcript: cannot read {}: {}", path.name, exc)
+        return []
+    out: list[dict[str, Any]] = []
+    for line in blob.decode("utf-8", "replace").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            payload = json.loads(stripped)
+        except (ValueError, TypeError):
+            # Not a JSON line — the parse contract, not a swallowed failure.
+            continue
+        if isinstance(payload, dict):
+            out.append(payload)
+    return out
+
+
+def _text_of(content: Any) -> str:
+    """The prose of one message body: a string, or its text blocks joined.
+
+    Tool results, images and the rest of a body's blocks are not prose and are
+    left out — a tool result arrives as a USER record, and quoting it would put
+    the agent's own output in the person's voice.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, dict) and str(block.get("type") or "").endswith("text"):
+            parts.append(str(block.get("text") or ""))
+    return "\n".join(parts)
+
+
+def _claude_first_user_text(session_id: str, home: Path | None) -> str | None:
+    path = _claude_file(session_id, home)
+    if path is None:
+        return None
+    for row in _head_rows(path):
+        if str(row.get("type") or "") != "user":
+            continue
+        # A meta row is the CLI annotating the conversation (an image's size, a
+        # slash command's echo); a sidechain is a sub-agent's conversation.
+        # Neither is the person opening this session.
+        if row.get("isMeta") or row.get("isSidechain"):
+            continue
+        message = row.get("message")
+        if not isinstance(message, dict) or str(message.get("role") or "") != "user":
+            continue
+        spoken = _spoken(_text_of(message.get("content")))
+        if spoken:
+            return spoken
+    return ""
+
+
+def _codex_first_user_text(session_id: str, home: Path | None) -> str | None:
+    path = _codex_file(session_id, home)
+    if path is None:
+        return None
+    for row in _head_rows(path):
+        if str(row.get("type") or "") != "response_item":
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict) or str(payload.get("type") or "") != "message":
+            continue
+        # `developer` is the harness; the person is `user`, and the harness
+        # wraps what IT adds to a user message in tags `_spoken` strips.
+        if str(payload.get("role") or "") != "user":
+            continue
+        spoken = _spoken(_text_of(payload.get("content")))
+        if spoken:
+            return spoken
+    return ""
+
+
+# --------------------------------------------------------------------------- #
 # registry
 # --------------------------------------------------------------------------- #
 
@@ -407,10 +511,35 @@ _READERS: dict[str, Callable[[str, Path | None], list[Turn] | None]] = {
     "codex": _codex_turns,
 }
 
+#: The same CLIs, read from the other end: the first thing the person said.
+_OPENERS: dict[str, Callable[[str, Path | None], str | None]] = {
+    "claude": _claude_first_user_text,
+    "codex": _codex_first_user_text,
+}
+
 
 def can_read(agent: str) -> bool:
     """Does this CLI keep a conversation this module knows how to read?"""
     return str(agent or "").strip().lower() in _READERS
+
+
+def first_user_text(agent: str, session_id: str, *, home: Path | None = None) -> str | None:
+    """The first thing a PERSON said in one session — what opened it.
+
+    ``None`` when this CLI keeps no readable record or the session has no file
+    yet; ``""`` when the file is there but nobody has spoken in it so far. Both
+    are transient for a pane that has just started, and neither is an error.
+    Reads the head of the file only (:data:`MAX_HEAD_BYTES`); the tail readers
+    above are for the conversation's recent past.
+    """
+    opener = _OPENERS.get(str(agent or "").strip().lower())
+    if opener is None or not str(session_id or "").strip():
+        return None
+    try:
+        return opener(session_id.strip(), home)
+    except OSError as exc:
+        logger.warning("Agent transcript: {} session {} unreadable: {}", agent, session_id, exc)
+        return None
 
 
 def read(agent: str, session_id: str, *, home: Path | None = None) -> list[Turn] | None:

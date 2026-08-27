@@ -185,3 +185,118 @@ class TestRegistry:
         assert clipped.startswith("START")
         assert clipped.endswith("END")
         assert len(clipped) < len(text)
+
+
+class TestOpening:
+    """The first thing the PERSON said — read from the file's head, once."""
+
+    def test_claude_skips_bookkeeping_meta_rows_and_tool_results(self, tmp_path: Path) -> None:
+        _claude_session(
+            tmp_path,
+            "abc",
+            [
+                {"type": "queue-operation", "operation": "enqueue"},
+                {"type": "file-history-snapshot", "snapshot": {}},
+                # A harness reminder in the user's voice — nobody spoke.
+                _msg("user", "<system-reminder>be brief</system-reminder>"),
+                # A tool result also arrives as a USER record.
+                _msg("user", [{"type": "tool_result", "content": "x"}]),
+                {
+                    "type": "user",
+                    "isMeta": True,
+                    "message": {"role": "user", "content": "[Image: original 3840x2054]"},
+                },
+                {
+                    "type": "user",
+                    "isSidechain": True,
+                    "message": {"role": "user", "content": "a sub-agent's brief"},
+                },
+                _msg("user", "@.jarvis/drops/shot.png There is a bug in the sidebar"),
+                _msg("assistant", [{"type": "text", "text": "Looking."}]),
+                _msg("user", "a later question"),
+            ],
+        )
+        assert (
+            agent_transcript.first_user_text("claude", "abc", home=tmp_path)
+            == "@.jarvis/drops/shot.png There is a bug in the sidebar"
+        )
+
+    def test_claude_reads_text_blocks_and_ignores_the_rest_of_a_body(self, tmp_path: Path) -> None:
+        _claude_session(
+            tmp_path,
+            "abc",
+            [
+                _msg(
+                    "user",
+                    [
+                        {"type": "image", "source": {}},
+                        {"type": "text", "text": "  What is this   button? "},
+                    ],
+                )
+            ],
+        )
+        assert agent_transcript.first_user_text("claude", "abc", home=tmp_path) == (
+            "What is this   button?"
+        )
+
+    def test_a_missing_file_is_none_and_a_silent_one_is_empty(self, tmp_path: Path) -> None:
+        assert agent_transcript.first_user_text("claude", "abc", home=tmp_path) is None
+        _claude_session(tmp_path, "abc", [{"type": "queue-operation"}])
+        assert agent_transcript.first_user_text("claude", "abc", home=tmp_path) == ""
+        assert agent_transcript.first_user_text("some-new-cli", "abc", home=tmp_path) is None
+        assert agent_transcript.first_user_text("claude", "  ", home=tmp_path) is None
+
+    def test_codex_skips_the_harness_preamble(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path / "sessions" / "2026" / "08" / "05" / "rollout-2026-abc.jsonl",
+            [
+                {"type": "session_meta", "payload": {"id": "abc"}},
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "developer",
+                        "content": [{"type": "input_text", "text": "You are Codex."}],
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "<environment_context>x</environment_context>",
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "duplicate announcement"},
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Refactor the parser"}],
+                    },
+                },
+            ],
+        )
+        assert agent_transcript.first_user_text("codex", "abc", home=tmp_path) == (
+            "Refactor the parser"
+        )
+
+    def test_only_the_head_of_the_file_is_read(self, tmp_path: Path) -> None:
+        """A bounded read: a message past the cap is simply not found."""
+        filler = [_msg("assistant", [{"type": "text", "text": "x" * 1000}])] * 20
+        _claude_session(tmp_path, "abc", [*filler, _msg("user", "late request")])
+        path = next((tmp_path / "projects").glob("*/abc.jsonl"))
+        assert agent_transcript._head_rows(path, max_bytes=5_000)
+        assert not any(
+            row.get("type") == "user" for row in agent_transcript._head_rows(path, max_bytes=5_000)
+        )
+        assert agent_transcript.first_user_text("claude", "abc", home=tmp_path) == "late request"

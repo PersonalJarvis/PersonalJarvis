@@ -393,3 +393,42 @@ def test_summarize_survives_a_pane_without_a_transcript() -> None:
         last_output_at = None
 
     assert summarize(Half()).headline
+
+
+def test_the_conversations_opening_titles_a_pane_whose_echo_scrolled_away(monkeypatch) -> None:
+    """The typed echo leaves the replay buffer after a screen of output — which
+    is exactly when a pane is deep in the work it was typed. The CLI's own
+    transcript still opens with that request, and a dropped file's reference
+    in front of it is not the job."""
+    from jarvis.agentic_ide import opening
+
+    monkeypatch.setattr(
+        opening,
+        "opening_for",
+        lambda term: "@.jarvis/drops/shot.png  There is a bug in the sidebar",
+    )
+    term = _pane(status="live")
+    for step in range(60):
+        term.transcript.feed(f"Analysing crash path {step} of the login flow\r\n")
+
+    recap = summarize(term)
+    assert recap.headline == "There is a bug in the sidebar"
+    assert recap.names_work is True
+
+
+def test_a_state_label_does_not_name_the_work(monkeypatch) -> None:
+    from jarvis.agentic_ide import opening
+
+    monkeypatch.setattr(opening, "opening_for", lambda term: "")
+    term = _pane(status="live")
+    for step in range(8):
+        term.transcript.feed(f"Startup step {step} of the banner sequence\r\n")
+
+    recap = summarize(term)
+    assert recap.headline.startswith("Claude Code — running")
+    assert recap.names_work is False
+
+
+def test_a_dropped_files_reference_is_not_the_job() -> None:
+    term = _pane(status="live", last_prompt="@.jarvis/drops/a.png @b.png Fix the login test")
+    assert summarize(term).headline == "Fix the login test"

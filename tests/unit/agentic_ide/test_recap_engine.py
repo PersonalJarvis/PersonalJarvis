@@ -108,14 +108,65 @@ def test_the_known_headline_is_what_the_header_last_showed() -> None:
 
 
 def test_the_session_row_carries_the_known_headline_without_a_walk() -> None:
-    """``to_row`` is the list's payload: it repeats the title, it never computes one."""
+    """``to_row`` is the list's payload: it repeats the title, it never walks the pane.
+
+    Before any header has described the pane, the row already names the prompt
+    it was sent — that is a field, not a scrollback walk. After the header's
+    poll, the row says exactly what the header says.
+    """
     term = _pane(lines=3, last_prompt="Fix the failing login test")
-    assert term.to_row()["recap"] == ""
+    assert term.to_row()["recap"] == "Fix the failing login test"
 
     recap_engine.recap_for(term, lines=term.transcript.lines())
 
     assert term.to_row()["recap"] == recap_engine.known_headline(term)
-    assert term.to_row()["recap"] != ""
+    assert term.to_row()["recap"] == "Fix the failing login test"
+
+
+def test_a_state_label_is_not_what_the_list_remembers() -> None:
+    """The header of a pane asked nothing says "Claude Code — running since …".
+
+    That is true for one poll and is what a fresh title must replace; a list
+    that kept repeating it showed "Claude Code…" for panes an hour into their
+    work (maintainer report 2026-08-27).
+    """
+    term = _pane(lines=3)
+    shown = recap_engine.recap_for(term, lines=term.transcript.lines())
+    assert shown.headline.startswith("Claude Code — running")
+
+    assert recap_engine.known_headline(term) == ""
+    assert term.to_row()["recap"] == ""
+
+
+def test_a_prompt_sent_after_the_header_poll_outranks_the_stale_floor() -> None:
+    """The floor the header read BEFORE the prompt is yesterday's news."""
+    term = _pane(status="live")
+    term.transcript.feed("> make the setup wizard one screen\r\n")
+    for step in range(8):
+        term.transcript.feed(f"Working on step {step}\r\n")
+    recap_engine.recap_for(term, lines=term.transcript.lines())
+    assert recap_engine.known_headline(term) == "make the setup wizard one screen"
+
+    term.last_prompt = "Now fix the failing login test"
+    term.last_prompt_at = time.time() + 1.0
+
+    assert recap_engine.known_headline(term) == "Now fix the failing login test"
+
+
+def test_the_conversations_opening_titles_a_pane_nothing_else_names(monkeypatch) -> None:
+    """A restored pane has no prompt in memory and its typed echo has scrolled
+    away; the CLI's own transcript still opens with what it was asked."""
+    from jarvis.agentic_ide import opening
+
+    monkeypatch.setattr(
+        opening, "opening_for", lambda term: "@.jarvis/drops/shot.png There is a bug in the sidebar"
+    )
+    term = _pane(lines=3)
+
+    assert recap_engine.known_headline(term) == "There is a bug in the sidebar"
+    shown = recap_engine.recap_for(term, lines=term.transcript.lines())
+    assert shown.headline == "There is a bug in the sidebar"
+    assert term.to_row()["recap"] == "There is a bug in the sidebar"
 
 
 # ------------------------------------------------------------- when it refreshes

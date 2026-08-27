@@ -377,11 +377,20 @@ class _PaneState:
     pinned_headline: str = ""
     pinned_detail: str = ""
     pinned_at: float = 0.0
-    #: The deterministic headline the header last read off this pane's screen.
+    #: The deterministic headline the header last read off this pane's screen,
+    #: kept ONLY when it names the work (``Recap.names_work``): the request
+    #: typed into the pane, the prompt sent to it, the message that opened its
+    #: conversation. Never a state label — "Claude Code — running since 10:52"
+    #: remembered here outranked the pane's own last prompt in the session
+    #: list for as long as no header was drawn (maintainer report 2026-08-27).
     #: Kept so a reader that must NOT walk the scrollback — the session list,
     #: which polls every pane of every open workspace — can still say what the
     #: pane's header says (:func:`known_headline`).
     floor_headline: str = ""
+    #: When that floor was read. A prompt sent to the pane AFTER it makes the
+    #: floor stale: the header will re-read on its next poll, and until then
+    #: the list must answer from the prompt, not from what was true before it.
+    floor_at: float = 0.0
 
 
 _panes: dict[str, _PaneState] = {}
@@ -566,10 +575,15 @@ def recap_for(term: Any, *, lines: Sequence[str] | None = None) -> SmartRecap:
     plain = recap.summarize(term, lines=None if lines is None else list(lines))
     reason = _why_no_summary(term, entry, None if lines is None else len(lines))
     # Remember what the header is about to show, so a reader that cannot afford
-    # this read (see known_headline) can still repeat it.
+    # this read (see known_headline) can still repeat it — but only a headline
+    # that names the work. A state label ("running since 10:52") is true for
+    # this poll and must not be what the list keeps saying once the pane has
+    # been asked something.
     key = str(getattr(term, "key", "") or "")
-    if key and plain.headline:
-        _state(key).floor_headline = plain.headline
+    if key:
+        state = _state(key)
+        state.floor_headline = plain.headline if plain.names_work else ""
+        state.floor_at = time.time()
     return SmartRecap(
         headline=plain.headline,
         detail=plain.detail,
@@ -590,14 +604,24 @@ def known_headline(term: Any) -> str:
     is "Fix the login test" in the grid and "Claude Code" in the sidebar — two
     names for one conversation. So this answers from memory alone, in the
     header's own order: what the user pinned, else what the model wrote, else
-    the floor the header last computed. Empty for a pane no header has
-    described yet; the list then falls back to the pane's last prompt, and
-    only after that to the CLI's name.
+    the work-naming floor the header last computed — unless a prompt has been
+    sent since, which makes that floor yesterday's news. After those, the two
+    sources the floor itself would read next, both free of a scrollback walk:
+    the last prompt sent to the pane, and the message that opened the CLI's
+    own conversation (:mod:`.opening`, cached). Empty only for a pane that has
+    been asked nothing anywhere; the list then names the CLI, which is then in
+    fact everything there is to say.
     """
     entry = _panes.get(str(getattr(term, "key", "") or ""))
-    if entry is None:
-        return ""
-    return entry.pinned_headline or entry.headline or entry.floor_headline
+    if entry is not None:
+        if entry.pinned_headline:
+            return entry.pinned_headline
+        if entry.headline:
+            return entry.headline
+        asked_at = float(getattr(term, "last_prompt_at", None) or 0.0)
+        if entry.floor_headline and entry.floor_at >= asked_at:
+            return entry.floor_headline
+    return recap.task_headline(term) or recap.opening_headline(term)
 
 
 def refresh_soon(term: Any, *, lines: Sequence[str], folder: str = "") -> None:

@@ -39,4 +39,14 @@ describe("promptOpening", () => {
     expect(promptOpening("")).toBe("");
     expect(promptOpening(" \n ")).toBe("");
   });
+
+  it("skips the section heading a composed brief opens with", () => {
+    expect(promptOpening("## Task\nFix the failing login test\n\n## Context\nmore")).toBe(
+      "Fix the failing login test",
+    );
+    expect(promptOpening("**Context**\n\nGoal:\nShip the parser")).toBe("Ship the parser");
+    expect(promptOpening("Task: fix the   login test")).toBe("fix the login test");
+    // A brief that is nothing but labels still answers with its first one.
+    expect(promptOpening("## Task\n## Context")).toBe("Task");
+  });
 });

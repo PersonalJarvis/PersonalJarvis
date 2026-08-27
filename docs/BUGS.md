@@ -12988,6 +12988,112 @@ profiles, recap/prompt composers — spent on the configured primary brain
 report of the callers that remembered. Meter where the object is made, not
 where it is used.
 
+## BUG-184: coding-agent terminals drew into the top-left corner of their pane, and maximizing one did not help — a second viewer held the size and the app could not take it back (HIGH, FIXED 2026-08-25)
+
+**Symptom (maintainer, 2026-08-25, screenshot).** Three panes of a five-pane
+workspace at text size 20: the agent's lines wrapped at ~30 columns inside a
+tile that fit ~55; one pane showed the same status line twice — once in a
+small box top-left, once full-width below it; expanding a pane painted the
+agent into the upper-left corner of the enlarged tile. Another pane in the
+same screenshot was busy opening `http://127.0.0.1:47821/?view=agentic-ide`
+in a browser tab "to measure the IDE grid".
+
+**Root cause — two halves.**
+
+1. A pane may be open in several places (the desktop app, a browser tab, a
+   window a tool opened) and a pseudo-terminal has ONE size, so the server
+   hands the size to the viewer in front (`Registry.resize` owner check) and
+   answers every other viewer's request with the owner's geometry (`size`
+   frame, `report_geometry`). The pane follows it — correct while it is only
+   watching, and exactly the corner drawing once the user turns to it. Taking
+   the pane back was gated on `document.hidden`, which the desktop shell
+   misreports for minutes at a time (2026-08-23), so a click in the app did
+   nothing; and maximizing, dragging a seam or changing the text size merely
+   ASKED (`r`), which the server refused and answered with the tab's strip.
+2. A displaced viewer only learned where the PTY had gone when it next
+   asked, and a promoted survivor never learned that its size was back: the
+   owner's repaints landed in a grid drawn for another width — the doubled
+   status line.
+
+**Fix.**
+
+* `AgenticTerminal.tsx` — `viewerMayOwn` no longer consults
+  `document.hidden`; a pointer pressed on the pane claims outright
+  (`takeOwnership`); maximize, seam release and text size go through
+  `claimResize`, which claims when the window may own and refits either way;
+  an `owned` flag keeps a claim for an unchanged size from repeating, and a
+  `size` frame clears it.
+* `session.py` — `PaneViewer.geometry`: the registry announces every PTY
+  geometry change to the other attached viewers (`_announce_geometry`) and
+  tells a promoted survivor its geometry outright.
+* `agentic_ide_routes.py` — `on_geometry` schedules the `size` frame; the
+  wire format is unchanged.
+
+**Lesson.** Ownership of a shared size follows the user's gestures, not the
+browser's account of its own visibility — and a viewer that is not told when
+the size moves under it keeps a grid nobody is drawing for.
+
+## BUG-184: the Agentic IDE's middle divider dragged the top and bottom halves together, because the same 2×2 could be built two ways (MEDIUM, FIXED 2026-08-25)
+
+**Symptom (maintainer, 2026-08-25).** "When I expand terminals sideways in the
+upper area it behaves right — I can drag them around with the mouse. When I
+spawn them at the bottom they spawn completely oddly: the lower terminal and
+the upper terminal are stuck in the same position. I can drag them, but the
+upper and the lower move together. I want it to be like at the top."
+
+**Root cause.** A split tree owns each boundary at exactly one container, and
+the same picture can be built by two different trees. Splitting right and then
+down twice leaves `row[column[a, c], column[b, d]]` — the vertical line
+between the two columns belongs to the ROOT, so it runs the full height and
+one drag resizes both bands. Reaching the same 2×2 the other way round — down
+first, then right twice — leaves `column[row[a, b], row[c, d]]`, where each
+band owns its own vertical line and the two resize independently. Same
+workspace on screen, two behaviours, decided by nothing but the order the
+panes happened to be opened in. Nothing was broken; the model simply had no
+opinion, and half the orders gave the maintainer the welded version.
+
+**Fix.** One of the two readings has to win, and side-by-side boundaries are
+the ones people size — a terminal needs width for its agent's output far more
+often than a column needs its own height. So a grid now always stands on its
+rows.
+
+* `jarvis/agentic_ide/layout_tree.py` — `rows_outermost()` transposes a row of
+  equally divided columns into a column of rows. Geometry in, the SAME
+  geometry out: it moves no boundary and resizes no pane, it only changes
+  which container owns each seam. Refused unless every column divides its
+  height at the same fractions (`_is_one_grid`), which is both what keeps the
+  picture identical and what keeps the rule off a hand-dragged workspace.
+  Applied after every structural edit (`split_pane`, `append_pane`,
+  `move_pane`, `remove_pane`) and never under a seam drag — reshaping mid-drag
+  would make the workspace jump under the pointer.
+* `jarvis/agentic_ide/session.py` — a reopened workspace is squared up on the
+  way in, so an existing layout gets its per-band seams back without the user
+  having to split again.
+* `wizard_tree()` now seats its panes in READING order (`_reseat`). A tree
+  standing on its rows is read across the top band first, so filling the shape
+  column by column would have permuted the workspace — and `Registry.refold`,
+  which re-deals the panes automatically when the window gets too narrow,
+  would then no longer be undone by widening it again.
+* `grid_hints()` reads a stack of bands as exactly as it already read a row of
+  columns, so "the top-left terminal" keeps meaning what it says.
+* `jarvis/ui/web/frontend/src/components/agentic/layout.ts` — `wizardPanes`
+  mirrors the new fill order, because the wizard's preview labels its tiles
+  with the agents' own names and would otherwise show the wrong terminal in
+  the wrong cell.
+
+**Guard.** `tests/unit/web/test_agentic_ide_layout_tree.py` —
+`::test_a_grid_reached_either_way_comes_out_the_same` (the report itself: both
+split orders now land on one tree), `::test_standing_a_grid_on_its_rows_moves_nothing`
+and the `boxes()` helper that compares the two trees as PICTURES,
+`::test_columns_cut_at_different_heights_are_left_alone`,
+`::test_the_wizard_preview_seats_panes_where_the_backend_does` (the parity
+test against `layout.test.ts`, AP-4).
+
+**Lesson.** When one model can express the same picture two ways, the user
+meets whichever one their click order produced — and reads the difference as a
+bug, correctly. Pick the reading, write down why, and make every path produce
+it.
+
 ## BUG-185: a dictation ended in "IDE, Agentic IDE, Agentic IDE, …, Claude, Agentic IDE, Claude, Agentic" — Whisper recited its bias prompt, and the dictionary rewrote nearby common words toward the user's terms (HIGH, FIXED 2026-08-26)
 
 **Symptom.** A 40-second German dictation (2026-08-26 17:24 UTC, Groq
@@ -13124,78 +13230,6 @@ only what is true in it.
 about the OUTCOME. Every tool that acts without being able to look owes the
 model the difference in a field it cannot miss — a note in prose is a caveat
 the model will politely paraphrase after the good news.
-## BUG-188: Local models says every model is "not installed" and a job cannot be changed — one sweep taken while Ollama was still booting became the cache both ends read from (HIGH, FIXED 2026-08-27)
-
-**Symptom (maintainer, 2026-08-27 10:09).** The Local models section showed
-`ornith:9b` with a trailing `(not installed)`, and under it the sentence
-"Nothing installed fits this job yet; this download is the pick." Picking a
-different model in the dropdown appeared to do nothing — "it always switches
-back to that odd one, even when you choose something else." Fifteen models
-were on the server at that moment, `ornith:9b` among them.
-
-**What was actually true.** Nothing was broken in the write path. Read live
-during the investigation, the backend was correct on every count:
-
-```
-GET …/local-models/overview?fresh=1   source: live
-  inventory error: None      models: 11
-  chat  current='ornith:9b'  installed=True  qualifying=[10 tags]
-PUT …/local-models/roles/chat  {"model":"qwen3.5:4b"}   -> ok
-  jarvis.toml            brain.providers.ollama.model = "qwen3.5:4b"
-  scripts/config-soll.json  brain.providers.ollama.model = "qwen3.5:4b"
-```
-
-The pick was written, the drift baseline followed it, and a re-read answered
-the new value. The screen was simply not showing the server.
-
-**Cause — a truthful answer cached as a lasting one.** `build_overview` runs
-its sweep whatever the server's state; when Ollama does not answer it returns
-a payload with an empty inventory and `inventory.error` set. That is the right
-answer to "what can I see right now" and a ruinous one to keep, and it was
-kept twice over:
-
-* `ollama_overview._refresh` handed every payload to `save_snapshot`, so the
-  offline sweep replaced the good file in `data/local_models_snapshot.json`.
-  `get_overview` paints a disk snapshot for `STALE_AFTER_S` — 24 hours.
-* `useOverview` mirrored every payload into `localStorage`, and reads it back
-  as react-query's `initialData` — which survives a failed refetch, so it
-  outlives the outage that produced it.
-
-Opening the section while Ollama is still booting is enough. Everything
-downstream then follows from an empty inventory: `RoleState.qualifying` is
-empty, so each role reads `installed: false` and its shortlist falls back to
-"nothing installed fits this job yet".
-
-**Why the dropdown looked stuck.** `RoleLedgerRow` built its options from
-`row.qualifying` plus the configured tag. With `qualifying` empty that list
-holds exactly ONE entry — the tag already configured. There was nothing else
-to select; the "reset" the maintainer saw was a picker that had never offered
-an alternative. An unprobed download (`probed: false`, no capabilities) fell
-out of the list the same silent way. The Simple page compounded it: the
-picker lived behind a "Change" button, two clicks from the row.
-
-**Fix.**
-
-1. `ollama_overview.is_paintable()` — a payload whose inventory carries an
-   error is never written to the snapshot, and one already on disk is dropped
-   on read instead of painted. The previous, honest snapshot stays.
-2. `localModelsSnapshot.isPaintable()` — the same guard on the browser side,
-   on both write and read.
-3. `RolePicker` offers EVERY installed download, grouped "Fits this job" /
-   "Other installed models", so there is always something to pick and an
-   unprobed model is visible rather than dropped.
-4. The picker is on screen for every job at every detail level; `advanced`
-   adds capability badges, Tune and the read-only jobs, it never removes a
-   control.
-5. A "Refresh" button in the section header clears the painted snapshot and
-   every cached answer, then reads the server again — the recovery a user can
-   reach without knowing what a cache is.
-
-**Lesson.** A cache entry is a claim that outlives the moment it was taken.
-"The server did not answer" is true when measured and false ten seconds
-later, so it may be returned but never stored. And a control whose options
-come from a filtered list needs an answer for the empty case: offering one
-option is indistinguishable, to the person using it, from ignoring the click.
 
 ## BUG-189: the desktop app hung in every section and sometimes did not paint at all for the first minutes after a cold Windows boot — the event loop was stopped for 15 s at a time behind an SDK import and a thread start (HIGH, FIXED 2026-08-27)
 
@@ -13288,61 +13322,6 @@ executor was fixed once; anyio's was the same bug one layer over. And a
 gate that releases on a timer gates only what fits in the timer: the honest
 end of a cold start is the CLI's own input line.
 
-
-## BUG-190: a message typed on the Agentic IDE's chat stage answered "T11: the prompt is in its input box, not sent" and a pasted screenshot "session not found" — the hidden tile spawned the agent at 10x4, an unconfirmed delivery was read as a refusal, and the pane's history id went out as a chat session id (MEDIUM, FIXED 2026-08-27)
-
-**Symptom.** With the Agentic IDE in chat view, a new pane (T11) was
-opened and "Hlallo" typed into the stage's composer. A warning toast said
-`T11: the prompt is in its input box, not sent` — while the agent in T11
-was already answering it. Pasting a screenshot into the same composer put
-`session not found` in red under the input. The log, eleven seconds apart:
-`PTY spawned: shell=agentic-ide:t11 … size=10x4`, then `never saw the
-prompt reach T11 — it may have been submitted or dropped; reporting it as
-unconfirmed`.
-
-**Cause.** Three, stacked.
-
-1. `AgenticTerminal` measures its tile once before the socket handshake, so
-   the agent is spawned at the size the grid shows. On the chat stage every
-   cell is `hidden` (display:none) and the staged pane's transcript is drawn
-   over the canvas instead — so the fit addon measured a box with no size
-   and answered with its own minimum (2x1), the floors clamped that to 10x4,
-   and the handshake spawned the CLI at exactly that. The later
-   `applyResize` path already refused an unmeasurable tile; the mount-time
-   fit did not.
-2. In a ten-column terminal the CLI never draws its input line the way
-   `_input_line_holds` reads it, so `_write_and_confirm` reported
-   `submitted: null` — "never seen arriving, no claim either way".
-   `useWebSocket.ts` folded that null into false and toasted the warning
-   meant for a prompt provably still sitting in its box.
-3. `store/paneChat.ts` handed the pane's history id out as
-   `activeSessionId`. The composer sends that id as `session_id` with every
-   file attach, and `/api/agent-chat/attachments` looks it up in the chat's
-   session store — where no pane has ever existed — and answers 404.
-
-**Fix.**
-
-1. The mount-time fit runs only for a tile that has a size (`measurable()`,
-   the same check `applyResize` uses); a pane that mounts hidden keeps its
-   constructed 80x24 until the tile is shown, and the first real measurement
-   follows from `sendResize` then. Test: "does not shrink a pane that mounts
-   hidden to the floors".
-2. The prompt toast has the event's three states: success for true, the
-   warning for false, and an info line for null that says the pane never
-   showed the prompt arriving (`use_web_socket.prompt_unconfirmed`,
-   en/de/es). Test: "tells the three states of a prompt typed into a pane
-   apart".
-3. A pane's store reports no `activeSessionId`; the attach goes by the
-   workspace folder, which is where a pane's files belong anyway. The
-   session object beside it still names the pane for the stage.
-
-**Lesson.** A measurement taken from something hidden is not a small
-number, it is no number — code that clamps to a floor must first ask
-whether there was anything to measure. And when the backend goes to the
-trouble of reporting three states, no layer on the way to the user may fold
-two of them together: an honest "unconfirmed" turned into a confident "not
-sent" is a lie the user acts on.
-
 ## BUG-187: a typed "Hallo" on a local 32k model answered "I can't reach my provider — check the network": 221 tool schemas went out with every turn, nothing read the model's context window, and the 400 that named the size was filed as a network failure (HIGH, FIXED 2026-08-27)
 
 **Symptom.** Front-page chat, 2026-08-27 10:11 (the same at 2026-08-26 20:32
@@ -13415,6 +13394,133 @@ the manager budgets" for months while the manager budgeted nothing. And an
 error the provider spells out must reach the user in its own words: filing
 an unknown 4xx as "network" turns a one-line fix into a day of "nothing
 works".
+
+## BUG-188: Local models says every model is "not installed" and a job cannot be changed — one sweep taken while Ollama was still booting became the cache both ends read from (HIGH, FIXED 2026-08-27)
+
+**Symptom (maintainer, 2026-08-27 10:09).** The Local models section showed
+`ornith:9b` with a trailing `(not installed)`, and under it the sentence
+"Nothing installed fits this job yet; this download is the pick." Picking a
+different model in the dropdown appeared to do nothing — "it always switches
+back to that odd one, even when you choose something else." Fifteen models
+were on the server at that moment, `ornith:9b` among them.
+
+**What was actually true.** Nothing was broken in the write path. Read live
+during the investigation, the backend was correct on every count:
+
+```
+GET …/local-models/overview?fresh=1   source: live
+  inventory error: None      models: 11
+  chat  current='ornith:9b'  installed=True  qualifying=[10 tags]
+PUT …/local-models/roles/chat  {"model":"qwen3.5:4b"}   -> ok
+  jarvis.toml            brain.providers.ollama.model = "qwen3.5:4b"
+  scripts/config-soll.json  brain.providers.ollama.model = "qwen3.5:4b"
+```
+
+The pick was written, the drift baseline followed it, and a re-read answered
+the new value. The screen was simply not showing the server.
+
+**Cause — a truthful answer cached as a lasting one.** `build_overview` runs
+its sweep whatever the server's state; when Ollama does not answer it returns
+a payload with an empty inventory and `inventory.error` set. That is the right
+answer to "what can I see right now" and a ruinous one to keep, and it was
+kept twice over:
+
+* `ollama_overview._refresh` handed every payload to `save_snapshot`, so the
+  offline sweep replaced the good file in `data/local_models_snapshot.json`.
+  `get_overview` paints a disk snapshot for `STALE_AFTER_S` — 24 hours.
+* `useOverview` mirrored every payload into `localStorage`, and reads it back
+  as react-query's `initialData` — which survives a failed refetch, so it
+  outlives the outage that produced it.
+
+Opening the section while Ollama is still booting is enough. Everything
+downstream then follows from an empty inventory: `RoleState.qualifying` is
+empty, so each role reads `installed: false` and its shortlist falls back to
+"nothing installed fits this job yet".
+
+**Why the dropdown looked stuck.** `RoleLedgerRow` built its options from
+`row.qualifying` plus the configured tag. With `qualifying` empty that list
+holds exactly ONE entry — the tag already configured. There was nothing else
+to select; the "reset" the maintainer saw was a picker that had never offered
+an alternative. An unprobed download (`probed: false`, no capabilities) fell
+out of the list the same silent way. The Simple page compounded it: the
+picker lived behind a "Change" button, two clicks from the row.
+
+**Fix.**
+
+1. `ollama_overview.is_paintable()` — a payload whose inventory carries an
+   error is never written to the snapshot, and one already on disk is dropped
+   on read instead of painted. The previous, honest snapshot stays.
+2. `localModelsSnapshot.isPaintable()` — the same guard on the browser side,
+   on both write and read.
+3. `RolePicker` offers EVERY installed download, grouped "Fits this job" /
+   "Other installed models", so there is always something to pick and an
+   unprobed model is visible rather than dropped.
+4. The picker is on screen for every job at every detail level; `advanced`
+   adds capability badges, Tune and the read-only jobs, it never removes a
+   control.
+5. A "Refresh" button in the section header clears the painted snapshot and
+   every cached answer, then reads the server again — the recovery a user can
+   reach without knowing what a cache is.
+
+**Lesson.** A cache entry is a claim that outlives the moment it was taken.
+"The server did not answer" is true when measured and false ten seconds
+later, so it may be returned but never stored. And a control whose options
+come from a filtered list needs an answer for the empty case: offering one
+option is indistinguishable, to the person using it, from ignoring the click.
+
+## BUG-190: a message typed on the Agentic IDE's chat stage answered "T11: the prompt is in its input box, not sent" and a pasted screenshot "session not found" — the hidden tile spawned the agent at 10x4, an unconfirmed delivery was read as a refusal, and the pane's history id went out as a chat session id (MEDIUM, FIXED 2026-08-27)
+
+**Symptom.** With the Agentic IDE in chat view, a new pane (T11) was
+opened and "Hlallo" typed into the stage's composer. A warning toast said
+`T11: the prompt is in its input box, not sent` — while the agent in T11
+was already answering it. Pasting a screenshot into the same composer put
+`session not found` in red under the input. The log, eleven seconds apart:
+`PTY spawned: shell=agentic-ide:t11 … size=10x4`, then `never saw the
+prompt reach T11 — it may have been submitted or dropped; reporting it as
+unconfirmed`.
+
+**Cause.** Three, stacked.
+
+1. `AgenticTerminal` measures its tile once before the socket handshake, so
+   the agent is spawned at the size the grid shows. On the chat stage every
+   cell is `hidden` (display:none) and the staged pane's transcript is drawn
+   over the canvas instead — so the fit addon measured a box with no size
+   and answered with its own minimum (2x1), the floors clamped that to 10x4,
+   and the handshake spawned the CLI at exactly that. The later
+   `applyResize` path already refused an unmeasurable tile; the mount-time
+   fit did not.
+2. In a ten-column terminal the CLI never draws its input line the way
+   `_input_line_holds` reads it, so `_write_and_confirm` reported
+   `submitted: null` — "never seen arriving, no claim either way".
+   `useWebSocket.ts` folded that null into false and toasted the warning
+   meant for a prompt provably still sitting in its box.
+3. `store/paneChat.ts` handed the pane's history id out as
+   `activeSessionId`. The composer sends that id as `session_id` with every
+   file attach, and `/api/agent-chat/attachments` looks it up in the chat's
+   session store — where no pane has ever existed — and answers 404.
+
+**Fix.**
+
+1. The mount-time fit runs only for a tile that has a size (`measurable()`,
+   the same check `applyResize` uses); a pane that mounts hidden keeps its
+   constructed 80x24 until the tile is shown, and the first real measurement
+   follows from `sendResize` then. Test: "does not shrink a pane that mounts
+   hidden to the floors".
+2. The prompt toast has the event's three states: success for true, the
+   warning for false, and an info line for null that says the pane never
+   showed the prompt arriving (`use_web_socket.prompt_unconfirmed`,
+   en/de/es). Test: "tells the three states of a prompt typed into a pane
+   apart".
+3. A pane's store reports no `activeSessionId`; the attach goes by the
+   workspace folder, which is where a pane's files belong anyway. The
+   session object beside it still names the pane for the stage.
+
+**Lesson.** A measurement taken from something hidden is not a small
+number, it is no number — code that clamps to a floor must first ask
+whether there was anything to measure. And when the backend goes to the
+trouble of reporting three states, no layer on the way to the user may fold
+two of them together: an honest "unconfirmed" turned into a confident "not
+sent" is a lie the user acts on.
 
 ## BUG-191: a hold-to-dictate recording that never ended — the bar's X did nothing, every key press was refused, only a restart cleared it (HIGH, FIXED 2026-08-27)
 
@@ -13580,3 +13686,55 @@ being read is somebody else's file, the fact has to be written down at the
 moment it is known and joined back later, not reconstructed from the file.
 And a picture the app stored itself is a picture it can show: a receipt that
 names an image the viewer could fetch is a chip nobody asked for.
+
+## BUG-193: the Agentic IDE's chat sidebar read "Claude Code…" for half its sessions — panes an hour into typed work, panes restored after a restart, and one with a prompt in memory — while the other half were titled by what they were about (MEDIUM, FIXED 2026-08-27)
+
+**Symptom.** Seventeen rows in the chat-mode sidebar; nine of them "Claude Code…"
+(maintainer screenshot 2026-08-27 11:34). Every one of the nine was a pane with a
+real conversation behind it: T15–T18 had been typed a task and were working on
+it, T2/T5/T8/T9/T11 had been restored with the app at 10:52, and T2 in the
+second workspace had a Jarvis-sent prompt sitting in `last_prompt`.
+
+**Root cause.** Three, stacked.
+1. `known_headline` (the list's title, `recap_engine.py`) remembered the
+   header's deterministic floor WHATEVER it said — and for a pane nothing named
+   the floor is the state label "Claude Code — running since 10:52". The row
+   truncated that to "Claude Code…", and because the frontend's `sessionTitle`
+   takes the recap first, the label outranked the pane's own `last_prompt`.
+2. The remembered floor had no timestamp: a prompt sent AFTER the header's
+   poll changed nothing in the list until some header polled again — and in
+   chat mode no header is drawn, so "again" was never.
+3. For a typed pane, the floor's only source was the echo of the first typed
+   request in the pane's replay buffer (`recap._typed_request`, first 40 rows).
+   After a screen of agent output that echo is gone, and for a pane restored
+   from a snapshot it was never there. Nothing durable named those panes.
+
+**Fix.**
+- `Recap.names_work` (`recap.py`): the floor says whether its headline names
+  the work or describes the pane's state. `recap_for` remembers only the
+  former, stamped with `floor_at`; `known_headline` ignores a floor older than
+  `last_prompt_at` and then falls through to the last prompt and to the new
+  source below. The row (`Terminal.to_row`) is unchanged in shape.
+- `jarvis/agentic_ide/opening.py` + `agent_transcript.first_user_text`: the
+  first thing the PERSON said in the CLI's own transcript — read from the
+  HEAD of the file once per pane (bounded, off the event loop, negative
+  result retried every 20 s), cached by (pane key, session id), dropped on
+  close. It is the same file the chat stage draws, so the row and the page
+  agree, and it survives restarts and scrollback alike. `recap.summarize`
+  uses it for the header after the sent prompt and the typed echo; a
+  leading `@drop.png` attachment reference is stripped from any title.
+- Frontend `promptOpening` skips a brief's "## Task" heading, as the
+  backend's `_job_line` always did.
+
+Tests: `tests/unit/agentic_ide/test_opening.py`, `test_agent_transcript.py`
+(`TestOpening`), `test_recap.py` (opening titles a scrolled pane; a state label
+does not name work; attachment refs), `test_recap_engine.py` (label never
+remembered; stale floor yields to a newer prompt; opening reaches the row),
+`sessionTitle.test.ts`.
+
+**Lesson.** A fallback that is TRUE is not the same as one that is USEFUL —
+"running since 10:52" was correct for every one of the nine rows and answered
+none of them. Memory that stands in for a computation must record WHEN it was
+computed, or a fact that arrives later loses to a stale one. And the durable
+source was on disk the whole time: the CLI's own transcript names every
+session, restart or not.
