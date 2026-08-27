@@ -2453,22 +2453,28 @@ describe("chat view", () => {
     rerender({ jumpTo: { pane: "Aria", nonce: 1 } });
     expect(screen.getByTestId("pane-chat-Aria")).toBeTruthy();
     expect(screen.queryByTestId("pane-chat-Mika")).toBeNull();
-    // The reading sticks: once the terminal is what is on stage, the next
-    // pane asked for shows its terminal, not its chat.
+    // The terminal detour belongs to the pane it was taken for. Aria's
+    // terminal is on screen...
     fireEvent.click(screen.getByTestId("pane-chat-show-terminal"));
     expect(cellClass("Aria")).not.toContain("hidden");
     expect(cellClass("Mika")).toContain("hidden");
+    // ...and the next pane asked for is read as a chat again, rather than
+    // inheriting a detour taken for someone else's question.
     rerender({ jumpTo: { pane: "Mika", nonce: 2 } });
-    expect(screen.queryByTestId("pane-chat-Mika")).toBeNull();
-    expect(cellClass("Mika")).not.toContain("hidden");
+    expect(screen.getByTestId("pane-chat-Mika")).toBeTruthy();
+    expect(cellClass("Mika")).toContain("hidden");
+    expect(cellClass("Aria")).toContain("hidden");
+    // And coming back to Aria lands in her chat too: the detour is over, not
+    // parked for later.
+    rerender({ jumpTo: { pane: "Aria", nonce: 3 } });
+    expect(screen.getByTestId("pane-chat-Aria")).toBeTruthy();
     expect(cellClass("Aria")).toContain("hidden");
   });
 
-  it("activates an externally added pane on its first chat-stage render", () => {
+  it("stages an externally added pane, and gives it the full stage on show-terminal", () => {
     const { rerender } = renderGrid(FOUR);
     toChat();
-    // The terminal is what is on stage here: behind the chat every pane is
-    // hidden alike, and this contract is about the pane that is SHOWN.
+    // A detour taken for the pane being read now, before the new one arrives.
     fireEvent.click(screen.getByTestId("pane-chat-show-terminal"));
     paneActiveHistory.clear();
 
@@ -2482,9 +2488,17 @@ describe("chat view", () => {
       ]),
     });
 
-    // Connecting once while inactive gives the PTY the narrow hidden-grid
-    // geometry. The pane must own the full stage before its first effect runs.
-    expect(paneActiveHistory.get("Fresh")?.[0]).toBe(true);
+    // The pane that just opened takes the stage, read as a chat — it does not
+    // inherit a terminal detour taken for the pane before it.
+    expect(screen.getByTestId("pane-chat-Fresh")).toBeTruthy();
+    expect(cellClass("Mika")).toContain("hidden");
+
+    // Its terminal is one click away, and it owns the WHOLE stage from the
+    // render it becomes visible in: a pane shown while inactive would hand the
+    // PTY the narrow hidden-grid geometry.
+    fireEvent.click(screen.getByTestId("pane-chat-show-terminal"));
+    expect(cellClass("Fresh")).not.toContain("hidden");
+    expect(paneActiveHistory.get("Fresh")?.at(-1)).toBe(true);
     expect(screen.getByTestId("pane-Fresh").getAttribute("data-active")).toBe(
       "yes",
     );

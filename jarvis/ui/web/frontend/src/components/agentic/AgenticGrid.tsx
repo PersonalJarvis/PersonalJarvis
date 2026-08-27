@@ -763,16 +763,24 @@ export function AgenticGrid({
    */
   const [chatPane, setChatPane] = useState<string | null>(null);
   /*
-   * How the staged pane is drawn: as the chat (its transcript through the
-   * agent chat's timeline — ./PaneChat) or as the terminal itself. Chat is the
-   * default, because that is what the stage is FOR; the terminal is one click
-   * away for the things only it can do — a permission prompt, a question the
-   * CLI asks in its own TUI. The choice sticks across stage changes: a rail
-   * click shows the next pane the way the person was reading the last one,
-   * and each reading has the other one click away (the stage's "Show
-   * terminal", the pane header's "Read as a chat"). No silent resets.
+   * Which ONE pane is being read as its terminal instead of as its chat.
+   *
+   * The stage draws a pane as the chat — its transcript through the agent
+   * chat's timeline (./PaneChat) — because that is what the stage is FOR. The
+   * terminal is one click away for the things only it can do: a permission
+   * prompt, a question the CLI asks inside its own TUI.
+   *
+   * That detour belongs to the PANE it was taken for, not to the stage. It
+   * used to be a stage-wide mode that stuck, on the theory that the next pane
+   * should be shown the way the person was reading the last one. In practice
+   * one click on "Show terminal", for one question, turned every session
+   * opened afterwards into a raw terminal — the chat view rendering terminals
+   * (reported 2026-08-27), with the way back a small unlabelled button in a
+   * pane header. So the stage goes back to the chat the moment it shows a
+   * different pane, and the terminal stays one click away for the pane that
+   * needs it.
    */
-  const [stageMode, setStageMode] = useState<"chat" | "terminal">("chat");
+  const [terminalPane, setTerminalPane] = useState<string | null>(null);
   // Null until the first render has been seen: on mount every pane is "new",
   // and announcing a restored workspace's eight panes would be a light show.
   // Kept beside the stage selection because a newly arrived pane must be
@@ -1330,8 +1338,19 @@ export function AgenticGrid({
     [chatView, chatSelected, session.terminals],
   );
   // The chat is on: the staged pane's cell is hidden like every other pane's,
-  // and its conversation is drawn over the canvas instead.
-  const chatStage = stagedTerm !== null && stageMode === "chat";
+  // and its conversation is drawn over the canvas instead. Derived rather than
+  // stored, so a stage that moves to another pane is already showing the chat
+  // on the very first render — no terminal frame flashes past on the way.
+  const chatStage = stagedTerm !== null && terminalPane !== stagedTerm.name;
+  /*
+   * The detour is over once the stage has moved on. Only tidying up after the
+   * line above, which has already put the chat back on screen: without it the
+   * pane would still be marked, and coming BACK to it later would land in the
+   * terminal again — the same surprise, one step further away.
+   */
+  useEffect(() => {
+    if (terminalPane !== null && terminalPane !== stagedTerm?.name) setTerminalPane(null);
+  }, [terminalPane, stagedTerm]);
 
   /*
    * On the chat stage, the pane being READ is the pane being TYPED and
@@ -1357,7 +1376,7 @@ export function AgenticGrid({
     (term: TerminalState) => {
       setChatPane(term.name);
       if (takesPrompts(term)) setTarget(term.name);
-      setStageMode("chat");
+      setTerminalPane(null);
       setViewMode("chat");
     },
     [setViewMode],
@@ -1827,6 +1846,10 @@ export function AgenticGrid({
         // rename leaves alone — sizes need no rekeying at all.
         setTarget((current) => (current === from ? to : current));
         setMaximized((current) => (current === from ? to : current));
+        // Without this the stage would drop back to the chat mid-rename: the
+        // detour is filed under the call-sign, and the pane just changed it.
+        setTerminalPane((current) => (current === from ? to : current));
+        setChatPane((current) => (current === from ? to : current));
         setPendingClose((current) => (current === from ? to : current));
         setSelectedTerminals((current) => {
           if (!current.has(from)) return current;
@@ -2523,7 +2546,7 @@ export function AgenticGrid({
             activitySince={activityOf(stagedTerm).since}
             worked={activityOf(stagedTerm).worked}
             status={stagedTerm.status}
-            onShowTerminal={() => setStageMode("terminal")}
+            onShowTerminal={() => setTerminalPane(stagedTerm.name)}
           />
         )}
         {/*
