@@ -104,6 +104,8 @@ import {
   TERMINAL_FONT_STACK,
   alignTerminalCells,
   syncTerminalFont,
+  terminalFontSettled,
+  whenTerminalFontReady,
 } from "@/lib/terminalFont";
 import {
   createTerminalLinkActivator,
@@ -307,6 +309,20 @@ const MAX_TERMINAL_NAME = 40;
  */
 const MIN_REAL_COLS = 10;
 const MIN_REAL_ROWS = 4;
+
+/**
+ * The size a pane hands over when it could not measure its tile at mount.
+ *
+ * Deliberately UNDER the server's viewer floor (`MIN_VIEWER_COLS` /
+ * `MIN_VIEWER_ROWS` in `jarvis/agentic_ide/session.py`): that is the wire's
+ * spelling of "not measured yet". The server answers it by keeping the
+ * geometry the pane already has — a running agent is not re-wrapped for a
+ * size no tile ever had, a fresh one is spawned at the transcript's default —
+ * and reports that geometry back, so the grid here follows it until the tile
+ * is shown and measured. Zero would not do: the server reads it as absent and
+ * substitutes 80x24, which is precisely a size no tile had.
+ */
+export const UNMEASURED_SIZE = { cols: 1, rows: 1 } as const;
 
 /*
  * A pane never argues about its own width any more.
@@ -709,8 +725,37 @@ export function AgenticTerminal({
     return bindTerminalScrollRegion(region);
   }, []);
 
+  /*
+   * Is the font this pane will draw with here to be measured?
+   *
+   * The connect effect below builds the grid from ONE measured glyph and hands
+   * the agent that grid's column count in its first message. Measured before
+   * the display font has arrived — it comes through a stylesheet the app
+   * `@import`s from the network, so after a restart it is routinely a moment
+   * late — that glyph is the fallback's, the count is wrong, and a RUNNING
+   * agent is re-wrapped for it and then re-wrapped again when the real font
+   * lands (see `whenTerminalFontReady` for what that did to every pane of a
+   * workspace on 2026-08-27). So the pane does not build until the font is
+   * measurable, or until the bounded wait says it is not coming. Settled
+   * synchronously where it can be, so a pane whose font is already here
+   * mounts exactly as it always did.
+   */
+  const [fontReady, setFontReady] = useState(() =>
+    terminalFontSettled(fontSizeRef.current),
+  );
   useEffect(() => {
-    if (!geometryReady) return;
+    if (fontReady) return;
+    let cancelled = false;
+    void whenTerminalFontReady(fontSizeRef.current).then(() => {
+      if (!cancelled) setFontReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fontReady]);
+
+  useEffect(() => {
+    if (!geometryReady || !fontReady) return;
     const container = containerRef.current;
     if (!container) return;
 
@@ -883,6 +928,8 @@ export function AgenticTerminal({
     /** Is this pane's tile something that can honestly be measured right now? */
     const measurable = () =>
       container.clientWidth >= 8 && container.clientHeight >= 8;
+    /** Did the grid below come from the tile, or is it still the constructed default? */
+    let mountMeasured = false;
 
     try {
       // Taken BEFORE the handshake below reads the terminal's geometry — so
@@ -918,6 +965,7 @@ export function AgenticTerminal({
             Math.max(proposed.rows, MIN_REAL_ROWS),
           );
         }
+        mountMeasured = true;
       }
     } catch {
       /* not measured yet — the ResizeObserver below will fit */
@@ -1556,16 +1604,22 @@ export function AgenticTerminal({
       {
         name,
         workspaceId,
-        // The connect-time size is a best effort. The mount-time fit above
-        // already clamped the grid to the floors, so the terminal's own
-        // geometry is normally safe to hand over as-is — the guards here are
-        // for the one case that fit could not run at all (a grid cell still
-        // mid-layout measures as nothing), where the terminal still holds
-        // whatever it was constructed with. A size under a floor is treated
-        // as "not measured yet"; the real one follows from `onOpen`'s fit as
-        // soon as the cell settles.
-        cols: term.cols >= MIN_REAL_COLS ? term.cols : 80,
-        rows: term.rows >= MIN_REAL_ROWS ? term.rows : 24,
+        // The connect-time size is the tile's own measurement when there was
+        // one. The mount-time fit above already clamped the grid to the
+        // floors, so the terminal's geometry is safe to hand over as-is.
+        // When that fit could not run at all — a grid cell still mid-layout,
+        // a pane mounted hidden on the chat stage — the terminal still holds
+        // what it was constructed with, and THAT must not go out as if a tile
+        // had measured it: a running agent would be re-wrapped for 80
+        // columns no tile has, and again for the real ones a moment later
+        // (ConPTY re-flows the whole screen on each). `UNMEASURED_SIZE` says
+        // so on the wire instead; the real size follows from `onOpen`'s fit
+        // as soon as the cell settles.
+        ...(mountMeasured &&
+        term.cols >= MIN_REAL_COLS &&
+        term.rows >= MIN_REAL_ROWS
+          ? { cols: term.cols, rows: term.rows }
+          : UNMEASURED_SIZE),
         appearance: appearanceRef.current,
         claimOwner: openedWithClaim,
       },
@@ -1897,7 +1951,7 @@ export function AgenticTerminal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see file header:
     // appearance/fontSize must NOT rebuild the pane (it would kill the agent).
-  }, [name, workspaceId, restartToken, geometryReady]);
+  }, [name, workspaceId, restartToken, geometryReady, fontReady]);
 
   /*
    * A chat-stage switch changes a pane from `display:none` to the full canvas

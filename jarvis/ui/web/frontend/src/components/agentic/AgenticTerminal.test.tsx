@@ -14,6 +14,8 @@ const terminalHarness = vi.hoisted(() => ({
   resize: vi.fn<(cols: number, rows: number) => void>(),
   /** The live socket's handlers, so a test can play a reconnect. */
   handlers: { current: null as Record<string, (...args: never[]) => void> | null },
+  /** What the pane opened its socket WITH — the handshake size among it. */
+  opened: { current: null as Record<string, unknown> | null },
   /** Everything the pane types into the terminal on the user's behalf. */
   input: vi.fn<(data: string) => void>(),
   /** xterm's single custom key handler, so a test can press a key. */
@@ -165,9 +167,10 @@ vi.mock("@xterm/addon-unicode11", () => ({ Unicode11Addon: class {} }));
 
 vi.mock("./paneSocket", () => ({
   openPaneSocket: (
-    _options: unknown,
+    options: unknown,
     handlers: Record<string, (...args: never[]) => void>,
   ) => {
+    terminalHarness.opened.current = options as Record<string, unknown>;
     terminalHarness.handlers.current = handlers;
     return {
       send: (payload: unknown) => terminalHarness.send(payload),
@@ -189,7 +192,9 @@ import {
   DRAG_REFIT_MS,
   REBUILD_QUIET_MS,
   RESIZE_PARSE_WAIT_MS,
+  UNMEASURED_SIZE,
 } from "./AgenticTerminal";
+import { FONT_WAIT_MS } from "@/lib/terminalFont";
 import { PANE_CHROME } from "./terminalThemes";
 
 /**
@@ -1565,6 +1570,13 @@ describe("pane refit", () => {
    * clamped to the floors that was a 10x4 terminal — which the handshake then
    * spawned the agent at (T11, 2026-08-27). Unmeasured, the terminal keeps
    * its constructed size and the agent starts in one it can draw in.
+   *
+   * And the handshake says "unmeasured" rather than passing that constructed
+   * size off as a measurement. Handed 80x24, the server re-wrapped a RUNNING
+   * agent for 80 columns no tile had, and again for the tile's real width the
+   * moment the pane was shown — twice through ConPTY's re-flow, which is how
+   * a workspace came back from a restart with every transcript cut through by
+   * fragments of its own earlier layout (2026-08-27).
    */
   it("does not shrink a pane that mounts hidden to the floors", () => {
     Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
@@ -1579,6 +1591,30 @@ describe("pane refit", () => {
     expect(terminalHarness.send).not.toHaveBeenCalledWith(
       expect.objectContaining({ cols: 10, rows: 4 }),
     );
+    expect(terminalHarness.opened.current).toEqual(
+      expect.objectContaining(UNMEASURED_SIZE),
+    );
+  });
+
+  it("hands over the tile's own measurement when there was one", () => {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      value: 600,
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      value: 400,
+    });
+    terminalHarness.size = { cols: 72, rows: 20 };
+    render(pane(false));
+    settle();
+
+    expect(terminalHarness.fit).toHaveBeenCalled();
+    expect(terminalHarness.opened.current).toEqual(
+      expect.objectContaining({ cols: 72, rows: 20 }),
+    );
+    Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+    Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
   });
 
   it("gives xterm and the agent the same number, always", () => {
@@ -2520,5 +2556,108 @@ describe("pane status", () => {
       "connecting",
     );
     expect(screen.queryByTestId("pane-notice-Dana")).toBeNull();
+  });
+});
+
+/*
+ * The grid is built from ONE measured glyph, and the agent hears that grid's
+ * column count in the pane's first message. Measured before the display font
+ * has arrived — it is `@import`ed from the network, so after a restart it is
+ * routinely a moment late — the glyph is the fallback's and the count is
+ * wrong: on the desktop (2026-08-27, 20px text) a 744px tile was announced as
+ * 67 columns, then as 62 once JetBrains Mono landed, and ConPTY re-flowed a
+ * running agent's whole transcript through both. So a pane waits for the font
+ * before it builds anything — and not for longer than the bounded wait.
+ */
+describe("pane font readiness", () => {
+  /** A FontFaceSet the test controls: which faces exist, and whether they loaded. */
+  function fakeFonts() {
+    const faces: { family: string }[] = [];
+    let loaded = false;
+    const listeners = new Set<() => void>();
+    const set = {
+      check: vi.fn(() => loaded),
+      load: vi.fn(() => Promise.resolve(loaded ? faces : [])),
+      addEventListener: (type: string, fn: () => void) => {
+        if (type === "loadingdone") listeners.add(fn);
+      },
+      removeEventListener: (_type: string, fn: () => void) => {
+        listeners.delete(fn);
+      },
+      [Symbol.iterator]: () => faces[Symbol.iterator](),
+    };
+    return {
+      set,
+      /** The @import landed: the face is declared, and it has loaded. */
+      arrive: () => {
+        faces.push({ family: '"JetBrains Mono"' });
+        loaded = true;
+        for (const fn of listeners) fn();
+      },
+    };
+  }
+
+  const pane = () => (
+    <AgenticTerminal
+      name="Dana"
+      displayName="Claude Code"
+      appearance="dark"
+      fontSize={20}
+    />
+  );
+
+  let fonts: ReturnType<typeof fakeFonts>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    globalThis.ResizeObserver = ResizeObserverHarness;
+    terminalHarness.open.mockClear();
+    terminalHarness.opened.current = null;
+    fonts = fakeFonts();
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: fonts.set,
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(document, "fonts");
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("does not build its grid before the display font can be measured", async () => {
+    render(pane());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(terminalHarness.open).not.toHaveBeenCalled();
+    expect(terminalHarness.opened.current).toBeNull();
+
+    fonts.arrive();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(terminalHarness.open).toHaveBeenCalledTimes(1);
+    expect(terminalHarness.opened.current).not.toBeNull();
+  });
+
+  it("builds on the font that is there once the wait runs out", async () => {
+    render(pane());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FONT_WAIT_MS - 100);
+    });
+    expect(terminalHarness.open).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(terminalHarness.open).toHaveBeenCalledTimes(1);
+  });
+
+  it("mounts at once when the font is already here", () => {
+    fonts.arrive();
+    render(pane());
+    expect(terminalHarness.open).toHaveBeenCalledTimes(1);
   });
 });

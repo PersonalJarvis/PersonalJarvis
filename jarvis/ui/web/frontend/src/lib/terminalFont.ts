@@ -167,6 +167,125 @@ export function measureAdvance(
   return width / SAMPLE.length;
 }
 
+/**
+ * How long a pane waits for the display font before building its grid on the
+ * font that is there. Long enough for a cached web font (milliseconds) and a
+ * cold fetch on an ordinary connection; short enough that an offline machine,
+ * where the font never comes, still gets its terminals inside two seconds.
+ */
+export const FONT_WAIT_MS = 1500;
+
+/** Is a face for the display family declared at all — has its @font-face been parsed? */
+function displayFaceDeclared(fonts: FontFaceSet): boolean {
+  try {
+    for (const face of fonts as unknown as Iterable<FontFace>) {
+      if (face.family.replace(/["']/g, "") === DISPLAY_FAMILY.replace(/"/g, "")) {
+        return true;
+      }
+    }
+  } catch {
+    /* a FontFaceSet that cannot be iterated — treated as undeclared */
+  }
+  return false;
+}
+
+/**
+ * Can the display font be measured at `fontSize` RIGHT NOW?
+ *
+ * Two conditions, because `FontFaceSet.check()` answers "yes" for a family it
+ * has never heard of — and the app's fonts arrive through a stylesheet
+ * `@import`ed from the network, so at start-up there is a window in which no
+ * face is declared yet and `check()` is true for the wrong reason. A face has
+ * to exist AND be loaded. No font API at all (jsdom, an old engine) counts as
+ * settled: whatever is measured is the font that will be drawn.
+ */
+export function terminalFontSettled(
+  fontSize: number,
+  deps: Pick<Partial<TerminalFontDeps>, "fonts"> = {},
+): boolean {
+  const fonts = deps.fonts !== undefined ? deps.fonts : browserFonts();
+  if (!fonts) return true;
+  try {
+    return displayFaceDeclared(fonts) && fonts.check(`400 ${fontSize}px ${DISPLAY_FAMILY}`);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Resolve once the display font can be measured at `fontSize`, or once the
+ * wait runs out — whichever comes first. Never rejects.
+ *
+ * `syncTerminalFont` below repairs a grid AFTER the font arrives, and that is
+ * enough for a pane whose agent starts with it. It is not enough for a pane
+ * that RE-JOINS a running agent: the grid it builds on the fallback font is the
+ * size it hands that agent in the very first message. Measured on the desktop
+ * (2026-08-27, Windows, text at 20px): Consolas advances 11px where JetBrains
+ * Mono advances 12px, so a 744px tile was announced as 67 columns, the agent
+ * re-wrapped for 67, the font landed, the same tile was announced as 62, and
+ * the agent re-wrapped again — and ConPTY, which re-flows the whole screen on
+ * every width change, left the two layouts on top of each other: every pane of
+ * a six-pane workspace came back from a restart as rows of one transcript cut
+ * through by fragments of the other. Nothing repairs that afterwards, because
+ * a coding agent only ever redraws its own live rows.
+ *
+ * So the pane waits here, before it builds anything, and its first measurement
+ * is of the font it will draw with. The wait is bounded: offline, the fallback
+ * IS the font, the measurement is right, and the agent hears one size.
+ */
+export function whenTerminalFontReady(
+  fontSize: number,
+  deps: Partial<TerminalFontDeps & { timeoutMs: number }> = {},
+): Promise<void> {
+  const fonts = deps.fonts !== undefined ? deps.fonts : browserFonts();
+  if (!fonts || terminalFontSettled(fontSize, { fonts })) return Promise.resolve();
+  const timeoutMs = deps.timeoutMs ?? FONT_WAIT_MS;
+  const spec = `400 ${fontSize}px ${DISPLAY_FAMILY}`;
+  return new Promise<void>((resolve) => {
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let poll: ReturnType<typeof setInterval> | undefined;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (timer !== undefined) clearTimeout(timer);
+      if (poll !== undefined) clearInterval(poll);
+      try {
+        fonts.removeEventListener?.("loadingdone", onLoadingDone);
+      } catch {
+        /* no event target here */
+      }
+      resolve();
+    };
+    const settledNow = () => {
+      if (terminalFontSettled(fontSize, { fonts })) finish();
+    };
+    const onLoadingDone = () => settledNow();
+    timer = setTimeout(finish, timeoutMs);
+    // Ask by name — the request `fonts.ready` would never make on its own (see
+    // the file header) — and re-ask on a poll, because a face that is not
+    // declared yet cannot be loaded yet: the @import that declares it may land
+    // any time within the wait.
+    const request = () => {
+      try {
+        void fonts.load(spec).then(settledNow, () => undefined);
+      } catch {
+        /* a family the engine refuses to parse — the poll and timeout cover it */
+      }
+    };
+    try {
+      fonts.addEventListener?.("loadingdone", onLoadingDone);
+    } catch {
+      /* no event target here */
+    }
+    request();
+    poll = setInterval(() => {
+      settledNow();
+      if (!done) request();
+    }, 50);
+  });
+}
+
 function browserFonts(): FontFaceSet | null {
   if (typeof document === "undefined") return null;
   return document.fonts ?? null;

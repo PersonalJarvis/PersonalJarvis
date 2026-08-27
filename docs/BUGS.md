@@ -13963,3 +13963,165 @@ skipped check protects nothing. The gate that survives a shared tree is the
 one that fails only on what is certainly broken — here, the one class of
 type error that is a `ReferenceError` in disguise — and lets everything
 merely disputed pass.
+
+---
+
+## BUG-198: the Spend section's coding-CLI total went DOWN from one day to the next — $12 300 became $8 000 without a filter changing, and "Agentic IDE" showed more than "Overall" (HIGH, FIXED 2026-08-27)
+
+**Symptom.** The maintainer read a 30-day total of roughly $12 300 one
+day and about $8 000 the next, on the same range. Two screenshots two
+seconds apart showed the *Agentic IDE* area at $8 857 / 1 310 calls and
+*Overall* — which contains it — at $7 994 / 1 582 calls; `claude-cli` alone
+had 1 154 calls in the subset and 838 in the whole. Days in the middle of
+the range had no bar at all.
+
+**Root cause.** Three separate ways the coding-CLI index
+(`jarvis/costs/cli_usage_index.py`) said less than the transcripts:
+
+1. *The index was a cache, and it was being rebuilt.* Schema version 4 (the
+   kimi/Antigravity split) dropped both tables and re-read 1.8 GB of Claude
+   Code, 9.5 GB of Codex and 370 MB of Grok Build at twenty seconds per
+   minute. The screenshots were taken forty minutes into that: the index
+   held 40 199 of an eventual 76 000+ turns, newest files first, and nothing
+   on the page said so. The two views disagreed because the browser held an
+   *Overall* answer from an earlier poll and fetched *Agentic IDE* fresh a
+   few thousand turns later. Measured on the live API an hour on: the same
+   30 days read $13 642.
+2. *Deleted transcripts took their turns with them.* `_prune_vanished`
+   removed the rows of any file no longer on disk — introduced 2026-08-25
+   to keep the index honest about rotated files. Claude Code deletes
+   sessions after `cleanupPeriodDays` (25 in the maintainer's
+   `settings.json`), so every night the oldest day's spend left the ledger.
+   The lifetime ("All") total on this machine begins on 1 August because
+   everything before it is gone.
+3. *Subagent transcripts were never read.* Discovery matched
+   `projects/*/*.jsonl` only; the Agent tool writes
+   `projects/<slug>/<session>/subagents/agent-<id>.jsonl` and a workflow
+   `…/subagents/workflows/<run>/agent-<id>.jsonl`. Comparing every transcript
+   on disk with the index: 68 937 Claude responses on disk, 39 339 indexed;
+   14 466 of the missing lived in subagent files (one fifth of all calls,
+   14.2 billion cached tokens on disk against 8.5 indexed).
+
+**Fix.**
+
+- The index is a ledger. `_forget_vanished` drops only a vanished file's
+  resume row; its turns stay. A schema bump (`_SCHEMA_VERSION` 5,
+  `_REREAD_BELOW`) never drops a table: `_migrate` fixes what it can in
+  place (the kimi rename by path), then clears the file bookkeeping so every
+  transcript still on disk is read again, and `_INSERT_TURN` overwrites a
+  row re-read FROM ITS OWN FILE while a copy in another file (a Codex
+  replay, a resumed Claude session) still only fills in a missing model.
+  Rows whose transcript is gone keep their old values. `turns_added` counts
+  rows a file newly owns, not SQLite change counts.
+- Discovery gained `projects/*/*/subagents/**/*.jsonl`; a subagent record
+  carries the parent's `sessionId`, so its spend lands on that conversation.
+- `/api/costs/summary` carries `index` (`files_known`, `files_indexed`,
+  `files_pending`, `bytes_pending`, `turns`, `complete`), and the Spend
+  section shows "Still counting the coding CLIs: {n} of {m} transcripts
+  read, {x} MB to go" while it is false. The background refresher runs
+  every 3 s instead of every 60 s until a run reaches the end of every file.
+
+Tests: `tests/unit/costs/test_cli_usage_index.py` —
+`test_a_transcript_that_disappeared_keeps_its_rows`,
+`test_a_transcript_that_comes_back_overwrites_its_own_rows`,
+`test_a_schema_bump_keeps_the_rows_of_a_transcript_that_is_gone`,
+`test_a_reread_corrects_a_row_but_a_copy_in_another_file_does_not`,
+`test_subagent_transcripts_are_indexed_under_their_parent_session`;
+`tests/unit/ui/web/test_costs_routes.py` —
+`test_summary_says_whether_the_cli_index_is_still_counting`.
+
+**Not recoverable.** Transcripts Claude Code already deleted before this fix
+are gone, and so is their spend — the ledger starts on the oldest transcript
+still on disk (1 August here). From now on it only grows.
+
+**Lesson.** A store that is rebuilt from its source is a cache, and a cache
+can be asked at any moment — so either it is never empty (rebuild in place)
+or it says how full it is. And a source that deletes itself on a timer
+(`cleanupPeriodDays`) cannot be the ledger; the index has to be.
+
+## BUG-199: after a restart every Agentic IDE pane came back shredded — rows of one transcript cut through by fragments of another ("●nRead 1 file, ran 3 shell commands ll commands"), and nothing the agent did afterwards repaired it (HIGH, FIXED 2026-08-27)
+
+**Symptom.** The desktop app was restarted at 18:32 (`data/jarvis_desktop.
+2026-08-27_18-32-26_041573.log` is the rotated log). A minute later a
+screenshot of the "Jarvis Web UI" workspace showed all six re-joined panes
+garbled the same way: each row held the agent's current text with the tail of
+an OLDER row still standing at its end (`… ran 3 shell commands ll commands`),
+one-letter fragments down the left edge (`-P`, `ne`, `ri`, `ur`, `st`), and
+rules drawn twice at different lengths. The live status line was affected too
+(`* Bunning…must b16s`). Every glyph sat squarely on the cell grid — this was
+not a renderer fault, it was two layouts of the same transcript in one buffer.
+Claude Code only ever redraws its own live rows, so the scrollback above them
+stayed like that for the rest of the session.
+
+**Cause.** A width bounce on a running agent, twice through ConPTY.
+
+1. `AgenticTerminal` builds its xterm grid from one measured glyph and hands
+   the agent that grid's column count in the socket handshake, which the
+   server applies at once (`SessionRegistry._attach_locked`: a re-join at a
+   size other than the transcript's resizes the PTY, rebases the replay and
+   nudges a repaint). The app's display font is `@import`ed from Google Fonts
+   (`index.css`), so after a restart it is routinely a moment late, and the
+   glyph measured was Consolas's. At the workspace's 20px text: Consolas
+   advances 11px, JetBrains Mono 12px; a 744px tile was announced as 67
+   columns. The agent re-wrapped for 67.
+2. `syncTerminalFont` (the 2026-07-28 fix) then saw the real font arrive,
+   re-measured, re-fitted and sent 62. The agent re-wrapped again — and on
+   Windows ConPTY answers every width change by re-flowing its whole screen
+   buffer, so the rows written for 67 were folded into 62-column rows and the
+   agent's next relative-cursor repaint finished into rows that now held other
+   text. The crop of the screenshot shows it exactly: 62-character rows whose
+   overflow (` nur men.`) sits on the row below.
+
+   The July fix was enough for a pane whose agent STARTS with it, because a
+   fresh CLI has no transcript to shred. It was never enough for a pane that
+   re-joins a running one, and every restart re-joins every pane.
+3. The same bounce, from the other side: a pane that mounts hidden (the chat
+   stage) cannot measure its tile, keeps xterm's constructed 80x24, and — since
+   BUG-190 that morning — handed THAT to the server as if a tile had measured
+   it. A running agent was re-wrapped for 80 columns no tile had, and for the
+   real ones the moment the pane was shown.
+
+**Fix.**
+
+- `lib/terminalFont.ts` — `terminalFontSettled(size)` says whether the display
+  font can be measured right now, and it needs two things, not one:
+  `FontFaceSet.check()` answers "yes" for a family it has never heard of, and
+  until the `@import`ed stylesheet lands no face is declared, so a face has to
+  EXIST and be loaded. `whenTerminalFontReady(size)` resolves once it is —
+  asking by name, re-asking on a poll (a face that is not declared yet cannot
+  be loaded yet), listening for `loadingdone` — or after `FONT_WAIT_MS`
+  (1.5 s), whichever comes first. Offline the fallback IS the font, the
+  measurement is right, and the agent hears one size.
+- `AgenticTerminal.tsx` — the connect effect does not run until `fontReady`,
+  so the grid's first measurement is of the font it draws with. Settled
+  synchronously where it can be, so a pane whose font is already here mounts
+  exactly as before (the tests' jsdom, which has no font API, counts as
+  settled).
+- `AgenticTerminal.tsx` — the handshake carries the tile's measurement only
+  when there was one. An unmeasured pane sends `UNMEASURED_SIZE` (1x1),
+  deliberately under the server's viewer floor: that is the wire's spelling of
+  "not measured yet", which the server already answered by keeping the PTY's
+  geometry for a live agent (and the transcript's default, 100x30, for a fresh
+  spawn) and reporting it back so the grid follows. Zero would not do —
+  `_safe_int` reads it as absent and substitutes 80x24.
+
+Tests: `src/lib/terminalFont.test.ts` — `terminalFontSettled` (3),
+`whenTerminalFontReady` (4: already here, declared-then-loaded with the
+listener released, the bounded wait, no font API);
+`src/components/agentic/AgenticTerminal.test.tsx` — "pane font readiness"
+(does not build before the font is measurable, builds on the fallback once
+the wait runs out, mounts at once when the font is here), "does not shrink a
+pane that mounts hidden to the floors" now also pins the handshake to
+`UNMEASURED_SIZE`, and "hands over the tile's own measurement when there was
+one".
+
+**Not recoverable.** A transcript ConPTY has already re-flowed stays
+re-flowed in that pane's scrollback; only a fresh pane (or the agent's next
+full-screen redraw) shows clean rows. The fix stops it happening on the next
+restart.
+
+**Lesson.** Repairing a measurement after the fact is not the same as not
+publishing the wrong one. The grid was corrected within a second — but the
+column count had already left the pane, and on Windows a size the agent has
+heard cannot be unheard. Anything that goes to the PTY on the strength of a
+measurement has to wait for the thing being measured to exist.

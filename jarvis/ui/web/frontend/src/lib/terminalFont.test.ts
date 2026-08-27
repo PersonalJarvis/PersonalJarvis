@@ -13,9 +13,12 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import {
+  FONT_WAIT_MS,
   TERMINAL_FONT_STACK,
   alignTerminalCells,
   syncTerminalFont,
+  terminalFontSettled,
+  whenTerminalFontReady,
 } from "./terminalFont";
 
 /** A stand-in for the xterm options this module is allowed to touch. */
@@ -326,5 +329,129 @@ describe("syncTerminalFont", () => {
 
     await Promise.resolve();
     expect(onRemeasured).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A FontFaceSet whose declared faces and loaded state the test controls.
+ *
+ * Both halves matter separately: `check()` is true for a family the set has
+ * never heard of, and the app's fonts are declared by a stylesheet fetched
+ * from the network — so at start-up there is a window in which the face is
+ * not declared yet and `check()` says "loaded" for the wrong reason.
+ */
+function controlledFonts() {
+  const faces: { family: string }[] = [];
+  let loaded = false;
+  const listeners = new Set<() => void>();
+  const set = {
+    check: vi.fn(() => loaded),
+    load: vi.fn(() => Promise.resolve(loaded ? faces : [])),
+    addEventListener: (type: string, fn: () => void) => {
+      if (type === "loadingdone") listeners.add(fn);
+    },
+    removeEventListener: (_type: string, fn: () => void) => {
+      listeners.delete(fn);
+    },
+    [Symbol.iterator]: () => faces[Symbol.iterator](),
+  } as unknown as FontFaceSet;
+  return {
+    set,
+    declare: () => {
+      faces.push({ family: '"JetBrains Mono"' });
+    },
+    finishLoading: () => {
+      loaded = true;
+      for (const fn of listeners) fn();
+    },
+    listenerCount: () => listeners.size,
+  };
+}
+
+describe("terminalFontSettled", () => {
+  it("is settled where there is no font API — whatever is measured is what is drawn", () => {
+    expect(terminalFontSettled(13, { fonts: null })).toBe(true);
+  });
+
+  it("is not settled on a check() that is true only because no face is declared", () => {
+    const fonts = controlledFonts();
+    fonts.finishLoading(); // check() now answers true — for a family it does not have
+    expect(terminalFontSettled(13, { fonts: fonts.set })).toBe(false);
+    fonts.declare();
+    expect(terminalFontSettled(13, { fonts: fonts.set })).toBe(true);
+  });
+
+  it("is not settled while the declared face is still loading", () => {
+    const fonts = controlledFonts();
+    fonts.declare();
+    expect(terminalFontSettled(13, { fonts: fonts.set })).toBe(false);
+  });
+});
+
+describe("whenTerminalFontReady", () => {
+  it("resolves at once when the font is already measurable", async () => {
+    const fonts = controlledFonts();
+    fonts.declare();
+    fonts.finishLoading();
+    let resolved = false;
+    void whenTerminalFontReady(13, { fonts: fonts.set }).then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+    expect(resolved).toBe(true);
+  });
+
+  it("waits for the face to be declared AND loaded, then resolves and stops listening", async () => {
+    vi.useFakeTimers();
+    try {
+      const fonts = controlledFonts();
+      let resolved = false;
+      void whenTerminalFontReady(13, { fonts: fonts.set }).then(() => {
+        resolved = true;
+      });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(resolved).toBe(false);
+      expect(fonts.set.load).toHaveBeenCalled(); // asked by name, not left to fonts.ready
+
+      fonts.declare();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(resolved).toBe(false); // declared is not loaded
+
+      fonts.finishLoading();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(resolved).toBe(true);
+      expect(fonts.listenerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up after the bounded wait, so an offline pane still opens", async () => {
+    vi.useFakeTimers();
+    try {
+      const fonts = controlledFonts();
+      let resolved = false;
+      void whenTerminalFontReady(13, { fonts: fonts.set, timeoutMs: FONT_WAIT_MS }).then(
+        () => {
+          resolved = true;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(FONT_WAIT_MS - 1);
+      expect(resolved).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(resolved).toBe(true);
+      expect(fonts.listenerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolves at once where there is no font API at all", async () => {
+    let resolved = false;
+    void whenTerminalFontReady(13, { fonts: null }).then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+    expect(resolved).toBe(true);
   });
 });
