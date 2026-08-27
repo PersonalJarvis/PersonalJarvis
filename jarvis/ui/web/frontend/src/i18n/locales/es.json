@@ -568,6 +568,10 @@
     "chat_empty_title": "¿En qué puedo ayudar?",
     "composer_hint": "Enter envía · Shift+Enter para una nueva línea",
     "model_hint": "Modelo en uso — haz clic para cambiarlo",
+    "prompt_mode_pill": "Prompt",
+    "prompt_mode_on": "El modo Prompt está activado: cada dictado llega como un prompt terminado para un agente de código, con un agradecimiento al final. Haz clic para desactivarlo.",
+    "prompt_mode_off": "El modo Prompt está desactivado: los dictados llegan tal como se dijeron. Haz clic para convertir cada dictado en un prompt terminado para un agente de código.",
+    "prompt_mode_failed": "No se pudo cambiar el modo Prompt.",
     "theme_to_light": "Cambiar al modo claro",
     "theme_to_dark": "Cambiar al modo oscuro",
     "background_label": "Fondo",
@@ -4855,7 +4859,21 @@
     "pick_cli_title": "Abrir un terminal — ¿con qué?",
     "new_session": "Nueva sesión — un workspace sin carpeta de proyecto",
     "new_workspace": "Nuevo workspace — elegir una carpeta de proyecto",
-    "pick_cli_aria": "¿Qué debe ejecutarse en el nuevo terminal?"
+    "pick_cli_aria": "¿Qué debe ejecutarse en el nuevo terminal?",
+    "menu_aria": "Qué hacer con esta sesión de código",
+    "archive": "Archivar chat",
+    "archive_hint": "Ocultar este chat de la lista. El terminal sigue en marcha hasta que lo cierres.",
+    "restore": "Restaurar chat",
+    "restore_hint": "Volver a mostrar este chat en la lista.",
+    "close_terminal": "Cerrar terminal",
+    "close_hint": "Detener este agente y quitar su terminal. No se puede deshacer.",
+    "archived_section": "Chats archivados",
+    "archived_count": "Chats archivados ({n})",
+    "archived_search": "Buscar un chat archivado",
+    "close_title": "¿Cerrar {name}?",
+    "close_body": "El agente de código de este terminal se detiene y esta sesión desaparece. Lo que ya escribió en disco se queda.",
+    "close_keep": "Dejarlo abierto",
+    "close_confirm": "Cerrar {name}"
   },
   "agentic_grid": {
     "view_switch": {
@@ -5505,7 +5523,11 @@
     "col_calls": "Llamadas",
     "billing_label": "Qué gasto mostrar",
     "top_refs_subtitle_counted": "Las {shown} más caras de {total} conversaciones, chats y misiones — {share} del total. Haz clic en una para filtrar.",
-    "billing": {"all": "Todo", "billed": "Facturado a claves", "subscription": "Con suscripciones"},
+    "billing": {
+      "all": "Todo",
+      "billed": "Facturado a claves",
+      "subscription": "Con suscripciones"
+    },
     "speech_area_note": "Escuchar y hablar se facturan en segundos de audio y caracteres — nunca en tokens. Un modelo voz a voz no tiene oído ni boca propios; sus turnos están en {name} → Voz en tiempo real. Una fila a $0,00 es un motor local (gratis) o un proveedor sin tarifa publicada — la columna «Tarifa» lo indica.",
     "col_rate": "Tarifa",
     "stat_total_hint_seat_only": "Equivalente API — cubierto por completo por suscripciones, nada facturado a una clave",

@@ -426,19 +426,26 @@ function SessionRow({
         data-activity={pane.activity}
         data-archived={pane.archived ? "true" : "false"}
         className={cn(
-          "flex w-full items-center gap-2 rounded-lg py-1.5 pl-8 pr-2 text-left transition-colors",
+          "flex w-full items-start gap-2 rounded-lg py-1.5 pl-8 pr-2 text-left transition-colors",
           "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           active ? "bg-card text-foreground shadow-sm" : "hover:bg-background/60",
         )}
       >
-        <AgentMark agent={pane.agent} label={cli} logoUrl={logoUrl} variant="plain" size="sm" />
+        <AgentMark
+          agent={pane.agent}
+          label={cli}
+          logoUrl={logoUrl}
+          variant="plain"
+          size="sm"
+          className="mt-0.5"
+        />
         <span
-          className="min-w-0 flex-1 truncate text-xs text-foreground"
+          className="min-w-0 flex-1 line-clamp-2 text-xs text-foreground"
           data-testid="workspace-session-title"
         >
           {label}
         </span>
-        <span className="shrink-0 truncate font-mono text-[10px] text-muted-foreground/70">
+        <span className="mt-0.5 shrink-0 truncate font-mono text-[10px] text-muted-foreground/70">
           {pane.name}
         </span>
         {/* The grid's own badge, not a second reading of the same facts.
@@ -451,12 +458,14 @@ function SessionRow({
             hollow ring for a pane nobody has asked anything, a beacon for one
             holding a question. Same component as the pane's header, so the
             list and the grid can never disagree about one pane. */}
-        <PaneActivityPill
-          status={pane.status}
-          activity={pane.activity}
-          since={pane.activity_since}
-          worked={pane.worked}
-        />
+        <span className="mt-0.5 shrink-0">
+          <PaneActivityPill
+            status={pane.status}
+            activity={pane.activity}
+            since={pane.activity_since}
+            worked={pane.worked}
+          />
+        </span>
       </button>
     </li>
   );
@@ -511,10 +520,10 @@ function ArchivedChats({
       {open && (
         <div className="pb-1">
           {panes.length >= ARCHIVED_SEARCH_AT && (
-            <div className="relative px-2 pb-1 pt-0.5">
+            <div className="relative mx-2 mb-1">
               <Search
                 aria-hidden
-                className="pointer-events-none absolute left-10 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground"
+                className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground"
               />
               <input
                 type="search"
@@ -523,7 +532,7 @@ function ArchivedChats({
                 placeholder={t("ide_chats.archived_search")}
                 aria-label={t("ide_chats.archived_search")}
                 data-testid="workspace-chats-archived-search"
-                className="w-full rounded-md border border-border bg-background/60 py-1 pl-8 pr-2 text-[11px] text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="w-full rounded-md border border-border bg-background/60 py-1 pl-7 pr-2 text-[11px] text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               />
             </div>
           )}
@@ -675,6 +684,9 @@ function ConfirmCloseTerminal({
       aria-label={fill(t("ide_chats.close_title"), { name: pane.name })}
       data-testid="workspace-chats-confirm-close"
       className="fixed inset-0 z-[100] flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm"
+      onClick={(event) => {
+        if (event.target === event.currentTarget && !busy) onCancel();
+      }}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !busy) onCancel();
       }}

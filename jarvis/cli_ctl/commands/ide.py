@@ -1,4 +1,5 @@
 """ide: control Agentic IDE workspaces and terminal panes."""
+
 from __future__ import annotations
 
 from typing import Annotated
@@ -22,6 +23,34 @@ def rename_terminal(
         "PATCH",
         f"/api/agentic-ide/terminals/{quote(name, safe='')}",
         body={"name": new_name},
+        dry_run=dry_run,
+        dangerous=False,
+    )
+
+
+@app.command("archive-terminal")
+def archive_terminal(
+    name: Annotated[str, typer.Argument(help="Terminal call-sign.")],
+    restore: bool = typer.Option(
+        False, "--restore", help="Show the chat in the session list again."
+    ),
+    workspace: Annotated[
+        str | None,
+        typer.Option("--workspace", help="Workspace id when several tabs are open."),
+    ] = None,
+    dry_run: bool = options.dry_opt(),
+) -> None:
+    """Hide a coding session from the chat list, or restore it.
+
+    The terminal keeps running. Closing it is `ide close-terminals`.
+    """
+    body: dict[str, object] = {"archived": not restore}
+    if workspace:
+        body["workspace_id"] = workspace
+    invoke.run(
+        "POST",
+        f"/api/agentic-ide/terminals/{quote(name, safe='')}/archive",
+        body=body,
         dry_run=dry_run,
         dangerous=False,
     )

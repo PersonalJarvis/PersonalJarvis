@@ -64,6 +64,9 @@ class SnapshotTerminal:
     # Opaque identity of the pane's on-demand prompt-history stream. Additive:
     # older snapshots leave it empty and receive a fresh id when restored.
     history_id: str = ""
+    # Hidden from the chat-mode session list. Additive: older snapshots
+    # leave it false, which is the list as it was before archive existed.
+    archived: bool = False
     column: int = 0
     slot: int = 0
     resume: ResumeHandle | None = None
@@ -100,6 +103,7 @@ class SnapshotTerminal:
             "name": self.name,
             "agent": self.agent,
             "history_id": self.history_id,
+            "archived": self.archived,
             "column": self.column,
             "slot": self.slot,
             "resume": self.resume.to_dict() if self.resume else None,
@@ -125,6 +129,7 @@ class SnapshotTerminal:
             name=name,
             agent=agent,
             history_id=str(data.get("history_id") or "").strip(),
+            archived=data.get("archived") is True,
             column=_as_int(data.get("column")),
             slot=_as_int(data.get("slot")),
             resume=ResumeHandle.from_dict(data.get("resume")),

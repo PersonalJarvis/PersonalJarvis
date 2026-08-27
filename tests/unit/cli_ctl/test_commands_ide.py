@@ -1,4 +1,5 @@
 """Tests for curated Agentic IDE terminal commands."""
+
 from __future__ import annotations
 
 from typer.testing import CliRunner
@@ -18,6 +19,26 @@ def test_rename_terminal_sends_the_new_call_sign(capture_api) -> None:
     # percent-encodes the space on the wire.
     assert call["path"] == "/api/agentic-ide/terminals/API pane"
     assert call["body"] == {"name": "Frontend"}
+
+
+def test_archive_terminal_hides_the_chat(capture_api) -> None:
+    result = runner.invoke(app, ["ide", "archive-terminal", "T1"])
+
+    assert result.exit_code == 0
+    call = capture_api["calls"][-1]
+    assert call["method"] == "POST"
+    assert call["path"] == "/api/agentic-ide/terminals/T1/archive"
+    assert call["body"] == {"archived": True}
+
+
+def test_archive_terminal_restore_puts_it_back(capture_api) -> None:
+    result = runner.invoke(
+        app, ["ide", "archive-terminal", "T1", "--restore", "--workspace", "ide_w2"]
+    )
+
+    assert result.exit_code == 0
+    call = capture_api["calls"][-1]
+    assert call["body"] == {"archived": False, "workspace_id": "ide_w2"}
 
 
 def test_close_terminals_requires_confirmation(capture_api) -> None:

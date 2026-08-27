@@ -568,6 +568,10 @@
     "chat_empty_title": "Wie kann ich helfen?",
     "composer_hint": "Enter sendet · Shift+Enter für eine neue Zeile",
     "model_hint": "Verwendetes Modell — zum Ändern klicken",
+    "prompt_mode_pill": "Prompt",
+    "prompt_mode_on": "Prompt-Modus ist an — jedes Diktat kommt als fertiger Prompt für einen Coding-Agenten an, mit einem Dank am Schluss. Klicken zum Ausschalten.",
+    "prompt_mode_off": "Prompt-Modus ist aus — Diktate kommen so an, wie gesprochen. Klicken, damit jedes Diktat zu einem fertigen Prompt für einen Coding-Agenten wird.",
+    "prompt_mode_failed": "Der Prompt-Modus konnte nicht umgeschaltet werden.",
     "theme_to_light": "Zum hellen Modus wechseln",
     "theme_to_dark": "Zum dunklen Modus wechseln",
     "background_label": "Hintergrund",
@@ -4855,7 +4859,21 @@
     "pick_cli_title": "Terminal öffnen — womit?",
     "new_session": "Neue Sitzung — ein Workspace ohne Projektordner",
     "new_workspace": "Neuer Workspace — einen Projektordner wählen",
-    "pick_cli_aria": "Was soll im neuen Terminal laufen?"
+    "pick_cli_aria": "Was soll im neuen Terminal laufen?",
+    "menu_aria": "Was mit dieser Coding-Sitzung tun",
+    "archive": "Chat archivieren",
+    "archive_hint": "Diesen Chat aus der Liste nehmen. Das Terminal läuft weiter, bis du es schließt.",
+    "restore": "Chat wiederherstellen",
+    "restore_hint": "Diesen Chat wieder in der Liste zeigen.",
+    "close_terminal": "Terminal schließen",
+    "close_hint": "Diesen Agenten stoppen und das Terminal entfernen. Das lässt sich nicht rückgängig machen.",
+    "archived_section": "Archivierte Chats",
+    "archived_count": "Archivierte Chats ({n})",
+    "archived_search": "Archivierten Chat finden",
+    "close_title": "{name} schließen?",
+    "close_body": "Der Coding-Agent in diesem Terminal wird gestoppt und diese Sitzung ist weg. Was schon auf die Platte geschrieben wurde, bleibt.",
+    "close_keep": "Offen lassen",
+    "close_confirm": "{name} schließen"
   },
   "agentic_grid": {
     "view_switch": {
@@ -5505,7 +5523,11 @@
     "col_calls": "Aufrufe",
     "billing_label": "Welche Ausgaben zeigen",
     "top_refs_subtitle_counted": "Die {shown} teuersten von {total} Gesprächen, Chats und Missionen — {share} der Gesamtsumme. Zum Filtern anklicken.",
-    "billing": {"all": "Alle", "billed": "Über Keys bezahlt", "subscription": "Über Abos"},
+    "billing": {
+      "all": "Alle",
+      "billed": "Über Keys bezahlt",
+      "subscription": "Über Abos"
+    },
     "speech_area_note": "Hören und Sprechen werden in Audiosekunden und Zeichen abgerechnet — nie in Tokens. Ein Sprache-zu-Sprache-Modell hat kein eigenes Ohr und keinen eigenen Mund; seine Turns stehen unter {name} → Realtime-Stimme. Eine Zeile mit 0,00 $ ist entweder eine lokale Engine (kostenlos) oder ein Anbieter ohne veröffentlichten Tarif — die Spalte „Tarif“ sagt, was zutrifft.",
     "col_rate": "Tarif",
     "stat_total_hint_seat_only": "API-Gegenwert — vollständig durch Abos gedeckt, nichts über einen Key abgerechnet",

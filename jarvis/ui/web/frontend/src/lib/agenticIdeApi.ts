@@ -7,7 +7,11 @@
 import type { LayoutNode } from "../components/agentic/treeLayout";
 // Type-only: a pane's transcript is served in the agent chat's event shape so
 // the chat's own reducer can fold it (see `fetchTerminalTimeline`).
-import type { AgentChatEvent } from "./agentChatApi";
+import type {
+  AgentChatEvent,
+  CuratedModel,
+  PermissionModeOption,
+} from "./agentChatApi";
 
 export interface AgentStatus {
   name: string;
@@ -35,6 +39,35 @@ export interface AgentStatus {
    * which falls back to a monogram.
    */
   logo_url?: string;
+  /**
+   * Can Jarvis type into a pane of this entry at all? False for an entry whose
+   * own interface is somewhere else — DeepSeek Harness boots a server and puts
+   * its chat in the browser — which a surface that opens a CHAT has to know
+   * before it offers the entry. Absent on an older backend reads as true, the
+   * behaviour every entry had before the field existed.
+   */
+  accepts_prompts?: boolean;
+  /**
+   * What a NEW pane of this entry may be opened on — its models, its effort
+   * ladder and the permission stances it can be launched into
+   * (`jarvis/workspace/launch_picks.py`).
+   *
+   * Deliberately the agent chat's catalog shape (`AgentChatProvider`): the
+   * IDE's chat surface picks with the front page's composer, so an entry
+   * answering in the shape that composer already reads is what keeps ONE
+   * model picker in the app instead of two that drift. Absent on a backend
+   * older than this, which reads the same as "this CLI offers no picks".
+   */
+  models?: CuratedModel[];
+  /** "" = the CLI's own default, which is what every entry answers today. */
+  default_model?: string;
+  /** Ascending; empty when this CLI takes no effort pick. */
+  effort_levels?: string[];
+  default_effort?: string;
+  /** Only the stances this CLI can actually be LAUNCHED into. */
+  permission_modes?: PermissionModeOption[];
+  /** "" = the CLI's own stance; a pane opens in it until somebody picks. */
+  default_permission_mode?: string;
 }
 
 export interface AgentsResponse {
@@ -811,6 +844,11 @@ export interface WorkspacePaneRow {
   readable: boolean;
   account: string | null;
   account_label: string | null;
+  /**
+   * Hidden from the chat-mode session list. The pane itself keeps running —
+   * archive is a list filter, not a close. The grid still draws it.
+   */
+  archived: boolean;
 }
 
 export interface WorkspacePanesResponse {
@@ -1205,6 +1243,15 @@ export async function addTerminal(payload: {
   name?: string;
   /** Subscription for the new pane; omitted inherits the anchor's. */
   account?: string;
+  /**
+   * What the new pane RUNS ON — the picks a chat surface makes before the
+   * first message. Each is checked against what that CLI offers before it
+   * reaches a command line, so a stale one costs the CLI's own default rather
+   * than a pane that will not start. Never inherited from the anchor.
+   */
+  model?: string;
+  effort?: string;
+  permission_mode?: string;
 }): Promise<SessionState> {
   const res = await fetch("/api/agentic-ide/terminals", {
     method: "POST",
@@ -1297,15 +1344,45 @@ export async function renameTerminal(
 }
 
 /** Stop one terminal's agent and remove its pane. Returns the updated workspace. */
-export async function closeTerminal(name: string): Promise<SessionState> {
+export async function closeTerminal(
+  name: string,
+  workspaceId?: string,
+): Promise<SessionState> {
+  const query = workspaceId
+    ? `?workspace_id=${encodeURIComponent(workspaceId)}`
+    : "";
   const res = await fetch(
-    `/api/agentic-ide/terminals/${encodeURIComponent(name)}`,
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}${query}`,
     { method: "DELETE" },
   );
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { state: IdeState };
   if (!body.state.session) throw new Error("The workspace is no longer open.");
   return body.state.session;
+}
+
+/**
+ * Hide a pane from the chat-mode session list, or put it back.
+ *
+ * The pane keeps running. Closing it is a separate call.
+ */
+export async function archiveTerminal(
+  name: string,
+  archived: boolean,
+  workspaceId?: string,
+): Promise<void> {
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/archive`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        archived,
+        ...(workspaceId ? { workspace_id: workspaceId } : {}),
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(await detail(res));
 }
 
 export interface CloseTerminalsResult {

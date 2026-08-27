@@ -881,6 +881,10 @@ class Terminal:
     # still the same pane. Prompt-history files use this id to preserve exactly
     # that boundary across app restarts.
     history_id: str = field(default_factory=lambda: uuid4().hex)
+    # Hidden from the chat-mode session list. The pane itself keeps running —
+    # archive is a list filter, not a close. Survives a restart because the
+    # resume snapshot carries it, so a cleaned-up sidebar stays cleaned up.
+    archived: bool = False
     # Coarse "where does this pane roughly sit" HINTS, derived from the
     # workspace's layout tree by `_renumber` after every structural change —
     # never authoritative. The tree (``Session.layout``) is the geometry now:
@@ -1272,6 +1276,8 @@ class Terminal:
             # Whether a handle EXISTS, never the handle itself: it is an
             # internal pointer into the CLI's history and no client needs it.
             "has_resume": self.resume is not None,
+            # Chat-mode session list only. The grid still draws every pane.
+            "archived": self.archived,
             "account": self.account,
             "account_label": account_label(self.account),
         }
@@ -1325,6 +1331,7 @@ class Terminal:
             # Whether one is actually on disk is the transcript endpoint's
             # answer; this only says the pane holds a handle to look up.
             "has_resume": self.resume is not None,
+            "archived": self.archived,
             "account": self.account,
             "account_label": account_label(self.account),
         }
@@ -1352,6 +1359,7 @@ class Terminal:
             name=self.name,
             agent=self.agent,
             history_id=self.history_id,
+            archived=self.archived,
             column=self.column,
             slot=self.slot,
             resume=self.resume,
@@ -2290,6 +2298,7 @@ class Registry:
                 display_name=agent_display(entry.agent),
                 index=index,
                 history_id=entry.history_id or uuid4().hex,
+                archived=entry.archived,
                 column=entry.column,
                 slot=entry.slot,
                 resume=entry.resume,
@@ -4438,15 +4447,44 @@ class Registry:
             logger.info("Agentic IDE: renamed terminal {} to {}", previous, cleaned)
             return session, term
 
-    async def close_terminal(self, wanted: str) -> Terminal:
+    async def set_terminal_archived(
+        self, wanted: str, archived: bool, *, workspace_id: str | None = None
+    ) -> tuple[Session, Terminal]:
+        """Hide or restore a pane in the chat-mode session list.
+
+        The pane keeps running. Archive is a list filter: a workspace with two
+        dozen agents is unusable as a conversation list, and closing them would
+        throw the conversations away. The flag survives a restart because the
+        resume snapshot carries it.
+
+        ``workspace_id`` pins the search to one tab. Every workspace numbers
+        its panes from T1, so without it the front workspace would archive
+        the wrong T1 whenever two tabs are open.
+        """
+        async with self._lock:
+            found = self.find_terminal(wanted, workspace_id)
+            if found is None:
+                raise self._unknown_terminal(wanted)
+            session, term = found
+            term.archived = bool(archived)
+            await self._persist()
+            logger.info(
+                "Agentic IDE: {} terminal {} in workspace {}",
+                "archived" if term.archived else "restored",
+                term.name,
+                session.id,
+            )
+            return session, term
+
+    async def close_terminal(self, wanted: str, *, workspace_id: str | None = None) -> Terminal:
         """Stop one terminal's agent and remove its pane from the workspace."""
-        closed, failed = await self.close_terminals([wanted])
+        closed, failed = await self.close_terminals([wanted], workspace_id=workspace_id)
         if failed:
             raise SessionError(failed[0]["detail"])
         return closed[0]
 
     async def close_terminals(
-        self, wanted: list[str]
+        self, wanted: list[str], *, workspace_id: str | None = None
     ) -> tuple[list[Terminal], list[dict[str, str]]]:
         """Stop several panes under one registry lock and persist once.
 
@@ -4454,11 +4492,18 @@ class Registry:
         terminal is closed. Resolving the complete selection before teardown
         keeps concurrent callers from changing which pane a name refers to
         halfway through the batch.
+
+        ``workspace_id`` pins the batch to one tab. The default is the workspace
+        on screen, which is what the grid's own close is asking about.
         """
         async with self._lock:
-            session = self.session
+            session = self.get(workspace_id) if workspace_id is not None else self.session
             if session is None:
-                raise SessionError("No Agentic-IDE session is running.")
+                raise SessionError(
+                    "That workspace is not open."
+                    if workspace_id is not None
+                    else "No Agentic-IDE session is running."
+                )
             known = ", ".join(t.name for t in session.terminals) or "none"
             resolved: list[Terminal] = []
             failed: list[dict[str, str]] = []

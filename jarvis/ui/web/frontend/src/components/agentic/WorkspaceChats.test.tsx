@@ -3,13 +3,22 @@
  * sessions, a way to open one more — the active one marked, and every click
  * travelling through the store to the view that performs it.
  */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
 import { useIdeChatStore } from "@/store/ideChat";
 import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
-import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
+import { archiveTerminal, closeTerminal, type WorkspacePaneRow } from "@/lib/agenticIdeApi";
+
+vi.mock("@/lib/agenticIdeApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agenticIdeApi")>();
+  return {
+    ...actual,
+    archiveTerminal: vi.fn().mockResolvedValue(undefined),
+    closeTerminal: vi.fn().mockResolvedValue({ terminals: [] }),
+  };
+});
 
 const HERE = "C:\\Users\\dev\\Personal Jarvis";
 const THERE = "C:\\Users\\dev\\Jarvis Web UI";
@@ -62,6 +71,8 @@ const CODEX = { name: "codex", displayName: "Codex", installed: true, kind: "cli
 
 describe("the sidebar's chat face", () => {
   beforeEach(() => {
+    vi.mocked(archiveTerminal).mockClear().mockResolvedValue(undefined);
+    vi.mocked(closeTerminal).mockClear().mockResolvedValue({ terminals: [] } as never);
     resetWorkspacePanesPoll();
     useWorkspacePanesStore.setState({
       panes: PANES,
@@ -292,5 +303,106 @@ describe("the sidebar's chat face", () => {
     // A finished job glows; a dead process does not.
     expect(badges[1].querySelector("[class*='shadow']")).not.toBeNull();
     expect(badges[4].querySelector("[class*='shadow']")).toBeNull();
+  });
+
+  it("opens an options menu on right-click of a session", () => {
+    render(<WorkspaceChats />);
+    fireEvent.contextMenu(screen.getAllByTestId("workspace-session-row")[0], {
+      clientX: 40,
+      clientY: 80,
+    });
+    const menu = screen.getByTestId("workspace-session-menu");
+    expect(menu.dataset.pane).toBe("T1");
+    expect(screen.getByTestId("workspace-session-archive").textContent).toContain("Archive chat");
+    expect(screen.getByTestId("workspace-session-close").textContent).toContain("Close terminal");
+  });
+
+  it("archives a chat out of the list and keeps it findable under the workspace", async () => {
+    render(<WorkspaceChats />);
+    const row = screen.getAllByTestId("workspace-session-row")[0];
+    fireEvent.contextMenu(row);
+    fireEvent.click(screen.getByTestId("workspace-session-archive"));
+
+    await waitFor(() =>
+      expect(archiveTerminal).toHaveBeenCalledWith("T1", true, "w1"),
+    );
+    const band = screen.getAllByTestId("workspace-chats-band")[0];
+    const live = Array.from(
+      band.querySelectorAll<HTMLElement>("[data-testid='workspace-session-row']"),
+    ).filter((el) => el.dataset.archived === "false");
+    expect(live.map((el) => el.dataset.pane)).toEqual(["T2"]);
+    expect(screen.getByTestId("workspace-chats-archived-toggle-w1").textContent).toContain(
+      "Archived chats (1)",
+    );
+
+    fireEvent.click(screen.getByTestId("workspace-chats-archived-toggle-w1"));
+    const hidden = screen
+      .getAllByTestId("workspace-session-row")
+      .filter((el) => el.dataset.archived === "true");
+    expect(hidden.map((el) => el.dataset.pane)).toEqual(["T1"]);
+  });
+
+  it("restores an archived chat back into the list", async () => {
+    useWorkspacePanesStore.setState({
+      panes: [
+        pane("T1", "Claude Code", "w1", "live", { archived: true, recap: "Old work" }),
+        pane("T2", "Codex", "w1"),
+      ],
+      activeId: "w1",
+      loaded: true,
+    });
+    render(<WorkspaceChats />);
+    fireEvent.click(screen.getByTestId("workspace-chats-archived-toggle-w1"));
+    fireEvent.contextMenu(screen.getAllByTestId("workspace-session-row").find((el) => el.dataset.archived === "true")!);
+    fireEvent.click(screen.getByTestId("workspace-session-archive"));
+
+    await waitFor(() =>
+      expect(archiveTerminal).toHaveBeenCalledWith("T1", false, "w1"),
+    );
+    expect(screen.queryByTestId("workspace-chats-archived")).toBeNull();
+    expect(
+      screen.getAllByTestId("workspace-session-row").map((el) => el.dataset.pane),
+    ).toEqual(["T1", "T2"]);
+  });
+
+  it("asks before closing a terminal, then removes the row", async () => {
+    render(<WorkspaceChats />);
+    fireEvent.contextMenu(screen.getAllByTestId("workspace-session-row")[0]);
+    fireEvent.click(screen.getByTestId("workspace-session-close"));
+    expect(closeTerminal).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("workspace-chats-confirm-close-confirm"));
+
+    await waitFor(() => expect(closeTerminal).toHaveBeenCalledWith("T1", "w1"));
+    expect(screen.queryByTestId("workspace-chats-confirm-close")).toBeNull();
+    const band = screen.getAllByTestId("workspace-chats-band")[0];
+    expect(
+      Array.from(band.querySelectorAll<HTMLElement>("[data-testid='workspace-session-row']")).map(
+        (el) => el.dataset.pane,
+      ),
+    ).toEqual(["T2"]);
+  });
+
+  it("lets an archived chat be found by name once the archive is long", () => {
+    useWorkspacePanesStore.setState({
+      panes: [
+        pane("T1", "Claude Code", "w1", "live", { archived: true, recap: "Fix the login" }),
+        pane("T2", "Claude Code", "w1", "live", { archived: true, recap: "Rewrite the parser" }),
+        pane("T3", "Claude Code", "w1", "live", { archived: true, recap: "Update the docs" }),
+        pane("T4", "Claude Code", "w1", "live", { archived: true, recap: "Paint the orb" }),
+        pane("T5", "Claude Code", "w1", "live", { archived: true, recap: "Tune the wake word" }),
+      ],
+      activeId: "w1",
+      loaded: true,
+    });
+    render(<WorkspaceChats />);
+    fireEvent.click(screen.getByTestId("workspace-chats-archived-toggle-w1"));
+    const search = screen.getByTestId("workspace-chats-archived-search");
+    fireEvent.change(search, { target: { value: "parser" } });
+    const shown = screen
+      .getAllByTestId("workspace-session-row")
+      .filter((el) => el.dataset.archived === "true");
+    expect(shown.map((el) => el.textContent)).toEqual([
+      expect.stringContaining("Rewrite the parser"),
+    ]);
   });
 });

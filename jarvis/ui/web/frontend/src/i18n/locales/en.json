@@ -568,6 +568,10 @@
     "chat_empty_title": "How can I help?",
     "composer_hint": "Enter to send · Shift+Enter for a new line",
     "model_hint": "Model in use — click to change it",
+    "prompt_mode_pill": "Prompt",
+    "prompt_mode_on": "Prompt Mode is on — every dictation comes out as a finished prompt for a coding agent, closing with thanks. Click to switch it off.",
+    "prompt_mode_off": "Prompt Mode is off — dictations arrive as spoken. Click to turn every dictation into a finished prompt for a coding agent.",
+    "prompt_mode_failed": "Prompt Mode could not be switched.",
     "theme_to_light": "Switch to light mode",
     "theme_to_dark": "Switch to dark mode",
     "background_label": "Background",
@@ -4855,7 +4859,21 @@
     "pick_cli_title": "Open a terminal — what?",
     "new_session": "New session — a workspace with no project folder",
     "new_workspace": "New workspace — pick a project folder",
-    "pick_cli_aria": "What should run in the new terminal?"
+    "pick_cli_aria": "What should run in the new terminal?",
+    "menu_aria": "What to do with this coding session",
+    "archive": "Archive chat",
+    "archive_hint": "Hide this chat from the list. The terminal keeps running until you close it.",
+    "restore": "Restore chat",
+    "restore_hint": "Show this chat in the list again.",
+    "close_terminal": "Close terminal",
+    "close_hint": "Stop this agent and remove its terminal. There is no undo.",
+    "archived_section": "Archived chats",
+    "archived_count": "Archived chats ({n})",
+    "archived_search": "Find an archived chat",
+    "close_title": "Close {name}?",
+    "close_body": "The coding agent in this terminal is stopped and this session is gone. Anything it already wrote to disk stays.",
+    "close_keep": "Keep it open",
+    "close_confirm": "Close {name}"
   },
   "agentic_grid": {
     "view_switch": {
@@ -5505,7 +5523,11 @@
     "col_calls": "Calls",
     "billing_label": "Which spend to show",
     "top_refs_subtitle_counted": "The {shown} most expensive of {total} conversations, chats and missions — {share} of the total. Click one to filter by it.",
-    "billing": {"all": "All", "billed": "Billed to keys", "subscription": "On subscriptions"},
+    "billing": {
+      "all": "All",
+      "billed": "Billed to keys",
+      "subscription": "On subscriptions"
+    },
     "speech_area_note": "Hearing and speaking are billed in audio seconds and characters — never tokens. A speech-to-speech model has no separate ear or mouth, so its turns sit under {name} → Realtime voice. A row at $0.00 is either a local engine (free) or a vendor that publishes no rate — the Rate column says which.",
     "col_rate": "Rate",
     "stat_total_hint_seat_only": "API-equivalent — fully covered by subscriptions, nothing billed to a key",

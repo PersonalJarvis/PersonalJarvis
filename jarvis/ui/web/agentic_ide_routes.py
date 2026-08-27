@@ -39,6 +39,7 @@ Endpoints (prefix ``/api/agentic-ide``):
   (open the panes, divide the work, brief each one, report who was reached)
 * ``GET    /terminals/{name}/report``    → what one named terminal is doing
 * ``PATCH  /terminals/{terminal}``       → give that pane another call-sign
+* ``POST   /terminals/{name}/archive``   → hide or restore a chat in the session list
 * ``GET    /terminals/{name}/prompts``   → every prompt handed to that pane
 * ``POST   /terminals/{name}/prompt``    → type a prompt into it and press Enter
 * ``POST   /terminals/{name}/attach``    → drop/paste files onto a pane
@@ -117,6 +118,7 @@ from jarvis.agentic_ide.session import (
     SessionError,
     SessionNotReady,
     Terminal,
+    accepts_prompts,
     account_home,
     agent_argv,
     coding_mode_event,
@@ -488,6 +490,17 @@ class RenameTerminalRequest(BaseModel):
     )
 
 
+class ArchiveTerminalRequest(BaseModel):
+    """Hide or restore one pane in the chat-mode session list."""
+
+    archived: bool
+    #: Pins the search to one tab. Every workspace numbers its panes from T1,
+    #: so without this the front workspace would archive the wrong pane
+    #: whenever two tabs are open. The session list always knows which tab a
+    #: row came from.
+    workspace_id: str | None = None
+
+
 class WorkspaceCard(BaseModel):
     """One open workspace, as the workspace bar shows it."""
 
@@ -671,6 +684,15 @@ class AgentStatus(BaseModel):
             "Where to fetch this entry's mark. Empty for a shipped entry, whose "
             "logo is a local asset the client already has, and for a custom one "
             "with no logo, which falls back to a monogram."
+        ),
+    )
+    accepts_prompts: bool = Field(
+        default=True,
+        description=(
+            "Can Jarvis type a message into a pane of this entry at all? False "
+            "for an entry whose own interface is somewhere else (DeepSeek "
+            "Harness boots a server and puts its chat in the browser), which a "
+            "surface that opens a CHAT has to know before it offers the entry."
         ),
     )
     # --- What a pane of this entry can be OPENED on -------------------------
@@ -1376,6 +1398,7 @@ async def get_agents() -> AgentsResponse:
             description=info.description,
             custom=info.custom,
             logo_url=info.logo_url,
+            accepts_prompts=accepts_prompts(info.name),
             **launch_picks.offered(info.name, live),
         )
         for info in infos
@@ -1461,9 +1484,7 @@ async def search(q: str, limit: int = 40) -> SearchResponse:
     )
 
 
-@router.post(
-    "/folders/create", response_model=CreateFolderResponse, summary="Create a new folder"
-)
+@router.post("/folders/create", response_model=CreateFolderResponse, summary="Create a new folder")
 async def create_new_folder(req: CreateFolderRequest) -> CreateFolderResponse:
     """Make one folder so a workspace can start in a place that did not exist yet.
 
@@ -1604,8 +1625,7 @@ def _resolve_terminal_target(workspace_folder: str, printed: str) -> Path:
 _WORKSPACE_PREVIEW_MAX_CHARS = 2 * 1024 * 1024
 _WORKSPACE_HEX_PREVIEW_BYTES = 256
 _WORKSPACE_FILE_CSP = (
-    "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
-    "media-src 'self'; sandbox"
+    "default-src 'none'; style-src 'unsafe-inline'; img-src data:; media-src 'self'; sandbox"
 )
 
 
@@ -1685,9 +1705,7 @@ async def get_workspace_file(workspace_id: str, path: str) -> FileResponse:
     response_model=WorkspaceFilePreviewResponse,
     summary="Preview one file from an open workspace",
 )
-async def get_workspace_file_preview(
-    workspace_id: str, path: str
-) -> WorkspaceFilePreviewResponse:
+async def get_workspace_file_preview(workspace_id: str, path: str) -> WorkspaceFilePreviewResponse:
     """Return bounded readable text or a safe hexadecimal fallback."""
     target = await asyncio.to_thread(_resolve_workspace_file, workspace_id, path)
     try:
@@ -1824,8 +1842,7 @@ async def resolve_folder(req: ResolveRequest) -> ResolveResponse:
     if not items:
         return ResolveResponse(
             detail=(
-                f'No folder called "{wanted}" was found on this computer. '
-                "Pick one from the list."
+                f'No folder called "{wanted}" was found on this computer. Pick one from the list.'
             )
         )
     return ResolveResponse(
@@ -2642,6 +2659,38 @@ async def close_terminals_by_agent(request: Request, agent: str) -> dict:
     }
 
 
+@router.post(
+    "/terminals/{name}/archive",
+    summary="Hide or restore a chat in the session list",
+)
+async def archive_terminal(name: str, req: ArchiveTerminalRequest) -> dict:
+    """Hide a pane from the chat-mode session list, or put it back.
+
+    The pane keeps running — archive is a list filter, not a close. The grid
+    still draws it. Closing the terminal is a separate, destructive action.
+    """
+    try:
+        session, term = await get_registry().set_terminal_archived(
+            name, req.archived, workspace_id=req.workspace_id
+        )
+    except SessionError as exc:
+        message = str(exc)
+        if message.startswith("No terminal called"):
+            status = 404
+        elif "not open" in message:
+            status = 404
+        else:
+            status = 409
+        raise HTTPException(status_code=status, detail=message) from exc
+    return {
+        "ok": True,
+        "archived": term.archived,
+        "name": term.name,
+        "workspace_id": session.id,
+        "terminal": term.to_dict(),
+    }
+
+
 @router.patch("/terminals/{terminal}", summary="Rename one terminal")
 async def rename_terminal(request: Request, terminal: str, req: RenameTerminalRequest) -> dict:
     """Give the pane ``terminal`` another call-sign.
@@ -2685,12 +2734,17 @@ async def rename_terminal(request: Request, terminal: str, req: RenameTerminalRe
     summary="Close one terminal",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def close_terminal(request: Request, name: str) -> dict:
-    """Stop the agent in the terminal called ``name`` and remove its pane."""
+async def close_terminal(request: Request, name: str, workspace_id: str | None = None) -> dict:
+    """Stop the agent in the terminal called ``name`` and remove its pane.
+
+    ``workspace_id`` pins the search to one tab. The session list shows every
+    open workspace, and each of them has a T1 — without the id, closing T1
+    from a background tab would stop the front workspace's T1 instead.
+    """
     registry = get_registry()
-    session = registry.session
+    session = registry.get(workspace_id) if workspace_id is not None else registry.session
     try:
-        term = await registry.close_terminal(name)
+        term = await registry.close_terminal(name, workspace_id=workspace_id)
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     bus = getattr(request.app.state, "bus", None)
@@ -3782,9 +3836,7 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
                     # Fire-and-forget: a beat that cannot be delivered must
                     # cost the line, never the brief (and never a warning
                     # about an unobserved task at teardown).
-                    task.add_done_callback(
-                        lambda done: done.cancelled() or done.exception()
-                    )
+                    task.add_done_callback(lambda done: done.cancelled() or done.exception())
 
                 on_progress = _publish_beat
 
@@ -3830,9 +3882,7 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
         try:
             # The receipt beside the brief: the sentence as typed and the files
             # that went with it, for the pane's chat stage (prompt_receipts).
-            term = await registry.send_prompt(
-                name, text, typed=req.prompt, attachments=attachments
-            )
+            term = await registry.send_prompt(name, text, typed=req.prompt, attachments=attachments)
         except SessionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -4247,9 +4297,7 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
                     _safe_int(msg.get("cols"), cols),
                     _safe_int(msg.get("rows"), rows),
                 )
-                registry.claim_viewer(
-                    term.key, *want, pane_workspace, viewer=on_output
-                )
+                registry.claim_viewer(term.key, *want, pane_workspace, viewer=on_output)
                 await report_geometry(want)
     finally:
         # The viewer went away — switched tab, reloaded, closed the browser.
