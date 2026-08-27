@@ -75,8 +75,9 @@ dependency's terms change either. Nothing is relicensed by being included here.
       `scoop-bucket/personal-jarvis-installer.json` — both are pinned to the
       v1.0.5 installer asset, which really is MIT. Change `license` in the same
       commit that bumps them to the 2.0 asset, not before.
-- [ ] `assets/brand/social-preview.html` — the template says "APACHE 2.0" now;
-      re-render the PNG and upload it as the repository's social preview.
+- [ ] Repository social preview — `assets/brand/social-preview.png` is already
+      re-rendered and reads "APACHE 2.0". GitHub does not take it from the
+      repository: upload it under Settings -> General -> Social preview.
 - [ ] personaljarvis.ai (the `webui` repo) — any license mention on the
       storefront.
 - [ ] The GitHub release notes for 2.0.0 — lead with the license change.
