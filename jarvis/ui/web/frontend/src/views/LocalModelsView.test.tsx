@@ -82,11 +82,14 @@ vi.mock("@/views/local-models/TuneSheet", () => ({
     </div>
   ),
 }));
+const mockReload = vi.fn(async () => {});
+
 vi.mock("@/hooks/useLocalModels", () => ({
   useInventory: () => ({
     isLoading: false,
     data: { models: [{ name: "qwen3.5:4b" }] },
   }),
+  useReloadLocalModels: () => mockReload,
 }));
 
 import {
@@ -245,5 +248,13 @@ describe("LocalModelsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "browse" }));
     expect(screen.getByTestId("catalogue-panel")).toBeDefined();
     expect(screen.queryByTestId("overview-panel")).toBeNull();
+  });
+
+  it("Refresh throws the section's cached answers away and reads again", () => {
+    render(<LocalModelsView />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "local_models.reload" }),
+    );
+    expect(mockReload).toHaveBeenCalledTimes(1);
   });
 });

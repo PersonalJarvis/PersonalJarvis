@@ -13124,3 +13124,75 @@ only what is true in it.
 about the OUTCOME. Every tool that acts without being able to look owes the
 model the difference in a field it cannot miss — a note in prose is a caveat
 the model will politely paraphrase after the good news.
+## BUG-188: Local models says every model is "not installed" and a job cannot be changed — one sweep taken while Ollama was still booting became the cache both ends read from (HIGH, FIXED 2026-08-27)
+
+**Symptom (maintainer, 2026-08-27 10:09).** The Local models section showed
+`ornith:9b` with a trailing `(not installed)`, and under it the sentence
+"Nothing installed fits this job yet; this download is the pick." Picking a
+different model in the dropdown appeared to do nothing — "it always switches
+back to that odd one, even when you choose something else." Fifteen models
+were on the server at that moment, `ornith:9b` among them.
+
+**What was actually true.** Nothing was broken in the write path. Read live
+during the investigation, the backend was correct on every count:
+
+```
+GET …/local-models/overview?fresh=1   source: live
+  inventory error: None      models: 11
+  chat  current='ornith:9b'  installed=True  qualifying=[10 tags]
+PUT …/local-models/roles/chat  {"model":"qwen3.5:4b"}   -> ok
+  jarvis.toml            brain.providers.ollama.model = "qwen3.5:4b"
+  scripts/config-soll.json  brain.providers.ollama.model = "qwen3.5:4b"
+```
+
+The pick was written, the drift baseline followed it, and a re-read answered
+the new value. The screen was simply not showing the server.
+
+**Cause — a truthful answer cached as a lasting one.** `build_overview` runs
+its sweep whatever the server's state; when Ollama does not answer it returns
+a payload with an empty inventory and `inventory.error` set. That is the right
+answer to "what can I see right now" and a ruinous one to keep, and it was
+kept twice over:
+
+* `ollama_overview._refresh` handed every payload to `save_snapshot`, so the
+  offline sweep replaced the good file in `data/local_models_snapshot.json`.
+  `get_overview` paints a disk snapshot for `STALE_AFTER_S` — 24 hours.
+* `useOverview` mirrored every payload into `localStorage`, and reads it back
+  as react-query's `initialData` — which survives a failed refetch, so it
+  outlives the outage that produced it.
+
+Opening the section while Ollama is still booting is enough. Everything
+downstream then follows from an empty inventory: `RoleState.qualifying` is
+empty, so each role reads `installed: false` and its shortlist falls back to
+"nothing installed fits this job yet".
+
+**Why the dropdown looked stuck.** `RoleLedgerRow` built its options from
+`row.qualifying` plus the configured tag. With `qualifying` empty that list
+holds exactly ONE entry — the tag already configured. There was nothing else
+to select; the "reset" the maintainer saw was a picker that had never offered
+an alternative. An unprobed download (`probed: false`, no capabilities) fell
+out of the list the same silent way. The Simple page compounded it: the
+picker lived behind a "Change" button, two clicks from the row.
+
+**Fix.**
+
+1. `ollama_overview.is_paintable()` — a payload whose inventory carries an
+   error is never written to the snapshot, and one already on disk is dropped
+   on read instead of painted. The previous, honest snapshot stays.
+2. `localModelsSnapshot.isPaintable()` — the same guard on the browser side,
+   on both write and read.
+3. `RolePicker` offers EVERY installed download, grouped "Fits this job" /
+   "Other installed models", so there is always something to pick and an
+   unprobed model is visible rather than dropped.
+4. The picker is on screen for every job at every detail level; `advanced`
+   adds capability badges, Tune and the read-only jobs, it never removes a
+   control.
+5. A "Refresh" button in the section header clears the painted snapshot and
+   every cached answer, then reads the server again — the recovery a user can
+   reach without knowing what a cache is.
+
+**Lesson.** A cache entry is a claim that outlives the moment it was taken.
+"The server did not answer" is true when measured and false ten seconds
+later, so it may be returned but never stored. And a control whose options
+come from a filtered list needs an answer for the empty case: offering one
+option is indistinguishable, to the person using it, from ignoring the click.

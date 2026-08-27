@@ -1,48 +1,37 @@
 /**
- * Roles — the four model slots Jarvis fills from the local server, one row
- * each, one primary action each.
+ * Jobs — which download answers for which job, one row each.
  *
  * Chat & voice, Tools & screen, Deep & coding and Embeddings come from
  * `GET roles`; every row shows the configured pick (or the discovery
- * sentence), the capabilities the slot requires, a picker over the installed
- * models that qualify, and "Use recommended" — which downloads the pick when
- * it is missing, assigns it, then writes the suggested options silently and
- * reads back one sentence. The read-only advanced roles hide under
- * "More roles". When nothing is installed at all, the ledger shows one
- * "Set up the recommended models" button that runs the overview's set-up
- * flow (`useLocalSetup`).
+ * sentence), a picker over the installed models (`RolePicker`) and, when the
+ * shortlist has a better one, "Use recommended" — which downloads that pick
+ * when it is missing, assigns it, then writes the suggested options silently
+ * and reads back one sentence. The read-only advanced roles hide under
+ * "More roles".
  *
- * Two variants: `ledger` (the full rows: picker, badges, Tune) and
- * `checklist` — one compact line per writable role (dot, label, model or
- * "not set", ONE trailing action: "Use recommended" when the shortlist has a
- * better pick, otherwise "Change"), where Change expands that line into the
- * full ledger row in place. The Overview uses the checklist.
+ * The picker is on screen for every row at every detail level. It used to be
+ * folded away behind a "Change" button on the Simple page, which — together
+ * with a shortlist that could come back empty — is what made the section
+ * read as "it keeps resetting my model" (BUG-188): the one control that
+ * changes a role was two clicks away and then offered nothing to pick.
+ * `advanced` now adds detail (capability badges, Tune, the read-only roles),
+ * it never takes the control away.
  *
+ * The panel draws no frame of its own — the caller's `StepCard` is the frame.
  * Props take `providerId` (the pull-capable card's id) rather than the whole
- * descriptor so the panel can be mounted from anywhere the id is known. The
- * "Tune" button only calls `onTune(model)` — the sheet belongs to the caller.
+ * descriptor so the panel can be mounted from anywhere the id is known.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ChevronDown,
-  ChevronRight,
-  Loader2,
-  SlidersHorizontal,
-  Sparkles,
-} from "lucide-react";
+import { ChevronDown, Loader2, SlidersHorizontal, Sparkles } from "lucide-react";
 
-import {
-  Panel,
-  PanelHeader,
-  SoftButton,
-  StatusDot,
-} from "@/components/extensions/primitives";
+import { SoftButton, StatusDot } from "@/components/extensions/primitives";
 import {
   setRole,
   useInvalidateLocalModels,
   useOverview,
   useSetRole,
   type LocalModelRole,
+  type LocalModelRow,
   type RoleRow,
 } from "@/hooks/useLocalModels";
 import { useProviders } from "@/hooks/useProviders";
@@ -50,6 +39,7 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { canonical, waitForPull } from "./localSetup";
+import { RolePicker } from "./RolePicker";
 import { useSilentTune } from "./useLocalSetup";
 
 export interface RolesPanelProps {
@@ -59,8 +49,8 @@ export interface RolesPanelProps {
   onTune?: (model: string) => void;
   /** Navigates to the API Keys section; shown when another brain is active. */
   onOpenApiKeys?: () => void;
-  /** `ledger` = full rows (default); `checklist` = compact rows that expand. */
-  variant?: "ledger" | "checklist";
+  /** Adds capability badges, Tune and the read-only roles. Never removes the picker. */
+  advanced?: boolean;
   /** Runs the overview's "Set up everything" flow (the empty state's button). */
   onSetup?: () => void;
   /** That flow is underway: the empty state's button waits. */
@@ -94,7 +84,7 @@ export function RolesPanel({
   providerId,
   onTune,
   onOpenApiKeys,
-  variant = "ledger",
+  advanced = false,
   onSetup,
   setupBusy = false,
 }: RolesPanelProps) {
@@ -116,16 +106,6 @@ export function RolesPanel({
 
   const [progress, setProgress] = useState<Record<string, Progress>>({});
   const [moreOpen, setMoreOpen] = useState(false);
-  // Checklist rows the user expanded into the full ledger row.
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const toggleExpanded = useCallback((roleId: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(roleId)) next.delete(roleId);
-      else next.add(roleId);
-      return next;
-    });
-  }, []);
 
   // Async flows outlive a tab switch; nothing is written to state afterwards.
   const mounted = useRef(true);
@@ -137,11 +117,15 @@ export function RolesPanel({
   }, []);
   const alive = useCallback(() => mounted.current, []);
 
+  const models: LocalModelRow[] = useMemo(
+    () => inventory.data?.models ?? [],
+    [inventory.data],
+  );
   const installed = useMemo(() => {
     const names = new Set<string>();
-    for (const m of inventory.data?.models ?? []) names.add(canonical(m.name));
+    for (const m of models) names.add(canonical(m.name));
     return names;
-  }, [inventory.data]);
+  }, [models]);
   const isInstalled = useCallback(
     (name: string) => installed.has(canonical(name)),
     [installed],
@@ -149,7 +133,7 @@ export function RolesPanel({
 
   const rows = roles.data?.roles ?? [];
   const primary = rows.filter((r) => !r.advanced);
-  const advanced = rows.filter((r) => r.advanced);
+  const advancedRows = rows.filter((r) => r.advanced);
 
   // The brain switch stays a user-only decision; the panel only says so.
   const activeBrain =
@@ -197,206 +181,197 @@ export function RolesPanel({
     [alive, invalidate, isInstalled, patch, providerId, tuneSilently],
   );
 
+  // "Nothing is installed" is only true when the server actually answered.
+  // While it is silent the inventory is empty for a different reason, and
+  // saying "download something" there sends the user after the wrong problem.
+  const serverSilent = Boolean(inventory.data?.error);
   const nothingInstalled =
-    inventory.data !== undefined &&
-    !inventory.data.error &&
-    inventory.data.models.length === 0;
+    inventory.data !== undefined && !serverSilent && models.length === 0;
 
   return (
-    <Panel className="p-4">
-      <div className="space-y-3" data-testid="local-models-roles" data-variant={variant}>
-        <PanelHeader
-          title={t("local_models.roles.title")}
-          subtitle={t("local_models.roles.subtitle")}
-        />
+    <div className="space-y-3" data-testid="local-models-roles">
+      {otherBrainActive && (
+        <p
+          className="text-sm text-amber-700 dark:text-amber-400"
+          data-testid="roles-other-brain"
+        >
+          {fill(t("local_models.roles.other_brain"), {
+            brain: activeBrain?.label ?? "",
+          })}{" "}
+          {onOpenApiKeys && (
+            <button
+              type="button"
+              onClick={onOpenApiKeys}
+              className="font-medium text-primary hover:underline"
+            >
+              {t("local_models.roles.other_brain_link")}
+            </button>
+          )}
+        </p>
+      )}
 
-        {otherBrainActive && (
-          <p
-            className="text-sm text-amber-700 dark:text-amber-400"
-            data-testid="roles-other-brain"
-          >
-            {fill(t("local_models.roles.other_brain"), {
-              brain: activeBrain?.label ?? "",
-            })}{" "}
-            {onOpenApiKeys && (
-              <button
-                type="button"
-                onClick={onOpenApiKeys}
-                className="font-medium text-primary hover:underline"
-              >
-                {t("local_models.roles.other_brain_link")}
-              </button>
-            )}
-          </p>
-        )}
+      {serverSilent && (
+        <p
+          className="text-sm text-amber-700 dark:text-amber-400"
+          data-testid="roles-server-silent"
+        >
+          {t("local_models.roles.server_silent")}
+        </p>
+      )}
+      {roles.data?.error && (
+        <p className="text-sm text-amber-700 dark:text-amber-400">
+          {roles.data.error}
+        </p>
+      )}
+      {roles.isError && (
+        <p className="text-sm text-destructive">
+          {roles.error instanceof Error
+            ? roles.error.message
+            : String(roles.error)}
+        </p>
+      )}
+      {roles.isLoading && (
+        <p className="text-sm text-muted-foreground">
+          {t("local_models.roles.loading")}
+        </p>
+      )}
 
-        {roles.data?.error && (
-          <p className="text-sm text-amber-700 dark:text-amber-400">
-            {roles.data.error}
-          </p>
-        )}
-        {roles.isError && (
-          <p className="text-sm text-destructive">
-            {roles.error instanceof Error
-              ? roles.error.message
-              : String(roles.error)}
-          </p>
-        )}
-        {roles.isLoading && (
+      {nothingInstalled && rows.length > 0 && onSetup && (
+        <div
+          className="rounded-lg border border-dashed border-border px-6 py-8 text-center"
+          data-testid="roles-empty"
+        >
           <p className="text-sm text-muted-foreground">
-            {t("local_models.roles.loading")}
+            {t("local_models.roles.empty_body")}
           </p>
-        )}
-
-        {nothingInstalled && rows.length > 0 && onSetup && (
-          <div
-            className="rounded-lg border border-dashed border-border px-6 py-8 text-center"
-            data-testid="roles-empty"
-          >
-            <p className="text-sm text-muted-foreground">
-              {t("local_models.roles.empty_body")}
-            </p>
-            <div className="mt-4 flex justify-center">
-              <SoftButton primary onClick={onSetup} disabled={setupBusy}>
-                {setupBusy ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Sparkles className="h-3.5 w-3.5" />
-                )}
-                {t("local_models.roles.setup_button")}
-              </SoftButton>
-            </div>
+          <div className="mt-4 flex justify-center">
+            <SoftButton primary onClick={onSetup} disabled={setupBusy}>
+              {setupBusy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {t("local_models.roles.setup_button")}
+            </SoftButton>
           </div>
-        )}
+        </div>
+      )}
 
-        {primary.length > 0 && (
-          <div
-            className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card/60"
-            data-testid="roles-ledger"
-          >
-            {primary.map((row) => {
-              const rowProgress = progress[row.id] ?? { phase: "idle" };
-              const saving =
+      {primary.length > 0 && (
+        <div
+          className="divide-y divide-border/70 overflow-hidden rounded-lg border border-border/70"
+          data-testid="roles-ledger"
+        >
+          {primary.map((row) => (
+            <RoleRowView
+              key={row.id}
+              row={row}
+              models={models}
+              progress={progress[row.id] ?? { phase: "idle" }}
+              installed={isInstalled}
+              saving={
                 setRoleMutation.isPending &&
-                setRoleMutation.variables?.role === row.id;
-              const onPick = (model: string) =>
+                setRoleMutation.variables?.role === row.id
+              }
+              advanced={advanced}
+              onPick={(model) =>
                 setRoleMutation.mutate({
                   role: row.id as LocalModelRole,
                   model,
-                });
-              if (variant === "checklist" && !expanded.has(row.id)) {
-                return (
-                  <RoleChecklistRow
-                    key={row.id}
-                    row={row}
-                    progress={rowProgress}
-                    installed={isInstalled}
-                    saving={saving}
-                    onUseRecommended={() => void useRecommended(row)}
-                    onExpand={() => toggleExpanded(row.id)}
-                    t={t}
-                  />
-                );
+                })
               }
-              return (
-                <RoleLedgerRow
-                  key={row.id}
-                  row={row}
-                  progress={rowProgress}
-                  installed={isInstalled}
-                  saving={saving}
-                  onPick={onPick}
-                  onUseRecommended={() => void useRecommended(row)}
-                  onTune={onTune}
-                  onCollapse={
-                    variant === "checklist"
-                      ? () => toggleExpanded(row.id)
-                      : undefined
-                  }
-                  t={t}
-                />
-              );
-            })}
-          </div>
-        )}
+              onUseRecommended={() => void useRecommended(row)}
+              onTune={onTune}
+              t={t}
+            />
+          ))}
+        </div>
+      )}
 
-        {setRoleMutation.isError && (
-          <p className="text-sm text-destructive">
-            {setRoleMutation.error instanceof Error
-              ? setRoleMutation.error.message
-              : String(setRoleMutation.error)}
-          </p>
-        )}
+      {setRoleMutation.isError && (
+        <p className="text-sm text-destructive">
+          {setRoleMutation.error instanceof Error
+            ? setRoleMutation.error.message
+            : String(setRoleMutation.error)}
+        </p>
+      )}
 
-        {advanced.length > 0 && (
-          <div>
-            <button
-              type="button"
-              onClick={() => setMoreOpen((v) => !v)}
-              aria-expanded={moreOpen}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+      {advanced && advancedRows.length > 0 && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setMoreOpen((v) => !v)}
+            aria-expanded={moreOpen}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ChevronDown
+              className={cn(
+                "h-3.5 w-3.5 transition-transform",
+                moreOpen && "rotate-180",
+              )}
+            />
+            {t("local_models.roles.more_roles")}
+          </button>
+          {moreOpen && (
+            <div
+              className="mt-2 divide-y divide-border/70 overflow-hidden rounded-lg border border-border/70"
+              data-testid="roles-more"
             >
-              <ChevronDown
-                className={cn(
-                  "h-3.5 w-3.5 transition-transform",
-                  moreOpen && "rotate-180",
-                )}
-              />
-              {t("local_models.roles.more_roles")}
-            </button>
-            {moreOpen && (
-              <div
-                className="mt-2 divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card/60"
-                data-testid="roles-more"
-              >
-                {advanced.map((row) => (
-                  <div
-                    key={row.id}
-                    className="grid gap-1 px-3.5 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] sm:items-center"
-                  >
-                    <div className="text-sm text-foreground">
-                      {t(row.label_key)}
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {row.current ? (
-                        <span className="font-mono text-xs text-foreground/85">
-                          {row.current}
-                        </span>
-                      ) : (
-                        row.note || t("local_models.roles.follows_chat")
-                      )}
-                    </div>
+              {advancedRows.map((row) => (
+                <div
+                  key={row.id}
+                  className="grid gap-1 px-3.5 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] sm:items-center"
+                >
+                  <div className="text-sm text-foreground">
+                    {t(row.label_key)}
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </Panel>
+                  <div className="text-sm text-muted-foreground">
+                    {row.current ? (
+                      <span className="font-mono text-xs text-foreground/85">
+                        {row.current}
+                      </span>
+                    ) : (
+                      row.note || t("local_models.roles.follows_chat")
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
-function RoleLedgerRow({
+/**
+ * One job: what it is, what answers it now, and the picker that changes it.
+ *
+ * Three columns on a wide pane — name and state, picker, actions — so the
+ * pickers line up as a column a user can run down. Below `lg` they stack in
+ * the same order.
+ */
+function RoleRowView({
   row,
+  models,
   progress,
   installed,
   saving,
+  advanced,
   onPick,
   onUseRecommended,
   onTune,
-  onCollapse,
   t,
 }: {
   row: RoleRow;
+  models: LocalModelRow[];
   progress: Progress;
   installed: (name: string) => boolean;
   saving: boolean;
+  advanced: boolean;
   onPick: (model: string) => void;
   onUseRecommended: () => void;
   onTune?: (model: string) => void;
-  /** Checklist only: folds the row back into its compact line. */
-  onCollapse?: () => void;
   t: (key: string) => string;
 }) {
   const running =
@@ -406,17 +381,10 @@ function RoleLedgerRow({
   const currentMissing = row.current !== "" && !row.installed;
   const canUseRecommended =
     row.writable && row.recommended !== "" && row.recommended !== row.current;
-  // The picker lists every qualifying download, plus the configured one when
-  // it is gone, so the gap is visible rather than silently replaced.
-  const choices = useMemo(() => {
-    const list = [...row.qualifying];
-    if (row.current && !list.includes(row.current)) list.unshift(row.current);
-    return list;
-  }, [row.current, row.qualifying]);
 
   return (
     <div
-      className="grid gap-3 px-3.5 py-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] lg:items-center"
+      className="grid gap-3 px-3.5 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-start"
       data-testid={`role-row-${row.id}`}
     >
       <div className="min-w-0">
@@ -424,30 +392,16 @@ function RoleLedgerRow({
           <span className="text-sm font-medium text-foreground">
             {t(row.label_key)}
           </span>
-          {row.required.map((cap) => (
-            <span
-              key={cap}
-              className="rounded-md border border-border px-1.5 py-0.5 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
-            >
-              {cap}
-            </span>
-          ))}
+          {advanced &&
+            row.required.map((cap) => (
+              <span
+                key={cap}
+                className="rounded-md border border-border px-1.5 py-0.5 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
+              >
+                {cap}
+              </span>
+            ))}
         </div>
-        {row.id === "voice" && row.context_tokens ? (
-          <p
-            className="mt-1 text-xs text-muted-foreground"
-            data-testid="voice-context"
-          >
-            {fill(
-              t(
-                row.context_source === "manual"
-                  ? "local_models.roles.voice_context_manual"
-                  : "local_models.roles.voice_context_auto",
-              ),
-              { context: contextLabel(row.context_tokens) },
-            )}
-          </p>
-        ) : null}
         <div className="mt-1 text-sm">
           {row.current ? (
             <StatusDot
@@ -469,35 +423,32 @@ function RoleLedgerRow({
             </span>
           )}
         </div>
+        {row.id === "voice" && row.context_tokens ? (
+          <p
+            className="mt-1 text-xs text-muted-foreground"
+            data-testid="voice-context"
+          >
+            {fill(
+              t(
+                row.context_source === "manual"
+                  ? "local_models.roles.voice_context_manual"
+                  : "local_models.roles.voice_context_auto",
+              ),
+              { context: contextLabel(row.context_tokens) },
+            )}
+          </p>
+        ) : null}
         <ProgressLine progress={progress} t={t} className="mt-1.5" />
       </div>
 
       <div className="min-w-0">
         {row.writable ? (
-          <select
-            aria-label={fill(t("local_models.roles.pick_label"), {
-              role: t(row.label_key),
-            })}
-            value={row.current}
+          <RolePicker
+            row={row}
+            models={models}
             disabled={saving || running}
-            onChange={(e) => onPick(e.target.value)}
-            className="h-8 w-full rounded-md border border-border bg-background/60 px-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
-          >
-            {row.id !== "embedding" && (
-              <option value="">{t("local_models.roles.pick_discovery")}</option>
-            )}
-            {row.id === "embedding" && !row.current && (
-              <option value="">{t("local_models.roles.pick_none")}</option>
-            )}
-            {choices.map((name) => (
-              <option key={name} value={name}>
-                {name}
-                {installed(name)
-                  ? ""
-                  : ` ${t("local_models.roles.pick_missing_suffix")}`}
-              </option>
-            ))}
-          </select>
+            onPick={onPick}
+          />
         ) : (
           <span className="text-xs text-muted-foreground">
             {t("local_models.roles.read_only")}
@@ -505,7 +456,7 @@ function RoleLedgerRow({
         )}
         {canUseRecommended && row.recommended_reason && (
           <p
-            className="mt-1 text-xs text-muted-foreground"
+            className="mt-1.5 text-xs text-muted-foreground"
             data-testid="role-recommended-reason"
           >
             <span className="font-mono text-foreground/85">
@@ -517,7 +468,7 @@ function RoleLedgerRow({
         )}
       </div>
 
-      <div className="flex items-center gap-1.5 lg:justify-end">
+      <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
         {canUseRecommended && (
           <SoftButton
             primary
@@ -536,119 +487,13 @@ function RoleLedgerRow({
                 })}
           </SoftButton>
         )}
-        {onTune && row.current && row.installed && (
+        {advanced && onTune && row.current && row.installed && (
           <SoftButton onClick={() => onTune(row.current)} disabled={running}>
             <SlidersHorizontal className="h-3.5 w-3.5" />
             {t("local_models.roles.tune")}
           </SoftButton>
         )}
-        {onCollapse && (
-          <SoftButton onClick={onCollapse} ariaExpanded>
-            <ChevronDown className="h-3.5 w-3.5" />
-            {t("local_models.roles.checklist_done")}
-          </SoftButton>
-        )}
       </div>
-    </div>
-  );
-}
-
-/**
- * The compact checklist line: dot + label + model (or "not set") + ONE
- * trailing action. The line itself is a button that expands to the full row;
- * the trailing action is "Use recommended" when the shortlist has a better
- * pick, otherwise "Change" (which expands too).
- */
-function RoleChecklistRow({
-  row,
-  progress,
-  installed,
-  saving,
-  onUseRecommended,
-  onExpand,
-  t,
-}: {
-  row: RoleRow;
-  progress: Progress;
-  installed: (name: string) => boolean;
-  saving: boolean;
-  onUseRecommended: () => void;
-  onExpand: () => void;
-  t: (key: string) => string;
-}) {
-  const running =
-    progress.phase === "pulling" ||
-    progress.phase === "assigning" ||
-    progress.phase === "tuning";
-  const currentMissing = row.current !== "" && !row.installed;
-  const canUseRecommended =
-    row.writable && row.recommended !== "" && row.recommended !== row.current;
-  const tone: "ok" | "warn" | "off" = row.current
-    ? currentMissing
-      ? "warn"
-      : "ok"
-    : "off";
-  return (
-    <div
-      className="grid gap-2 px-3.5 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-      data-testid={`role-row-${row.id}`}
-      data-variant="checklist"
-    >
-      <button
-        type="button"
-        onClick={onExpand}
-        aria-expanded={false}
-        className="flex min-w-0 items-center gap-2 text-left"
-      >
-        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="text-sm font-medium text-foreground">
-          {t(row.label_key)}
-        </span>
-        <StatusDot
-          tone={tone}
-          label={
-            row.current ? (
-              <span className="font-mono text-xs text-foreground/85">
-                {row.current}
-                {currentMissing && (
-                  <span className="ml-2 font-sans text-muted-foreground">
-                    {t("local_models.roles.not_installed")}
-                  </span>
-                )}
-              </span>
-            ) : (
-              <span className="text-xs">
-                {t("local_models.roles.checklist_not_set")}
-              </span>
-            )
-          }
-        />
-      </button>
-      <div className="flex items-center gap-1.5 sm:justify-end">
-        {canUseRecommended ? (
-          <SoftButton
-            primary
-            onClick={onUseRecommended}
-            disabled={running || saving}
-          >
-            {running ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="h-3.5 w-3.5" />
-            )}
-            {installed(row.recommended)
-              ? t("local_models.roles.use_recommended")
-              : fill(t("local_models.roles.download_recommended"), {
-                  model: row.recommended,
-                })}
-          </SoftButton>
-        ) : (
-          <SoftButton onClick={onExpand} disabled={running || saving}>
-            {t("local_models.roles.checklist_change")}
-          </SoftButton>
-        )}
-      </div>
-      <ProgressLine progress={progress} t={t} className="sm:col-span-2" />
     </div>
   );
 }

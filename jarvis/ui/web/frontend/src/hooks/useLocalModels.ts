@@ -19,6 +19,7 @@ import {
 import { useEffect, useMemo } from "react";
 
 import {
+  clearOverviewSnapshot,
   readOverviewSnapshot,
   writeOverviewSnapshot,
 } from "../lib/localModelsSnapshot";
@@ -1081,22 +1082,57 @@ export function useEnvGuide(providerId: string | undefined, os?: EnvGuideOs) {
  * next poll. `?fresh=1` skips the cache; the answer replaces the cached
  * payload under the same key, so every panel repaints from it.
  */
-export function refetchOverviewFresh(
+export async function refetchOverviewFresh(
   qc: QueryClient,
   providerId: string,
 ): Promise<OverviewResponse | undefined> {
-  return qc
-    .fetchQuery({
-      queryKey: localModelsKeys.overview(providerId),
+  const queryKey = localModelsKeys.overview(providerId);
+  try {
+    // A poll may be in flight with the cache-first answer; `fetchQuery`
+    // would join it instead of running the fresh read and the stale payload
+    // would land AFTER the write. Cancel it first, then read live.
+    await qc.cancelQueries({ queryKey });
+    return await qc.fetchQuery({
+      queryKey,
       queryFn: () => getOverview(providerId, true),
       staleTime: 0,
-    })
-    .catch((err: unknown) => {
-      // The write already landed; a failed re-read only delays the repaint
-      // until the next poll, so it is logged rather than surfaced.
-      console.warn("[local-models] fresh overview failed", err);
-      return undefined;
     });
+  } catch (err) {
+    // The write already landed; a failed re-read only delays the repaint
+    // until the next poll, so it is logged rather than surfaced.
+    console.warn("[local-models] fresh overview failed", err);
+    return undefined;
+  }
+}
+
+/** "qwen3.5" and "qwen3.5:latest" are the same download. */
+export function canonicalModelName(name: string): string {
+  return name.endsWith(":latest") ? name.slice(0, -":latest".length) : name;
+}
+
+/**
+ * The overview as it will read once `role` is on `model` — the optimistic
+ * shape a pick shows while the write and the fresh read are underway.
+ */
+export function withRolePick(
+  overview: OverviewResponse,
+  role: LocalModelRole,
+  model: string,
+): OverviewResponse {
+  const installed =
+    model !== "" &&
+    overview.inventory.models.some(
+      (m) => canonicalModelName(m.name) === canonicalModelName(model),
+    );
+  return {
+    ...overview,
+    roles: {
+      ...overview.roles,
+      roles: overview.roles.roles.map((r) =>
+        r.id === role ? { ...r, current: model, installed } : r,
+      ),
+    },
+  };
 }
 
 export function useInvalidateLocalModels(providerId: string | undefined) {
@@ -1114,13 +1150,51 @@ export function useInvalidateLocalModels(providerId: string | undefined) {
   };
 }
 
+/**
+ * Throw away everything the section has cached and read it again from the
+ * server — the "Refresh" button behind the section header.
+ *
+ * `useInvalidateLocalModels` refetches, but it cannot help against the one
+ * state a user actually gets stuck in: a painted snapshot taken while the
+ * server was silent. That snapshot is `initialData`, so it survives a
+ * refetch failure and keeps a wiped-looking machine on screen. Clearing it
+ * first makes the button mean what it says (BUG-188).
+ */
+export function useReloadLocalModels(providerId: string | undefined) {
+  const qc = useQueryClient();
+  return async () => {
+    const id = providerId ?? "";
+    if (!id) return;
+    clearOverviewSnapshot(id);
+    await qc.cancelQueries({ queryKey: ["local-models", id] });
+    qc.removeQueries({ queryKey: ["local-models", id] });
+    await refetchOverviewFresh(qc, id);
+  };
+}
+
 export function useSetRole(providerId: string | undefined) {
   const qc = useQueryClient();
+  const id = providerId ?? "";
+  const overviewKey = localModelsKeys.overview(id);
   return useMutation({
     mutationFn: ({ role, model }: { role: LocalModelRole; model: string }) =>
       setRole(providerId as string, role, model),
-    onSuccess: () => {
-      const id = providerId ?? "";
+    // The picker is a controlled input bound to the overview. Without this
+    // it snapped back to the OLD model the instant a pick was made and
+    // stayed there until the fresh read landed (one to three seconds on a
+    // live build) — which reads as "my pick was thrown away". The cache
+    // shows the pick at once; a refused write rolls it back.
+    onMutate: async ({ role, model }) => {
+      await qc.cancelQueries({ queryKey: overviewKey });
+      const previous = qc.getQueryData<OverviewResponse>(overviewKey);
+      if (previous)
+        qc.setQueryData(overviewKey, withRolePick(previous, role, model));
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) qc.setQueryData(overviewKey, context.previous);
+    },
+    onSettled: () => {
       void qc.invalidateQueries({ queryKey: localModelsKeys.roles(id) });
       void qc.invalidateQueries({ queryKey: localModelsKeys.inventory(id) });
       void refetchOverviewFresh(qc, id);

@@ -53,6 +53,7 @@ __all__ = [
     "forget",
     "get_overview",
     "inventory_payload",
+    "is_paintable",
     "load_snapshot",
     "model_row",
     "role_row",
@@ -325,13 +326,40 @@ def load_snapshot(path: Path | None = None) -> dict[str, Any] | None:
     return data
 
 
+def is_paintable(payload: dict[str, Any]) -> bool:
+    """Whether ``payload`` may be cached as the next open's head start.
+
+    A sweep taken while the server was unreachable — Ollama still booting,
+    a stopped service, a remote host off the network — is a truthful answer
+    to "what can I see right now", but a ruinous thing to paint later: its
+    inventory is empty, so every role reads "not installed", every shortlist
+    reads "nothing installed fits this job yet", and each role's picker
+    offers only the tag already configured. Keeping the previous, honest
+    snapshot instead means the next open paints stale facts rather than a
+    machine that looks wiped (BUG-188).
+
+    Only that one condition disqualifies a payload: this is a guard against a
+    known lie, not a schema check, so anything else is cached as before.
+    """
+    inv = payload.get("inventory")
+    return not (isinstance(inv, dict) and inv.get("error"))
+
+
 def save_snapshot(root: str, payload: dict[str, Any], path: Path | None = None) -> None:
     """Persist ``payload`` atomically (``.part`` + ``os.replace``).
 
     A crash mid-write leaves the previous snapshot intact; a write failure
     is logged and swallowed on purpose — the overview was already answered
-    live, the cache is only the next open's head start.
+    live, the cache is only the next open's head start. A payload that fails
+    :func:`is_paintable` is not written at all.
     """
+    if not is_paintable(payload):
+        log.info(
+            "local-models: not caching the overview for %s — the server was "
+            "unreachable, so its inventory is empty; the previous snapshot stays",
+            root,
+        )
+        return
     target = path or snapshot_path()
     part = target.with_suffix(target.suffix + ".part")
     data = {"root": root, "fetched_at": float(payload.get("fetched_at") or time.time())}
@@ -351,6 +379,9 @@ def save_snapshot(root: str, payload: dict[str, Any], path: Path | None = None) 
 # ── Stale-while-revalidate ───────────────────────────────────────────────
 
 _memo: dict[str, tuple[float, dict[str, Any]]] = {}  # root -> (monotonic, payload)
+#: Roots whose memo was dropped by a write and whose disk snapshot is
+#: therefore known-stale: the next open builds live instead of painting it.
+_dirty: set[str] = set()
 #: The one background refresh per root; the reference is kept so the task
 #: cannot be garbage-collected mid-flight, and a second open joins it.
 _refresh_tasks: dict[str, asyncio.Task[dict[str, Any]]] = {}
@@ -360,6 +391,7 @@ def _reset_for_tests() -> None:
     """Drop the in-memory overview memo and refresh bookkeeping (tests only)."""
     _memo.clear()
     _refresh_tasks.clear()
+    _dirty.clear()
 
 
 def forget(root: str) -> None:
@@ -368,10 +400,13 @@ def forget(root: str) -> None:
     A role pick, a tune, an unload or a delete changes what the next open
     must show; without this the memo answered the OLD payload for up to
     :data:`DEFAULT_MAX_AGE_S` after the write and the row the user had just
-    changed stayed where it was. The disk snapshot is left alone — the next
-    live build overwrites it.
+    changed stayed where it was. The disk snapshot is known-stale from here
+    on too, so the next plain read builds live rather than painting it —
+    every client sees the write, not only one that asks for ``fresh``.
     """
-    _memo.pop(normalize_server_root(root), None)
+    key = normalize_server_root(root)
+    _memo.pop(key, None)
+    _dirty.add(key)
 
 
 def _fresh(root: str, max_age_s: float) -> dict[str, Any] | None:
@@ -385,6 +420,7 @@ async def _refresh(root: str, cfg: Any, provider_id: str) -> dict[str, Any]:
     """Build live, memoise, save to disk (off-loop); returns the payload."""
     payload = await build_overview(root, cfg, provider_id=provider_id)
     _memo[root] = (time.monotonic(), payload)
+    _dirty.discard(root)
     await asyncio.to_thread(save_snapshot, root, payload)
     return payload
 
@@ -431,11 +467,21 @@ async def get_overview(
     """
     root = normalize_server_root(root)
     disk: dict[str, Any] | None = None
-    if not fresh:
+    # After a write (`forget`) both the memo and the disk snapshot are known
+    # stale, so a plain read goes straight to the live build as well.
+    if not fresh and root not in _dirty:
         if (hit := _fresh(root, max_age_s)) is not None:
             return hit, "live"
         disk = await asyncio.to_thread(load_snapshot)
         if disk is not None and disk.get("root") != root:
+            disk = None
+        # A snapshot written before `is_paintable` existed can still hold an
+        # offline sweep; painting it would show an empty machine for up to
+        # STALE_AFTER_S. Build live instead and let that answer replace it.
+        if disk is not None and not is_paintable(disk["payload"]):
+            log.info(
+                "local-models: the saved overview for %s is an offline sweep; rebuilding", root
+            )
             disk = None
         if disk is not None and time.time() - float(disk["fetched_at"]) < STALE_AFTER_S:
             _schedule_refresh(root, cfg, provider_id)

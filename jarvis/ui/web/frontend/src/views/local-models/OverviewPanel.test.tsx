@@ -345,7 +345,7 @@ describe("OverviewPanel paint-first", () => {
       name: "local_models.overview.disk",
     });
     expect(disk.textContent).toContain("80 GB");
-    expect(screen.getByTestId("overview-status").textContent).toContain(
+    expect(screen.getByTestId("step-server").textContent).toContain(
       "local_models.overview.status_runningOllama|0.32.15",
     );
     expect(screen.getByTestId("role-row-chat")).toBeDefined();
@@ -397,22 +397,22 @@ describe("OverviewPanel paint-first", () => {
 });
 
 describe("OverviewPanel", () => {
-  it("opens with one status sentence: server, graphics memory, active brain", async () => {
+  it("step 1 says whether the server runs, on what hardware, and who the brain is", async () => {
     installFetchMock();
     renderPanel();
 
-    const status = await screen.findByTestId("overview-status");
+    const status = await screen.findByTestId("step-server");
     await waitFor(() =>
       expect(status.textContent).toContain(
         "local_models.overview.status_runningOllama|0.32.15",
       ),
     );
-    expect(status.textContent).toContain(
-      "local_models.overview.status_gpu16.0",
-    );
+    expect(status.textContent).toContain("16.0 GB");
     expect(status.textContent).toContain(
       "local_models.overview.status_brain_activeOllama",
     );
+    // A running server satisfies step 1: the marker is a check, not a "1".
+    expect(status.getAttribute("data-state")).toBe("done");
   });
 
   it("names the other brain in the status sentence when Ollama is not active", async () => {
@@ -429,35 +429,42 @@ describe("OverviewPanel", () => {
     );
   });
 
-  it("offers one action: browse the catalogue", async () => {
+  it("browsing the catalogue is step 2's action", async () => {
     installFetchMock();
     const onBrowse = vi.fn();
     renderPanel({ onBrowse });
 
-    await screen.findByTestId("overview-actions");
+    const models = await screen.findByTestId("step-models");
     fireEvent.click(
-      screen.getByRole("button", { name: "local_models.overview.action_browse" }),
+      within(models).getByRole("button", {
+        name: "local_models.overview.action_browse",
+      }),
     );
     expect(onBrowse).toHaveBeenCalledTimes(1);
   });
 
-  it("the detail level changes the roles on this very screen", async () => {
+  it("the detail level adds detail to the jobs but never takes the picker away", async () => {
     installFetchMock();
-    const { unmount } = renderPanel();
-    const simple = await screen.findByTestId("local-models-roles");
-    expect(simple.getAttribute("data-variant")).toBe("checklist");
+    const { unmount } = renderPanel({ onTune: vi.fn() });
+    await screen.findByTestId("role-row-chat");
+    // Simple: the picker is there, the capability badges and Tune are not.
+    expect(screen.getByTestId("role-picker-chat")).toBeDefined();
+    expect(screen.queryByText("tools")).toBeNull();
+    expect(screen.queryByText("local_models.roles.tune")).toBeNull();
     unmount();
 
     installFetchMock();
-    renderPanel({ advanced: true });
-    const advanced = await screen.findByTestId("local-models-roles");
-    expect(advanced.getAttribute("data-variant")).not.toBe("checklist");
+    renderPanel({ advanced: true, onTune: vi.fn() });
+    await screen.findByTestId("role-row-chat");
+    expect(screen.getByTestId("role-picker-chat")).toBeDefined();
+    expect(screen.getAllByText("tools").length).toBeGreaterThan(0);
+    expect(screen.getByText("local_models.roles.tune")).toBeDefined();
   });
 
   it("keeps 'Set up everything' even when no browse handler is wired", async () => {
     installFetchMock();
     renderPanel();
-    await screen.findByTestId("overview-status");
+    await screen.findByTestId("step-server");
     expect(
       screen.queryByRole("button", {
         name: "local_models.overview.action_browse",
@@ -487,10 +494,11 @@ describe("OverviewPanel", () => {
       name: "local_models.overview.disk",
     });
     await waitFor(() => expect(disk.textContent).toContain("12 GB"));
-    await waitFor(() =>
-      expect(disk.textContent).toContain("local_models.overview.disk_model_one"),
-    );
     expect(disk.textContent).toContain("/home/x/.ollama/models");
+    // How many downloads there are is step 2's own status line.
+    expect(
+      (await screen.findByTestId("step-models")).textContent,
+    ).toContain("local_models.overview.models_one");
 
     const gpu = screen.getByRole("group", {
       name: "local_models.overview.gpu",
@@ -512,67 +520,53 @@ describe("OverviewPanel", () => {
     });
     renderPanel();
 
-    const status = await screen.findByTestId("overview-status");
+    const status = await screen.findByTestId("step-server");
     await waitFor(() =>
       expect(status.textContent).toContain(
         "local_models.overview.status_stoppedOllama",
       ),
     );
-    expect(screen.getByText("local_models.overview.gpu_unknown")).toBeDefined();
+    // Named in step 1's facts and again on step 2's tile.
+    expect(
+      screen.getAllByText(/local_models\.overview\.gpu_unknown/).length,
+    ).toBeGreaterThan(0);
   });
 
-  it("renders the roles as a checklist, expands one row to the full ledger row and folds it back", async () => {
+  it("gives every job its picker straight away, listing more than the qualifying models", async () => {
     installFetchMock();
-    renderPanel({ onTune: vi.fn() });
+    renderPanel({ advanced: true, onTune: vi.fn() });
 
-    const chat = await screen.findByTestId("role-row-chat");
-    expect(chat.getAttribute("data-variant")).toBe("checklist");
+    await screen.findByTestId("role-row-chat");
     expect(screen.getByTestId("role-row-tools_screen")).toBeDefined();
     expect(screen.getByTestId("role-row-deep")).toBeDefined();
     expect(screen.getByTestId("role-row-embedding")).toBeDefined();
     expect(screen.queryByText("local_models.role_voice")).toBeNull();
-    // Compact rows: the model, "not set", no badges, no picker, no Tune.
-    // (Scoped to the ledger: the installed list below names the model too.)
-    expect(
-      within(screen.getByTestId("roles-ledger")).getByText("qwen3.5:4b", {
-        selector: "span",
-      }),
-    ).toBeDefined();
-    expect(
-      screen.getAllByText("local_models.roles.checklist_not_set").length,
-    ).toBe(3);
-    expect(screen.queryByText("tools")).toBeNull();
-    expect(screen.queryByText("local_models.roles.tune")).toBeNull();
-    // Embedding has no recommendation applied yet -> "Download ..."; the
-    // trailing action is exactly one per row.
+
+    // No expanding: the control that changes a job is on screen for each one.
+    for (const role of ["chat", "tools_screen", "deep", "embedding"])
+      expect(screen.getByTestId(`role-picker-${role}`)).toBeDefined();
+
+    // Embedding qualifies for nothing installed, yet its picker still offers
+    // the installed downloads — the state that used to leave a user with a
+    // single option and no way to change it (BUG-188).
+    const embedding = screen.getByTestId(
+      "role-picker-embedding",
+    ) as HTMLSelectElement;
+    const offered = [...embedding.options].map((o) => o.value);
+    expect(offered).toContain("qwen3.5:4b");
     expect(
       screen.getByText("local_models.roles.download_recommendedqwen3-embedding:4b"),
     ).toBeDefined();
-
-    // Expand chat via its line -> the full row with badges, picker, Tune, Done.
-    fireEvent.click(
-      screen.getByRole("button", { name: /local_models.role_chat/ }),
-    );
-    expect(screen.getAllByText("tools").length).toBeGreaterThan(0);
-    expect(screen.getByText("local_models.roles.tune")).toBeDefined();
-    expect(
-      screen.getByLabelText("local_models.roles.pick_labellocal_models.role_chat"),
-    ).toBeDefined();
-    fireEvent.click(screen.getByText("local_models.roles.checklist_done"));
-    expect(screen.queryByText("local_models.roles.tune")).toBeNull();
 
     fireEvent.click(screen.getByText("local_models.roles.more_roles"));
     expect(screen.getByText("local_models.role_voice")).toBeDefined();
   });
 
-  it("writes the pick through PUT roles/{role} from the expanded row", async () => {
+  it("writes the pick through PUT roles/{role}", async () => {
     const fetchMock = installFetchMock();
     renderPanel();
 
     await screen.findByTestId("role-row-deep");
-    fireEvent.click(
-      screen.getByRole("button", { name: /local_models.role_deep/ }),
-    );
     const select = screen.getByLabelText(
       "local_models.roles.pick_labellocal_models.role_deep",
     );
@@ -670,7 +664,7 @@ describe("OverviewPanel", () => {
     ];
     renderPanel();
 
-    await screen.findByTestId("overview-actions");
+    await screen.findByTestId("step-server");
     fireEvent.click(
       screen.getByRole("button", { name: "local_models.overview.action_setup" }),
     );
@@ -735,9 +729,13 @@ describe("OverviewPanel", () => {
     const onManage = vi.fn();
     renderPanel({ onManage });
 
-    const list = await screen.findByTestId("local-models-installed");
+    await screen.findByTestId("local-models-installed");
     await screen.findByTestId("installed-qwen3.5:4b");
-    expect(list.textContent).toContain("local_models.installed.subtitle2|");
+    // How many downloads and how much disk is step 2's status line; the list
+    // itself no longer repeats it inside the card.
+    expect(
+      (await screen.findByTestId("step-models")).textContent,
+    ).toContain("local_models.overview.models_count2|");
     // Each line says which roles it is the pick for (the fixture's rows
     // carry no used_by, so the markers are the recommendations).
     expect(

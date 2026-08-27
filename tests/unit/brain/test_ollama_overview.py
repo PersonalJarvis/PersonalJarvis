@@ -115,20 +115,51 @@ async def test_the_disk_snapshot_paints_at_once_and_one_refresh_runs(fake, tmp_p
     assert time.perf_counter() - started < 0.5
     task = ollama_overview._refresh_tasks.get(ROOT)
     assert task is not None and not task.done()
-    # A second open while the refresh runs joins it — no second task.
-    again, source_again = await ollama_overview.get_overview(ROOT, _cfg())
-    assert source_again == "cache"
-    assert ollama_overview._refresh_tasks.get(ROOT) is task
 
     refreshed = await task
     assert refreshed["server"]["running"] is False
     assert "did not answer" in refreshed["inventory"]["error"]
     assert ROOT not in ollama_overview._refresh_tasks
-    # The refreshed payload is now the memo, and it reached the disk.
+    # The refreshed payload is now the memo...
     memo, memo_source = await ollama_overview.get_overview(ROOT, _cfg())
     assert memo_source == "live" and memo is refreshed
+    # ...but it did NOT reach the disk: a sweep with no server behind it
+    # would paint a wiped machine on the next open (BUG-188), so the good
+    # snapshot from the first open stays.
     saved = ollama_overview.load_snapshot()
-    assert saved is not None and saved["payload"]["server"]["running"] is False
+    assert saved is not None and saved["payload"]["server"]["running"] is True
+    assert [m["name"] for m in saved["payload"]["inventory"]["models"]]
+
+
+async def test_a_second_open_during_a_refresh_joins_it(fake, monkeypatch) -> None:
+    """One refresh per root: a second open while one runs must not start a
+    second sweep of the same server."""
+    await ollama_overview.get_overview(ROOT, _cfg())
+    ollama_overview._reset_for_tests()
+    ollama_inventory._reset_for_tests()
+
+    # Hold the refresh open, so "while one runs" is a fact and not a race.
+    release = asyncio.Event()
+    real_build = ollama_overview.build_overview
+
+    async def _slow_build(*args: object, **kwargs: object) -> dict:
+        await release.wait()
+        return await real_build(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ollama_overview, "build_overview", _slow_build)
+
+    _payload, source = await ollama_overview.get_overview(ROOT, _cfg())
+    assert source == "cache"
+    task = ollama_overview._refresh_tasks.get(ROOT)
+    assert task is not None and not task.done()
+
+    _again, source_again = await ollama_overview.get_overview(ROOT, _cfg())
+    assert source_again == "cache"
+    assert ollama_overview._refresh_tasks.get(ROOT) is task
+
+    release.set()
+    await task
+    assert ROOT not in ollama_overview._refresh_tasks
 
 
 async def test_a_day_old_snapshot_is_replaced_by_a_live_build(fake) -> None:
@@ -196,3 +227,57 @@ async def test_a_failing_refresh_is_logged_not_lost(fake, monkeypatch, caplog) -
     await asyncio.sleep(0)  # let the done-callback run
     assert ROOT not in ollama_overview._refresh_tasks
     assert any("background refresh" in r.getMessage() for r in caplog.records)
+
+
+async def test_an_offline_sweep_never_becomes_the_next_open_s_snapshot(fake) -> None:
+    """A sweep taken while the server is down must not replace a good one.
+
+    What would lie if it broke: the next open paints an empty inventory, so
+    every role reads "not installed", every shortlist reads "nothing fits
+    this job yet", and each role's picker offers only the tag already
+    configured — the machine looks wiped and nothing can be changed
+    (BUG-188).
+    """
+    good, source = await ollama_overview.get_overview(ROOT, _cfg())
+    assert source == "live"
+    assert good["inventory"]["models"]
+    saved_before = ollama_overview.load_snapshot()
+    assert saved_before is not None
+
+    fake.offline = True
+    ollama_overview._reset_for_tests()
+    ollama_inventory._reset_for_tests()
+    offline, source = await ollama_overview.get_overview(ROOT, _cfg(), fresh=True)
+    assert source == "live"
+    # The live answer is honest about the outage...
+    assert offline["inventory"]["error"]
+    assert offline["inventory"]["models"] == []
+    # ...and the snapshot on disk is still the one that holds real models.
+    saved_after = ollama_overview.load_snapshot()
+    assert saved_after == saved_before
+
+
+async def test_an_offline_snapshot_from_an_older_build_is_rebuilt_not_painted(fake) -> None:
+    """A poisoned snapshot already on disk is dropped on read.
+
+    What would lie if it broke: a file written before the guard existed keeps
+    painting a wiped machine for up to STALE_AFTER_S — a day.
+    """
+    await ollama_overview.get_overview(ROOT, _cfg())
+    poisoned = ollama_overview.load_snapshot()
+    assert poisoned is not None
+    poisoned["payload"]["inventory"] = {"models": [], "error": "Ollama is not answering."}
+    # Straight past the guard, the way an older build wrote it.
+    ollama_overview.snapshot_path().write_text(json.dumps(poisoned), encoding="utf-8")
+    ollama_overview._reset_for_tests()
+    ollama_inventory._reset_for_tests()
+
+    payload, source = await ollama_overview.get_overview(ROOT, _cfg())
+    assert source == "live"
+    assert [m["name"] for m in payload["inventory"]["models"]]
+
+
+def test_is_paintable_only_rejects_an_inventory_error() -> None:
+    assert ollama_overview.is_paintable({"inventory": {"models": [], "error": None}})
+    assert ollama_overview.is_paintable({"fetched_at": 1.0})  # not a schema check
+    assert not ollama_overview.is_paintable({"inventory": {"models": [], "error": "down"}})

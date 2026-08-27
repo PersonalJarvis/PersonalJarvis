@@ -17,14 +17,16 @@
  * for `/api/providers`; the list still resolves and corrects the seed.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   BackLink,
   Panel,
   PanelHeader,
   SegmentedFilter,
+  SoftButton,
 } from "@/components/extensions/primitives";
-import { useInventory } from "@/hooks/useLocalModels";
+import { useInventory, useReloadLocalModels } from "@/hooks/useLocalModels";
 import { useProviders } from "@/hooks/useProviders";
 import {
   LOCAL_MODELS_MARK_MOUNT,
@@ -153,6 +155,17 @@ export function LocalModelsView() {
     setMode(next);
     storeMode(next);
   }, []);
+
+  // Refresh: drops the painted snapshot and every cached answer, then reads
+  // the server again. The one recovery from a snapshot taken while the
+  // server was silent, which otherwise paints a wiped machine (BUG-188).
+  const reload = useReloadLocalModels(providerId ?? undefined);
+  const [reloading, setReloading] = useState(false);
+  const onReload = useCallback(() => {
+    if (reloading) return;
+    setReloading(true);
+    void reload().finally(() => setReloading(false));
+  }, [reload, reloading]);
   // "Manage" on the overview's installed list: the full ledger lives on the
   // Advanced-only Models tab, so the switch flips along with the tab.
   const openManage = useCallback(() => {
@@ -202,6 +215,19 @@ export function LocalModelsView() {
             options={tabs}
           />
           <div className="flex items-center gap-2">
+            <SoftButton
+              onClick={onReload}
+              disabled={!providerId || reloading}
+              ariaLabel={t("local_models.reload")}
+              className="h-8"
+            >
+              {reloading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              {t("local_models.reload")}
+            </SoftButton>
             <span className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
               {t("local_models.mode_label")}
             </span>

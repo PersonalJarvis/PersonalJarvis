@@ -31,6 +31,21 @@ export function snapshotKey(providerId: string): string {
 }
 
 /**
+ * Whether a payload is safe to paint from later.
+ *
+ * A sweep taken while the server was unreachable — still booting, stopped,
+ * a remote host off the network — carries an empty inventory. Painting that
+ * on the next open shows a machine that looks wiped: every role reads "not
+ * installed", every shortlist reads "nothing installed fits this job yet",
+ * and each role's picker offers only the tag already configured, so no other
+ * model can be chosen at all. Such a payload is neither stored nor read back;
+ * the previous, honest snapshot stays (BUG-188).
+ */
+export function isPaintable(data: OverviewResponse): boolean {
+  return !data.inventory?.error;
+}
+
+/**
  * Synchronously read the last overview for `providerId`; `null` when there
  * is none, the version does not match, the JSON is broken or storage is
  * unavailable. The returned payload carries `source: "cache"` so a panel can
@@ -53,6 +68,7 @@ export function readOverviewSnapshot(
       !data.recommended
     )
       return null;
+    if (!isPaintable(data)) return null;
     return { ...data, source: "cache" };
   } catch {
     return null;
@@ -60,14 +76,16 @@ export function readOverviewSnapshot(
 }
 
 /**
- * Persist an overview for the next paint. Oversized payloads and blocked
- * storage are silent no-ops — the section still works, it just paints a
- * beat later next time.
+ * Persist an overview for the next paint. Oversized payloads, a sweep taken
+ * while the server was unreachable (see `isPaintable`) and blocked storage
+ * are silent no-ops — the section still works, it just paints a beat later
+ * next time.
  */
 export function writeOverviewSnapshot(
   providerId: string,
   data: OverviewResponse,
 ): boolean {
+  if (!isPaintable(data)) return false;
   try {
     const env: Envelope = { v: SNAPSHOT_VERSION, data };
     const json = JSON.stringify(env);

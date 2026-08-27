@@ -1,16 +1,20 @@
 /**
- * Overview — the Simple-mode front page of the Local models section, written
- * so it reads like a plan rather than a dashboard.
+ * Overview — the front page of the Local models section, written as three
+ * steps rather than a dashboard.
  *
- * Top to bottom: one status sentence ("Ollama 0.32 running · 16 GB graphics
- * memory · Ollama is not your active brain (OpenRouter answers)"), the
- * actions — "Set up everything" first (the one click that starts the server,
- * fills every role with the best installed download and fetches only what
- * is missing; `useLocalSetup`), then "Browse models" — with the flow's
- * progress line underneath, the headline tiles (downloads on disk, graphics
- * memory, loaded now), the roles as a checklist, and every installed model
- * as one line (`InstalledPanel`), so "what do I have?" never needs the
- * Advanced switch.
+ * Running a model on your own machine is three questions in a fixed order:
+ * is there a server, are there models on it, and which model answers for
+ * which job. The page is those three questions, one numbered `StepCard`
+ * each, whose marker turns into a check once the step is satisfied — so
+ * "what is still missing" is a glance. Each card carries at most one primary
+ * action, and step 1 carries the one that does everything (`useLocalSetup`:
+ * install or start the server, fill every job with the best installed
+ * download, fetch only what is missing, verify, and remember the autostart).
+ *
+ * Every job's picker is on screen at every detail level. The Simple page used
+ * to fold them away behind a "Change" button, which is half of why the
+ * section read as "it keeps resetting my model" (BUG-188). `advanced` adds
+ * capability badges, Tune and the read-only jobs; it never removes a control.
  *
  * Props take `providerId` — the id of the card that declares
  * `supports_model_pull` — never a provider name.
@@ -19,6 +23,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Cpu, HardDrive, Layers, Loader2, Search, Sparkles } from "lucide-react";
 
 import {
+  FactRows,
   SoftButton,
   StatTile,
   StatusDot,
@@ -36,6 +41,7 @@ import { InstalledPanel } from "./InstalledPanel";
 import { formatExpiry } from "./localModelsFormat";
 import type { SetupStep, SetupSummary } from "./localSetup";
 import { RolesPanel, type RolesPanelProps } from "./RolesPanel";
+import { StepCard, type StepState } from "./StepCard";
 import { useLocalSetup } from "./useLocalSetup";
 import { verifyLines } from "./verifyLines";
 
@@ -46,8 +52,8 @@ export interface OverviewPanelProps extends RolesPanelProps {
   onManage?: () => void;
   /**
    * Detail level. The switch beside the rail must change what is on screen
-   * HERE too, or it reads as a dead control: Simple keeps the roles a
-   * checklist, Advanced opens every row to its picker, capabilities and Tune.
+   * HERE too, or it reads as a dead control: Advanced adds the capability
+   * badges, the Tune buttons and the read-only jobs.
    */
   advanced?: boolean;
 }
@@ -73,11 +79,13 @@ export function OverviewPanel({
   const { providers, refetch: refetchProviders } = useProviders();
   const setup = useLocalSetup(providerId);
 
-  // One round-trip (or the painted snapshot) feeds every tile.
+  // One round-trip (or the painted snapshot) feeds every card.
   const s = overview.data?.server;
   const shortlist = { data: overview.data?.recommended };
   const inventory = { data: overview.data?.inventory };
   const server = { isLoading: overview.isLoading, isError: overview.isError };
+  // Painted from the snapshot while the live read runs: say so rather than
+  // present a cached machine as the current one.
   const checking = overview.isFetching && overview.data?.source === "cache";
 
   const marked = useRef(false);
@@ -91,7 +99,7 @@ export function OverviewPanel({
     providers.find((p) => p.id === providerId)?.label ||
     t("local_models.overview.status_generic_server");
 
-  // --- status sentence --------------------------------------------------
+  // --- step 1: the server ----------------------------------------------
   let serverClause = t("local_models.overview.status_checking");
   let serverTone: "ok" | "warn" | "error" | "busy" = "busy";
   if (s) {
@@ -135,32 +143,17 @@ export function OverviewPanel({
 
   const acceleratorGb = shortlist.data?.accelerator_gb ?? 0;
   const acceleratorSource = shortlist.data?.accelerator_source ?? "";
-  const gpuClause =
-    acceleratorGb > 0
-      ? fill(t("local_models.overview.status_gpu"), {
-          gb: acceleratorGb.toFixed(1),
-        })
-      : shortlist.data
-        ? t("local_models.overview.status_gpu_unknown")
-        : "";
 
-  // The third clause only renders once the provider list is here — no gate.
+  // The brain clause only renders once the provider list is here — no gate.
   const activeBrain =
     providers.find((p) => p.tier === "brain" && p.active) ?? null;
   const otherBrainActive =
     activeBrain !== null && activeBrain.id !== providerId;
-  const brainClause = activeBrain
-    ? activeBrain.id === providerId
-      ? fill(t("local_models.overview.status_brain_active"), {
-          server: serverLabel,
-        })
-      : fill(t("local_models.overview.status_brain_other"), {
-          server: serverLabel,
-          brain: activeBrain.label,
-        })
-    : "";
 
-  // --- tiles ------------------------------------------------------------
+  // --- step 2: the models ----------------------------------------------
+  const models = inventory.data?.models ?? [];
+  const modelCount = models.length;
+  const serverSilent = Boolean(inventory.data?.error);
   const gpuValue =
     acceleratorGb > 0
       ? `${acceleratorGb.toFixed(1)} GB`
@@ -179,18 +172,6 @@ export function OverviewPanel({
           })
         : t("local_models.overview.gpu_unknown_hint");
 
-  const modelCount = inventory.data?.models.length ?? null;
-  const diskHint = [
-    modelCount === null
-      ? ""
-      : modelCount === 1
-        ? t("local_models.overview.disk_model_one")
-        : fill(t("local_models.overview.disk_models"), { count: modelCount }),
-    s?.models_dir ?? "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
   const loaded = s?.running_models ?? [];
   const firstExpiry = loaded.length > 0 ? formatExpiry(loaded[0].expires_at) : "";
   const loadedHint =
@@ -207,27 +188,10 @@ export function OverviewPanel({
           .join(" · ")
       : t("local_models.overview.loaded_none");
 
-  const dotClass = {
-    ok: "bg-emerald-500",
-    warn: "bg-amber-500",
-    error: "bg-destructive",
-    busy: "bg-primary animate-pulse",
-  }[serverTone];
-
-  // --- actions ----------------------------------------------------------
-  // A server that is not installed gets a button that NAMES the install:
-  // the click is the consent the dangerous-flagged install route asks for.
-  const needsInstall = Boolean(s && !s.installed && !remote);
-  const setupLabel = needsInstall
-    ? fill(t("local_models.overview.action_setup_install"), {
-        server: serverLabel,
-      })
-    : t("local_models.overview.action_setup");
-  const setupHint = needsInstall
-    ? t("local_models.overview.action_setup_install_hint")
-    : t("local_models.overview.action_setup_hint");
-
+  // --- step 3: the jobs -------------------------------------------------
   const roleRows = overview.data?.roles.roles ?? [];
+  const writableRows = roleRows.filter((r) => !r.advanced && r.writable);
+  const filledRows = writableRows.filter((r) => r.current !== "" && r.installed);
   const roleLabel = useCallback(
     (role: LocalModelRole) => {
       const row = roleRows.find((r) => r.id === role);
@@ -236,133 +200,247 @@ export function OverviewPanel({
     [roleRows, t],
   );
 
+  // --- step states ------------------------------------------------------
+  // "Checking" is busy, not a verdict; a step only claims done on facts.
+  const serverState: StepState = !s
+    ? server.isError
+      ? "attention"
+      : "busy"
+    : s.running
+      ? "done"
+      : "attention";
+  const modelsState: StepState = !inventory.data
+    ? "busy"
+    : serverSilent
+      ? "attention"
+      : modelCount > 0
+        ? "done"
+        : "attention";
+  const jobsState: StepState =
+    writableRows.length === 0
+      ? "busy"
+      : filledRows.length === writableRows.length
+        ? "done"
+        : "attention";
+
+  // A server that is not installed gets a button that NAMES the install:
+  // the click is the consent the dangerous-flagged install route asks for.
+  const needsInstall = Boolean(s && !s.installed && !remote);
+  const setupLabel = needsInstall
+    ? fill(t("local_models.overview.action_setup_install"), {
+        server: serverLabel,
+      })
+    : t("local_models.overview.action_setup");
+
   return (
     <div className="space-y-4" data-testid="local-models-overview-panel">
-      <p
-        className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-foreground"
-        data-testid="overview-status"
-      >
-        <span className={cn("h-2 w-2 shrink-0 rounded-full", dotClass)} />
-        <span>{serverClause}</span>
-        {gpuClause && (
-          <>
-            <span className="text-muted-foreground">·</span>
-            <span className="text-muted-foreground">{gpuClause}</span>
-          </>
-        )}
-        {brainClause && (
-          <>
-            <span className="text-muted-foreground">·</span>
-            <span
-              className={cn(
-                activeBrain?.id === providerId
-                  ? "text-muted-foreground"
-                  : "text-amber-700 dark:text-amber-400",
-              )}
-              data-testid="overview-brain-clause"
-            >
-              {brainClause}
-            </span>
-          </>
-        )}
-        {checking && (
-          <span className="ml-1" data-testid="overview-checking">
-            <StatusDot
-              tone="busy"
-              pulse
-              label={t("local_models.overview.checking")}
-            />
+      {/* ── 1 · Server ────────────────────────────────────────────────── */}
+      <StepCard
+        step={1}
+        title={t("local_models.overview.step_server_title")}
+        subtitle={t("local_models.overview.step_server_subtitle")}
+        state={serverState}
+        testId="step-server"
+        status={
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <StatusDot tone={serverTone} pulse={serverTone === "busy"} label={serverClause} />
+            {checking && (
+              <span data-testid="overview-checking">
+                <StatusDot tone="busy" pulse label={t("local_models.overview.checking")} />
+              </span>
+            )}
           </span>
-        )}
-      </p>
-
-      <div
-        className="flex flex-wrap gap-2"
-        role="group"
-        aria-label={t("local_models.overview.actions_label")}
-        data-testid="overview-actions"
-      >
-        <ActionButton
-          primary
-          icon={
-            setup.busy ? (
+        }
+        action={
+          <SoftButton
+            primary
+            onClick={setup.run}
+            disabled={setup.busy}
+            className="h-9"
+          >
+            {setup.busy ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Sparkles className="h-4 w-4" />
-            )
-          }
-          label={setupLabel}
-          hint={setupHint}
-          onClick={setup.run}
-          disabled={setup.busy}
-          testId="overview-setup"
+            )}
+            {setupLabel}
+          </SoftButton>
+        }
+      >
+        <p className="text-xs text-muted-foreground" data-testid="setup-hint">
+          {needsInstall
+            ? t("local_models.overview.action_setup_install_hint")
+            : t("local_models.overview.action_setup_hint")}
+        </p>
+        <SetupProgress
+          step={setup.step}
+          serverLabel={serverLabel}
+          roleLabel={roleLabel}
+          otherBrain={otherBrainActive ? (activeBrain?.label ?? "") : ""}
+          onSwitchBrain={async () => {
+            await switchBrainProvider(providerId);
+            await refetchProviders();
+          }}
+          t={t}
         />
-        {onBrowse && (
-          <ActionButton
-            icon={<Search className="h-4 w-4" />}
-            label={t("local_models.overview.action_browse")}
-            hint={t("local_models.overview.action_browse_hint")}
-            onClick={onBrowse}
+        <FactRows
+          className="mt-3 !text-sm"
+          rows={[
+            {
+              label: t("local_models.overview.fact_version"),
+              value: s?.version || t("local_models.overview.server_unknown"),
+            },
+            {
+              label: t("local_models.overview.fact_address"),
+              value: s?.base_url ? (
+                <span className="font-mono text-xs">{s.base_url}</span>
+              ) : (
+                ""
+              ),
+            },
+            {
+              label: t("local_models.overview.gpu"),
+              value: (
+                <span>
+                  {gpuValue}
+                  <span className="ml-2 text-xs text-muted-foreground">{gpuHint}</span>
+                </span>
+              ),
+            },
+            {
+              label: t("local_models.overview.fact_brain"),
+              value: activeBrain ? (
+                <span
+                  className={cn(
+                    otherBrainActive && "text-amber-700 dark:text-amber-400",
+                  )}
+                  data-testid="overview-brain-clause"
+                >
+                  {otherBrainActive
+                    ? fill(t("local_models.overview.status_brain_other"), {
+                        server: serverLabel,
+                        brain: activeBrain.label,
+                      })
+                    : fill(t("local_models.overview.status_brain_active"), {
+                        server: serverLabel,
+                      })}
+                </span>
+              ) : (
+                ""
+              ),
+            },
+          ]}
+        />
+      </StepCard>
+
+      {/* ── 2 · Models ───────────────────────────────────────────────── */}
+      <StepCard
+        step={2}
+        title={t("local_models.overview.step_models_title")}
+        subtitle={t("local_models.overview.step_models_subtitle")}
+        state={modelsState}
+        testId="step-models"
+        status={
+          <StatusDot
+            tone={modelsState === "done" ? "ok" : modelsState === "busy" ? "busy" : "warn"}
+            pulse={modelsState === "busy"}
+            label={
+              serverSilent
+                ? t("local_models.overview.models_unknown")
+                : modelCount === 1
+                  ? fill(t("local_models.overview.models_one"), {
+                      size: formatGigabytes(inventory.data?.disk_bytes ?? 0),
+                    })
+                  : fill(t("local_models.overview.models_count"), {
+                      count: modelCount,
+                      size: formatGigabytes(inventory.data?.disk_bytes ?? 0),
+                    })
+            }
           />
-        )}
-      </div>
+        }
+        action={
+          <>
+            {onBrowse && (
+              <SoftButton onClick={onBrowse} className="h-9">
+                <Search className="h-4 w-4" />
+                {t("local_models.overview.action_browse")}
+              </SoftButton>
+            )}
+            {onManage && modelCount > 0 && (
+              <SoftButton onClick={onManage} className="h-9">
+                {t("local_models.installed.manage")}
+              </SoftButton>
+            )}
+          </>
+        }
+      >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <StatTile
+            icon={<HardDrive className="h-3.5 w-3.5" />}
+            label={t("local_models.overview.disk")}
+            value={formatGigabytes(s?.disk_bytes ?? 0)}
+            hint={s?.models_dir ?? ""}
+            tone="primary"
+            loading={server.isLoading}
+          />
+          <StatTile
+            icon={<Cpu className="h-3.5 w-3.5" />}
+            label={t("local_models.overview.gpu")}
+            value={gpuValue}
+            hint={gpuHint}
+            tone="primary"
+            loading={server.isLoading}
+          />
+          <StatTile
+            icon={<Layers className="h-3.5 w-3.5" />}
+            label={t("local_models.overview.loaded")}
+            value={String(loaded.length)}
+            hint={loadedHint}
+            tone="primary"
+            loading={server.isLoading}
+          />
+        </div>
+        <div className="mt-3">
+          <InstalledPanel
+            bare
+            models={models}
+            roles={roleRows}
+            diskBytes={inventory.data?.disk_bytes ?? s?.disk_bytes ?? 0}
+            loading={overview.isLoading}
+            error={inventory.data?.error ?? null}
+            onManage={onManage}
+          />
+        </div>
+      </StepCard>
 
-      <SetupProgress
-        step={setup.step}
-        serverLabel={serverLabel}
-        roleLabel={roleLabel}
-        otherBrain={otherBrainActive ? (activeBrain?.label ?? "") : ""}
-        onSwitchBrain={async () => {
-          await switchBrainProvider(providerId);
-          await refetchProviders();
-        }}
-        t={t}
-      />
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatTile
-          icon={<HardDrive className="h-3.5 w-3.5" />}
-          label={t("local_models.overview.disk")}
-          value={formatGigabytes(s?.disk_bytes ?? 0)}
-          hint={diskHint}
-          tone="primary"
-          loading={server.isLoading}
+      {/* ── 3 · Jobs ─────────────────────────────────────────────────── */}
+      <StepCard
+        step={3}
+        title={t("local_models.overview.step_jobs_title")}
+        subtitle={t("local_models.overview.step_jobs_subtitle")}
+        state={jobsState}
+        testId="step-jobs"
+        status={
+          writableRows.length > 0 ? (
+            <StatusDot
+              tone={jobsState === "done" ? "ok" : "warn"}
+              label={fill(t("local_models.overview.jobs_filled"), {
+                filled: filledRows.length,
+                total: writableRows.length,
+              })}
+            />
+          ) : null
+        }
+      >
+        <RolesPanel
+          providerId={providerId}
+          onTune={onTune}
+          onOpenApiKeys={onOpenApiKeys}
+          advanced={advanced}
+          onSetup={setup.run}
+          setupBusy={setup.busy}
         />
-        <StatTile
-          icon={<Cpu className="h-3.5 w-3.5" />}
-          label={t("local_models.overview.gpu")}
-          value={gpuValue}
-          hint={gpuHint}
-          tone="primary"
-          loading={server.isLoading}
-        />
-        <StatTile
-          icon={<Layers className="h-3.5 w-3.5" />}
-          label={t("local_models.overview.loaded")}
-          value={String(loaded.length)}
-          hint={loadedHint}
-          tone="primary"
-          loading={server.isLoading}
-        />
-      </div>
-
-      <RolesPanel
-        providerId={providerId}
-        onTune={onTune}
-        onOpenApiKeys={onOpenApiKeys}
-        variant={advanced ? "ledger" : "checklist"}
-        onSetup={setup.run}
-        setupBusy={setup.busy}
-      />
-
-      <InstalledPanel
-        models={inventory.data?.models ?? []}
-        roles={roleRows}
-        diskBytes={inventory.data?.disk_bytes ?? s?.disk_bytes ?? 0}
-        loading={overview.isLoading}
-        error={inventory.data?.error ?? null}
-        onManage={onManage}
-      />
+      </StepCard>
     </div>
   );
 }
@@ -498,7 +576,7 @@ function SetupProgress({
   }
 
   return (
-    <div className="space-y-1 text-xs" data-testid="setup-progress">
+    <div className="mt-2 space-y-1 text-xs" data-testid="setup-progress">
       <StatusDot tone={tone} pulse={tone === "busy"} label={text} />
       {lines.map((line, i) => (
         <p key={i} className="ml-4 text-muted-foreground">
@@ -553,7 +631,7 @@ function SetupProgress({
 }
 
 /** A 44 px SoftButton with icon, label and a one-line hint underneath. */
-function ActionButton({
+export function ActionButton({
   icon,
   label,
   hint,

@@ -61,6 +61,32 @@ describe("localModelsSnapshot", () => {
     expect(readOverviewSnapshot("ollama")).toBeNull();
   });
 
+  it("neither stores nor reads a sweep taken while the server was silent", () => {
+    // Ollama still booting: the payload is truthful now and ruinous later —
+    // an empty inventory paints a machine that looks wiped, and each role's
+    // picker then offers only the tag already configured (BUG-188).
+    const offline = payload({
+      inventory: {
+        models: [],
+        error: "Ollama is not answering on http://localhost:11434.",
+      } as unknown as OverviewResponse["inventory"],
+    });
+    expect(writeOverviewSnapshot("ollama", offline)).toBe(false);
+    expect(readOverviewSnapshot("ollama")).toBeNull();
+
+    // A good snapshot already on disk survives the offline sweep.
+    writeOverviewSnapshot("ollama", payload());
+    expect(writeOverviewSnapshot("ollama", offline)).toBe(false);
+    expect(readOverviewSnapshot("ollama")?.fetched_at).toBe(1_700_000_000);
+
+    // One written by an older build is dropped on read rather than painted.
+    window.localStorage.setItem(
+      snapshotKey("ollama"),
+      JSON.stringify({ v: SNAPSHOT_VERSION, data: offline }),
+    );
+    expect(readOverviewSnapshot("ollama")).toBeNull();
+  });
+
   it("keeps one entry per provider", () => {
     writeOverviewSnapshot("ollama", payload());
     expect(readOverviewSnapshot("other")).toBeNull();
