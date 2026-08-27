@@ -1487,6 +1487,37 @@ _LOCAL_MANAGED_INTERACTIVE_OPEN_S = 3.0
 _LOCAL_LAUNCH_MIN_INTERVAL_S = 60.0
 
 
+def _local_declaration_budget(launch_command: str) -> int:
+    """Declaration tokens THIS machine's own voice brain can carry (ADR-0035 §4).
+
+    A hosted model reads a big declaration block off a server-side cache; a
+    self-hosted one re-sends it into a window it shares with the persona, the
+    transcript and the answer, and re-prefills it whenever the local prefix
+    cache misses. So the bound belongs to the machine, not to a price list —
+    it is derived from the num_ctx the supervisor already sized from this
+    host's VRAM, and is therefore right on an 8 GB laptop and a 48 GB
+    workstation alike. Tools over it stay reachable through ``jarvis_action``.
+
+    0 (unbounded) for an endpoint we cannot measure: a box on the LAN may be
+    far bigger than this one, and ``[voice].realtime_tool_declaration_budget_tokens``
+    stays the user's own lever there.
+    """
+    if not launch_command:
+        return 0
+    try:
+        import importlib  # lazy (AP-26)
+
+        supervisor = importlib.import_module("jarvis.realtime.local_server.supervisor")
+        return max(int(supervisor.voice_brain_declaration_budget_tokens(launch_command)), 0)
+    except Exception:  # noqa: BLE001 — an unbounded set still works, just slower
+        log.debug(
+            "local-realtime: declaration budget unreadable; leaving the "
+            "native tool set unbounded",
+            exc_info=True,
+        )
+        return 0
+
+
 def _launch_command_target_state(command: str) -> str:
     """Whether the program a launch command names still exists on this machine.
 
@@ -1603,8 +1634,10 @@ class LocalRealtimeProvider:
 
     name = "local-realtime"
     supports_realtime = True
-    # Same OpenAI-protocol wire, same per-response context billing model —
-    # and a self-hosted model is usually the smaller one (ADR-0035 §4).
+    # Class-level floor for the declaration budget (ADR-0035 §4). The real
+    # number is per-instance and comes from the brain this machine actually
+    # runs — see the property below; this literal only keeps the attribute
+    # present for the runtime protocol check on the CLASS.
     tool_declaration_budget_tokens = 0
     # Never an implicit stand-in: a self-hosted endpoint is a deliberate choice,
     # and quietly routing a call into one the user did not pick is the opposite
@@ -1685,6 +1718,9 @@ class LocalRealtimeProvider:
         self._launch_command = (launch_command or "").strip()
         self._managed_interactive_preflight = False
         self._duplex_unavailable_reason = ""
+        self.tool_declaration_budget_tokens = _local_declaration_budget(
+            self._launch_command
+        )
 
     # -- factory wiring ----------------------------------------------------
 

@@ -2127,6 +2127,16 @@ _COMPLETE_THE_REQUEST_DIRECTIVE = (
 # a few hundred characters and pass through untouched.
 _PREFERENCES_MAX_CHARS = 64_000
 
+#: The same block for a brain that re-reads it on every turn. Not a cost
+#: window — the cap above was retired as one (2026-08-24), but its own comment
+#: names this hot path, and a self-hosted model has no server-side prompt cache
+#: to hide behind: it re-prefills whatever it is handed whenever the local
+#: prefix cache misses. Live 2026-08-27 the per-turn prompt on the local card
+#: had grown from a 3,060-token median to 16,386, and the call stopped feeling
+#: live. Providers that declare ``prefers_compact_instructions`` get this one;
+#: everyone else keeps the full block.
+_PREFERENCES_MAX_CHARS_COMPACT = 4_000
+
 #: Cap on a skill body injected straight into the live session. Tighter than the
 #: preferences cap above by precedent, not by guess: that block is the user's own
 #: standing file and carries the comment that a pathologically large one must not
@@ -2149,7 +2159,7 @@ _REALTIME_SKILL_TOOL_WORD_RE = re.compile(
 )
 
 
-def _preferences_block(config: Any) -> str:
+def _preferences_block(config: Any, *, compact: bool = False) -> str:
     """The user's standing-instructions block (``Ruben.md`` equivalent).
 
     The realtime engine speaks directly to the user, so it must honor the same
@@ -2163,7 +2173,10 @@ def _preferences_block(config: Any) -> str:
         from jarvis.brain import agent_instructions
 
         return agent_instructions.render_for_prompt(
-            config, max_chars=_PREFERENCES_MAX_CHARS
+            config,
+            max_chars=(
+                _PREFERENCES_MAX_CHARS_COMPACT if compact else _PREFERENCES_MAX_CHARS
+            ),
         )
     except Exception:  # noqa: BLE001 — never break the voice session on a prefs fault
         return ""
@@ -3731,7 +3744,12 @@ class RealtimeVoiceSession:
                     model=model,
                     language_is_pinned=self._language_is_pinned,
                     tool_directive=self._tool_directive(provider=provider),
-                    preferences=_preferences_block(self._config),
+                    preferences=_preferences_block(
+                        self._config,
+                        compact=bool(
+                            getattr(provider, "prefers_compact_instructions", False)
+                        ),
+                    ),
                     workspace_directive=self._workspace_directive(),
                     skills_directive=self._skills_directive(
                         compact=bool(
@@ -5283,7 +5301,12 @@ class RealtimeVoiceSession:
                                 model=self._active_model,
                                 language_is_pinned=True,
                                 tool_directive=turn_tool_directive,
-                                preferences=_preferences_block(self._config),
+                                preferences=_preferences_block(
+                                    self._config,
+                                    compact=getattr(
+                                        self, "_compact_instructions", False
+                                    ),
+                                ),
                                 # Zero extra round trips: this update already
                                 # fires on every final transcript, so a
                                 # qualifying skill rides along instead of paying
@@ -7175,7 +7198,10 @@ class RealtimeVoiceSession:
                         delegate_required=False,
                         delegate_discouraged=True,
                     ),
-                    preferences=_preferences_block(self._config),
+                    preferences=_preferences_block(
+                        self._config,
+                        compact=getattr(self, "_compact_instructions", False),
+                    ),
                     workspace_directive=self._workspace_directive(),
                     skills_directive=self._skills_directive(),
                     compact=getattr(self, "_compact_instructions", False),

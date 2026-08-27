@@ -1733,6 +1733,39 @@ def test_warm_brain_pings_ollama_with_keep_alive(monkeypatch) -> None:
     assert payload["keep_alive"] == supervisor.BRAIN_KEEP_ALIVE
 
 
+def test_the_declaration_budget_follows_this_machine_s_context_window() -> None:
+    """The bound is the hardware's, so it has to move with the box: the same
+    code must give a 8 GB laptop and a big workstation different numbers."""
+    def command(model: str) -> str:
+        return (
+            '"C:\tree\venv\Scripts\speech-to-speech.exe" --mode realtime '
+            f"--model_name {model} "
+            "--responses_api_base_url http://127.0.0.1:11434/v1 "
+            "--responses_api_api_key ollama"
+        )
+
+    small = supervisor.voice_brain_declaration_budget_tokens(command("qwen3.5:4b-voice-8k"))
+    medium = supervisor.voice_brain_declaration_budget_tokens(command("ornith:9b-voice-32k"))
+    large = supervisor.voice_brain_declaration_budget_tokens(command("m:14b-voice-64k"))
+
+    assert (small, medium, large) == (2048, 8192, 16384)
+    assert small < medium < large
+
+
+def test_a_brain_without_a_sized_alias_falls_back_to_the_floor() -> None:
+    """Never unbounded on a local brain we cannot measure: the floor is the
+    smallest window a managed brain is ever given."""
+    budget = supervisor.voice_brain_declaration_budget_tokens(_COMMAND)
+    expected = int(
+        supervisor.VOICE_BRAIN_CONTEXT_TOKENS_FLOOR * supervisor.VOICE_BRAIN_DECLARATION_SHARE
+    )
+    assert budget == expected
+
+
+def test_a_command_without_a_brain_declares_no_budget() -> None:
+    assert supervisor.voice_brain_declaration_budget_tokens("serve --mode realtime") == 0
+
+
 def test_anchor_brain_load_outlives_the_caller(monkeypatch) -> None:
     """Ollama drops a model load the moment its LAST client hangs up, so the
     request that carries a cold load must not be one the spawn path waits on

@@ -159,6 +159,17 @@ def _brain_keep_alive(release_s: float) -> str:
 # (``jarvis.brain.ollama_profiles.largest_context_for``).
 #: Context used when the machine's memory or the model's size cannot be read.
 VOICE_BRAIN_CONTEXT_TOKENS_FLOOR = 8192
+
+#: Share of the voice brain's context window that native tool declarations may
+#: claim. Small local brains re-send the whole declaration block on every turn,
+#: and llama.cpp only keeps it free by caching that unchanged prefix — a cache
+#: that dies the moment declarations plus the growing transcript overflow
+#: num_ctx and the context starts shifting. Measured on an RTX 5070 Ti with
+#: ornith:9b at 32k (2026-08-27): a stable 8k-token block costs 2.4 s once and
+#: 0.16 s on every later turn, while a set that overflows the window costs the
+#: full 4.2 s prefill EVERY turn. A quarter leaves three quarters for the
+#: instructions, the transcript and the answer, so the cache survives the call.
+VOICE_BRAIN_DECLARATION_SHARE = 0.25
 #: Accelerator memory kept free for the local STT + TTS models beside the brain.
 VOICE_STACK_RESERVE_GB = 4.0
 #: Historical name of the floor; readers that only need "some bound" keep it.
@@ -2459,6 +2470,35 @@ def voice_brain_context_tokens(
         chosen,
         f"{model} ({size_gb:.1f} GB{native_note}): {budget_sentence} -> num_ctx {chosen:,}",
     )
+
+
+def voice_brain_declaration_budget_tokens(launch_command: str) -> int:
+    """Native tool declarations THIS machine's voice brain can carry, in tokens.
+
+    A hardware bound, not a cost one (the 2026-08-24 mandate retires cost caps
+    but keeps hardware limits): a hosted model reads a 60k-token declaration
+    block off a cached, server-side prefix, while a 9B brain in a 32k window
+    has to fit that block, the persona, the whole transcript AND the answer
+    into the same window — and pays a full prefill on every turn once it does
+    not. Live 2026-08-27 that was 4.2 s of silence per answer instead of 0.2 s.
+
+    Derived from the context window the machine actually got, so it scales with
+    the box: :func:`voice_brain_context_tokens` already sizes num_ctx from this
+    host's VRAM (or RAM), and the bounded alias carries the result in its name.
+    A command with no readable window falls back to the floor, which is the
+    smallest window any managed brain is ever given.
+
+    Nothing becomes unreachable: declarations over the budget are dropped from
+    the NATIVE set in a deterministic order and stay callable through
+    ``jarvis_action`` (ADR-0035 §4).
+    """
+    model, _brain_url = _brain_endpoint(launch_command)
+    if not model:
+        return 0
+    tag = model.rsplit(":", 1)[-1] if ":" in model else ""
+    match = _VOICE_MODEL_SUFFIX_RE.search(tag)
+    context_tokens = int(match.group(1)) * 1024 if match else VOICE_BRAIN_CONTEXT_TOKENS_FLOOR
+    return max(int(context_tokens * VOICE_BRAIN_DECLARATION_SHARE), 512)
 
 
 def _voice_context_models(
