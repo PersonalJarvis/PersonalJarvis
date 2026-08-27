@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { robustCopy } from "@/lib/clipboard";
+import {
+  DICTATION_SETTINGS_EVENT,
+  announceDictationSettings,
+  type DictationSettingsEventDetail,
+} from "@/hooks/usePromptMode";
 
 /**
  * The complete outcome vocabulary of one dictation, mirroring
@@ -552,6 +557,19 @@ export function useDictation() {
     void refetch();
   }, [refetch]);
 
+  // A flip made elsewhere — the Prompt Mode pill on the Jarvis bar — reaches
+  // this settings block without a refetch, so the card under Voice never
+  // shows a switch the bar just moved in the other position.
+  useEffect(() => {
+    const onSettings = (ev: Event) => {
+      const detail = (ev as CustomEvent<DictationSettingsEventDetail>).detail;
+      if (!detail?.settings) return;
+      setSettings((prev) => (prev ? { ...prev, ...(detail.settings as Partial<DictationSettings>) } : prev));
+    };
+    window.addEventListener(DICTATION_SETTINGS_EVENT, onSettings);
+    return () => window.removeEventListener(DICTATION_SETTINGS_EVENT, onSettings);
+  }, []);
+
   const start = useCallback(
     async (target: "auto" | "insert" | "chat" = "auto") => {
       await unwrap(
@@ -583,6 +601,7 @@ export function useDictation() {
         }),
       );
       setSettings(data.settings);
+      announceDictationSettings(data.settings as unknown as Record<string, unknown>);
       await refetchStatus();
     },
     [refetchStatus],

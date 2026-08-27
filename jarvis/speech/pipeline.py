@@ -13134,6 +13134,7 @@ class SpeechPipeline:
                         cleaned,
                         cfg=cfg,
                         protected_terms=self._dictation_protected_terms(),
+                        language=effective_language,
                     )
                     prompted = result.status == STATUS_PROMPTED
                     log.info(

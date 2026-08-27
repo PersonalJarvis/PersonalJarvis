@@ -274,7 +274,9 @@ async def _format_restored_text(
             )
 
             if prompt_mode_enabled(cfg):
-                result = await compose_prompt(text, cfg=cfg, protected_terms=terms)
+                result = await compose_prompt(
+                    text, cfg=cfg, protected_terms=terms, language=language
+                )
                 prompted = result.status == STATUS_PROMPTED
                 if prompted:
                     text = result.text
@@ -1399,7 +1401,11 @@ async def test_polish(request: Request) -> dict[str, Any]:
     )
 
     if prompt_mode_enabled(cfg):
-        result = await compose_prompt(_PROMPT_MODE_SAMPLE, cfg=cfg, protected_terms=terms)
+        # The sample is English, so the closing line is too when the model
+        # leaves it out — the same rule a live English dictation gets.
+        result = await compose_prompt(
+            _PROMPT_MODE_SAMPLE, cfg=cfg, protected_terms=terms, language="en"
+        )
         if result.status == STATUS_PROMPTED or not (polish_enabled(cfg) or translate_to):
             return {
                 "status": result.status,

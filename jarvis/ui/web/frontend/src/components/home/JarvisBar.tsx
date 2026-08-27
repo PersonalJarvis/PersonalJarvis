@@ -1,5 +1,5 @@
 import { useCallback, type KeyboardEvent, type MouseEvent } from "react";
-import { PhoneOff } from "lucide-react";
+import { Loader2, PhoneOff, Sparkles } from "lucide-react";
 
 import { useEventStore, type VoiceState } from "@/store/events";
 import type { WaveformPhase } from "@/components/overlay/VoiceWaveform";
@@ -8,6 +8,7 @@ import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
+import { usePromptMode } from "@/hooks/usePromptMode";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -21,12 +22,14 @@ import { cn } from "@/lib/utils";
  * StageWaveform — breathing at rest, the microphone while listening).
  * Bottom row: the state (dot + word) and, in the same breath, what to do
  * or what is happening ("Say “Hey George” or tap to start", "Listening…")
- * on the left; on the right the engine pill — provider and model, click to
- * change it — and, only while a conversation is running, an End button.
- * The whole card is the start/stop control (maintainer, 2026-08-23: no
- * microphone button — you tap the bar or say the wake word); the pills stop
- * the click from reaching the card so changing the model never starts a
- * call by accident.
+ * on the left; on the right the Prompt Mode pill — lit while every dictation
+ * comes out as a finished prompt for a coding agent, one click flips it
+ * (maintainer, 2026-08-27) — then the engine pill — provider and model,
+ * click to change it — and, only while a conversation is running, an End
+ * button. The whole card is the start/stop control (maintainer, 2026-08-23:
+ * no microphone button — you tap the bar or say the wake word); the pills
+ * stop the click from reaching the card so changing the model or flipping
+ * Prompt Mode never starts a call by accident.
  *
  * A `div` with the button role rather than a `<button>`: a button may not
  * contain the two inner buttons, and nesting them is how a screen reader
@@ -36,8 +39,10 @@ export function JarvisBar({ phase, hint }: { phase: WaveformPhase; hint: string 
   const t = useT();
   const voiceState = useEventStore((s) => s.voiceState);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
+  const pushToast = useEventStore((s) => s.pushToast);
   const { connected } = useVoiceReadiness();
   const engine = useVoiceEngineDisplay();
+  const promptMode = usePromptMode();
   const { active: callActive, busy: callBusy, connecting, toggleCall } = useVoiceCall();
 
   const disabled = callBusy || connecting || !connected;
@@ -76,6 +81,22 @@ export function JarvisBar({ phase, hint }: { phase: WaveformPhase; hint: string 
     },
     [callBusy, toggleCall],
   );
+
+  const onPromptModeClick = useCallback(
+    (ev: MouseEvent<HTMLButtonElement>) => {
+      ev.stopPropagation();
+      promptMode.toggle().catch((err: unknown) => {
+        // The backend's own sentence names the blocker (a config file that
+        // could not be written); ours would send the user to the wrong place.
+        const detail = err instanceof Error && err.message ? err.message : "";
+        pushToast("error", detail || t("home.prompt_mode_failed"));
+      });
+    },
+    [promptMode, pushToast, t],
+  );
+
+  const promptModeTitle =
+    promptMode.enabled === true ? t("home.prompt_mode_on") : t("home.prompt_mode_off");
 
   return (
     <div
@@ -127,6 +148,37 @@ export function JarvisBar({ phase, hint }: { phase: WaveformPhase; hint: string 
         >
           {hint}
         </span>
+        {promptMode.enabled !== null && (
+          <button
+            type="button"
+            onClick={onPromptModeClick}
+            disabled={promptMode.busy}
+            aria-pressed={promptMode.enabled}
+            aria-label={promptModeTitle}
+            title={promptModeTitle}
+            data-testid="jarvis-bar-prompt-mode"
+            data-on={promptMode.enabled || undefined}
+            className={cn(
+              "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60",
+              promptMode.enabled
+                ? "border-primary/40 bg-primary/10 text-primary hover:bg-primary/15"
+                : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
+            )}
+          >
+            {promptMode.busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" aria-hidden />
+            )}
+            <span className="hidden font-medium sm:inline">{t("home.prompt_mode_pill")}</span>
+            {promptMode.enabled && (
+              <span
+                aria-hidden
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary animate-jarvis-pulse"
+              />
+            )}
+          </button>
+        )}
         <button
           type="button"
           onClick={onEngineClick}

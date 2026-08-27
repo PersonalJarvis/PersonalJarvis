@@ -37,7 +37,12 @@ from jarvis.dictation.polish import POLISH_STATUSES
 from jarvis.dictation.prompt_mode import (
     STATUS_PROMPTED,
     build_prompt_mode_prompt,
+    closing_thanks,
     compose_prompt,
+    ends_with_thanks,
+    ensure_closing_thanks,
+    guess_language,
+    normalize_prompt_text,
     prompt_guard_reason,
     prompt_mode_enabled,
     timeout_budget_s,
@@ -53,8 +58,12 @@ GOOD = (
     "The login page is broken again. When you type a wrong password it shows a "
     "blank screen instead of the error message. I think it's in AuthHandler, "
     "please fix that.\n\n"
-    "Also rename the save button to submit."
+    "Also rename the save button to submit.\n\n"
+    "Thanks!"
 )
+# The same prompt without the closing line — what a model that skipped the
+# last rule hands back, and what the code must finish.
+GOOD_WITHOUT_THANKS = GOOD.removesuffix("\n\nThanks!")
 
 
 class FakeChain:
@@ -133,11 +142,39 @@ def test_the_prompt_asks_for_plain_text_in_the_spoken_language() -> None:
     assert "## Task" not in system
 
 
-def test_the_prompt_asks_for_a_spoken_register() -> None:
+def test_the_prompt_asks_for_a_courteous_spoken_register() -> None:
     system = build_prompt_mode_prompt()
-    assert "SOUND LIKE A PERSON TALKING" in system
+    assert "SOUND LIKE A PERSON WRITING TO A COLLEAGUE" in system
+    assert "Courteous, not commanding" in system
     assert "Everyday words" in system
     assert "No sets of three" in system
+
+
+def test_the_prompt_describes_the_shape_of_a_professional_request() -> None:
+    """v3 (2026-08-27): situation, goal, limits, thanks — as paragraphs, no
+    labels, and the observed symptom is the part that must survive."""
+    system = build_prompt_mode_prompt()
+    assert "WHAT A GOOD REQUEST CONTAINS" in system
+    assert "with no labels in front of them" in system
+    assert "keep every concrete detail" in system
+    assert "one short line of thanks on its own line" in system
+    assert "FIX WHAT EXISTS" in system
+    assert "SAY EACH THING ONCE" in system
+    assert "no typographic hyphens" in system
+
+
+def test_the_prompt_carries_one_worked_example_per_language_it_ships_for() -> None:
+    """A fast model follows a shown shape far better than a described one;
+    one German and one English pair, each ending on its thanks line."""
+    system = build_prompt_mode_prompt()
+    assert system.count("Transcript: ") == 2
+    assert system.count("Message:\n") == 2
+    assert "\nDanke!\n" in system
+    assert system.rstrip().endswith("(none)") or "Thanks!" in system
+
+
+def test_the_prompt_version_names_the_v3_revision() -> None:
+    assert prompt_mode.PROMPT_MODE_PROMPT_VERSION == 3
 
 
 def test_the_prompt_keeps_every_task_dictated_at_once() -> None:
@@ -322,3 +359,114 @@ def test_the_keys_persist_and_reach_the_settings_route() -> None:
 
 def test_prompted_is_part_of_the_shared_status_vocabulary() -> None:
     assert STATUS_PROMPTED in POLISH_STATUSES
+
+
+# --------------------------------------------------------------------------- #
+# Typography — what a fast model leaves behind and the code takes out
+# --------------------------------------------------------------------------- #
+
+
+def test_non_breaking_hyphens_inside_words_become_hyphen_minus() -> None:
+    """Measured live 2026-08-27: "Jarvis‑Bar" and "Self‑Hosted" came back with
+    U+2011, which no grep for the spoken spelling ever matches."""
+    assert normalize_prompt_text("Jarvis‑Bar and Self‑Hosted") == (
+        "Jarvis-Bar and Self-Hosted"
+    )
+    assert normalize_prompt_text("Prompt‐Modus") == "Prompt-Modus"
+    assert normalize_prompt_text("Prompt–Modus") == "Prompt-Modus"
+
+
+def test_a_spaced_dash_is_left_alone() -> None:
+    """An aside the model wrote as " – " is punctuation, not an identifier."""
+    assert normalize_prompt_text("fix it – today") == "fix it – today"
+
+
+def test_special_spaces_trailing_spaces_and_blank_runs_are_cleaned() -> None:
+    raw = "first line  \nsecond line \n\n\n\nthird line\t\n"
+    assert normalize_prompt_text(raw) == "first line\nsecond line\n\nthird line"
+
+
+async def test_normalisation_runs_before_the_protected_term_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A protected spelling the model wrote with a U+2011 still counts as
+    present, and the delivered text carries the plain hyphen."""
+    raw = RAW.replace("AuthHandler", "Auth-Handler")
+    answer = GOOD.replace("AuthHandler", "Auth‑Handler")
+    _install(monkeypatch, FakeChain(answer=answer))
+    out = await compose_prompt(raw, cfg=_cfg(), protected_terms=["Auth-Handler"])
+    assert out.status == STATUS_PROMPTED
+    assert "Auth-Handler" in out.text and "‑" not in out.text
+
+
+# --------------------------------------------------------------------------- #
+# The closing thanks — asked of the model, guaranteed by the code
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "closing",
+    ["Danke!", "Vielen Dank im Voraus!", "Thanks!", "Thank you.", "Thanks a lot.", "¡Gracias!"],
+)
+def test_a_short_closing_line_of_thanks_is_recognised(closing: str) -> None:
+    assert ends_with_thanks(f"Fix the login page.\n\n{closing}") is True
+
+
+@pytest.mark.parametrize(
+    "last_line",
+    [
+        "Please fix the login page.",
+        "Danke für den Hinweis, aber die Seite ist trotzdem kaputt und zeigt nichts an.",
+        "",
+    ],
+)
+def test_a_line_that_merely_mentions_thanks_is_not_a_closing(last_line: str) -> None:
+    assert ends_with_thanks(f"Fix the login page.\n\n{last_line}") is False
+
+
+def test_a_missing_closing_is_appended_in_the_resolved_language() -> None:
+    assert ensure_closing_thanks("Bitte repariere die Seite.", language="de") == (
+        "Bitte repariere die Seite.\n\nDanke!"
+    )
+    assert ensure_closing_thanks("Please fix the page.", language="en") == (
+        "Please fix the page.\n\nThanks!"
+    )
+    assert ensure_closing_thanks("Arregla la página.", language="es") == (
+        "Arregla la página.\n\n¡Gracias!"
+    )
+
+
+def test_an_existing_closing_is_never_doubled() -> None:
+    assert ensure_closing_thanks(GOOD, language="de") == GOOD
+
+
+def test_an_unresolved_language_is_read_off_the_text() -> None:
+    german = "Bitte bring die Indikatoren in Ordnung, sie zeigen nicht den echten Zustand."
+    assert guess_language(german, "auto") == "de"
+    assert guess_language("Please fix the login page.", "") == "en"
+    assert guess_language("anything", "de-DE") == "de"
+    assert ensure_closing_thanks(german, language="auto").endswith("\n\nDanke!")
+
+
+def test_a_language_the_table_does_not_know_closes_in_english() -> None:
+    assert closing_thanks("xx") == "Thanks!"
+    assert ensure_closing_thanks("Napraw stronę logowania.", language="pl").endswith("Thanks!")
+
+
+async def test_a_model_that_skipped_the_thanks_still_delivers_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install(monkeypatch, FakeChain(answer=GOOD_WITHOUT_THANKS))
+    out = await compose_prompt(RAW, cfg=_cfg(), language="en")
+    assert out.status == STATUS_PROMPTED
+    assert out.text == GOOD
+
+
+async def test_the_thanks_never_masks_a_truncated_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Appending "Thanks!" to a prompt that stopped mid-sentence would make the
+    truncation guard blind; the guard runs first and the words come back raw."""
+    _install(monkeypatch, FakeChain(answer="Fix the login page so that"))
+    out = await compose_prompt(RAW, cfg=_cfg(), language="en")
+    assert (out.status, out.text, out.reason) == ("rejected_drift", RAW, "truncated")
