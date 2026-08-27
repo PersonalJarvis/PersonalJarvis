@@ -96,6 +96,22 @@ export function isApiRunner(runner: string): boolean {
   return runner === "api" || runner === "brain";
 }
 
+/**
+ * One provider row's LIVE state, from `GET /api/agent-chat/provider-health`.
+ * `status` mirrors jarvis/brain/section_health.py — the same vocabulary the
+ * API-Keys tab dots use, so the two screens cannot disagree.
+ */
+export type ProviderHealthStatus = "ok" | "needs_setup" | "error" | "unknown";
+
+export interface ProviderHealth {
+  provider: string;
+  status: ProviderHealthStatus;
+  /** "bad_key" | "no_credits" | "timeout" | … — turned into a sentence by the UI. */
+  reason: string;
+  /** The provider's own words, for the tooltip. */
+  detail: string;
+}
+
 export interface AgentConnectionRow {
   jarvis: string;
   label?: string;
@@ -133,6 +149,23 @@ async function json<T>(res: Response, what: string): Promise<T> {
 export async function fetchAgentChatCatalog(surface?: AgentChatSurface): Promise<AgentChatCatalog> {
   const query = surface ? `?surface=${encodeURIComponent(surface)}` : "";
   return json(await fetch(`/api/agent-chat/catalog${query}`), "catalog-failed");
+}
+
+/**
+ * Which seats actually answer. Slow by nature — it makes one real request per
+ * provider — so callers fire it beside the catalog and never await it before
+ * painting. The backend caches a sweep for five minutes.
+ */
+export async function fetchProviderHealth(
+  surface: AgentChatSurface,
+  refresh = false,
+): Promise<ProviderHealth[]> {
+  const q = `surface=${encodeURIComponent(surface)}${refresh ? "&refresh=true" : ""}`;
+  const data = await json<{ providers?: ProviderHealth[] }>(
+    await fetch(`/api/agent-chat/provider-health?${q}`),
+    "provider-health-failed",
+  );
+  return Array.isArray(data.providers) ? data.providers : [];
 }
 
 export async function fetchAgentConnections(): Promise<AgentConnectionRow[]> {

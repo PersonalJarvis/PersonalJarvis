@@ -8,6 +8,7 @@ import {
   fetchAgentChatCatalog,
   fetchAgentChatSessions,
   fetchAgentConnections,
+  fetchProviderHealth,
   fetchProviderModels,
   isApiRunner,
   patchAgentChatSession,
@@ -23,6 +24,7 @@ import {
   type ChatAttachment,
   type CuratedModel,
   type PatchSessionInput,
+  type ProviderHealth,
 } from "@/lib/agentChatApi";
 import { EMPTY_TIMELINE, reduceEvent, reduceEvents, type Timeline } from "@/components/agentchat/reduce";
 
@@ -100,6 +102,8 @@ export interface AgentChatStore {
   backendOutdated: boolean;
   /** Live model lists per provider id (the API-backed rows). */
   liveModels: Record<string, CuratedModel[]>;
+  /** Live per-provider state, keyed by provider id; empty until the sweep lands. */
+  health: Record<string, ProviderHealth>;
   sessions: AgentChatSession[];
   activeSessionId: string | null;
   activeSession: AgentChatSession | null;
@@ -113,6 +117,8 @@ export interface AgentChatStore {
   loadSessions: () => Promise<void>;
   loadModels: (providerId: string) => Promise<void>;
   providerOptions: () => ProviderOption[];
+  /** Ask which seats actually answer. Never awaited by a render path. */
+  loadHealth: (refresh?: boolean) => Promise<void>;
   providerById: (id: string) => ProviderOption | null;
   setDraft: (patch: Partial<ComposerDraft>) => Promise<void>;
   setPlan: (on: boolean) => Promise<void>;
@@ -281,6 +287,7 @@ export function createAgentChatStore(surface: AgentChatSurface) {
       catalogError: null,
       backendOutdated: false,
       liveModels: {},
+      health: {},
       sessions: [],
       activeSessionId: null,
       activeSession: null,
@@ -317,6 +324,10 @@ export function createAgentChatStore(surface: AgentChatSurface) {
             })),
           };
           set({ catalog, connections, catalogError: null, backendOutdated });
+          // Deliberately not awaited: the sweep makes one real request per
+          // provider and can take seconds. The composer paints from the
+          // catalog now and the dots appear when the answers arrive.
+          void get().loadHealth();
           // Settle the draft: an empty or unknown provider becomes the active
           // sub-agent (else the first connected one); blank picks take the
           // provider's defaults.
@@ -391,6 +402,19 @@ export function createAgentChatStore(surface: AgentChatSurface) {
           set((s) => ({ liveModels: { ...s.liveModels, [providerId]: rows } }));
         } catch {
           /* the curated list stays */
+        }
+      },
+
+      loadHealth: async (refresh = false) => {
+        try {
+          const rows = await fetchProviderHealth(surface, refresh);
+          const health: Record<string, ProviderHealth> = {};
+          for (const row of rows) health[row.provider] = row;
+          set({ health });
+        } catch {
+          // A backend too old to know the route, or a sweep that failed: the
+          // composer simply shows no live state, which is what it did before.
+          // Never an error banner — nothing the person did went wrong.
         }
       },
 

@@ -92,6 +92,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const backendOutdated = useAgentChat((s) => s.backendOutdated);
   const connections = useAgentChat((s) => s.connections);
   const liveModels = useAgentChat((s) => s.liveModels);
+  const health = useAgentChat((s) => s.health);
   const draft = useAgentChat((s) => s.draft);
   const activeSessionId = useAgentChat((s) => s.activeSessionId);
   const timeline = useAgentChat((s) => s.timeline);
@@ -210,18 +211,54 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const providerGroups = useMemo<ComboboxGroup[]>(() => {
     const anyConnected = providers.some((p) => p.connected);
     const shown = anyConnected ? providers.filter((p) => p.connected) : providers;
-    const toOption = (p: ProviderOption): ComboboxOption => ({
-      value: p.id,
-      label: p.label,
-      hint: p.connected
-        ? undefined
-        : p.cli_installed === false
-          ? t("agent_chat.provider_not_installed")
-          : t("agent_chat.provider_connect"),
-      disabled: !p.connected,
-      icon: <ProviderLogo providerId={p.id} label={p.label} size="sm" />,
-      searchText: `${p.family} ${p.runner}`,
-    });
+    const toOption = (p: ProviderOption): ComboboxOption => {
+      // A saved key is not a working one. The live sweep says which seats
+      // actually answered a real request; until it lands (or on a backend
+      // that has no such route) the row looks exactly as it did before.
+      // A coding CLI spends a subscription login, not a key — a leaked
+      // `bad_key` (the dual Claude row shares the Anthropic API id) must
+      // not paint "Key rejected" on that CLI.
+      const live = liveHealthFor(p, health[p.id]);
+      const broken = p.connected && live?.status === "error";
+      const working = p.connected && live?.status === "ok";
+      return {
+        value: p.id,
+        label: p.label,
+        hint: !p.connected
+          ? p.cli_installed === false
+            ? t("agent_chat.provider_not_installed")
+            : t("agent_chat.provider_connect")
+          : broken
+            ? healthReasonLabel(live?.reason ?? "", t)
+            : undefined,
+        // Still selectable when broken: a rate limit or a flat network passes,
+        // and refusing the click would strand someone whose account recovered
+        // a minute ago. The dot and the reason are the honest part.
+        disabled: !p.connected,
+        icon: (
+          <span className="relative inline-flex shrink-0">
+            <ProviderLogo providerId={p.id} label={p.label} size="sm" />
+            {(broken || working) && (
+              <span
+                data-testid={`provider-health-${p.id}`}
+                data-health={live?.status}
+                title={live?.detail || undefined}
+                aria-label={
+                  broken
+                    ? healthReasonLabel(live?.reason ?? "", t)
+                    : t("agent_chat.provider_health_ok")
+                }
+                className={cn(
+                  "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-popover",
+                  broken ? "bg-destructive" : "bg-emerald-500",
+                )}
+              />
+            )}
+          </span>
+        ),
+        searchText: `${p.family} ${p.runner}`,
+      };
+    };
     const labels: Record<ProviderKind, string> = {
       cli: t("agent_chat.group_clis"),
       api: t("agent_chat.group_api_keys"),
@@ -233,7 +270,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       if (rows.length) groups.push({ id: kind, label: labels[kind], options: rows.map(toOption) });
     }
     return groups;
-  }, [providers, t]);
+  }, [providers, health, t]);
 
   const modelList = useMemo(() => {
     if (!provider) return [];
@@ -667,11 +704,47 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
  * every row on the front page's chat resolves to. Reading it as a CLI put
  * the whole list under the wrong heading there.
  */
+/**
+ * A health reason in the person's own words. The backend's `reason` is a
+ * machine token ("bad_key", "no_credits", …) from the same vocabulary the
+ * API-Keys screen uses; an unfamiliar one falls back to the general "not
+ * answering" rather than showing a word out of a log.
+ */
+export function healthReasonLabel(reason: string, t: (key: string) => string): string {
+  switch (reason) {
+    case "bad_key":
+      return t("agent_chat.provider_health_bad_key");
+    case "no_credits":
+    case "rate_limited":
+      return t("agent_chat.provider_health_no_credits");
+    case "unreachable":
+      return t("agent_chat.provider_health_unreachable");
+    case "timeout":
+      return t("agent_chat.provider_health_slow");
+    default:
+      return t("agent_chat.provider_health_error");
+  }
+}
+
+/** Reasons that only make sense for a stored API key. */
+export function isApiKeyHealthReason(reason: string): boolean {
+  return reason === "bad_key";
+}
+
 export type ProviderKind = "cli" | "api" | "local";
 export const PROVIDER_KINDS: readonly ProviderKind[] = ["cli", "api", "local"];
 export function providerKind(p: { runner: string; keyless: boolean }): ProviderKind {
   if (p.keyless) return "local";
   return isApiRunner(p.runner) ? "api" : "cli";
+}
+
+function liveHealthFor(
+  p: { runner: string; keyless: boolean },
+  live: { status: string; reason: string; detail: string } | undefined,
+): { status: string; reason: string; detail: string } | undefined {
+  if (!live) return undefined;
+  if (providerKind(p) === "cli" && isApiKeyHealthReason(live.reason)) return undefined;
+  return live;
 }
 
 /** One compact pick on the composer's bottom row — a pill-sized Combobox. */

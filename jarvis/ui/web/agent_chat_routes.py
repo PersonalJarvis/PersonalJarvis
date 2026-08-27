@@ -3,6 +3,7 @@
 Prefix ``/api/agent-chat``:
 
     GET    /catalog?surface=                 provider rows + effort + permission ladders
+    GET    /provider-health?surface=         which of those rows actually answer
     GET    /sessions?surface=                newest first; ``surface`` narrows to one chat
     POST   /sessions                         create (provider, model, effort, cwd,
                                              permission_mode, surface)
@@ -27,8 +28,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from fastapi import (
     APIRouter,
@@ -258,6 +260,216 @@ async def get_catalog(request: Request, surface: SurfaceName = "agent") -> dict[
         "default_cwd": svc.default_cwd(surface),
         "shell": shell_label(),
     }
+
+
+# ------------------------------------------------------------- health
+
+
+class ProviderHealthRow(BaseModel):
+    """One row's live state, in the API-Keys screen's own vocabulary."""
+
+    provider: str
+    #: ok | needs_setup | error | unknown (jarvis.brain.section_health).
+    status: str = "unknown"
+    #: Machine-readable cause — "bad_key", "no_credits", "not_configured",
+    #: "timeout", … The UI turns it into a sentence; it is never shown raw.
+    reason: str = "unknown"
+    #: The provider's own words, for the tooltip and the log.
+    detail: str = ""
+
+
+class ProviderHealthResponse(BaseModel):
+    providers: list[ProviderHealthRow]
+    checked_at: float = 0.0
+    cached: bool = False
+
+
+#: How long one sweep stands. A key does not go bad between two clicks, and
+#: the sweep costs one real request per provider — 9 s to 16 s each on the
+#: maintainer's box (measured 2026-08-26), which is why nothing waits for it.
+_HEALTH_TTL_S: Final[float] = 300.0
+#: The whole sweep's ceiling. A provider still thinking when this runs out is
+#: reported ``unknown`` and draws no dot: a seat that cannot answer a one-token
+#: request inside this is not a seat someone should be told is fine, but
+#: neither is a slow network proof that a key is bad.
+_HEALTH_SWEEP_S: Final[float] = 20.0
+
+#: surface -> (checked_at, rows). Process-local, like every other short cache
+#: in the routes; a restart simply re-sweeps on first use.
+_health_cache: dict[str, tuple[float, list[ProviderHealthRow]]] = {}
+
+#: Vendor CLI runners. Their credential is a subscription login, not a key,
+#: so the API-Keys one-token probe is the wrong check: the dual Claude row
+#: is catalogued as ``claude-api``, and that probe hits Anthropic's endpoint
+#: and paints "Key rejected" on a Claude Code seat that is signed in.
+_CLI_RUNNERS: Final[frozenset[str]] = frozenset({"claude-cli", "codex-cli", "agy-cli", "grok-cli"})
+
+
+def _cli_auth_status(runner: str) -> Any | None:
+    """The vendor CLI's own login snapshot. ``None`` if ``runner`` is not a CLI."""
+    if runner == "claude-cli":
+        from jarvis.claude_auth import ClaudeAuthService
+
+        return ClaudeAuthService().status()
+    if runner == "codex-cli":
+        from jarvis.codex_auth import CodexAuthService
+
+        return CodexAuthService().status()
+    if runner == "agy-cli":
+        from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+        return GoogleCliAuthService().status()
+    if runner == "grok-cli":
+        from jarvis.grok_build_auth import GrokBuildAuthService
+
+        return GrokBuildAuthService().status()
+    return None
+
+
+def _cli_subscription_connected(runner: str, st: Any) -> bool:
+    """Whether ``st`` is a login this CLI seat can actually spend.
+
+    Claude and Grok Build report ``connected=True`` for a stored API key as
+    well; that key belongs to a different picker row. Antigravity's
+    ``api_key`` mode is the Gemini key, same split. Codex's ``connected``
+    is the CLI's own auth.json (ChatGPT login or a key the CLI itself
+    holds), which is what ``codex exec`` uses.
+    """
+    connected = bool(getattr(st, "connected", False))
+    mode = (getattr(st, "mode", None) or "").strip().lower()
+    if runner == "claude-cli":
+        return connected and mode == "subscription"
+    if runner == "grok-cli":
+        return connected and mode == "subscription"
+    if runner == "agy-cli":
+        return connected and mode == "oauth-personal"
+    return connected
+
+
+def _cli_login_snapshot(runner: str) -> tuple[str, str, str]:
+    """Login presence for a vendor CLI seat. Never a live API-key call.
+
+    Returns ``(status, reason, detail)``. A signed-in subscription is
+    ``ok``; anything else is ``needs_setup`` so the picker does not borrow
+    API-key words ("Key rejected") for a seat that has no key.
+    """
+    try:
+        st = _cli_auth_status(runner)
+    except Exception as exc:  # noqa: BLE001 — one bad CLI must not lose the sweep
+        log.info("agent chat: CLI login check for %s failed: %s", runner, exc)
+        return (
+            "unknown",
+            "check_failed",
+            f"The check itself failed ({type(exc).__name__})",
+        )
+    if st is None:
+        return "unknown", "unknown_provider", f"{runner}: not a CLI seat"
+    connected = _cli_subscription_connected(runner, st)
+    detail = (getattr(st, "message", None) or "").strip() or (
+        f"{runner}: signed in" if connected else f"{runner}: not signed in"
+    )
+    if connected:
+        return "ok", "ok", detail
+    return "needs_setup", "not_configured", detail
+
+
+async def _one_provider_health(cfg: Any, provider_id: str, *, surface: str) -> ProviderHealthRow:
+    """One row, never raising: a broken check is ``unknown``, not a 500."""
+    runner = resolve_runner(provider_id, surface=surface)
+    if runner in _CLI_RUNNERS:
+        try:
+            status, reason, detail = await asyncio.to_thread(_cli_login_snapshot, runner)
+        except Exception as exc:  # noqa: BLE001 — one bad row must not lose the sweep
+            log.info("agent chat: CLI health check for %s failed: %s", provider_id, exc)
+            return ProviderHealthRow(
+                provider=provider_id,
+                status="unknown",
+                reason="check_failed",
+                detail=f"The check itself failed ({type(exc).__name__})",
+            )
+        return ProviderHealthRow(provider=provider_id, status=status, reason=reason, detail=detail)
+
+    from jarvis.ui.web.provider_routes import provider_health
+
+    try:
+        health = await provider_health(cfg, provider_id, probe=True)
+    except TimeoutError:
+        return ProviderHealthRow(
+            provider=provider_id, status="unknown", reason="timeout", detail="No answer in time"
+        )
+    except Exception as exc:  # noqa: BLE001 — one bad row must not lose the sweep
+        log.info("agent chat: health check for %s failed: %s", provider_id, exc)
+        return ProviderHealthRow(
+            provider=provider_id,
+            status="unknown",
+            reason="check_failed",
+            detail=f"The check itself failed ({type(exc).__name__})",
+        )
+    return ProviderHealthRow(
+        provider=provider_id,
+        status=health.status,
+        reason=health.reason,
+        detail=health.detail,
+    )
+
+
+@router.get("/provider-health")
+async def get_provider_health(
+    request: Request, surface: SurfaceName = "agent", refresh: bool = False
+) -> ProviderHealthResponse:
+    """Which of ``surface``'s rows actually answer right now.
+
+    The composer shows whether a provider is CONNECTED — a key is saved. That
+    is not the same as usable: a key can be revoked, an account can run out of
+    credits, an endpoint can be down. On the maintainer's own box on
+    2026-08-26, four of nine connected rows were in one of those states, and
+    the picker offered all nine as if they were equal.
+
+    API / brain seats run the real one-token check the API-Keys screen's tab
+    dots use (``provider_routes.provider_health``). A vendor CLI seat does
+    not: it spends a subscription login, so this reports that login instead.
+    The dual Claude row is why the split exists — its catalog id is
+    ``claude-api``, and the API-Keys probe would otherwise paint "Key
+    rejected" on a Claude Code seat that is signed in.
+
+    Nothing waits for this: the composer paints from the catalog and folds
+    these in when they land. A row that does not finish inside the sweep
+    ceiling comes back ``unknown`` and is drawn exactly as it was before.
+    """
+    _service(request)  # 503 like every other route when the chat is off
+    now = time.monotonic()
+    cached = _health_cache.get(surface)
+    if cached and not refresh and (now - cached[0]) < _HEALTH_TTL_S:
+        return ProviderHealthResponse(providers=cached[1], checked_at=cached[0], cached=True)
+
+    from jarvis.ui.web.provider_routes import _resolve_cfg
+
+    cfg = _resolve_cfg(request)
+    ids = [row.id for row in rows_for(surface)]
+    tasks = {
+        pid: asyncio.create_task(_one_provider_health(cfg, pid, surface=surface)) for pid in ids
+    }
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*tasks.values(), return_exceptions=True), timeout=_HEALTH_SWEEP_S
+        )
+    except TimeoutError:
+        log.info("agent chat: provider health sweep hit its %.0fs ceiling", _HEALTH_SWEEP_S)
+    rows: list[ProviderHealthRow] = []
+    for pid, task in tasks.items():
+        if task.done() and not task.cancelled():
+            exc = task.exception()
+            if exc is None:
+                rows.append(task.result())
+                continue
+        task.cancel()
+        rows.append(
+            ProviderHealthRow(
+                provider=pid, status="unknown", reason="timeout", detail="No answer in time"
+            )
+        )
+    _health_cache[surface] = (now, rows)
+    return ProviderHealthResponse(providers=rows, checked_at=now, cached=False)
 
 
 # ------------------------------------------------------------------ sessions
