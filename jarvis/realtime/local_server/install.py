@@ -357,7 +357,9 @@ def derive_launch_command(brain: BrainResolution, *, memory_source: str) -> str:
 
     Derived, never hand-authored: flags follow the probed hardware and the
     resolved brain. The TTS device maps NVIDIA → cuda and Apple unified
-    memory → mps; a machine with neither never passes preflight.
+    memory → mps; a machine with neither never passes preflight. The STT
+    device is left at the handler's own ``auto``, which resolves the same
+    way — pinning it cost 8.5 s per sentence on a box whose GPU was idle.
 
     Secrets never enter the command (they would land in jarvis.toml): the
     Ollama path uses the literal placeholder token Ollama expects, and the
@@ -374,7 +376,17 @@ def derive_launch_command(brain: BrainResolution, *, memory_source: str) -> str:
         "--qwen3_tts_dtype bfloat16",
         "--qwen3_tts_backend torch",
         "--qwen3_tts_speaker Aiden",
-        "--parakeet_tdt_device cpu",
+        # "auto", not "cpu": the handler already resolves MPS on Apple Silicon,
+        # CUDA on an NVIDIA box and CPU where there is neither, so this follows
+        # the machine instead of pinning every user to the slowest option.
+        # Live 2026-08-27 on an RTX 5070 Ti, transcribing a 2.7 s sentence on
+        # the CPU took 8.46 s and held the pipeline's compute lock for all of
+        # it, while the GPU sat at 13 % — the single largest item in a turn
+        # that is supposed to feel live. Earlier the same stack answered in
+        # 0.6-1.2 s, so the CPU path is not even reliably slow, it is
+        # unpredictable. A machine with no accelerator still lands on CPU,
+        # which is the honest floor there.
+        "--parakeet_tdt_device auto",
         # Jarvis consumes only final input transcripts. Progressive Parakeet
         # passes therefore contend with the final pass without improving the
         # product surface. A short acoustic silence gate removes breath-sized

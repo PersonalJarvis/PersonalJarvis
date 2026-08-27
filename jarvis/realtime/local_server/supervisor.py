@@ -1012,6 +1012,10 @@ _SMART_TURN_INCOMPLETE_DELAY_FLAG = re.compile(
     r"(?:\s+|=)(?:\"[^\"]*\"|'[^']*'|\S+)",
     re.IGNORECASE,
 )
+_PARAKEET_DEVICE_FLAG = re.compile(
+    r"(?<!\S)--parakeet(?:_|-)tdt(?:_|-)device(?:\s+|=)(?:\"[^\"]*\"|'[^']*'|\S+)",
+    re.IGNORECASE,
+)
 _UNANSWERED_REOPEN_FLAG = re.compile(
     r"(?<!\S)--unanswered(?:_|-)reopen(?:_|-)ms(?:\s+|=)"
     r"(?:\"[^\"]*\"|'[^']*'|\S+)",
@@ -1128,6 +1132,31 @@ def _force_stable_turn_detection(command: str) -> str:
     return f"{without_live_transcription} --no_enable_live_transcription"
 
 
+def _needs_gpu_stt_migration(command: str) -> bool:
+    """Whether this command still pins transcription to the CPU.
+
+    Installs written before 2026-08-27 carry ``--parakeet_tdt_device cpu``,
+    which Jarvis hardcoded while the handler's own default already resolved
+    the right device per platform. On an idle RTX 5070 Ti that pin cost 8.46 s
+    to transcribe a 2.7 s sentence — held under the pipeline's compute lock,
+    so it was the whole turn's floor — against 0.6-1.2 s previously observed.
+    """
+    return (_cli_flag_value(command, "--parakeet_tdt_device") or "").lower() == "cpu"
+
+
+def _force_hardware_stt_device(command: str) -> str:
+    """Hand transcription back to the handler's own device resolution.
+
+    ``auto`` is MPS on Apple Silicon, CUDA on an NVIDIA box and CPU where
+    there is neither — so a machine without an accelerator keeps exactly the
+    behaviour it has today, and every other machine stops paying for a device
+    it does not have to use.
+    """
+    if not _needs_gpu_stt_migration(command):
+        return command
+    return _replace_cli_flag(command, _PARAKEET_DEVICE_FLAG, "--parakeet_tdt_device auto")
+
+
 def _uses_loopback_bind(command: str) -> bool:
     """Whether the effective managed-server bind is explicitly loopback-only."""
     try:
@@ -1189,6 +1218,7 @@ def ensure_running(
             command = _force_loopback_bind(command)
             command = _force_low_latency_ollama_backend(command)
             command = _force_stable_turn_detection(command)
+            command = _force_hardware_stt_device(command)
             try:
                 from jarvis.realtime.local_server import install  # lazy (AP-26)
 
@@ -1210,7 +1240,10 @@ def ensure_running(
             unstable_turn_detection = bool(
                 owned_command and _needs_stable_turn_detection_migration(owned_command)
             )
-            latency_migration = slow_ollama_backend or unstable_turn_detection
+            cpu_pinned_stt = bool(owned_command and _needs_gpu_stt_migration(owned_command))
+            latency_migration = (
+                slow_ollama_backend or unstable_turn_detection or cpu_pinned_stt
+            )
             if (
                 latency_migration
                 and not unsafe_bind
@@ -1413,6 +1446,7 @@ def replace_idle_managed_runtime(
         command = _force_loopback_bind(command)
         command = _force_low_latency_ollama_backend(command)
         command = _force_stable_turn_detection(command)
+        command = _force_hardware_stt_device(command)
         try:
             command = prepare_voice_brain_command(command)
         except RuntimeError as exc:

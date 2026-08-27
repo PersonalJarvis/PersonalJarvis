@@ -1766,6 +1766,74 @@ def test_a_command_without_a_brain_declares_no_budget() -> None:
     assert supervisor.voice_brain_declaration_budget_tokens("serve --mode realtime") == 0
 
 
+def test_a_cpu_pinned_transcriber_is_handed_back_to_the_machine() -> None:
+    """Live 2026-08-27: transcribing a 2.7 s sentence on the CPU took 8.46 s
+    and held the pipeline's compute lock for all of it, while the GPU idled at
+    13 %. The handler resolves its own device per platform; Jarvis pinned it."""
+    command = (
+        '"s.exe" --mode realtime --parakeet_tdt_device cpu --num_pipelines 1'
+    )
+    assert supervisor._needs_gpu_stt_migration(command) is True
+    migrated = supervisor._force_hardware_stt_device(command)
+    assert "--parakeet_tdt_device auto" in migrated
+    assert "--parakeet_tdt_device cpu" not in migrated
+    # Everything else about the command is left exactly as it was.
+    assert "--num_pipelines 1" in migrated and "--mode realtime" in migrated
+
+
+def test_a_transcriber_already_following_the_machine_is_left_alone() -> None:
+    for device in ("auto", "cuda", "mps"):
+        command = f'"s.exe" --mode realtime --parakeet_tdt_device {device}'
+        assert supervisor._needs_gpu_stt_migration(command) is False
+        assert supervisor._force_hardware_stt_device(command) == command
+
+
+def test_the_stt_device_reaches_popen_on_the_spawn_path(monkeypatch, tmp_path) -> None:
+    """A migration nobody applies is not a fix — prove it reaches the child."""
+    from jarvis.realtime.local_server import install
+
+    supervisor._reset_for_tests()
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    entrypoint = install.install_root() / "venv" / "server.exe"
+    command = (
+        f'"{entrypoint}" --mode realtime --ws_host 127.0.0.1 '
+        "--parakeet_tdt_device cpu --model_name qwen3.5:4b"
+    )
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(supervisor, "_port_open", lambda *a, **k: False)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (None, False))
+    monkeypatch.setattr(supervisor, "_kill_by_install_root", lambda root: (0, 0))
+    monkeypatch.setattr(supervisor, "prepare_voice_brain_command", lambda c: c)
+    monkeypatch.setattr(supervisor, "anchor_brain_load", lambda **k: True)
+    monkeypatch.setattr(supervisor, "_write_pidfile", lambda *args: True)
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        supervisor, "_spawn", lambda c, **k: spawned.append(c) or 7331
+    )
+
+    assert (
+        supervisor.ensure_running(
+            launch_command=command, base_url="http://127.0.0.1:8765", reason="test"
+        )
+        == "spawned"
+    )
+    assert "--parakeet_tdt_device auto" in spawned[0]
+
+
+def test_a_fresh_install_never_pins_the_transcriber_to_the_cpu() -> None:
+    """The command the installer writes must be right from the start, not only
+    after a migration — a new user gets no migration."""
+    from jarvis.realtime.local_server import install
+    from jarvis.realtime.local_server.brain_link import BrainResolution
+
+    command = install.derive_launch_command(
+        BrainResolution(kind="ollama", model="qwen3.5:4b", base_url="http://127.0.0.1:11434/v1"),
+        memory_source="nvidia-smi",
+    )
+    assert "--parakeet_tdt_device auto" in command
+    assert "--parakeet_tdt_device cpu" not in command
+
+
 def test_anchor_brain_load_outlives_the_caller(monkeypatch) -> None:
     """Ollama drops a model load the moment its LAST client hangs up, so the
     request that carries a cold load must not be one the spawn path waits on
