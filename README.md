@@ -553,7 +553,7 @@ PersonalJarvis/
 ├── .github/                 # CI workflows + issue / pull-request templates
 ├── scoop-bucket/            # Windows install manifest (Scoop)
 ├── homebrew-tap/            # macOS install formula (Homebrew)
-└── README · LICENSE · CONTRIBUTING · SECURITY · TRADEMARK · CHANGELOG
+└── README · LICENSE · NOTICE · CONTRIBUTING · SECURITY · TRADEMARK · CHANGELOG
 ```
 
 </details>

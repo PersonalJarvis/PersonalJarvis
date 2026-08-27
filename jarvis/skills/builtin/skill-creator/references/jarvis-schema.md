@@ -19,7 +19,7 @@ Source: ``jarvis.skills.schema.SkillFrontmatter`` (Pydantic, ``extra="forbid"``)
 | `category` | string | `"general"` | grouping in the UI; convention: `productivity`, `system`, `dev`, `meta`, `memory`, `general` |
 | `tags` | `list[str]` | `[]` | free-form tags for search |
 | `author` | string | `""` | e.g. `builtin`, a username, or `anthropic (adapted)` |
-| `license` | string | `"MIT"` | SPDX ID or free-form |
+| `license` | string | `"Apache-2.0"` | SPDX ID or free-form |
 | `triggers` | `list[SkillTrigger]` | `[]` | See below. `[]` = no auto-trigger (meta-skill) |
 | `requires_tools` | `list[str]` | `[]` | tool names that must be present, otherwise DRAFT state |
 | `risk_policy` | `SkillRiskPolicy` | `{default_tier: monitor}` | See below |

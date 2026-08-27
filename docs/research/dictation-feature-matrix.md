@@ -28,7 +28,7 @@ either backed by a source or by a probe run in this repository.
 
 ## 1. Licence boundary (binding)
 
-This repository is MIT-licensed and public.
+This repository is Apache-2.0-licensed and public (MIT through 1.6.0).
 
 * **MIT-licensed projects** (Handy, OpenWhispr, and the wider `awesome-voice-typing`
   list) were read as source. Any pattern adopted from them is re-implemented

@@ -1,6 +1,9 @@
 # Keep the Docker build context small AND private. The image only needs
-# pyproject.toml, README.md, the jarvis/ package and the frontend source — never
-# the maintainer's runtime state, secrets or git history.
+# pyproject.toml, README.md, LICENSE, NOTICE, the jarvis/ package and the
+# frontend source — never the maintainer's runtime state, secrets or git
+# history. LICENSE and NOTICE are not optional: pyproject declares them under
+# license-files, and Apache 2.0 section 4 requires them to travel with the
+# image.
 
 # Personal runtime state / secrets — must never enter the build context.
 data/

@@ -1,6 +1,7 @@
 {
   "name": "jarvis-frontend",
   "private": true,
+  "license": "Apache-2.0",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -16,6 +17,8 @@
     "@radix-ui/react-slot": "^1.1.0",
     "@radix-ui/react-switch": "^1.1.1",
     "@radix-ui/react-tabs": "^1.1.1",
+    "@react-three/drei": "^9.122.0",
+    "@react-three/fiber": "^8.18.0",
     "@tanstack/react-query": "^5.56.0",
     "@xterm/addon-canvas": "^0.7.0",
     "@xterm/addon-fit": "^0.10.0",

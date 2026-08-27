@@ -56,7 +56,7 @@ WORKDIR /app
 # [local-voice] extras). An editable install keeps PROJECT_ROOT == /app, so the
 # runtime data dir resolves to the writable /app/data volume below rather than
 # into read-only site-packages.
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY jarvis ./jarvis
 COPY --from=web /web/dist ./jarvis/ui/web/dist
 RUN python -m pip install --upgrade pip \

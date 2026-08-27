@@ -15,7 +15,7 @@ when_to_use: >-
 category: meta
 tags: [self-config, control-api, agent, settings]
 author: builtin
-license: MIT
+license: Apache-2.0
 requires_tools: []
 risk_policy:
   default_tier: ask

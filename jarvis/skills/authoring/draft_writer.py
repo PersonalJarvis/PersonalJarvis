@@ -310,7 +310,7 @@ def _render_skill_md(draft: SkillDraft) -> str:
         "category": draft.category,
         "tags": ["jarvis-agent-authored"],
         "author": "jarvis-agent",
-        "license": "MIT",
+        "license": "Apache-2.0",
         "triggers": triggers_parsed,
         "requires_tools": draft.requires_tools,
         # **HARDCODED**: Plan-§AD-8 — the Jarvis-Agent-Author output `state` is discarded.

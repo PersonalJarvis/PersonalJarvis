@@ -9,7 +9,7 @@ Raspberry Pi, and the only widely-used open family with genuine German voices
 Two decisions worth stating, because both are easy to get wrong later:
 
 **Licensing.** Piper's own runtime moved from MIT to GPL-3 in October 2025
-(the project now lives at OHF-Voice/piper1-gpl). This repo is MIT, so the GPL
+(the project now lives at OHF-Voice/piper1-gpl). This repo is Apache-2.0, so the GPL
 library is NOT used: the voices are plain ONNX files, and sherpa-onnx
 (Apache-2.0) loads them. Do not "simplify" this by depending on piper1-gpl.
 

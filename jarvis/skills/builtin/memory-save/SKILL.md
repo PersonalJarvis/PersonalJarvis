@@ -13,7 +13,7 @@ when_to_use: >-
 category: memory
 tags: [memory, notes, recall, deprecated]
 author: builtin
-license: MIT
+license: Apache-2.0
 state: disabled
 triggers: []
 requires_tools: []

@@ -84,7 +84,7 @@ class SkillFrontmatter(BaseModel):
     category: str = "general"
     tags: list[str] = Field(default_factory=list)
     author: str = ""
-    license: str = "MIT"
+    license: str = "Apache-2.0"
     homepage_url: str | None = None
     source_url: str | None = None
     docs_url: str | None = None

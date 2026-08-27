@@ -22,7 +22,7 @@ tags: [meta, authoring, developer, skill-creator]
 # register a capability; this feeds only the matcher).
 intent_objects: [skill, skills, automatisierung, automation, workflow, ablauf, faehigkeit, routine]  # i18n-allow: speech-input vocabulary
 author: builtin (Anthropic skill-creator guide kept in references/)
-license: MIT
+license: Apache-2.0
 # 2026-08-18: the deterministic authoring resolver
 # (jarvis/skills/authoring_request.py) now decides "the user wants a NEW skill"
 # BEFORE any brand trigger runs, so a request that mentions YouTube Music or

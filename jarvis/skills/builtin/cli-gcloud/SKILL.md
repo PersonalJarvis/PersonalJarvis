@@ -14,7 +14,7 @@ when_to_use: >-
 category: meta
 tags: [gcloud, google-cloud, cli, billing]
 author: builtin
-license: MIT
+license: Apache-2.0
 requires_tools: [cli_gcloud]
 risk_policy:
   default_tier: ask

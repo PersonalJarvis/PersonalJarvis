@@ -20,7 +20,7 @@ when_to_use: >-
 category: meta
 tags: [meta, docs, authoring, diataxis, documentation, style-guide]
 author: builtin
-license: MIT
+license: Apache-2.0
 triggers: []
 requires_tools: []
 risk_policy:

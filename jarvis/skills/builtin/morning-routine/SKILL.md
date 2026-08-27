@@ -14,7 +14,7 @@ when_to_use: >-
 category: productivity
 tags: [daily, routine, mail, calendar, weather]
 author: builtin
-license: MIT
+license: Apache-2.0
 triggers:
   - type: voice
     pattern: "(morgenroutine|morgen[-\\s]?briefing|morning routine|morning briefing|start day|tages(ue|ü)berblick)"

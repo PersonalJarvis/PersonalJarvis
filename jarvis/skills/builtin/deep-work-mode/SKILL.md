@@ -21,7 +21,7 @@ tags: [focus, dnd, timer, slack]
 # objects to register a capability, so this feeds ONLY the matcher.
 intent_objects: [ruhe, stille, ungestoert, ablenkung, ablenkungen, ablenkungsfrei, konzentration, fokusphase, quiet, peace, distraction, distractions, concentration, tranquilidad, concentracion, enfoque, silencio]  # i18n-allow: speech-input vocabulary
 author: builtin
-license: MIT
+license: Apache-2.0
 triggers:
   - type: hotkey
     combo: "ctrl+alt+d"
