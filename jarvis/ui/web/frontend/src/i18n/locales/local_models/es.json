@@ -300,6 +300,7 @@
       "pick_missing_suffix": "(no instalado)",
       "pick_group_fits": "Encaja con esta tarea",
       "pick_group_others": "Otros modelos instalados",
+      "pick_group_over_size": "Tiene la capacidad, pero supera {gb} GB: responde más despacio",
       "server_silent": "El servidor no respondió, así que esta lista puede estar incompleta. Actualiza cuando esté en marcha.",
       "use_recommended": "Usar el recomendado",
       "download_recommended": "Descargar {model}",

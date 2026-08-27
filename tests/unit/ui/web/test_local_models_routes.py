@@ -324,13 +324,15 @@ def test_put_role_drops_the_memoised_overview(server, fake, writes, monkeypatch)
         first = client.get(f"{BASE}/overview").json()
         assert first["source"] == "live"
         assert client.put(f"{BASE}/roles/deep", json={"model": "qwen3.5:4b"}).status_code == 200
-        # The memo is gone: a plain read is no longer a stale "live" answer,
-        # and a fresh read carries the new pick.
+        # The memo and the disk snapshot are both known stale now: even a
+        # plain read builds live and carries the new pick — every client
+        # sees the write, not only one that asks for ``fresh``.
         after = client.get(f"{BASE}/overview").json()
-        assert after["source"] == "cache"
-        fresh = client.get(f"{BASE}/overview", params={"fresh": 1}).json()
-        deep = next(r for r in fresh["roles"]["roles"] if r["id"] == "deep")
+        assert after["source"] == "live"
+        deep = next(r for r in after["roles"]["roles"] if r["id"] == "deep")
         assert deep["current"] == "qwen3.5:4b"
+        # And the next plain read is the memo again, not another build.
+        assert client.get(f"{BASE}/overview").json()["source"] == "live"
     ollama_overview._reset_for_tests()
 
 
@@ -707,6 +709,10 @@ def test_roles_carry_the_voice_brains_context(server: WebServer, fake, monkeypat
     assert rows["voice"]["context_source"] == "automatic"
     assert rows["chat"]["context_tokens"] is None
     assert rows["chat"]["context_source"] == ""
+    # The size class reaches the picker, so it can say which downloads are
+    # "fast enough for a call" rather than listing every chat model as a fit.
+    assert rows["voice"]["max_size_gb"] == 6.0
+    assert rows["chat"]["max_size_gb"] is None
 
 
 # ═════════════════════════════════════════════════════════════════════════

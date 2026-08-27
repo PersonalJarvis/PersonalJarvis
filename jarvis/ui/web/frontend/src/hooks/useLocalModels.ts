@@ -144,6 +144,11 @@ export interface RoleRow {
   context_tokens?: number | null;
   /** "automatic" (sized from memory) | "manual" (set in Tune) | "". */
   context_source?: "" | "automatic" | "manual";
+  /**
+   * The size class this job prefers, in GB (the voice brain stays under 6 so
+   * a call answers within a breath); null/absent when the job has none.
+   */
+  max_size_gb?: number | null;
 }
 
 export interface IdleReleaseResponse {

@@ -357,6 +357,9 @@ class RoleRow(BaseModel):
     context_tokens: int | None = None
     #: "automatic" | "manual" | "".
     context_source: str = ""
+    #: The size class the job prefers, in GB (the voice brain stays under 6
+    #: so a call answers within a breath); ``None`` when the job has none.
+    max_size_gb: float | None = None
 
 
 class RolesResponse(BaseModel):

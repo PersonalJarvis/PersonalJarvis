@@ -1,26 +1,35 @@
 /**
- * The model picker of one role row.
+ * The model picker of one job.
  *
- * It used to list `row.qualifying` only — the installed downloads that
- * declare every capability the job requires — plus the configured tag when
- * that had gone missing. Two ways that leaves a user stuck with a value they
- * did not choose (BUG-188):
+ * Two failures shaped it. The first (BUG-188): the list was `row.qualifying`
+ * alone, so an offline sweep left one option and a pick "jumped back". The
+ * over-correction then offered EVERY installed download, which put an
+ * embedding-only model in the speech list — a model that cannot answer a
+ * call is not a choice, it is a trap that looks like one.
  *
- *   * the sweep behind the payload found no server, so `qualifying` is empty
- *     and the list holds exactly one entry: the tag already configured;
- *   * a download Jarvis could not probe (`probed: false`) reports no
- *     capabilities, so it silently never appears — even though it runs.
+ * The list is therefore built from the job's own requirements, on the
+ * client, from the inventory it can see:
  *
- * Both read as "I picked something else and it jumped back". The picker
- * therefore offers EVERY installed download, in two groups: the ones that
- * fit the job first, the rest under "Other installed models" with the
- * consequence spelled out rather than hidden. Choosing one is a real choice
- * a user is allowed to make; the section says what it costs, it does not
- * decide for them.
+ *   * `fits`   — every installed download that declares each capability the
+ *                job requires AND sits inside the job's size class when it
+ *                has one (the voice brain answers within a breath, so it
+ *                stays under 6 GB);
+ *   * `others` — downloads that have the capabilities but fall outside the
+ *                size class, or that Jarvis could not probe (`probed: false`
+ *                means "unknown", never "unable"). A real choice with a
+ *                stated cost, so it is offered under its own heading.
+ *
+ * A download that lacks a required capability is not listed at all. The
+ * configured tag stays listed even when it is gone from disk, or the row
+ * would show a value the picker cannot express.
  */
 import { useMemo } from "react";
 
-import { canonicalModelName, type LocalModelRow, type RoleRow } from "@/hooks/useLocalModels";
+import {
+  canonicalModelName,
+  type LocalModelRow,
+  type RoleRow,
+} from "@/hooks/useLocalModels";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -34,7 +43,24 @@ export interface RolePickerProps {
   className?: string;
 }
 
-/** `qualifying`, then every other installed tag, each list de-duplicated. */
+const GIB = 1024 ** 3;
+
+/** Whether `model` declares every capability `row` requires. */
+export function hasRequired(row: RoleRow, model: LocalModelRow): boolean {
+  return row.required.every((cap) => model.capabilities.includes(cap));
+}
+
+/** Whether `model` sits inside the job's size class (no class = always). */
+export function inSizeClass(row: RoleRow, model: LocalModelRow): boolean {
+  const cap = row.max_size_gb;
+  if (cap == null || cap <= 0) return true;
+  return model.size_bytes / GIB <= cap;
+}
+
+/**
+ * `fits` first, then `others`, both in inventory order, de-duplicated
+ * across `:latest`. Nothing that lacks a required capability appears.
+ */
 export function splitChoices(
   row: RoleRow,
   models: LocalModelRow[],
@@ -48,10 +74,18 @@ export function splitChoices(
     seen.add(key);
     into.push(name);
   };
+  for (const m of models) {
+    if (m.probed) {
+      if (!hasRequired(row, m)) continue;
+      take(m.name, inSizeClass(row, m) ? fits : others);
+    } else {
+      // Unknown capabilities: offered, not hidden, and not called a fit.
+      take(m.name, others);
+    }
+  }
+  // The backend's own verdict wins for anything it named that the client
+  // could not see (a row the inventory has not caught up with yet).
   for (const name of row.qualifying) take(name, fits);
-  for (const m of models) take(m.name, others);
-  // A configured tag that is gone from disk still belongs in the list, or
-  // the row would silently show a value the picker cannot express.
   if (row.current) take(row.current, others);
   return { fits, others };
 }
@@ -76,6 +110,14 @@ export function RolePicker({
       ? name
       : `${name} ${t("local_models.roles.pick_missing_suffix")}`;
 
+  // The second heading says what "other" costs for THIS job.
+  const othersLabel =
+    row.max_size_gb != null && row.max_size_gb > 0
+      ? fill(t("local_models.roles.pick_group_over_size"), {
+          gb: String(row.max_size_gb),
+        })
+      : t("local_models.roles.pick_group_others");
+
   return (
     <select
       aria-label={fill(t("local_models.roles.pick_label"), {
@@ -92,10 +134,10 @@ export function RolePicker({
         className,
       )}
     >
-      {row.id !== "embedding" && (
+      {row.id !== "embedding" && row.id !== "voice" && (
         <option value="">{t("local_models.roles.pick_discovery")}</option>
       )}
-      {row.id === "embedding" && !row.current && (
+      {(row.id === "embedding" || row.id === "voice") && !row.current && (
         <option value="">{t("local_models.roles.pick_none")}</option>
       )}
       {fits.length > 0 && (
@@ -108,7 +150,7 @@ export function RolePicker({
         </optgroup>
       )}
       {others.length > 0 && (
-        <optgroup label={t("local_models.roles.pick_group_others")}>
+        <optgroup label={othersLabel}>
           {others.map((name) => (
             <option key={name} value={name}>
               {label(name)}

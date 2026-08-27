@@ -124,6 +124,9 @@ def role_row(state: ollama_roles.RoleState) -> dict[str, Any]:
         "note": state.note,
         "context_tokens": state.context_tokens,
         "context_source": state.context_source,
+        # The size class the job prefers (the voice brain answers within a
+        # breath, so it stays under 6 GB); ``None`` when the job has none.
+        "max_size_gb": spec.max_size_gb,
     }
 
 

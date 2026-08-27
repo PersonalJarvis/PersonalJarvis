@@ -300,6 +300,7 @@
       "pick_missing_suffix": "(not installed)",
       "pick_group_fits": "Fits this job",
       "pick_group_others": "Other installed models",
+      "pick_group_over_size": "Has the skills, but over {gb} GB — slower to answer",
       "server_silent": "The server did not answer, so this list may be incomplete. Refresh once it is running.",
       "use_recommended": "Use recommended",
       "download_recommended": "Download {model}",

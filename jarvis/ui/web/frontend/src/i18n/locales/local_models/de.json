@@ -300,6 +300,7 @@
       "pick_missing_suffix": "(nicht installiert)",
       "pick_group_fits": "Passt zu diesem Job",
       "pick_group_others": "Weitere installierte Modelle",
+      "pick_group_over_size": "Kann den Job, ist aber über {gb} GB — antwortet langsamer",
       "server_silent": "Der Server hat nicht geantwortet, daher kann diese Liste unvollständig sein. Aktualisiere, sobald er läuft.",
       "use_recommended": "Empfehlung nutzen",
       "download_recommended": "{model} herunterladen",
