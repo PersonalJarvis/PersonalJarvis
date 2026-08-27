@@ -42,6 +42,12 @@ export interface AgentChatProvider {
   default_permission_mode: string;
   /** null for the API runner; else whether the vendor binary is on PATH. */
   cli_installed: boolean | null;
+  /**
+   * The characters that open the composer's typeahead on this seat — a
+   * subset of "/", "@", "$" decided by the runner (jarvis/agent_chat/typeahead.py).
+   * Absent on an older backend: then nothing opens.
+   */
+  typeahead?: string[];
 }
 
 export interface AgentChatCatalog {
@@ -57,7 +63,13 @@ export interface AgentChatCatalog {
  * and catalog, so they never mix in a sidebar. Mirrors `SURFACES` in
  * `jarvis/agent_chat/store.py` (a parity test reads this union).
  */
-export type AgentChatSurface = "jarvis" | "agent";
+/**
+ * Where a person is typing. Each surface is its own session list, socket
+ * and draft, and the backend keeps one turn recipe per name
+ * (``jarvis/agent_chat/surface_kits.py``): the front page, the coding
+ * agents, and the Local models section's setup assistant.
+ */
+export type AgentChatSurface = "jarvis" | "agent" | "local-models";
 
 export interface AgentChatSession {
   session_id: string;
@@ -149,6 +161,43 @@ async function json<T>(res: Response, what: string): Promise<T> {
 export async function fetchAgentChatCatalog(surface?: AgentChatSurface): Promise<AgentChatCatalog> {
   const query = surface ? `?surface=${encodeURIComponent(surface)}` : "";
   return json(await fetch(`/api/agent-chat/catalog${query}`), "catalog-failed");
+}
+
+export interface TypeaheadRow {
+  value: string;
+  label: string;
+  hint: string;
+  kind: string;
+  group: string;
+}
+
+/**
+ * What the composer lists after a trigger character on one seat — read from
+ * the disk that seat's runner reads (`GET /api/agent-chat/typeahead`).
+ */
+export async function fetchTypeahead(
+  input: {
+    surface: AgentChatSurface;
+    provider: string;
+    cwd: string;
+    trigger: string;
+    q: string;
+    limit?: number;
+  },
+  signal?: AbortSignal,
+): Promise<{ trigger: string; items: TypeaheadRow[]; truncated: boolean }> {
+  const params = new URLSearchParams({
+    surface: input.surface,
+    provider: input.provider,
+    trigger: input.trigger,
+    q: input.q,
+    limit: String(input.limit ?? 40),
+  });
+  if (input.cwd) params.set("cwd", input.cwd);
+  return json(
+    await fetch(`/api/agent-chat/typeahead?${params.toString()}`, { signal }),
+    "typeahead-failed",
+  );
 }
 
 /**

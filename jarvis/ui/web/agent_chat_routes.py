@@ -46,6 +46,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from jarvis.agent_chat import attachments as chat_attachments
+from jarvis.agent_chat import typeahead
 from jarvis.agent_chat.catalog import CLAUDE_CODE_MODELS, offers, rows_for
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
@@ -70,12 +71,12 @@ log = logging.getLogger(__name__)
 
 #: The Pydantic twin of ``jarvis.agent_chat.store.SURFACES`` (AP-4; the parity
 #: test in tests/unit/agent_chat/test_agent_chat_surface_parity.py pins it).
-SurfaceName = Literal["jarvis", "agent"]
+SurfaceName = Literal["jarvis", "agent", "local-models"]
 
 #: The same names, as data — a multipart form field cannot be typed by a
 #: ``Literal`` without turning an unknown surface into a 422 on a file the
 #: person just dropped.
-SURFACE_NAMES: frozenset[str] = frozenset({"jarvis", "agent"})
+SURFACE_NAMES: frozenset[str] = frozenset({"jarvis", "agent", "local-models"})
 
 router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 
@@ -93,8 +94,9 @@ class CreateSessionBody(BaseModel):
     #: "" = the runner's default mode (jarvis/agent_chat/permissions.py).
     permission_mode: str = ""
     title: str = ""
-    #: Which chat the session belongs to — the front page ("jarvis") or the
-    #: Agentic IDE's chat mode ("agent"). Fixed for the session's life.
+    #: Which chat the session belongs to — the front page ("jarvis"), the
+    #: Agentic IDE's chat mode ("agent"), or the Local models section's setup
+    #: assistant ("local-models"). Fixed for the session's life.
     surface: SurfaceName = "agent"
 
 
@@ -254,12 +256,50 @@ async def get_catalog(request: Request, surface: SurfaceName = "agent") -> dict[
         ladder = ladder_key(surface, runner)
         d["permission_modes"] = [m.to_dict() for m in permission_modes(ladder)]
         d["default_permission_mode"] = default_permission(ladder)
+        # Which characters open the composer's typeahead on this seat —
+        # decided here, from the runner, so the box never offers a "/" list
+        # to a seat that would read it as plain text.
+        d["typeahead"] = list(typeahead.triggers_for(runner))
         rows.append(d)
     return {
         "providers": rows,
         "default_cwd": svc.default_cwd(surface),
         "shell": shell_label(),
     }
+
+
+# ----------------------------------------------------------- typeahead
+
+
+@router.get("/typeahead", openapi_extra={"x-jarvis-readonly": True})
+async def get_typeahead(
+    request: Request,
+    trigger: str = Query(..., min_length=1, max_length=1),
+    surface: SurfaceName = "agent",
+    provider: str = "",
+    cwd: str | None = None,
+    q: str = Query("", max_length=200),
+    limit: int = Query(40, ge=1, le=200),
+) -> dict[str, Any]:
+    """What the composer lists after ``/``, ``@`` or ``$`` on one seat.
+
+    The seat is (surface, provider) resolved to its runner exactly as a turn
+    would be; the folder is the chat's. Rows are read from the disk that
+    runner reads (``jarvis.agent_chat.typeahead``) — the account's skills,
+    commands and plugins, the folder's own, or the files under it — and a
+    trigger the seat does not honour answers with an empty list.
+    """
+    svc = _service(request)
+    runner = resolve_runner(provider, surface=surface) if provider else "api"
+    folder = _validate_cwd(cwd) or svc.default_cwd(surface)
+    return await asyncio.to_thread(
+        typeahead.suggest,
+        runner=runner,
+        cwd=folder,
+        trigger=trigger,
+        query=q,
+        limit=limit,
+    )
 
 
 # ------------------------------------------------------------- health

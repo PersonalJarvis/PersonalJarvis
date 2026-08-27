@@ -72,8 +72,10 @@ _PREVIEW_MAX_CHARS = 120
 #: is ``AgentChatSurface`` in ``src/lib/agentChatApi.ts`` and the Pydantic one
 #: ``CreateSessionBody.surface`` in ``jarvis/ui/web/agent_chat_routes.py`` —
 #: ``tests/unit/agent_chat/test_agent_chat_surface_parity.py`` keeps the three
-#: in step (AP-4).
-SURFACES: Final[tuple[str, ...]] = ("jarvis", "agent")
+#: in step (AP-4). ``"local-models"`` is the Local models section's setup
+#: assistant: one session per install, its own hands, never in either chat's
+#: session list.
+SURFACES: Final[tuple[str, ...]] = ("jarvis", "agent", "local-models")
 DEFAULT_SURFACE: Final[str] = "agent"
 
 

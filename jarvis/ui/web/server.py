@@ -367,6 +367,9 @@ class WebServer:
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
+        from .local_models_assistant_routes import (
+            router as local_models_assistant_router,
+        )
         from .local_models_routes import router as local_models_router
         from .marketplace_publish_routes import router as marketplace_publish_router
         from .marketplace_routes import router as marketplace_router
@@ -436,6 +439,9 @@ class WebServer:
         # Local models section: inventory / unload / delete behind the
         # pull-capable card (same capability gate as the pull routes).
         app.include_router(local_models_router)
+        # The section's setup assistant — same capability gate, its own chat
+        # surface on the Agents tier.
+        app.include_router(local_models_assistant_router)
         app.include_router(antigravity_router)
         app.include_router(claude_router)
         app.include_router(grok_build_router)

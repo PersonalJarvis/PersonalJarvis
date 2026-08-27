@@ -96,6 +96,39 @@ def _chat_workspace() -> Path:
     return chat_workspace_dir()
 
 
+def _local_models_tools(cfg: Any, _brain: Any) -> dict[str, Tool]:
+    """The setup assistant's hands — the ``lm_*`` tools (lazy, AP-26)."""
+    from jarvis.local_models.assistant_tools import build_tools
+    from jarvis.local_models.health_monitor import server_root
+
+    return build_tools(cfg, root=server_root(cfg))
+
+
+async def _local_models_extra(cfg: Any, _brain: Any) -> str:
+    """What the assistant can already see: machine, inventory, roles, catalogue.
+
+    Read per turn rather than once per session, because the whole point of the
+    assistant is that things change while it works — a model finishes pulling,
+    the server comes up, a role gets filled.
+    """
+    from jarvis.local_models.assistant_prompt import build_system_extra
+    from jarvis.local_models.health_monitor import server_root
+
+    return await build_system_extra(cfg, root=server_root(cfg))
+
+
+def _only_local_models(tools: dict[str, Tool]) -> dict[str, Tool]:
+    """Its own hands and nothing else.
+
+    The assistant sets up local models; the wiki, the calendar and the folder
+    tools are foreign schemas that only make the request bigger and give a
+    provider more to refuse.
+    """
+    from jarvis.local_models.assistant_tools import TOOL_PREFIX
+
+    return {name: tool for name, tool in tools.items() if name.startswith(TOOL_PREFIX)}
+
+
 # ── the table ─────────────────────────────────────────────────────────────
 
 _KITS: Final[dict[str, SurfaceKit]] = {
@@ -116,6 +149,26 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         # composer hides the chip here (a person talks to Jarvis, they do not
         # point it at a checkout), so the default is also the only folder most
         # of these chats ever see. It has to be a small one.
+        workspace_dir=_chat_workspace,
+    ),
+    # The Local models section's setup assistant. It runs on Jarvis' own
+    # harness over the Agents tier (an API key, never a vendor CLI and never
+    # the voice brain) so that a person whose voice runs on Ollama still gets
+    # a capable model to set Ollama UP. Session policy — one chat per install,
+    # re-created when the tier moves — lives in
+    # ``jarvis/local_models/assistant_session.py``.
+    "local-models": SurfaceKit(
+        surface="local-models",
+        brain_runner=True,
+        cli_seats=False,
+        ladder=_JARVIS_LADDER,
+        uses_stance=True,
+        tools=_local_models_tools,
+        system_extra=_local_models_extra,
+        tool_origin="local-models-assistant",
+        tool_filter=_only_local_models,
+        # No folder: this surface never touches a checkout. Its hands talk to
+        # the local server and the config, and the composer shows no chip.
         workspace_dir=_chat_workspace,
     ),
 }
