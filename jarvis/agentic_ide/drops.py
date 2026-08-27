@@ -234,6 +234,22 @@ def reference(path: str, *, agent: str) -> str:
     return f'"{posix}"'
 
 
+def dereference(reference: str) -> str:
+    """The workspace-relative path behind a :func:`reference`, or "".
+
+    The inverse of :func:`reference`, and deliberately nothing more: it undoes
+    the two shapes that function writes (``@path`` and a quoted path) so a
+    receipt about a drop can point a viewer at the file, without a second
+    place that knows how agents like their paths.
+    """
+    value = (reference or "").strip()
+    if value.startswith("@"):
+        value = value[1:]
+    elif len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    return value.strip().replace("\\", "/")
+
+
 def within_workspace(path: str, workspace: str | Path) -> str | None:
     """``path`` as a workspace-relative posix path, or ``None`` if it is outside.
 
@@ -260,6 +276,7 @@ __all__ = [
     "MAX_TOTAL_BYTES",
     "DropError",
     "StoredDrop",
+    "dereference",
     "drop_dir",
     "reference",
     "safe_name",

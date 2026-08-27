@@ -82,6 +82,13 @@ export interface UserAttachment {
   kind: string;
   /** `vision` / `extraction` / `none` — whether the model could read it. */
   describedBy: string;
+  /**
+   * Where the file itself can be fetched from, same-origin — set for an image
+   * that lives inside an open workspace (a drop the Agentic IDE stored; the
+   * backend folds it in, `jarvis/agentic_ide/prompt_receipts.py`). The
+   * timeline draws the picture when it has this and a chip when it does not.
+   */
+  url?: string;
 }
 
 export interface TurnItem {
@@ -144,7 +151,15 @@ function userAttachments(raw: unknown): UserAttachment[] {
     if (!entry || typeof entry !== "object") continue;
     const row = entry as Record<string, unknown>;
     const name = str(row.name);
-    if (name) out.push({ name, kind: str(row.kind), describedBy: str(row.described_by) });
+    if (name) {
+      const url = str(row.url);
+      out.push({
+        name,
+        kind: str(row.kind),
+        describedBy: str(row.described_by),
+        ...(url ? { url } : {}),
+      });
+    }
   }
   return out;
 }

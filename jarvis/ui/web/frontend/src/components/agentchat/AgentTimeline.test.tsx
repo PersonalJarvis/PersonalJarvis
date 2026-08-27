@@ -382,3 +382,41 @@ describe("a run of steps puts itself away", () => {
     expect(rows[0].dataset.state).toBe("error");
   });
 });
+
+describe("the person's turn with files", () => {
+  const SHOT = {
+    name: "shot.png",
+    kind: "image",
+    described_by: "none",
+    url: "/api/agentic-ide/workspaces/ide_1/file?path=.jarvis%2Fdrops%2Fshot.png",
+  };
+
+  it("draws an image that can be fetched as the picture itself", () => {
+    // The complaint (maintainer, 2026-08-27): a screenshot dropped on a pane
+    // showed up in the person's turn as "### shot.png - '.jarvis/drops/…'".
+    // With a url, the turn shows the person's sentence and the picture.
+    draw([ev("user_message", { text: "## Task\nlook", typed: "look at this", attachments: [SHOT] })]);
+    const turn = screen.getByTestId("agent-message-user");
+    expect(turn.textContent).toContain("look at this");
+    expect(turn.textContent).not.toContain("## Task");
+    const image = within(turn).getByTestId("agent-message-image") as HTMLImageElement;
+    expect(image.getAttribute("src")).toBe(SHOT.url);
+    expect(image.getAttribute("alt")).toBe("shot.png");
+  });
+
+  it("keeps the chip for a file with nothing to draw", () => {
+    draw([
+      ev("user_message", {
+        text: "read these",
+        attachments: [
+          { name: "notes.md", kind: "text", described_by: "extraction" },
+          { name: "front-page.png", kind: "image", described_by: "vision" },
+        ],
+      }),
+    ]);
+    const turn = screen.getByTestId("agent-message-user");
+    expect(within(turn).queryByTestId("agent-message-image")).toBeNull();
+    expect(turn.textContent).toContain("notes.md");
+    expect(turn.textContent).toContain("front-page.png");
+  });
+});

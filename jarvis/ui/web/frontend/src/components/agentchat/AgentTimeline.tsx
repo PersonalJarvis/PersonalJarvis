@@ -117,7 +117,25 @@ export function AgentTimeline({
                       item.text && "mt-2 border-t border-border/60 pt-2",
                     )}
                   >
-                    {item.attachments.map((file) => (
+                    {item.attachments.map((file) =>
+                      // The picture itself, where there is one to fetch: a
+                      // screenshot dropped on a pane is a thing the person
+                      // wants to SEE in their turn, not a file name with an
+                      // icon (maintainer, 2026-08-27). A file with no url —
+                      // a document, or the front page's chat, whose drops
+                      // are read and not stored — keeps the chip.
+                      file.kind === "image" && file.url ? (
+                        <img
+                          key={file.name}
+                          src={file.url}
+                          alt={file.name}
+                          title={file.name}
+                          loading="lazy"
+                          decoding="async"
+                          data-testid="agent-message-image"
+                          className="max-h-60 max-w-full rounded-lg border border-border/70 bg-background/40 object-contain"
+                        />
+                      ) : (
                       <span
                         key={file.name}
                         // The receipt says whether the model could actually
@@ -138,7 +156,8 @@ export function AgentTimeline({
                         )}
                         <span className="max-w-[12rem] truncate font-mono">{file.name}</span>
                       </span>
-                    ))}
+                      ),
+                    )}
                   </div>
                 )}
               </div>

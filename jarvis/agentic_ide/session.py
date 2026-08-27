@@ -67,7 +67,7 @@ import re
 import shutil
 import sys
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -4496,7 +4496,13 @@ class Registry:
 
     # --------------------------------------------------------------- prompt
     async def send_prompt(
-        self, wanted: str, text: str, *, workspace_id: str | None = None
+        self,
+        wanted: str,
+        text: str,
+        *,
+        workspace_id: str | None = None,
+        typed: str = "",
+        attachments: Sequence[Any] = (),
     ) -> Terminal:
         """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
@@ -4526,6 +4532,12 @@ class Registry:
         ``workspace_id`` pins background work such as a deferred Continue to the
         pane it came from; without it, the front workspace keeps the established
         call-sign resolution rules.
+
+        ``typed`` and ``attachments`` are the receipt: what the person actually
+        said and the files that went with it, when ``text`` is a brief written
+        around them. They are recorded beside the prompt so the chat stage can
+        show the person their own sentence and their pictures, where the
+        CLI's transcript holds only the brief (``prompt_receipts``).
 
         Raises ``SessionError`` when the terminal is unknown, not running, still
         booting after the readiness window, or the prompt sanitizes down to
@@ -4622,12 +4634,17 @@ class Registry:
         term.manual_submit_token += 1
         term.submitted = submitted
         term.sent_multiline = multiline and submitted is True
+        from .prompt_receipts import receipts_for
+
         history_entry = prompt_history.PromptHistoryEntry(
             id=uuid4().hex,
             sequence=term.prompts_sent,
             text=payload,
             at=term.last_prompt_at,
             submitted=submitted,
+            # Only when it differs: a verbatim prompt IS what the person typed.
+            typed=typed.strip() if typed.strip() != payload.strip() else "",
+            attachments=receipts_for(attachments),
         )
         # Memory first: even a read-only or temporarily unavailable data folder
         # must not make a prompt disappear from the history while the pane is

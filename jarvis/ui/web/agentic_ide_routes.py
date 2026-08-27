@@ -2967,6 +2967,21 @@ async def terminal_conversation(name: str, workspace: str | None = None) -> dict
     }
 
 
+async def _with_prompt_receipts(term: Terminal, session: Session, events: list[dict]) -> list[dict]:
+    """The transcript's events with the person's own words and pictures folded in.
+
+    The CLI's record holds the brief Jarvis typed; the pane's prompt history
+    holds what the person said and dropped alongside it. Joined here, off the
+    event loop (the history is a file), so the chat stage draws the sentence
+    and the image where the transcript alone would draw a "## Task" brief.
+    """
+    from jarvis.agentic_ide import prompt_receipts
+
+    stored = await asyncio.to_thread(prompt_history.load, term.history_id)
+    entries = prompt_history.merged(stored, term.prompt_records)
+    return prompt_receipts.annotate(events, entries, workspace_id=session.id)
+
+
 @router.get(
     "/terminals/{name}/timeline",
     summary="One terminal's conversation as agent-chat events",
@@ -3013,7 +3028,11 @@ async def terminal_timeline(name: str, workspace: str | None = None) -> dict:
     )
     if events is None:
         return {**base, "available": False, "events": []}
-    return {**base, "available": True, "events": events}
+    return {
+        **base,
+        "available": True,
+        "events": await _with_prompt_receipts(term, _session, events),
+    }
 
 
 @router.get(
@@ -3672,7 +3691,11 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
             }
 
         try:
-            term = await registry.send_prompt(name, text)
+            # The receipt beside the brief: the sentence as typed and the files
+            # that went with it, for the pane's chat stage (prompt_receipts).
+            term = await registry.send_prompt(
+                name, text, typed=req.prompt, attachments=attachments
+            )
         except SessionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 

@@ -433,10 +433,17 @@ async def _default_compose(utterance: str, **kwargs: Any) -> Any:
     return await compose_prompt(utterance, **kwargs)
 
 
-async def _default_send(name: str, text: str) -> Any:
+async def _default_send(name: str, text: str, **receipt: Any) -> Any:
+    """Type ``text`` into the pane; ``receipt`` is what the person said and dropped.
+
+    The receipt is recorded beside the prompt so the pane's chat can show the
+    sentence and the pictures rather than the brief (``prompt_receipts``). An
+    injected sender is a test double or a CLI caller and is never handed one:
+    its two-argument shape is the contract it was written against.
+    """
     from .session import get_registry
 
-    return await get_registry().send_prompt(name, text)
+    return await get_registry().send_prompt(name, text, **receipt)
 
 
 async def deliver(
@@ -642,8 +649,14 @@ async def deliver(
                 reason="its prompt came back empty",
             )
 
+        # The person's own words go with the prompt, for the chat stage: the
+        # utterance itself, because the assignment a split fan-out hands a pane
+        # is the writer's sentence, not theirs.
+        receipt = (
+            {"typed": utterance, "attachments": pending_attachments} if send is None else {}
+        )
         try:
-            sent = await send_fn(term.name, text)
+            sent = await send_fn(term.name, text, **receipt)
         except asyncio.CancelledError:
             await _finish_prompt_attachments_shielded(term, pending_batches, consume=False)
             raise

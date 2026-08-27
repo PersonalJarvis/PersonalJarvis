@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { AgentChatEvent } from "@/lib/agentChatApi";
-import { EMPTY_TIMELINE, reduceEvent, reduceEvents, runningTurn, type TurnItem } from "./reduce";
+import {
+  EMPTY_TIMELINE,
+  reduceEvent,
+  reduceEvents,
+  runningTurn,
+  type TurnItem,
+  type UserItem,
+} from "./reduce";
 
 let seq = 0;
 function ev(kind: string, payload: Record<string, unknown>, persisted = true): AgentChatEvent {
@@ -133,5 +140,45 @@ describe("agent-chat reduce", () => {
     const turn = tl.items[0] as TurnItem;
     expect(turn.usage).toEqual({ input_tokens: 4, output_tokens: 65 });
     expect(turn.durationMs).not.toBeNull();
+  });
+});
+
+describe("a user message with files", () => {
+  // A pane's chat reads the CLI's transcript, which holds the brief Jarvis
+  // typed; the backend folds the person's own sentence and the file receipts
+  // back in (jarvis/agentic_ide/prompt_receipts.py). The reducer shows the
+  // sentence and carries the url an image can be drawn from.
+  it("shows what the person said and keeps the picture's url", () => {
+    const tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("user_message", {
+        text: "## Task\nScroll the traces.\n\n## Dropped files\n### shot.png",
+        typed: "scroll the traces into view",
+        attachments: [
+          {
+            name: "shot.png",
+            kind: "image",
+            described_by: "none",
+            url: "/api/agentic-ide/workspaces/ide_1/file?path=.jarvis%2Fdrops%2Fshot.png",
+          },
+          { name: "notes.md", kind: "text", described_by: "extraction" },
+          { kind: "image" },
+        ],
+      }),
+    ]);
+    expect(tl.items[0]).toMatchObject({
+      type: "user",
+      text: "scroll the traces into view",
+      attachments: [
+        {
+          name: "shot.png",
+          kind: "image",
+          describedBy: "none",
+          url: "/api/agentic-ide/workspaces/ide_1/file?path=.jarvis%2Fdrops%2Fshot.png",
+        },
+        { name: "notes.md", kind: "text", describedBy: "extraction" },
+      ],
+    });
+    const [, doc] = (tl.items[0] as UserItem).attachments;
+    expect("url" in doc).toBe(false);
   });
 });

@@ -33,6 +33,14 @@ class PromptHistoryEntry:
     text: str
     at: float
     submitted: bool | None
+    #: What the person actually said or typed, when ``text`` is a brief Jarvis
+    #: wrote around it. Empty on a prompt sent verbatim. The chat stage shows
+    #: this instead of the brief — the brief is the agent's reading matter.
+    typed: str = ""
+    #: Receipts for the files that went in with the prompt, in the shape
+    #: :mod:`jarvis.agentic_ide.prompt_receipts` writes (name, kind, path, …).
+    #: Empty on an ordinary prompt, so nothing changes there.
+    attachments: tuple[dict[str, Any], ...] = ()
 
     @staticmethod
     def from_dict(value: Any) -> PromptHistoryEntry | None:
@@ -52,12 +60,22 @@ class PromptHistoryEntry:
         submitted = value.get("submitted")
         if submitted not in (True, False, None):
             submitted = None
+        typed = value.get("typed")
+        raw_attachments = value.get("attachments")
         return PromptHistoryEntry(
             id=entry_id,
             sequence=max(0, sequence),
             text=text,
             at=max(0.0, at),
             submitted=submitted,
+            typed=typed if isinstance(typed, str) else "",
+            # A receipt without a name says nothing a viewer could show; the
+            # rest of the row is still the prompt it always was.
+            attachments=tuple(
+                {k: v for k, v in item.items() if isinstance(k, str)}
+                for item in (raw_attachments if isinstance(raw_attachments, list) else ())
+                if isinstance(item, dict) and isinstance(item.get("name"), str) and item["name"]
+            ),
         )
 
 

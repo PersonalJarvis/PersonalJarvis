@@ -13522,3 +13522,61 @@ backend). OS parity: `docs/os-parity.md` P-39.
 way" is a claim about the other layers, and here every other way had the
 same blind spot. And a lane that can only be stopped by an EDGE has no
 bottom: when the thing being waited for is a physical key, ask the keyboard.
+
+## BUG-192: a pane's chat drew the person's turn as "## Task … ## Dropped files ### shot.png - '.jarvis/drops/…' Could not be described" — the brief Jarvis typed, not what the person said, and the screenshot reduced to a path (MEDIUM, FIXED 2026-08-27)
+
+**Symptom.** On the Agentic IDE's chat stage, the user's own bubble read
+`## Task` followed by a paraphrase of what they had said, then `## Dropped
+files`, `### pythonw_….png - ".jarvis/drops/20260827-…png"` and `Could not
+be described (ClientError); it is attached as a file.` The person had spoken
+one sentence and dropped one screenshot. The maintainer: "why is there a
+markdown Task and then Python, bla bla, where the images were thrown in? …
+the images should be rendered live … and the prompt the user said should be
+shown."
+
+**Cause.** The stage reads the coding CLI's own transcript
+(`GET /terminals/{name}/timeline`), and that transcript holds what was TYPED
+into the CLI: the brief `prompt_blueprint` wrote around the sentence — here
+its deterministic `render_fallback`, because the vision provider had failed
+(`ClientError`) and the writer with it. The front page's chat had solved the
+same problem at the event: a `user_message` carries `text` (the composed
+prompt), `typed` (the person's sentence) and `attachments` (receipts), and
+`reduce.ts` shows `typed` when it is there. A pane's transcript cannot carry
+that — it is the CLI's file — and the pane's own prompt history
+(`prompt_history.py`) recorded only the text that went in. So the stage had
+nothing but the brief to draw, and its attachment receipts were name-only
+chips even where the picture sat in the workspace.
+
+**Fix.** The receipt is recorded beside the prompt at send time and folded
+back into the transcript's events when the stage reads them.
+
+1. `PromptHistoryEntry` gains `typed` and `attachments` (name, kind,
+   described_by, note, workspace-relative `path`); old rows load unchanged.
+   `Registry.send_prompt(typed=…, attachments=…)` records them — on the
+   typed path from the REST route's `req.prompt` and analysed attachments,
+   on the spoken path from the fan-out's utterance and the pending drops
+   (`fanout._default_send`; injected senders keep their two-argument shape).
+2. `prompt_receipts.annotate` joins each `user_message` to its entry by
+   text — whitespace-insensitive, and tolerant of the reader's middle cut
+   (`agent_transcript._clip`) — and adds `typed` plus receipts; an image
+   inside the workspace gets a `url` on the existing workspace file route.
+   `drops.dereference` is the inverse of `drops.reference` for that path.
+   The timeline route applies it (`_with_prompt_receipts`).
+3. `reduce.ts` carries `url`; `AgentTimeline` draws an `<img>` for an image
+   receipt that has one, and the chip as before for a file that does not
+   (documents; the front page's chat, whose drops are read, not stored).
+
+Tests: `tests/unit/agentic_ide/test_prompt_receipts.py` (dereference is the
+inverse of reference, the history row round-trips and an old row still
+loads, the join survives whitespace and the middle cut, identical briefs take
+their own receipts, the route serves the sentence and a PNG that loads),
+`reduce.test.ts` and `AgentTimeline.test.tsx` ("draws an image that can be
+fetched as the picture itself" / "keeps the chip for a file with nothing to
+draw").
+
+**Lesson.** A conversation view must show the person what THEY said, and
+the prompt the machine wrote FOR them is a different thing — when the record
+being read is somebody else's file, the fact has to be written down at the
+moment it is known and joined back later, not reconstructed from the file.
+And a picture the app stored itself is a picture it can show: a receipt that
+names an image the viewer could fetch is a chip nobody asked for.
