@@ -13415,3 +13415,110 @@ the manager budgets" for months while the manager budgeted nothing. And an
 error the provider spells out must reach the user in its own words: filing
 an unknown 4xx as "network" turns a one-line fix into a day of "nothing
 works".
+
+## BUG-191: a hold-to-dictate recording that never ended — the bar's X did nothing, every key press was refused, only a restart cleared it (HIGH, FIXED 2026-08-27)
+
+**Symptom (maintainer, 2026-08-27 10:26).** Hold the dictation key
+(`ctrl+win`, `[dictation].mode = "hold"`), speak, let go — and the Jarvis Bar
+stays in its dictation look with the level bars moving. The X on the bar does
+nothing. Pressing the key again does nothing. It "comes back more often since
+a while" and has been "fixed" more than once. Only restarting the app ends it.
+
+**What was actually true.** Read from `data/jarvis_desktop.log` and the
+flight recorder of that minute:
+
+```
+10:26:06.135  🎙️ dictation started (transcribe-only, target=auto)   ← which door? the log never said
+10:26:07.917  📋 paste-last: ok=True (46 chars)                      ← ctrl+alt+v fired, synthetic Ctrl+V sent
+10:26:33 … 10:29:57  "final dictation window …" every ~23 s          ← the recording was ALIVE the whole time
+10:26:35 … 10:27:24  start_dictation refused (already_running) ×8   ← every key press
+             (no "📵 request_hangup" at all)                          ← the X never reached the backend
+             (no "Mic closed", no "dictation ended")
+```
+
+The live transcripts were the recognizer's silence hallucinations
+(`1.5x4.5x4.5x…`): nobody was speaking into a microphone that stayed open.
+`_dictation_session` sat in its `asyncio.wait({stop, hangup, drain})` for
+four minutes; neither `_dictation_stop_event` nor `_hangup_event` was ever
+set. The recording ceiling is 1800 s, so it would have ended — half an hour
+later, by pasting the garbage into whatever was focused.
+
+**Cause — three defects that lock each other in.**
+
+1. *The bar's X was drawn and dead.* `renderer.visual_mode` paints
+   `dictate` as "speak" and `dictate_transcribing` as "think", so the close-X
+   is on screen; `interaction.resolve_click` returned `"none"` for every
+   `DICTATION_MODES` click — on the documented theory that "another way to
+   stop always exists". `overlay._on_click` also passed `pill_w=None` for
+   those modes. With a lost release there was no other way.
+2. *A press during a running dictation was a refused START, not a stop.*
+   `_on_dictate_press` only repairs a STUCK LATCH (press with
+   `_dictate_key_down` still True past the grace window). The ordinary case
+   is the opposite: the latch is already False (the release edge arrived, or
+   the hands-free key / bar / REST started the recording), so the press went
+   to `start_dictation`, was refused as `already_running` — a refusal the bar
+   deliberately paints as nothing (`DICTATION_INERT_REFUSALS`) — and the
+   latch was dropped again. The key did nothing, silently, for as long as the
+   recording lived.
+3. *A hold recording had no bond to the physical key.* The chain
+   `HotkeyChecker` thread → `_make_handler` → queue → `_hotkey_loop` →
+   `_on_dictate_release` → `stop_dictation` carries the up edge exactly
+   once, and several things drop it: a checker restart mid-hold re-creates
+   the library's `binding_press_state` (the release branch requires
+   `key_state == 1`), a registry re-arm starts every row at "not pressed",
+   and BOTH the library poller (`HotkeyChecker.run`) and `_hotkey_loop`
+   called handlers with no `try/except` — one raise ended every global
+   shortcut in the process, invisibly. On top of that the repo's own
+   comments claimed the Windows poller re-fires `on_press` every tick; the
+   library fires it once per chord-down (`key_state != 1`), so the "heartbeat"
+   the self-heal was written around never existed.
+
+Which of the three doors the 10:26:06 start came through cannot be told from
+the log — the start line did not name it. That is a defect of its own.
+
+**Fix.**
+
+1. `interaction.resolve_click` resolves a hovered click on the X glyph in a
+   dictation mode to `"dictation_stop"` (body and mic zone stay inert — a
+   stray click must neither start a voice session nor mute the ear being
+   dictated into). The Tk bar, the Qt bar and the macOS host/child protocol
+   carry the action; `SpeechPipeline.request_dictation_stop(discard=True)` is
+   the thread-safe entry (marshalled onto the pipeline loop like
+   `request_hangup`) and ends the recording like a hangup: nothing delivered.
+2. `_on_dictate_press`: a press while `dictation_active()` and no latch is
+   the STOP of whatever runs — logged, `stop_dictation()`, no second start.
+   The key is the kill switch of its own lane. `stop_dictation` also sets the
+   stop event while cancelling a handover, so a recording alive at that
+   moment cannot be skipped.
+3. A hold-key watchdog. `HotkeyBackend.chord_is_down(combo)` is a new
+   three-way capability — `True`/`False` when the backend can see the
+   keyboard (Windows: `GetAsyncKeyState`, the poller's own source; Quartz and
+   pynput: their held-set), `None` when it cannot (Noop, not started). A
+   HOLD-started recording polls it every 250 ms and finishes itself through
+   the ordinary stop event once the chord has read "up" for 1 s with no
+   release edge — delivering what was said, as a release would. `None` stands
+   the watchdog down; it never invents a release. `HotkeyTrigger.chord_is_down`
+   aggregates over a binding's combos (the AltGr compatibility chord).
+4. Containment: `_hotkey_loop` wraps every handler; `_make_handler` never
+   lets an exception reach the library's poller thread; the dictation's
+   wait for the wake microphone's release confirmation is bounded
+   (`_DICTATION_WAKE_RELEASE_TIMEOUT_S`) instead of forever.
+5. Diagnosability: `start_dictation(source=…)` — `hold_key`, `toggle_key`,
+   `ws`, `rest`, `api` — is logged on start; every dictate edge logs its
+   latch state; the session logs which waiter ended the recording (`stop`,
+   `discard`, `hangup`, `input ended`, the cap). The false "re-fires every
+   tick" comments are corrected.
+
+Tests: `tests/unit/dictation/test_dictate_keybind.py` (press-while-running
+stops, sources, a raising handler does not end the loop),
+`tests/unit/speech/test_dictation_hold_watchdog.py`,
+`tests/unit/speech/test_dictation_mic_handoff.py` (bounded release wait),
+`tests/unit/ui/jarvisbar/test_interaction.py` / `test_host_protocol.py` /
+`test_subprocess_overlay.py` (the X), `tests/unit/trigger/test_hotkey_key_state.py`
+and `tests/contract/test_hotkey_backend_protocol.py` (the capability on every
+backend). OS parity: `docs/os-parity.md` P-39.
+
+**Lesson.** A control that is drawn must work — "there is always another
+way" is a claim about the other layers, and here every other way had the
+same blind spot. And a lane that can only be stopped by an EDGE has no
+bottom: when the thing being waited for is a physical key, ask the keyboard.
