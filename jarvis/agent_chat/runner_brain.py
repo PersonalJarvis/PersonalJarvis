@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections.abc import Callable, Mapping
@@ -544,10 +545,29 @@ def _agent_secret(resolver: Callable[[str], str | None], provider: str) -> str |
         return None
 
 
+#: A leading ``/slug`` — the composer's slash pick — and whatever follows it.
+_EXPLICIT_SKILL_RE = re.compile(r"^\s*/([A-Za-z0-9][\w.:-]*)(?:\s+|$)(.*)$", re.DOTALL)
+
+
+def explicit_skill(text: str) -> tuple[str, str] | None:
+    """``("slug", "the rest")`` when the message opens with ``/slug``, else None.
+
+    The composer's ``/`` typeahead lists the registry's active skills by
+    slug; picking one puts ``/slug`` at the head of the sentence. That pick
+    is an order, not a hint, so it is honoured before any trigger-phrase
+    matching — the same precedence a CLI gives its slash commands.
+    """
+    m = _EXPLICIT_SKILL_RE.match(text or "")
+    if m is None:
+        return None
+    return m.group(1), m.group(2).strip()
+
+
 def _note_skill_trigger(brain: Any, text: str) -> None:
     """The desktop text path's pre-brain hook, verbatim in effect: a skill
     whose trigger matches is noted on the brain, which injects its
-    instructions into this turn (desktop_app._on_user_message)."""
+    instructions into this turn (desktop_app._on_user_message). A leading
+    ``/slug`` names the skill outright and wins over the trigger matcher."""
     try:
         from jarvis.skills.skill_context import try_get_skill_context
         from jarvis.skills.trigger_matcher import TriggerMatcher
@@ -556,6 +576,16 @@ def _note_skill_trigger(brain: Any, text: str) -> None:
         note = getattr(brain, "note_skill_trigger", None)
         if skill_ctx is None or not callable(note):
             return
+        explicit = explicit_skill(text)
+        if explicit is not None:
+            slug, rest = explicit
+            try:
+                skill = skill_ctx.registry.resolve(slug)
+            except KeyError:  # not a skill's name: the trigger matcher gets its turn
+                log.debug("brain runner: /%s names no active skill", slug)
+            else:
+                note(skill.name, content=rest, source="chat")
+                return
         match_result = TriggerMatcher(skill_ctx.registry).match_voice_with_match(text, lang="auto")
         if match_result is None:
             return

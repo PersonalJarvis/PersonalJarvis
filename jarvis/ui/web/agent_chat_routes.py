@@ -19,6 +19,8 @@ Prefix ``/api/agent-chat``:
     GET    /check-folder?path=               does the folder exist / is it a directory
     GET    /typeahead?trigger=&surface=&provider=&cwd=&q=
                                              what the composer lists after "/", "@" or "$"
+    GET    /typeahead?trigger=&surface=&provider=&cwd=&q=
+                                             what the composer lists after "/", "@" or "$"
 
 The service lives on ``app.state.agent_chat`` (built in ``server.py``); a
 missing service answers 503 like every other optional subsystem.

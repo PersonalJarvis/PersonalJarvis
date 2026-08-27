@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { Combobox, type ComboboxGroup, type ComboboxOption } from "@/components/ui/combobox";
+import { AgentMark } from "@/components/agentic/AgentMark";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatStoreContext";
 import type { ProviderOption } from "@/store/agentChat";
@@ -26,6 +27,8 @@ import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { usePasteRescue } from "@/components/agentchat/usePasteRescue";
+import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
+import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { fill, useT } from "@/i18n";
@@ -145,6 +148,18 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pasteRescue = usePasteRescue();
 
+  // The list over the box after "/", "@" or "$" — which of the three this
+  // seat honours is the catalog row's word (`typeahead`), read from the
+  // runner, so a seat that would take the slash as text never gets a list.
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const triggers = useMemo(() => provider?.typeahead ?? [], [provider]);
+  const typeahead = useComposerTypeahead(textareaRef, value, setValueState, {
+    surface,
+    provider: draft.provider,
+    cwd: draft.cwd,
+    triggers,
+  });
+
   const running = runningTurn(timeline) !== null;
 
   async function onSend() {
@@ -166,6 +181,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     // Watches for a Ctrl+V the embedded browser may never answer; does nothing
     // in a real browser, where the box pastes on its own.
     pasteRescue.onKeyDown(ev);
+    // An open list owns the arrows, Enter, Tab and Escape.
+    if (typeahead.onKeyDown(ev)) return;
     if (ev.key === "Enter" && !ev.shiftKey) {
       ev.preventDefault();
       void onSend();
@@ -239,7 +256,21 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         disabled: !p.connected,
         icon: (
           <span className="relative inline-flex shrink-0">
-            <ProviderLogo providerId={p.id} label={p.label} size="sm" />
+            {/* A coding CLI installed on this machine wears its own mark; a
+                catalog row wears its provider family's. Both are real brand
+                files — the fallback either would otherwise take is a letter
+                in a box, and a letter is not a logo. */}
+            {p.agentMark ? (
+              <AgentMark
+                agent={p.agentMark}
+                label={p.label}
+                logoUrl={p.logoUrl}
+                variant="plain"
+                size="sm"
+              />
+            ) : (
+              <ProviderLogo providerId={p.id} label={p.label} size="sm" />
+            )}
             {(broken || working) && (
               <span
                 data-testid={`provider-health-${p.id}`}
@@ -376,6 +407,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
 
   return (
     <div
+      ref={cardRef}
       data-testid="agent-composer"
       data-dragging={files.dragging ? "true" : undefined}
       // The whole card is the drop target, not just the text box: someone
@@ -415,6 +447,16 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         analyzing={files.analyzing}
         onRemove={files.remove}
       />
+      <ComposerTypeahead
+        anchorRef={cardRef}
+        open={typeahead.open}
+        trigger={typeahead.token?.trigger ?? null}
+        items={typeahead.items}
+        loading={typeahead.loading}
+        activeIndex={typeahead.activeIndex}
+        onHover={typeahead.setActiveIndex}
+        onPick={typeahead.pick}
+      />
       <textarea
         ref={textareaRef}
         data-jarvis-chat-input=""
@@ -422,6 +464,11 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         value={value}
         onChange={(e) => setValueState(e.target.value)}
         onKeyDown={onKeyDown}
+        onSelect={typeahead.refresh}
+        onClick={typeahead.refresh}
+        onBlur={typeahead.blur}
+        aria-expanded={typeahead.open || undefined}
+        aria-autocomplete={triggers.length ? "list" : undefined}
         onPaste={(e) => {
           pasteRescue.onPaste();
           files.onPaste(e);

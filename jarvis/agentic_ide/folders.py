@@ -49,6 +49,9 @@ _SKIP_DIRS = frozenset(
         "System Volume Information",
     }
 )
+#: The same set for other listers (the chat composer's ``@`` typeahead), so
+#: "what a folder walk skips" is decided once.
+SKIP_DIRS = _SKIP_DIRS
 
 # marker file/dir -> stack label. Order is irrelevant; all matches are reported.
 _STACK_MARKERS: tuple[tuple[str, str], ...] = (
@@ -628,6 +631,7 @@ def probe_project(path: str | Path) -> ProjectProfile:
 
 
 __all__ = [
+    "SKIP_DIRS",
     "FolderEntry",
     "ProjectProfile",
     "WorkspaceEntry",
