@@ -25,6 +25,7 @@ import {
 } from "@/store/commandActivity";
 import { useDeckStore } from "@/store/deck";
 import { useHomeStore } from "@/store/home";
+import { PANE_ACTIVITY_EVENT } from "@/store/workspacePanes";
 import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
 import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
 import { hydrateUiTheme } from "@/hooks/useTheme";
@@ -518,6 +519,19 @@ export function useWebSocket(): void {
               new CustomEvent("jarvis:agentic-ide-prompt", { detail: p }),
             );
           }
+        }
+
+        if (env.event_name === "AgenticIdePaneActivity") {
+          // One pane's agent changed state — started, stopped, asked, died.
+          // The payload is the activity half of a `/panes` row, so the session
+          // list and the grid patch their row in place the moment the sweep
+          // decides, instead of showing a spinner over a finished session
+          // until their next poll (up to four seconds in the sidebar). No
+          // toast: the bell is the surface for "it finished", this is the
+          // badge keeping up with the pane.
+          window.dispatchEvent(
+            new CustomEvent(PANE_ACTIVITY_EVENT, { detail: env.payload }),
+          );
         }
 
         if (env.event_name === "AgenticIdeComposeProgress") {

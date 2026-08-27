@@ -204,6 +204,43 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     expect(toasts[2].message).toContain("never showed it arriving");
   });
 
+  it("hands a pane's activity change to the window, payload intact and without a toast", async () => {
+    render(<Harness />);
+    await Promise.resolve();
+    const seen: unknown[] = [];
+    const onActivity = (event: Event) => seen.push((event as CustomEvent).detail);
+    window.addEventListener("jarvis:agentic-ide-activity", onActivity);
+    try {
+      MockWebSocket.last!.deliver(
+        envelope("AgenticIdePaneActivity", {
+          session_id: "ide_1",
+          key: "t3",
+          name: "T3",
+          status: "live",
+          activity: "waiting",
+          activity_since: 1787823736,
+          worked: true,
+        }),
+      );
+    } finally {
+      window.removeEventListener("jarvis:agentic-ide-activity", onActivity);
+    }
+
+    expect(seen).toEqual([
+      {
+        session_id: "ide_1",
+        key: "t3",
+        name: "T3",
+        status: "live",
+        activity: "waiting",
+        activity_since: 1787823736,
+        worked: true,
+      },
+    ]);
+    // The bell is the surface for "it finished"; the badge just keeps up.
+    expect(useEventStore.getState().toasts).toEqual([]);
+  });
+
   it("routes native microphone levels outside React state and clears them after listening", async () => {
     render(<Harness />);
     await Promise.resolve();

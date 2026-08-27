@@ -13767,3 +13767,77 @@ the rail's stacking context").
 overlays out, and it lets a section's z-indexes in. Anything in the chrome that
 reaches past its own column must not rely on the column's z-index; a portal at
 the tooltip level is the one placement no section can tie with.
+
+## BUG-194: the chat sidebar's session badges flipped between "working" and "done" for sessions that never stopped — a pane whose own spinner read "11m 00s" wore "Working for 7s", and ten sessions turned to finished dots at once and back two seconds later (MEDIUM, FIXED 2026-08-27)
+
+**Symptom.** In the Agentic IDE's chat mode the session rows showed a
+turning spinner or a still dot per session, and the dots were wrong: a
+session visibly mid-job in its terminal wore the finished dot for a beat,
+then the spinner again, and the chat stage's header restarted its clock
+each time ("Working for 7s" beside a Claude Code spinner reading
+"Untangling… 11m 00s"). The maintainer: "correct the indicators so they work,
+make them update live, and give me an indicator that says whether the
+session is working or done" (2026-08-27). Sampled from the live app over six
+minutes (`GET /api/agentic-ide/panes` every half second): at 11:48:11 TEN
+working panes flipped to `waiting` in the same second — each with output
+0.1–0.6 s old — and back to `working` two seconds later; single panes did
+the same after output gaps of 4.5–6.4 s.
+
+**Cause.** Three things, in the order they mattered.
+
+1. The badge published the RAW stillness edge. `activity.read_activity`
+   calls a pane `waiting` the moment its screen has stood still for
+   `STILL_S` (4 s), and the sweep stamped that word straight onto the pane.
+   Two known pauses cross that line while a job is running: a coding TUI's
+   gap between tool steps (measured 4.5–6.4 s on the maintainer's panes),
+   and the resize shadow — after a layout change every pane's output is
+   discounted for `RESIZE_SHADOW_S` and its screen changes for one sweep
+   more, so a global resize turns every working pane "still" at once. The
+   mass flip at 11:48:11 is that shadow. `WORK_RESUME_GRACE_S` (BUG-tool-step,
+   2026-08-07) had only spared the RE-CONFIRMATION on the way back up; the dip
+   itself still went out, and `stamp` restarted `activity_since` on every
+   transition, which is where "for 7s" came from.
+2. The sidebar learned any of it four seconds late. `store/workspacePanes.ts`
+   polled `/panes` every 4 s and nothing pushed a change, so even a correct
+   backend word showed up a poll late — long enough for a finished session to
+   keep spinning while the user looked at it.
+3. "Done" was a still amber dot beside amber spinners, which read as "also
+   busy, just not animated" — the reason the maintainer asked for an
+   indicator the list already had.
+
+**Fix.**
+
+1. `notifications.WORK_HOLD_S` (= `SETTLE_S`): a pane that wore "working"
+   keeps wearing it for five seconds past the raw flip to `waiting`, with
+   `moving_since` kept so its clock counts the whole episode. A question on
+   screen is not held — it outranks the hold, as it outranks the submit
+   grace. When the hold runs out the stop is dated from the last paint
+   (`_stopped_at`), not from the sweep that admitted it. The bell already
+   waited `SETTLE_S` before announcing; the badge now never says "done"
+   after the bell has.
+2. The sweep publishes every change of the shown reading on the bus
+   (`AgenticIdePaneActivity`: workspace id, pane key, status, activity,
+   since, worked — the activity half of a `/panes` row). `ActivityFeed`
+   diffs against the last sweep so only transitions go out; the web server
+   hands the sweep its `bus.publish` at router mount (the registry stays
+   bus-less by design). `useWebSocket` raises it as
+   `jarvis:agentic-ide-activity`; the pane store and the grid's activity
+   cache patch their row in place. The polls stay as the fallback.
+3. `PaneActivityPill` draws a finished job as a check mark; the still dot
+   is left to `exited`.
+
+Tests: `tests/unit/agentic_ide/test_pane_notifications.py` ("a short pause
+is not published as done", "a stop is dated from the last paint", "a
+question is not held back by the hold", the feed reports a pane once per
+change, changes go to the bus as pane activity events, a deaf bus does not
+end the sweep), `store/workspacePanes.test.ts`, `useWebSocket.test.tsx`
+("hands a pane's activity change to the window"), and the three icon
+assertions moved from `dot` to `check`.
+
+**Lesson.** A detector's raw edge is not the user's word for it. The
+movement rule was measured and right; publishing its first flicker was the
+bug, and the fix for the way UP (`WORK_RESUME_GRACE_S`) had left the way
+DOWN alone. When a badge and a bell answer the same question they must
+share the same debounce, or one of them is wrong by construction. And a
+list that only polls is a list that lies for a poll interval — the thing
+that decides a state should say so.

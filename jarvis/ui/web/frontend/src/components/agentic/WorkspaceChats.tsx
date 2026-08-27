@@ -454,10 +454,12 @@ function SessionRow({
             still dot are the same silhouette, so twelve sessions in twelve
             states read as twelve identical dots (maintainer report
             2026-08-27). The pill tells busy from finished by SHAPE: a turning
-            spinner while the agent works, a still dot once it has stopped, a
+            spinner while the agent works, a check mark once it has finished, a
             hollow ring for a pane nobody has asked anything, a beacon for one
             holding a question. Same component as the pane's header, so the
-            list and the grid can never disagree about one pane. */}
+            list and the grid can never disagree about one pane — and both
+            follow the socket's word the moment the backend decides it (see
+            the store), so the row changes with the pane, not with the poll. */}
         <span className="mt-0.5 shrink-0">
           <PaneActivityPill
             status={pane.status}

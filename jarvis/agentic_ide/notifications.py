@@ -88,6 +88,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from itertools import count
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
@@ -132,6 +133,28 @@ SWEEP_INTERVAL_S = 2.0
 #: while staying far below the minutes a finished pane typically sits before
 #: the user prints something into it (the case the confirm gate exists for).
 WORK_RESUME_GRACE_S = 15.0
+
+#: How long the badge keeps saying "working" after the screen stopped moving.
+#:
+#: The other half of the tool-step problem ``WORK_RESUME_GRACE_S`` solved. That
+#: grace let a job RESUME without re-confirmation, but the dip itself was still
+#: published: the raw reading flips to ``waiting`` the moment a pane has stood
+#: still for ``STILL_S``, so every pause longer than that — a slow tool call,
+#: the model's own think time, the redraw shadow of a resize — turned the
+#: session's badge into a finished dot for a sweep or two and restarted its
+#: clock. The maintainer watched a pane whose own spinner read "11m 00s" wear
+#: "Working for 7s" beside it (2026-08-27), and a row of twenty sessions
+#: flickered between busy and done for work that never stopped.
+#:
+#: So a pane that WAS working is only called stopped once it has held still
+#: for this long past the raw flip — the same window the bell already waits
+#: (``SETTLE_S``) before announcing the stop. One number for both on purpose:
+#: the badge is the thing the bell points at, and it must never say "done"
+#: after the bell has already said so. Cost: a finished pane shows its dot
+#: about ``STILL_S + SETTLE_S`` seconds after its last paint instead of
+#: ``STILL_S``. The hold covers ``waiting`` only — a question on screen still
+#: takes over at once, because the pane really has stopped for the user.
+WORK_HOLD_S = SETTLE_S
 
 #: How many entries are kept. A heavy day across six workspaces produces a few
 #: dozen; past this the oldest fall off the back, which is the right end to lose
@@ -369,6 +392,18 @@ class _PaneWatch:
     stamped_working_at: float = 0.0
 
 
+def _stopped_at(term: Any, watch: _PaneWatch) -> float:
+    """When this pane's screen last moved — the honest start of its stillness.
+
+    The later of the last output byte and the last sweep that saw the picture
+    change: output is stamped the instant it arrives, while a screen change is
+    only noticed at sweep time, so either can be the fresher of the two. Zero
+    when neither is known, which ``stamp`` reads as "now".
+    """
+    out_at = float(getattr(term, "last_output_at", 0.0) or 0.0)
+    return max(out_at, float(watch.changed_at or 0.0))
+
+
 def _detail(term: Any) -> str:
     """One line about what the pane was doing, from state it already keeps."""
     text = " ".join(str(getattr(term, "last_prompt", "") or "").split())
@@ -568,12 +603,17 @@ class ActivityWatcher:
         # ``since`` is the moment the movement episode actually began, so the
         # handover at the confirm boundary does not restart the badge's clock —
         # "working for 6s" must not read "for 0s" merely because the first 5
-        # were spent confirming.
+        # were spent confirming. And a pane that STOPPED is dated from its last
+        # movement, not from the sweep that noticed: the hold above means the
+        # notice comes seconds after the fact, and "Done for 0s" about a pane
+        # that went quiet nine seconds ago is the clock lying in the other
+        # direction.
+        confirmed = self._confirmed(term, watch, activity, now)
         stamp(
             term,
-            self._confirmed(term, watch, activity, now),
+            confirmed,
             now=now,
-            since=watch.moving_since,
+            since=watch.moving_since if confirmed == "working" else _stopped_at(term, watch),
         )
         self._checkpoint_resume_state(term, activity, watch, now)
 
@@ -630,8 +670,17 @@ class ActivityWatcher:
         false "waiting" dips. The gate exists for the pane that has been SITTING
         at its prompt when a burst arrives, and such a pane has not worn
         "working" for a long time.
+
+        And the way DOWN is guarded too (:data:`WORK_HOLD_S`): a pane that wore
+        "working" a moment ago keeps wearing it through a short still spell,
+        so a tool-step pause or a resize redraw is not published as "done".
+        ``moving_since`` survives the hold, which is what keeps the badge's
+        clock counting the whole episode rather than restarting after every
+        pause. Only ``waiting`` is held — a question outranks the hold.
         """
         if activity != "working":
+            if activity == "waiting" and 0 <= now - watch.stamped_working_at <= WORK_HOLD_S:
+                return "working"
             watch.moving_since = None
             return activity
         if watch.moving_since is None:
@@ -821,6 +870,96 @@ _CENTER = NotificationCenter()
 _WATCHER = ActivityWatcher(_CENTER)
 
 
+class ActivityFeed:
+    """Which panes' PUBLISHED reading changed since the last sweep.
+
+    The sweep stamps a word on every pane two times a second-ish; almost every
+    stamp repeats the last one. Clients want the transitions — a pane that
+    started, stopped, asked, or died — and this is the diff that finds them, so
+    the bus carries one event per change rather than a heartbeat per pane.
+
+    Compared on what a client would SHOW (:meth:`Terminal.reading`, the graced
+    word behind ``/panes``, plus ``worked`` and the process status), not on the
+    watcher's raw reading: the point is that the row on screen and the event
+    that patched it can never disagree. Every pane of every open workspace is
+    covered — a plain shell too, whose only news is its process ending.
+    """
+
+    def __init__(self) -> None:
+        self._last: dict[tuple[str, str], tuple[str, str, float, bool]] = {}
+
+    def changes(self, registry: Registry) -> list[dict[str, Any]]:
+        """The rows whose reading differs from the last call — and drop the gone."""
+        # Local import: ``session`` imports this module's siblings.
+        from .activity import has_work_behind_it
+
+        changed: list[dict[str, Any]] = []
+        alive: set[tuple[str, str]] = set()
+        for session in registry.sessions:
+            for term in session.terminals:
+                ident = (str(session.id), str(getattr(term, "key", "") or ""))
+                alive.add(ident)
+                reading = term.reading()
+                status = str(getattr(term, "status", "") or "")
+                activity = str(reading.activity)
+                since = float(reading.since or 0.0)
+                worked = has_work_behind_it(term)
+                mark = (status, activity, since, worked)
+                if self._last.get(ident) != mark:
+                    self._last[ident] = mark
+                    changed.append(
+                        {
+                            "session_id": ident[0],
+                            "key": ident[1],
+                            "name": str(getattr(term, "name", "") or ""),
+                            "status": status,
+                            "activity": activity,
+                            "activity_since": since,
+                            "worked": worked,
+                        }
+                    )
+        for gone in self._last.keys() - alive:
+            del self._last[gone]
+        return changed
+
+    def clear(self) -> None:
+        self._last.clear()
+
+
+_FEED = ActivityFeed()
+
+#: Where a change goes once the feed has found one — the app bus's ``publish``,
+#: handed in by the one place that holds a bus (the web server, at router
+#: mount). The registry deliberately has no bus of its own (see
+#: ``session.terminals_added_event``), and the sweep is started by the
+#: registry, so the hook is module state rather than an argument. ``None``
+#: means nobody is listening: a headless embedding, or a test — the feed still
+#: runs, its answers just go nowhere.
+Publisher = Callable[[Any], Awaitable[None]]
+_publisher: Publisher | None = None
+
+
+def set_publisher(publish: Publisher | None) -> None:
+    """Route pane activity changes onto ``publish`` (``None`` to stop)."""
+    global _publisher
+    _publisher = publish
+
+
+async def _publish_changes(registry: Registry) -> None:
+    """Send every pane whose reading changed this sweep to the bus."""
+    publish = _publisher
+    changed = _FEED.changes(registry)
+    if publish is None or not changed:
+        return
+    from jarvis.core.events import AgenticIdePaneActivity
+
+    for row in changed:
+        try:
+            await publish(AgenticIdePaneActivity(**row, source_layer="agentic_ide.notifications"))
+        except Exception as exc:  # noqa: BLE001 - a deaf bus must not end the sweep
+            logger.warning("Agentic IDE: could not publish activity for {}: {}", row["name"], exc)
+
+
 def center() -> NotificationCenter:
     """The process-wide store the routes read."""
     return _CENTER
@@ -836,6 +975,8 @@ def reset() -> None:
     _CENTER.clear()
     _WATCHER._panes.clear()  # noqa: SLF001 - same module, one owner
     _WATCHER._resume_dirty = False  # noqa: SLF001 - same module, one owner
+    _FEED.clear()
+    set_publisher(None)
     reset_switch_cache()
 
 
@@ -869,6 +1010,9 @@ async def _run(registry: Registry) -> None:
                 _WATCHER.poll(registry, emit=await _enabled_off_loop())
                 if _WATCHER.take_resume_dirty():
                     await registry.persist_resume_activity()
+                # After the stamps, so the event carries the word this sweep
+                # decided on — the same one the next ``/panes`` poll would.
+                await _publish_changes(registry)
             except Exception as exc:  # noqa: BLE001 - one bad pane must not end the sweep
                 logger.warning("Agentic IDE: pane notification sweep failed: {}", exc)
     except asyncio.CancelledError:  # pragma: no cover - shutdown
@@ -934,7 +1078,9 @@ __all__ = [
     "MAX_ENTRIES",
     "SETTLE_S",
     "SWEEP_INTERVAL_S",
+    "WORK_HOLD_S",
     "WORK_RESUME_GRACE_S",
+    "ActivityFeed",
     "ActivityWatcher",
     "Kind",
     "Notification",
@@ -943,6 +1089,7 @@ __all__ = [
     "center",
     "enabled",
     "reset",
+    "set_publisher",
     "reset_switch_cache",
     "start",
     "state",

@@ -514,6 +514,13 @@ class WebServer:
         # workspace above; adds the folder picker, call-signs, transcripts, and
         # the focused coding mode.
         app.include_router(agentic_ide_router)
+        # The pane-activity sweep has no bus of its own (the registry is a plain
+        # holder by design); this is the one place that holds one, so the sweep
+        # is told where a changed reading goes. A reference, not work — nothing
+        # runs until a workspace is opened (AP-26).
+        from jarvis.agentic_ide import notifications as ide_notifications
+
+        ide_notifications.set_publisher(self.bus.publish)
         # The project/chat library behind the chat surface's sidebar. Pure file
         # store, no Brain and no session dependency — it lists on a fresh
         # install with no keys and answers headless.

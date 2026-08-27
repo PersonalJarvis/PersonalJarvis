@@ -758,6 +758,34 @@ class AgenticIdeWorkspaceChanged(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class AgenticIdePaneActivity(Event):
+    """One pane's agent changed state: started working, stopped, asked, exited.
+
+    The pane list and the chat stage used to learn this by polling — every
+    four seconds for the sidebar — so a session that finished showed a spinner
+    for up to a poll interval after its terminal had gone quiet, and the
+    dozen rows of a busy workspace never quite agreed with the grid. The sweep
+    that stamps the reading (``jarvis.agentic_ide.notifications``) already
+    knows the moment a word changes; this carries that moment to every client
+    on the app socket, and the polls become the fallback they should be.
+
+    The payload IS the reading, not a trigger: it is exactly the activity half
+    of a row from ``GET /api/agentic-ide/panes`` (``session_id`` naming the
+    workspace, ``key`` the pane's stable call-sign), so a client patches its
+    row in place and never has to re-fetch the list to act on it. A row the
+    client does not hold — a pane it has not listed yet — is ignored there and
+    arrives with the next poll.
+    """
+    session_id: str = ""
+    key: str = ""
+    name: str = ""
+    status: str = ""
+    activity: str = ""
+    activity_since: float = 0.0
+    worked: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class AgenticIdePromptSent(Event):
     """A prompt was typed into one pane by Jarvis rather than by the user.
 
