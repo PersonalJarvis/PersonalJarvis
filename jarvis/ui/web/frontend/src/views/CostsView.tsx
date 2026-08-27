@@ -300,7 +300,7 @@ export function CostsView() {
           total reads as money gone missing ($8 000 next to yesterday's
           $12 300, 2026-08-27). Say it is still counting, and how far it is.
         */}
-        {data && !data.index.complete ? (
+        {data?.index && !data.index.complete ? (
           <EmptyRow>
             {fill(t("costs_view.index_catching_up"), {
               indexed: formatExact(data.index.files_indexed),

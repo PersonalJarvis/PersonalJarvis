@@ -125,8 +125,12 @@ export interface CostSummary {
   facets: CostFacets;
   currency: CostCurrency;
   sources_present: string[];
-  /** Whether the coding-CLI numbers are final yet, and how far they are. */
-  index: CostIndexStatus;
+  /**
+   * Whether the coding-CLI numbers are final yet, and how far they are.
+   * Optional on the wire: a backend from before the field (the bundle
+   * reloads before the server restarts) answers without it.
+   */
+  index?: CostIndexStatus;
 }
 
 /**
