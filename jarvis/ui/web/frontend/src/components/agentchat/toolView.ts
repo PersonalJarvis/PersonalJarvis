@@ -117,10 +117,31 @@ export function inputSummary(input: unknown, family?: string): string {
   const keys = [...(family ? (SUMMARY_KEYS[family] ?? []) : []), ...GENERIC_SUMMARY_KEYS];
   for (const key of keys) {
     const v = obj[key];
-    if (typeof v === "string" && v.trim()) return firstLine(v);
+    if (typeof v === "string" && v.trim()) return shortenPath(firstLine(v));
   }
   const first = Object.values(obj).find((v) => typeof v === "string" && v.trim());
   return typeof first === "string" ? firstLine(first) : "";
+}
+
+/**
+ * An absolute path, shortened to the part that differs between rows.
+ *
+ * Every file in a workspace shares its first six or seven segments, so a row
+ * showing the whole of it spends its width saying where the project is and
+ * runs out before saying which file (live check, 2026-08-27). The last three
+ * segments are what a person reads anyway, and the leading ellipsis says
+ * plainly that something was cut.
+ *
+ * Windows separators become forward slashes on the way: one shape for a path
+ * beats two, and every agent in the column writes both.
+ */
+export function shortenPath(value: string): string {
+  const flat = value.replace(/\\/g, "/");
+  // Not a path: a sentence with a slash in it, a URL, a bare name.
+  if (!/^([A-Za-z]:\/|\/|\.{1,2}\/)/.test(flat) || /\s{2,}/.test(flat)) return value;
+  const parts = flat.split("/").filter(Boolean);
+  if (parts.length <= 3) return flat;
+  return `…/${parts.slice(-3).join("/")}`;
 }
 
 function firstLine(text: string): string {

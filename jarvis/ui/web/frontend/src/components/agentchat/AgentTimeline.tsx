@@ -25,6 +25,7 @@ import { LiveCore } from "@/components/LiveCore";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { formatThoughtDuration } from "@/components/home/TurnSteps";
 import { agentToolView, formatTokens, outputTokens } from "@/components/agentchat/toolView";
+import { diffStat, toolDiff, type DiffFile, type DiffLine } from "@/components/agentchat/toolDiff";
 import type {
   ReasoningBlock,
   TextBlock,
@@ -185,6 +186,7 @@ const Turn = memo(function Turn({
   const live = turn.status === "running";
   const elapsed = useElapsedMs(live ? turn.startedMs : null);
   const blocks = useMemo(() => arrangeThinking(turn.blocks), [turn.blocks]);
+  const groups = useMemo(() => groupSteps(blocks), [blocks]);
   // A scratchpad still receiving words carries the turn's live line in its
   // own header; the line below would only say "thinking" a second time.
   const thinkingAloud = blocks.some((b) => b.kind === "reasoning" && b.live);
@@ -215,14 +217,26 @@ const Turn = memo(function Turn({
       {/* No rail, no frame: the byline above and the spacing are what group
           the turn, and the closing line below says how it ended. */}
       <div className="flex flex-col gap-1.5 px-1">
-        {blocks.map((block) => {
-          if (block.kind === "text") return <Prose key={block.id} block={block} />;
-          if (block.kind === "reasoning") {
+        {groups.map((group) => {
+          if (group.kind === "tools") {
             return (
-              <Thought key={block.id} block={block} turnLive={live} usage={turn.liveUsage} />
+              <ToolGroup
+                key={group.id}
+                blocks={group.blocks}
+                turnLive={live}
+                onDecide={onDecide}
+              />
             );
           }
-          return <ToolRow key={block.callId} block={block} onDecide={onDecide} />;
+          if (group.block.kind === "text") return <Prose key={group.id} block={group.block} />;
+          return (
+            <Thought
+              key={group.id}
+              block={group.block}
+              turnLive={live}
+              usage={turn.liveUsage}
+            />
+          );
         })}
 
         {live && !thinkingAloud && <LiveStatus elapsed={elapsed} usage={turn.liveUsage} />}
@@ -708,6 +722,242 @@ function errorGist(text: string): string {
 }
 
 /**
+ * The change a coding call made, painted the way every code host paints one.
+ *
+ * A row saying `Edit src/app.ts` names a file and says nothing about what
+ * happened in it, and the arguments underneath were worse: two JSON string
+ * literals, escapes and all, so the one thing worth reading was the one thing
+ * that could not be (maintainer, 2026-08-27, against Claude Code and Codex).
+ *
+ * No frame — the fold's own indent already holds it (rule 1). What carries
+ * the meaning is the ink: removed lines in the destructive red the whole app
+ * uses for loss, added lines in the one green the palette now has, and every
+ * line that did NOT move in plain grey, which is what makes a change legible
+ * rather than a wall of colour.
+ */
+function DiffView({ files }: { files: DiffFile[] }) {
+  const t = useT();
+  return (
+    <div className="flex flex-col gap-2" data-testid="agent-tool-diff">
+      {files.map((file, i) => (
+        <div key={`${file.path}:${i}`} className="flex min-w-0 flex-col gap-1">
+          {/* The path only when the row above cannot already be carrying it:
+              one file is named on the row, several need naming here. */}
+          {files.length > 1 && file.path && (
+            <span className="truncate font-mono text-[10px] text-muted-foreground/60">
+              {file.path}
+            </span>
+          )}
+          <div className="scrollbar-jarvis max-h-80 overflow-auto">
+            {file.lines.map((line, n) => (
+              <DiffRow key={n} line={line} />
+            ))}
+          </div>
+          {file.truncated > 0 && (
+            <span className="font-mono text-[10px] text-muted-foreground/50">
+              {fill(t("agent_chat.diff_truncated"), { count: String(file.truncated) })}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One line of a diff.
+ *
+ * The +/- mark is unselectable, so copying a diff out of the chat yields the
+ * CODE rather than a column of marks to strip afterwards.
+ */
+function DiffRow({ line }: { line: DiffLine }) {
+  const t = useT();
+  if (line.kind === "gap") {
+    return (
+      <div
+        data-diff="gap"
+        className="select-none px-2 py-0.5 font-mono text-[10px] text-muted-foreground/40"
+      >
+        {line.text ? fill(t("agent_chat.diff_skipped"), { count: line.text }) : "⋯"}
+      </div>
+    );
+  }
+  return (
+    <div
+      data-diff={line.kind}
+      className={cn(
+        "flex whitespace-pre-wrap break-words px-2 font-mono text-[11.5px] leading-relaxed",
+        line.kind === "add" && "diff-line-add",
+        line.kind === "del" && "diff-line-del",
+        line.kind === "ctx" && "text-muted-foreground/70",
+      )}
+    >
+      <span aria-hidden className="mr-2 w-2 shrink-0 select-none opacity-70">
+        {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
+      </span>
+      <span className="min-w-0">{line.text || "\u00A0"}</span>
+    </div>
+  );
+}
+
+/** `+12 -3` — how big the change is, in the shape every code host uses. */
+function DiffStat({ added, removed }: { added: number; removed: number }) {
+  if (added === 0 && removed === 0) return null;
+  return (
+    <span
+      className="shrink-0 font-mono text-[10px] tabular-nums"
+      data-testid="agent-diff-stat"
+      data-added={added}
+      data-removed={removed}
+    >
+      {added > 0 && <span className="diff-ink-add">+{added}</span>}
+      {added > 0 && removed > 0 && <span className="text-muted-foreground/40"> </span>}
+      {removed > 0 && <span className="diff-ink-del">-{removed}</span>}
+    </span>
+  );
+}
+
+/**
+ * A turn's blocks, with consecutive tool calls collected into one group.
+ *
+ * Thinking and prose stay exactly where they happened — that is rule 2 and it
+ * is not up for negotiation. What CAN be put away is a run of tool calls with
+ * nothing between them: twenty greps and reads in a row is the "far too much
+ * stuff" the maintainer objected to (2026-08-27), and it is also the part of
+ * a finished turn nobody re-reads.
+ */
+export type TurnGroup =
+  | { kind: "tools"; id: string; blocks: ToolBlock[] }
+  | { kind: "block"; id: string; block: TextBlock | ReasoningBlock };
+
+export function groupSteps(blocks: TurnBlock[]): TurnGroup[] {
+  const out: TurnGroup[] = [];
+  for (const block of blocks) {
+    if (block.kind === "tool") {
+      const last = out[out.length - 1];
+      if (last && last.kind === "tools") {
+        last.blocks.push(block);
+        continue;
+      }
+      out.push({ kind: "tools", id: `g-${block.callId}`, blocks: [block] });
+      continue;
+    }
+    out.push({ kind: "block", id: block.id, block });
+  }
+  return out;
+}
+
+/** From this many calls in a row, a finished run puts itself away. */
+export const FOLD_STEPS_FROM = 4;
+
+/**
+ * A run of tool calls — open while it matters, one line once it does not.
+ *
+ * WHILE THE TURN WORKS every step shows: watching the work is the whole point
+ * of a running turn, and a spinner behind a fold proves nothing. The moment
+ * the turn is done a long run collapses to "14 steps · +42 -7 · 1m 12s",
+ * which is what a finished conversation should read as — the answer, with the
+ * work one click away.
+ *
+ * Two runs never fold, however long: one holding a step that FAILED, and one
+ * holding a step still waiting for a decision. Both are the reason the person
+ * is looking at the turn at all.
+ */
+function ToolGroup({
+  blocks,
+  turnLive,
+  onDecide,
+}: {
+  blocks: ToolBlock[];
+  turnLive: boolean;
+  onDecide: (approvalId: string, decision: ApprovalDecision) => void;
+}) {
+  const [manual, setManual] = useState<boolean | null>(null);
+  // A call still waiting for a decision is a question to the person: it holds
+  // the whole run open, because an approval behind a fold is an approval
+  // nobody gives. A call that FAILED does not — it stays in view on its own
+  // while the rest of the run folds away around it.
+  const asking = blocks.some((b) => b.approval !== null && b.approval.decision === null);
+  const foldable = !turnLive && !asking && blocks.length >= FOLD_STEPS_FROM;
+  const open = !foldable || (manual ?? false);
+  const shown = open ? blocks : blocks.filter((b) => b.isError);
+  const duration = blocks.reduce((sum, b) => sum + (b.durationMs ?? 0), 0);
+  const stat = useMemo(() => {
+    const files = blocks.flatMap((b) => toolDiff(b.name, b.input) ?? []);
+    return files.length ? diffStat(files) : null;
+  }, [blocks]);
+
+  return (
+    <div
+      className="flex min-w-0 flex-col gap-1.5"
+      data-testid="agent-tool-group"
+      data-state={!foldable ? "plain" : open ? "open" : "folded"}
+      data-steps={blocks.length}
+    >
+      {foldable && (
+        <GroupToggle
+          open={open}
+          count={blocks.length}
+          duration={duration}
+          stat={stat}
+          onClick={() => setManual(!open)}
+        />
+      )}
+      {shown.map((b) => (
+        <ToolRow key={b.callId} block={b} onDecide={onDecide} />
+      ))}
+    </div>
+  );
+}
+
+/** The one line a folded run wears, and the way back out of an open one. */
+function GroupToggle({
+  open,
+  count,
+  duration,
+  stat,
+  onClick,
+}: {
+  open: boolean;
+  count: number;
+  duration: number;
+  stat: { added: number; removed: number } | null;
+  onClick: () => void;
+}) {
+  const t = useT();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      data-testid="agent-tool-group-toggle"
+      className={cn(
+        "-ml-1 flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-1",
+        "text-left text-xs transition-colors hover:bg-secondary/50",
+      )}
+    >
+      <ChevronRight
+        className={cn(
+          "h-3.5 w-3.5 shrink-0 text-muted-foreground/50 transition-transform",
+          open && "rotate-90",
+        )}
+        aria-hidden
+      />
+      <span className="shrink-0 font-medium text-muted-foreground">
+        {fill(t("agent_chat.steps_count"), { count: String(count) })}
+      </span>
+      {stat && <DiffStat added={stat.added} removed={stat.removed} />}
+      <span className="flex-1" />
+      {duration > 0 && (
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60">
+          {formatStepDuration(duration)}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/**
  * One tool call — a ROW, not a card.
  *
  * The name is the agent's own — "PowerShell", "ToolSearch", "Grep" — never a
@@ -741,6 +991,10 @@ function ToolRow({
   const showLogo = Boolean(view.logoUrl) && !logoFailed;
   const gist = block.isError && block.output ? errorGist(block.output) : "";
   const showInput = !inputAddsNothing(block.input, summary);
+  // A coding call carries its change in its arguments. Read it once here: the
+  // row wears the size of it, the fold paints the whole thing.
+  const diff = useMemo(() => toolDiff(block.name, block.input), [block.name, block.input]);
+  const stat = diff ? diffStat(diff) : null;
 
   return (
     <div
@@ -810,6 +1064,7 @@ function ToolRow({
         ) : (
           <span className="flex-1" />
         )}
+        {stat && !running && <DiffStat added={stat.added} removed={stat.removed} />}
         {running ? (
           <span className="inline-flex shrink-0 items-center gap-1.5 text-[10px] text-primary/90">
             <Spinner />
@@ -877,17 +1132,27 @@ function ToolRow({
 
       {open && (
         <Trace tone={block.isError ? "error" : "plain"}>
-          {showInput && <Detail label={t("agent_chat.tool_input")} text={pretty(block.input)} />}
-          {denied && <div className="text-muted-foreground">{t("agent_chat.approval_denied")}</div>}
-          {block.output !== null ? (
-            <Detail
-              label={block.isError ? t("agent_chat.tool_error") : t("agent_chat.tool_output")}
-              text={block.output}
-              error={block.isError}
-            />
+          {diff ? (
+            <DiffView files={diff} />
           ) : (
-            running && <div className="text-muted-foreground">{t("agent_chat.tool_running")}</div>
+            showInput && <Detail label={t("agent_chat.tool_input")} text={pretty(block.input)} />
           )}
+          {denied && <div className="text-muted-foreground">{t("agent_chat.approval_denied")}</div>}
+          {block.output !== null
+            ? // An edit's receipt — "The file … has been updated successfully" —
+              // says nothing the diff above did not already show, so a call that
+              // painted its change keeps its output for the case that matters:
+              // when it failed.
+              (!diff || block.isError) && (
+                <Detail
+                  label={block.isError ? t("agent_chat.tool_error") : t("agent_chat.tool_output")}
+                  text={block.output}
+                  error={block.isError}
+                />
+              )
+            : running && (
+                <div className="text-muted-foreground">{t("agent_chat.tool_running")}</div>
+              )}
         </Trace>
       )}
     </div>

@@ -476,6 +476,12 @@ label,
     --accent-foreground: 0 0% 100%;
     --destructive: 6 63% 46%; /* #C0392B — the light terminal's red */
     --destructive-foreground: 0 0% 100%;
+    /* Added / removed code in a chat diff. The red is the destructive one, so
+       a deleted line and a failed step speak with the same voice. */
+    --diff-add: 145 55% 24%;
+    --diff-add-bg: 145 50% 95%;
+    --diff-del: 6 60% 40%;
+    --diff-del-bg: 6 60% 96%;
     --border: 50 21% 89%; /* #E8E6DC */
     --input: 52 29% 95%;
     --ring: 38 100% 33%;
@@ -573,6 +579,10 @@ label,
     --accent-foreground: 0 0% 4%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 48 23% 95%;
+    --diff-add: 145 55% 65%;
+    --diff-add-bg: 145 40% 11%;
+    --diff-del: 0 70% 72%;
+    --diff-del-bg: 0 45% 12%;
     --border: 40 3% 23%; /* #3B3A38 */
     --input: 60 2% 21%;
     --ring: 50 100% 52%;
@@ -3166,5 +3176,34 @@ label,
   /* The pictures-only stage keeps its own flat ground either way. */
   :root:not(.jarvis-wallpaper) .jarvis-visualization-stage {
     background: hsl(var(--background));
+  }
+}
+
+/*
+ * One line of a diff in the chat column.
+ *
+ * Classes rather than utilities because the PAIR of tokens is the thing being
+ * applied: ink and ground belong together, and both are redefined per mode.
+ * The ground is faint on purpose — the mark and the ink carry the meaning, and
+ * a solid band per line turns a twenty-line change into a flag.
+ */
+@layer components {
+  .diff-line-add {
+    background-color: hsl(var(--diff-add-bg));
+    color: hsl(var(--diff-add));
+  }
+
+  .diff-line-del {
+    background-color: hsl(var(--diff-del-bg));
+    color: hsl(var(--diff-del));
+  }
+
+  /* The same two inks with no ground, for the "+12 -3" on a row. */
+  .diff-ink-add {
+    color: hsl(var(--diff-add));
+  }
+
+  .diff-ink-del {
+    color: hsl(var(--diff-del));
   }
 }

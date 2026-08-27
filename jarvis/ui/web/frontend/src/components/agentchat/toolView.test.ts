@@ -5,6 +5,7 @@ import {
   formatTokens,
   inputSummary,
   outputTokens,
+  shortenPath,
 } from "@/components/agentchat/toolView";
 
 describe("agentToolView", () => {
@@ -77,5 +78,36 @@ describe("token formatting", () => {
     expect(outputTokens({ output: 7 })).toBe(7);
     expect(outputTokens(null)).toBeNull();
     expect(outputTokens({})).toBeNull();
+  });
+});
+
+/*
+ * A path on a row.
+ *
+ * Every file in one workspace shares its first six or seven segments, so a
+ * row printing the whole of an absolute path spends its width saying where
+ * the project lives and runs out before saying which file (live check,
+ * 2026-08-27).
+ */
+describe("shortenPath", () => {
+  it("keeps the three segments that tell a row apart from its neighbours", () => {
+    expect(
+      shortenPath("C:\\Users\\Someone\\Desktop\\Project\\src\\brain\\healthcheck.py"),
+    ).toBe("…/src/brain/healthcheck.py");
+    expect(shortenPath("/home/someone/work/repo/src/app.ts")).toBe("…/repo/src/app.ts");
+  });
+
+  it("leaves a path that is already short exactly as it is", () => {
+    expect(shortenPath("/etc/hosts")).toBe("/etc/hosts");
+    expect(shortenPath("src/app.ts")).toBe("src/app.ts");
+  });
+
+  it("does not touch things that merely contain a slash", () => {
+    expect(shortenPath("a/b or c/d — either way")).toBe("a/b or c/d — either way");
+    expect(shortenPath("rg -n 'foo/bar' src")).toBe("rg -n 'foo/bar' src");
+  });
+
+  it("reaches the row through the summary, whichever way the agent spells it", () => {
+    expect(inputSummary({ file_path: "C:\\a\\b\\c\\d\\e.ts" }, "edit")).toBe("…/c/d/e.ts");
   });
 });

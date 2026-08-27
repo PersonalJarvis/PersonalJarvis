@@ -224,3 +224,161 @@ describe("the scratchpad", () => {
     expect(screen.getAllByTestId("agent-turn-live")).toHaveLength(1);
   });
 });
+
+/*
+ * The change a coding call made, and the wall of steps around it.
+ *
+ * Two complaints from 2026-08-27, judged against Claude Code and Codex: an
+ * edit arrived as its raw arguments, so the one thing worth reading — what
+ * actually changed — was the one thing you could not read; and a finished
+ * turn left its whole run of calls lying in the transcript, which the
+ * maintainer called "far too much stuff".
+ */
+describe("a coding call shows its diff", () => {
+  const EDIT = {
+    turn_id: "d1",
+    call_id: "e1",
+    name: "Edit",
+    input: {
+      file_path: "src/app.ts",
+      old_string: "const port = 47821;",
+      new_string: "const port = 47921;",
+    },
+  };
+
+  function drawEdit(output = "The file src/app.ts has been updated successfully.") {
+    draw([
+      ev("user_message", { text: "change the port" }),
+      ev("turn_started", { turn_id: "d1", ...TURN }),
+      ev("tool_call", EDIT),
+      ev("tool_result", { turn_id: "d1", call_id: "e1", output, is_error: false }),
+      ev("turn_finished", { turn_id: "d1", status: "done", duration_ms: 900, usage: {} }),
+    ]);
+  }
+
+  it("wears the size of the change on the row, before anything is opened", () => {
+    drawEdit();
+    const stat = screen.getByTestId("agent-diff-stat");
+    expect(stat.dataset.added).toBe("1");
+    expect(stat.dataset.removed).toBe("1");
+  });
+
+  it("paints the removed line and the added one when the row is opened", () => {
+    drawEdit();
+    fireEvent.click(screen.getByTestId("agent-tool").querySelector("button")!);
+    const diff = screen.getByTestId("agent-tool-diff");
+    const removed = diff.querySelector("[data-diff='del']");
+    const added = diff.querySelector("[data-diff='add']");
+    expect(removed?.textContent).toContain("47821");
+    expect(added?.textContent).toContain("47921");
+    // The colours live on a class each, so both themes get their own pair.
+    expect(removed?.className).toContain("diff-line-del");
+    expect(added?.className).toContain("diff-line-add");
+  });
+
+  it("does not repeat the edit's receipt under the diff it already showed", () => {
+    drawEdit();
+    fireEvent.click(screen.getByTestId("agent-tool").querySelector("button")!);
+    expect(screen.getByTestId("agent-tool-diff")).toBeTruthy();
+    expect(screen.queryByText(/has been updated successfully/)).toBeNull();
+  });
+
+  it("still shows the output when the edit FAILED — that is the whole point", () => {
+    draw([
+      ev("turn_started", { turn_id: "d1", ...TURN }),
+      ev("tool_call", EDIT),
+      ev("tool_result", {
+        turn_id: "d1",
+        call_id: "e1",
+        output: "String to replace not found in file.",
+        is_error: true,
+      }),
+      ev("turn_finished", { turn_id: "d1", status: "done", duration_ms: 900, usage: {} }),
+    ]);
+    fireEvent.click(screen.getByTestId("agent-tool").querySelector("button")!);
+    expect(screen.getByText(/String to replace not found/)).toBeTruthy();
+  });
+
+  it("leaves a call that edits nothing exactly as it was", () => {
+    draw([
+      ev("turn_started", { turn_id: "d2", ...TURN }),
+      ev("tool_call", { turn_id: "d2", call_id: "b1", name: "Bash", input: { command: "ls" } }),
+      ev("tool_result", { turn_id: "d2", call_id: "b1", output: "a.ts", is_error: false }),
+      ev("turn_finished", { turn_id: "d2", status: "done", duration_ms: 200, usage: {} }),
+    ]);
+    expect(screen.queryByTestId("agent-diff-stat")).toBeNull();
+    fireEvent.click(screen.getByTestId("agent-tool").querySelector("button")!);
+    expect(screen.queryByTestId("agent-tool-diff")).toBeNull();
+    expect(screen.getByText("a.ts")).toBeTruthy();
+  });
+});
+
+describe("a run of steps puts itself away", () => {
+  /** `count` calls in a row, optionally one of them failing. */
+  function run(count: number, opts: { live?: boolean; failAt?: number } = {}) {
+    const events = [
+      ev("user_message", { text: "look into it" }),
+      ev("turn_started", { turn_id: "g1", ...TURN }),
+    ];
+    for (let i = 0; i < count; i++) {
+      events.push(
+        ev("tool_call", {
+          turn_id: "g1",
+          call_id: `c${i}`,
+          name: "Grep",
+          input: { pattern: `p${i}` },
+        }),
+      );
+      events.push(
+        ev("tool_result", {
+          turn_id: "g1",
+          call_id: `c${i}`,
+          output: "hit",
+          is_error: opts.failAt === i,
+        }),
+      );
+    }
+    if (!opts.live) {
+      events.push(
+        ev("turn_finished", { turn_id: "g1", status: "done", duration_ms: 5000, usage: {} }),
+      );
+    }
+    draw(events);
+  }
+
+  it("folds a finished run to one line, and opens it again on a click", () => {
+    run(6);
+    const group = screen.getByTestId("agent-tool-group");
+    expect(group.dataset.state).toBe("folded");
+    expect(screen.queryAllByTestId("agent-tool")).toHaveLength(0);
+
+    fireEvent.click(screen.getByTestId("agent-tool-group-toggle"));
+    expect(screen.getByTestId("agent-tool-group").dataset.state).toBe("open");
+    expect(screen.queryAllByTestId("agent-tool")).toHaveLength(6);
+  });
+
+  it("leaves a short run alone: three rows are not a wall", () => {
+    run(3);
+    expect(screen.getByTestId("agent-tool-group").dataset.state).toBe("plain");
+    expect(screen.queryByTestId("agent-tool-group-toggle")).toBeNull();
+    expect(screen.queryAllByTestId("agent-tool")).toHaveLength(3);
+  });
+
+  it("shows every step while the turn is still working", () => {
+    run(6, { live: true });
+    expect(screen.getByTestId("agent-tool-group").dataset.state).toBe("plain");
+    expect(screen.queryAllByTestId("agent-tool")).toHaveLength(6);
+  });
+
+  it("folds AROUND a step that failed, keeping the failure itself in view", () => {
+    // The first pass held the whole run open on any failure, which left a
+    // group of thirty-five calls lying open because one of them missed (live
+    // check, 2026-08-27). The failure is the thing worth seeing — not the
+    // thirty-four calls that went fine around it.
+    run(6, { failAt: 2 });
+    expect(screen.getByTestId("agent-tool-group").dataset.state).toBe("folded");
+    const rows = screen.queryAllByTestId("agent-tool");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].dataset.state).toBe("error");
+  });
+});
