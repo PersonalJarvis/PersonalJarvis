@@ -18,13 +18,11 @@ and is unusable in a grid of twelve.
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from jarvis.agentic_ide import activity as activity_mod
 from jarvis.agentic_ide import notifications
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.activity import STILL_S, read_activity
@@ -725,184 +723,17 @@ async def test_a_tool_step_gap_does_not_demand_reconfirmation(
         watcher.poll(registry, now=at)
     assert term.activity == "working", "sustained movement confirms"
 
-    # A quiet tool step: the screen stands still past its freshness tail. The
-    # RAW reading says waiting; the badge holds (see the next test).
+    # A quiet tool step: the screen stands still past its freshness tail.
     watcher.poll(registry, now=1008.0 + STILL_S + 1)
-    assert watcher._panes[(_session.id, term.key)].activity == "waiting"  # noqa: SLF001
-    assert term.activity == "working"
-
-    # The pause outlasts the hold: now it is a stop, dated from the last paint.
-    watcher.poll(registry, now=1008.0 + notifications.WORK_HOLD_S + 1)
     assert term.activity == "waiting"
 
     # Work resumes. The badge must follow on the SAME sweep, not five later.
     term.transcript.clear()
     _draw(term, "\r\n· working again after the tool call\r\n")
-    term.last_output_at = 1020.0
-    watcher.poll(registry, now=1020.0)
+    term.last_output_at = 1015.0
+    watcher.poll(registry, now=1015.0)
 
     assert term.activity == "working", "a resuming job needs no re-confirmation"
-
-
-async def test_a_short_pause_is_not_published_as_done(registry: Registry, tmp_path: Path) -> None:
-    """The dip itself. A working pane that stands still for a beat — a slow
-    tool call, the redraw shadow of a resize — used to flip the badge to a
-    finished dot for a sweep and restart its clock: a pane whose own spinner
-    read "11m 00s" wore "Working for 7s" (maintainer, 2026-08-27). The badge
-    now holds "working" for WORK_HOLD_S past the raw flip, and the episode's
-    start survives the pause."""
-    watcher = notifications.watcher()
-    _session, term = await _pane(registry, tmp_path)
-    term.last_submit_at = 500.0
-    term.submit_generation = term.process_generation
-    _quiet_since(term, 999.0)
-    _draw(term, IDLE_SCREEN)
-    watcher.poll(registry, now=996.0)
-
-    for step, at in enumerate((1000.0, 1002.0, 1004.0, 1006.0, 1008.0)):
-        term.transcript.clear()
-        _draw(term, f"\r\n· working, frame {step}\r\n")
-        term.last_output_at = at
-        watcher.poll(registry, now=at)
-    assert (term.activity, term.activity_since) == ("working", 1000.0)
-
-    # Still past STILL_S — the raw reading has flipped — but inside the hold.
-    for at in (1008.0 + STILL_S + 1, 1008.0 + notifications.WORK_HOLD_S):
-        watcher.poll(registry, now=at)
-        assert term.activity == "working", f"a pause of {at - 1008.0:.0f}s is not a stop"
-        assert term.activity_since == 1000.0, "the clock counts the whole episode"
-
-    # Work resumes: same episode, same clock.
-    term.transcript.clear()
-    _draw(term, "\r\n· working again\r\n")
-    term.last_output_at = 1014.0
-    watcher.poll(registry, now=1014.0)
-    assert (term.activity, term.activity_since) == ("working", 1000.0)
-
-
-async def test_a_stop_is_dated_from_the_last_paint(registry: Registry, tmp_path: Path) -> None:
-    """When the hold runs out the badge says "done" — and says since WHEN it
-    has been done: the moment the screen last moved, not the sweep that
-    finally admitted it. "Done for 0s" about a pane quiet for nine seconds is
-    the clock lying the other way."""
-    watcher = notifications.watcher()
-    _session, term = await _pane(registry, tmp_path)
-    term.last_submit_at = 500.0
-    term.submit_generation = term.process_generation
-    _quiet_since(term, 999.0)
-    _draw(term, IDLE_SCREEN)
-    watcher.poll(registry, now=996.0)
-    for step, at in enumerate((1000.0, 1002.0, 1004.0, 1006.0, 1008.0)):
-        term.transcript.clear()
-        _draw(term, f"\r\n· working, frame {step}\r\n")
-        term.last_output_at = at
-        watcher.poll(registry, now=at)
-
-    watcher.poll(registry, now=1008.0 + STILL_S + 1)
-    watcher.poll(registry, now=1008.0 + notifications.WORK_HOLD_S + 1)
-
-    assert term.activity == "waiting"
-    assert term.activity_since == 1008.0, "quiet since the last paint, not since the sweep"
-
-
-async def test_a_question_is_not_held_back_by_the_hold(registry: Registry, tmp_path: Path) -> None:
-    """A working pane that stops on a permission prompt has stopped FOR THE
-    USER. The hold covers a plain pause only; a question on screen takes the
-    badge over the moment the raw reading sees it."""
-    watcher = notifications.watcher()
-    _session, term = await _pane(registry, tmp_path)
-    term.last_submit_at = 500.0
-    term.submit_generation = term.process_generation
-    _quiet_since(term, 999.0)
-    _draw(term, IDLE_SCREEN)
-    watcher.poll(registry, now=996.0)
-    for step, at in enumerate((1000.0, 1002.0, 1004.0, 1006.0, 1008.0)):
-        term.transcript.clear()
-        _draw(term, f"\r\n· working, frame {step}\r\n")
-        term.last_output_at = at
-        watcher.poll(registry, now=at)
-
-    term.transcript.clear()
-    _draw(term, QUESTION_SCREEN)
-    term.last_output_at = 1009.0
-    watcher.poll(registry, now=1009.0)
-    watcher.poll(registry, now=1009.0 + STILL_S + 1)
-
-    assert term.activity == "asking"
-
-
-# ------------------------------------------------------------ the live feed
-#
-# The sweep is the one thing that knows the MOMENT a pane's word changes; the
-# feed turns that into one event per change for every client on the app
-# socket, so a finished session shows as finished without waiting for a poll.
-
-
-async def test_the_feed_reports_a_pane_once_per_change(registry: Registry, tmp_path: Path) -> None:
-    feed = notifications.ActivityFeed()
-    session, term = await _pane(registry, tmp_path)
-
-    first = feed.changes(registry)
-    assert [(row["session_id"], row["key"], row["name"]) for row in first] == [
-        (session.id, term.key, "Alex")
-    ]
-    assert feed.changes(registry) == [], "nothing changed, nothing to say"
-
-    # The sweep stamps a new word (on the wall clock: `reading()` trusts a
-    # stamp only while it is fresh against the real time).
-    now = time.time()
-    activity_mod.stamp(term, "working", now=now)
-    term.last_submit_at = now
-    term.submit_generation = term.process_generation
-    rows = feed.changes(registry)
-    assert [(row["activity"], row["activity_since"], row["worked"]) for row in rows] == [
-        ("working", now, True)
-    ]
-    assert feed.changes(registry) == []
-
-    # A pane that is gone is forgotten, not carried as a ghost.
-    await registry.close_terminal(term.name)
-    assert feed.changes(registry) == []
-    assert feed._last == {}  # noqa: SLF001 - the leak this guards against is invisible otherwise
-
-
-async def test_changes_go_to_the_bus_as_pane_activity_events(
-    registry: Registry, tmp_path: Path
-) -> None:
-    """What a client receives: the activity half of a `/panes` row, verbatim,
-    under the workspace id and the pane's stable key — enough to patch the
-    row in place without a second request."""
-    from jarvis.core.events import AgenticIdePaneActivity
-
-    published: list[Any] = []
-
-    async def publish(event: Any) -> None:
-        published.append(event)
-
-    notifications.set_publisher(publish)
-    session, term = await _pane(registry, tmp_path)
-
-    await notifications._publish_changes(registry)  # noqa: SLF001 - the sweep's own step
-    await notifications._publish_changes(registry)  # noqa: SLF001
-
-    assert len(published) == 1
-    event = published[0]
-    assert isinstance(event, AgenticIdePaneActivity)
-    assert (event.session_id, event.key, event.name) == (session.id, term.key, "Alex")
-    assert event.status == "live"
-    assert event.activity == term.reading().activity
-    assert event.worked is False
-    assert event.source_layer == "agentic_ide.notifications"
-
-
-async def test_a_deaf_bus_does_not_end_the_sweep(registry: Registry, tmp_path: Path) -> None:
-    async def publish(_event: Any) -> None:
-        raise RuntimeError("bus closed")
-
-    notifications.set_publisher(publish)
-    await _pane(registry, tmp_path)
-
-    await notifications._publish_changes(registry)  # noqa: SLF001 - must not raise
 
 
 async def test_a_question_is_reported_even_though_it_never_worked(

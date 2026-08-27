@@ -404,10 +404,6 @@ class YouTubeMusicRestTool:
         self._player = player
         self._playback_mode = playback_mode or _default_playback_mode
         self._player_confirm_timeout_s = player_confirm_timeout_s
-        # Whether the last blind media key this tool sent was a pause — the
-        # only state in which a blind "play" is a resume rather than a guess
-        # (``_control_blind``).
-        self._blind_pause_sent = False
         self._pool = HttpClientPool(transport=transport)
         # search.list is the rationed call (100/day). Same words → same answer
         # within a session, so a repeat costs nothing.
@@ -562,12 +558,7 @@ class YouTubeMusicRestTool:
                 ok, why = False, str(exc)
             if ok:
                 try:
-                    out = await self._play_in_player(url, started)
-                    # Only a player that reported "playing" counts as done;
-                    # a cookie wall, a paused page or a page still loading
-                    # is an attempt the voice must not sell as a result.
-                    out["verified"] = bool(out.get("playback_confirmed"))
-                    return out
+                    return await self._play_in_player(url, started)
                 except Exception as exc:  # noqa: BLE001 — player unusable → browser, and say so
                     log.info("background player unusable, opening the browser: %s", exc)
                     why = f"The background player could not start ({exc})."
@@ -832,12 +823,7 @@ class YouTubeMusicRestTool:
                 return {"error": f"The background player did not accept '{verb}': {exc}"}
             if not ok:
                 return {"error": f"The background player did not accept '{verb}'."}
-            via_player: dict[str, Any] = {
-                "ok": True,
-                "action": verb,
-                "app": _PLAYER_APP,
-                "verified": True,
-            }
+            via_player: dict[str, Any] = {"ok": True, "action": verb, "app": _PLAYER_APP}
             if verb in ("next", "previous"):
                 await asyncio.sleep(1.2)
                 after = await self._player_state()
@@ -851,61 +837,26 @@ class YouTubeMusicRestTool:
         cap = await media.capability()
         if not cap.can_control:
             return {"error": "This machine cannot control playback. " + (cap.note or "")}
-        if not cap.can_read:
-            return await self._control_blind(media, verb, cap.note)
-        before = await media.now_playing()
-        if before is None:
+        before = await media.now_playing() if cap.can_read else None
+        if cap.can_read and before is None:
             return {"error": _NO_SESSION_READ}
         ok = bool(await getattr(media, verb)())
         if not ok:
             return {"error": f"The player did not accept '{verb}'."}
-        out: dict[str, Any] = {"ok": True, "action": verb, "verified": True, "app": before.app}
-        if verb in ("next", "previous"):
-            await asyncio.sleep(0.8)
-            after = await media.now_playing()
-            if after is not None:
-                out["now"] = after.as_dict()
-        else:
-            out["track"] = before.title
-            out["artist"] = before.artist
+        out: dict[str, Any] = {"ok": True, "action": verb}
+        if before is not None:
+            out["app"] = before.app
+            if verb in ("next", "previous"):
+                await asyncio.sleep(0.8)
+                after = await media.now_playing()
+                if after is not None:
+                    out["now"] = after.as_dict()
+            else:
+                out["track"] = before.title
+                out["artist"] = before.artist
+        elif cap.backend == "media-keys":
+            out["note"] = "Sent as a media key: this toggles play/pause blindly."
         return out
-
-    async def _control_blind(self, media: Any, verb: str, note: str | None) -> dict[str, Any]:
-        """Steer through media keys on a machine that cannot read its media
-        session (Windows without the ``winrt`` extras).
-
-        A media key reaches whatever player the OS considers current and
-        reports nothing back, so the result is an ATTEMPT and says so
-        (``verified: false``): the realtime bridge turns that into a spoken
-        caveat, never a completion. ``play`` is the one verb refused outright
-        unless this tool itself paused something the same way — the key is
-        the play/pause TOGGLE, so with nothing known to be paused it starts a
-        random tab or stops a running one. Live 2026-08-26 19:50: "play some
-        cool music" arrived without a title, this path pressed the toggle,
-        answered ``ok: true, resumed: true``, and the voice said "I've just
-        started some cool music on YouTube Music" over a silent machine.
-        """
-        if verb == "play" and not self._blind_pause_sent:
-            return {
-                "error": (
-                    "Nothing is known to be paused, and this machine cannot see "
-                    "what is playing, so play was not pressed."
-                )
-            }
-        ok = bool(await getattr(media, verb)())
-        if not ok:
-            return {"error": f"The player did not accept '{verb}'."}
-        self._blind_pause_sent = verb == "pause"
-        return {
-            "ok": True,
-            "action": verb,
-            "verified": False,
-            "note": (
-                "Sent as a media key to whichever player is current; this machine "
-                "cannot confirm that anything changed. "
-                + (note or "")
-            ).strip(),
-        }
 
     async def pause(self) -> dict[str, Any]:
         return await self._control("pause")
@@ -976,23 +927,12 @@ class YouTubeMusicRestTool:
                         confirmed = True
                         break
             out["playback_confirmed"] = confirmed
-            out["verified"] = confirmed
             if not confirmed:
                 out["note"] = (
                     "YouTube Music opened, but the browser has not reported playback "
                     "yet — if it stays silent, press play once (browsers block "
                     "autoplay on a site until it has been used there)."
                 )
-        else:
-            # The page opened; whether it plays is beyond what this machine
-            # can see, so the result is an attempt (``verified: false``),
-            # never "it is playing".
-            out["playback_confirmed"] = False
-            out["verified"] = False
-            out["note"] = (
-                "YouTube Music opened in the browser; this machine cannot confirm "
-                "that playback started. " + (cap.note or "")
-            ).strip()
         return out
 
     async def play(

@@ -25,23 +25,17 @@ import shutil
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
-from jarvis.agent_chat import attachments as chat_attachments
 from jarvis.agent_chat.approval_bridge import ChatApprovalBridge
-from jarvis.agent_chat.catalog import PROVIDER_ROWS, api_seat, offers, provider_row
+from jarvis.agent_chat.catalog import provider_row
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import ladder_key, normalize_permission
 from jarvis.agent_chat.runner_api import TurnHandle, run_api_turn, supports_api_runner
 from jarvis.agent_chat.runner_brain import run_brain_turn
 from jarvis.agent_chat.runner_cli import run_cli_turn, supports_cli_runner
-from jarvis.agent_chat.store import (
-    DEFAULT_SURFACE,
-    SURFACES,
-    AgentChatSession,
-    AgentChatStore,
-)
+from jarvis.agent_chat.store import DEFAULT_SURFACE, AgentChatSession, AgentChatStore
 from jarvis.agent_chat.surface_kits import kit_for
 
 log = logging.getLogger(__name__)
@@ -71,33 +65,25 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
 
     On the Jarvis surface the API path is Jarvis' own brain (``brain``): the
     same set of providers, driven by ``BrainManager.generate`` instead of the
-    coding agent's tool loop. That surface has no CLI seats at all
-    (``SurfaceKit.cli_seats``, maintainer 2026-08-26), so a vendor CLI never
-    answers there — not even the dual Claude row, which runs on the Anthropic
-    API behind its key like every other seat.
+    coding agent's tool loop. The CLI seats keep their CLI runner there — a
+    subscription only pays for the vendor's own loop — and run as Jarvis
+    (see :mod:`jarvis.agent_chat.jarvis_harness`).
     """
     kit = kit_for(surface)
     api_runner = "brain" if kit.brain_runner else "api"
     row = provider_row(provider)
+    if kit.brain_only:
+        # The surface's tools only exist inside the brain loop: a CLI seat
+        # (agy-cli, codex-cli, claude-cli) would run the vendor's coding agent
+        # without them, so any provider the brain knows is driven by the brain.
+        return "brain" if row is not None or supports_api_runner(provider) else "unknown"
     if row is None:
         return api_runner if supports_api_runner(provider) else "unknown"
-    if not kit.cli_seats:
-        # No vendor process here: the provider's own API answers, or nothing
-        # does. ``rows_for`` keeps the picker to the same set, so "unknown"
-        # is only reachable through a stale session or a hand-made request.
-        return api_runner if supports_api_runner(row.id) else "unknown"
     if row.id == "claude-api":
         return "claude-cli" if _claude_cli_installed() else api_runner
     if row.runner == "api":
         return api_runner
     return row.runner
-
-
-#: ``AgentChatStore.data_version`` after the front page's chat gave up its
-#: CLI seats (2026-08-26) and its sessions moved to the API row of the same
-#: brand. Bump — and add a branch in ``_retire_cli_seats``' caller — only for
-#: another migration that rewrites what a person picked.
-_CLI_SEATS_RETIRED: Final[int] = 1
 
 
 class _Running:
@@ -142,71 +128,11 @@ class AgentChatService:
         # no word for "auto" and flipping to bypass would silence every later
         # card, a mail send included.
         self._always_allowed: dict[str, set[str]] = {}
-        self._retire_cli_seats()
-
-    def _retire_cli_seats(self) -> None:
-        """Move chats off a CLI seat their surface no longer offers.
-
-        The front page's chat runs on provider APIs only (``cli_seats``).
-        A session opened before that — a Codex or Antigravity seat, or a
-        Claude one carrying a Claude Code model id — would otherwise show a
-        provider its own picker does not list, or send the endpoint a model
-        name only the CLI understands. It moves to the API row of the same
-        brand instead (``catalog.api_seat``), keeping its title, its folder,
-        its permission mode and its whole transcript.
-
-        Once per database, not once per boot (``data_version``): it rewrites
-        a pick, and a pick made afterwards — a live model id the curated
-        list does not carry — must survive every later start untouched.
-        """
-        if self.store.data_version() >= _CLI_SEATS_RETIRED:
-            return
-        for surface in SURFACES:
-            if kit_for(surface).cli_seats:
-                continue
-            for row in PROVIDER_ROWS:
-                # Rows that were always an API seat have nothing to migrate.
-                if row.runner == "api":
-                    continue
-                for session in self.store.sessions_on(surface, row.id):
-                    provider, model = api_seat(session.provider, session.model)
-                    if (provider, model) == (session.provider, session.model):
-                        continue
-                    self.store.reseat_session(session.session_id, provider=provider, model=model)
-                    log.info(
-                        "agent chat: %s left the %s CLI seat for %s %s",
-                        session.session_id,
-                        row.id,
-                        provider,
-                        f"({model})" if model else "(its default model)",
-                    )
-        self.store.set_data_version(_CLI_SEATS_RETIRED)
 
     # ------------------------------------------------------------ sessions
 
-    def default_cwd(self, surface: str = DEFAULT_SURFACE) -> str:
-        """Where a new ``surface`` session starts when nobody picked a folder.
-
-        A surface that brings its own workspace (the Jarvis chat) gets that
-        directory, created on first use. One that cannot be created — a
-        read-only install, no writable app data — falls back to the service
-        default rather than handing a chat a folder it cannot work in.
-        """
-        workspace = kit_for(surface).workspace_dir
-        if workspace is None:
-            return self._default_cwd()
-        folder = workspace()
-        try:
-            folder.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            log.warning(
-                "chat workspace %s could not be created (%s) — starting in the "
-                "fallback folder instead",
-                folder,
-                exc,
-            )
-            return self._default_cwd()
-        return str(folder)
+    def default_cwd(self) -> str:
+        return self._default_cwd()
 
     def _bridge_for(self, bus: Any | None) -> ChatApprovalBridge | None:
         """The approval bridge, built on the first Jarvis turn that has a bus."""
@@ -230,11 +156,6 @@ class AgentChatService:
         row = provider_row(provider)
         if row is None and not supports_api_runner(provider):
             raise ValueError(f"Unknown agent-chat provider: {provider!r}")
-        if row is not None and not offers(surface, provider):
-            raise ValueError(
-                f"Provider {provider!r} is not offered on the {surface!r} chat. "
-                "That chat runs on a provider API behind a key, not on a vendor CLI."
-            )
         ladder = ladder_key(surface, resolve_runner(provider, surface=surface))
         permission_mode = normalize_permission(ladder, permission_mode)
         eff = normalize_effort(provider, effort) if effort is not None else ""
@@ -246,7 +167,7 @@ class AgentChatService:
             provider=provider,
             model=model or (row.default_model if row else ""),
             effort=eff,
-            cwd=cwd or self.default_cwd(surface),
+            cwd=cwd or self.default_cwd(),
             permission_mode=permission_mode,
             title=title,
             surface=surface,
@@ -287,37 +208,16 @@ class AgentChatService:
 
     # ---------------------------------------------------------------- turns
 
-    async def send(
-        self,
-        session_id: str,
-        text: str,
-        attachments: list[dict[str, Any]] | None = None,
-    ) -> str:
-        """Persist the person's message and start the turn. Returns turn_id.
-
-        ``attachments`` are what the composer already had read for this message
-        (``jarvis.agent_chat.attachments``): a described screenshot, an
-        extracted document. Their contents go INTO the message the turn
-        receives, because a chat may be answered by a coding CLI or a
-        text-only model that cannot open the file itself.
-
-        A message with attachments may carry no sentence at all — dropping a
-        picture and pressing Enter is a complete gesture — but an empty message
-        with nothing attached is still refused.
-        """
+    async def send(self, session_id: str, text: str) -> str:
+        """Persist the person's message and start the turn. Returns turn_id."""
         session = self.store.get_session(session_id)
         if session is None:
             raise NoSuchSession(session_id)
         if self.is_running(session_id):
             raise SessionBusy(session_id)
-        kit = kit_for(session.surface)
         text = text.strip()
-        attached = chat_attachments.to_analysis(attachments)
-        if not text and not attached:
+        if not text:
             raise ValueError("empty message")
-        # What the turn receives; ``text`` stays what the person typed so the
-        # timeline shows their sentence rather than a page of extracted PDF.
-        prompt = chat_attachments.compose(text, attached)
 
         turn_id = uuid.uuid4().hex
         cancel = asyncio.Event()
@@ -325,37 +225,7 @@ class AgentChatService:
         self._running[session_id] = run
 
         history = self.store.list_events(session_id)
-        await self._emit(
-            session_id,
-            make_event(
-                "user_message",
-                {
-                    # The full prompt: this is what was actually sent, and the
-                    # API runner rebuilds the conversation from these events —
-                    # storing only the sentence would lose the picture on the
-                    # NEXT turn (runner_api.messages_from_events).
-                    "text": prompt,
-                    # What the person typed, when it differs from the prompt.
-                    # Absent on an ordinary message, so nothing changes there.
-                    **({"typed": text} if attached else {}),
-                    **(
-                        {
-                            "attachments": [
-                                {
-                                    "name": item.name,
-                                    "kind": item.kind,
-                                    "described_by": item.described_by,
-                                    "note": item.note,
-                                }
-                                for item in attached
-                            ]
-                        }
-                        if attached
-                        else {}
-                    ),
-                },
-            ),
-        )
+        await self._emit(session_id, make_event("user_message", {"text": text}))
         runner = resolve_runner(session.provider, surface=session.surface)
         await self._emit(
             session_id,
@@ -365,12 +235,13 @@ class AgentChatService:
                     "turn_id": turn_id,
                     "provider": session.provider,
                     "model": session.model,
-                    # The effort the turn RUNS with. It is the session's own
-                    # pick: no surface overrides it any more (the kit's
-                    # `effort` went with the setup helper), so reading one off
-                    # the kit would only be a way to raise an AttributeError
-                    # on every turn.
-                    "effort": normalize_effort(session.provider, session.effort),
+                    # The effort the turn RUNS with: a surface may ask for more
+                    # than the session's own pick (the setup helper does), and
+                    # the timeline must not report the stale one.
+                    "effort": normalize_effort(
+                        session.provider,
+                        kit_for(session.surface).effort or session.effort,
+                    ),
                     "runner": runner,
                     "surface": session.surface,
                 },
@@ -390,7 +261,7 @@ class AgentChatService:
             assistant_name=self._assistant_name(),
             bus=bus,
             surface=session.surface,
-            stance=session.permission_mode if kit.uses_stance else "",
+            stance=session.permission_mode if kit_for(session.surface).uses_stance else "",
         )
 
         async def _body() -> None:
@@ -404,20 +275,12 @@ class AgentChatService:
                             always_allowed=self.always_allowed(session_id),
                         )
                 elif supports_cli_runner(runner):
-                    # A CLI runs AS Jarvis — its own tools over MCP, its calls
-                    # answered by the chat's approval card — only where the
-                    # surface both is Jarvis and seats a CLI at all. The front
-                    # page is the first and the second is now false there, so
-                    # today this is every CLI turn running as a plain coding
-                    # agent. Asked of the kit rather than the surface name, so
-                    # a surface that combines the two keeps working.
-                    as_jarvis = kit.brain_runner and kit.cli_seats
                     vendor = await run_cli_turn(
                         handle,
                         text,
                         runner,
-                        identity=as_jarvis,
-                        bridge=self._bridge_for(bus) if as_jarvis else None,
+                        identity=(session.surface == "jarvis"),
+                        bridge=self._bridge_for(bus) if session.surface == "jarvis" else None,
                         always_allowed=self.always_allowed(session_id),
                     )
                     if vendor and vendor != session.vendor_session:

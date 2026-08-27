@@ -169,13 +169,32 @@ def parse_boot_stage(lines: list[str], *, spawned_at: float) -> tuple[str, str] 
     return best[1], best[2]
 
 
-def crash_tail(lines: list[str]) -> list[str]:
+def crash_tail(lines: list[str], *, since: float | None = None) -> list[str]:
     """The substantive end of the server log, bounded for the desktop log.
 
     Readiness polling produces hundreds of identical ``GET /v1/pool`` lines
     that would drown the one traceback worth keeping (a real crashed
     generation's tail was 100% polling noise, live 2026-08-10 18:41).
+
+    ``since`` is the spawn time of the generation that died. The server log is
+    append-only across generations, so without that gate a child which exits
+    saying nothing inherits the last traceback in the file — on 2026-08-27 a
+    crash at 18:11 was reported with a stack from 11:44 and sent the diagnosis
+    seven hours off. Lines are gated exactly as in :func:`parse_boot_stage`:
+    untimestamped output (uvicorn, bare prints) belongs to the last timestamped
+    line above it.
     """
+    if since is not None:
+        threshold = since - 5.0
+        in_generation = False
+        current: list[str] = []
+        for line in lines:
+            stamp = _line_epoch(line)
+            if stamp is not None:
+                in_generation = stamp >= threshold
+            if in_generation:
+                current.append(line)
+        lines = current
     kept = [
         line[:CRASH_TAIL_MAX_LINE_CHARS]
         for line in lines

@@ -131,41 +131,16 @@ def _json_safe(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
-#: Spoken-outcome contract for a tool that acted but could not check the
-#: effect (``output["verified"] is False``). The system prompt already forbids
-#: claiming an outcome no successful result supports; this makes the result
-#: itself say "attempt, not outcome", in the field the model reads for
-#: confirmation questions too. Live 2026-08-26 19:50: a blind media-key
-#: "play" came back ``ok: true`` and the voice said "I've just started some
-#: cool music on YouTube Music" while nothing played.
-_UNVERIFIED_OUTCOME_INSTRUCTION = (
-    "This result is an ATTEMPT, not a confirmed outcome: the tool acted but "
-    "could not verify that anything changed. Tell the user in one short "
-    "sentence what was tried and that you cannot confirm it from here; never "
-    "say it is done, playing, running, or started. Offer the next step in the "
-    "same breath instead of asking them to wait."
-)
-
-
-def _outcome_unverified(output: Any) -> bool:
-    """Whether a tool explicitly marked its own outcome as unchecked."""
-    return isinstance(output, dict) and output.get("verified") is False
-
-
 def _bounded_result(success: bool, output: Any, error: str | None) -> dict[str, Any]:
-    payload: dict[str, Any] = {
+    payload = {
         "success": bool(success),
         "output": _json_safe(output),
         "error": str(error) if error else None,
     }
-    unverified = success and _outcome_unverified(output)
-    if unverified:
-        payload["unverified"] = True
-        payload["instruction"] = _UNVERIFIED_OUTCOME_INSTRUCTION
     serialized = json.dumps(payload, ensure_ascii=False, default=str)
     if len(serialized) <= _MAX_RESULT_CHARS:
         return payload
-    truncated: dict[str, Any] = {
+    return {
         "success": bool(success),
         "output": serialized[:_MAX_RESULT_CHARS],
         "error": (
@@ -174,10 +149,6 @@ def _bounded_result(success: bool, output: Any, error: str | None) -> dict[str, 
         ),
         "truncated": True,
     }
-    if unverified:
-        truncated["unverified"] = True
-        truncated["instruction"] = _UNVERIFIED_OUTCOME_INSTRUCTION
-    return truncated
 
 
 def _compact_text(text: str, limit: int) -> str:

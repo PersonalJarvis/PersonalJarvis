@@ -40,8 +40,6 @@ from typing import Any, Literal
 from jarvis.clis.prober import CliStatusProber
 from jarvis.clis.spec import AuthConfig, CliSpec, InstallMethods, RiskConfig
 from jarvis.terminal.shells import default_shell
-from jarvis.workspace.launch_picks import VALUE as picks_value
-from jarvis.workspace.launch_picks import LaunchPicks, flag_modes
 
 log = logging.getLogger(__name__)
 
@@ -227,14 +225,6 @@ class WorkspaceAgent:
     #: Answers which GENERATION of the CLI is installed, when a vendor ships two
     #: under one binary name. ``None`` when there is only ever one.
     generation_probe: Callable[[], str | None] | None = None
-
-    #: How this CLI takes a model / effort / permission pick on its launch argv
-    #: (:mod:`jarvis.workspace.launch_picks`). ``None`` means "offers no picks":
-    #: a pane of it opens on whatever the binary itself defaults to, and every
-    #: picker upstream shows nothing to choose rather than a control that does
-    #: nothing. Declaring it is what makes those three picks work for an entry —
-    #: no layer above knows any CLI's flag spelling (AP-21).
-    launch_picks: LaunchPicks | None = None
 
     # --- How it behaves once it is running ----------------------------------
     trust: TrustSpec | None = None
@@ -595,108 +585,10 @@ def glm_spawn_env() -> dict[str, str] | None:
     return env
 
 
-# ---------------------------------------------------------------- launch picks
-#
-# What each CLI accepts as "run on THIS model, think THIS hard, ask THIS often"
-# when a pane opens. Every flag below was read off the installed binary's own
-# ``--help`` and its rejected-value message, which is the only source that can
-# be trusted here: a wrong word is not a warning but a pane that dies on the
-# command line. The mode NAMES stay the agent chat's ladder vocabulary
-# (jarvis/agent_chat/permissions.py) even where the binary spells one
-# differently, so one word means one stance across the whole app.
-
-_CLAUDE_PICKS = LaunchPicks(
-    provider="claude-api",
-    model_args=("--model", picks_value),
-    effort_args=("--effort", picks_value),
-    # ``default`` is this CLI's ask-first mode. Recent builds call the same
-    # stance ``manual`` in their help text and still accept ``default``
-    # (verified on 2.1.247), so the older word is the one that runs on both.
-    permission_args=flag_modes(
-        "--permission-mode",
-        "default",
-        "acceptEdits",
-        "plan",
-        "auto",
-        "dontAsk",
-        "bypassPermissions",
-    ),
-)
-
-#: GLM drives the Claude Code binary, so it takes the same permission words —
-#: but its models are Z.ai's own and this app ships no list of them, and the
-#: effort flag belongs to Anthropic's endpoint rather than Z.ai's. Offering
-#: neither is what keeps a picker from listing choices the endpoint refuses.
-_GLM_PICKS = LaunchPicks(provider="claude-api", permission_args=_CLAUDE_PICKS.permission_args)
-
-_CODEX_PICKS = LaunchPicks(
-    provider="openai-codex",
-    model_args=("--model", picks_value),
-    # A ``-c`` override, not a flag of its own. The value is parsed as TOML and
-    # falls back to the literal string, so the level goes in bare — quoting it
-    # here would put the quote characters themselves into the setting.
-    effort_args=("-c", f"model_reasoning_effort={picks_value}"),
-    permission_args=(
-        ("read-only", ("--sandbox", "read-only")),
-        ("approve-for-me", ("--approve-for-me",)),
-        ("auto", ("--sandbox", "workspace-write")),
-        ("full-access", ("--dangerously-bypass-approvals-and-sandbox",)),
-    ),
-)
-
-_AGY_PICKS = LaunchPicks(
-    provider="antigravity",
-    model_args=("--model", picks_value),
-    effort_args=("--effort", picks_value),
-    permission_args=(
-        ("accept-edits", ("--mode", "accept-edits")),
-        ("plan", ("--mode", "plan")),
-        ("skip-permissions", ("--dangerously-skip-permissions",)),
-    ),
-    # A base Gemini id is an error without a level beside it.
-    effort_required=True,
-)
-
-_GROK_PICKS = LaunchPicks(
-    provider="grok-build",
-    model_args=("--model", picks_value),
-    effort_args=("--reasoning-effort", picks_value),
-    # The binary also takes ``auto`` and ``dontAsk``; they are left out because
-    # this app has no sentence describing what they mean for Grok Build, and a
-    # picker entry nobody can explain is worse than one fewer choice.
-    permission_args=flag_modes(
-        "--permission-mode",
-        "default",
-        "acceptEdits",
-        "plan",
-        "bypassPermissions",
-    ),
-)
-
-#: OpenCode and Kimi bring their own accounts and their own model aliases, so
-#: neither publishes a list this app could offer — the pick is whatever the
-#: person has configured, and the shape check in ``launch_picks`` is what
-#: stands in for a list. Their one permission flag is described by the shared
-#: API ladder, which has the right sentence for "everything runs without
-#: asking" already.
-_OPENCODE_PICKS = LaunchPicks(
-    model_args=("--model", picks_value),
-    permission_args=(("auto", ("--auto",)),),
-    ladder="api",
-)
-
-_KIMI_PICKS = LaunchPicks(
-    model_args=("--model", picks_value),
-    permission_args=(("auto", ("--auto",)),),
-    ladder="api",
-)
-
-
 _AGENTS: dict[str, WorkspaceAgent] = {
     "claude": make_cli_agent(
         "claude",
         "Claude Code",
-        launch_picks=_CLAUDE_PICKS,
         binary="claude",
         npm_package="@anthropic-ai/claude-code",
         homepage="https://claude.com/claude-code",
@@ -730,7 +622,6 @@ _AGENTS: dict[str, WorkspaceAgent] = {
     "codex": make_cli_agent(
         "codex",
         "Codex",
-        launch_picks=_CODEX_PICKS,
         binary="codex",
         npm_package="@openai/codex",
         homepage="https://github.com/openai/codex",
@@ -753,7 +644,6 @@ _AGENTS: dict[str, WorkspaceAgent] = {
     "opencode": make_cli_agent(
         "opencode",
         "OpenCode",
-        launch_picks=_OPENCODE_PICKS,
         binary="opencode",
         homepage="https://opencode.ai",
         description="Open-source terminal coding agent — bring your own model.",
@@ -788,7 +678,6 @@ _AGENTS: dict[str, WorkspaceAgent] = {
     "kimi": make_cli_agent(
         "kimi",
         "Kimi Code",
-        launch_picks=_KIMI_PICKS,
         binary="kimi",
         npm_package="@moonshot-ai/kimi-code",
         homepage="https://moonshotai.github.io/kimi-code/en/",
@@ -839,7 +728,6 @@ _AGENTS: dict[str, WorkspaceAgent] = {
     "glm": make_cli_agent(
         "glm",
         "GLM Coding Plan",
-        launch_picks=_GLM_PICKS,
         # The whole design of this entry: the binary IS Claude Code. Z.ai ships
         # no CLI of its own — its own documentation says to run Anthropic's
         # binary against a different endpoint — so detection, the install
@@ -861,7 +749,6 @@ _AGENTS: dict[str, WorkspaceAgent] = {
     "grok-build": make_cli_agent(
         "grok-build",
         "Grok Build",
-        launch_picks=_GROK_PICKS,
         binary="grok",
         homepage="https://x.ai/cli",
         description="xAI's terminal coding agent — SuperGrok or X Premium+.",
@@ -888,7 +775,6 @@ _AGENTS: dict[str, WorkspaceAgent] = {
     "antigravity": make_cli_agent(
         "antigravity",
         "Antigravity",
-        launch_picks=_AGY_PICKS,
         binary="agy",
         homepage="https://antigravity.google",
         description="Google's terminal coding agent — billed against the Google subscription.",

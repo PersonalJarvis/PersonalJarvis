@@ -107,6 +107,17 @@ BRAIN_REWARM_INTERVAL_S = 45 * 60.0
 #: be read (30 min). 0 = never release.
 DEFAULT_IDLE_RELEASE_S = 30 * 60.0
 
+#: Ceiling for the request that anchors a cold Ollama load (see
+#: :func:`anchor_brain_load`). Generous enough for a large model on a
+#: contended, paging host, bounded so a wedged Ollama cannot pin the thread
+#: for the life of the process.
+BRAIN_ANCHOR_TIMEOUT_S = 600.0
+
+#: Ollama endpoints with a load anchor in flight, so a burst of spawns cannot
+#: pile request on request for the same weights.
+_BRAIN_ANCHORS: set[tuple[str, str]] = set()
+_BRAIN_ANCHOR_LOCK = threading.Lock()
+
 
 def idle_release_s() -> float:
     """Seconds of voice idleness after which the local stack frees the accelerator.
@@ -859,7 +870,11 @@ def _log_crash_tail() -> None:
     try:
         from jarvis.realtime.local_server import boot_progress  # lazy (AP-26)
 
-        tail = boot_progress.crash_tail(boot_progress.read_log_tail(_server_log()))
+        record = _read_pidfile() or {}
+        spawned_at = _json_float(record.get("spawned_at"))
+        tail = boot_progress.crash_tail(
+            boot_progress.read_log_tail(_server_log()), since=spawned_at
+        )
         if tail:
             log.warning(
                 "local-realtime monitor: owned server process exited "
@@ -869,7 +884,7 @@ def _log_crash_tail() -> None:
         else:
             log.warning(
                 "local-realtime monitor: owned server process exited "
-                "unexpectedly and left no substantive log tail"
+                "unexpectedly and left no substantive log tail of its own"
             )
     except Exception:  # noqa: BLE001 - forensics must never break recovery
         log.debug("supervisor: crash-tail capture failed", exc_info=True)
@@ -1297,6 +1312,11 @@ def ensure_running(
                     exc,
                 )
                 return "refused:brain-context-profile"
+            # The child gives its own LLM warm-up 20 s per attempt and cancels
+            # the Ollama load when that expires, which on a slow first load is
+            # a loop that can never converge. Hold that load open from here
+            # instead; the thread outlives this call and nobody waits for it.
+            anchor_brain_load(launch_command=command)
         clear_pidfile()
         spawned_pid = _spawn(command, reason=reason)
         if spawned_pid is None:
@@ -1390,6 +1410,10 @@ def replace_idle_managed_runtime(
                 exc,
             )
             return "refused:brain-context-profile"
+
+        # A model switch is the one spawn whose brain is COLD by definition,
+        # so this path needs the load anchor at least as much as the other.
+        anchor_brain_load(launch_command=command)
 
         clear_pidfile()
         spawned_pid = _spawn(command, reason=reason)
@@ -2126,6 +2150,94 @@ def _kill_by_install_root(root: Path) -> tuple[int, int]:
 # ── Brain warm-up ────────────────────────────────────────────────────────
 
 
+def anchor_brain_load(*, launch_command: str) -> bool:
+    """Hold a cold Ollama load open while the voice server boots into it.
+
+    Ollama ties a model load to the requests waiting on it: the moment the
+    last client hangs up it logs ``aborting load``, answers 499 and throws
+    the partly loaded weights away. The pinned speech-to-speech warm-up gives
+    its first completion 20 s and retries six times, so on a host where the
+    brain needs longer than that — a 9B model at 32k context on a box whose
+    RAM is nearly spent — every attempt kills the very load it is waiting
+    for, and the child dies with ``APITimeoutError`` before it ever serves a
+    turn. Respawning cannot help: each new generation restarts a load that
+    the next timeout aborts again.
+
+    So the spawn path starts one request that simply never hangs up. Its
+    prompt is empty, which makes it a pure load: Ollama answers
+    ``done_reason: "load"`` the instant the weights are resident. It runs in
+    a daemon thread nobody waits for, so :func:`ensure_running` stays as
+    quick as it was and a call that cannot be served still fails fast with
+    its spoken reason. The child's impatient attempts may still time out; the
+    load now survives them, and the next attempt finds a resident model.
+
+    Measured against Ollama on 2026-08-27: three clients aborting at 3 s left
+    the load running to completion while one patient client stayed connected.
+
+    Best-effort and idempotent — a non-Ollama brain, an unusable endpoint or
+    an anchor already in flight for the same model all answer ``False``.
+    """
+    launch_command = _effective_owned_launch_command(launch_command)
+    model, brain_url = _brain_endpoint(launch_command)
+    if not model or not brain_url:
+        return False
+    root = brain_url[: -len("/v1")] if brain_url.endswith("/v1") else brain_url
+    url = f"{root}/api/generate"
+    if not url.startswith(("http://", "https://")):
+        return False
+
+    key = (root, model)
+    with _BRAIN_ANCHOR_LOCK:
+        if key in _BRAIN_ANCHORS:
+            return False
+        _BRAIN_ANCHORS.add(key)
+
+    keep_alive = _brain_keep_alive(idle_release_s())
+    payload = json.dumps(
+        {"model": model, "prompt": "", "keep_alive": keep_alive, "stream": False}
+    ).encode("utf-8")
+
+    def _hold() -> None:
+        import urllib.error
+        import urllib.request
+
+        started = time.monotonic()
+        request = urllib.request.Request(  # noqa: S310 — scheme checked above
+            url, data=payload, headers={"Content-Type": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=BRAIN_ANCHOR_TIMEOUT_S):  # noqa: S310
+                pass
+        except (urllib.error.URLError, OSError, ValueError):
+            log.debug("supervisor: brain load anchor for %s failed", model, exc_info=True)
+            return
+        finally:
+            with _BRAIN_ANCHOR_LOCK:
+                _BRAIN_ANCHORS.discard(key)
+        log.info(
+            "local-realtime supervisor: brain model %s resident after %.1f s "
+            "(its load was anchored through the server warm-up, keep_alive=%s)",
+            model,
+            time.monotonic() - started,
+            keep_alive,
+        )
+
+    thread = threading.Thread(target=_hold, name="local-realtime-brain-anchor", daemon=True)
+    try:
+        thread.start()
+    except RuntimeError:
+        with _BRAIN_ANCHOR_LOCK:
+            _BRAIN_ANCHORS.discard(key)
+        log.debug("supervisor: could not start the brain load anchor", exc_info=True)
+        return False
+    log.info(
+        "local-realtime supervisor: anchoring the load of brain model %s so the "
+        "server warm-up cannot abandon it",
+        model,
+    )
+    return True
+
+
 def warm_brain(*, launch_command: str, timeout: float = 5.0) -> bool:
     """Make the Ollama brain model resident BEFORE the first turn needs it.
 
@@ -2422,6 +2534,8 @@ def _reset_for_tests() -> None:
     global _last_spawn_at, _monitor_thread, _monitor_stop, _monitor_key
     _last_spawn_at = float("-inf")
     _prepared_voice_models.clear()
+    with _BRAIN_ANCHOR_LOCK:
+        _BRAIN_ANCHORS.clear()
     with _MONITOR_LOCK:
         if _monitor_stop is not None:
             _monitor_stop.set()

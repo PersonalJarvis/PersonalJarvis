@@ -1635,9 +1635,7 @@ def test_voice_brain_command_creates_a_bounded_ollama_profile(monkeypatch) -> No
 
     # The size itself follows the machine (test_voice_brain_context.py); here
     # the create round-trip is under test, so the choice is pinned.
-    monkeypatch.setattr(
-        supervisor, "voice_brain_context_tokens", lambda *a, **k: (8192, "pinned")
-    )
+    monkeypatch.setattr(supervisor, "voice_brain_context_tokens", lambda *a, **k: (8192, "pinned"))
 
     requests: list[tuple[str, dict[str, Any]]] = []
 
@@ -1673,9 +1671,7 @@ def test_voice_brain_command_creates_a_bounded_ollama_profile(monkeypatch) -> No
 def test_voice_brain_profile_is_idempotent_across_restarts(monkeypatch) -> None:
     import urllib.request
 
-    monkeypatch.setattr(
-        supervisor, "voice_brain_context_tokens", lambda *a, **k: (8192, "pinned")
-    )
+    monkeypatch.setattr(supervisor, "voice_brain_context_tokens", lambda *a, **k: (8192, "pinned"))
 
     payloads: list[dict[str, Any]] = []
 
@@ -1735,6 +1731,169 @@ def test_warm_brain_pings_ollama_with_keep_alive(monkeypatch) -> None:
     assert url == "http://127.0.0.1:11434/api/generate"
     assert payload["model"] == "qwen2.5:7b"
     assert payload["keep_alive"] == supervisor.BRAIN_KEEP_ALIVE
+
+
+def test_anchor_brain_load_outlives_the_caller(monkeypatch) -> None:
+    """Ollama drops a model load the moment its LAST client hangs up, so the
+    request that carries a cold load must not be one the spawn path waits on
+    (live 2026-08-27: the child's own 20 s warm-up aborted the load it needed,
+    six times, and died with APITimeoutError)."""
+    import urllib.request
+
+    supervisor._reset_for_tests()
+    monkeypatch.setattr(supervisor, "idle_release_s", lambda: 0.0)
+
+    entered = threading.Event()
+    release = threading.Event()
+    seen: list[tuple[str, dict[str, Any], float]] = []
+
+    class _Response:
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+    def held_urlopen(request: Any, timeout: float = 0.0) -> _Response:
+        seen.append((request.full_url, json.loads(request.data.decode("utf-8")), timeout))
+        entered.set()
+        release.wait(5.0)
+        return _Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", held_urlopen)
+
+    assert supervisor.anchor_brain_load(launch_command=_COMMAND) is True
+    assert entered.wait(5.0), "the anchoring request never went out"
+    # The caller is back while the load is still in flight — and a second
+    # spawn attempt must not pile another request on the same weights.
+    assert supervisor.anchor_brain_load(launch_command=_COMMAND) is False
+    release.set()
+
+    url, payload, timeout = seen[0]
+    assert url == "http://127.0.0.1:11434/api/generate"
+    assert payload == {
+        "model": "qwen2.5:7b",
+        "prompt": "",
+        "keep_alive": supervisor.BRAIN_KEEP_ALIVE,
+        "stream": False,
+    }
+    assert timeout == supervisor.BRAIN_ANCHOR_TIMEOUT_S
+    assert len(seen) == 1
+
+
+def test_anchor_brain_load_without_a_brain_flag_is_a_noop() -> None:
+    supervisor._reset_for_tests()
+    assert supervisor.anchor_brain_load(launch_command="serve --mode realtime") is False
+
+
+def test_a_failed_anchor_frees_the_slot_for_the_next_spawn(monkeypatch) -> None:
+    """A refused endpoint must not leave the model permanently 'anchored'."""
+    import urllib.error
+    import urllib.request
+
+    supervisor._reset_for_tests()
+    attempts: list[str] = []
+
+    def dead(request: Any, timeout: float = 0.0) -> None:
+        attempts.append(request.full_url)
+        raise urllib.error.URLError("refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", dead)
+
+    assert supervisor.anchor_brain_load(launch_command=_COMMAND) is True
+    deadline = time.monotonic() + 5.0
+    while not attempts and time.monotonic() < deadline:
+        time.sleep(0.01)
+    while supervisor._BRAIN_ANCHORS and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert supervisor._BRAIN_ANCHORS == set()
+    assert supervisor.anchor_brain_load(launch_command=_COMMAND) is True
+
+
+def test_managed_spawn_anchors_the_brain_load_before_the_child_starts(
+    monkeypatch, tmp_path
+) -> None:
+    """Order is the whole point: the child begins cancelling the load 15 s
+    after it starts, so the anchor has to be in flight before Popen."""
+    from jarvis.realtime.local_server import install
+
+    supervisor._reset_for_tests()
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    entrypoint = install.install_root() / "venv" / "server.exe"
+    command = f'"{entrypoint}" --mode realtime --model_name qwen3.5:4b'
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
+    monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: False)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (None, False))
+    monkeypatch.setattr(supervisor, "_kill_by_install_root", lambda root: (0, 0))
+    monkeypatch.setattr(supervisor, "prepare_voice_brain_command", lambda candidate: candidate)
+    monkeypatch.setattr(supervisor, "_write_pidfile", lambda *args: True)
+
+    order: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "anchor_brain_load",
+        lambda **kwargs: order.append("anchor") or True,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_spawn",
+        lambda candidate, **kwargs: order.append("spawn") or 7331,
+    )
+
+    outcome = supervisor.ensure_running(
+        launch_command=command,
+        base_url="http://127.0.0.1:8765",
+        reason="test",
+    )
+
+    assert outcome == "spawned"
+    assert order == ["anchor", "spawn"]
+
+
+def test_a_model_switch_anchors_the_new_brain_load(monkeypatch, tmp_path) -> None:
+    """A switch is the one spawn whose brain is cold by definition."""
+    from jarvis.realtime.local_server import install
+
+    supervisor._reset_for_tests()
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    entrypoint = install.install_root() / "venv" / "server.exe"
+    current = f'"{entrypoint}" --mode realtime --model_name qwen3.5:4b'
+    wanted = f'"{entrypoint}" --mode realtime --model_name qwen2.5:7b'
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *a, **k: {"size": 1, "in_use": 0})
+    monkeypatch.setattr(supervisor, "_port_open", lambda *a, **k: False)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (4242, True))
+    monkeypatch.setattr(supervisor, "_verified_owned_command", lambda: current)
+    monkeypatch.setattr(supervisor, "_stop_owned_unlocked", lambda **k: (True, "stopped"))
+    monkeypatch.setattr(supervisor, "prepare_voice_brain_command", lambda candidate: candidate)
+    monkeypatch.setattr(supervisor, "_write_pidfile", lambda *args: True)
+
+    order: list[str] = []
+    anchored: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "anchor_brain_load",
+        lambda **kwargs: (
+            order.append("anchor") or anchored.append(kwargs["launch_command"]) or True
+        ),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_spawn",
+        lambda candidate, **kwargs: order.append("spawn") or 7331,
+    )
+
+    outcome = supervisor.replace_idle_managed_runtime(
+        current_command=current,
+        launch_command=wanted,
+        base_url="http://127.0.0.1:8765",
+        reason="model-switch",
+    )
+
+    assert outcome == "spawned"
+    assert order == ["anchor", "spawn"]
+    # The anchor loads the model the switch is switching TO, off the same
+    # normalized command the child is about to be started with.
+    assert "--model_name qwen2.5:7b" in anchored[0]
 
 
 def test_warm_brain_without_a_brain_flag_is_a_noop() -> None:

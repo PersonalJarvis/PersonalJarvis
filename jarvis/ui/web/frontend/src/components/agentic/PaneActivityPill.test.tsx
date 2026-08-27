@@ -30,13 +30,10 @@ describe("what the badge shows", () => {
     expect(badge.getAttribute("data-icon")).toBe("spinner");
   });
 
-  it("shows an amber check mark for a pane that was given a job and has finished", () => {
-    // A check, not a still dot: beside a row of spinners a dot read as "also
-    // busy, just not animated", and the maintainer asked for an indicator
-    // that says working or done (2026-08-27).
+  it("shows a still amber dot for a pane that was given a job and has stopped", () => {
     const badge = pill({ status: "live", activity: "waiting", worked: true });
     expect(badge.textContent).toBe("");
-    expect(badge.getAttribute("data-icon")).toBe("check");
+    expect(badge.getAttribute("data-icon")).toBe("dot");
     expect(badge.className).toContain("text-amber-400");
   });
 

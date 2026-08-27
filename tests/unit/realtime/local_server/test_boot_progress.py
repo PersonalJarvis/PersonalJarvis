@@ -126,6 +126,29 @@ class TestCrashTail:
             "Windows fatal exception: access violation",
         ]
 
+    def test_an_older_generation_is_not_reported_as_this_crash(self) -> None:
+        """Live 2026-08-27: a child that exited saying nothing was reported
+        with a traceback from seven hours earlier, because the server log is
+        append-only across generations."""
+        lines = [
+            "2026-08-27 11:44:27,171 - openai._base_client - INFO - Retrying request",
+            "openai.APITimeoutError: Request timed out.",
+            "2026-08-27 18:11:30,000 - speech_to_speech.VAD.smart_turn - INFO - Loaded",
+            "Windows fatal exception: access violation",
+        ]
+        tail = boot_progress.crash_tail(lines, since=_epoch("2026-08-27 18:11:25"))
+        assert tail == [
+            "2026-08-27 18:11:30,000 - speech_to_speech.VAD.smart_turn - INFO - Loaded",
+            "Windows fatal exception: access violation",
+        ]
+
+    def test_a_generation_that_said_nothing_reports_nothing(self) -> None:
+        lines = [
+            "2026-08-27 11:44:27,171 - openai._base_client - INFO - Retrying request",
+            "openai.APITimeoutError: Request timed out.",
+        ]
+        assert boot_progress.crash_tail(lines, since=_epoch("2026-08-27 18:11:25")) == []
+
     def test_output_is_bounded_in_lines_and_line_length(self) -> None:
         lines = [f"line {index} " + "y" * 1000 for index in range(200)]
         tail = boot_progress.crash_tail(lines)

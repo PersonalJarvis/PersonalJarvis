@@ -28,9 +28,8 @@ class FakeTool:
 
 
 class FakeExecutor:
-    def __init__(self, *, confirmation_required: bool = False, output="opened") -> None:
+    def __init__(self, *, confirmation_required: bool = False) -> None:
         self.confirmation_required = confirmation_required
-        self.output = output
         self.execute_calls = []
         self.confirmed_calls = []
         self.cancelled = []
@@ -44,7 +43,7 @@ class FakeExecutor:
                 output={"tool_name": tool.name},
                 error=VOICE_CONFIRM_SENTINEL,
             )
-        return SimpleNamespace(success=True, output=self.output, error=None)
+        return SimpleNamespace(success=True, output="opened", error=None)
 
     async def execute_confirmed(self, trace_id, **kwargs):
         self.confirmed_calls.append((trace_id, kwargs))
@@ -120,41 +119,6 @@ async def test_available_tool_runs_only_through_tool_executor():
     assert executor.execute_calls[0][0] is tool
     assert executor.execute_calls[0][1] == {"app_name": "Calculator"}
     assert executor.execute_calls[0][2]["config_snapshot"]["voice_confirm"] is True
-
-
-@pytest.mark.asyncio
-async def test_unverified_outcome_carries_the_attempt_not_outcome_instruction():
-    """A tool that acted blind (``verified: false``) must reach the model as
-    an attempt: live 2026-08-26 19:50 a media-key "play" came back ok and
-    the voice announced music that never started."""
-    tool = FakeTool("youtube_music")
-    executor = FakeExecutor(output={"ok": True, "action": "play", "verified": False})
-    bridge = RealtimeToolBridge(tools={"youtube_music": tool}, executor=executor, language="en")
-
-    _name, result = await bridge.execute(
-        wire_name="youtube_music", arguments={"app_name": "x"}
-    )
-
-    assert result["success"] is True and result["unverified"] is True
-    assert "not a confirmed outcome" in result["instruction"]
-    assert "never say it is done" in result["instruction"]
-
-
-@pytest.mark.asyncio
-async def test_verified_outcome_carries_no_instruction():
-    tool = FakeTool("youtube_music")
-    executor = FakeExecutor(output={"ok": True, "action": "play", "verified": True})
-    bridge = RealtimeToolBridge(tools={"youtube_music": tool}, executor=executor, language="en")
-
-    _name, result = await bridge.execute(
-        wire_name="youtube_music", arguments={"app_name": "x"}
-    )
-
-    assert result == {
-        "success": True,
-        "output": {"ok": True, "action": "play", "verified": True},
-        "error": None,
-    }
 
 
 @pytest.mark.asyncio

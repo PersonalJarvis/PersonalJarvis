@@ -10575,7 +10575,16 @@ class BrainManager:
             _TURN_HISTORY_OVERRIDE.reset(history_token)
             _PUBLISH_RESPONSE_EVENT.reset(token)
 
-    async def _generate(
+    async def _generate(self, user_text: str, *args: Any, **kwargs: Any) -> str:
+        """A voice turn. Its spend is published on ``BrainTurnCompleted`` with
+        the realtime/tool/pipeline split, so the ledger row the metered
+        provider writes underneath is tagged and not counted a second time."""
+        from jarvis.costs.ledger import usage_context
+
+        with usage_context("voice-turn"):
+            return await self._generate_untagged(user_text, *args, **kwargs)
+
+    async def _generate_untagged(
         self,
         user_text: str,
         *,

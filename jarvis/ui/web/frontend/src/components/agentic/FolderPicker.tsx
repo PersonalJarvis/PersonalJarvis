@@ -9,20 +9,13 @@
  * 2. **Recents** — the folders opened before, with their previous layout. One
  *    click and the launcher already knows how many terminals to open.
  * 3. **Search** — type a name, get matches from anywhere under home and the
- *    usual code directories. Faster than clicking down five levels. The same
- *    field reads a PATH as a place, not a name: `C:\Users\me\.claude` opens
- *    that folder on the spot instead of searching the disk for a folder called
- *    that (which found nothing, and was reported as "search is broken").
- * 4. **Browsing** — the list, projects and repositories sorted first. Hidden
- *    folders (`.claude`, `.config`) stay out of the way until asked for.
+ *    usual code directories. Faster than clicking down five levels.
+ * 4. **Browsing** — the list, projects and repositories sorted first.
  * 5. **Typing a path** — with completion, the way `cd` works in a terminal.
  * 6. **Drag and drop** — drop a folder (or a file inside it) anywhere on the
  *    panel. Inside the desktop shell the host reports the real path
  *    (`waitForNativeDrop`); in a browser only the NAME is known, and the
  *    backend searches for it — see `extractDropPayload`.
- * 7. **A new folder** — a project that does not exist yet has nothing to pick.
- *    "New folder" makes one inside the folder on screen, and a typed path that
- *    is not a folder yet is offered for creation rather than only refused.
  *
  * The in-page browser is not a fallback for the system window, it is the floor:
  * the system window opens on the machine the BACKEND runs on, so it is useless
@@ -52,12 +45,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CornerDownLeft,
   CornerLeftUp,
-  Eye,
-  EyeOff,
   Folder,
   FolderGit2,
   FolderOpen,
-  FolderPlus,
   Loader2,
   RefreshCw,
   Search,
@@ -69,7 +59,6 @@ import { waitForNativeDrop } from "@/lib/nativeDrop";
 import { useDragSessionEnd } from "./dragSessionEnd";
 import { Button, Field, IconButton, SectionLabel } from "./controls";
 import {
-  createFolder,
   fetchFolders,
   fetchNativePickerSupport,
   fetchRecents,
@@ -172,37 +161,11 @@ export function FolderPicker({
   const [nativeOpen, setNativeOpen] = useState(false);
   const [nativeNote, setNativeNote] = useState<string | null>(null);
 
-  // Dot-folders are noise in a project list and the one thing someone opening
-  // `.claude` needs — so they are a switch, off by default, and a typed name
-  // that starts with a dot turns them on for that lookup by itself.
-  const [showHidden, setShowHidden] = useState(false);
-  const showHiddenRef = useRef(showHidden);
-  showHiddenRef.current = showHidden;
-
-  // The search field holding a path whose last segment is not a folder (yet):
-  // the folder above it is on screen, filtered to names starting with this.
-  const [pathLeaf, setPathLeaf] = useState<string | null>(null);
-  // Where a folder that does not exist could be made, and what to call it.
-  const [createOffer, setCreateOffer] = useState<{
-    parent: string | null;
-    name: string;
-  } | null>(null);
-  const [naming, setNaming] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [createNote, setCreateNote] = useState<string | null>(null);
-
-  // Read through a ref by the search effect: the launcher may hand in a fresh
-  // callback every render, and an effect keyed on it would re-run — and
-  // re-fetch — on each of its own state updates.
-  const onSelectRef = useRef(onSelect);
-  onSelectRef.current = onSelect;
-
-  const load = useCallback(async (target: string | null, hidden?: boolean) => {
+  const load = useCallback(async (target: string | null) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchFolders(target, hidden ?? showHiddenRef.current);
+      const res = await fetchFolders(target);
       setPath(res.path);
       setParent(res.parent);
       setEntries(res.entries);
@@ -263,69 +226,9 @@ export function FolderPicker({
       .finally(() => setNativeOpen(false));
   };
 
-  /**
-   * A path typed into the search field is a place to go, not a name to find.
-   *
-   * The folder is listed and becomes the selection when it exists. When it does
-   * not, the folder ABOVE it is listed instead, narrowed to names starting with
-   * the last segment — so a half-typed name completes on screen — and, once
-   * nothing matches, creating it is offered. Nothing here is relative to the
-   * folder that happened to be open: a typed path means exactly what it says.
-   */
-  const goToTypedPath = useCallback((typed: string) => {
-    const { dir, leaf } = splitTypedPath(typed);
-    const hidden = showHiddenRef.current || leaf.startsWith(".");
-    return fetchFolders(typed, hidden).then(async (res) => {
-      if (res.device_name) setDeviceName(res.device_name);
-      if (!res.error) {
-        setPath(res.path);
-        setParent(res.parent);
-        setEntries(res.entries);
-        setPathLeaf(null);
-        setCreateOffer(null);
-        setError(null);
-        if (res.path) onSelectRef.current(res.path);
-        return;
-      }
-      if (!dir || !leaf) {
-        setError(res.error);
-        setPathLeaf(null);
-        setCreateOffer(null);
-        return;
-      }
-      const above = await fetchFolders(dir, hidden);
-      if (above.error) {
-        setError(above.error);
-        setPathLeaf(null);
-        setCreateOffer(null);
-        return;
-      }
-      setPath(above.path);
-      setParent(above.parent);
-      setEntries(above.entries);
-      setError(null);
-      setPathLeaf(leaf);
-      setCreateOffer({ parent: above.path, name: leaf });
-    });
-  }, []);
-
   // Server-side search once the query is long enough; shorter input just filters
-  // the folder list already on screen, which feels instant. A path goes its own
-  // way (see `goToTypedPath`) and never reaches the name search.
+  // the folder list already on screen, which feels instant.
   useEffect(() => {
-    const typed = normalizeTypedPath(query);
-    if (looksLikePath(typed)) {
-      setSearchHits(null);
-      setSearching(true);
-      const handle = window.setTimeout(() => {
-        goToTypedPath(typed)
-          .catch((e) => setError((e as Error).message))
-          .finally(() => setSearching(false));
-      }, SEARCH_DEBOUNCE_MS);
-      return () => window.clearTimeout(handle);
-    }
-    setPathLeaf(null);
-    setCreateOffer(null);
     const trimmed = query.trim();
     if (trimmed.length < SEARCH_MIN) {
       setSearchHits(null);
@@ -340,57 +243,20 @@ export function FolderPicker({
         .finally(() => setSearching(false));
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [query, goToTypedPath]);
+  }, [query]);
 
   const visible = useMemo(() => {
     if (searchHits !== null) return searchHits;
-    if (pathLeaf !== null) {
-      const needle = pathLeaf.toLowerCase();
-      return entries.filter((e) => e.name.toLowerCase().startsWith(needle));
-    }
-    const typed = normalizeTypedPath(query);
-    // A path on its way to being listed: the folder itself is what is shown,
-    // not the list filtered by a string no folder is called.
-    if (looksLikePath(typed)) return entries;
     const needle = query.trim().toLowerCase();
     if (!needle) return entries;
     return entries.filter((e) => e.name.toLowerCase().includes(needle));
-  }, [entries, query, searchHits, pathLeaf]);
+  }, [entries, query, searchHits]);
 
   const open = (item: FolderItem) => {
     onSelect(item.path);
     setQuery("");
     setSearchHits(null);
-    setPathLeaf(null);
-    setCreateOffer(null);
     void load(item.path);
-  };
-
-  /** Make the folder, then treat it like any other folder that was clicked. */
-  const makeFolder = (parent: string | null, name: string) => {
-    if (creating) return;
-    setCreating(true);
-    setCreateNote(null);
-    createFolder({ parent, name })
-      .then((res) => {
-        if (res.error || !res.folder) {
-          setCreateNote(res.error || "Could not create that folder.");
-          return;
-        }
-        setNaming(false);
-        setNewName("");
-        setError(null);
-        open(res.folder);
-      })
-      .catch((e) => setCreateNote((e as Error).message))
-      .finally(() => setCreating(false));
-  };
-
-  const toggleHidden = () => {
-    const next = !showHidden;
-    setShowHidden(next);
-    showHiddenRef.current = next;
-    if (searchHits === null) void load(path, next);
   };
 
   /**
@@ -405,22 +271,16 @@ export function FolderPicker({
     if (!value) return;
     setLoading(true);
     setError(null);
-    const { dir, leaf } = splitTypedPath(value);
-    fetchFolders(value, showHiddenRef.current || leaf.startsWith("."))
+    fetchFolders(value)
       .then((res) => {
         if (res.device_name) setDeviceName(res.device_name);
         if (res.error) {
           setError(res.error);
-          // Not a folder — but it could be one. The offer sits next to the
-          // message, so a typo is corrected and a new project is created from
-          // the same line.
-          setCreateOffer(dir && leaf ? { parent: dir, name: leaf } : null);
           return;
         }
         setPath(res.path);
         setParent(res.parent);
         setEntries(res.entries);
-        setCreateOffer(null);
         onSelect(res.path ?? value);
       })
       .catch((e) => setError((e as Error).message))
@@ -525,8 +385,8 @@ export function FolderPicker({
           <Field
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search folders by name, or type a path…"
-            aria-label="Search folders by name, or type a path"
+            placeholder="Search folders by name…"
+            aria-label="Search folders by name"
             data-testid="folder-search"
             className="w-full pl-8 pr-7"
             spellCheck={false}
@@ -557,38 +417,6 @@ export function FolderPicker({
             {nativeOpen ? "Window open…" : "Browse"}
           </Button>
         )}
-        <Button
-          onClick={() => {
-            setNaming(true);
-            setNewName("");
-            setCreateNote(null);
-          }}
-          disabled={naming}
-          data-testid="new-folder"
-          title={`Make a new folder in ${path ?? "your home folder"}`}
-        >
-          <FolderPlus className="h-3.5 w-3.5" />
-          New folder
-        </Button>
-        <IconButton
-          label={showHidden ? "Hide hidden folders" : "Show hidden folders"}
-          title={
-            showHidden
-              ? "Hidden folders (names starting with a dot) are shown"
-              : "Also list hidden folders — names starting with a dot"
-          }
-          aria-pressed={showHidden}
-          onClick={toggleHidden}
-          disabled={loading}
-          data-testid="toggle-hidden"
-          className={cn(showHidden && "text-primary")}
-        >
-          {showHidden ? (
-            <Eye className="h-4 w-4" />
-          ) : (
-            <EyeOff className="h-4 w-4" />
-          )}
-        </IconButton>
         <IconButton
           label="Go up one folder"
           onClick={() => void load(parent)}
@@ -640,56 +468,6 @@ export function FolderPicker({
           A folder window has opened. Choose your folder there. If you cannot
           see it, it is behind this window or in the taskbar.
         </p>
-      )}
-
-      {/* --------------------------------------------------------- new folder */}
-      {naming && (
-        <form
-          data-testid="new-folder-form"
-          className="flex items-center gap-1.5 px-3 pb-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (newName.trim()) makeFolder(path, newName);
-          }}
-        >
-          <FolderPlus className="h-4 w-4 shrink-0 text-primary" />
-          <Field
-            autoFocus
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setNaming(false);
-            }}
-            placeholder={`Name of the new folder in ${path ?? "your home folder"}`}
-            aria-label="Name of the new folder"
-            data-testid="new-folder-name"
-            className="min-w-0 flex-1"
-            spellCheck={false}
-            autoComplete="off"
-          />
-          <Button
-            type="submit"
-            variant="primary"
-            disabled={creating || !newName.trim()}
-            data-testid="new-folder-create"
-          >
-            {creating ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <FolderPlus className="h-3.5 w-3.5" />
-            )}
-            Create
-          </Button>
-          <IconButton
-            label="Cancel new folder"
-            onClick={() => {
-              setNaming(false);
-              setCreateNote(null);
-            }}
-          >
-            <X className="h-4 w-4" />
-          </IconButton>
-        </form>
       )}
 
       {/* --------------------------------------------------------------- list */}
@@ -759,42 +537,11 @@ export function FolderPicker({
           </>
         )}
 
-        {/*
-          The typed path's last segment is not a folder in the folder on
-          screen, and nothing there starts with it either: the one thing left
-          to do with that name is make it.
-        */}
-        {createOffer && pathLeaf !== null && visible.length === 0 && !searching && (
-          <button
-            type="button"
-            data-testid="create-offer"
-            onClick={() => makeFolder(createOffer.parent, createOffer.name)}
-            disabled={creating}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-primary transition-colors hover:bg-secondary/60"
-          >
-            {creating ? (
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-            ) : (
-              <FolderPlus className="h-4 w-4 shrink-0" />
-            )}
-            <span className="min-w-0 flex-1">
-              <span className="block truncate">
-                Create folder “{createOffer.name}”
-              </span>
-              <span className="block truncate font-mono text-[10px] text-muted-foreground">
-                in {createOffer.parent ?? "your home folder"}
-              </span>
-            </span>
-          </button>
-        )}
-
         {visible.length === 0 && !loading && !searching ? (
           <p className="px-3 py-4 text-sm text-muted-foreground">
             {searchingMachine
               ? "No folder with that name was found."
-              : pathLeaf !== null
-                ? `No folder here starts with “${pathLeaf}”.`
-                : "Nothing to list here — search above, drop a folder, or type its path below."}
+              : "Nothing to list here — search above, drop a folder, or type its path below."}
           </p>
         ) : (
           <ul>
@@ -856,35 +603,14 @@ export function FolderPicker({
       </div>
 
       {/* ------------------------------------------------------------- typing */}
-      <PathInput base={path} showHidden={showHidden} onUse={usePath} />
+      <PathInput base={path} onUse={usePath} />
 
       {/* ---------------------------------------------------------- reporting */}
-      {(error || nativeNote || dropNote || createNote) && (
+      {(error || nativeNote || dropNote) && (
         <div className="space-y-1 px-3 pb-3">
           {error && (
             <p className="text-xs text-destructive" role="alert">
               {error}
-            </p>
-          )}
-          {/* The path field's "no such folder", answered: make it. */}
-          {error && createOffer && pathLeaf === null && (
-            <Button
-              onClick={() => makeFolder(createOffer.parent, createOffer.name)}
-              disabled={creating}
-              data-testid="create-offer"
-              className="h-7 text-xs"
-            >
-              {creating ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <FolderPlus className="h-3.5 w-3.5" />
-              )}
-              Create folder “{createOffer.name}”
-            </Button>
-          )}
-          {createNote && (
-            <p className="text-xs text-destructive" role="alert">
-              {createNote}
             </p>
           )}
           {nativeNote && !nativeOpen && (
@@ -959,9 +685,6 @@ export function joinPath(base: string, name: string): string {
 export function normalizeTypedPath(raw: string): string {
   let value = raw.trim();
   value = value.replace(/^cd(?:\s+\/d)?(?:\s+|$)/i, "").trim();
-  // A prompt copied whole — `PS C:\Users\me>` — is the path with a shell's
-  // decoration on both ends; the decoration is not part of the folder.
-  value = value.replace(/^PS\s+/, "").replace(/\s*>$/, "").trim();
   const quoted = value.match(/^(["'])(.*)\1$/);
   if (quoted) value = quoted[2].trim();
   return value;
@@ -970,17 +693,6 @@ export function normalizeTypedPath(raw: string): string {
 /** A path that names its own root: `/…`, `~…`, `C:\…`, or a UNC `\\server`. */
 export function isAbsolutePath(value: string): boolean {
   return /^(?:[a-zA-Z]:[\\/]|[\\/]|~)/.test(value);
-}
-
-/**
- * Text that names a PLACE rather than a folder to look for.
- *
- * A root or a separator anywhere is the tell: nobody searches for a folder
- * called `Desktop\shop`, they mean the one at that path. A bare name stays a
- * search, which is what a search field is for.
- */
-export function looksLikePath(value: string): boolean {
-  return isAbsolutePath(value) || /[\\/]/.test(value);
 }
 
 /**
@@ -1013,11 +725,9 @@ export function resolveTypedPath(raw: string, base: string | null): string {
  */
 function PathInput({
   base,
-  showHidden,
   onUse,
 }: {
   base: string | null;
-  showHidden: boolean;
   onUse: (value: string) => void;
 }) {
   const [value, setValue] = useState("");
@@ -1042,9 +752,7 @@ function PathInput({
     }
     let cancelled = false;
     const handle = window.setTimeout(() => {
-      // A dot-name completes against hidden folders whether or not they are
-      // switched on: typing `.cl` is the request to see `.claude`.
-      fetchFolders(lookupDir || null, showHidden || leaf.startsWith("."))
+      fetchFolders(lookupDir || null)
         .then((res) => {
           if (cancelled) return;
           const needle = leaf.toLowerCase();
@@ -1063,7 +771,7 @@ function PathInput({
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [lookupDir, leaf, value, base, showHidden]);
+  }, [lookupDir, leaf, value, base]);
 
   /** Take a suggestion and leave the cursor ready for the next segment. */
   const complete = (item: FolderItem) => {

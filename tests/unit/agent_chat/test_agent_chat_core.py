@@ -477,93 +477,18 @@ def test_codex_reasoning_start_is_announced():
 
 
 def test_resolve_runner_per_surface(monkeypatch):
-    """The Jarvis surface is API endpoints only; the agent surface keeps its CLIs."""
+    """The Jarvis surface runs API-key and local rows on the brain; CLI seats stay CLIs."""
     from jarvis.agent_chat import service as svc_mod
 
     monkeypatch.setattr(svc_mod, "_claude_cli_installed", lambda: False)
     assert svc_mod.resolve_runner("openai") == "api"
     assert svc_mod.resolve_runner("openai", surface="jarvis") == "brain"
     assert svc_mod.resolve_runner("ollama", surface="jarvis") == "brain"
+    assert svc_mod.resolve_runner("openai-codex", surface="jarvis") == "codex-cli"
+    assert svc_mod.resolve_runner("antigravity", surface="jarvis") == "agy-cli"
     assert svc_mod.resolve_runner("claude-api") == "api"
     assert svc_mod.resolve_runner("claude-api", surface="jarvis") == "brain"
-    # A CLI-only row has no API path, so the surface that dropped its CLI
-    # seats has no runner for it at all — and never offers it (see
-    # test_the_jarvis_surface_offers_api_seats_only).
-    assert svc_mod.resolve_runner("openai-codex", surface="jarvis") == "unknown"
-    assert svc_mod.resolve_runner("antigravity", surface="jarvis") == "unknown"
-    assert svc_mod.resolve_runner("openai-codex", surface="agent") == "codex-cli"
-    assert svc_mod.resolve_runner("antigravity", surface="agent") == "agy-cli"
     monkeypatch.setattr(svc_mod, "_claude_cli_installed", lambda: True)
     assert svc_mod.resolve_runner("claude-api") == "claude-cli"
-    # Even with Claude Code installed: the front page's chat runs the
-    # Anthropic endpoint, not the subscription seat (maintainer 2026-08-26).
-    assert svc_mod.resolve_runner("claude-api", surface="jarvis") == "brain"
+    assert svc_mod.resolve_runner("claude-api", surface="jarvis") == "claude-cli"
     assert svc_mod.resolve_runner("no-such-provider", surface="jarvis") == "unknown"
-
-
-def test_the_jarvis_surface_offers_api_seats_only():
-    """Every row the front page's chat lists has a brain plugin behind it."""
-    from jarvis.agent_chat.catalog import PROVIDER_ROWS, offers, rows_for
-    from jarvis.agent_chat.runner_api import supports_api_runner
-
-    jarvis_ids = [row.id for row in rows_for("jarvis")]
-    assert jarvis_ids and all(supports_api_runner(pid) for pid in jarvis_ids)
-    # The CLI-only rows are gone from it and still there for the IDE's chat.
-    for cli_row in ("openai-codex", "antigravity", "grok-build"):
-        assert not offers("jarvis", cli_row)
-        assert offers("agent", cli_row)
-    assert [row.id for row in rows_for("agent")] == [row.id for row in PROVIDER_ROWS]
-
-
-def test_a_cli_seat_cannot_be_created_or_patched_onto_the_jarvis_chat(tmp_path):
-    """The picker does not list them, and the routes refuse them either way."""
-    import pytest
-
-    from jarvis.agent_chat.service import AgentChatService
-    from jarvis.agent_chat.store import AgentChatStore
-
-    svc = AgentChatService(AgentChatStore(":memory:"), default_cwd=lambda: str(tmp_path))
-    with pytest.raises(ValueError, match="not offered"):
-        svc.create_session(provider="openai-codex", surface="jarvis")
-    # The same row is fine on the surface that has CLI seats.
-    assert svc.create_session(provider="openai-codex", surface="agent").provider == "openai-codex"
-
-
-def test_an_old_cli_seated_jarvis_chat_moves_to_its_api_twin(tmp_path):
-    """A chat from before the change keeps its history and gains a working seat."""
-    from jarvis.agent_chat.service import AgentChatService
-    from jarvis.agent_chat.store import AgentChatStore
-
-    store = AgentChatStore(":memory:")
-    # ``gpt-5.2`` is in Codex's own catalog and not in OpenAI's, so it goes.
-    codex = store.create_session(
-        provider="openai-codex", model="gpt-5.2", effort="high", cwd=".", surface="jarvis"
-    )
-    # One the API does know rides along rather than resetting for nothing.
-    shared = store.create_session(
-        provider="openai-codex", model="gpt-5.5", effort="high", cwd=".", surface="jarvis"
-    )
-    claude = store.create_session(
-        provider="claude-api", model="opusplan", effort="high", cwd=".", surface="jarvis"
-    )
-    kept = store.create_session(
-        provider="claude-api", model="claude-opus-5", effort="high", cwd=".", surface="agent"
-    )
-    before = store.get_session(codex.session_id).updated_ms
-
-    AgentChatService(store, default_cwd=lambda: str(tmp_path))
-
-    moved = store.get_session(codex.session_id)
-    assert (moved.provider, moved.model) == ("openai", "")
-    assert (store.get_session(shared.session_id).provider, store.get_session(shared.session_id).model) == (
-        "openai",
-        "gpt-5.5",
-    )
-    # The list order is by updated_ms; a migration must not reshuffle it.
-    assert moved.updated_ms == before
-    # Claude keeps its row and loses only the model id the API cannot take.
-    assert store.get_session(claude.session_id).provider == "claude-api"
-    assert store.get_session(claude.session_id).model == ""
-    # The IDE's chat is untouched.
-    assert store.get_session(kept.session_id).provider == "claude-api"
-    assert store.get_session(kept.session_id).model == "claude-opus-5"
