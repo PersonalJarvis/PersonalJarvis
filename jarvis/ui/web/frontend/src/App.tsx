@@ -13,6 +13,7 @@ import {
   Sidebar,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_RAIL_WIDTH,
+  SIDEBAR_WIDTH_STORAGE_KEY,
 } from "@/components/layout/Sidebar";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useResizablePane } from "@/hooks/useResizablePane";
@@ -228,7 +229,7 @@ export default function App() {
    * seam brings the full 280 px back.
    */
   const sidebar = useResizablePane({
-    storageKey: "jarvis.sidebar.width.v1",
+    storageKey: SIDEBAR_WIDTH_STORAGE_KEY,
     defaultSize: SIDEBAR_DEFAULT_WIDTH,
     min: SIDEBAR_RAIL_WIDTH,
     max: 520,

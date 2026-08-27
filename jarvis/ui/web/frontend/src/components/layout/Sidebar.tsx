@@ -91,6 +91,20 @@ export interface SidebarProps {
 export const SIDEBAR_DEFAULT_WIDTH = 320;
 
 /**
+ * localStorage key the dragged width is remembered under.
+ *
+ * `v2` since 2026-08-27. The seam used to stop at 200 px, and a column dragged
+ * to that floor back then stayed there through every default since — on the
+ * maintainer's desktop the Agentic IDE's session list was still 200 px wide
+ * when its rows were redesigned around a two-line title that holds a whole
+ * 48-character recap at the designed 320 (`WorkspaceChats`). At 200 the same
+ * row holds twelve characters a line, so nothing about the redesign reached
+ * the one box it was asked for. A new key seeds every column at the designed
+ * width once; a dragged width is remembered again from there.
+ */
+export const SIDEBAR_WIDTH_STORAGE_KEY = "jarvis.sidebar.width.v2";
+
+/**
  * Narrowest the sidebar goes: the nav icons, and nothing else.
  *
  * The seam used to stop at 200 px, which is wide enough to still read every
@@ -287,10 +301,12 @@ export function Sidebar({
     // two 1px lines three pixels apart read as a rendering fault.
     // z-20: above the stage column, which carries no z-index of its own so
     // that the overlays inside it are not trapped below this one (App.tsx).
-    // The rail's hover label flies out past the sidebar's edge, and it must
-    // paint over the page rather than under it; the app-wide layers (toasts,
-    // docks, dialogs) all sit at z-40 and above and now really do cover this
-    // column.
+    // That same open stage means a section's own z-20 layer (the IDE's pane
+    // chat, say) ties with this column and wins on DOM order — so the rail's
+    // hover label, which flies out past the sidebar's edge, does NOT rely on
+    // this z-index: `DockRail` portals it to <body> at the tooltip level. The
+    // app-wide layers (toasts, docks, dialogs) all sit at z-40 and above and
+    // really do cover this column.
     <aside
       style={{ width: railed ? SIDEBAR_RAIL_WIDTH : width }}
       data-testid="sidebar"

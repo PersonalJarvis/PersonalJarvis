@@ -1,5 +1,13 @@
-import { useRef, useState } from "react";
-import { Folder, FolderPlus, Plus } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
+import { createPortal } from "react-dom";
+import { Archive, Folder, FolderPlus, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 
 import {
   AgentPickerMenu,
@@ -10,12 +18,28 @@ import { AgentMark } from "@/components/agentic/AgentMark";
 import { folderColor } from "@/components/agentic/folderColor";
 import { PaneActivityPill } from "@/components/agentic/PaneActivityPill";
 import { sessionTitle } from "@/components/agentic/sessionTitle";
+import { useEventStore } from "@/store/events";
 import { useIdeChatStore, type IdeWorkspaceRow } from "@/store/ideChat";
-import { useWorkspacePanes } from "@/store/workspacePanes";
-import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
+import {
+  dropWorkspacePane,
+  patchWorkspacePane,
+  useWorkspacePanes,
+} from "@/store/workspacePanes";
+import { archiveTerminal, closeTerminal, type WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { folderLeaf } from "@/lib/folderPath";
 import { cn } from "@/lib/utils";
 import { fill, useT } from "@/i18n";
+
+const MENU_WIDTH = 220;
+const VIEWPORT_MARGIN = 8;
+/** Search earns its place once the archive is too long to scan. */
+const ARCHIVED_SEARCH_AT = 5;
+
+interface SessionMenuState {
+  pane: WorkspacePaneRow;
+  x: number;
+  y: number;
+}
 
 /**
  * The sidebar, wearing the Agentic IDE's chat face — the ONE list of sessions.
@@ -33,6 +57,12 @@ import { fill, useT } from "@/i18n";
  * another tab, and the stage shows the pane. The folder row brings the whole
  * workspace to the front. Opening a terminal asks WHICH CLI first when the
  * machine offers more than one, exactly like the grid's own split menus.
+ *
+ * Right-click on a session offers two ways to thin the list: archive hides
+ * the chat (the terminal keeps running, and an "Archived chats" row under
+ * the workspace finds it again) and close stops the agent. The desktop
+ * WebView has no native context menu, so without this the list had no
+ * way to drop a row at all.
  *
  * This block does NOT own the column — it sits at the top of it and the
  * sections follow underneath (see `Sidebar`). It used to REPLACE them, with a
@@ -54,8 +84,43 @@ export function WorkspaceChats() {
   const requestSession = useIdeChatStore((s) => s.requestSession);
   const requestAddWorkspace = useIdeChatStore((s) => s.requestAddWorkspace);
   const stagedPane = useIdeChatStore((s) => s.stagedPane);
+  const pushToast = useEventStore((s) => s.pushToast);
   // Shares one poll with every other reader of the list (see the store).
   const panes = useWorkspacePanes();
+  const [menu, setMenu] = useState<SessionMenuState | null>(null);
+  const [pendingClose, setPendingClose] = useState<WorkspacePaneRow | null>(null);
+  const [closing, setClosing] = useState(false);
+
+  const openMenu = useCallback((pane: WorkspacePaneRow, x: number, y: number) => {
+    setMenu({ pane, x, y });
+  }, []);
+
+  const setArchived = useCallback(
+    async (pane: WorkspacePaneRow, archived: boolean) => {
+      patchWorkspacePane(pane.history_id, { archived });
+      try {
+        await archiveTerminal(pane.name, archived, pane.workspace_id);
+      } catch (error) {
+        patchWorkspacePane(pane.history_id, { archived: !archived });
+        pushToast("error", (error as Error).message);
+      }
+    },
+    [pushToast],
+  );
+
+  const confirmClose = useCallback(async () => {
+    if (!pendingClose) return;
+    setClosing(true);
+    try {
+      await closeTerminal(pendingClose.name, pendingClose.workspace_id);
+      dropWorkspacePane(pendingClose.history_id);
+      setPendingClose(null);
+    } catch (error) {
+      pushToast("error", (error as Error).message);
+    } finally {
+      setClosing(false);
+    }
+  }, [pendingClose, pushToast]);
 
   return (
     <div data-testid="workspace-chats">
@@ -65,19 +130,24 @@ export function WorkspaceChats() {
             {t("ide_chats.no_workspaces")}
           </p>
         ) : (
-          workspaces.map((workspace, index) => (
-            <WorkspaceBand
-              key={workspace.id}
-              index={index + 1}
-              workspace={workspace}
-              panes={panes.filter((pane) => pane.workspace_id === workspace.id)}
-              stagedPane={workspace.active ? stagedPane : null}
-              agents={agents}
-              onOpenPane={(pane) => requestPane(workspace.id, pane)}
-              onOpenWorkspace={() => requestWorkspace(workspace.id)}
-              onNewTerminal={(agent) => requestTerminal(workspace.id, agent)}
-            />
-          ))
+          workspaces.map((workspace, index) => {
+            const mine = panes.filter((pane) => pane.workspace_id === workspace.id);
+            return (
+              <WorkspaceBand
+                key={workspace.id}
+                index={index + 1}
+                workspace={workspace}
+                panes={mine.filter((pane) => !pane.archived)}
+                archived={mine.filter((pane) => pane.archived)}
+                stagedPane={workspace.active ? stagedPane : null}
+                agents={agents}
+                onOpenPane={(pane) => requestPane(workspace.id, pane)}
+                onOpenWorkspace={() => requestWorkspace(workspace.id)}
+                onNewTerminal={(agent) => requestTerminal(workspace.id, agent)}
+                onMenu={openMenu}
+              />
+            );
+          })
         )}
         {/* One more project.
             First of the two closing rows and in reading ink rather than muted,
@@ -110,6 +180,33 @@ export function WorkspaceChats() {
           {t("ide_chats.new_session")}
         </button>
       </div>
+      {menu && (
+        <SessionMenu
+          pane={menu.pane}
+          x={menu.x}
+          y={menu.y}
+          onDismiss={() => setMenu(null)}
+          onArchive={() => {
+            const { pane } = menu;
+            setMenu(null);
+            void setArchived(pane, !pane.archived);
+          }}
+          onClose={() => {
+            setPendingClose(menu.pane);
+            setMenu(null);
+          }}
+        />
+      )}
+      {pendingClose && (
+        <ConfirmCloseTerminal
+          pane={pendingClose}
+          busy={closing}
+          onCancel={() => {
+            if (!closing) setPendingClose(null);
+          }}
+          onConfirm={() => void confirmClose()}
+        />
+      )}
     </div>
   );
 }
@@ -126,20 +223,24 @@ function WorkspaceBand({
   index,
   workspace,
   panes,
+  archived,
   stagedPane,
   agents,
   onOpenPane,
   onOpenWorkspace,
   onNewTerminal,
+  onMenu,
 }: {
   index: number;
   workspace: IdeWorkspaceRow;
   panes: WorkspacePaneRow[];
+  archived: WorkspacePaneRow[];
   stagedPane: string | null;
   agents: SplitAgentChoice[];
   onOpenPane: (pane: string) => void;
   onOpenWorkspace: () => void;
   onNewTerminal: (agent?: string) => void;
+  onMenu: (pane: WorkspacePaneRow, x: number, y: number) => void;
 }) {
   const t = useT();
   const [picking, setPicking] = useState(false);
@@ -247,7 +348,7 @@ function WorkspaceBand({
         )}
       </div>
 
-      {panes.length === 0 ? (
+      {panes.length === 0 && archived.length === 0 ? (
         <p className="pl-8 pr-2 text-[11px] text-muted-foreground/50">{t("ide_chats.no_sessions")}</p>
       ) : (
         <ul className="space-y-px">
@@ -258,9 +359,20 @@ function WorkspaceBand({
               active={pane.name === stagedPane}
               logoUrl={agents.find((agent) => agent.name === pane.agent)?.logoUrl}
               onOpen={() => onOpenPane(pane.name)}
+              onMenu={onMenu}
             />
           ))}
         </ul>
+      )}
+      {archived.length > 0 && (
+        <ArchivedChats
+          workspaceId={workspace.id}
+          panes={archived}
+          stagedPane={stagedPane}
+          agents={agents}
+          onOpenPane={onOpenPane}
+          onMenu={onMenu}
+        />
       )}
     </section>
   );
@@ -284,11 +396,13 @@ function SessionRow({
   active,
   logoUrl,
   onOpen,
+  onMenu,
 }: {
   pane: WorkspacePaneRow;
   active: boolean;
   logoUrl?: string;
   onOpen: () => void;
+  onMenu: (pane: WorkspacePaneRow, x: number, y: number) => void;
 }) {
   const label = sessionTitle(pane);
   const cli = pane.display_name || pane.agent;
@@ -297,11 +411,20 @@ function SessionRow({
       <button
         type="button"
         onClick={onOpen}
+        onContextMenu={(event) => {
+          // The app-wide Cut/Copy/Paste menu lives on document. Stop this
+          // click here so a session row never offers paste over an action
+          // that is actually about the chat.
+          event.preventDefault();
+          event.stopPropagation();
+          onMenu(pane, event.clientX, event.clientY);
+        }}
         title={`${label} · ${cli} · ${pane.name}`}
         data-testid="workspace-session-row"
         data-pane={pane.name}
         data-status={pane.status}
         data-activity={pane.activity}
+        data-archived={pane.archived ? "true" : "false"}
         className={cn(
           "flex w-full items-center gap-2 rounded-lg py-1.5 pl-8 pr-2 text-left transition-colors",
           "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
@@ -336,5 +459,253 @@ function SessionRow({
         />
       </button>
     </li>
+  );
+}
+
+/**
+ * The chats taken off the main list, still findable under the workspace.
+ *
+ * Folded by default so a cleaned-up list stays a cleaned-up list. Expanding
+ * it is how an archived chat is found again; restoring it (from the same
+ * right-click menu) puts it back among the live rows.
+ */
+function ArchivedChats({
+  workspaceId,
+  panes,
+  stagedPane,
+  agents,
+  onOpenPane,
+  onMenu,
+}: {
+  workspaceId: string;
+  panes: WorkspacePaneRow[];
+  stagedPane: string | null;
+  agents: SplitAgentChoice[];
+  onOpenPane: (pane: string) => void;
+  onMenu: (pane: WorkspacePaneRow, x: number, y: number) => void;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const visible = query.trim()
+    ? panes.filter((pane) => {
+        const haystack = `${sessionTitle(pane)} ${pane.display_name} ${pane.name}`.toLowerCase();
+        return haystack.includes(query.trim().toLowerCase());
+      })
+    : panes;
+
+  return (
+    <div className="mt-1" data-testid="workspace-chats-archived" data-workspace={workspaceId}>
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        data-testid={`workspace-chats-archived-toggle-${workspaceId}`}
+        className="flex w-full items-center gap-2 rounded-md py-1.5 pl-8 pr-2 text-left text-[11px] text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+      >
+        <Archive aria-hidden className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          {fill(t("ide_chats.archived_count"), { n: panes.length })}
+        </span>
+      </button>
+      {open && (
+        <div className="pb-1">
+          {panes.length >= ARCHIVED_SEARCH_AT && (
+            <div className="relative px-2 pb-1 pt-0.5">
+              <Search
+                aria-hidden
+                className="pointer-events-none absolute left-10 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground"
+              />
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("ide_chats.archived_search")}
+                aria-label={t("ide_chats.archived_search")}
+                data-testid="workspace-chats-archived-search"
+                className="w-full rounded-md border border-border bg-background/60 py-1 pl-8 pr-2 text-[11px] text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </div>
+          )}
+          <ul className="space-y-px">
+            {visible.map((pane) => (
+              <SessionRow
+                key={pane.history_id}
+                pane={pane}
+                active={pane.name === stagedPane}
+                logoUrl={agents.find((agent) => agent.name === pane.agent)?.logoUrl}
+                onOpen={() => onOpenPane(pane.name)}
+                onMenu={onMenu}
+              />
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SessionMenu({
+  pane,
+  x,
+  y,
+  onDismiss,
+  onArchive,
+  onClose,
+}: {
+  pane: WorkspacePaneRow;
+  x: number;
+  y: number;
+  onDismiss: () => void;
+  onArchive: () => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onDismiss();
+      }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) onDismiss();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("resize", onDismiss);
+    window.addEventListener("blur", onDismiss);
+    document.addEventListener("scroll", onDismiss, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("resize", onDismiss);
+      window.removeEventListener("blur", onDismiss);
+      document.removeEventListener("scroll", onDismiss, true);
+    };
+  }, [onDismiss]);
+
+  useLayoutEffect(() => {
+    const node = menuRef.current;
+    if (!node) return;
+    const { width, height } = node.getBoundingClientRect();
+    const maxX = window.innerWidth - width - VIEWPORT_MARGIN;
+    const maxY = window.innerHeight - height - VIEWPORT_MARGIN;
+    node.style.left = `${Math.max(VIEWPORT_MARGIN, Math.min(x, maxX))}px`;
+    node.style.top = `${Math.max(VIEWPORT_MARGIN, Math.min(y, maxY))}px`;
+    node.style.visibility = "visible";
+    node.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus();
+  }, [x, y]);
+
+  const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>("button:not([disabled])") ?? [],
+    );
+    if (!items.length) return;
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    const next = (current + step + items.length) % items.length;
+    items[next]?.focus();
+  };
+
+  const archived = pane.archived;
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label={t("ide_chats.menu_aria")}
+      data-testid="workspace-session-menu"
+      data-pane={pane.name}
+      onKeyDown={onMenuKeyDown}
+      style={{ width: MENU_WIDTH, visibility: "hidden" }}
+      className="fixed z-[100] overflow-hidden rounded-md border border-border bg-background py-1 shadow-lg"
+    >
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="workspace-session-archive"
+        title={archived ? t("ide_chats.restore_hint") : t("ide_chats.archive_hint")}
+        onClick={onArchive}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted"
+      >
+        {archived ? (
+          <RotateCcw aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <Archive aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        )}
+        {archived ? t("ide_chats.restore") : t("ide_chats.archive")}
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="workspace-session-close"
+        title={t("ide_chats.close_hint")}
+        onClick={onClose}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-destructive transition-colors hover:bg-destructive/10"
+      >
+        <Trash2 aria-hidden className="h-3.5 w-3.5 shrink-0" />
+        {t("ide_chats.close_terminal")}
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
+function ConfirmCloseTerminal({
+  pane,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  pane: WorkspacePaneRow;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const t = useT();
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={fill(t("ide_chats.close_title"), { name: pane.name })}
+      data-testid="workspace-chats-confirm-close"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !busy) onCancel();
+      }}
+    >
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-xl">
+        <h3 className="font-display text-base font-semibold">
+          {fill(t("ide_chats.close_title"), { name: pane.name })}
+        </h3>
+        <p className="mt-2 text-sm text-muted-foreground">{t("ide_chats.close_body")}</p>
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            autoFocus
+            disabled={busy}
+            onClick={onCancel}
+          >
+            {t("ide_chats.close_keep")}
+          </button>
+          <button
+            type="button"
+            data-testid="workspace-chats-confirm-close-confirm"
+            className="rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            disabled={busy}
+            onClick={onConfirm}
+          >
+            {fill(t("ide_chats.close_confirm"), { name: pane.name })}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

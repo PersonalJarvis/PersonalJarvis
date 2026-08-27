@@ -46,6 +46,7 @@ function pane(
     readable: true,
     account: null,
     account_label: null,
+    archived: false,
     ...overrides,
   };
 }
@@ -146,6 +147,29 @@ describe("the sidebar's chat face", () => {
     expect(row.getAttribute("title")).toBe("Fixing the login test · Claude Code · T1");
   });
 
+  it("lets a title run onto a second line instead of cutting it at the fourth word", () => {
+    useWorkspacePanesStore.setState({
+      panes: [
+        pane("T1", "Claude Code", "w1", "live", {
+          // Longer than the ~30 characters one line of the row holds at the
+          // sidebar's designed width, and within the recap engine's ceiling.
+          recap: "Move the wake-word check off the boot path",
+        }),
+      ],
+      activeId: "w1",
+      loaded: true,
+    });
+    render(<WorkspaceChats />);
+
+    const title = screen.getByTestId("workspace-session-title");
+    // Wrapped and clamped, never single-line truncated — a 48-character
+    // headline needs two lines at the sidebar's designed width.
+    expect(title.className).toContain("line-clamp-2");
+    expect(title.className).not.toContain("truncate");
+    // The mark, call-sign and pill stay on the FIRST line of a wrapped title.
+    expect(screen.getByTestId("workspace-session-row").className).toContain("items-start");
+  });
+
   it("asks the view to bring the clicked session to the front, workspace and all", () => {
     render(<WorkspaceChats />);
     const bands = screen.getAllByTestId("workspace-chats-band");
@@ -234,7 +258,7 @@ describe("the sidebar's chat face", () => {
     // The row used to draw one amber dot for every live pane, pulsing for a
     // working one — the same six-pixel silhouette twelve times over. The
     // badge is now the grid's own pill: a spinner while the agent works, a
-    // still dot once it stopped, a hollow ring for a pane never asked
+    // check mark once it finished, a hollow ring for a pane never asked
     // anything, a beacon for one holding a question (maintainer, 2026-08-27).
     useWorkspacePanesStore.setState({
       panes: [
@@ -252,7 +276,7 @@ describe("the sidebar's chat face", () => {
     const badges = screen.getAllByTestId("pane-activity");
     expect(badges.map((b) => b.getAttribute("data-icon"))).toEqual([
       "spinner",
-      "dot",
+      "check",
       "ring",
       "beacon",
       "dot",
