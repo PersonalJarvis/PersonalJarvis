@@ -113,6 +113,15 @@ log = logging.getLogger(__name__)
 #: a second — no pass over the transcript worth the name — reworded phrasing
 #: the user had chosen deliberately, thinned the context they had given, and
 #: closed every message with a sign-off the receiving agent has no use for.
+#:
+#: The language rule is a POINT OF THE ANALYSIS and both worked examples are
+#: shown, one German and one English. A first cut of v4 kept only the English
+#: pair, trusting the written rule to carry the language; measured live on
+#: Groq the same day, a German dictation came back as a fluent English
+#: message. A shown example outweighs a written rule, so the examples have to
+#: disagree with each other about language for the rule to be readable at
+#: all — and naming the language in writing before composing is what makes
+#: the model commit to it.
 PROMPT_MODE_PROMPT_VERSION: Final[int] = 4
 
 #: The status a successful Prompt Mode delivery reports on the history row.
@@ -132,41 +141,59 @@ _DEFAULT_TIMEOUT_MS: Final[int] = 12_000
 _MIN_TIMEOUT_MS: Final[int] = 4_000
 _MAX_TIMEOUT_MS: Final[int] = 20_000
 
-# The budget covers BOTH blocks: the analysis (300-900 tokens on a real
-# dictation) and the message itself. Generous on purpose — a cut-off answer
-# is rejected as truncated and costs the whole pass. Temperature 0: this is
-# rewriting, not writing.
-_MAX_OUTPUT_TOKENS: Final[int] = 3_000
+# The budget covers ALL THREE blocks: the analysis (300-900 tokens on a real
+# dictation), the draft, and the message the read-back corrects. Generous on
+# purpose — a cut-off answer is rejected as truncated and costs the whole
+# pass. Temperature 0: this is rewriting, not writing.
+_MAX_OUTPUT_TOKENS: Final[int] = 4_000
 _TEMPERATURE: Final[float] = 0.0
 
-# The two blocks of the answer. Parsed with a tolerant regex rather than an
+# The three blocks of the answer. Parsed with tolerant regexes rather than an
 # XML parser: the content is prose the model wrote, it may contain a stray
-# angle bracket, and a strict parser would throw away a perfectly good
-# message over one. Case-insensitive and whitespace-tolerant for the same
-# reason — a fast model writes ``<Prompt>`` often enough to matter.
+# angle bracket, and a strict parser would throw away a perfectly good message
+# over one. Case-insensitive and whitespace-tolerant for the same reason — a
+# fast model writes ``<Prompt>`` often enough to matter.
+#
+# ``<prompt>`` is LAST in the answer, so the regex takes the last one: a model
+# that names the tag inside its analysis ("...then the <prompt> block...")
+# would otherwise hand us its worksheet.
 _ANALYSIS_BLOCK_RE: Final[re.Pattern[str]] = re.compile(
     r"<\s*analysis\s*>(.*?)<\s*/\s*analysis\s*>", re.IGNORECASE | re.DOTALL
 )
-_PROMPT_BLOCK_RE: Final[re.Pattern[str]] = re.compile(
-    r"<\s*prompt\s*>(.*?)(?:<\s*/\s*prompt\s*>|\Z)", re.IGNORECASE | re.DOTALL
+_PROMPT_OPEN_RE: Final[re.Pattern[str]] = re.compile(r"<\s*prompt\s*>", re.IGNORECASE)
+_PROMPT_CLOSE_RE: Final[re.Pattern[str]] = re.compile(r"<\s*/\s*prompt\s*>", re.IGNORECASE)
+# The fallbacks, most recent boundary first: everything after the draft is the
+# corrected message, everything after the analysis is at worst draft + message.
+_CLOSE_FALLBACKS: Final[tuple[re.Pattern[str], ...]] = (
+    re.compile(r"<\s*/\s*draft\s*>", re.IGNORECASE),
+    re.compile(r"<\s*/\s*analysis\s*>", re.IGNORECASE),
 )
-_ANALYSIS_CLOSE_RE: Final[re.Pattern[str]] = re.compile(r"<\s*/\s*analysis\s*>", re.IGNORECASE)
 # Any leftover tag of ours the model echoed inside the message it wrote.
 _OUR_TAGS_RE: Final[re.Pattern[str]] = re.compile(
-    r"<\s*/?\s*(?:analysis|prompt)\s*>", re.IGNORECASE
+    r"<\s*/?\s*(?:analysis|draft|prompt)\s*>", re.IGNORECASE
 )
 
-# A courtesy sign-off on the last line. v3 guaranteed one in code; v4 removes
-# it, and this cuts the one a model adds on its own — the message ends on its
-# last piece of substance, because the reader is a coding agent that gains
-# nothing from being thanked. Anchored to the LAST line and matched short: a
-# paragraph that merely contains "thanks" is the user's own wording and stays.
-_SIGN_OFF_LINE_RE: Final[re.Pattern[str]] = re.compile(
-    r"^\W{0,3}(?:\w+\s+){0,4}?"
+# A courtesy sign-off. v3 guaranteed one in code; v4 removes it, and this cuts
+# the one a model adds on its own — the message ends on its last piece of
+# substance, because the reader is a coding agent that gains nothing from
+# being thanked.
+#
+# It comes in two shapes and both have been measured live on 2026-08-27: a
+# line of its own ("...\n\nDanke!") and a sentence tacked onto the end of the
+# last paragraph ("...lasse ihn unverändert. Danke dir."). Same vocabulary,
+# two anchors — the second one needs a sentence boundary in front of it, which
+# also keeps a message that IS a thank-you from being erased.
+_SIGN_OFF_WORDS: Final[str] = (
     r"(?:thanks?|thank\s+you|dank(?:e|esch[öo]n)?|gracias|merci|grazie|obrigad[oa]|"
     r"bedankt|tak|tack|takk|kiitos|dzi[eę]kuj[eę]|d[ěe]kuji|спасибо|ありがとう|谢谢|"
     r"regards|cheers|gr[üu][ßs]e)"
-    r"[\w\s,!.…]{0,40}$",
+)
+_SIGN_OFF_LINE_RE: Final[re.Pattern[str]] = re.compile(
+    rf"^\W{{0,3}}(?:\w+\s+){{0,4}}?{_SIGN_OFF_WORDS}[\w\s,!.…]{{0,40}}$",
+    re.IGNORECASE,
+)
+_SIGN_OFF_SENTENCE_RE: Final[re.Pattern[str]] = re.compile(
+    rf"(?<=[.!?…])[ \t]+(?:\w+\s+){{0,3}}?{_SIGN_OFF_WORDS}[\w\s,]{{0,30}}[.!…]*\s*$",
     re.IGNORECASE,
 )
 
@@ -180,48 +207,79 @@ to an AI coding agent. The user will paste what you write into that agent \
 themselves, so it has to read like a well-written request from a colleague: \
 complete, calm, and no longer than it needs to be.
 
-ANSWER IN TWO BLOCKS, IN THIS ORDER, AND NEVER SKIP THE FIRST.
+ANSWER IN THREE BLOCKS, IN THIS ORDER, AND NEVER SKIP ONE.
 
 <analysis>
 ...your working pass over the transcript, worked through item by item...
 </analysis>
+<draft>
+...your first version of the message...
+</draft>
 <prompt>
-...the message, and nothing else...
+...the message again, corrected by the read-back, and nothing else...
 </prompt>
 
-PHASE 1 - THE ANALYSIS. Work through all six points below in writing before \
+PHASE 1 - THE ANALYSIS. Work through all seven points below in writing before \
 you compose a single sentence of the message. This is not a summary and it is \
 not for the user; nobody will read it. It exists so that you have actually \
 been through the transcript by the time you write. Take the time it needs - a \
 careful pass here is the whole difference between a message that carries what \
 the user said and one that carries your impression of it.
 
-1. TASKS. Number every separate thing the user asked for, in the order \
+1. LANGUAGE. Name the language the transcript is in, and quote the four or \
+five words that told you. THE MESSAGE IS WRITTEN IN THAT LANGUAGE, whatever \
+language these instructions or the examples below happen to be in. A German \
+transcript gets a German message, a Spanish one a Spanish message. Note also \
+which form of address the user used, and whether that language distinguishes \
+a familiar from a formal "you".
+2. TASKS. Number every separate thing the user asked for, in the order \
 spoken. People dictate two, three, five small tasks in one breath, and the \
 small one is dropped far more often than the big one. Write the count.
-2. LITERALS. List every file name, folder, path, symbol, function, class, \
+3. LITERALS. List every file name, folder, path, symbol, function, class, \
 setting, product name, error message, quoted string, number, version and \
 proper name the user said - exactly as they said it. Each of these must \
 appear in the message, spelled the same way.
-3. THE SITUATION. What does the user see, what did they expect instead, and \
-where does it happen? Quote the phrase they used for it. This is the most \
-valuable thing a transcript holds and the first thing a hasty writer throws \
-away.
-4. LIMITS. Every restriction, preference, exclusion or bound they stated: \
-"only", "never", "not the live app", "keep the wording", "for now", a \
-deadline, a scope they drew.
-5. WORDING TO KEEP. The phrases the user chose that carry meaning and must \
-survive into the message unchanged - a term of art, a name they use for \
-something, a distinction they drew, a word they repeated. Also note which \
-form of address they used, and whether their language distinguishes a \
-familiar from a formal "you".
-6. NOT SAID. What is missing, ambiguous, or a pointer you cannot resolve \
+4. THE SITUATION. What does the user see, what did they expect instead, and \
+where does it happen? Quote the transcript verbatim for each of those, in the \
+transcript's own language. This is the most valuable thing a transcript holds \
+and the first thing a hasty writer throws away.
+5. LIMITS. Every restriction, preference, exclusion or bound they stated, each \
+one quoted verbatim: "only", "never", "not the live app", "keep the wording", \
+"for now", a deadline, a scope they drew.
+6. WORDING TO KEEP. Quote the phrases the user chose that carry meaning and \
+must survive into the message unchanged - a term of art, a name they use for \
+something, a distinction they drew, a word they repeated, a hedge like "I \
+think" that must not harden into a finding. Beside each, name what would be \
+lost if you replaced it with a synonym.
+7. NOT SAID. What is missing, ambiguous, or a pointer you cannot resolve \
 ("that one", "the second option"). These are left OUT of the message. Never \
 guess a file, a cause or a mechanism to fill a gap.
 
-PHASE 2 - THE MESSAGE. Write it against the analysis. Then check it back \
-against points 1 and 2 before you close the block: every task present, every \
-literal present.
+PHASE 2 - THE DRAFT. Write the message against the analysis, in the \
+``<draft>`` block. This is a first version, not the answer.
+
+PHASE 3 - THE READ-BACK. Go through the draft once against the seven \
+questions below and write the corrected message into the ``<prompt>`` block. \
+When the draft was already right, the two blocks are simply the same text - \
+that is a fine outcome and not a reason to change anything for the sake of \
+it. Do NOT write out what you found; the corrections go into the message, not \
+next to it.
+
+a. Is it in the language from point 1?
+b. Is every task from point 2 there, none merged and none dropped?
+c. Is every literal from point 3 there, spelled the way the user said it?
+d. Does any sentence state something the user did not say? A cause they only \
+suspected, a fix they never named, a "so that it works everywhere again" \
+nobody asked for. Cut it - a gap the transcript leaves is left open.
+e. Did you replace a word of theirs from point 6 with one of your own? Put \
+theirs back.
+f. Does any sentence say again what the sentence before it already said, in \
+other words? One task must not appear twice - once as a description of the \
+problem and once as an instruction. Keep the clearer of the two and delete \
+the other outright.
+g. Does it end on the last piece of substance? Cut a closing line of thanks, \
+a "Danke dir" tacked onto the last sentence, a sign-off, an offer to help \
+further - even when the user said it themselves at the end of the dictation.
 
 THE USER'S OWN WORDS ARE THE DEFAULT; REWRITING IS THE EXCEPTION. You are \
 cleaning up a transcript, not authoring a document. Change a word only when \
@@ -270,10 +328,11 @@ sure that" clause that repeats the sentence before it, no summary. A sentence \
 that adds no fact the message does not already have is left out.
 
 PLAIN TEXT, SAME LANGUAGE. No markdown: no headings, no "##", no bullet \
-marks, no bold, no code fences, no labels like "Task:" or "Context:". Write \
-in the language the transcript is in; if it mixes languages, keep the mix. \
-Names, identifiers, paths and quoted strings stay exactly as spoken. Use the \
-ordinary hyphen-minus and ordinary spaces: no typographic hyphens, no \
+marks, no bold, no code fences, no labels like "Task:" or "Context:". Write in \
+the language you named in point 1 - these instructions are in English and that \
+means nothing about the message; if the transcript mixes languages, keep the \
+mix. Names, identifiers, paths and quoted strings stay exactly as spoken. Use \
+the ordinary hyphen-minus and ordinary spaces: no typographic hyphens, no \
 non-breaking spaces, no two spaces at the end of a line.
 
 SOUND LIKE THE PERSON WHO SPOKE, writing to a colleague - not like a ticket \
@@ -297,8 +356,10 @@ preamble, no quotes, no comment of your own.
 
 {FORBIDDEN_SUBJECTS_RULE}
 
-One worked example of the shape. The analysis is shown short here; yours is \
-as long as the transcript needs.
+Two worked examples, one per language, because THE MESSAGE FOLLOWS THE \
+TRANSCRIPT AND NOT THE EXAMPLE. Measured live 2026-08-27: with only the \
+English pair shown, a German dictation came back as an English message. The \
+analyses are shown short here; yours is as long as the transcript needs.
 
 Transcript: "okay so um the login page is broken again when you type a wrong \
 password it just shows a blank screen instead of the error message i think \
@@ -306,19 +367,31 @@ it's in the auth handler file can you have a look and fix it so the message \
 shows up like it used to and also rename the save button to submit"
 Answer:
 <analysis>
-1. TASKS (2): (a) fix the blank screen on a wrong password so the error \
+1. LANGUAGE: English ("okay so um", "can you have a look"). The message is \
+written in English. Informal, second person.
+2. TASKS (2): (a) fix the blank screen on a wrong password so the error \
 message shows again; (b) rename the save button to submit.
-2. LITERALS: "login page", "auth handler file", "save", "submit", "wrong \
+3. LITERALS: "login page", "auth handler file", "save", "submit", "wrong \
 password", "blank screen", "error message".
-3. SITUATION: typing a wrong password shows a blank screen instead of the \
-error message; the user says it is broken "again" and that it used to work.
-4. LIMITS: none stated.
-5. WORDING TO KEEP: "broken again", "I think it's in" (a guess, not a \
-finding - do not harden it into a cause), "like it used to". Informal, second \
-person.
-6. NOT SAID: which file exactly, what changed, no repro steps beyond the \
+4. SITUATION: "it just shows a blank screen instead of the error message", on \
+a wrong password. "broken again" and "like it used to" say it worked before.
+5. LIMITS: none stated.
+6. WORDING TO KEEP: "broken again" (not "is failing" - it has failed before); \
+"I think it's in" (a guess, not a finding - "the cause is in" would send the \
+agent off certain about something the user only suspects); "like it used to" \
+(names the old behaviour as the target).
+7. NOT SAID: which file exactly, what changed, no repro steps beyond the \
 wrong password.
 </analysis>
+<draft>
+The login page is failing again: on a wrong password the error message does \
+not appear and the screen stays blank. The cause is in the auth handler file.
+
+Please fix it so the error message is shown again and users get proper \
+feedback on a failed login.
+
+Also, please rename the save button to submit.
+</draft>
 <prompt>
 The login page is broken again: when you type a wrong password it just shows \
 a blank screen instead of the error message. I think it's in the auth handler \
@@ -327,6 +400,42 @@ file.
 Please have a look and fix it so the error message shows up like it used to.
 
 Also, please rename the save button to submit.
+</prompt>
+
+Transcript: "ähm also die Indikatoren funktionieren nicht mehr richtig ich \
+möchte dass man sieht ob die Session gerade arbeitet oder nicht weil es ist \
+zum Beispiel so dass angezeigt wird sie ist fertig obwohl sie noch arbeitet \
+oder andersrum und live aktualisieren tun die sich auch nicht"
+Answer:
+<analysis>
+1. LANGUAGE: German ("ähm also", "ich möchte dass", "oder andersrum"). The \
+message is written in German. "du"-Form is not shown either way, so the \
+familiar form is used.
+2. TASKS (1): repair the session indicators.
+3. LITERALS: "Indikatoren", "Session".
+4. SITUATION: "angezeigt wird sie ist fertig obwohl sie noch arbeitet oder \
+andersrum", and "live aktualisieren tun die sich auch nicht".
+5. LIMITS: none stated.
+6. WORDING TO KEEP: "funktionieren nicht mehr richtig" - they EXIST and are \
+broken, so this is a repair and never "implementiere Indikatoren"; "live" is \
+the user's word for the update behaviour.
+7. NOT SAID: since when, which screen, no file named.
+</analysis>
+<draft>
+Die Statusanzeigen der Sessions sind fehlerhaft: Eine laufende Session wird \
+als abgeschlossen dargestellt und umgekehrt, und eine Aktualisierung in \
+Echtzeit findet nicht statt.
+
+Bitte implementiere eine zuverlässige Anzeige des Session-Status, die sich \
+automatisch aktualisiert, damit die Übersicht wieder verwendbar ist.
+</draft>
+<prompt>
+Die Indikatoren, die anzeigen, ob eine Session gerade arbeitet, funktionieren \
+nicht mehr richtig: Eine Session wird als fertig angezeigt, obwohl sie noch \
+arbeitet, und andersrum. Live aktualisieren sie sich auch nicht.
+
+Bitte bring die Indikatoren wieder in Ordnung, sodass man sieht, ob eine \
+Session gerade arbeitet, und sodass sie sich live aktualisieren.
 </prompt>\
 """
 
@@ -423,17 +532,18 @@ def build_prompt_mode_prompt(protected_terms: Sequence[str] = ()) -> str:
 
 
 def extract_prompt_block(answer: str) -> str:
-    """The message out of a two-block answer, tolerant of a ragged one.
+    """The message out of a three-block answer, tolerant of a ragged one.
 
-    In order of preference: the content of ``<prompt>`` (closing tag optional,
-    because a model that ran out of budget still wrote a usable message up to
-    that point — the truncation guard is what decides whether it is usable);
-    otherwise everything after ``</analysis>``, which is the same message with
-    the opening tag forgotten; otherwise the whole answer, on the assumption
-    that the model ignored the two-block instruction and wrote the message
-    directly. That last case then faces the same guards as before, so a model
-    that answers with its analysis is caught by the markdown guard rather than
-    handing the user a numbered worksheet.
+    In order of preference: the content of the LAST ``<prompt>`` (closing tag
+    optional, because a model that ran out of budget still wrote a usable
+    message up to that point — the truncation guard is what decides whether it
+    is usable); otherwise everything after ``</draft>`` and then everything
+    after ``</analysis>``, which is the same message with an opening tag
+    forgotten; otherwise the whole answer, on the assumption that the model
+    ignored the block instruction and wrote the message directly. That last
+    case then faces the same guards as before, so a model that answers with
+    its worksheet is caught by the markdown guard rather than handing the user
+    a numbered list.
 
     Whatever comes out is stripped of any of our own tags the model echoed
     inside it.
@@ -441,12 +551,19 @@ def extract_prompt_block(answer: str) -> str:
     body = str(answer or "").strip()
     if not body:
         return ""
-    match = _PROMPT_BLOCK_RE.search(body)
-    if match:
-        return _OUR_TAGS_RE.sub("", match.group(1)).strip()
-    close = _ANALYSIS_CLOSE_RE.search(body)
-    if close:
-        return _OUR_TAGS_RE.sub("", body[close.end() :]).strip()
+    opens = list(_PROMPT_OPEN_RE.finditer(body))
+    if opens:
+        # The LAST opening tag, not the last complete block: a model that
+        # names the tag while thinking ("...then I fill the <prompt> block...")
+        # opens one inside its analysis and never closes it, and a match that
+        # started there would swallow the draft along with the message.
+        rest = body[opens[-1].end() :]
+        close = _PROMPT_CLOSE_RE.search(rest)
+        return _OUR_TAGS_RE.sub("", rest[: close.start()] if close else rest).strip()
+    for pattern in _CLOSE_FALLBACKS:
+        closes = list(pattern.finditer(body))
+        if closes:
+            return _OUR_TAGS_RE.sub("", body[closes[-1].end() :]).strip()
     return _OUR_TAGS_RE.sub("", body).strip()
 
 
@@ -484,27 +601,36 @@ def normalize_prompt_text(text: str) -> str:
 
 
 def ends_with_sign_off(text: str) -> bool:
-    """Whether the LAST line of *text* is a short courtesy sign-off."""
-    lines = [line.strip() for line in str(text or "").strip().splitlines() if line.strip()]
-    if not lines:
+    """Whether *text* closes on a courtesy sign-off, as a line or a sentence."""
+    body = str(text or "").strip()
+    if not body:
         return False
-    return bool(_SIGN_OFF_LINE_RE.match(lines[-1]))
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    if lines and _SIGN_OFF_LINE_RE.match(lines[-1]):
+        return True
+    return bool(_SIGN_OFF_SENTENCE_RE.search(body))
 
 
 def strip_closing_sign_off(text: str) -> str:
-    """*text* with a trailing courtesy line removed.
+    """*text* with a trailing courtesy line or sentence removed.
 
     The prompt asks for a message that ends on its substance; this is the
     guarantee, the way ``ensure_closing_thanks`` was the guarantee of the
-    opposite in v3. Repeated, because a model that writes "Danke!" under
-    "Viele Grüße" has written two. Never strips the whole message: a
-    transcript that IS a thank-you note keeps its only line.
+    opposite in v3. Loops, because a model that writes "Danke!" under "Viele
+    Grüße" has written two, and because cutting the last line can expose
+    another underneath it. Never strips the whole message: a line of thanks
+    that is all there is stays, and a sentence is only cut when a finished
+    sentence stands in front of it.
 
     Runs AFTER the truncation guard, for the reason that guard exists — a
     message that stopped mid-sentence must be caught as damage, not tidied.
     """
     body = str(text or "").strip()
     while True:
+        trimmed = _SIGN_OFF_SENTENCE_RE.sub("", body).strip()
+        if trimmed != body and trimmed:
+            body = trimmed
+            continue
         lines = body.splitlines()
         kept = [line.strip() for line in lines if line.strip()]
         if len(kept) < 2 or not _SIGN_OFF_LINE_RE.match(kept[-1]):

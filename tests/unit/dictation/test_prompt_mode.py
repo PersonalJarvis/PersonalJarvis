@@ -7,9 +7,11 @@ Five things are worth pinning, and none of them is "the model writes well":
    ritual, no reasoning echo — so the two rule texts are imported from the
    blueprint and asserted to be the very same strings.
 2. **The writer THINKS before it answers (v4, 2026-08-27).** A model spends
-   time by emitting tokens, so the answer is two blocks: a written pass over
-   the transcript, then the message. The pass is parsed off and thrown away,
-   and a model that skips it is the v3 defect this revision exists to fix.
+   time by emitting tokens, so the answer is three blocks: a written pass over
+   the transcript, a draft, and the message the read-back corrects. Only the
+   last one is delivered, and a model that skips the first is the v3 defect
+   this revision exists to fix. Measured live the same day: 5.2 s on
+   gemini-3.5-flash-lite, which is the bar, against 0.4-0.9 s for v3.
 3. **The maintainer's bar: plain text, the transcript's language, the
    speaker's own words, several tasks dictated at once all surviving, and
    nothing after the last piece of substance.** Each is a rule in the prompt
@@ -68,16 +70,28 @@ GOOD = (
     "please fix that.\n\n"
     "Also rename the save button to submit."
 )
-ANALYSIS = (
-    "1. TASKS (2): fix the blank screen; rename the save button to submit.\n"
-    "2. LITERALS: login page, AuthHandler, save, submit.\n"
-    "3. SITUATION: a wrong password shows a blank screen.\n"
-    "4. LIMITS: none stated.\n"
-    "5. WORDING TO KEEP: broken again, I think it's in.\n"
-    "6. NOT SAID: which file exactly."
+#: What the draft looked like before the read-back: the hedge hardened into a
+#: finding, and a promise the transcript never made.
+DRAFT = (
+    "The login page is failing again. The cause is in AuthHandler.\n\n"
+    "Also rename the save button to submit, so the wording is consistent "
+    "everywhere."
 )
-#: What a well-behaved model returns: the working pass, then the message.
-ANSWER = f"<analysis>\n{ANALYSIS}\n</analysis>\n<prompt>\n{GOOD}\n</prompt>"
+ANALYSIS = (
+    "1. LANGUAGE: English. The message is written in English.\n"
+    "2. TASKS (2): fix the blank screen; rename the save button to submit.\n"
+    "3. LITERALS: login page, AuthHandler, save, submit.\n"
+    "4. SITUATION: a wrong password shows a blank screen.\n"
+    "5. LIMITS: none stated.\n"
+    "6. WORDING TO KEEP: broken again, I think it's in.\n"
+    "7. NOT SAID: which file exactly."
+)
+#: What a well-behaved model returns: the working pass, a draft, the message.
+ANSWER = (
+    f"<analysis>\n{ANALYSIS}\n</analysis>\n"
+    f"<draft>\n{DRAFT}\n</draft>\n"
+    f"<prompt>\n{GOOD}\n</prompt>"
+)
 
 
 class FakeChain:
@@ -146,42 +160,89 @@ def test_the_prompt_carries_the_blueprints_rules_verbatim() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_prompt_demands_an_analysis_before_the_message() -> None:
+def test_the_prompt_demands_an_analysis_and_a_read_back() -> None:
     """The whole point of v4. v3 asked for the message directly and a fast
     model wrote it in under a second — no pass over the transcript at all."""
     system = build_prompt_mode_prompt()
-    assert "ANSWER IN TWO BLOCKS" in system
-    assert "NEVER SKIP THE FIRST" in system
-    assert "<analysis>" in system and "</analysis>" in system
-    assert "<prompt>" in system and "</prompt>" in system
+    assert "ANSWER IN THREE BLOCKS" in system
+    assert "NEVER SKIP ONE" in system
+    for tag in ("<analysis>", "</analysis>", "<draft>", "</draft>",
+                "<prompt>", "</prompt>"):
+        assert tag in system, tag
     assert "PHASE 1 - THE ANALYSIS" in system
-    assert "PHASE 2 - THE MESSAGE" in system
+    assert "PHASE 2 - THE DRAFT" in system
+    assert "PHASE 3 - THE READ-BACK" in system
 
 
-def test_the_analysis_names_all_six_points_it_must_work_through() -> None:
+def test_the_analysis_names_all_seven_points_it_must_work_through() -> None:
     system = build_prompt_mode_prompt()
-    for point in ("1. TASKS", "2. LITERALS", "3. THE SITUATION", "4. LIMITS",
-                  "5. WORDING TO KEEP", "6. NOT SAID"):
+    for point in ("1. LANGUAGE", "2. TASKS", "3. LITERALS", "4. THE SITUATION",
+                  "5. LIMITS", "6. WORDING TO KEEP", "7. NOT SAID"):
         assert point in system, point
     assert "before you compose a single sentence" in system
 
 
-def test_only_the_message_block_is_delivered() -> None:
+def test_the_read_back_asks_the_six_questions_that_catch_the_known_failures() -> None:
+    """Each one is a defect measured live rather than a checklist item: the
+    wrong language, a merged task, a dropped file name, a claim the user never
+    made, a word swapped for a synonym, a courtesy line."""
+    system = build_prompt_mode_prompt()
+    assert "Is it in the language from point 1?" in system
+    assert "none merged and none dropped" in system
+    assert "spelled the way the user said it" in system
+    assert "state something the user did not say" in system
+    assert "Put theirs back" in system
+    assert "say again what the sentence before it already said" in system
+    assert "Cut a closing line of thanks" in system
+    # ...including one the user said themselves; the reader is an agent.
+    assert "even when the user said it themselves" in system
+    # The read-back is a correction, not a report the user has to read past.
+    assert "not next to it" in system
+
+
+def test_the_language_rule_is_a_point_of_the_analysis() -> None:
+    """Measured live 2026-08-27: with the rule written but not worked through,
+    and only an English example shown, a German dictation came back English."""
+    system = build_prompt_mode_prompt()
+    assert "THE MESSAGE IS WRITTEN IN THAT LANGUAGE" in system
+    assert "A German transcript gets a German message" in system
+    assert "these instructions are in English and that means nothing" in system
+
+
+def test_only_the_final_message_is_delivered() -> None:
     assert extract_prompt_block(ANSWER) == GOOD
 
 
-def test_a_forgotten_opening_tag_still_yields_the_message() -> None:
-    """A fast model drops the opening tag often enough to matter; everything
-    after the analysis is the message either way."""
-    ragged = f"<analysis>\n{ANALYSIS}\n</analysis>\n{GOOD}"
+def test_the_draft_is_never_delivered() -> None:
+    """It is the version the read-back exists to correct. Handing it over
+    would make the whole third phase decorative."""
+    out = extract_prompt_block(ANSWER)
+    assert "The cause is in" not in out
+    assert "so the wording is consistent everywhere" not in out
+
+
+def test_a_forgotten_opening_tag_still_yields_the_final_message() -> None:
+    """A fast model drops a tag often enough to matter; everything after the
+    draft is the corrected message either way."""
+    ragged = f"<analysis>\n{ANALYSIS}\n</analysis>\n<draft>\n{DRAFT}\n</draft>\n{GOOD}"
     assert extract_prompt_block(ragged) == GOOD
 
 
 def test_a_missing_closing_tag_still_yields_the_message() -> None:
     """The answer ran out of budget mid-message. What it wrote comes out and
     faces the truncation guard, which is the thing that decides."""
-    cut = f"<analysis>\n{ANALYSIS}\n</analysis>\n<prompt>\n{GOOD}"
+    cut = f"<analysis>\n{ANALYSIS}\n</analysis>\n<draft>\n{DRAFT}\n</draft>\n<prompt>\n{GOOD}"
     assert extract_prompt_block(cut) == GOOD
+
+
+def test_the_tag_named_inside_the_analysis_does_not_win() -> None:
+    """A model that writes "...then the <prompt> block..." while thinking would
+    otherwise hand us its worksheet. The LAST block is the answer."""
+    chatty = (
+        "<analysis>\n1. LANGUAGE: English. Next I fill the <prompt> block.\n</analysis>\n"
+        f"<draft>\n{DRAFT}\n</draft>\n<prompt>\n{GOOD}\n</prompt>"
+    )
+    assert extract_prompt_block(chatty) == GOOD
 
 
 def test_an_answer_with_no_blocks_at_all_is_taken_whole() -> None:
@@ -255,13 +316,34 @@ def test_the_prompt_describes_the_shape_of_the_message() -> None:
     assert "no typographic hyphens" in system
 
 
-def test_the_prompt_shows_one_worked_two_block_answer() -> None:
-    """A fast model follows a shown shape far better than a described one, and
-    what has to be shown now is the SHAPE OF THE ANSWER, not of the message."""
+def test_the_prompt_shows_one_worked_answer_per_language_it_ships_for() -> None:
+    """A shown example outweighs a written rule, so the examples have to
+    DISAGREE about language for the language rule to be readable at all. With
+    only the English pair, a German dictation came back English (live,
+    2026-08-27). Each shows the full three-block shape, draft included."""
     system = build_prompt_mode_prompt()
-    assert system.count("Transcript: ") == 1
-    assert "Answer:\n<analysis>" in system
-    assert system.rstrip().endswith("</prompt>") or "</prompt>" in system
+    assert system.count("Transcript: ") == 2
+    assert system.count("Answer:\n<analysis>") == 2
+    # The closing tag, not the opening one: the phase description names
+    # ``<draft>`` in running text as well, and only a real block closes.
+    assert system.count("</draft>") == 3, "one per example plus the shape itself"
+    assert "1. LANGUAGE: German" in system
+    assert "1. LANGUAGE: English" in system
+    # The examples are the LAST thing the model reads before the protected
+    # terms — nothing may follow them and dilute the shape they set.
+    assert prompt_mode._SYSTEM_PROMPT.rstrip().endswith("</prompt>")
+
+
+def test_each_shown_draft_carries_the_defect_its_read_back_removes() -> None:
+    """An example whose draft already equals its message teaches nothing about
+    the third phase. The English pair hardens a hedge into a finding; the
+    German one turns a repair into "implementiere"."""
+    system = build_prompt_mode_prompt()
+    assert "The cause is in the auth handler file" in system
+    assert "Bitte implementiere eine zuverlässige Anzeige" in system
+    # ...and neither survives into the message beside it.
+    assert "I think it's in the auth handler" in system
+    assert "Bitte bring die Indikatoren wieder in Ordnung" in system
 
 
 def test_the_prompt_version_names_the_v4_revision() -> None:
@@ -461,7 +543,7 @@ def test_the_budget_covers_the_analysis_as_well_as_the_message() -> None:
 
     source = inspect.getsource(prompt_mode._call_chain)
     assert "max_output_tokens=_MAX_OUTPUT_TOKENS" in source
-    assert prompt_mode._MAX_OUTPUT_TOKENS >= 3_000
+    assert prompt_mode._MAX_OUTPUT_TOKENS >= 4_000
     assert prompt_mode._TEMPERATURE == 0.0
 
 
@@ -663,6 +745,23 @@ def test_a_trailing_thanks_is_cut() -> None:
         "Bitte repariere die Seite."
     )
     assert strip_closing_sign_off("Please fix the page.\n\nThanks!") == "Please fix the page."
+
+
+@pytest.mark.parametrize(
+    ("written", "kept"),
+    [
+        ("Bitte setze retry_count auf 10. Danke dir.", "Bitte setze retry_count auf 10."),
+        ("Fix it. Thanks a lot!", "Fix it."),
+        ("Please have a look. Thanks in advance.", "Please have a look."),
+    ],
+)
+def test_a_thanks_tacked_onto_the_last_sentence_is_cut(written: str, kept: str) -> None:
+    """Measured live 2026-08-27 on gpt-oss: the model did not put its thanks on
+    a line of its own, it appended it to the last paragraph — where a
+    line-anchored guard never sees it. The user had said "danke dir" at the end
+    of the dictation, and the writer carried it through."""
+    assert ends_with_sign_off(written) is True
+    assert strip_closing_sign_off(written) == kept
 
 
 def test_a_stacked_sign_off_is_cut_to_the_last_piece_of_substance() -> None:
