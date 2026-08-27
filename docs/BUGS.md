@@ -13147,10 +13147,45 @@ and five sentences ending in dictionary words that must survive),
 `::test_fuzzy_long_tokens_allow_one_sound_apart`,
 `::test_fuzzy_never_rewrites_toward_a_misspelt_entry`.
 
+**Second landing (2026-08-27, FIXED the same day).** The day after the tail
+guard shipped, two dictations carried the recitation again: 09:33 UTC
+`… da oben. IDE, Agentic IDE, Agentic IDE, Agentic IDE, Agentic Also ich kann …` <!-- i18n-allow: verbatim transcript -->
+and 16:38 UTC
+`… zu verhandeln. Agentic IDE, Agentic IDE, Agentic IDE, Agentic IDE, Agentic IDE` <!-- i18n-allow: verbatim transcript -->
+— two gaps, both in the guard's reach, not in its rule:
+
+1. **The wrapper judged `raw_text` only by what `text` had lost.** Groq's
+   provider filters `text` on the way in (`transcript_filter.clean_stt_text`
+   folds a phrase repeated three or more times into one), so `text` ended in a
+   single "Agentic IDE" — one term at the end of a sentence, which the guard
+   rightly keeps. `raw_text` was stripped only when `text` had changed, and
+   the dictation lane transcribes from `raw_text`, where all five copies still
+   stood (`jarvis_desktop.log` 18:38:47–58: the truncation repair's two halves
+   came back, and the only strip logged was the last window's own
+   "Agentic IDE, Agentic"). Each field is now judged on its own.
+2. **The guard looked at the tail only.** Whisper recites over a pause
+   *inside* a window and then transcribes the speech that followed it, so the
+   run stands in the middle of the text with real words on both sides.
+   `strip_prompt_echo` now walks every run of two or more dictionary items
+   and drops a mid-text run when it repeats an item or holds four
+   (`_ECHO_MIN_MID_ITEMS`); three distinct terms in one breath
+   ("Claude, Agentic IDE, Grok are the three sections") stay. A sentence mark
+   right after a dropped run moves to the words before it, and the
+   one-code-point ellipsis Whisper likes to end a hallucination with counts as
+   closing the text, like the three-dot kind.
+
+Guard: `TestPromptEcho::test_recitation_over_a_pause_is_dropped_from_the_middle`,
+`::test_a_recited_whole_list_in_the_middle_is_dropped`,
+`::test_three_distinct_terms_in_a_sentence_stay`,
+`::test_a_sentence_mark_after_a_mid_run_moves_to_the_words_before`,
+`::test_an_ellipsis_still_closes_the_tail`, `::test_two_runs_are_both_dropped`,
+`TestWrapper::test_raw_text_is_stripped_even_when_the_filtered_text_passed`.
+
 **Lesson.** A decoder bias is text the model will happily read back to you;
 whatever goes into a Whisper prompt needs a guard on the way out. And "one
 letter apart" is a property of spelling — the person who registers a word is
-describing how it sounds.
+describing how it sounds. When a provider carries two copies of its answer,
+a guard that reads one and infers the other has guarded neither.
 
 ## BUG-186: "There you go, I've just started some cool music on YouTube Music" — over a silent machine. The tool pressed a media key blindly, called that a resume, and the voice sold it as done (HIGH, FIXED 2026-08-26)
 

@@ -14,7 +14,13 @@ Dictation-tool-style feature: the user registers words the STT keeps getting wro
 The canonical words are also handed to prompt-capable Whisper providers as a
 decoder bias, and Whisper answers silence by reciting that list back
 ("…, Claude, Agentic IDE, Claude, Agentic"). The provider wrapper drops such a
-run from the end of a transcript before correcting it (BUG-185).
+run from a transcript before correcting it (BUG-185) — from its end, and from
+its middle too, because Whisper recites over a pause and then carries on with
+the speech that followed it. The wrapper strips ``raw_text`` on its own, not
+only when ``text`` lost something: the provider's cleanup has already folded a
+fivefold "Agentic IDE" on ``text`` into one, which passes for a sentence, while
+the dictation lane transcribes from ``raw_text``, where all five still stand
+(BUG-185, second landing 2026-08-27).
 
 Design constraints (see the plan file and CLAUDE.md):
 
@@ -95,12 +101,25 @@ _FOLD_RULES: tuple[tuple[str, str], ...] = (
 _FOLD_SILENT_H_RE = re.compile(r"(?<!^)h")
 _FOLD_REPEAT_RE = re.compile(r"(.)\1+")
 
-# Prompt-echo guard. A run of dictionary items at the END of a transcript is
-# Whisper reciting its bias prompt, never speech, when it is long enough or
-# repeats itself; a whole transcript made of nothing else needs fewer items,
-# because a stretch of silence is exactly where the recitation happens.
+# Prompt-echo guard. A run of dictionary items is Whisper reciting its bias
+# prompt, never speech, when it is long enough or repeats itself. Where the run
+# stands decides how much it takes: a whole transcript made of nothing else
+# needs the fewest items, because a stretch of silence is exactly where the
+# recitation happens; the END of a transcript is the next most likely place
+# (the silence after the last word); a run in the MIDDLE — Whisper reciting
+# over a pause and then transcribing the speech that followed — needs a repeat
+# or a run longer than any sentence lists dictionary terms in a row.
 _ECHO_MIN_TAIL_ITEMS = 3
 _ECHO_MIN_WHOLE_ITEMS = 2
+_ECHO_MIN_MID_ITEMS = 4
+
+#: Characters that may follow a run without it being "followed by speech":
+#: the recognizer's own punctuation, including the ellipsis it likes to end a
+#: hallucination with (one code point, not three dots) and a dangling dash.
+_ECHO_TRAIL_CHARS = " \t\r\n,.;:!?\u2026-\u2013\u2014"
+_ECHO_LEAD_SEP_RE = re.compile(r"^[\s,;:]+")
+_ECHO_TERMINATOR_RE = re.compile(r"^[.!?\u2026]+")
+_SENTENCE_END_CHARS = ".!?\u2026:"
 
 # Re-stat the sidecar at most this often — the corrector is consulted per
 # STT call (including the live-preview probe at a few calls/second).
@@ -380,10 +399,12 @@ def _compile_echo_patterns(
 ) -> tuple[re.Pattern[str] | None, re.Pattern[str] | None]:
     """Patterns behind :meth:`TranscriptCorrector.strip_prompt_echo`.
 
-    ``tail`` matches a run of dictionary items that closes the text —
-    whole entries, plus the single tokens of multi-word entries, because a
-    recitation may start mid-phrase ("IDE, Agentic IDE, …"). ``item`` finds
-    the WHOLE entries inside such a run; fragments never count as items.
+    ``run`` matches a run of two or more dictionary items anywhere in the
+    text — whole entries, plus the single tokens of multi-word entries,
+    because a recitation may start mid-phrase ("IDE, Agentic IDE, …").
+    ``item`` finds the WHOLE entries inside such a run; fragments never count
+    as items. Where the run stands (whole, tail, middle) is the caller's
+    reading of what surrounds the match.
     """
     phrases = sorted({e.word for e in entries}, key=len, reverse=True)
     if not phrases:
@@ -404,13 +425,33 @@ def _compile_echo_patterns(
     item_alt = "|".join(whole)
     run_alt = "|".join(whole + [re.escape(f) for f in fragments])
     separator = r"(?:\s*[,;:]\s*|\s*\.\s+|\s+)"
-    tail = re.compile(
-        rf"(?<!\w)(?P<run>(?:{run_alt})(?:{separator}(?:{run_alt}))+)(?!\w)"
-        r"[\s,.;:!?]*$",
+    run = re.compile(
+        rf"(?<!\w)(?P<run>(?:{run_alt})(?:{separator}(?:{run_alt}))+)(?!\w)",
         re.IGNORECASE | re.UNICODE,
     )
     item = re.compile(rf"(?<!\w)(?:{item_alt})(?!\w)", re.IGNORECASE | re.UNICODE)
-    return tail, item
+    return run, item
+
+
+def _splice_out_run(before: str, after: str) -> str:
+    """``before`` and ``after`` rejoined as if the run between them was never
+    said. A separator the run dragged along goes with it; a sentence mark
+    right after the run belonged to the words before it, so it moves there
+    unless those already end a sentence — "and then Agentic IDE, Agentic
+    IDE. That was" reads "and then. That was", never "and then . That was".
+    """
+    left = before.rstrip()
+    right = _ECHO_LEAD_SEP_RE.sub("", after)
+    mark = _ECHO_TERMINATOR_RE.match(right)
+    if mark is not None:
+        right = right[mark.end() :].lstrip()
+        if left and left[-1] not in _SENTENCE_END_CHARS:
+            left = left.rstrip(",;:") + mark.group(0)
+    if not left:
+        return right
+    if not right:
+        return left
+    return f"{left} {right}"
 
 
 class TranscriptCorrector:
@@ -450,36 +491,61 @@ class TranscriptCorrector:
             self._fuzzy_index.setdefault(fold[:1], []).append((word, fold))
 
         self._token_re = re.compile(r"[^\W\d_][\w''\-]*", re.UNICODE)
-        self._echo_tail_re, self._echo_item_re = _compile_echo_patterns(entries)
+        self._echo_run_re, self._echo_item_re = _compile_echo_patterns(entries)
         self.rule_count = len(self._replacements) + len(self._casing)
 
     def strip_prompt_echo(self, text: str) -> str:
-        """Drop a recited bias prompt from the end of ``text``.
+        """Drop a recited bias prompt from ``text``, wherever it stands.
 
         Prompt-capable Whisper providers receive the canonical words as a
         comma-separated decoder bias, and Whisper answers a stretch of silence
         by continuing that list — "…, Claude, Agentic IDE, Claude, Agentic".
-        A run of dictionary items closing the transcript is that recitation
-        when it holds at least ``_ECHO_MIN_TAIL_ITEMS`` items or repeats one;
-        a transcript made of nothing else needs ``_ECHO_MIN_WHOLE_ITEMS``.
-        One trailing word, or two different ones, is a sentence and stays:
-        "…nutze Claude, Agentic IDE." is something a person says.
+        A run of dictionary items is that recitation when it repeats an item,
+        or when it is longer than a sentence has reason to be: at least
+        ``_ECHO_MIN_TAIL_ITEMS`` items when the run closes the transcript, and
+        ``_ECHO_MIN_WHOLE_ITEMS`` when the transcript holds nothing else.
+
+        The silence Whisper recites over is not only the one after the last
+        word. A pause mid-dictation lands the run in the MIDDLE of a window,
+        with the speech that followed the pause transcribed right after it
+        ("… up there. IDE, Agentic IDE, Agentic IDE, Agentic IDE, Agentic So
+        I cannot …"). A run there is dropped when it repeats an item or holds
+        ``_ECHO_MIN_MID_ITEMS`` — a person may list three of their terms in
+        one breath; the fourth, or the same one twice, is the prompt.
+
+        One word, or two different ones, is a sentence and stays wherever it
+        is: "…I use Claude, Agentic IDE." and "the Agentic IDE amounts" are
+        things a person says.
         """
-        if not text or self._echo_tail_re is None or self._echo_item_re is None:
+        if not text or self._echo_run_re is None or self._echo_item_re is None:
             return text
-        match = self._echo_tail_re.search(text)
-        if match is None:
+        matches = list(self._echo_run_re.finditer(text))
+        if not matches:
             return text
-        run = match.group("run")
-        items = [
-            " ".join(m.group(0).casefold().split())
-            for m in self._echo_item_re.finditer(run)
-        ]
-        whole = match.start("run") == 0 or not text[: match.start("run")].strip()
-        needed = _ECHO_MIN_WHOLE_ITEMS if whole else _ECHO_MIN_TAIL_ITEMS
-        if len(items) < needed and len(items) == len(set(items)):
-            return text
-        return text[: match.start("run")].rstrip()
+        out = text
+        # Back to front: a removal only ever shortens what FOLLOWS the earlier
+        # matches, so their offsets into ``out`` stay valid — and a run that
+        # becomes the tail once the run after it is gone is judged as one.
+        for match in reversed(matches):
+            run = match.group("run")
+            items = [
+                " ".join(m.group(0).casefold().split())
+                for m in self._echo_item_re.finditer(run)
+            ]
+            before = out[: match.start("run")]
+            after = out[match.end("run") :]
+            closes = not after.strip(_ECHO_TRAIL_CHARS)
+            whole = closes and not before.strip()
+            if whole:
+                needed = _ECHO_MIN_WHOLE_ITEMS
+            elif closes:
+                needed = _ECHO_MIN_TAIL_ITEMS
+            else:
+                needed = _ECHO_MIN_MID_ITEMS
+            if len(items) < needed and len(items) == len(set(items)):
+                continue
+            out = before.rstrip() if closes else _splice_out_run(before, after)
+        return out
 
     def correct(self, text: str) -> str:
         if not text or self.rule_count == 0:
@@ -643,19 +709,19 @@ class DictionaryCorrectingSTT:
             # are words a person registered by name — so they have to reach both
             # fields or dictation silently stops honouring the dictionary.
             raw = getattr(transcript, "raw_text", "") or ""
-            # A finished transcript that ends in a recited bias prompt loses
-            # that tail BEFORE correction. Partials are still growing — an
+            # A finished transcript that carries a recited bias prompt loses
+            # it BEFORE correction. Partials are still growing — an
             # enumeration cut off mid-list is not evidence of anything.
+            # ``raw_text`` is judged on its own, never on what ``text`` lost:
+            # the provider's cleanup folds a repeated phrase on ``text`` into
+            # one ("Agentic IDE" ×5 → "Agentic IDE"), which passes for a
+            # sentence, while ``raw_text`` — the field dictation transcribes
+            # from — still holds every copy. Stripping raw only after text had
+            # lost something is how five "Agentic IDE" reached a document
+            # the day after the tail guard shipped.
             if not getattr(transcript, "is_partial", False):
-                kept = corrector.strip_prompt_echo(text)
-                if kept != text:
-                    log.info(
-                        "STT dictionary dropped a recited bias prompt from the "
-                        "transcript tail: %r",
-                        text[len(kept) :].strip(),
-                    )
-                    text = kept
-                    raw = corrector.strip_prompt_echo(raw) if raw else raw
+                text = self._strip_echo(corrector, text, "text")
+                raw = self._strip_echo(corrector, raw, "raw_text") if raw else raw
             corrected = corrector.correct(text)
             corrected_raw = corrector.correct(raw) if raw else raw
             original_text = getattr(transcript, "text", "")
@@ -676,6 +742,19 @@ class DictionaryCorrectingSTT:
         except Exception as exc:  # noqa: BLE001 — corrections must never break STT
             log.warning("STT dictionary correction failed (%s); using raw text.", exc)
             return transcript
+
+    @staticmethod
+    def _strip_echo(corrector: TranscriptCorrector, value: str, field: str) -> str:
+        """``value`` without a recited bias prompt, logged when one was there."""
+        kept = corrector.strip_prompt_echo(value)
+        if kept != value:
+            log.info(
+                "STT dictionary dropped a recited bias prompt from %s: %r -> %r",
+                field,
+                value[-120:],
+                kept[-120:],
+            )
+        return kept
 
     async def transcribe_pcm(self, *args: Any, **kwargs: Any) -> Any:
         return self._apply(await self._inner.transcribe_pcm(*args, **kwargs))

@@ -274,6 +274,67 @@ class TestPromptEcho:
             "Claude, Agentic IDE, Claude"
         )
 
+    def test_recitation_over_a_pause_is_dropped_from_the_middle(self) -> None:
+        # Verbatim from dictation history 2026-08-27 09:33 UTC: Whisper recited
+        # over a pause inside the window and then transcribed the speech that
+        # followed it, so the run stood mid-text and the tail guard never saw it.
+        c = _live_corrector()
+        heard = (
+            "Aber egal, es geht um diese Sections da oben. IDE, Agentic IDE, "
+            "Agentic IDE, Agentic IDE, Agentic Also ich kann mir nicht mal die "  # i18n-allow: verbatim transcript
+            "Chats anzeigen lassen."  # i18n-allow: verbatim transcript
+        )
+        assert c.strip_prompt_echo(heard) == (
+            "Aber egal, es geht um diese Sections da oben. Also ich kann mir "  # i18n-allow: verbatim transcript
+            "nicht mal die Chats anzeigen lassen."  # i18n-allow: verbatim transcript
+        )
+
+    def test_a_recited_whole_list_in_the_middle_is_dropped(self) -> None:
+        # No item repeats, but nobody lists four of their own terms in a row.
+        c = _live_corrector()
+        heard = "then GitHub, Grok, Claude, Agentic IDE, Agentic and so on"
+        assert c.strip_prompt_echo(heard) == "then and so on"
+
+    def test_three_distinct_terms_in_a_sentence_stay(self) -> None:
+        c = _live_corrector()
+        for sentence in (
+            "Claude, Agentic IDE, Grok are the three sections.",
+            "bei den Agentic IDE Beträgen gibt es Fehler",  # i18n-allow: verbatim transcript
+            "open GitHub, Claude and Grok, then close them.",
+        ):
+            assert c.strip_prompt_echo(sentence) == sentence
+
+    def test_a_sentence_mark_after_a_mid_run_moves_to_the_words_before(
+        self,
+    ) -> None:
+        c = _live_corrector()
+        heard = "und dann Agentic IDE, Agentic IDE. Das war so."  # i18n-allow: verbatim transcript
+        assert c.strip_prompt_echo(heard) == "und dann. Das war so."  # i18n-allow: verbatim transcript
+        # …but never doubles one the words before already carry.
+        assert c.strip_prompt_echo(
+            "Also. IDE, Agentic IDE, Agentic IDE, Agentic IDE, ebenso funktionieren."
+        ) == "Also. ebenso funktionieren."
+
+    def test_an_ellipsis_still_closes_the_tail(self) -> None:
+        # Whisper ends a hallucination with the one-code-point ellipsis as
+        # readily as with three dots; either is the recognizer's, not speech.
+        c = _live_corrector()
+        spoken = "verhandeln."
+        for trail in ("\u2026", "...", " -", "\n"):
+            heard = spoken + " Agentic IDE, Agentic IDE, Agentic IDE" + trail
+            assert c.strip_prompt_echo(heard) == spoken
+
+    def test_two_runs_are_both_dropped(self) -> None:
+        # Verbatim shape from 2026-08-26 17:53 UTC: one recitation over a pause
+        # in the middle and one over the silence at the end.
+        c = _live_corrector()
+        heard = (
+            "Also. IDE, Agentic IDE, Agentic IDE, Agentic IDE, Agentic IDE, "
+            "ebenso funktionieren. Nur bei dem IDE, Agentic IDE, Agentic IDE, "  # i18n-allow: verbatim transcript
+            "Agentic IDE"
+        )
+        assert c.strip_prompt_echo(heard) == "Also. ebenso funktionieren. Nur bei dem"  # i18n-allow: verbatim transcript
+
 
 # ----------------------------------------------------------------------
 # Live-reloading shared corrector + bias words
@@ -312,6 +373,29 @@ class _FakeTranscript:
     confidence: float = 0.9
     is_partial: bool = False
     segments: tuple = field(default_factory=tuple)
+
+
+@dataclass
+class _FakeRawTranscript:
+    text: str
+    raw_text: str
+    language: str = "de"
+    confidence: float = 0.9
+    is_partial: bool = False
+    segments: tuple = field(default_factory=tuple)
+
+
+class _FakeRawSTT:
+    """A provider that, like Groq, carries the unfiltered string on ``raw_text``."""
+
+    def __init__(self, *, text: str, raw_text: str) -> None:
+        self.text = text
+        self.raw_text = raw_text
+
+    async def transcribe_pcm(
+        self, pcm: bytes, sample_rate: int = 16_000, **kwargs: Any
+    ) -> _FakeRawTranscript:
+        return _FakeRawTranscript(text=self.text, raw_text=self.raw_text)
 
 
 class _FakeSTT:
@@ -378,6 +462,25 @@ class TestWrapper:
         wrapped = DictionaryCorrectingSTT(_FakeSTT(heard), store=store)
         result = await wrapped.transcribe_pcm(b"\x00\x00")
         assert result.text == "open GitHub."
+
+    async def test_raw_text_is_stripped_even_when_the_filtered_text_passed(
+        self, store: DictionaryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The second landing of BUG-185 (2026-08-27 16:38 UTC): the provider's
+        # own cleanup had folded "Agentic IDE" ×5 on ``text`` into one, which
+        # reads as a sentence — and the dictation lane transcribes from
+        # ``raw_text``, where all five still stood. Each field is judged alone.
+        monkeypatch.setattr(sd, "_RELOAD_CHECK_INTERVAL_S", 0.0)
+        store.add("Agentic IDE")
+        spoken = "Idee, das ganze Pult ausführlich zu verhandeln."  # i18n-allow: verbatim transcript
+        recited = " Agentic IDE, Agentic IDE, Agentic IDE, Agentic IDE, Agentic IDE"
+        wrapped = DictionaryCorrectingSTT(
+            _FakeRawSTT(text=spoken + " Agentic IDE", raw_text=spoken + recited),
+            store=store,
+        )
+        result = await wrapped.transcribe_pcm(b"\x00\x00")
+        assert result.raw_text == spoken
+        assert result.text == spoken + " Agentic IDE"  # one term is a sentence
 
     async def test_partial_transcripts_keep_their_tail(
         self, store: DictionaryStore, monkeypatch: pytest.MonkeyPatch

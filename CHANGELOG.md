@@ -11,6 +11,15 @@ versioning per [SemVer](https://semver.org/).
 
 ### Added
 
+- **Agentic IDE chat: every connected coding CLI is a seat.** The chat's
+  provider picker lists the Agentic IDE's own CLI registry under "Coding
+  CLIs" — OpenCode, Kimi Code, GLM Coding Plan and DeepSeek Harness join
+  Claude Code, Codex, Grok Build and Antigravity — instead of the sub-agent
+  missions' provider map, and each one answers as a chat: the reply, the
+  reasoning where the CLI shares it, and every tool call with its result as
+  rows in the conversation, never as a terminal. OpenCode's model list comes
+  live from `opencode models`; a CLI that keeps its own login reads as
+  available once it is installed; a CLI the registry drops leaves the picker.
 - **Local models: one click sets everything up.** "Set up everything" on the
   overview starts the local server when it is stopped (and names the install
   on the button when it is not installed), then fills every role — chat,
@@ -65,6 +74,31 @@ versioning per [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **Spend: the coding-CLI bill no longer shrinks, and it counts every
+  subagent.** Three things made the Spend section show less than was spent
+  — $8 000 for a month that had read $12 300 the day before. The index of
+  the coding CLIs' transcripts deleted a session's turns when the CLI
+  deleted its log (Claude Code does after `cleanupPeriodDays`), so the
+  lifetime total sank a little every night; a change to a reader's rule
+  dropped the whole index and rebuilt it from zero, and for the hours that
+  took the page presented the half-read index as the bill — two views a
+  minute apart disagreed by thousands; and the transcripts of every
+  subagent (`<session>/subagents/**`, the Agent tool and workflows) were
+  never read at all — one fifth of every Claude Code call on the reference
+  machine. The index is now a ledger: a vanished transcript keeps its rows,
+  a rule change re-reads the transcripts still on disk and corrects rows in
+  place while the table stays complete, subagent transcripts are indexed
+  under the conversation that spawned them, and while the index is still
+  catching up the section says so — "{n} of {m} transcripts read, {x} MB to
+  go" — and reads again every few seconds instead of once a minute.
+  (BUG-198)
+- **Dictation: "Agentic IDE, Agentic IDE, Agentic IDE" no longer lands in the
+  text — from the middle of a dictation either.** Whisper recites the
+  dictionary's bias prompt over a pause and then carries on with the speech
+  that followed, and the field dictation pastes from was checked only by what
+  the provider's filtered copy had lost. Each copy is now judged on its own,
+  and a recited run is dropped wherever it stands; three distinct terms in one
+  breath stay.
 - **Local models: a changed role showed its old pick for up to 15 s.** The
   overview's in-memory memo was not dropped on a write, and the section never
   asked for a live rebuild after its own change. Every write now forgets the
