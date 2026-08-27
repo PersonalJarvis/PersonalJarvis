@@ -256,15 +256,26 @@ async def test_the_timeline_serves_the_sentence_and_a_picture_that_loads(
     # The typed path: the pane chat's composer sends the sentence with the file.
     await registry.send_prompt(name, BRIEF, typed=SAID, attachments=[shot])
 
-    # What the CLI wrote down is the brief, whitespace and all.
-    monkeypatch.setattr(
-        agent_transcript,
-        "read_timeline",
-        lambda *_a, **_k: agent_transcript.TimelineRead(events=[_user(BRIEF + " ")]),
-    )
+    # What the CLI wrote down is the brief, whitespace and all — a real record
+    # in a real history directory, read by the transcript reader itself, so
+    # this holds whichever reader the route calls.
+    home = tmp_path / "claude-home"
+    record = home / "projects" / "ws" / "sess-1.jsonl"
+    record.parent.mkdir(parents=True)
+    row = {
+        "type": "user",
+        "timestamp": "2026-08-27T11:20:16Z",
+        "message": {"role": "user", "content": BRIEF + " "},
+    }
+    record.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    from jarvis.ui.web import agentic_ide_routes
+
+    monkeypatch.setattr(agentic_ide_routes, "account_home", lambda *_a, **_k: home)
     body = client.get(f"/api/agentic-ide/terminals/{name}/timeline").json()
     assert body["available"] is True
-    [event] = body["events"]
+    # A pane still starting gets an open turn after the question; the person's
+    # message is the one event this is about.
+    [event] = [e for e in body["events"] if e["kind"] == "user_message"]
     assert event["payload"]["typed"] == SAID
     [receipt] = event["payload"]["attachments"]
     assert receipt["name"] == "shot.png"
