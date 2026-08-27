@@ -47,6 +47,15 @@ def _record(tmp_path: Path) -> dict[str, Any]:
     return json.loads((tmp_path / "state" / "local_models_health.json").read_text("utf-8"))
 
 
+def _capability(detail: str | Exception):
+    async def probe(_root: str, _model: str) -> str:
+        if isinstance(detail, Exception):
+            raise detail
+        return detail
+
+    return probe
+
+
 def _embed(dims: int | Exception):
     async def _fn(_root: str, _model: str) -> int:
         if isinstance(dims, Exception):
@@ -73,10 +82,14 @@ async def test_verify_reports_every_step_and_writes_the_record(tmp_path: Path) -
         probe=_probe(True),
         generate=_generate,
         embed=_embed(768),
+        tool_call=_capability("Called the tool."),
+        vision=_capability("Saw the image: white"),
     )
     assert result["ok"] is True and result["status"] == "ok" and result["reason"] == ""
     steps = {s["id"]: s for s in result["steps"]}
-    assert list(steps) == ["server", "chat", "embedding"]
+    assert list(steps) == ["server", "chat", "voice", "tools_screen", "embedding"]
+    # Neither the voice nor the screen role is configured here: not run, not passed.
+    assert steps["voice"]["ok"] is None and steps["tools_screen"]["ok"] is None
     assert steps["server"]["ok"] is True and "0.32.15" in steps["server"]["detail"]
     assert steps["chat"] == {
         "id": "chat",
@@ -115,11 +128,11 @@ async def test_verify_marks_unconfigured_roles_as_not_run_and_a_down_server_firs
 
     nothing = await hm.verify_setup(_cfg(), probe=_probe(True), generate=_generate)
     assert nothing["status"] == "needs_setup"
-    assert [s["ok"] for s in nothing["steps"]] == [True, None, None]
+    assert [s["ok"] for s in nothing["steps"]] == [True, None, None, None, None]
 
     down = await hm.verify_setup(_cfg("qwen3.5:4b"), probe=_probe(False), generate=_generate)
     assert down["status"] == "error" and "No Ollama answered" in down["reason"]
-    assert [s["ok"] for s in down["steps"]] == [False, None, None]
+    assert [s["ok"] for s in down["steps"]] == [False, None, None, None, None]
     assert down["steps"][1]["model"] == "qwen3.5:4b"
     assert _record(tmp_path)["status"] == "error"
 

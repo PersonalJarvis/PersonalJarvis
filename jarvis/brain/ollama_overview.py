@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from jarvis.brain import ollama_inventory as inventory
+from jarvis.brain import ollama_names as names
 from jarvis.brain import ollama_pull, ollama_roles, ollama_runtime
 from jarvis.brain.ollama_inventory import (
     OllamaModelInfo,
@@ -56,6 +57,7 @@ __all__ = [
     "is_paintable",
     "load_snapshot",
     "model_row",
+    "resident_payload",
     "role_row",
     "roles_payload",
     "running_row",
@@ -77,13 +79,32 @@ STALE_AFTER_S = 24 * 3600.0
 # ── Row builders (the wire shape, spelled out once) ──────────────────────
 
 
+def _live_entry(
+    info: OllamaModelInfo, running: dict[str, OllamaRunningModel]
+) -> OllamaRunningModel | None:
+    """The ``/api/ps`` entry holding ``info``'s weights — the download itself
+    or one of its aliases (a Tune profile, the voice brain's context alias),
+    which is what is actually resident during a call or a tuned chat."""
+    for key, entry in running.items():
+        if same_model(key, info.name) or same_model(names.base_of(key, [info.name]), info.name):
+            return entry
+    return None
+
+
 def model_row(
     info: OllamaModelInfo, running: dict[str, OllamaRunningModel], used_by: list[str]
 ) -> dict[str, Any]:
     """One inventory row: the download's facts plus what ``/api/ps`` says."""
-    live = next((r for key, r in running.items() if same_model(key, info.name)), None)
+    live = _live_entry(info, running)
+    shown = names.describe(info.name, info.parameter_size, info.quantization_level)
     return {
         "name": info.name,
+        "display_name": shown.name,
+        "display_label": shown.label,
+        "params_label": shown.params,
+        "quant_label": shown.quant,
+        "source": shown.source,
+        "variant": shown.variant,
         "size_bytes": info.size_bytes,
         "digest": info.digest,
         "modified_at": info.modified_at,
@@ -96,14 +117,19 @@ def model_row(
         "probed": info.probed,
         "used_by": used_by,
         "loaded": live is not None,
+        "loaded_as": live.name if live else "",
         "size_vram_bytes": live.size_vram_bytes if live else 0,
+        "loaded_size_bytes": live.size_bytes if live else 0,
         "expires_at": live.expires_at if live else "",
         "running_context_length": live.context_length if live else None,
     }
 
 
-def running_row(model: OllamaRunningModel) -> dict[str, Any]:
-    return asdict(model)
+def running_row(model: OllamaRunningModel, candidates: list[str] | None = None) -> dict[str, Any]:
+    row = asdict(model)
+    row["base_tag"] = names.base_of(model.name, candidates or [])
+    row["kind"] = names.alias_kind(model.name) or "model"
+    return row
 
 
 def role_row(state: ollama_roles.RoleState) -> dict[str, Any]:
@@ -112,11 +138,21 @@ def role_row(state: ollama_roles.RoleState) -> dict[str, Any]:
         "id": spec.id,
         "label_key": spec.label_key,
         "config_key": spec.config_key,
+        "layout": spec.layout,
         "current": state.current,
         "installed": state.installed,
+        "current_fit": state.current_fit,
+        "current_reason": state.current_reason,
         "required": list(spec.required),
         "recommended_capabilities": list(spec.recommended),
         "qualifying": list(state.qualifying),
+        "choices": [
+            {"tag": tag, "fit": fit, "reason": reason} for tag, fit, reason in state.choices
+        ],
+        "downloads": [
+            {"tag": tag, "label": label, "size_gb": size, "fit": fit, "note": note}
+            for tag, label, size, fit, note in state.downloads
+        ],
         "recommended": state.recommended,
         "recommended_reason": state.recommended_reason,
         "writable": spec.writable,
@@ -127,6 +163,86 @@ def role_row(state: ollama_roles.RoleState) -> dict[str, Any]:
         # The size class the job prefers (the voice brain answers within a
         # breath, so it stays under 6 GB); ``None`` when the job has none.
         "max_size_gb": spec.max_size_gb,
+        "min_context_tokens": spec.min_context_tokens,
+    }
+
+
+#: Rough extra memory a context window costs, in GiB per 1k tokens per GiB of
+#: weights — the rule of thumb the Tune suggestion and the frontend chip use.
+_CONTEXT_GB_PER_K_PER_GB = 0.03
+#: The window an unloaded, untuned model is assumed to open with.
+_DEFAULT_CONTEXT_TOKENS = 8192
+
+
+def _context_gb(tokens: int | None, weights_gb: float) -> float:
+    return (
+        (float(tokens or _DEFAULT_CONTEXT_TOKENS) / 1000.0)
+        * _CONTEXT_GB_PER_K_PER_GB
+        * max(weights_gb, 0.5)
+    )
+
+
+def resident_payload(
+    states: list[ollama_roles.RoleState],
+    models: list[OllamaModelInfo],
+    running: dict[str, OllamaRunningModel],
+    machine: ollama_roles.Machine,
+    *,
+    voice_reserve_gb: float = 0.0,
+) -> dict[str, Any]:
+    """What sits in graphics memory when every job is loaded at once.
+
+    The per-card bar answers "does THIS model fit"; this answers the question
+    that decides a local setup — whether the chat model, the voice brain and
+    the embedder fit TOGETHER, because a call arrives while a chat is loaded.
+    One item per distinct download across the writable roles (a model on
+    three jobs is loaded once), each with its weights, its context estimate
+    (the live ``/api/ps`` figure when loaded, the rule of thumb otherwise)
+    and the roles it serves; plus the reserve the local speech stack keeps
+    free beside the voice brain. ``over`` says the total exceeds the card.
+    """
+    by_name = {m.name: m for m in models}
+    items: list[dict[str, Any]] = []
+    seen: dict[str, dict[str, Any]] = {}
+    for state in states:
+        if not state.spec.writable or not state.current:
+            continue
+        info = next((m for m in models if same_model(m.name, state.current)), None)
+        if info is None:
+            continue
+        key = info.name
+        if key in seen:
+            seen[key]["roles"].append(state.spec.id)
+            continue
+        weights_gb = info.size_bytes / (1024**3)
+        live = _live_entry(info, running)
+        tokens = state.context_tokens if state.spec.id == "voice" else None
+        if live is not None:
+            context_gb = max(0.0, (live.size_bytes - info.size_bytes) / (1024**3))
+            tokens = live.context_length or tokens
+        else:
+            context_gb = _context_gb(tokens, weights_gb)
+        shown = names.describe(info.name, info.parameter_size, info.quantization_level)
+        item = {
+            "tag": info.name,
+            "display_label": shown.label,
+            "roles": [state.spec.id],
+            "weights_gb": round(weights_gb, 2),
+            "context_gb": round(context_gb, 2),
+            "context_tokens": tokens,
+            "loaded": live is not None,
+        }
+        seen[key] = item
+        items.append(item)
+    del by_name
+    total = sum(i["weights_gb"] + i["context_gb"] for i in items) + voice_reserve_gb
+    accelerator = machine.accelerator_gb
+    return {
+        "items": items,
+        "reserve_gb": round(voice_reserve_gb, 2),
+        "total_gb": round(total, 2),
+        "accelerator_gb": accelerator,
+        "over": bool(accelerator > 0 and total > accelerator),
     }
 
 
@@ -159,6 +275,7 @@ def _inventory_from(
             "error": error,
         }
     running = {r.name: r for r in snapshot.running}
+    candidates = [m.name for m in snapshot.models]
     return {
         "provider": provider_id,
         "server": root,
@@ -166,7 +283,7 @@ def _inventory_from(
             model_row(m, running, ollama_roles.roles_using(cfg, m.name) if cfg else [])
             for m in snapshot.models
         ],
-        "running": [running_row(r) for r in snapshot.running],
+        "running": [running_row(r, candidates) for r in snapshot.running],
         "disk_bytes": sum(m.size_bytes for m in snapshot.models),
         "loaded_vram_bytes": sum(r.size_vram_bytes for r in snapshot.running),
         "error": None,
@@ -193,12 +310,33 @@ async def _roles_from(
     states, _unused = await ollama_roles.list_roles(
         root, cfg, models=models, shortlist=shortlist, machine=machine
     )
+    running = {r.name: r for r in snapshot.running} if snapshot is not None else {}
     return {
         "provider": provider_id,
         "server": root,
         "roles": [role_row(s) for s in states],
+        "resident": resident_payload(
+            states,
+            models,
+            running,
+            machine or ollama_roles.Machine(),
+            voice_reserve_gb=_voice_reserve_gb(states),
+        ),
         "error": error,
     }
+
+
+def _voice_reserve_gb(states: list[ollama_roles.RoleState]) -> float:
+    """The memory the local speech stack keeps free beside the voice brain —
+    only when a voice brain is picked (the stack is installed and configured)."""
+    voice = next((s for s in states if s.spec.id == "voice"), None)
+    if voice is None or not voice.current:
+        return 0.0
+    try:
+        from jarvis.realtime.local_server.supervisor import VOICE_STACK_RESERVE_GB
+    except Exception:  # noqa: BLE001 — the reserve is an estimate, never a blocker
+        return 0.0
+    return float(VOICE_STACK_RESERVE_GB)
 
 
 async def roles_payload(provider_id: str, root: str, cfg: Any) -> dict[str, Any]:

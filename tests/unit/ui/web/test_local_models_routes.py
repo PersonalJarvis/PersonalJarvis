@@ -643,7 +643,7 @@ def test_autostart_round_trip(server: WebServer, fake, monkeypatch) -> None:
     assert server.app.state.config.brain.providers["ollama"].autostart is False
 
 
-def test_verify_runs_the_three_steps_and_refreshes_the_badge(
+def test_verify_runs_the_five_steps_and_refreshes_the_badge(
     server: WebServer, fake, monkeypatch, tmp_path
 ) -> None:
     from jarvis.local_models import health_monitor
@@ -663,14 +663,26 @@ def test_verify_runs_the_three_steps_and_refreshes_the_badge(
 
     monkeypatch.setattr(health_monitor, "_default_probe", _probe)
     monkeypatch.setattr(health_monitor, "_default_generate", _generate)
+
+    async def _capability(_root: str, _model: str) -> str:
+        return "Answered the probe."
+
     monkeypatch.setattr(health_monitor, "_default_embed", _embed)
+    monkeypatch.setattr(health_monitor, "_default_tool_call", _capability)
+    monkeypatch.setattr(health_monitor, "_default_vision", _capability)
     with TestClient(server.app) as client:
         body = client.post(f"{BASE}/verify").json()
     assert body["ok"] is True and body["status"] == "ok"
-    assert [s["id"] for s in body["steps"]] == ["server", "chat", "embedding"]
+    assert [s["id"] for s in body["steps"]] == [
+        "server",
+        "chat",
+        "voice",
+        "tools_screen",
+        "embedding",
+    ]
     assert body["steps"][0]["ms"] == 7
     assert body["steps"][1]["model"] == "qwen3.5:4b"
-    assert body["steps"][2]["detail"] == "1024 dimensions."
+    assert body["steps"][4]["detail"] == "1024 dimensions."
     assert health_monitor.read_health_record()["status"] == "ok"
 
 

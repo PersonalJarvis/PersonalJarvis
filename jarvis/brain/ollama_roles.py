@@ -38,12 +38,16 @@ from jarvis.brain.ollama_inventory import OllamaModelInfo, OllamaServerError, sa
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "FITS",
     "ROLES",
     "WRITABLE_ROLE_IDS",
     "Machine",
     "RoleSpec",
     "RoleState",
+    "choices_for",
     "current_pick",
+    "download_picks",
+    "fit_for",
     "list_roles",
     "machine_from",
     "pick_installed",
@@ -81,6 +85,14 @@ class RoleSpec:
     #: where speed beats depth (a call must answer within a breath). ``None``
     #: = the largest model that fits wins.
     max_size_gb: float | None = None
+    #: The smallest native context window that can do the job; a model whose
+    #: manifest declares less is unfit, not merely slow. ``None`` = no floor.
+    min_context_tokens: int | None = None
+    #: Where the section shows the role: ``card`` (one of the peers the user
+    #: talks to), ``row`` (set here, not part of the conversation) or
+    #: ``footnote`` (follows another pick; read-only). The frontend iterates
+    #: what the backend sends, so a new role lands somewhere by construction.
+    layout: str = "card"
 
 
 ROLES: tuple[RoleSpec, ...] = (
@@ -96,13 +108,19 @@ ROLES: tuple[RoleSpec, ...] = (
         id="voice",
         label_key="local_models.role_voice",
         config_key="brain.providers.local-realtime.launch_command",
-        required=("completion",),
-        recommended=("tools",),
+        # The live model calls every Jarvis tool itself (ADR-0035), so a
+        # download without tool calls is a conversation without hands — a
+        # gate, not a preference. Ollama declares ``tools`` per manifest.
+        required=("completion", "tools"),
+        recommended=("thinking",),
         pull_role="chat",
         # A call is judged by its first word, not its best one: the pick stays
         # in the class that answers within a breath, the chat slot takes the
         # depth.
         max_size_gb=6.0,
+        # The voice brain runs a machine-sized window of 8k or more; a 4k
+        # model would truncate the call's own history.
+        min_context_tokens=8192,
     ),
     RoleSpec(
         id="tools_screen",
@@ -127,6 +145,7 @@ ROLES: tuple[RoleSpec, ...] = (
         required=("embedding",),
         recommended=(),
         pull_role="embedding",
+        layout="row",
     ),
     # Read-only consumers: the ack and polish models have their own pickers
     # on their own cards, so the rows only say which tag they follow.
@@ -139,6 +158,7 @@ ROLES: tuple[RoleSpec, ...] = (
         pull_role="chat",
         writable=False,
         advanced=True,
+        layout="footnote",
     ),
     RoleSpec(
         id="polish",
@@ -149,6 +169,7 @@ ROLES: tuple[RoleSpec, ...] = (
         pull_role="chat",
         writable=False,
         advanced=True,
+        layout="footnote",
     ),
 )
 
@@ -178,6 +199,36 @@ class RoleState:
     context_tokens: int | None = None
     #: ``"automatic"`` (sized from memory) | ``"manual"`` (set in Tune) | ``""``.
     context_source: str = ""
+    #: Every installed download judged for this job, inventory order:
+    #: ``(tag, fit, reason)`` with ``fit`` from :data:`FITS`.
+    choices: tuple[tuple[str, str, str], ...] = ()
+    #: The verdict on ``current`` itself: a fit from :data:`FITS`, ``absent``
+    #: when it is configured but not on the server, ``""`` when nothing is set.
+    current_fit: str = ""
+    current_reason: str = ""
+    #: Downloads from the shortlist that would do this job on this machine
+    #: and are not installed yet: ``(tag, label, size_gb, fit, note)``.
+    downloads: tuple[tuple[str, str, float, str, str], ...] = ()
+
+
+#: The verdicts :func:`fit_for` hands out, strongest first.
+#:
+#: ``fits`` — declares every required capability, sits inside the job's size
+#: class and context floor, and fits this machine; ``slow`` — can do the job
+#: but costs something the job feels (over the size class, or spilling past
+#: the graphics memory); ``unfit`` — lacks a required capability, declares a
+#: window under the floor, or cannot be held by this machine at all;
+#: ``unknown`` — ``/api/show`` did not answer, so nothing can be said.
+FITS: tuple[str, ...] = ("fits", "slow", "unfit", "unknown")
+
+_CAPABILITY_WORDS: dict[str, str] = {
+    "tools": "no tool calls",
+    "vision": "no vision",
+    "thinking": "no thinking",
+    "embedding": "not an embedding model",
+    "completion": "no text completion",
+    "audio": "no audio",
+}
 
 
 # ── Reading ──────────────────────────────────────────────────────────────
@@ -270,22 +321,6 @@ def _voice_pick(cfg: Any) -> tuple[str, str]:
     return _voice_context_models(model)[0], ""
 
 
-def qualifying_models(spec: RoleSpec, models: list[OllamaModelInfo]) -> tuple[str, ...]:
-    """Installed tags that declare every capability ``spec`` requires.
-
-    A row whose ``/api/show`` failed (``probed=False``) is left out: "unknown"
-    must not read as "qualifies", or a screen reader without vision gets
-    assigned and fails on the first screenshot.
-    """
-    out: list[str] = []
-    for info in models:
-        if not info.probed:
-            continue
-        if all(cap in info.capabilities for cap in spec.required):
-            out.append(info.name)
-    return tuple(out)
-
-
 @dataclass(frozen=True, slots=True)
 class Machine:
     """The memory an installed pick is judged against.
@@ -301,6 +336,79 @@ class Machine:
 
 def _size_gb(info: OllamaModelInfo) -> float:
     return info.size_bytes / _GIB
+
+
+def _context_label(tokens: int) -> str:
+    return f"{tokens // 1024}k" if tokens >= 1024 else str(tokens)
+
+
+def fit_for(
+    spec: RoleSpec, info: OllamaModelInfo, machine: Machine | None = None
+) -> tuple[str, str]:
+    """``(fit, reason)`` — the ONE verdict on ``info`` doing ``spec``'s job.
+
+    The card, the picker, the catalogue badge and the setup automation all
+    read this; nothing else re-derives it (BUG-188's over-correction came
+    from a second definition of "fits" in the client). The reason is one
+    short English clause the picker shows beside the name — "" when it fits.
+    """
+    machine = machine or Machine()
+    if not info.probed:
+        return "unknown", "Jarvis could not read what this model can do."
+    missing = [cap for cap in spec.required if cap not in info.capabilities]
+    if missing:
+        return "unfit", ", ".join(_CAPABILITY_WORDS.get(cap, f"no {cap}") for cap in missing)
+    floor = spec.min_context_tokens
+    if floor and info.context_length and info.context_length < floor:
+        return (
+            "unfit",
+            f"{_context_label(info.context_length)} context — this job needs "
+            f"{_context_label(floor)} or more",
+        )
+    size = _size_gb(info)
+    verdict, _note = ollama_pull.fit_verdict(size, machine.memory_gb, machine.accelerator_gb)
+    over_card = (
+        machine.accelerator_gb > 0 and size + ollama_pull._OVERHEAD_GB > machine.accelerator_gb
+    )
+    if verdict == "tight" and spec.max_size_gb is not None:
+        # A job that must answer within a breath cannot wait for the CPU.
+        if over_card:
+            return (
+                "unfit",
+                f"{size:.1f} GB — over the {machine.accelerator_gb:.0f} GB of graphics memory",
+            )
+        return "unfit", f"{size:.1f} GB — too tight on this machine's memory for a call"
+    if spec.max_size_gb is not None and size > spec.max_size_gb:
+        return "slow", f"{size:.1f} GB — over {spec.max_size_gb:g} GB, slower to answer"
+    if verdict == "tight":
+        if over_card:
+            return "slow", (
+                f"{size:.1f} GB — bigger than the {machine.accelerator_gb:.0f} GB of "
+                "graphics memory, runs partly on the processor"
+            )
+        return "slow", f"{size:.1f} GB — tight on this machine's memory"
+    return "fits", ""
+
+
+def choices_for(
+    spec: RoleSpec, models: list[OllamaModelInfo], machine: Machine | None = None
+) -> tuple[tuple[str, str, str], ...]:
+    """Every installed download with its verdict for ``spec``, inventory order."""
+    return tuple((info.name, *fit_for(spec, info, machine)) for info in models)
+
+
+def qualifying_models(
+    spec: RoleSpec, models: list[OllamaModelInfo], machine: Machine | None = None
+) -> tuple[str, ...]:
+    """Installed tags that can do ``spec``'s job (``fits`` or ``slow``).
+
+    A row whose ``/api/show`` failed (``probed=False``) is left out: "unknown"
+    must not read as "qualifies", or a screen reader without vision gets
+    assigned and fails on the first screenshot.
+    """
+    return tuple(
+        name for name, fit, _reason in choices_for(spec, models, machine) if fit in ("fits", "slow")
+    )
 
 
 def _has_preferred(spec: RoleSpec, info: OllamaModelInfo) -> bool:
@@ -327,11 +435,7 @@ def pick_installed(
     runs it. A role with ``max_size_gb`` prefers the class under that size.
     The reason is one English sentence the row shows beside the button.
     """
-    candidates = [
-        info
-        for info in models
-        if info.probed and all(c in info.capabilities for c in spec.required)
-    ]
+    candidates = [info for info in models if fit_for(spec, info, machine)[0] in ("fits", "slow")]
     if not candidates:
         return "", ""
     preferred = _preferred_clause(spec)
@@ -374,6 +478,29 @@ def pick_installed(
     )
 
 
+def _row_serves(spec: RoleSpec, row: dict[str, Any]) -> bool:
+    """Whether a shortlist row could do ``spec``'s job at all.
+
+    The shortlist knows two capabilities per entry (``tools``, ``vision``)
+    and its role; the size class is the same gate the installed picks get,
+    so the voice slot is never sent a 25 GB download for a 6 GB job.
+    """
+    role_ok = row.get("role") == spec.pull_role or ollama_pull._serves_vision(spec.pull_role, row)
+    if not role_ok:
+        return False
+    # Curated entries declare ``tools`` (default True in the shortlist) and
+    # ``vision``; a row without the key is a chat-class model that has them.
+    if "tools" in spec.required and not row.get("tools", True):
+        return False
+    if "vision" in spec.required and not row.get("vision", False):
+        return False
+    if spec.max_size_gb is not None:
+        size = float(row.get("size_gb") or 0)
+        if size > spec.max_size_gb:
+            return False
+    return row.get("fit") != "tight" or spec.max_size_gb is None
+
+
 def _recommended_for(spec: RoleSpec, rows: list[dict[str, Any]]) -> str:
     """The shortlist's pick for ``spec`` on this machine — the fallback when
     :func:`pick_installed` found nothing installed that qualifies.
@@ -381,20 +508,45 @@ def _recommended_for(spec: RoleSpec, rows: list[dict[str, Any]]) -> str:
     :func:`ollama_pull._pick_recommended` marks nothing for a role that has
     a curated model installed already — the user has chosen. Then the
     largest INSTALLED curated model of that role is named instead, so the
-    "Use recommended" button always has something honest to assign.
+    "Use recommended" button always has something honest to assign. Either
+    way the entry has to pass :func:`_row_serves` — the job's own gates.
     """
     for row in rows:
-        if spec.pull_role in (row.get("recommended_for") or []):
+        if spec.pull_role in (row.get("recommended_for") or []) and _row_serves(spec, row):
             return str(row["id"])
-    installed = [
-        row
-        for row in rows
-        if row.get("installed")
-        and (row.get("role") == spec.pull_role or ollama_pull._serves_vision(spec.pull_role, row))
-    ]
+    serving = [row for row in rows if _row_serves(spec, row)]
+    installed = [row for row in serving if row.get("installed")]
     if installed:
         return str(max(installed, key=lambda r: float(r.get("size_gb") or 0))["id"])
+    comfortable = [row for row in serving if row.get("fit") == "comfortable"]
+    if comfortable:
+        return str(max(comfortable, key=lambda r: float(r.get("size_gb") or 0))["id"])
     return ""
+
+
+def download_picks(
+    spec: RoleSpec, rows: list[dict[str, Any]], *, limit: int = 3
+) -> tuple[tuple[str, str, float, str, str], ...]:
+    """Shortlist entries that would do ``spec``'s job here and are not on disk.
+
+    What the picker offers under "download a pick": the curated, reviewed
+    entries (``ollama_pull.RECOMMENDED_MODELS``, dated by
+    ``CURATED_REVIEWED_ON``) that pass the job's gates, largest comfortable
+    first, then the tight ones — never more than ``limit``.
+    """
+    serving = [row for row in rows if _row_serves(spec, row) and not row.get("installed")]
+    order = {"comfortable": 0, "unknown": 1, "tight": 2}
+    serving.sort(key=lambda r: (order.get(str(r.get("fit")), 3), -float(r.get("size_gb") or 0)))
+    return tuple(
+        (
+            str(row["id"]),
+            str(row.get("label") or row["id"]),
+            float(row.get("size_gb") or 0),
+            str(row.get("fit") or "unknown"),
+            str(row.get("fit_note") or ""),
+        )
+        for row in serving[:limit]
+    )
 
 
 def machine_from(recommended: dict[str, Any] | None) -> Machine:
@@ -453,7 +605,8 @@ async def list_roles(
     states: list[RoleState] = []
     for spec in ROLES:
         current, note = current_pick(cfg, spec.id)
-        qualifying = qualifying_models(spec, models)
+        choices = choices_for(spec, models, machine)
+        qualifying = tuple(name for name, fit, _r in choices if fit in ("fits", "slow"))
         context_tokens: int | None = None
         context_source = ""
         if spec.id == "voice" and current and error is None:
@@ -463,17 +616,31 @@ async def list_roles(
             recommended_tag = _recommended_for(spec, shortlist)
             if recommended_tag:
                 reason = "Nothing installed fits this job yet; this download is the pick."
+        installed = bool(current) and any(same_model(m.name, current) for m in models)
+        current_fit, current_reason = "", ""
+        if current:
+            verdict = next((c for c in choices if same_model(c[0], current)), None)
+            if verdict is not None:
+                current_fit, current_reason = verdict[1], verdict[2]
+            elif error is not None:
+                current_fit, current_reason = "unknown", "The server did not answer."
+            else:
+                current_fit, current_reason = "absent", "Not downloaded."
         states.append(
             RoleState(
                 spec=spec,
                 current=current,
-                installed=bool(current) and any(same_model(m.name, current) for m in models),
+                installed=installed,
                 qualifying=qualifying,
                 recommended=recommended_tag,
                 recommended_reason=reason,
                 note=note,
                 context_tokens=context_tokens,
                 context_source=context_source,
+                choices=choices,
+                current_fit=current_fit,
+                current_reason=current_reason,
+                downloads=download_picks(spec, shortlist) if spec.writable else (),
             )
         )
     return states, error
@@ -552,8 +719,20 @@ def set_role(role_id: str, model: str, *, cfg: Any = None) -> dict[str, Any]:
                 "answers with the Chat model."
             )
         # The same writer the voice card uses: rewrites ONLY the model flag of
-        # the persisted command, never a bring-your-own command.
-        config_writer.update_local_realtime_launch_model(tag)
+        # the persisted command, never a bring-your-own command. It answers
+        # False when nothing reached jarvis.toml — a missing block, a command
+        # without the flag, or the same value — and only the last of those
+        # is a no-op the caller may call a success (BUG class: a pick that
+        # reads back from memory while the file still holds the old one).
+        current_tag, _note = _voice_pick(cfg)
+        written = config_writer.update_local_realtime_launch_model(tag)
+        if not written and not same_model(current_tag, tag):
+            raise ValueError(
+                "The voice server's launch command in jarvis.toml could not be "
+                "updated — it names no --model_name, or the local-realtime block "
+                "is missing. Reinstall the managed voice server from the Voice "
+                "settings, then pick again."
+            )
         if voice is not None:
             from jarvis.realtime.local_server.supervisor import _replace_brain_model
 
@@ -587,11 +766,16 @@ def set_role(role_id: str, model: str, *, cfg: Any = None) -> dict[str, Any]:
     }
 
 
-def roles_using(cfg: Any, name: str) -> list[str]:
-    """Writable role ids whose configured pick is ``name`` (``:latest`` tolerant)."""
+def roles_using(cfg: Any, name: str, *, include_readonly: bool = False) -> list[str]:
+    """Role ids whose configured pick is ``name`` (``:latest`` tolerant).
+
+    Writable roles by default; ``include_readonly`` adds the consumers that
+    pin their own tag elsewhere (the quick ack, dictation polish), so a
+    delete can refuse to pull the model out from under them.
+    """
     out: list[str] = []
     for spec in ROLES:
-        if not spec.writable:
+        if not spec.writable and not include_readonly:
             continue
         current, _note = current_pick(cfg, spec.id)
         if current and same_model(current, name):

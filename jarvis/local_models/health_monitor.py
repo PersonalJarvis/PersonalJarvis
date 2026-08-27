@@ -247,6 +247,10 @@ async def check_once(
 # ── the on-demand proof ───────────────────────────────────────────────────
 
 EmbedFn = Callable[[str, str], Awaitable[int]]
+#: ``(root, model) -> detail`` for the two capability probes below; a probe
+#: raises when the model cannot do the job, and returns one sentence when it
+#: can (what it answered, briefly).
+CapabilityFn = Callable[[str, str], Awaitable[str]]
 
 
 async def _default_embed(root: str, model: str) -> int:
@@ -255,10 +259,133 @@ async def _default_embed(root: str, model: str) -> int:
     return await embed_probe(root, model)
 
 
+#: A 1×1 white PNG — the smallest image a vision model can be asked about.
+_PROBE_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
+)
+
+_PROBE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "ping",
+        "description": "Answer the check. Call this tool with the word you were given.",
+        "parameters": {
+            "type": "object",
+            "properties": {"word": {"type": "string"}},
+            "required": ["word"],
+        },
+    },
+}
+
+
+async def _chat_probe(root: str, body: dict[str, Any]) -> dict[str, Any]:
+    """One ``/api/chat`` round trip; raises with Ollama's own sentence on refusal."""
+    from jarvis.brain import ollama_inventory
+    from jarvis.plugins.brain.ollama import normalize_server_root
+
+    root = normalize_server_root(root)
+    # The inventory's client factory, so tests drive this through the same
+    # fake server the sweep uses instead of the network.
+    async with ollama_inventory._make_client() as client:
+        resp = await client.post(
+            f"{root}/api/chat", json={**body, "stream": False}, timeout=GENERATION_CAP_S
+        )
+    if resp.status_code >= 400:
+        try:
+            detail = str(resp.json().get("error") or "")
+        except ValueError:
+            detail = ""
+        raise RuntimeError(detail or f"Ollama answered {resp.status_code}.")
+    payload = resp.json()
+    return payload if isinstance(payload, dict) else {}
+
+
+async def _default_tool_call(root: str, model: str) -> str:
+    """Prove ``model`` can call a tool: one request with one tool, and the
+    answer must carry a tool call — that is what a voice turn relies on."""
+    payload = await _chat_probe(
+        root,
+        {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Call the ping tool with the word 'jarvis'. Do not answer in text.",
+                }
+            ],
+            "tools": [_PROBE_TOOL],
+            "options": {"num_predict": 64, "temperature": 0},
+            "keep_alive": "5m",
+        },
+    )
+    message = payload.get("message") or {}
+    calls = message.get("tool_calls") if isinstance(message, dict) else None
+    if not calls:
+        raise RuntimeError("Answered in text instead of calling the tool.")
+    return "Called the tool."
+
+
+async def _default_vision(root: str, model: str) -> str:
+    """Prove ``model`` can look at a picture: one request with one image."""
+    payload = await _chat_probe(
+        root,
+        {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "One word: what colour is this image?",
+                    "images": [_PROBE_PNG_B64],
+                }
+            ],
+            "options": {"num_predict": 16, "temperature": 0},
+            "keep_alive": "5m",
+        },
+    )
+    message = payload.get("message") or {}
+    text = str(message.get("content") or "").strip() if isinstance(message, dict) else ""
+    if not text:
+        raise RuntimeError("The server answered without any text.")
+    return f"Saw the image: {text[:40]}"
+
+
 def _step(
     step_id: str, ok: bool | None, *, model: str = "", detail: str = "", ms: int = 0
 ) -> dict[str, Any]:
     return {"id": step_id, "ok": ok, "model": model, "detail": detail, "ms": ms}
+
+
+async def _capability_step(
+    step_id: str, model: str, root: str, probe: CapabilityFn, *, missing: str
+) -> dict[str, Any]:
+    """One timed capability probe as a verify step; ``None`` when unconfigured."""
+    import time
+
+    if not model:
+        return _step(step_id, None, detail=missing)
+    started = time.monotonic()
+    try:
+        detail = await asyncio.wait_for(probe(root, model), timeout=GENERATION_CAP_S)
+    except TimeoutError:
+        return _step(
+            step_id,
+            False,
+            model=model,
+            detail=f"No answer within {GENERATION_CAP_S:.0f} s.",
+            ms=int(GENERATION_CAP_S * 1000),
+        )
+    except Exception as exc:  # noqa: BLE001 — the step says so, the log keeps it
+        log.info("verify: %s probe on %s failed", step_id, model, exc_info=True)
+        return _step(
+            step_id,
+            False,
+            model=model,
+            detail=str(exc) or type(exc).__name__,
+            ms=int((time.monotonic() - started) * 1000),
+        )
+    return _step(
+        step_id, True, model=model, detail=detail, ms=int((time.monotonic() - started) * 1000)
+    )
 
 
 async def verify_setup(
@@ -268,24 +395,30 @@ async def verify_setup(
     probe: ProbeFn | None = None,
     generate: GenerateFn | None = None,
     embed: EmbedFn | None = None,
+    tool_call: CapabilityFn | None = None,
+    vision: CapabilityFn | None = None,
     persist: bool = True,
 ) -> dict[str, Any]:
     """Prove the setup works, step by step, and write the health record.
 
     :func:`check_once` is the quiet schedule; this is the answer to a click
-    ("Set up everything", "Run a check"). Three steps, each with how long it
+    ("Set up everything", "Run a check"). Five steps, each with how long it
     took: the server answers, the chat pick produces one real answer, the
-    embedding pick produces one real vector. A step whose role is not
-    configured is reported as not run (``ok: None``) rather than as a pass,
-    so "it is set up" is a sentence that was tested, not assumed. Returns
-    ``{"ok", "status", "reason", "steps"}``; ``status`` uses the badge's
-    vocabulary (``ok`` / ``needs_setup`` / ``error``).
+    voice pick calls one tool (what a call turn relies on), the tools &
+    screen pick reads one image, the embedding pick produces one real
+    vector. A step whose role is not configured is reported as not run
+    (``ok: None``) rather than as a pass, so "it is set up" is a sentence
+    that was tested, not assumed. Returns ``{"ok", "status", "reason",
+    "steps"}``; ``status`` uses the badge's vocabulary (``ok`` /
+    ``needs_setup`` / ``error``).
     """
     import time
 
     root = root or _server_root(cfg)
     roles = _configured_roles(cfg)
     steps: list[dict[str, Any]] = []
+    voice_model = roles.get("voice") or ""
+    screen_model = roles.get("tools_screen") or ""
 
     server = await (probe or _default_probe)(root)
     server_ok = bool(server.get("ok"))
@@ -305,6 +438,8 @@ async def verify_setup(
     not_run = "Not tested — the server did not answer."
     if not server_ok:
         steps.append(_step("chat", None, model=chat_model, detail=not_run))
+        steps.append(_step("voice", None, model=voice_model, detail=not_run))
+        steps.append(_step("tools_screen", None, model=screen_model, detail=not_run))
         steps.append(_step("embedding", None, model=embed_model, detail=not_run))
     else:
         if chat_model:
@@ -336,6 +471,24 @@ async def verify_setup(
                 )
         else:
             steps.append(_step("chat", None, detail="No chat role is configured."))
+        steps.append(
+            await _capability_step(
+                "voice",
+                voice_model,
+                root,
+                tool_call or _default_tool_call,
+                missing="No voice role is configured.",
+            )
+        )
+        steps.append(
+            await _capability_step(
+                "tools_screen",
+                screen_model,
+                root,
+                vision or _default_vision,
+                missing="No tools & screen role is configured.",
+            )
+        )
         if embed_model:
             started = time.monotonic()
             try:

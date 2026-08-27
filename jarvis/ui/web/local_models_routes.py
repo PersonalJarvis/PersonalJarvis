@@ -60,6 +60,16 @@ router = APIRouter(prefix="/api/providers/{provider_id}/local-models", tags=["lo
 
 class LocalModelRow(BaseModel):
     name: str
+    #: Readable parts from ``jarvis.brain.ollama_names.describe``: the model
+    #: line ("Qwen 3.5"), the line with its size ("Qwen 3.5 4B"), the size
+    #: ("4B"), the quantisation ("Q4_K_M"), the source namespace for imports
+    #: ("hf.co/unsloth") and the tag's variant markers ("it-qat").
+    display_name: str = ""
+    display_label: str = ""
+    params_label: str = ""
+    quant_label: str = ""
+    source: str = ""
+    variant: str = ""
     size_bytes: int
     digest: str
     modified_at: str
@@ -73,9 +83,14 @@ class LocalModelRow(BaseModel):
     #: Role ids (``chat`` / ``tools_screen`` / ``deep`` / ``embedding``) whose
     #: configured pick is this download.
     used_by: list[str] = Field(default_factory=list)
-    #: Present when ``/api/ps`` lists it.
+    #: Present when ``/api/ps`` lists it — the download itself or one of its
+    #: aliases (``loaded_as`` names which; a Tune profile or the voice
+    #: brain's context alias holds the same weights).
     loaded: bool = False
+    loaded_as: str = ""
     size_vram_bytes: int = 0
+    #: What ``/api/ps`` reports as the loaded size (weights + context).
+    loaded_size_bytes: int = 0
     expires_at: str = ""
     running_context_length: int | None = None
 
@@ -92,6 +107,10 @@ class RunningModelRow(BaseModel):
     expires_at: str
     context_length: int | None
     digest: str = ""
+    #: The download this entry's weights belong to (an alias folded back).
+    base_tag: str = ""
+    #: ``model`` | ``tune_profile`` | ``voice_profile``.
+    kind: str = "model"
 
 
 class InventoryResponse(BaseModel):
@@ -153,6 +172,21 @@ def _roles_using(cfg: Any, name: str) -> list[str]:
     from jarvis.brain.ollama_roles import roles_using
 
     return roles_using(cfg, name)
+
+
+def _readonly_roles_using(cfg: Any, name: str) -> list[str]:
+    """The read-only consumers (quick ack, dictation polish) pinned to ``name``.
+
+    They cannot be reassigned from here — their pick lives on their own
+    card — so a delete does not refuse for them, but it says so, because
+    the model vanishing under them is otherwise a silent breakage.
+    """
+    if cfg is None:
+        return []
+    from jarvis.brain.ollama_roles import roles_using
+
+    writable = set(roles_using(cfg, name))
+    return [r for r in roles_using(cfg, name, include_readonly=True) if r not in writable]
 
 
 async def _running_by_name(root: str) -> dict[str, OllamaRunningModel]:
@@ -295,6 +329,12 @@ async def delete_inventory_model(
     message = f"{name} was deleted from the server."
     if reassigned:
         message += f" {', '.join(reassigned)} now use {target}."
+    readonly = _readonly_roles_using(cfg, name)
+    if readonly:
+        from jarvis.brain.ollama_roles import role_spec
+
+        where = ", ".join(f"{r} ({role_spec(r).config_key})" for r in readonly)
+        message += f" Still named by {where} — change that on its own card."
     return DeleteResponse(
         ok=True,
         model=name,
@@ -331,18 +371,49 @@ def _reassign_roles(cfg: Any, roles: list[str], target: str) -> list[str]:
 # ═════════════════════════════════════════════════════════════════════════
 
 
+class RoleChoice(BaseModel):
+    """One installed download judged for one job — the picker's row."""
+
+    tag: str
+    #: ``fits`` | ``slow`` | ``unfit`` | ``unknown`` (``ollama_roles.FITS``).
+    fit: str
+    #: Short clause saying why, ``""`` when it fits.
+    reason: str = ""
+
+
+class RoleDownload(BaseModel):
+    """A shortlist entry that would do the job here and is not on disk."""
+
+    tag: str
+    label: str
+    size_gb: float
+    #: ``comfortable`` | ``tight`` | ``unknown`` — the shortlist's own verdict.
+    fit: str
+    note: str = ""
+
+
 class RoleRow(BaseModel):
     id: str
     label_key: str
     config_key: str
+    #: ``card`` | ``row`` | ``footnote`` — where the section shows it.
+    layout: str = "card"
     #: Configured tag; ``""`` = the plugin discovers one.
     current: str
     #: ``current`` is on the server right now.
     installed: bool
+    #: The verdict on ``current``: a fit from ``ollama_roles.FITS``, ``absent``
+    #: when configured but not on the server, ``""`` when nothing is set.
+    current_fit: str = ""
+    current_reason: str = ""
     required: list[str]
     recommended_capabilities: list[str]
-    #: Installed tags declaring every required capability.
+    #: Installed tags that can do the job (``fits`` or ``slow``).
     qualifying: list[str]
+    #: Every installed download with its verdict, inventory order.
+    choices: list[RoleChoice] = Field(default_factory=list)
+    #: Shortlist downloads that would do the job on this machine.
+    downloads: list[RoleDownload] = Field(default_factory=list)
     #: The pick for this machine — the best qualifying INSTALLED download,
     #: or the shortlist's download when nothing installed qualifies (``""``
     #: when neither has one).
@@ -360,12 +431,38 @@ class RoleRow(BaseModel):
     #: The size class the job prefers, in GB (the voice brain stays under 6
     #: so a call answers within a breath); ``None`` when the job has none.
     max_size_gb: float | None = None
+    #: The smallest native context that can do the job; ``None`` = no floor.
+    min_context_tokens: int | None = None
+
+
+class ResidentItem(BaseModel):
+    """One distinct download across the roles, with what it costs loaded."""
+
+    tag: str
+    display_label: str = ""
+    roles: list[str]
+    weights_gb: float
+    context_gb: float
+    context_tokens: int | None = None
+    loaded: bool = False
+
+
+class ResidentPayload(BaseModel):
+    """What graphics memory holds when every job is loaded at once."""
+
+    items: list[ResidentItem] = Field(default_factory=list)
+    #: Kept free beside the voice brain for local speech in/out.
+    reserve_gb: float = 0.0
+    total_gb: float = 0.0
+    accelerator_gb: float = 0.0
+    over: bool = False
 
 
 class RolesResponse(BaseModel):
     provider: str
     server: str
     roles: list[RoleRow]
+    resident: ResidentPayload = Field(default_factory=ResidentPayload)
     error: str | None = None
 
 
@@ -876,7 +973,7 @@ async def put_autostart(
 
 
 class VerifyStep(BaseModel):
-    #: ``server`` | ``chat`` | ``embedding``.
+    #: ``server`` | ``chat`` | ``voice`` | ``tools_screen`` | ``embedding``.
     id: str
     #: ``None`` = not run (the role is not configured, or the server is down).
     ok: bool | None
