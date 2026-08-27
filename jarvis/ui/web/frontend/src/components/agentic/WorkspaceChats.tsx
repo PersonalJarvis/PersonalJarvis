@@ -1,35 +1,36 @@
-import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, Folder, MessageSquare, Plus, Terminal, Trash2 } from "lucide-react";
+import { useRef, useState } from "react";
+import { ChevronLeft, Folder, FolderPlus, Plus } from "lucide-react";
 
-import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
-import { useAgentSessionStore } from "@/store/agentChat";
-import { useIdeChatStore } from "@/store/ideChat";
+import {
+  AgentPickerMenu,
+  offersAgentChoice,
+  type SplitAgentChoice,
+} from "@/components/agentic/AgentPicker";
+import { AgentMark } from "@/components/agentic/AgentMark";
+import { folderColor } from "@/components/agentic/folderColor";
+import { useIdeChatStore, type IdeWorkspaceRow } from "@/store/ideChat";
 import { useWorkspacePanes } from "@/store/workspacePanes";
 import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { folderLeaf } from "@/lib/folderPath";
-import { folderColor } from "@/components/agentic/folderColor";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
-
-/** Chats shown per folder before "Show more" — enough to recognise the folder. */
-const FOLDED = 5;
+import { fill, useT } from "@/i18n";
 
 /**
- * The sidebar, wearing the Agentic IDE's chat face.
+ * The sidebar, wearing the Agentic IDE's chat face — the ONE list of sessions.
  *
- * While the IDE is in chat mode the app's own navigation steps aside and this
- * column takes over: the conversations you are having, grouped by the FOLDER
- * they are running in. That grouping is the whole point — with several
- * workspaces open, a flat list of eleven chats says nothing about which
- * repository any of them is touching. The folder you have open leads, under
- * its own band; everything else follows underneath.
+ * Every open workspace is a band, in the workspace bar's order and numbered
+ * the same way: "Workspace 1", then its folder, then the coding sessions
+ * running in it (the grid's panes), then a row to open another. The tab at
+ * the front says so. That is the maintainer's sketch (2026-08-26): the folder
+ * first, every workspace, the active one marked — and it replaced the second
+ * list the grid used to draw beside the stage, which said the same things
+ * twice in two orders.
  *
- * Above the chats: the coding sessions RUNNING in the open workspace — the
- * panes of the terminal grid. Switching from grid to chat used to leave them
- * behind, because this column knew only about chat sessions and the grid knew
- * only about panes, so the same workspace looked like two unrelated places
- * depending on which view was on (maintainer, 2026-08-25). They are one list
- * now: click a session here and the view brings that pane to the front.
+ * A session row brings that pane to the front through the store
+ * (`requestPane`): the view switches workspace when the row belongs to
+ * another tab, and the stage shows the pane. The folder row brings the whole
+ * workspace to the front. Opening a terminal asks WHICH CLI first when the
+ * machine offers more than one, exactly like the grid's own split menus.
  *
  * The way back is the first thing in the column, not a hidden gesture: a
  * sidebar that swallows the navigation with no visible exit is a trap, so the
@@ -37,60 +38,21 @@ const FOLDED = 5;
  */
 export function WorkspaceChats() {
   const t = useT();
-  const workspace = useIdeChatStore((s) => s.workspace);
+  const workspaces = useIdeChatStore((s) => s.workspaces);
+  const agents = useIdeChatStore((s) => s.agents);
   const setSidebarFace = useIdeChatStore((s) => s.setSidebarFace);
-
   const requestPane = useIdeChatStore((s) => s.requestPane);
+  const requestTerminal = useIdeChatStore((s) => s.requestTerminal);
+  const requestWorkspace = useIdeChatStore((s) => s.requestWorkspace);
+  const requestSession = useIdeChatStore((s) => s.requestSession);
+  const requestAddWorkspace = useIdeChatStore((s) => s.requestAddWorkspace);
   const stagedPane = useIdeChatStore((s) => s.stagedPane);
   // Shares one poll with every other reader of the list (see the store).
   const panes = useWorkspacePanes();
 
-  const sessions = useAgentSessionStore((s) => s.sessions);
-  const activeSessionId = useAgentSessionStore((s) => s.activeSessionId);
-  const loadSessions = useAgentSessionStore((s) => s.loadSessions);
-  const openSession = useAgentSessionStore((s) => s.openSession);
-  const removeSession = useAgentSessionStore((s) => s.removeSession);
-  const newChat = useAgentSessionStore((s) => s.newChat);
-  const setDraft = useAgentSessionStore((s) => s.setDraft);
-
-  useEffect(() => {
-    void loadSessions();
-    const id = window.setInterval(() => void loadSessions(), CONVERSATIONS_REFRESH_MS);
-    return () => window.clearInterval(id);
-  }, [loadSessions]);
-
-  const groups = useMemo(
-    () => groupByFolder(sessions, workspace?.path ?? ""),
-    [sessions, workspace?.path],
-  );
-  // The open workspace's folder always sorts first (see `groupByFolder`), so
-  // the leading group is "this workspace" — unless nothing is open, in which
-  // case every group is just another folder.
-  /*
-   * The sessions of the workspace that is open, in the grid's own order.
-   *
-   * Only this workspace's: the other tabs have their own panes, and a column
-   * that mixed all of them would say nothing about where any of them runs.
-   */
-  const sessionsHere = useMemo(
-    () => (workspace ? panes.filter((pane) => pane.workspace_id === workspace.id) : []),
-    [panes, workspace],
-  );
-
-  const openFolder = workspace?.path ?? "";
-  const leads = openFolder !== "" && groups[0]?.folder === openFolder;
-  const here = leads ? groups[0] : null;
-  const elsewhere = leads ? groups.slice(1) : groups;
-
-  /** A fresh chat in `folder` — the folder is the pick, the chat is empty. */
-  const startChat = (folder: string) => {
-    newChat();
-    void setDraft({ cwd: folder });
-  };
-
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="workspace-chats">
-      <div className="shrink-0 space-y-1 px-2 pb-2 pt-2">
+      <div className="shrink-0 px-2 pb-2 pt-2">
         <button
           type="button"
           data-testid="workspace-chats-back"
@@ -100,179 +62,234 @@ export function WorkspaceChats() {
           <ChevronLeft aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />
           {t("ide_chats.back_to_sections")}
         </button>
-        <button
-          type="button"
-          data-testid="workspace-chats-new"
-          onClick={() => startChat(workspace?.path ?? "")}
-          className="flex w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        >
-          <span className="flex h-4 w-4 items-center justify-center rounded bg-primary text-primary-foreground">
-            <Plus aria-hidden className="h-3 w-3" />
-          </span>
-          {t("sidebar.new_chat")}
-        </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-1 pb-3">
-        {workspace && (
-          <section data-testid="workspace-chats-sessions">
-            <Band>{t("ide_chats.running_sessions")}</Band>
-            {sessionsHere.length === 0 ? (
-              <p className="px-3 py-1 text-[11px] text-muted-foreground/50">
-                {t("ide_chats.no_sessions_here")}
-              </p>
-            ) : (
-              <ul className="space-y-px">
-                {sessionsHere.map((pane) => (
-                  <SessionRow
-                    key={pane.history_id}
-                    pane={pane}
-                    active={pane.name === stagedPane}
-                    onOpen={() => requestPane(pane.workspace_id, pane.name)}
-                  />
-                ))}
-              </ul>
-            )}
-          </section>
-        )}
-        {here && (
-          <>
-            <Band>{t("ide_chats.this_workspace")}</Band>
-            <FolderGroup
-              group={here}
-              activeSessionId={activeSessionId}
-              onOpen={openSession}
-              onDelete={(id) => void removeSession(id)}
-              onNewChat={() => startChat(here.folder)}
-            />
-          </>
-        )}
-        {elsewhere.length > 0 && (
-          <>
-            <Band>{t("ide_chats.other_folders")}</Band>
-            {elsewhere.map((group) => (
-              <FolderGroup
-                key={group.folder || "~"}
-                group={group}
-                activeSessionId={activeSessionId}
-                onOpen={openSession}
-                onDelete={(id) => void removeSession(id)}
-                onNewChat={() => startChat(group.folder)}
-              />
-            ))}
-          </>
-        )}
-        {groups.length === 0 && (
+        {workspaces.length === 0 ? (
           <p className="px-3 py-2 text-[11px] text-muted-foreground/70">
-            {t("sidebar.no_chats")}
+            {t("ide_chats.no_workspaces")}
           </p>
+        ) : (
+          workspaces.map((workspace, index) => (
+            <WorkspaceBand
+              key={workspace.id}
+              index={index + 1}
+              workspace={workspace}
+              panes={panes.filter((pane) => pane.workspace_id === workspace.id)}
+              stagedPane={workspace.active ? stagedPane : null}
+              agents={agents}
+              onOpenPane={(pane) => requestPane(workspace.id, pane)}
+              onOpenWorkspace={() => requestWorkspace(workspace.id)}
+              onNewTerminal={(agent) => requestTerminal(workspace.id, agent)}
+            />
+          ))
         )}
+        {/* One more project.
+            First of the two closing rows and in reading ink rather than muted,
+            because opening a second folder is the ordinary next thing to want
+            from a list of workspaces. Until now this list could not say it at
+            all: the "+" that opens a workspace lives in the workspace bar,
+            which is the surface chat mode replaces, so from inside chat there
+            was no way to start one (maintainer report 2026-08-27). It opens
+            the same launcher the bar's "+" does — folder, pane count and
+            agents chosen exactly as they are from the grid, rather than a
+            second, thinner way of doing it that would drift from the first. */}
+        <button
+          type="button"
+          onClick={requestAddWorkspace}
+          data-testid="workspace-chats-new-workspace"
+          className="mt-3 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs font-medium text-foreground transition-colors hover:bg-background/60"
+        >
+          <FolderPlus aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          {t("ide_chats.new_workspace")}
+        </button>
+        {/* A workspace with no project folder — the scratch session the grid's
+            rail used to offer. Last, quiet: a fresh folder is the usual ask. */}
+        <button
+          type="button"
+          onClick={requestSession}
+          data-testid="workspace-chats-new-session"
+          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+        >
+          <Plus aria-hidden className="h-3.5 w-3.5 shrink-0" />
+          {t("ide_chats.new_session")}
+        </button>
       </div>
     </div>
   );
 }
 
-/** A quiet section heading — scanned past rather than read. */
-function Band({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="px-3 pb-1 pt-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-      {children}
-    </div>
-  );
-}
-
-function FolderGroup({
-  group,
-  activeSessionId,
-  onOpen,
-  onDelete,
-  onNewChat,
+/**
+ * One workspace: its number and state, its folder, its sessions, its "+".
+ *
+ * The folder is drawn under the band rather than in it because that is how
+ * the maintainer reads the list — "Workspace 2, then the folder Personal
+ * Jarvis" — and because two workspaces can be open on the SAME folder, so
+ * the folder alone would not tell them apart.
+ */
+function WorkspaceBand({
+  index,
+  workspace,
+  panes,
+  stagedPane,
+  agents,
+  onOpenPane,
+  onOpenWorkspace,
+  onNewTerminal,
 }: {
-  group: FolderGroupData;
-  activeSessionId: string | null;
-  onOpen: (sessionId: string) => void;
-  onDelete: (sessionId: string) => void;
-  onNewChat: () => void;
+  index: number;
+  workspace: IdeWorkspaceRow;
+  panes: WorkspacePaneRow[];
+  stagedPane: string | null;
+  agents: SplitAgentChoice[];
+  onOpenPane: (pane: string) => void;
+  onOpenWorkspace: () => void;
+  onNewTerminal: (agent?: string) => void;
 }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
-  const shown = open ? group.chats : group.chats.slice(0, FOLDED);
-  const hidden = group.chats.length - shown.length;
+  const [picking, setPicking] = useState(false);
+  /*
+   * The "+" the menu hangs off.
+   *
+   * Handing the picker an anchor is what detaches it into a portal, and this
+   * surface needs that for two separate reasons. The list scrolls
+   * (`overflow-y-auto`), so a menu drawn inside it is CLIPPED at the column's
+   * edge — a workspace near the bottom would show a sliver of the first entry
+   * and nothing else. And a menu placed inside its caller has to be given a
+   * z-index by that caller, which is exactly how this menu became unclickable:
+   * the class said `z-30`, tailwind-merge replaced the picker's own `z-50`
+   * with it, and the picker's full-window dismiss layer (`z-40`) ended up ON
+   * TOP of the list. Every click on a CLI hit that layer instead — the menu
+   * closed and no terminal opened (maintainer report 2026-08-27). Detached,
+   * the picker owns its own stacking and there is no number here to get wrong.
+   */
+  const plusRef = useRef<HTMLButtonElement | null>(null);
+  const label = workspace.name || folderLeaf(workspace.folder) || t("ide_chats.no_folder");
+  const openTerminal = () => {
+    if (offersAgentChoice(agents)) setPicking((current) => !current);
+    else onNewTerminal();
+  };
 
   return (
-    <section data-testid="workspace-chats-folder" data-folder={group.folder}>
-      <div className="group/folder flex items-center gap-1.5 rounded-md px-2 py-1.5">
-        <Folder
+    <section
+      data-testid="workspace-chats-band"
+      data-workspace={workspace.id}
+      data-active={workspace.active ? "true" : "false"}
+      className="mb-1"
+    >
+      <div className="flex items-center gap-2 px-3 pb-1 pt-3">
+        <span
           aria-hidden
-          className="h-3.5 w-3.5 shrink-0"
-          style={{ color: folderColor(group.folder || group.label) }}
+          className={cn(
+            "h-1.5 w-1.5 shrink-0 rounded-full",
+            workspace.active ? "bg-primary" : "bg-muted-foreground/30",
+          )}
         />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium" title={group.folder}>
-          {group.label}
+        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+          {fill(t("ide_chats.workspace_band"), { n: index })}
         </span>
+        {workspace.active && (
+          <span
+            data-testid="workspace-chats-active"
+            className="rounded bg-primary/15 px-1.5 py-px text-[10px] font-medium text-primary"
+          >
+            {t("ide_chats.active")}
+          </span>
+        )}
+      </div>
+
+      <div className="group/folder relative">
         <button
           type="button"
-          onClick={onNewChat}
-          title={t("ide_chats.new_chat_here")}
-          aria-label={t("ide_chats.new_chat_here")}
-          data-testid={`workspace-chats-new-in-${group.folder || "~"}`}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground focus-visible:opacity-100 group-hover/folder:opacity-100"
+          onClick={onOpenWorkspace}
+          title={workspace.folder || t("ide_chats.no_folder")}
+          data-testid="workspace-chats-folder"
+          className={cn(
+            "flex w-full items-center gap-1.5 rounded-md py-1.5 pl-2 pr-8 text-left transition-colors",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            workspace.active ? "text-foreground" : "hover:bg-background/60",
+          )}
+        >
+          <Folder
+            aria-hidden
+            className="h-3.5 w-3.5 shrink-0"
+            style={{ color: folderColor(workspace.folder || workspace.name) }}
+          />
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">{label}</span>
+        </button>
+        <button
+          type="button"
+          onClick={openTerminal}
+          title={t("ide_chats.new_terminal")}
+          aria-label={t("ide_chats.new_terminal")}
+          aria-expanded={picking}
+          data-testid={`workspace-chats-new-terminal-${workspace.id}`}
+          ref={plusRef}
+          className={cn(
+            "absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-background/60 hover:text-foreground focus-visible:opacity-100 group-hover/folder:opacity-100",
+            // Stays lit while its own menu is open: the pointer leaves the row
+            // to reach the list, and a button that faded out under it would
+            // leave the menu hanging off nothing.
+            picking ? "text-foreground opacity-100" : "opacity-0",
+          )}
         >
           <Plus className="h-3 w-3" />
         </button>
+        {picking && (
+          <AgentPickerMenu
+            title={t("ide_chats.pick_cli_title")}
+            ariaLabel={t("ide_chats.pick_cli_aria")}
+            agents={agents}
+            testId={`workspace-chats-agent-menu-${workspace.id}`}
+            itemTestId={(agent) => `workspace-chats-new-${workspace.id}-${agent}`}
+            anchorTo={plusRef.current}
+            onDismiss={() => setPicking(false)}
+            onPick={(agent) => {
+              setPicking(false);
+              onNewTerminal(agent);
+            }}
+          />
+        )}
       </div>
 
-      <ul className="space-y-px">
-        {shown.map((chat) => (
-          <ChatRow
-            key={chat.session_id}
-            id={chat.session_id}
-            title={chat.title || chat.preview}
-            active={chat.session_id === activeSessionId}
-            onOpen={() => onOpen(chat.session_id)}
-            onDelete={() => onDelete(chat.session_id)}
-          />
-        ))}
-      </ul>
-
-      {group.chats.length === 0 && (
-        <p className="pl-8 pr-2 text-[11px] text-muted-foreground/50">
-          {t("ide_chats.no_chats_here")}
-        </p>
-      )}
-      {(hidden > 0 || open) && (
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className="ml-8 rounded px-2 py-0.5 text-[11px] text-muted-foreground/70 transition-colors hover:text-foreground"
-        >
-          {open ? t("sidebar.show_less") : t("ide_chats.show_more")}
-        </button>
+      {panes.length === 0 ? (
+        <p className="pl-8 pr-2 text-[11px] text-muted-foreground/50">{t("ide_chats.no_sessions")}</p>
+      ) : (
+        <ul className="space-y-px">
+          {panes.map((pane) => (
+            <SessionRow
+              key={pane.history_id}
+              pane={pane}
+              active={pane.name === stagedPane}
+              logoUrl={agents.find((agent) => agent.name === pane.agent)?.logoUrl}
+              onOpen={() => onOpenPane(pane.name)}
+            />
+          ))}
+        </ul>
       )}
     </section>
   );
 }
 
 /**
- * One coding session of the open workspace.
+ * One coding session of a workspace.
  *
- * Reads like the chat row below it on purpose — same height, same indent, same
- * active treatment — because from where the user sits these are the same kind
- * of thing: a conversation with an agent. What differs is the mark (a terminal,
- * not a speech bubble) and the dot, which carries the state the grid's badge
- * shows: running, waiting to start, or finished.
+ * Same height and indent as a chat row anywhere else in the app, because from
+ * where the user sits these are the same kind of thing: a conversation with
+ * an agent. The mark is a terminal, and the dot carries the state the grid's
+ * badge shows: running, waiting to start, or finished.
  */
 function SessionRow({
   pane,
   active,
+  logoUrl,
   onOpen,
 }: {
   pane: WorkspacePaneRow;
   active: boolean;
+  logoUrl?: string;
   onOpen: () => void;
 }) {
-  const t = useT();
   const label = pane.display_name || pane.name;
   return (
     <li className="group relative">
@@ -284,26 +301,24 @@ function SessionRow({
         data-pane={pane.name}
         data-status={pane.status}
         className={cn(
-          "flex w-full items-center gap-2 rounded-lg py-1.5 pl-3 pr-2 text-left transition-colors",
+          "flex w-full items-center gap-2 rounded-lg py-1.5 pl-8 pr-2 text-left transition-colors",
           "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           active ? "bg-card text-foreground shadow-sm" : "hover:bg-background/60",
         )}
       >
-        <Terminal
-          aria-hidden
-          className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground")}
-        />
+        <AgentMark agent={pane.agent} label={label} logoUrl={logoUrl} variant="plain" size="sm" />
         <span className="min-w-0 flex-1 truncate text-xs text-foreground">{label}</span>
         <span className="shrink-0 truncate font-mono text-[10px] text-muted-foreground/70">
           {pane.name}
         </span>
         <span
           aria-hidden
-          title={t("ide_chats.session_here")}
           className={cn(
             "h-1.5 w-1.5 shrink-0 rounded-full",
             pane.status === "live"
-              ? "bg-primary"
+              ? pane.activity === "working" || pane.activity === "starting"
+                ? "bg-primary motion-safe:animate-pulse"
+                : "bg-primary"
               : pane.status === "pending"
                 ? "bg-muted-foreground/50"
                 : pane.status === "error"
@@ -314,106 +329,4 @@ function SessionRow({
       </button>
     </li>
   );
-}
-
-function ChatRow({
-  id,
-  title,
-  active,
-  onOpen,
-  onDelete,
-}: {
-  id: string;
-  title: string;
-  active: boolean;
-  onOpen: () => void;
-  onDelete: () => void;
-}) {
-  const t = useT();
-  const label = title || t("chats_view.new_chat");
-  return (
-    <li className="group relative">
-      <button
-        type="button"
-        onClick={onOpen}
-        title={label}
-        data-testid="workspace-chat-row"
-        data-session={id}
-        className={cn(
-          "flex w-full items-center gap-2 rounded-lg py-1.5 pl-8 pr-2 text-left transition-colors",
-          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-          active ? "bg-card text-foreground shadow-sm" : "hover:bg-background/60",
-        )}
-      >
-        <MessageSquare
-          aria-hidden
-          className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground")}
-        />
-        <span className="min-w-0 flex-1 truncate text-xs text-foreground">{label}</span>
-      </button>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete();
-        }}
-        title={t("chats_view.delete")}
-        aria-label={t("chats_view.delete")}
-        className="absolute right-1 top-1/2 hidden -translate-y-1/2 rounded-md bg-card p-1 text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive group-hover:block"
-      >
-        <Trash2 className="h-3 w-3" />
-      </button>
-    </li>
-  );
-}
-
-interface ChatLike {
-  session_id: string;
-  title: string;
-  preview: string;
-  cwd: string;
-  updated_ms: number;
-}
-
-export interface FolderGroupData {
-  /** Absolute path as the backend reported it; "" for the runner's default. */
-  folder: string;
-  /** What the folder is called — its last segment. */
-  label: string;
-  chats: ChatLike[];
-}
-
-/**
- * Chats grouped by the folder they run in, the open workspace first.
- *
- * The open workspace is ALWAYS the first group even with no chats in it yet:
- * the column has to say where a new chat would land, and a folder that appears
- * only once it has history would leave a fresh workspace looking like it
- * belongs to no folder at all. Everything else follows by recency, so the
- * folder someone touched last is the next one they see.
- *
- * Exported for the tests: the grouping is the contract this column keeps.
- */
-export function groupByFolder(
-  sessions: readonly ChatLike[],
-  workspaceFolder: string,
-): FolderGroupData[] {
-  const byFolder = new Map<string, ChatLike[]>();
-  if (workspaceFolder) byFolder.set(workspaceFolder, []);
-  for (const session of sessions) {
-    const key = session.cwd ?? "";
-    const bucket = byFolder.get(key);
-    if (bucket) bucket.push(session);
-    else byFolder.set(key, [session]);
-  }
-  const groups = [...byFolder.entries()].map(([folder, chats]) => ({
-    folder,
-    label: folderLeaf(folder),
-    chats: [...chats].sort((a, b) => b.updated_ms - a.updated_ms),
-  }));
-  return groups.sort((left, right) => {
-    if (left.folder === workspaceFolder) return -1;
-    if (right.folder === workspaceFolder) return 1;
-    return (right.chats[0]?.updated_ms ?? 0) - (left.chats[0]?.updated_ms ?? 0);
-  });
 }
