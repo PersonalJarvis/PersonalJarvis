@@ -200,6 +200,9 @@ document:
 - Short, direct sentences. Say the thing, then stop.
 - Courteous, not commanding: "please" where a person would say it, and the \
 user's own "I would like" where they said it. Never a bare string of orders.
+- Address the agent the way the user did. In a language that distinguishes \
+a familiar from a formal "you", keep the user's form and never switch to the \
+formal one on your own; a transcript that shows neither gets the familiar one.
 - Everyday words. No "utilize", "leverage", "ensure", "make sure", "robust", \
 "seamless", "comprehensive", "delve" - and not their equivalents in the \
 transcript's language either.

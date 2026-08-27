@@ -146,6 +146,10 @@ def test_the_prompt_asks_for_a_courteous_spoken_register() -> None:
     system = build_prompt_mode_prompt()
     assert "SOUND LIKE A PERSON WRITING TO A COLLEAGUE" in system
     assert "Courteous, not commanding" in system
+    # Measured live 2026-08-27: the fast chain answered a "du" transcript with
+    # "Bitte prüfen Sie" — the formal form the user never used.
+    assert "Address the agent the way the user did" in system
+    assert "never switch to the formal one" in system
     assert "Everyday words" in system
     assert "No sets of three" in system
 
