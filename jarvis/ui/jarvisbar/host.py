@@ -222,6 +222,7 @@ class _EchoBar:
     def set_on_voice_action(self, cb: Any) -> None: ...
     def set_on_talk(self, cb: Any) -> None: ...
     def set_on_hangup(self, cb: Any) -> None: ...
+    def set_on_dictation_stop(self, cb: Any) -> None: ...
     def set_feedback_publisher(self, cb: Any) -> None: ...
     def set_on_show_window(self, cb: Any) -> None: ...
     def set_on_speaker_toggle(self, cb: Any) -> None: ...
@@ -368,17 +369,20 @@ def _wire_surface_events(surface: Any) -> None:
 
     def _emit_voice_action(action: str) -> None:
         normalized = str(action).strip().lower()
-        if normalized in {"talk", "hangup"}:
+        if normalized in {"talk", "hangup", "dictation_stop"}:
             emit(normalized)
         else:
             log.warning("bar-host: dropping unknown voice action %r", action)
 
-    # Qt exposes the compact action callback; Tk keeps the two explicit
+    # Qt exposes the compact action callback; Tk keeps the explicit
     # setters. Wiring both is safe because each surface invokes only the
     # callback contract it implements.
     _call(surface, "set_on_voice_action", _emit_voice_action)
     _call(surface, "set_on_talk", lambda: emit("talk"))
     _call(surface, "set_on_hangup", lambda: emit("hangup"))
+    # The close-X while DICTATING: the recording is ended in the parent, where
+    # the pipeline lives (BUG-191 — this X used to resolve to nothing).
+    _call(surface, "set_on_dictation_stop", lambda: emit("dictation_stop"))
     _call(surface, "set_on_mute_toggle", lambda: emit("mute_toggle"))
     # The orb's control row adds one action the bar never had: muting the
     # ASSISTANT's voice. Like talk/hang-up it needs the parent, because the

@@ -36,6 +36,7 @@ from collections.abc import Callable
 from typing import Any
 
 from jarvis.ui.jarvisbar import interaction, renderer
+from jarvis.ui.jarvisbar.modes import DICTATION_MODES
 
 log = logging.getLogger("jarvis.ui.jarvisbar")
 
@@ -484,6 +485,9 @@ class JarvisBarOverlay:
         # runtime_refs fallback when no callback is installed.
         self._on_talk: Callable[[], None] | None = None
         self._on_hangup: Callable[[], None] | None = None
+        # The close-X while DICTATING (an external host routes it to the
+        # parent; in-process it reaches the pipeline directly).
+        self._on_dictation_stop: Callable[[], None] | None = None
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
         self._hovered = False  # mouse over the bar → reveal the close cross
@@ -621,6 +625,10 @@ class JarvisBarOverlay:
     def set_on_hangup(self, callback: Callable[[], None] | None) -> None:
         """Register the active close-X action for an external host."""
         self._on_hangup = callback
+
+    def set_on_dictation_stop(self, callback: Callable[[], None] | None) -> None:
+        """Register the dictating close-X action for an external host."""
+        self._on_dictation_stop = callback
 
     def set_feedback_publisher(self, callback: Callable[[str, dict], None] | None) -> None:
         self._feedback_publisher = callback
@@ -1758,7 +1766,12 @@ class JarvisBarOverlay:
         if time.monotonic() < self._hangup_click_block_until:
             return
         try:
-            active = self._mode in ("listen", "think", "speak")
+            # The dictation modes render on the active pill too (dictate →
+            # "speak", dictate_transcribing → "think"), so their close-X sits
+            # where the active pill puts it.
+            active = self._mode in ("listen", "think", "speak") or (
+                self._mode in DICTATION_MODES
+            )
             pill_w = renderer.ACTIVE_W if active else None
             action = interaction.resolve_click(
                 click_x,
@@ -1767,6 +1780,26 @@ class JarvisBarOverlay:
                 hovered=hovered,
                 pill_w=pill_w,
             )
+            if action == "dictation_stop":
+                # The X while dictating ends the recording and delivers
+                # nothing — the same "make it go away" the X means for a
+                # voice session. Until BUG-191 this click resolved to nothing
+                # while the glyph was drawn.
+                callback = self._on_dictation_stop
+                if callback is not None:
+                    callback()
+                else:
+                    from jarvis.core.runtime_refs import get_speech_pipeline
+
+                    pipeline = get_speech_pipeline()
+                    stop = getattr(pipeline, "request_dictation_stop", None)
+                    if callable(stop):
+                        stop(discard=True)
+                # Immediate local feedback; the bridge reconciles on
+                # ``DictationCompleted``.
+                self._mode = "idle"
+                self._hangup_click_block_until = time.monotonic() + HANGUP_CLICK_GUARD_S
+                return
             if action == "mute":
                 # The mic button toggles voice mute via the bridge-wired
                 # callback (publishes VoiceMuteToggleRequested → pipeline flips

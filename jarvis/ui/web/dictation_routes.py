@@ -691,7 +691,7 @@ async def start(body: StartBody, request: Request) -> dict[str, Any]:
         getattr(_dictation_cfg(request), "target", "auto") or "auto"
     )
     try:
-        started = bool(pipeline.start_dictation(target=target))
+        started = bool(pipeline.start_dictation(target=target, source="rest"))
     except Exception as exc:  # noqa: BLE001
         log.warning("dictation start failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Dictation could not start.") from exc

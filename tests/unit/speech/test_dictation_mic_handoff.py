@@ -449,3 +449,31 @@ async def test_a_wake_dropped_by_a_dictation_says_so_in_the_log(
     finally:
         blocking.cancel()
         pipeline._dictation_task = None
+
+
+@pytest.mark.asyncio
+async def test_a_wake_side_that_never_confirms_its_release_cannot_hold_the_dictation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REGRESSION (BUG-191 family): the lease waited for the confirmation forever.
+
+    A wake owner whose teardown wedges never sets ``_wake_capture_released``.
+    The dictation used to await it with no bound, so its task never ended,
+    every later press was refused as "already running", and only a restart
+    cleared it. The wait is bounded now: the wake side is told, the dictation
+    finishes.
+    """
+    pipeline, mic, _ = _wake_pipeline(monkeypatch)
+    monkeypatch.setattr(pipeline_mod, "_DICTATION_WAKE_RELEASE_TIMEOUT_S", 0.05)
+
+    wake_task = asyncio.create_task(pipeline._run_parallel_wake())
+    await asyncio.wait_for(mic.entered.wait(), timeout=1.0)
+
+    async def _dictate_under_a_wedged_wake() -> None:
+        async with pipeline._capture_dictation_input():
+            # The confirmation nobody will ever give: swap in an event no
+            # teardown knows about, so the wait can only end on its bound.
+            pipeline._wake_capture_released = asyncio.Event()
+
+    await asyncio.wait_for(_dictate_under_a_wedged_wake(), timeout=1.0)
+    await asyncio.wait_for(wake_task, timeout=1.0)

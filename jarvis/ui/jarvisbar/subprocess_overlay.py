@@ -130,6 +130,7 @@ class SubprocessBarOverlay:
         self._on_mute_toggle: Callable[[], None] | None = None
         self._on_talk: Callable[[], None] | None = None
         self._on_hangup: Callable[[], None] | None = None
+        self._on_dictation_stop: Callable[[], None] | None = None
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
         self._on_speaker_toggle: Callable[[], None] | None = None
@@ -322,6 +323,9 @@ class SubprocessBarOverlay:
     def set_on_hangup(self, callback: Callable[[], None] | None) -> None:
         self._on_hangup = callback
 
+    def set_on_dictation_stop(self, callback: Callable[[], None] | None) -> None:
+        self._on_dictation_stop = callback
+
     def set_feedback_publisher(self, callback: Callable[[str, dict], None] | None) -> None:
         self._feedback_publisher = callback
 
@@ -509,6 +513,8 @@ class SubprocessBarOverlay:
                 self._dispatch_talk_action()
             elif event == "hangup":
                 self._dispatch_hangup_action()
+            elif event == "dictation_stop":
+                self._dispatch_dictation_stop_action()
             elif event == "mute_toggle":
                 cb = self._on_mute_toggle
                 if cb is not None:
@@ -620,6 +626,27 @@ class SubprocessBarOverlay:
         hangup = getattr(pipeline, "request_hangup", None)
         if callable(hangup):
             hangup()
+
+    def _dispatch_dictation_stop_action(self) -> None:
+        """The close-X while dictating: discard the recording in the parent.
+
+        Same shape as the hang-up: an installed callback wins for embedders and
+        tests, the desktop path reaches the live pipeline through
+        ``runtime_refs`` (populated here, deliberately empty in the child).
+        """
+        callback = self._on_dictation_stop
+        if callback is not None:
+            callback()
+            return
+
+        from jarvis.core.runtime_refs import get_speech_pipeline
+
+        pipeline = get_speech_pipeline()
+        if pipeline is None:
+            return
+        stop = getattr(pipeline, "request_dictation_stop", None)
+        if callable(stop):
+            stop(discard=True)
 
     def _pump_stderr(self, stream: IO[str] | None) -> None:
         if stream is None:

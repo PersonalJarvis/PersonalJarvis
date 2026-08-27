@@ -28,6 +28,7 @@ class _RecordingBar:
         self.on_voice_action = None
         self.on_talk = None
         self.on_hangup = None
+        self.on_dictation_stop = None
         self.on_mute_toggle = None
         self.feedback_publisher = None
         self.on_show_window = None
@@ -83,6 +84,9 @@ class _RecordingBar:
 
     def set_on_hangup(self, callback) -> None:
         self.on_hangup = callback
+
+    def set_on_dictation_stop(self, callback) -> None:
+        self.on_dictation_stop = callback
 
     def set_on_mute_toggle(self, callback) -> None:
         self.on_mute_toggle = callback
@@ -147,12 +151,17 @@ def test_surface_interactions_are_wired_to_child_events(monkeypatch) -> None:
     assert bar.on_voice_action is not None
     assert bar.on_talk is not None
     assert bar.on_hangup is not None
+    assert bar.on_dictation_stop is not None
     assert bar.on_mute_toggle is not None
     assert bar.feedback_publisher is not None
     assert bar.on_show_window is not None
 
     bar.on_voice_action("talk")
     bar.on_voice_action("hangup")
+    # The close-X while dictating crosses the process boundary like the
+    # hang-up (BUG-191): both the compact Qt action and the Tk setter.
+    bar.on_voice_action("dictation_stop")
+    bar.on_dictation_stop()
     bar.on_mute_toggle()
     bar.feedback_publisher("bar", {"value": 1})
     bar.on_show_window()
@@ -160,6 +169,8 @@ def test_surface_interactions_are_wired_to_child_events(monkeypatch) -> None:
     assert emitted == [
         ("talk", {}),
         ("hangup", {}),
+        ("dictation_stop", {}),
+        ("dictation_stop", {}),
         ("mute_toggle", {}),
         ("feedback", {"kind": "bar", "payload": {"value": 1}}),
         ("show_window", {}),

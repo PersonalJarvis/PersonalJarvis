@@ -275,12 +275,14 @@ class _RecordingPipeline(SpeechPipeline):
 
     def __init__(self) -> None:  # noqa: D107 — deliberately bypasses the real ctor
         self.started: list[str] = []
+        self.sources: list[str] = []
         self.stopped = 0
         self._dictate_key_down = False
         self._dictation_task = None
 
-    def start_dictation(self, *, target: str = "chat") -> bool:  # type: ignore[override]
+    def start_dictation(self, *, target: str = "chat", source: str = "api") -> bool:  # type: ignore[override]
         self.started.append(target)
+        self.sources.append(source)
         return True
 
     def stop_dictation(self) -> bool:  # type: ignore[override]
@@ -388,15 +390,80 @@ def test_release_submits_once() -> None:
 def test_a_refused_start_does_not_swallow_the_next_press() -> None:
     pipe = _RecordingPipeline()
 
-    def _refuse(*, target: str = "chat") -> bool:
+    def _refuse(*, target: str = "chat", source: str = "api") -> bool:
         return False
 
     pipe.start_dictation = _refuse  # type: ignore[assignment]
     pipe._on_dictate_press()
     assert pipe._dictate_key_down is False
 
-    pipe.start_dictation = lambda *, target="chat": pipe.started.append(target) or True  # type: ignore[assignment]
+    pipe.start_dictation = (  # type: ignore[assignment]
+        lambda *, target="chat", source="api": pipe.started.append(target) or True
+    )
     pipe._on_dictate_press()
+    assert pipe.started == ["auto"]
+
+
+def test_a_press_while_a_dictation_nobody_holds_is_running_stops_it() -> None:
+    """REGRESSION (BUG-191): the press used to be REFUSED as already_running.
+
+    The latch says "up" — the release edge arrived, or the recording was
+    started by the hands-free key, the bar or a REST call — and the lane is
+    still busy. Before this, ``start_dictation`` refused the press (a refusal
+    the bar paints as nothing) and dropped the latch again, so the key did
+    nothing, silently, for as long as the recording ran: with a lost key-up,
+    until the 30-minute cap or a restart. The dictation key is the kill switch
+    of its own lane: the press ends the recording and delivers it.
+    """
+    pipe = _RecordingPipeline()
+
+    class _RunningTask:
+        def done(self) -> bool:
+            return False
+
+    pipe._dictation_task = _RunningTask()  # type: ignore[assignment]
+    pipe._on_dictate_press()
+
+    assert pipe.stopped == 1
+    assert pipe.started == [], "never a second dictation on top of the first"
+    assert pipe._dictate_key_down is False, "nothing is being held after a stop press"
+
+    # The matching release is a no-op — the stop already went out once.
+    pipe._on_dictate_release()
+    assert pipe.stopped == 1
+
+    # The lane is free again: the next press records normally.
+    pipe._dictation_task = None
+    pipe._on_dictate_press()
+    assert pipe.started == ["auto"]
+    assert pipe._dictate_key_down is True
+
+
+def test_the_hold_key_names_itself_as_the_source() -> None:
+    pipe = _RecordingPipeline()
+    pipe._on_dictate_press()
+    assert pipe.sources == ["hold_key"]
+
+
+def test_the_toggle_key_names_itself_as_the_source() -> None:
+    pipe = _RecordingPipeline()
+    pipe._on_dictate_toggle()
+    assert pipe.sources == ["toggle_key"]
+
+
+@pytest.mark.asyncio
+async def test_the_hotkey_loop_survives_a_handler_that_raises() -> None:
+    """One raising handler used to end the loop — and with it EVERY global
+    shortcut in the process, invisibly, until a restart (BUG-191)."""
+    pipe = _RecordingPipeline()
+
+    def _boom() -> None:
+        raise RuntimeError("edge handler blew up")
+
+    pipe._on_dictate_press = _boom  # type: ignore[method-assign]
+    await pipe._hotkey_loop(_ScriptedTrigger(["dictate_press", "dictate_toggle"]))
+
+    # The bad edge was dropped; the NEXT edge was still served.
     assert pipe.started == ["auto"]
 
 

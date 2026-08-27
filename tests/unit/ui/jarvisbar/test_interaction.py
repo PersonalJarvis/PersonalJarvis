@@ -75,6 +75,40 @@ def test_hangup_hitbox_at_real_bar_geometry():
     assert I.resolve_click(x_glyph, W, "speak", hovered=False, pill_w=PW) == "none"
 
 
+def test_dictating_bar_close_x_stops_the_dictation():
+    """REGRESSION (BUG-191): the X the renderer draws while dictating was inert.
+
+    ``dictate`` renders as "speak" and ``dictate_transcribing`` as "think", so
+    the close-X is on screen — and every click on it resolved to ``"none"``.
+    With a lost key-up edge that left the user with a recording nothing could
+    end. A drawn X is a working X: on the glyph, controls shown → stop.
+    """
+    W, PW = 100, 100
+    for mode in ("dictate", "dictate_transcribing"):
+        assert I.resolve_click(20, W, mode, hovered=True, pill_w=PW) == "dictation_stop"
+        # Same spot, controls NOT shown → nothing (matches the visible affordance).
+        assert I.resolve_click(20, W, mode, hovered=False, pill_w=PW) == "none"
+        # The body and the mic zone stay inert while dictating: a stray click
+        # must neither start a voice session nor mute the ear being dictated into.
+        assert I.resolve_click(48, W, mode, hovered=True, pill_w=PW) == "none"
+        assert I.resolve_click(90, W, mode, hovered=True, pill_w=PW) == "none"
+        assert I.resolve_click(50, W, mode, hovered=False, pill_w=PW) == "none"
+
+
+def test_dictating_close_x_hitbox_at_real_bar_geometry():
+    """Anchor the dictation X to the deployed pill, like the hang-up test."""
+    W, PW = R.WIN_W, R.ACTIVE_W
+    x_glyph = round(W / 2.0 - 0.30 * PW)
+    assert I.resolve_click(x_glyph, W, "dictate", hovered=True, pill_w=PW) == "dictation_stop"
+    assert I.resolve_click(round(W / 2.0), W, "dictate", hovered=True, pill_w=PW) == "none"
+    assert I.resolve_click(x_glyph, W, "dictate", hovered=False, pill_w=PW) == "none"
+
+
+def test_a_notice_stays_inert_even_on_the_x_spot():
+    """A notice is an answer, not a control — unchanged by the dictation X."""
+    assert I.resolve_click(20, 100, "notice", hovered=True, pill_w=100) == "none"
+
+
 def test_default_bottom_center_placement():
     x, y = I.default_bottom_center(
         screen_w=1920, screen_h=1080, bar_w=300, bar_h=72, margin=12

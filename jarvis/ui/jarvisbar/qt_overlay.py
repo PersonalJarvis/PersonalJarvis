@@ -34,6 +34,7 @@ from typing import Any
 from PIL import Image
 
 from jarvis.ui.jarvisbar import interaction, renderer
+from jarvis.ui.jarvisbar.modes import DICTATION_MODES
 
 log = logging.getLogger("jarvis.ui.jarvisbar.qt")
 
@@ -578,7 +579,8 @@ class QtJarvisBarOverlay:
         self._on_show_window = callback
 
     def set_on_voice_action(self, callback: Callable[[str], None] | None) -> None:
-        """Register parent-owned handling for ``"talk"`` and ``"hangup"``.
+        """Register parent-owned handling for ``"talk"``, ``"hangup"`` and
+        ``"dictation_stop"`` (the close-X while dictating).
 
         The macOS surface lives in a companion process, so importing
         ``runtime_refs.get_speech_pipeline`` here would always return ``None``.
@@ -1439,7 +1441,12 @@ class QtJarvisBarOverlay:
             log.debug("Qt bar: ignoring click (a file drop is in flight)")
             return "none"
         is_hovered = self._hovered if hovered is None else bool(hovered)
-        active = self._mode in ("listen", "think", "speak")
+        # The dictation modes render on the active pill (dictate → "speak",
+        # dictate_transcribing → "think"), so their close-X sits where the
+        # active pill puts it.
+        active = self._mode in ("listen", "think", "speak") or (
+            self._mode in DICTATION_MODES
+        )
         action = interaction.resolve_click(
             click_x,
             renderer.WIN_W,
@@ -1453,7 +1460,7 @@ class QtJarvisBarOverlay:
                 self._invoke_callback(callback, "mute-toggle")
                 self._muted = not self._muted
                 self._invalidate_static_frame()
-        elif action in {"talk", "hangup"}:
+        elif action in {"talk", "hangup", "dictation_stop"}:
             callback = self._on_voice_action
             if callback is None:
                 log.warning(
@@ -1462,7 +1469,7 @@ class QtJarvisBarOverlay:
                 )
             else:
                 self._invoke_callback(lambda: callback(action), f"voice-{action}")
-                if action == "hangup":
+                if action in ("hangup", "dictation_stop"):
                     # Match the Tk surface's optimistic collapse while the
                     # authoritative parent tears the session down (or repairs
                     # a stuck active state). The next bus state reconciles it.

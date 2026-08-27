@@ -1910,7 +1910,7 @@ class WebServer:
             if mode == "stop":
                 pipeline.stop_dictation()
             else:
-                started = pipeline.start_dictation(target=target)
+                started = pipeline.start_dictation(target=target, source="ws")
                 if not started:
                     await self.bus.publish(
                         ErrorOccurred(

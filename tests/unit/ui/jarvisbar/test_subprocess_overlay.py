@@ -243,6 +243,39 @@ class _FakeSpeechPipeline:
     def request_hangup(self) -> None:
         self.hangup_calls += 1
 
+    def request_dictation_stop(self, *, discard: bool = False) -> bool:
+        self.dictation_stops = getattr(self, "dictation_stops", [])
+        self.dictation_stops.append(discard)
+        return True
+
+
+def test_dictation_stop_event_discards_the_parent_recording(monkeypatch) -> None:
+    """The dictating close-X (BUG-191) reaches the parent's pipeline and
+    DISCARDS — the same "make it go away" the X means for a voice session —
+    without touching the voice hang-up or starting a session."""
+    pipeline = _FakeSpeechPipeline(session_active=False)
+    monkeypatch.setattr("jarvis.core.runtime_refs.get_speech_pipeline", lambda: pipeline)
+    surface = SubprocessBarOverlay()
+
+    surface._dispatch_event({"event": "dictation_stop"})
+
+    assert pipeline.dictation_stops == [True]
+    assert pipeline.hangup_calls == 0
+    assert pipeline.talk_calls == 0
+
+
+def test_dictation_stop_event_prefers_an_installed_callback(monkeypatch) -> None:
+    pipeline = _FakeSpeechPipeline(session_active=False)
+    monkeypatch.setattr("jarvis.core.runtime_refs.get_speech_pipeline", lambda: pipeline)
+    surface = SubprocessBarOverlay()
+    fired: list[str] = []
+    surface.set_on_dictation_stop(lambda: fired.append("stop"))
+
+    surface._dispatch_event({"event": "dictation_stop"})
+
+    assert fired == ["stop"]
+    assert getattr(pipeline, "dictation_stops", []) == []
+
 
 def test_talk_event_executes_the_parent_pipeline(monkeypatch) -> None:
     pipeline = _FakeSpeechPipeline(session_active=False)

@@ -56,7 +56,8 @@ def resolve_click(
 ) -> str:
     """Resolve a click on the bar into an action by its horizontal zone + state.
 
-    Returns one of ``"hangup"`` / ``"mute"`` / ``"talk"`` / ``"none"``.
+    Returns one of ``"hangup"`` / ``"dictation_stop"`` / ``"mute"`` / ``"talk"``
+    / ``"none"``.
 
     The RIGHT zone is the microphone mute toggle (mic muted FOR JARVIS only —
     non-destructive, so it keeps a generous zone). When IDLE, a click anywhere
@@ -72,13 +73,18 @@ def resolve_click(
     trap (live bug 2026-06-19): the old code hung up on ANY click in the left
     40% of the bar, decoupled from the visible affordance.
 
-    EVERY dictation mode (``dictate`` while recording, ``dictate_transcribing``
-    while the text is being produced) is inert on purpose: without this branch
-    they would fall through to "not active" and a stray click would START A
-    VOICE SESSION in the middle of dictating. There is always another way to
-    stop — release the key, press it again in toggle mode, the Dictation view,
-    or ``jarvis api dictation stop`` — so an inert bar costs nothing and cannot
-    misfire.
+    The dictation modes (``dictate`` while recording, ``dictate_transcribing``
+    while the text is being produced) resolve exactly ONE thing: a click on the
+    visible close-X is ``"dictation_stop"``. Everything else there is inert on
+    purpose — without that, a stray click would fall through to "not active"
+    and START A VOICE SESSION in the middle of dictating, and the mic zone
+    would mute Jarvis's ear while the user is dictating into it. The X used to
+    be inert too, on the theory that another way to stop always existed (the
+    key, the Dictation view, the CLI). It did not: a hold recording whose
+    release edge was lost had the key refusing every press as "already
+    running", and the one control the user could see — the X the renderer
+    draws for these modes — resolved to nothing (BUG-191). The renderer and
+    this resolver now agree: a drawn X is a working X.
 
     ``NOTICE_MODES`` is inert for the same reason and one more. A notice is a
     transient ANSWER, not a control: it appears unrequested, it opens the pill
@@ -91,7 +97,11 @@ def resolve_click(
     bar the user could not see the truth of.
     """
     frac = x / max(1, width)
-    if mode in DICTATION_MODES or mode in NOTICE_MODES:
+    if mode in NOTICE_MODES:
+        return "none"
+    if mode in DICTATION_MODES:
+        if hovered and _on_close_x(x, width, pill_w):
+            return "dictation_stop"
         return "none"
     active = mode in ("listen", "think", "speak")
     if frac >= 0.60:            # right zone → the mic mute toggle (non-destructive)
@@ -100,16 +110,22 @@ def resolve_click(
         return "talk"
     # Active session: the ONLY destructive bar action is the close-X hang-up,
     # which must be a deliberate click ON the visible X glyph.
-    if hovered:
-        # In production `pill_w` is always the active pill width (ACTIVE_W); the
-        # caller only passes None for idle mode, which returns above before this
-        # branch. The `width` fallback is just a sane default for direct callers.
-        pw = float(pill_w) if pill_w is not None else float(width)
-        x_glyph = width / 2.0 - _CLOSE_X_CENTRE_FRAC * pw  # mirror renderer._draw_close_x
-        hit = max(_CLOSE_X_HIT_PX, _CLOSE_X_HIT_FRAC * pw)
-        if abs(x - x_glyph) <= hit:
-            return "hangup"
+    if hovered and _on_close_x(x, width, pill_w):
+        return "hangup"
     return "none"              # active body / no visible X → nothing
+
+
+def _on_close_x(x: float, width: int, pill_w: float | None) -> bool:
+    """Does a click at ``x`` land on the close-X glyph the renderer draws?
+
+    In production ``pill_w`` is always the active pill width (ACTIVE_W); the
+    ``width`` fallback is just a sane default for direct callers. The glyph
+    centre mirrors ``renderer._draw_close_x`` (``cx - 0.42*pw``).
+    """
+    pw = float(pill_w) if pill_w is not None else float(width)
+    x_glyph = width / 2.0 - _CLOSE_X_CENTRE_FRAC * pw
+    hit = max(_CLOSE_X_HIT_PX, _CLOSE_X_HIT_FRAC * pw)
+    return abs(x - x_glyph) <= hit
 
 
 def default_bottom_center(
