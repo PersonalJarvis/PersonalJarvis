@@ -125,6 +125,26 @@ class Currency(BaseModel):
     """``config`` when jarvis.toml set a rate, ``default`` otherwise."""
 
 
+class IndexStatus(BaseModel):
+    """How far the coding-CLI index has read the transcripts on disk.
+
+    The section renders from the index, and the index fills in over many
+    background runs — on a first start, after an account is added, after a
+    reader's rule changes. While ``complete`` is false the coding-CLI share
+    of every number on the page is still rising, and the page has to say so:
+    two screenshots taken a minute apart during such a catch-up showed
+    $8 000 and $12 300 for the same month and read as money gone missing
+    (2026-08-27).
+    """
+
+    files_known: int
+    files_indexed: int
+    files_pending: int
+    bytes_pending: int
+    turns: int
+    complete: bool
+
+
 class CostSummary(BaseModel):
     since_ms: int
     until_ms: int
@@ -142,6 +162,8 @@ class CostSummary(BaseModel):
     currency: Currency
     sources_present: list[str]
     """Which stores actually existed — an empty section is explainable."""
+    index: IndexStatus
+    """Whether the coding-CLI numbers are final yet, and how far they are."""
 
 
 class DayRow(BaseModel):
@@ -267,25 +289,36 @@ class _IndexRefresher:
 
     Reading a vendor transcript is seconds of I/O on gigabytes, so it can
     never happen while a request waits. Instead every summary request asks
-    this to run, and it does so at most once a minute, one thread at a time,
-    reporting whatever it managed. The section always renders from what the
-    index already has; a first run on a busy machine simply fills in over the
-    next few refreshes rather than blocking the page (AP-26: nothing here
-    starts at import or at boot either — the first request arms it).
+    this to run, and it does so one thread at a time, reporting whatever it
+    managed. The section always renders from what the index already has; a
+    first run on a busy machine simply fills in over the next few refreshes
+    rather than blocking the page (AP-26: nothing here starts at import or
+    at boot either — the first request arms it).
+
+    Cadence: once a minute when the last run reached the end of every
+    transcript, every few seconds while it did not. A catch-up — a first
+    start, a new account, a re-read after a rule change — is nine gigabytes
+    on the reference machine; at one twenty-second run per minute that is a
+    third of the wall clock spent reading and hours of a page that says less
+    than the truth. Running back to back while there is tail to read cuts
+    that to the read time itself, and the summary names the state meanwhile.
     """
 
     _MIN_GAP_S = 60.0
+    _CATCH_UP_GAP_S = 3.0
     _BUDGET_S = 20.0
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._running = False
         self._last = 0.0
+        self._complete = False
 
     def nudge(self, data_dir: Path | None) -> None:
         now = time.monotonic()
         with self._lock:
-            if self._running or (self._last and now - self._last < self._MIN_GAP_S):
+            gap = self._MIN_GAP_S if self._complete else self._CATCH_UP_GAP_S
+            if self._running or (self._last and now - self._last < gap):
                 return
             self._running = True
         threading.Thread(
@@ -293,10 +326,12 @@ class _IndexRefresher:
         ).start()
 
     def _run(self, data_dir: Path | None) -> None:
+        complete = False
         try:
             from jarvis.costs.cli_usage_index import refresh
 
             result = refresh(data_dir=data_dir, deadline_s=self._BUDGET_S)
+            complete = result.complete
             if result.turns_added:
                 log.debug(
                     "cli usage index: +%d turns from %d files",
@@ -311,9 +346,61 @@ class _IndexRefresher:
             with self._lock:
                 self._running = False
                 self._last = time.monotonic()
+                self._complete = complete
 
 
 _refresher = _IndexRefresher()
+
+
+class _IndexStatusCache:
+    """``index_state`` walks the transcript folders (a few thousand ``stat``
+    calls); the summary is polled every 30 s and re-requested on every filter
+    click, so the walk is shared for a short while rather than repeated."""
+
+    _TTL_S = 10.0
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._key: str | None = None
+        self._value: IndexStatus | None = None
+        self._at = 0.0
+
+    def get(self, data_dir: Path | None) -> IndexStatus:
+        key = str(data_dir)
+        now = time.monotonic()
+        with self._lock:
+            if self._value is not None and self._key == key and (now - self._at) < self._TTL_S:
+                return self._value
+        value = _index_status(data_dir)
+        with self._lock:
+            self._key = key
+            self._value = value
+            self._at = now
+        return value
+
+
+def _index_status(data_dir: Path | None) -> IndexStatus:
+    try:
+        from jarvis.costs.cli_usage_index import index_state
+
+        state = index_state(data_dir=data_dir)
+    except Exception as exc:  # noqa: BLE001 — a status badge must never 500 the page
+        log.warning("cli usage index: state unavailable (%s)", exc)
+        return IndexStatus(
+            files_known=0, files_indexed=0, files_pending=0, bytes_pending=0, turns=0,
+            complete=True,
+        )
+    return IndexStatus(
+        files_known=state.files_known,
+        files_indexed=state.files_indexed,
+        files_pending=state.files_pending,
+        bytes_pending=state.bytes_pending,
+        turns=state.turns,
+        complete=state.complete,
+    )
+
+
+_index_status_cache = _IndexStatusCache()
 
 
 
@@ -427,6 +514,7 @@ async def get_summary(
     payload["facets"] = _facets(entries).model_dump()
     payload["currency"] = _currency().model_dump()
     payload["sources_present"] = [p.name for p in sources.existing()]
+    payload["index"] = _index_status_cache.get(sources.cli_index_dir).model_dump()
     return CostSummary.model_validate(payload)
 
 

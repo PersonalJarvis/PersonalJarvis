@@ -294,6 +294,23 @@ export function CostsView() {
         ) : null}
 
         {/*
+          The coding-CLI numbers come from an index that fills in over
+          background runs — a first start, a new account, a re-read after a
+          rule change. A page that shows a half-read index as the month's
+          total reads as money gone missing ($8 000 next to yesterday's
+          $12 300, 2026-08-27). Say it is still counting, and how far it is.
+        */}
+        {data && !data.index.complete ? (
+          <EmptyRow>
+            {fill(t("costs_view.index_catching_up"), {
+              indexed: formatExact(data.index.files_indexed),
+              known: formatExact(data.index.files_known),
+              pendingMb: formatExact(Math.round(data.index.bytes_pending / 1_000_000)),
+            })}
+          </EmptyRow>
+        ) : null}
+
+        {/*
           An empty report under a row filter is indistinguishable from
           "nothing was spent" — the tab looked broken for a day because a
           provider picked in another area was still on (2026-08-25). Name

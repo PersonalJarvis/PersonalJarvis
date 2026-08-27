@@ -15,9 +15,16 @@ answers *how many tokens, when, by which agent and model*.
 What each source looks like — MEASURED on a live install, not taken from
 documentation:
 
-**Claude Code** — ``<config>/projects/<slug>/<session>.jsonl``. The records
-that carry usage have ``type == "assistant"`` and hold it at
-``message.usage``, with the thinking count nested one level deeper in
+**Claude Code** — ``<config>/projects/<slug>/<session>.jsonl``, and the
+subagents that session spawned under
+``<config>/projects/<slug>/<session>/subagents/**/*.jsonl`` (a plain
+``agent-<id>.jsonl`` for the Agent tool, ``workflows/<run>/agent-<id>.jsonl``
+for a workflow). A subagent file is the same record shape, stamped with the
+PARENT's ``sessionId``, so its spend files under the conversation that asked
+for it. Those files were never read until 2026-08-27 — on the machine this was
+measured on they held 14 466 of 68 937 responses, one fifth of every Claude
+Code call. The records that carry usage have ``type == "assistant"`` and hold
+it at ``message.usage``, with the thinking count nested one level deeper in
 ``usage.output_tokens_details``.
 
 *The identity of such a record is NOT its ``uuid``.* One API response is
@@ -84,6 +91,17 @@ Design rules this module holds itself to:
 * **Incremental.** A file is re-opened at its stored offset when it grew, and
   re-read from zero only when it SHRANK (rotated or rewritten), whose rows are
   dropped first. An offset is only ever stored at a line boundary.
+* **Durable.** The index is a ledger, not a cache of the transcripts. A turn
+  that was indexed stays indexed when its transcript is deleted — Claude Code
+  removes sessions after ``cleanupPeriodDays`` (25 on the machine this was
+  found on), and the money those sessions cost did not come back with them.
+  Until 2026-08-27 a vanished file took its rows with it and the lifetime
+  total shrank a little every night. Likewise a reader whose accounting rule
+  changes never drops the table: every transcript still on disk is re-read
+  and its rows are corrected in place, so the section never shows a half-
+  built index as if it were the whole bill (the previous rebuild dropped
+  everything first and reported $8 000 of a $13 600 month for the hours it
+  took to catch up).
 * **Bounded.** :func:`refresh` stops when its deadline is spent, commits what
   it has and says ``complete=False``. Files are taken newest-modified first and
   no single file may take more than :data:`_FILE_BYTE_BUDGET` per run, so one
@@ -239,17 +257,24 @@ _FILE_BYTE_BUDGET = 48 * 1024 * 1024
 _ROLLOUT_ID = re.compile(r"([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$")
 
 # Bumped whenever a reader's accounting changes so rows already indexed under
-# the old rule would be wrong. An older index is dropped and rebuilt from the
-# transcripts, which are the source of truth; nothing is lost but time.
+# the old rule would be wrong. Nothing is ever dropped on a bump: the file
+# bookkeeping is reset so every transcript still on disk is read again, and
+# a row re-read from its own file overwrites the old one in place
+# (``_INSERT_TURN``). Rows whose transcript is gone keep their old values —
+# an old number beats no number, and the section names the index as still
+# catching up while the re-read runs.
 #   2 — Codex: cached input subtracted from input; lineage-based dedup.
-#   3 — cost_usd column (OpenCode records its own price). Additive: migrated
-#       in place, no rebuild.
+#   3 — cost_usd column (OpenCode records its own price). Additive.
 #   4 — kimi wire logs were stored as ``agy-cli``; Antigravity (the Google
-#       ``agy`` binary) has its own conversation DBs. Rebuild so the two no
-#       longer share a Spend row.
-_SCHEMA_VERSION = 4
-#: Versions whose rows are still right and only need columns added.
-_MIGRATE_IN_PLACE_FROM = 4
+#       ``agy`` binary) has its own conversation DBs. Renamed in place.
+#   5 — the index became a ledger: vanished transcripts keep their rows, a
+#       bump re-reads instead of rebuilding, and a path index was added.
+#       Nothing about a row changed.
+_SCHEMA_VERSION = 5
+#: Rows written under a version below this were counted under a rule that has
+#: since changed and are re-read from their transcripts where those still
+#: exist. Rows from this version on are right as they are.
+_REREAD_BELOW = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS indexed_files (
@@ -281,18 +306,43 @@ CREATE TABLE IF NOT EXISTS cli_turns (
 );
 CREATE INDEX IF NOT EXISTS idx_cli_turns_ts ON cli_turns (ts_ms);
 CREATE INDEX IF NOT EXISTS idx_cli_turns_session ON cli_turns (agent, session_id);
+CREATE INDEX IF NOT EXISTS idx_cli_turns_path ON cli_turns (path);
 """
 
-# A duplicate is ignored except for one field: a row indexed without a model
-# (a Codex replay ahead of its ``turn_context``) takes the model from the copy
-# that knows it. Nothing else may change — the first sighting is the record.
+# A turn seen again is one of two things. Read again FROM ITS OWN FILE — a
+# re-read after a rule change, or Claude Code's one-line-per-content-block
+# repeat of the same response — it is the same record and the fresh values
+# win; that is how a rebuild corrects rows without deleting them first. Seen
+# in ANOTHER file (a Codex fork replaying its parent, a resumed Claude
+# session) it is a copy: the first sighting stays the record, and the one
+# field a copy may fill in is a model the original did not know.
 _INSERT_TURN = (
     "INSERT INTO cli_turns "
     "(agent, dedup_key, path, session_id, ts_ms, model, "
     " tokens_in, tokens_out, tokens_cached, cwd, label, cost_usd) "
     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-    "ON CONFLICT(agent, dedup_key) DO UPDATE SET model=excluded.model "
-    "WHERE cli_turns.model = '' AND excluded.model <> ''"
+    "ON CONFLICT(agent, dedup_key) DO UPDATE SET "
+    " session_id = CASE WHEN cli_turns.path = excluded.path"
+    "   THEN excluded.session_id ELSE cli_turns.session_id END,"
+    " ts_ms = CASE WHEN cli_turns.path = excluded.path"
+    "   THEN excluded.ts_ms ELSE cli_turns.ts_ms END,"
+    " tokens_in = CASE WHEN cli_turns.path = excluded.path"
+    "   THEN excluded.tokens_in ELSE cli_turns.tokens_in END,"
+    " tokens_out = CASE WHEN cli_turns.path = excluded.path"
+    "   THEN excluded.tokens_out ELSE cli_turns.tokens_out END,"
+    " tokens_cached = CASE WHEN cli_turns.path = excluded.path"
+    "   THEN excluded.tokens_cached ELSE cli_turns.tokens_cached END,"
+    " cwd = CASE WHEN cli_turns.path = excluded.path"
+    "   THEN excluded.cwd ELSE cli_turns.cwd END,"
+    " label = CASE WHEN cli_turns.path = excluded.path"
+    "   THEN excluded.label ELSE cli_turns.label END,"
+    " cost_usd = CASE WHEN cli_turns.path = excluded.path"
+    "   THEN excluded.cost_usd ELSE cli_turns.cost_usd END,"
+    " model = CASE WHEN excluded.model <> ''"
+    "   AND (cli_turns.path = excluded.path OR cli_turns.model = '')"
+    "   THEN excluded.model ELSE cli_turns.model END "
+    "WHERE cli_turns.path = excluded.path"
+    "   OR (cli_turns.model = '' AND excluded.model <> '')"
 )
 
 _UPSERT_FILE = (
@@ -622,6 +672,10 @@ def _grok_roots(home: Path | None) -> list[Path]:
 #: that can hold transcripts.
 _LAYOUTS: tuple[tuple[str, str], ...] = (
     (AGENT_CLAUDE, "projects/*/*.jsonl"),
+    # The subagents a session spawned: ``<session>/subagents/agent-<id>.jsonl``
+    # for the Agent tool, one level deeper under ``workflows/<run>/`` for a
+    # workflow. ``**`` covers both and whatever depth a later CLI adds.
+    (AGENT_CLAUDE, "projects/*/*/subagents/**/*.jsonl"),
     (AGENT_CODEX, "sessions/*/*/*/rollout-*.jsonl"),
     # Older Codex builds filed rollouts flat.
     (AGENT_CODEX, "sessions/rollout-*.jsonl"),
@@ -1358,7 +1412,7 @@ def _scan_antigravity(cand: _Candidate, start: int) -> _FileScan:
     finally:
         conn.close()
     return _FileScan(
-        rows=rows,
+        rows=list(rows),  # type: ignore[arg-type]
         offset=0 if failed else cand.size,
         cursor=_Cursor(
             session_id=session_id,
@@ -1441,7 +1495,7 @@ def _scan_opencode(cand: _Candidate, start: int) -> _FileScan:
     finally:
         conn.close()
     return _FileScan(
-        rows=list(rows),  # type: ignore[arg-type]
+        rows=rows,
         offset=max(newest, cand.size),
         cursor=_Cursor(),
         bytes_read=cand.size,
@@ -1553,32 +1607,56 @@ def _open_rw(path: Path) -> sqlite3.Connection | None:
         # fsyncs. A lost tail after a crash costs a re-read, never a wrong sum.
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
-        version = _int(conn.execute("PRAGMA user_version").fetchone()[0])
-        if _MIGRATE_IN_PLACE_FROM <= version < _SCHEMA_VERSION:
-            # Rows counted under this version are right; only the shape grew.
-            columns = {r[1] for r in conn.execute("PRAGMA table_info(cli_turns)")}
-            if "cost_usd" not in columns:
-                conn.execute("ALTER TABLE cli_turns ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0")
-            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
-            version = _SCHEMA_VERSION
-        if version < _SCHEMA_VERSION:
-            # Rows counted under an older rule are wrong, not stale. Rebuild.
-            if _has_rows(conn):
-                log.info(
-                    "cli usage index: schema %d < %d, rebuilding from the transcripts",
-                    version,
-                    _SCHEMA_VERSION,
-                )
-            conn.executescript(
-                "DROP TABLE IF EXISTS cli_turns; DROP TABLE IF EXISTS indexed_files;"
-            )
-            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         conn.executescript(_SCHEMA)
+        version = _int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if version < _SCHEMA_VERSION:
+            _migrate(conn, version)
+            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         conn.commit()
         return conn
     except (OSError, sqlite3.Error) as exc:
         log.warning("cli usage index: %s not writable (%s)", path, exc)
         return None
+
+
+def _migrate(conn: sqlite3.Connection, version: int) -> None:
+    """Bring an older index up to date WITHOUT losing a row.
+
+    Every step is in place. Where a reader's rule changed, the file
+    bookkeeping is cleared so each transcript still on disk is read again
+    and its rows are overwritten from their own file (``_INSERT_TURN``); the
+    rows of a transcript that has since been deleted are kept under the old
+    rule rather than thrown away. An index that is brand new (version 0 and
+    no rows) has nothing to migrate.
+    """
+    if version == 0 and not _has_rows(conn):
+        return
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(cli_turns)")}
+    if "cost_usd" not in columns:
+        # 3: OpenCode writes its own price. Additive.
+        conn.execute("ALTER TABLE cli_turns ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0")
+    if version < 4:
+        # 4: kimi wire logs were filed under Antigravity's name. The path
+        # says which reader wrote the row, so the rename needs no re-read.
+        conn.execute(
+            "UPDATE cli_turns SET agent = ? WHERE agent = ? AND path LIKE '%wire.jsonl'",
+            (AGENT_KIMI, AGENT_AGY),
+        )
+        conn.execute(
+            "UPDATE indexed_files SET agent = ? WHERE agent = ? AND path LIKE '%wire.jsonl'",
+            (AGENT_KIMI, AGENT_AGY),
+        )
+    if version < _REREAD_BELOW:
+        # Rows counted under an older accounting rule are wrong, not stale.
+        # Forgetting every file makes the next runs read them all again from
+        # byte zero; each row is then corrected from its own transcript. The
+        # table stays readable — and complete — the whole time.
+        log.info(
+            "cli usage index: schema %d < %d, re-reading every transcript in place",
+            version,
+            _SCHEMA_VERSION,
+        )
+        conn.execute("DELETE FROM indexed_files")
 
 
 def _has_rows(conn: sqlite3.Connection) -> bool:
@@ -1632,18 +1710,23 @@ def _backfill_models(conn: sqlite3.Connection, keys: list[str]) -> None:
     conn.executemany(sql, [(key,) for key in keys])
 
 
-def _prune_vanished(
+def _forget_vanished(
     conn: sqlite3.Connection,
     candidates: list[_Candidate],
     known: dict[str, sqlite3.Row],
     home: Path | None,
 ) -> None:
-    """Drop the rows of transcripts that no longer exist.
+    """Drop the BOOKKEEPING of transcripts that no longer exist — never their
+    turns.
 
-    ``_drop_rows`` only fires when a file SHRANK; a deleted file kept its rows
-    forever (446 rows / 88M tokens from six vanished transcripts,
-    2026-08-25). Pruning is limited to roots that are readable right now, so
-    an unmounted drive or a transient permission error never wipes history.
+    The turns stay: the calls were made and billed, and the CLI deleting its
+    own log afterwards (Claude Code's ``cleanupPeriodDays``, a user tidying
+    ``~/.codex``) does not refund them. Until 2026-08-27 this function took
+    the rows too, and the lifetime total went DOWN every night as the oldest
+    day's transcripts aged out. Only the resume row goes, so a file that
+    comes back (a remounted drive) is read from zero and overwrites its own
+    rows in place. Limited to roots that are readable right now, so a
+    transient permission error never touches the bookkeeping either.
     """
     live: list[str] = []
     for agent, _pattern in _LAYOUTS:
@@ -1659,7 +1742,6 @@ def _prune_vanished(
     for key in list(known):
         if key in fresh or not any(key.startswith(r) for r in live):
             continue
-        _drop_rows(conn, key)
         conn.execute("DELETE FROM indexed_files WHERE path = ?", (key,))
         known.pop(key, None)
 
@@ -1723,7 +1805,7 @@ def refresh(
     scanned_keys: list[str] = []
     try:
         known = _resume_rows(conn)
-        _prune_vanished(conn, candidates, known, home)
+        _forget_vanished(conn, candidates, known, home)
         pending = _pending(candidates, known, since_ms)
         # Newest first: the file a user just closed is the one whose numbers
         # they are looking at, and it is the one most likely to be small.
@@ -1958,20 +2040,33 @@ def _resume_point(cand: _Candidate, row: sqlite3.Row | None) -> tuple[int, _Curs
 
 
 def _drop_rows(conn: sqlite3.Connection, key: str) -> None:
+    """Forget the turns of ONE file — only ever because that file shrank and
+    is about to be read again. A file that disappeared keeps its rows."""
     try:
         conn.execute("DELETE FROM cli_turns WHERE path = ?", (key,))
     except sqlite3.Error as exc:
         log.warning("cli usage index: could not drop rows of %s (%s)", key, exc)
 
 
+def _rows_of(conn: sqlite3.Connection, key: str) -> int:
+    row = conn.execute("SELECT COUNT(*) FROM cli_turns WHERE path = ?", (key,)).fetchone()
+    return _int(row[0]) if row is not None else 0
+
+
 def _commit_file(conn: sqlite3.Connection, cand: _Candidate, scan: _FileScan) -> int:
-    """Write a file's turns and its resume point as one transaction."""
-    before = conn.total_changes
+    """Write a file's turns and its resume point as one transaction.
+
+    ``added`` counts rows this file now owns that it did not own before. A
+    row overwritten in place (a re-read, a repeated content-block line) and
+    a row another file already owns are not additions — ``total_changes``
+    would count both, and the section would report turns nobody made.
+    """
     try:
+        before = _rows_of(conn, cand.key)
         if scan.rows:
             priced = [r if len(r) == 12 else (*r, 0.0) for r in scan.rows]
             conn.executemany(_INSERT_TURN, priced)
-        added = conn.total_changes - before
+        added = _rows_of(conn, cand.key) - before
         if scan.cursor.model:
             # A replayed prefix lands before the file's ``turn_context``; the
             # context that follows is authoritative for every row in the

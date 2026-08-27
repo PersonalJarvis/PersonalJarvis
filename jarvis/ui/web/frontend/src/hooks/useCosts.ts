@@ -125,6 +125,23 @@ export interface CostSummary {
   facets: CostFacets;
   currency: CostCurrency;
   sources_present: string[];
+  /** Whether the coding-CLI numbers are final yet, and how far they are. */
+  index: CostIndexStatus;
+}
+
+/**
+ * How far the coding-CLI index has read the transcripts on disk. While
+ * `complete` is false the coding-CLI share of every number on the page is
+ * still rising — the page says so rather than presenting a fraction as the
+ * whole bill.
+ */
+export interface CostIndexStatus {
+  files_known: number;
+  files_indexed: number;
+  files_pending: number;
+  bytes_pending: number;
+  turns: number;
+  complete: boolean;
 }
 
 /**

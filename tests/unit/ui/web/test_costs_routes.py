@@ -238,3 +238,16 @@ def test_daily_on_an_empty_install_is_an_empty_ledger(tmp_path: Path) -> None:
     body = _client(tmp_path / "nothing").get("/api/costs/daily?days=30").json()
     assert body["days"] == []
     assert body["currency"]["eur_per_usd"] > 0
+
+
+def test_summary_says_whether_the_cli_index_is_still_counting(client: TestClient) -> None:
+    """The coding-CLI numbers fill in over background runs; the page must be
+    able to say "still counting" instead of showing a fraction as the bill."""
+    body = client.get("/api/costs/summary?days=30").json()
+    index = body["index"]
+    assert set(index) == {
+        "files_known", "files_indexed", "files_pending", "bytes_pending", "turns", "complete",
+    }
+    assert isinstance(index["complete"], bool)
+    assert index["files_indexed"] + index["files_pending"] == index["files_known"]
+    assert index["complete"] == (index["files_pending"] == 0)

@@ -5502,6 +5502,7 @@
     "refresh": "Refresh",
     "clear_filters": "Clear filters",
     "load_error": "Spend could not be read. This section reads the app's own databases — if it keeps failing, the data folder is unreachable.",
+    "index_catching_up": "Still counting the coding CLIs: {indexed} of {known} transcripts read, {pendingMb} MB to go. Every number on this page keeps rising until that is done.",
     "stat_total": "Total spend",
     "stat_total_hint": "{perDay} per day on average",
     "stat_total_hint_seat": "{billed} billed to API keys · {seat} covered by subscriptions",

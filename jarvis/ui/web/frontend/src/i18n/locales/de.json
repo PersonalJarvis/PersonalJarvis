@@ -5502,6 +5502,7 @@
     "refresh": "Aktualisieren",
     "clear_filters": "Filter zurücksetzen",
     "load_error": "Die Kosten konnten nicht gelesen werden. Dieser Bereich liest die eigenen Datenbanken der App — wenn das bleibt, ist der Datenordner nicht erreichbar.",
+    "index_catching_up": "Die Coding-CLIs werden noch gezählt: {indexed} von {known} Transkripten gelesen, {pendingMb} MB offen. Jede Zahl auf dieser Seite steigt noch, bis das durch ist.",
     "stat_total": "Gesamtkosten",
     "stat_total_hint": "{perDay} pro Tag im Schnitt",
     "stat_total_hint_seat": "{billed} über API-Keys abgerechnet · {seat} durch Abos gedeckt",

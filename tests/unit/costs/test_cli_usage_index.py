@@ -381,6 +381,36 @@ def test_a_corrupt_line_does_not_cost_the_file(tmp_path: Path) -> None:
     assert len(_all(data)) == 2
 
 
+def test_subagent_transcripts_are_indexed_under_their_parent_session(tmp_path: Path) -> None:
+    """The Agent tool and workflows write their own files beside the session:
+    ``<session>/subagents/agent-<id>.jsonl`` and
+    ``<session>/subagents/workflows/<run>/agent-<id>.jsonl``. They carry the
+    parent's ``sessionId``, so their spend lands on that conversation. One
+    fifth of every Claude Code call on the reference machine lived there,
+    unread, until 2026-08-27.
+    """
+    data = tmp_path / "data"
+    session_dir = _claude_path(tmp_path, "sess-1").with_suffix("")
+    _write(_claude_path(tmp_path, "sess-1"), [_claude_line(uuid="u1", msg_id="msg_main")])
+    _write(
+        session_dir / "subagents" / "agent-a1b2c3.jsonl",
+        [_claude_line(uuid="u2", msg_id="msg_agent", input_tokens=100)],
+    )
+    _write(
+        session_dir / "subagents" / "workflows" / "wf_1234" / "agent-d4e5f6.jsonl",
+        [_claude_line(uuid="u3", msg_id="msg_workflow", input_tokens=1000)],
+    )
+
+    result = refresh(data_dir=data, home=tmp_path)
+
+    assert result.files_seen == 3
+    assert result.turns_added == 3
+    turns = _all(data)
+    assert {t.session_id for t in turns} == {"sess-1"}
+    assert sum(t.tokens_in for t in turns) == 15 + 105 + 1005
+    assert all(t.agent == AGENT_CLAUDE for t in turns)
+
+
 # ---------------------------------------------------------------------------
 # Codex
 # ---------------------------------------------------------------------------
@@ -505,8 +535,9 @@ def test_codex_fork_replays_its_parent_but_is_counted_once(tmp_path: Path) -> No
     assert {t.model for t in turns} == {"gpt-5.6-terra"}
 
 
-def test_an_index_built_under_an_older_rule_is_rebuilt(tmp_path: Path) -> None:
-    """A schema bump throws the old rows away rather than mixing two rules."""
+def test_an_index_built_under_an_older_rule_is_reread(tmp_path: Path) -> None:
+    """A schema bump re-reads every transcript and corrects its rows in place —
+    the table never empties, so a report taken mid-way is never a fraction."""
     import sqlite3
 
     from jarvis.costs.cli_usage_index import index_db_path
@@ -1098,7 +1129,13 @@ def test_grok_replayed_turn_counts_once(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_transcript_that_disappeared_loses_its_rows(tmp_path: Path) -> None:
+def test_a_transcript_that_disappeared_keeps_its_rows(tmp_path: Path) -> None:
+    """The index is a ledger: a deleted log does not refund the calls in it.
+
+    Claude Code deletes sessions after ``cleanupPeriodDays``; the total for
+    the month must not sink with them. Only the file's resume row goes, so
+    the state report stops counting it as pending.
+    """
     import sqlite3
 
     from jarvis.costs.cli_usage_index import index_db_path
@@ -1112,10 +1149,110 @@ def test_a_transcript_that_disappeared_loses_its_rows(tmp_path: Path) -> None:
 
     path.unlink()
     refresh(data_dir=data, home=tmp_path)
+    refresh(data_dir=data, home=tmp_path)
 
-    assert _all(data) == []
+    turns = _all(data)
+    assert len(turns) == 1
+    assert turns[0].tokens_in == 65
     with sqlite3.connect(index_db_path(data)) as conn:
         assert conn.execute("SELECT COUNT(*) FROM indexed_files").fetchone()[0] == 0
+    state = index_state(data_dir=data, home=tmp_path)
+    assert state.files_known == 0 and state.turns == 1 and state.complete
+
+
+def test_a_transcript_that_comes_back_overwrites_its_own_rows(tmp_path: Path) -> None:
+    """A remounted drive: the file is read from zero and lands on the same
+    rows, so the ledger neither doubles nor loses what it kept meanwhile."""
+    data = tmp_path / "data"
+    session = "019ffba8-3748-7652-bf9d-f3b54697b10a"
+    path = _codex_path(tmp_path, session)
+    lines = [*_codex_prelude(session), _codex_token_line()]
+    _write(path, lines)
+    refresh(data_dir=data, home=tmp_path)
+
+    path.unlink()
+    refresh(data_dir=data, home=tmp_path)
+    _write(path, lines)
+    result = refresh(data_dir=data, home=tmp_path)
+
+    assert result.turns_added == 0
+    assert len(_all(data)) == 1
+
+
+def test_a_schema_bump_keeps_the_rows_of_a_transcript_that_is_gone(tmp_path: Path) -> None:
+    """A rebuild re-reads what is still on disk; what is not stays as it was.
+
+    The alternative — drop everything, read it back — showed $8 000 of a
+    $13 600 month for the hours the re-read took and lost every deleted
+    transcript for good (2026-08-27).
+    """
+    import sqlite3
+
+    from jarvis.costs.cli_usage_index import index_db_path
+
+    data = tmp_path / "data"
+    kept = _claude_path(tmp_path, "kept")
+    gone = _claude_path(tmp_path, "gone")
+    _write(kept, [_claude_line(uuid="u1", msg_id="msg_kept", input_tokens=10)])
+    _write(gone, [_claude_line(uuid="u2", msg_id="msg_gone", input_tokens=10)])
+    refresh(data_dir=data, home=tmp_path)
+    assert len(_all(data)) == 2
+
+    gone.unlink()
+    with sqlite3.connect(index_db_path(data)) as conn:
+        # Numbers an older rule produced, for both rows.
+        conn.execute("UPDATE cli_turns SET tokens_in = 999999")
+        conn.execute("PRAGMA user_version=1")
+
+    refresh(data_dir=data, home=tmp_path)
+
+    by_session = {t.session_id: t for t in _all(data)}
+    assert set(by_session) == {"sess-1"} or len(_all(data)) == 2
+    turns = sorted(_all(data), key=lambda t: t.tokens_in)
+    assert len(turns) == 2
+    # The file still on disk was re-read and corrected in place …
+    assert turns[0].tokens_in == 15
+    # … the one that is gone kept its old value rather than vanishing.
+    assert turns[1].tokens_in == 999999
+
+
+def test_a_reread_corrects_a_row_but_a_copy_in_another_file_does_not(tmp_path: Path) -> None:
+    """Same response, two files: only its OWN file may rewrite a turn.
+
+    A resumed Claude session copies the parent's responses in with the same
+    ``message.id``; a rebuild scans the newest file first. If the copy could
+    overwrite, every rebuild would restamp old turns with the resume's path
+    and session and the day-by-day picture would drift.
+    """
+    data = tmp_path / "data"
+    original = _claude_path(tmp_path, "original")
+    resumed = _claude_path(tmp_path, "resumed")
+    _write(
+        original,
+        [_claude_line(uuid="u1", msg_id="msg_a", session="orig", input_tokens=10)],
+    )
+    refresh(data_dir=data, home=tmp_path)
+
+    _write(
+        resumed,
+        [_claude_line(uuid="u9", msg_id="msg_a", session="resume", input_tokens=500)],
+    )
+    result = refresh(data_dir=data, home=tmp_path)
+    assert result.turns_added == 0
+    turns = _all(data)
+    assert len(turns) == 1
+    assert turns[0].session_id == "orig" and turns[0].tokens_in == 15
+
+    # The original file rewritten (shorter, so it is read again from zero)
+    # with a corrected count: its row follows, the copy still does not count.
+    _write(
+        original,
+        [_claude_line(uuid="u1", msg_id="msg_a", session="orig", input_tokens=2)],
+    )
+    refresh(data_dir=data, home=tmp_path)
+    turns = _all(data)
+    assert len(turns) == 1
+    assert turns[0].session_id == "orig" and turns[0].tokens_in == 7
 
 
 def test_an_unreadable_root_never_prunes(tmp_path: Path) -> None:

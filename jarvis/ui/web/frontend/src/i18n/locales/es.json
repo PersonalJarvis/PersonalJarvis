@@ -5502,6 +5502,7 @@
     "refresh": "Actualizar",
     "clear_filters": "Quitar filtros",
     "load_error": "No se pudieron leer los gastos. Esta sección lee las bases de datos de la propia app; si sigue fallando, la carpeta de datos no es accesible.",
+    "index_catching_up": "Las CLIs de código aún se están contando: {indexed} de {known} transcripciones leídas, {pendingMb} MB pendientes. Cada cifra de esta página sigue subiendo hasta que termine.",
     "stat_total": "Gasto total",
     "stat_total_hint": "{perDay} al día de media",
     "stat_total_hint_seat": "{billed} facturado a claves API · {seat} cubierto por suscripciones",
