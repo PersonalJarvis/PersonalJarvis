@@ -182,17 +182,48 @@ describe("PaneChat", () => {
     renderStage({ title: "Fixing the login test" });
     await screen.findByTestId("agent-turn");
     const header = screen.getByTestId("pane-chat-T7").querySelector("header")!;
-    expect(screen.getByTestId("pane-chat-title").textContent).toBe("Fixing the login test");
+    expect(screen.getByTestId("pane-recap-T7").textContent).toBe("Fixing the login test");
+    expect(screen.getByTestId("pane-chat-agent").textContent).toBe("Claude Code");
     expect(header.textContent).toContain("Claude Code");
+  });
+
+  // The title is the grid's own recap line, card and all: the backend cuts
+  // the header line to a grid pane's width ("Look into why the embedding
+  // models show up in…"), and the card is where the rest of the sentence,
+  // the longer recap and the reason for it can be read — in the chat exactly
+  // as in the grid (maintainer report 2026-08-27).
+  it("opens the same recap card the grid opens, with the longer form behind the cut line", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    renderStage({
+      title: "Look into why the embedding models show up in…",
+      titleDetail:
+        "Look into why the embedding models show up in the voice model picker although they should not.",
+      recapMeta: { source: "heuristic", reason: "warming" },
+      recapActions: { onSave },
+    });
+    await screen.findByTestId("agent-turn");
+    expect(screen.queryByTestId("pane-recap-card-T7")).toBeNull();
+    fireEvent.click(screen.getByTestId("pane-recap-T7"));
+    const card = screen.getByTestId("pane-recap-card-T7");
+    expect(screen.getByTestId("pane-recap-headline-T7").textContent).toBe(
+      "Look into why the embedding models show up in…",
+    );
+    expect(screen.getByTestId("pane-recap-detail-T7").textContent).toContain(
+      "although they should not",
+    );
+    expect(screen.getByTestId("pane-recap-why-T7").textContent).toContain("Too little output");
+    expect(card.textContent).toContain("Read from the output");
+    expect(screen.getByTestId("pane-recap-card-edit-T7")).toBeTruthy();
   });
 
   it("names the CLI alone while no header has described the pane", async () => {
     vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
     renderStage({ title: "  " });
     await screen.findByTestId("agent-turn");
-    expect(screen.queryByTestId("pane-chat-title")).toBeNull();
-    const header = screen.getByTestId("pane-chat-T7").querySelector("header")!;
-    expect(header.textContent).toContain("Claude Code");
+    expect(screen.queryByTestId("pane-recap-T7")).toBeNull();
+    expect(screen.queryByTestId("pane-chat-agent")).toBeNull();
+    expect(screen.getByTestId("pane-agent-T7").textContent).toBe("Claude Code");
   });
 
   it("flags a pane that is asking something only the terminal can answer", async () => {
@@ -229,7 +260,7 @@ describe("the header's state", () => {
     const chip = screen.getByTestId("pane-chat-state");
     expect(chip.dataset.state).toBe("done");
     expect(chip.textContent).toContain("Done");
-    expect(chip.querySelector("[data-icon='dot']")).not.toBeNull();
+    expect(chip.querySelector("[data-icon='check']")).not.toBeNull();
   });
 
   it("does not call a pane that was never asked anything done", async () => {

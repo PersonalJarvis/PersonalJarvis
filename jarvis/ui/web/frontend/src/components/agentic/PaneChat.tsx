@@ -25,7 +25,10 @@ import {
   paneActivityState,
   type PaneActivityState,
 } from "@/components/agentic/PaneActivityPill";
+import { PaneRecap } from "@/components/agentic/PaneRecap";
+import type { PaneRecapActions, PaneRecapMeta } from "@/components/agentic/AgenticTerminal";
 import { ChatStage } from "@/components/home/ChatStage";
+import { useThemeValue } from "@/hooks/useTheme";
 import { createPaneChatStore, type PaneChatStoreHook } from "@/store/paneChat";
 import type { PaneActivity } from "@/lib/agenticIdeApi";
 import { fill, useT } from "@/i18n";
@@ -109,6 +112,17 @@ export interface PaneChatProps {
    * CLI's name then carries the header alone, as it always did.
    */
   title?: string;
+  /**
+   * The longer form behind the title — the paragraph the recap card shows.
+   * The header line is cut to a grid pane's width on the backend (48
+   * characters, hence the "…" a long prompt ends in); this is where the
+   * rest of the sentence lives, and the card is the place it can be read.
+   */
+  titleDetail?: string;
+  /** Who wrote the recap and why it is the one on screen — the card's footer. */
+  recapMeta?: PaneRecapMeta;
+  /** Rewrite, reset or refresh the recap; absent leaves the card read-only. */
+  recapActions?: PaneRecapActions;
   /** The workspace folder — the composer's chip and the empty page's headline. */
   folder: string;
   /** The grid's own reading of the pane: working, waiting, asking… */
@@ -130,6 +144,9 @@ export function PaneChat({
   agent,
   agentLabel,
   title = "",
+  titleDetail = "",
+  recapMeta,
+  recapActions,
   folder,
   activity,
   activitySince = 0,
@@ -177,6 +194,11 @@ export function PaneChat({
   const timed = activitySince > 0 && state !== "live" && state !== "starting";
   const now = useClock(timed);
   const elapsed = timed ? elapsedLabel(activitySince, now, t) : "";
+  // The recap line dresses in the pane brand's ink, keyed to the ground it
+  // sits on. In the grid that is the terminal's own appearance; here the
+  // header sits on the app's background, so the app's theme is the ground.
+  const theme = useThemeValue();
+  const titled = title.trim().length > 0;
 
   return (
     <div
@@ -188,25 +210,50 @@ export function PaneChat({
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
         <MessageSquare className="h-4 w-4 shrink-0 text-primary" aria-hidden />
         <span className="font-mono text-xs font-semibold text-foreground">{terminal}</span>
-        {/* The pane's title where the sidebar row showed it too, so the header
-            and the row that opened it agree on what this conversation is; the
-            CLI's name steps aside to the right, the logo-sized fact it is. */}
-        {title.trim() ? (
-          <>
-            <span
-              className="min-w-0 flex-1 truncate text-sm text-foreground"
-              data-testid="pane-chat-title"
-              title={title}
-            >
-              {title}
-            </span>
-            <span className="max-w-[10rem] shrink-0 truncate text-xs text-muted-foreground">
-              {agentLabel}
-            </span>
-          </>
-        ) : (
-          <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{agentLabel}</span>
+        {/* The pane's title, drawn by the same component the grid draws it
+            with in the pane's own header — so the stage and the terminal
+            behind it are one pane named one way, and so the title IS the
+            same thing here that it is there: a line that opens into a card
+            with the whole sentence, the longer recap, who wrote it and why,
+            and the two ways to change it. A plain span said less than the
+            grid did about the very session the stage was opened to read
+            (maintainer report 2026-08-27). Without a title the line names
+            the CLI, as the grid's header does; with one, the CLI's name
+            steps aside to the right, the logo-sized fact it is.
+
+            The line hugs its text rather than filling the header: the
+            recap's chevron trails the sentence, and in a grid pane's
+            narrow header that IS the far edge — across a window-wide
+            header it would sit half a screen from the words it opens. So
+            the wrapper is content-sized (still able to shrink and clip
+            when the header is crowded) and a spacer after the CLI's name
+            pushes the state and the buttons to the right instead. */}
+        <span className="flex min-w-0 items-center" data-testid="pane-chat-title">
+          <PaneRecap
+            name={terminal}
+            displayName={agentLabel}
+            recap={title}
+            detail={titleDetail}
+            source={recapMeta?.source}
+            reason={recapMeta?.reason}
+            writer={recapMeta?.writer}
+            note={recapMeta?.note}
+            generatedAt={recapMeta?.generatedAt}
+            light={theme === "light"}
+            onSave={recapActions?.onSave}
+            onClear={recapActions?.onClear}
+            onRefresh={recapActions?.onRefresh}
+          />
+        </span>
+        {titled && (
+          <span
+            className="max-w-[10rem] shrink-0 truncate text-xs text-muted-foreground"
+            data-testid="pane-chat-agent"
+          >
+            {agentLabel}
+          </span>
         )}
+        <span className="flex-1" aria-hidden />
         {/* The state, spelled out: the pill's shape and a word for it, with
             how long it has been so. A chip rather than loose text so it reads
             as ONE fact beside the title, and never wraps into it. */}

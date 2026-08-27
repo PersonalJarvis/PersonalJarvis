@@ -77,6 +77,7 @@ import { WorkspaceExplorer } from "./WorkspaceExplorer";
 import { WorkspaceFileViewer } from "./WorkspaceFileViewer";
 import { PaneChat } from "./PaneChat";
 import { useIdeChatStore } from "@/store/ideChat";
+import { PANE_ACTIVITY_EVENT, readPaneActivityChange } from "@/store/workspacePanes";
 import type { WorkspaceView } from "@/components/agentic/workspaceView";
 import { sameRows } from "./chatState";
 import { usePaneArrange, type DropZone } from "./paneArrange";
@@ -975,9 +976,41 @@ export function AgenticGrid({
       timer = window.setTimeout(() => void run(), busy ? ACTIVITY_POLL_MS : ACTIVITY_POLL_IDLE_MS);
     };
     void run();
+    // The socket's own word, ahead of the poll: the backend sweep says the
+    // moment a pane's reading changes (`AgenticIdePaneActivity`), and the
+    // badge follows on that beat rather than on the next pull. Same cache,
+    // same workspace guard, same keep-identity rule — an event repeating what
+    // the poll already said changes nothing.
+    const onActivity = (event: Event) => {
+      const change = readPaneActivityChange((event as CustomEvent).detail);
+      if (!change || change.session_id !== session.id || cancelled) return;
+      const row: TerminalActivityRow = {
+        key: change.key,
+        name: change.name,
+        status: change.status,
+        activity: change.activity,
+        activity_since: change.activity_since,
+        worked: change.worked,
+      };
+      setActivityCache((current) => {
+        const currentRows = current.workspaceId === session.id ? current.rows : {};
+        const next = { ...currentRows, [row.name]: row };
+        return sameRows(currentRows, next) ? current : { workspaceId: session.id, rows: next };
+      });
+      if (change.activity === "working") {
+        // The backend confirmed what the optimistic bridge was holding.
+        setSentAt((current) =>
+          row.name in current
+            ? Object.fromEntries(Object.entries(current).filter(([name]) => name !== row.name))
+            : current,
+        );
+      }
+    };
+    window.addEventListener(PANE_ACTIVITY_EVENT, onActivity);
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
+      window.removeEventListener(PANE_ACTIVITY_EVENT, onActivity);
     };
   }, [session.id, pollRecaps]);
 
@@ -2536,8 +2569,20 @@ export function AgenticGrid({
             }
             // The same recap the pane's own header wears (polled, else the one
             // the workspace state carried), so the stage and the terminal
-            // behind it never name one pane two ways.
+            // behind it never name one pane two ways — and the same card
+            // behind it: the longer form, who wrote it and why, and the
+            // actions, exactly as the pane's own header hands them to
+            // PaneRecap above.
             title={recaps[stagedTerm.name]?.recap ?? stagedTerm.recap}
+            titleDetail={recaps[stagedTerm.name]?.recap_detail ?? stagedTerm.recap_detail}
+            recapMeta={{
+              source: recaps[stagedTerm.name]?.source,
+              reason: recaps[stagedTerm.name]?.reason,
+              writer: recaps[stagedTerm.name]?.writer,
+              note: recaps[stagedTerm.name]?.note,
+              generatedAt: recaps[stagedTerm.name]?.generated_at,
+            }}
+            recapActions={recapActionsFor(stagedTerm.name)}
             // The whole reading, not just the word: the header spells the
             // state out with how long it has held, and tells a finished pane
             // from one nobody has spoken to — the same three facts the
