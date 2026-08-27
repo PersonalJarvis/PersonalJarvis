@@ -86,7 +86,8 @@ def test_resolve_runner_names_each_clis_own_runner() -> None:
     assert resolve_runner("kimi") == "kimi-cli"
     assert resolve_runner("glm") == "glm-cli"
     assert resolve_runner("deepseek-harness") == "dsh-cli"
-    for pid in ("opencode", "kimi", "glm", "deepseek-harness"):
+    assert resolve_runner("cursor") == "cursor-cli"
+    for pid in ("opencode", "kimi", "glm", "deepseek-harness", "cursor"):
         assert resolve_runner(pid, surface="jarvis") == "unknown"
 
 
@@ -121,6 +122,9 @@ def test_every_cli_runner_has_a_permission_ladder_and_a_typeahead_answer() -> No
         ("kimi-cli", "plan", "plan"),
         ("dsh-cli", "plan", "auto"),
         ("glm-cli", "bypass", "bypassPermissions"),
+        ("cursor-cli", "plan", "plan"),
+        ("cursor-cli", "bypassPermissions", "auto"),
+        ("cursor-cli", "acceptEdits", "ask"),
     ],
 )
 def test_a_mode_from_another_ladder_folds_onto_the_new_clis(
@@ -130,7 +134,7 @@ def test_a_mode_from_another_ladder_folds_onto_the_new_clis(
 
 
 def test_the_new_clis_offer_no_effort_knob() -> None:
-    for provider in ("opencode", "kimi", "glm", "deepseek-harness"):
+    for provider in ("opencode", "kimi", "glm", "deepseek-harness", "cursor"):
         assert effort.effort_levels(provider) == ("",)
         assert effort.default_effort(provider) == ""
         assert effort.normalize_effort(provider, "high") == ""
@@ -374,6 +378,41 @@ def test_plan_kimi_prints_json_and_finds_its_session_afterwards(stubbed: None) -
     assert plan.discover is None and plan.vendor_session == "session_1"
 
 
+def test_plan_cursor_prints_stream_json_and_maps_the_stances(
+    stubbed: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(rc, "cursor_argv_prefix", lambda: ["agent"])
+    plan = rc.plan_cursor(
+        prompt="fix it",
+        cwd=Path("."),
+        model="composer-2",
+        effort="high",
+        permission_mode="auto",
+        resume=None,
+    )
+    assert plan.argv[:4] == ["agent", "-p", "--output-format", "stream-json"]
+    assert "--force" in plan.argv
+    assert "--mode" not in plan.argv
+    assert plan.argv[plan.argv.index("--model") + 1] == "composer-2"
+    assert plan.argv[-1] == "fix it"
+    assert plan.shape == "cursor" and plan.env["AGENT"] == "cursor"
+    assert plan.vendor_session is None
+
+    plan = rc.plan_cursor(
+        prompt="p", cwd=Path("."), model="", effort="", permission_mode="plan", resume="chat-9"
+    )
+    assert plan.argv[plan.argv.index("--mode") + 1] == "plan"
+    assert "--force" not in plan.argv
+    assert plan.argv[plan.argv.index("--resume") + 1] == "chat-9"
+    assert plan.vendor_session == "chat-9"
+
+    plan = rc.plan_cursor(
+        prompt="p", cwd=Path("."), model="", effort="", permission_mode="ask", resume=None
+    )
+    assert plan.argv[plan.argv.index("--mode") + 1] == "ask"
+    assert "--force" not in plan.argv
+
+
 def test_plan_dsh_is_one_task_in_plain_text(stubbed: None) -> None:
     plan = rc.plan_dsh(
         prompt="run the tests", cwd=Path("."), model="", effort="", permission_mode="", resume=None
@@ -570,6 +609,88 @@ def test_a_kimi_turn_discovers_its_session_once_the_cli_has_exited(
         "tool_call",
         "tool_result",
         "assistant_text",
+        "turn_finished",
+    ]
+    assert events[-1]["payload"]["status"] == "done"
+
+
+# Cursor print-mode stream-json, from the documented example sequence.
+_CURSOR_ASSISTANT = {
+    "type": "assistant",
+    "message": {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "I'll read the README.md file"}],
+    },
+    "session_id": "c6b62c6f-7ead-4fd6-9922-e952131177ff",
+}
+_CURSOR_TOOL_START = {
+    "type": "tool_call",
+    "subtype": "started",
+    "call_id": "toolu_1",
+    "tool_call": {"readToolCall": {"args": {"path": "README.md"}}},
+    "session_id": "c6b62c6f-7ead-4fd6-9922-e952131177ff",
+}
+_CURSOR_TOOL_DONE = {
+    "type": "tool_call",
+    "subtype": "completed",
+    "call_id": "toolu_1",
+    "tool_call": {
+        "readToolCall": {
+            "args": {"path": "README.md"},
+            "result": {"success": {"content": "# Project\n", "totalLines": 54}},
+        }
+    },
+    "session_id": "c6b62c6f-7ead-4fd6-9922-e952131177ff",
+}
+_CURSOR_RESULT = {
+    "type": "result",
+    "subtype": "success",
+    "is_error": False,
+    "duration_ms": 1234,
+    "result": "I'll read the README.md fileDone!",
+    "session_id": "c6b62c6f-7ead-4fd6-9922-e952131177ff",
+}
+
+
+def test_cursor_lines_become_text_and_tool_rows() -> None:
+    st = rc._CursorState(turn_id="t")
+    events = rc.translate_cursor_line(_CURSOR_ASSISTANT, st)
+    assert _kinds(events) == ["assistant_text"]
+    assert events[0]["payload"]["text"] == "I'll read the README.md file"
+    assert st.vendor_session == "c6b62c6f-7ead-4fd6-9922-e952131177ff"
+
+    events = rc.translate_cursor_line(_CURSOR_TOOL_START, st)
+    assert _kinds(events) == ["tool_call"]
+    assert events[0]["payload"]["name"] == "read"
+    assert events[0]["payload"]["summary"] == "README.md"
+
+    events = rc.translate_cursor_line(_CURSOR_TOOL_DONE, st)
+    assert _kinds(events) == ["tool_result"]
+    assert "# Project" in events[0]["payload"]["output"]
+    assert not events[0]["payload"]["is_error"]
+
+    # The result's concatenated text is not a second assistant row — the
+    # earlier message already is the answer.
+    assert rc.translate_cursor_line(_CURSOR_RESULT, st) == []
+    assert st.status == "done" and st.emitted_text
+
+
+def test_a_cursor_turn_runs_through_the_shared_pump(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = rc.CliPlan(
+        _fake_cli([_CURSOR_ASSISTANT, _CURSOR_TOOL_START, _CURSOR_TOOL_DONE, _CURSOR_RESULT]),
+        dict(os.environ),
+        None,
+        "cursor",
+        None,
+    )
+    vendor, events = _turn(monkeypatch, tmp_path, "cursor-cli", plan, "cursor")
+    assert vendor == "c6b62c6f-7ead-4fd6-9922-e952131177ff"
+    assert _kinds(events) == [
+        "assistant_text",
+        "tool_call",
+        "tool_result",
         "turn_finished",
     ]
     assert events[-1]["payload"]["status"] == "done"

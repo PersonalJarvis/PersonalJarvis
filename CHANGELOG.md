@@ -11,6 +11,12 @@ versioning per [SemVer](https://semver.org/).
 
 ### Added
 
+- **Cursor CLI in the Agentic IDE.** Cursor's official terminal agent
+  (`agent` / `cursor-agent`) is a pick in Open beside, the chat's Coding
+  CLIs list, and the install button. Windows runs
+  `irm https://cursor.com/install?win32=true`; macOS, Linux and WSL run
+  `curl https://cursor.com/install`. Sign-in is `agent login` (or
+  `CURSOR_API_KEY`) inside the pane.
 - **Agentic IDE chat: every connected coding CLI is a seat.** The chat's
   provider picker lists the Agentic IDE's own CLI registry under "Coding
   CLIs" — OpenCode, Kimi Code, GLM Coding Plan and DeepSeek Harness join

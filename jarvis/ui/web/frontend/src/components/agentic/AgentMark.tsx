@@ -36,6 +36,7 @@ const AGENT_LOGOS: Record<string, LogoAsset> = {
   antigravity: { url: "/provider-logos/antigravity.svg", ground: "ink" },
   claude: { url: "/provider-logos/claude.svg", ground: "ink" },
   codex: { url: "/provider-logos/openai.svg", ground: "ink" },
+  cursor: { url: "/agent-logos/cursor.svg", ground: "ink" },
   "deepseek-harness": { url: "/agent-logos/deepseek.svg", ground: "ink" },
   glm: { url: "/agent-logos/zai.svg", ground: "any" },
   "grok-build": { url: "/provider-logos/grok.svg", ground: "ink" },

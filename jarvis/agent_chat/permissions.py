@@ -211,6 +211,25 @@ _DSH: Final[tuple[PermissionMode, ...]] = (
     ),
 )
 
+_CURSOR: Final[tuple[PermissionMode, ...]] = (
+    PermissionMode(
+        "ask",
+        "Ask",
+        "Read-only exploration — Cursor CLI's Ask mode; nothing is changed.",
+    ),
+    PermissionMode(
+        "plan",
+        "Plan",
+        "Design the approach before coding — Cursor CLI's Plan mode.",
+    ),
+    PermissionMode(
+        "auto",
+        "Agent",
+        "Full access to tools for coding tasks. In the chat, print mode "
+        "applies edits without asking (``--force``).",
+    ),
+)
+
 _API: Final[tuple[PermissionMode, ...]] = (
     PermissionMode(
         "ask",
@@ -276,6 +295,7 @@ _LADDERS: Final[dict[str, tuple[tuple[PermissionMode, ...], str]]] = {
     # Code's own words.
     "glm-cli": (_CLAUDE, "acceptEdits"),
     "dsh-cli": (_DSH, "auto"),
+    "cursor-cli": (_CURSOR, "auto"),
     "api": (_API, "ask"),
     JARVIS_LADDER: (_JARVIS, "ask"),
 }

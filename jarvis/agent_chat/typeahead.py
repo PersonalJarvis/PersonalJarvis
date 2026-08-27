@@ -63,6 +63,7 @@ TRIGGERS_BY_RUNNER: Final[dict[str, tuple[str, ...]]] = {
     "grok-cli": (MENTION,),
     "opencode-cli": (MENTION,),
     "kimi-cli": (MENTION,),
+    "cursor-cli": (MENTION,),
     # One task in, one answer out — nothing to complete against.
     "dsh-cli": (),
     "api": (MENTION,),

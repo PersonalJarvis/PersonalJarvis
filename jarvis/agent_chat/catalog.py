@@ -1,9 +1,9 @@
 """The provider rows the agent-chat composer can pick from.
 
 Two kinds of row. The **coding CLIs** are the Agentic IDE's own registry
-(``jarvis.workspace.agents`` — Claude Code, Codex, OpenCode, Kimi Code, GLM
-Coding Plan, Grok Build, Antigravity, DeepSeek Harness), one row per entry
-that :mod:`jarvis.agent_chat.runner_cli` drives without a terminal. Each row
+(``jarvis.workspace.agents`` — Claude Code, Codex, Cursor CLI, OpenCode, Kimi
+Code, GLM Coding Plan, Grok Build, Antigravity, DeepSeek Harness), one row
+per entry that :mod:`jarvis.agent_chat.runner_cli` drives without a terminal. Each row
 names its registry key in ``agent``, and :func:`rows_for` drops a row whose
 entry the IDE no longer has, so the chat's picker and the IDE's pane picker
 offer the same CLIs (maintainer, 2026-08-27: the CLIs connected in the
@@ -21,7 +21,7 @@ Two kinds of runner sit behind the rows:
     (:mod:`jarvis.agent_chat.runner_api`). Model lists come live from the
     provider catalog (``GET /api/providers/{id}/models``).
 
-``claude-cli`` … ``dsh-cli`` — one runner per coding CLI (``runner_cli._PLANNERS``)
+``claude-cli`` … ``cursor-cli`` — one runner per coding CLI (``runner_cli._PLANNERS``)
     A vendor CLI driven non-interactively (:mod:`jarvis.agent_chat.runner_cli`).
     The CLI brings its own tools and permissions; the model list is the
     CLI's own — read live where the CLI publishes one (``agy models``,
@@ -71,6 +71,7 @@ Runner = Literal[
     "kimi-cli",
     "glm-cli",
     "dsh-cli",
+    "cursor-cli",
 ]
 
 
@@ -211,6 +212,19 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         default_model="",
         native_resume=True,
         agent="codex",
+    ),
+    ProviderRow(
+        id="cursor",
+        label="Cursor CLI",
+        family="cursor",
+        runner="cursor-cli",
+        models_source="curated",
+        # Model ids are Cursor's own (Auto, Composer, the vendor models the
+        # account can reach) and the CLI publishes no list this app could
+        # offer — the pick is whatever ``/model`` accepts.
+        default_model="",
+        native_resume=True,
+        agent="cursor",
     ),
     ProviderRow(
         id="opencode",

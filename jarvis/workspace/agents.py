@@ -210,6 +210,10 @@ class WorkspaceAgent:
     #: ``shutil.which`` can find, and feeding it one used to fail as "not
     #: installed" rather than as the configuration error it is.
     binary: str = ""
+    #: Other PATH names this CLI answers to, tried after ``binary`` when that
+    #: one is missing. Cursor's installer also drops ``cursor-agent`` so the
+    #: generic ``agent`` does not collide with another product.
+    binary_aliases: tuple[str, ...] = ()
     #: Arguments that always precede the per-pane ones.
     launch_args: tuple[str, ...] = ()
     win_shim: WinShim | None = None
@@ -481,6 +485,24 @@ def _antigravity_install() -> InstallMethods:
     return InstallMethods(script_url=url, recommended="script")
 
 
+def _cursor_cli_install() -> InstallMethods:
+    """Official Cursor CLI installer for the OS that will run it.
+
+    Cursor ships two scripts, not one: the native Windows installer is
+    ``https://cursor.com/install?win32=true`` (PowerShell), and macOS, Linux
+    and WSL share ``https://cursor.com/install`` (curl | bash). The shared
+    script installer fetches whichever URL we declare and wraps it in the
+    matching runner, so picking the URL at registration is what makes the
+    command actually work.
+    """
+    url = (
+        "https://cursor.com/install?win32=true"
+        if sys.platform == "win32"
+        else "https://cursor.com/install"
+    )
+    return InstallMethods(script_url=url, recommended="script")
+
+
 #: Kimi ships under two generations that both install a binary called ``kimi``.
 KIMI_CURRENT = "kimi-code"
 KIMI_LEGACY = "kimi-cli"
@@ -704,6 +726,18 @@ _KIMI_PICKS = LaunchPicks(
     ladder="api",
 )
 
+#: Cursor CLI takes ``--model`` and ``--mode plan|ask``; Agent mode is the
+#: default (no extra flag). Effort is the model's own, not a CLI flag.
+_CURSOR_PICKS = LaunchPicks(
+    provider="cursor",
+    model_args=("--model", picks_value),
+    permission_args=(
+        ("plan", ("--mode", "plan")),
+        ("ask", ("--mode", "ask")),
+    ),
+)
+_CURSOR_RUNTIME = RuntimePicks(model=f"/model {picks_value}")
+
 
 _AGENTS: dict[str, WorkspaceAgent] = {
     "claude": make_cli_agent(
@@ -763,6 +797,33 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         # unrelated CLI keep the normal parallel path.
         resume_start_limit=1,
         spoken_aliases=("codex", "kodex", "codecs", "codeks"),
+    ),
+    "cursor": make_cli_agent(
+        "cursor",
+        "Cursor CLI",
+        launch_picks=_CURSOR_PICKS,
+        runtime_picks=_CURSOR_RUNTIME,
+        binary="agent",
+        homepage="https://cursor.com/docs/cli/overview",
+        description="Cursor's terminal coding agent — the same models as the editor.",
+        install=_cursor_cli_install(),
+        # The documented command is ``agent``; the Windows installer also
+        # drops ``cursor-agent`` so the generic name does not collide with
+        # another product on PATH.
+        binary_aliases=("cursor-agent",),
+        # No trust dialog is documented. Sign-in is ``agent login`` (or
+        # ``CURSOR_API_KEY``) inside the pane on first use.
+        needs_trust=False,
+        extra_path_dirs=("~/.local/bin",),
+        file_reference="at",
+        instruction_filename="AGENTS.md",
+        input_markers=("→",),
+        version_regex=_LOOSE_SEMVER_RE,
+        # DELIBERATELY no AccountSpec. Cursor stores the login itself after
+        # ``agent login``; the layout of that store has not been verified
+        # against a live install, so a seat switcher here would report
+        # switches that did not happen. Tracked in docs/os-parity.md.
+        spoken_aliases=("cursor", "cursor cli", "cursor-cli", "cursor agent"),
     ),
     "opencode": make_cli_agent(
         "opencode",
@@ -1529,11 +1590,18 @@ def _agent_info(
             kind=agent.kind,
             description=agent.description,
         )
+    installed = bool(status and status.installed)
+    # The documented binary may be missing while an alias the installer also
+    # drops is on PATH (Cursor's ``cursor-agent`` next to ``agent``). A probe
+    # that only asked the documented name would list the entry as missing
+    # while a pane of it would start.
+    if not installed and agent.binary_aliases:
+        installed = any(_on_path(name) for name in agent.binary_aliases)
     return AgentInfo(
         name=agent.name,
         display_name=agent.display_name,
-        installed=bool(status and status.installed),
-        version=status.version if status else None,
+        installed=installed,
+        version=status.version if status and status.installed else None,
         install_command=install_command(agent.name),
         launch_command=agent.launch_command or "",
         kind=agent.kind,

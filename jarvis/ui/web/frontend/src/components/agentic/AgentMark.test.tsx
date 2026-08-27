@@ -50,6 +50,14 @@ describe("AgentMark", () => {
       "/provider-logos/antigravity.svg",
     );
     expect(mark("antigravity").querySelector("img")).toBeNull();
+
+    const cursor = render(<AgentMark agent="cursor" label="Cursor CLI" />);
+    expect(mark("cursor").getAttribute("data-ground")).toBe("ink");
+    expect(mark("cursor").getAttribute("data-logo")).toBe(
+      "/agent-logos/cursor.svg",
+    );
+    expect(mark("cursor").querySelector("img")).toBeNull();
+    cursor.unmount();
   });
 
   it("knows the harness whose own interface is not the terminal", () => {

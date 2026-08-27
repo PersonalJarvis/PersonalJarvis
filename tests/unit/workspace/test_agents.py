@@ -36,7 +36,17 @@ from jarvis.workspace.agents import (
 # registry is for. What must not break is that a shipped provider silently
 # disappears.
 REQUIRED_CODING_AGENTS = frozenset(
-    {"claude", "codex", "opencode", "kimi", "glm", "grok-build", "antigravity"}
+    {
+        "claude",
+        "codex",
+        "cursor",
+        "opencode",
+        "kimi",
+        "glm",
+        "grok-build",
+        "antigravity",
+        "deepseek-harness",
+    }
 )
 
 
@@ -119,6 +129,13 @@ def test_install_commands_are_runnable_or_honestly_absent() -> None:
         assert "install.ps1" in agy_install
     else:
         assert "install.sh" in agy_install
+    cursor_install = install_command("cursor")
+    assert cursor_install is not None
+    if sys.platform == "win32":
+        assert "cursor.com/install?win32=true" in cursor_install
+    else:
+        assert "cursor.com/install" in cursor_install
+        assert "win32" not in cursor_install
     assert install_command("nope") is None
 
 
@@ -146,6 +163,16 @@ def test_launch_command_is_bare_binary() -> None:
     assert agy.file_reference == "at"
     assert agy.account is None
     assert agy.trust is not None and agy.trust.scalar is True
+    cursor = get_agent("cursor")
+    assert cursor is not None
+    assert cursor.display_name == "Cursor CLI"
+    assert cursor.executable == "agent"
+    assert cursor.launch_command == "agent"
+    assert cursor.binary_aliases == ("cursor-agent",)
+    assert cursor.file_reference == "at"
+    assert cursor.needs_trust is False
+    assert cursor.account is None
+    assert cursor.input_markers == ("→",)
 
 
 def test_build_agent_argv_wraps_command_in_a_shell() -> None:

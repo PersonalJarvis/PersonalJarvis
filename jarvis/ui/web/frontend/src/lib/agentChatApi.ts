@@ -29,7 +29,8 @@ export interface AgentChatProvider {
   /**
    * Which runner answers on this machine: "api" / "brain", or a vendor CLI —
    * "claude-cli" | "codex-cli" | "agy-cli" | "grok-cli" | "opencode-cli" |
-   * "kimi-cli" | "glm-cli" | "dsh-cli" (jarvis/agent_chat/runner_cli.py).
+   * "kimi-cli" | "glm-cli" | "dsh-cli" | "cursor-cli"
+   * (jarvis/agent_chat/runner_cli.py).
    */
   runner: string;
   models_source: "live" | "curated";

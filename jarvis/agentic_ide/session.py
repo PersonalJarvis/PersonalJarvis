@@ -793,6 +793,11 @@ def agent_argv(agent: str) -> tuple[str, ...] | None:
         pass
     exe = shutil.which(binary)
     if exe is None:
+        for alias in spec.binary_aliases:
+            exe = shutil.which(alias)
+            if exe is not None:
+                break
+    if exe is None:
         return None
     if spec.shell_launch:
         # A user-added entry whose command is shell SOURCE — a pipeline, a

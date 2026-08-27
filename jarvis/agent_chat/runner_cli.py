@@ -3,7 +3,7 @@
 Every coding CLI the Agentic IDE registers (``jarvis.workspace.agents``)
 has a planner here, so the chat's picker offers the same CLIs a pane does
 (maintainer, 2026-08-27: the CLIs connected in the Agentic IDE, and each
-one drawn as a chat, never as a terminal). Eight entries, six wire shapes:
+one drawn as a chat, never as a terminal). Nine entries, seven wire shapes:
 
 * **Claude-shaped NDJSON** — ``claude`` (Claude Code), ``grok`` (Grok
   Build, whose ``--output-format streaming-messages-json`` is the Anthropic
@@ -29,10 +29,13 @@ one drawn as a chat, never as a terminal). Eight entries, six wire shapes:
   (verified against kimi-code 0.29.2).
 * **Plain text** — ``dsh --profile headless`` (DeepSeek Harness) prints the
   final message and exits: no tool stream, no session, one answer.
+* **Cursor stream-json** — ``agent -p --output-format stream-json`` with
+  ``system`` / ``assistant`` / ``tool_call`` / ``result`` lines (Cursor's
+  documented print-mode wire; session id on every line).
 
 Every CLI that keeps a conversation resumes it natively (``claude --resume``,
 ``codex exec resume``, ``grok -r``, ``agy --conversation``, ``opencode run
---session``, ``kimi --session``), so the session row keeps the vendor's id
+--session``, ``kimi --session``, ``agent --resume``), so the session row keeps the vendor's id
 in ``vendor_session`` and a later turn continues the same conversation — the
 tools, skills, MCP servers and permissions are the CLI's own, exactly as in
 a terminal. The person's permission mode maps onto the closest stance each
@@ -96,6 +99,16 @@ CLI_BINARIES: Final[dict[str, tuple[str, ...]]] = {
     # (``jarvis.workspace.agents``), so its seat stands on Claude Code's.
     "glm-cli": ("claude", "claude.cmd", "claude.exe"),
     "dsh-cli": ("dsh", "dsh.cmd", "dsh.exe"),
+    # Documented command is ``agent``; the Windows installer also drops
+    # ``cursor-agent`` so the generic name does not collide with another
+    # product. Prefer the unambiguous name when both are present.
+    "cursor-cli": (
+        "cursor-agent",
+        "cursor-agent.exe",
+        "agent",
+        "agent.exe",
+        "agent.cmd",
+    ),
 }
 
 
@@ -188,6 +201,13 @@ def dsh_argv_prefix() -> list[str]:
     return [binary]
 
 
+def cursor_argv_prefix() -> list[str]:
+    binary = _which(*CLI_BINARIES["cursor-cli"])
+    if not binary:
+        raise CliUnavailable("Cursor CLI (agent) is not installed or not on PATH.")
+    return [binary]
+
+
 def _account_env(platform: str) -> dict[str, str]:
     """The child environment for the active subscription seat of ``platform``."""
     try:
@@ -257,7 +277,7 @@ class CliPlan:
     argv: list[str]
     env: dict[str, str]
     stdin_text: str | None
-    shape: str  # a key of ``_SHAPES``: claude | codex | agy | opencode | kimi | text
+    shape: str  # a key of ``_SHAPES``: claude | codex | agy | opencode | kimi | text | cursor
     #: Vendor session id we chose up front (claude/grok --session-id), or None
     #: when the CLI assigns one (agy, codex) and we read it from the stream.
     vendor_session: str | None
@@ -941,6 +961,47 @@ def plan_dsh(
     return CliPlan(argv, env, None, "text", None)
 
 
+def plan_cursor(
+    *,
+    prompt: str,
+    cwd: Path,
+    model: str,
+    effort: str,
+    permission_mode: str,
+    resume: str | None,
+    identity: jarvis_harness.Identity | None = None,
+) -> CliPlan:
+    """Cursor CLI print mode: one prompt in, stream-json events out.
+
+    ``-p`` / ``--print`` is the non-interactive path (scripts, CI, this chat).
+    ``--force`` is what actually applies edits — without it print mode only
+    proposes. Ask and Plan are ``--mode`` flags and do not take ``--force``,
+    because those stances are supposed to leave the tree alone.
+    """
+    del cwd, effort  # cwd is the spawn cwd; Cursor has no effort flag.
+    mode = normalize_permission("cursor-cli", permission_mode)
+    prompt = _with_identity(prompt, identity, resume, compact=True)
+    argv = [
+        *cursor_argv_prefix(),
+        "-p",
+        "--output-format",
+        "stream-json",
+    ]
+    if model:
+        argv += ["--model", model]
+    if mode == "plan":
+        argv += ["--mode", "plan"]
+    elif mode == "ask":
+        argv += ["--mode", "ask"]
+    else:
+        argv += ["--force"]
+    if resume:
+        argv += ["--resume", resume]
+    argv.append(prompt)
+    env = _registry_env("cursor", _account_env("cursor"))
+    return CliPlan(argv, env, None, "cursor", resume)
+
+
 def _with_identity(
     prompt: str,
     identity: jarvis_harness.Identity | None,
@@ -970,6 +1031,7 @@ _PLANNERS: Final[dict[str, Any]] = {
     "kimi-cli": plan_kimi,
     "glm-cli": plan_glm,
     "dsh-cli": plan_dsh,
+    "cursor-cli": plan_cursor,
 }
 
 #: Every runner this module drives — the catalog route's "is this a CLI
@@ -1908,6 +1970,196 @@ def translate_kimi_line(obj: dict[str, Any], st: _KimiState) -> list[dict[str, A
     return out
 
 
+# ---------------------------------------------------------- cursor translation
+
+
+@dataclass(slots=True)
+class _CursorState:
+    """Cursor CLI ``--output-format stream-json`` print-mode stream."""
+
+    turn_id: str
+    vendor_session: str | None = None
+    status: str = "done"
+    error: str | None = None
+    usage: dict[str, int] = field(default_factory=dict)
+    emitted_text: bool = False
+    result_text: str = ""
+    tool_calls: set[str] = field(default_factory=set)
+    started_at: dict[str, float] = field(default_factory=dict)
+
+
+def _cursor_message_text(message: Any) -> str:
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, dict) and str(block.get("type") or "") == "text":
+            text = str(block.get("text") or "")
+            if text:
+                parts.append(text)
+    return "".join(parts)
+
+
+def _cursor_tool_payload(tool_call: Any) -> tuple[str, dict[str, Any], Any]:
+    """Name, args, and the inner payload of one Cursor ``tool_call`` object."""
+    if not isinstance(tool_call, dict):
+        return "tool", {}, {}
+    for key, payload in tool_call.items():
+        if not isinstance(payload, dict):
+            continue
+        if key.endswith("ToolCall"):
+            name = key[: -len("ToolCall")] or "tool"
+            args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
+            return name, args, payload
+        if key == "function":
+            raw_args = payload.get("arguments")
+            args: dict[str, Any]
+            if isinstance(raw_args, dict):
+                args = raw_args
+            elif isinstance(raw_args, str):
+                try:
+                    parsed = json.loads(raw_args)
+                except ValueError:
+                    parsed = {"arguments": raw_args}
+                args = parsed if isinstance(parsed, dict) else {"arguments": parsed}
+            else:
+                args = {}
+            return str(payload.get("name") or "tool"), args, payload
+    return "tool", {}, {}
+
+
+def _cursor_tool_output(payload: dict[str, Any]) -> tuple[str, bool]:
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        return "", False
+    if "success" in result:
+        success = result.get("success")
+        if isinstance(success, dict):
+            for key in ("content", "path"):
+                val = success.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val, False
+            return json.dumps(success, ensure_ascii=False)[:4000], False
+        return str(success or "done"), False
+    if "error" in result or "failure" in result:
+        err = result.get("error") or result.get("failure")
+        return str(err or "failed"), True
+    return json.dumps(result, ensure_ascii=False)[:4000], False
+
+
+def translate_cursor_line(obj: dict[str, Any], st: _CursorState) -> list[dict[str, Any]]:
+    """One Cursor print-mode stream-json object -> agent-chat events.
+
+    Shape (Cursor docs, ``--output-format stream-json``): ``system`` init,
+    ``assistant`` messages (complete between tool calls), ``tool_call``
+    started/completed, terminal ``result``. Session id rides on every line.
+    """
+    out: list[dict[str, Any]] = []
+    kind = str(obj.get("type") or "")
+    sid = obj.get("session_id")
+    if sid and not st.vendor_session:
+        st.vendor_session = str(sid)
+
+    if kind in {"system", "user"}:
+        return out
+
+    if kind == "assistant":
+        # Partial-output duplicates: a pre-tool flush carries ``model_call_id``
+        # and a final flush has no ``timestamp_ms``. Complete messages (the
+        # default without ``--stream-partial-output``) have neither extra
+        # field and are the ones we keep.
+        if "model_call_id" in obj:
+            return out
+        if "timestamp_ms" in obj:
+            return out
+        text = _cursor_message_text(obj.get("message"))
+        if not text.strip():
+            return out
+        st.emitted_text = True
+        st.result_text = text
+        st.status, st.error = "done", None
+        mid = str(sid or uuid.uuid4().hex)
+        out.append(
+            make_event(
+                "assistant_text",
+                {"turn_id": st.turn_id, "message_id": mid, "text": text},
+            )
+        )
+        return out
+
+    if kind == "tool_call":
+        call_id = str(obj.get("call_id") or uuid.uuid4().hex)
+        name, args, payload = _cursor_tool_payload(obj.get("tool_call"))
+        subtype = str(obj.get("subtype") or "")
+        if subtype == "started" or (subtype != "completed" and call_id not in st.tool_calls):
+            if call_id not in st.tool_calls:
+                st.tool_calls.add(call_id)
+                st.started_at[call_id] = time.perf_counter()
+                out.append(
+                    make_event(
+                        "tool_call",
+                        {
+                            "turn_id": st.turn_id,
+                            "call_id": call_id,
+                            "name": name,
+                            "input": args,
+                            "summary": _cli_tool_summary(name, args)
+                            or str(args.get("path") or "")[:200],
+                        },
+                    )
+                )
+        if subtype == "completed":
+            output, is_error = _cursor_tool_output(payload if isinstance(payload, dict) else {})
+            started = st.started_at.get(call_id)
+            duration_ms = int((time.perf_counter() - started) * 1000) if started else None
+            out.append(
+                make_event(
+                    "tool_result",
+                    {
+                        "turn_id": st.turn_id,
+                        "call_id": call_id,
+                        "output": output or ("failed" if is_error else "done"),
+                        "is_error": is_error,
+                        "duration_ms": duration_ms,
+                    },
+                )
+            )
+        return out
+
+    if kind == "result":
+        if sid:
+            st.vendor_session = str(sid)
+        is_error = bool(obj.get("is_error")) or str(obj.get("subtype") or "") != "success"
+        result = str(obj.get("result") or "")
+        if result.strip():
+            st.result_text = result
+            if not st.emitted_text:
+                st.emitted_text = True
+                out.append(
+                    make_event(
+                        "assistant_text",
+                        {
+                            "turn_id": st.turn_id,
+                            "message_id": str(sid or uuid.uuid4().hex),
+                            "text": result,
+                        },
+                    )
+                )
+        if is_error:
+            st.status = "error"
+            st.error = result or "Cursor CLI reported an error"
+        else:
+            st.status, st.error = "done", None
+        return out
+
+    return out
+
+
 # ---------------------------------------------------------- plain-text shape
 
 
@@ -1940,6 +2192,10 @@ _SHAPES: Final[dict[str, tuple[Callable[[str, str | None], Any], Callable[..., A
         translate_opencode_line,
     ),
     "kimi": (lambda tid, vs: _KimiState(turn_id=tid, vendor_session=vs), translate_kimi_line),
+    "cursor": (
+        lambda tid, vs: _CursorState(turn_id=tid, vendor_session=vs),
+        translate_cursor_line,
+    ),
     "text": (lambda tid, vs: _TextState(turn_id=tid, vendor_session=vs), _translate_nothing),
 }
 
