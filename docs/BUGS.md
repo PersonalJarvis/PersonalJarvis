@@ -13738,3 +13738,32 @@ none of them. Memory that stands in for a computation must record WHEN it was
 computed, or a fact that arrives later loses to a stale one. And the durable
 source was on disk the whole time: the CLI's own transcript names every
 session, restart or not.
+
+## BUG-195: the collapsed sidebar's hover label is cut to "Lo" at the rail's edge in the Agentic IDE — the pane chat's `z-20` tied with the nav column's `z-20` and won on DOM order (LOW, FIXED 2026-08-27)
+
+**Symptom.** With the sidebar collapsed to its icon rail and the Agentic IDE
+open in chat mode, hovering an icon showed the first two letters of its name
+("Lo" for Local models) and nothing past the sidebar's right edge (maintainer
+screenshot 2026-08-27 11:46). Every other section drew the label whole.
+
+**Root cause.** The rail's label was an `absolute` child of the sidebar
+column, which paints at `z-20`. The stage column beside it deliberately
+carries NO stacking context (App.tsx, `overlay-stacking.test.ts`) so a
+section's full-screen overlays can reach the app's dialog levels — which also
+means every z-index a section uses lands in the SAME root context as the
+sidebar's. `PaneChat` covers its pane with `absolute inset-0 z-20`; equal
+z-index, later in the DOM, so it painted over the part of the label that
+reached past the column. Raising the column's z-index would only move the tie
+to the next section overlay (the IDE has `z-30` drag targets and dropdowns).
+
+**Fix.** `DockRail` renders the label through `createPortal` on `<body>`,
+`position: fixed` at the app's tooltip level (`z-[70]`, the same as
+`QuickTooltip`), and offsets its rail-relative `top` by the rail's measured
+viewport position, re-measured whenever the hovered slot changes — the only
+moment the label moves. Regression: `DockRail.test.tsx` ("the label leaves
+the rail's stacking context").
+
+**Lesson.** An open stage column is a two-way door: it lets a section's
+overlays out, and it lets a section's z-indexes in. Anything in the chrome that
+reaches past its own column must not rely on the column's z-index; a portal at
+the tooltip level is the one placement no section can tie with.

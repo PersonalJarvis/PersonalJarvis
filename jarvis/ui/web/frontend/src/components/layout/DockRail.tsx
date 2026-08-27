@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AnimatePresence,
   motion,
@@ -131,11 +132,36 @@ export function DockRail({ className }: { className?: string }) {
   const labelTopSmooth = useSpring(labelTopRaw, GLIDE_SPRING);
   const labelTop = reduced ? labelTopRaw : labelTopSmooth;
 
+  // The label is rendered in a portal on <body>, fixed to the viewport, and
+  // its rail-relative `top` is offset by where the rail sits on screen. The
+  // offset is measured whenever the hovered slot changes — the only moment
+  // the label's own position changes too, so the derived value is never stale
+  // for a label that is moving. The rail itself does not move mid-hover.
+  //
+  // Why a portal: the sidebar column paints at z-20 with no stacking context
+  // around the section stage (App.tsx), so a section's own `z-20` layer — the
+  // IDE's pane chat is one — meets the column's z-20 in the SAME context and
+  // wins on DOM order, covering a label that reaches past the rail's edge.
+  // A higher z-index on the column would only move the tie to the next
+  // section overlay; leaving the column's context entirely settles it, the
+  // same way `QuickTooltip` does.
+  const navRef = useRef<HTMLElement | null>(null);
+  const navTop = useRef(0);
+  const labelLeft = useMotionValue(LABEL_LEFT);
+  const labelViewportTop = useTransform(labelTop, (top: number) => top + navTop.current);
+  const measureOrigin = useCallback(() => {
+    const rect = navRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    navTop.current = rect.top;
+    labelLeft.set(rect.left + LABEL_LEFT);
+  }, [labelLeft]);
+
   const setHoveredSlot = useCallback(
     (slot: number) => {
       const prev = hoveredRef.current;
       if (slot === prev) return;
       hoveredRef.current = slot;
+      if (slot >= 0) measureOrigin();
       hoveredMV.set(slot);
       setHovered(slot);
       if (slot < 0) return;
@@ -198,6 +224,7 @@ export function DockRail({ className }: { className?: string }) {
 
   return (
     <nav
+      ref={navRef}
       aria-label={t("deck.sections")}
       className={cn("relative z-10 flex min-h-0 w-16 shrink-0 flex-col", className)}
     >
@@ -243,37 +270,42 @@ export function DockRail({ className }: { className?: string }) {
         </div>
       </div>
 
-      {/* The label rides beside the hovered icon, outside the scroller so the
-          scroller's clipping cannot cut it off. Decorative: every button
-          already carries its name as aria-label. */}
-      <AnimatePresence>
-        {hoveredItem && (
-          <motion.div
-            key="label"
-            aria-hidden
-            data-testid="dock-label"
-            initial={{ opacity: 0, x: -6 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -4 }}
-            transition={reduced ? { duration: 0 } : { duration: 0.12, ease: "easeOut" }}
-            style={{ top: labelTop, left: LABEL_LEFT, y: "-50%" }}
-            className="pointer-events-none absolute flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-background/95 px-2 py-1 text-xs text-foreground shadow-md backdrop-blur"
-          >
-            {resolveNavLabel(t, hoveredItem)}
-            {hoveredItem.beta && (
-              <span className="rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary">
-                {t("nav.agentic_ide_beta")}
-              </span>
-            )}
-            {hoveredCount > 0 && (
-              <span className="font-mono text-[10px] text-primary">{hoveredCount}</span>
-            )}
-            {hoveredHint && (
-              <span className="max-w-[28ch] truncate text-muted-foreground">— {hoveredHint}</span>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* The label rides beside the hovered icon. It lives in a portal on
+          <body>, fixed to the viewport, so neither the scroller's clipping nor
+          a section's own z-20 layer (see `measureOrigin`) can cut it off.
+          z-[70] is the app's tooltip level (`QuickTooltip`). Decorative: every
+          button already carries its name as aria-label. */}
+      {createPortal(
+        <AnimatePresence>
+          {hoveredItem && (
+            <motion.div
+              key="label"
+              aria-hidden
+              data-testid="dock-label"
+              initial={{ opacity: 0, x: -6 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -4 }}
+              transition={reduced ? { duration: 0 } : { duration: 0.12, ease: "easeOut" }}
+              style={{ top: labelViewportTop, left: labelLeft, y: "-50%" }}
+              className="pointer-events-none fixed z-[70] flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-background/95 px-2 py-1 text-xs text-foreground shadow-md backdrop-blur"
+            >
+              {resolveNavLabel(t, hoveredItem)}
+              {hoveredItem.beta && (
+                <span className="rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary">
+                  {t("nav.agentic_ide_beta")}
+                </span>
+              )}
+              {hoveredCount > 0 && (
+                <span className="font-mono text-[10px] text-primary">{hoveredCount}</span>
+              )}
+              {hoveredHint && (
+                <span className="max-w-[28ch] truncate text-muted-foreground">— {hoveredHint}</span>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
     </nav>
   );
 }

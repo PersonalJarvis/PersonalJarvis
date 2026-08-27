@@ -98,6 +98,22 @@ describe("DockRail", () => {
     );
   });
 
+  test("the label leaves the rail's stacking context — a portal on <body>, fixed to the viewport", () => {
+    // The sidebar column paints at z-20 in the same stacking context as the
+    // section stage, so a section's own z-20 layer (the IDE's pane chat) ties
+    // with it and wins on DOM order: "Local models" was cut to "Lo" at the
+    // rail's edge (report 2026-08-27). The label therefore rides outside the
+    // column entirely, at the tooltip level.
+    renderRail();
+    const rail = screen.getByTestId("dock-rail");
+    moveTo(rail, centreOf(2));
+    const label = screen.getByTestId("dock-label");
+    expect(label.parentElement).toBe(document.body);
+    expect(rail.contains(label)).toBe(false);
+    expect(label.classList).toContain("fixed");
+    expect(label.classList).toContain("z-[70]");
+  });
+
   test("hovering does not grow or move an icon — the rail holds its size and place", () => {
     // The magnification was taken back by the maintainer (2026-08-18): the
     // hovered icon gets its surface and its label, nothing else changes.
