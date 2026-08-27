@@ -123,7 +123,9 @@ Unsure which row you're in? Open the PR and ask. We'd rather tell you in review 
 you guess high and waste an evening.
 
 Describe what changed and why, link the issue it closes. By contributing you agree your work
-is licensed under the [MIT License](LICENSE).
+is licensed under the [MIT License](LICENSE) for the 1.x line, and under the
+[Apache License 2.0](LICENSE-APACHE-2.0) from version 2.0 on — see
+[`docs/licensing.md`](docs/licensing.md).
 
 ---
 

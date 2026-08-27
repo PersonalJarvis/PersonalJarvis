@@ -640,7 +640,15 @@ the same day on [Discord](https://discord.gg/x7USduHxbc).
 ## License
 
 MIT. Free to use, modify, and distribute, including commercially; see
-[`LICENSE`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE). Third-party names and logos belong to their owners,
+[`LICENSE`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE).
+
+**From version 2.0 on, Personal Jarvis moves to the Apache License 2.0** — the same
+freedoms, plus an explicit patent grant and a written trademark carve-out. The text
+is already in the repository as [`LICENSE-APACHE-2.0`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE-APACHE-2.0)
+and [`docs/licensing.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/licensing.md) says what changes for users,
+forks, and contributors. Every 1.x release stays MIT, permanently.
+
+Third-party names and logos belong to their owners,
 see [`TRADEMARK.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/TRADEMARK.md).
 
 <br/>

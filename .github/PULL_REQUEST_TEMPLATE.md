@@ -85,5 +85,6 @@ the same evidence as a new speech provider, and we do not pretend otherwise.
 <!--
 First PR here? You do not need to get every box right. Open it, and we will
 help you finish it in review. By contributing you agree your work is licensed
-under the MIT License.
+under the MIT License for the 1.x line, and under the Apache License 2.0 from
+version 2.0 on — see docs/licensing.md.
 -->

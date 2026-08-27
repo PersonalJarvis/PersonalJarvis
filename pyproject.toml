@@ -13,6 +13,9 @@ version = "1.6.0"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
+# MIT governs the whole 1.x line. Version 2.0.0 switches this to "Apache-2.0"
+# and LICENSE to the text already sitting in LICENSE-APACHE-2.0; the full list
+# of places to change lives in docs/licensing.md.
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Ruben Lütke" }]  # i18n-allow: maintainer proper name (umlaut)
