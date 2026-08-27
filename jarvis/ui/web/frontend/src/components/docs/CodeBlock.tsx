@@ -78,9 +78,15 @@ async function loadHighlighter(language: string): Promise<ShikiHighlighterApi> {
 interface CodeBlockProps {
   language: string;
   code: string;
+  /**
+   * Draw the block's own frame — border, language tag, copy button. Off when
+   * the caller frames the code itself (a rendered fence's Source view), so two
+   * header bars never stack.
+   */
+  chrome?: boolean;
 }
 
-export function CodeBlock({ language, code }: CodeBlockProps) {
+export function CodeBlock({ language, code, chrome = true }: CodeBlockProps) {
   const t = useT();
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -136,8 +142,14 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
   };
 
   return (
-    <div className="not-prose group relative my-4 overflow-hidden rounded-md border border-border bg-muted/40">
+    <div
+      className={cn(
+        "not-prose group relative overflow-hidden",
+        chrome && "my-4 rounded-md border border-border bg-muted/40",
+      )}
+    >
       {/* Header-Bar */}
+      {chrome && (
       <div className="flex items-center justify-between border-b border-border/40 bg-muted/20 px-3 py-1">
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
           {language || "text"}
@@ -165,6 +177,7 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
           </span>
         </button>
       </div>
+      )}
       {/* Body — either Shiki HTML or plain text */}
       {html ? (
         <div
