@@ -11,7 +11,7 @@
  * Tune, Use-for, Unload and Delete.
  */
 import { useMemo, type ReactNode } from "react";
-import { Database } from "lucide-react";
+import { Database, Search } from "lucide-react";
 
 import {
   Panel,
@@ -35,11 +35,8 @@ export interface InstalledPanelProps {
   error?: string | null;
   /** Opens the full ledger (Advanced → Models); the button hides without it. */
   onManage?: () => void;
-  /**
-   * Drop the card frame and the title row: the caller already draws both
-   * (the overview's `StepCard`), and a card inside a card reads as clutter.
-   */
-  bare?: boolean;
+  /** Opens the catalogue; the button hides without it. */
+  onBrowse?: () => void;
 }
 
 /** The capabilities a role is gated on; the rest is noise on a one-liner. */
@@ -79,7 +76,7 @@ export function InstalledPanel({
   loading = false,
   error = null,
   onManage,
-  bare = false,
+  onBrowse,
 }: InstalledPanelProps) {
   const t = useT();
   const k = (key: string) => t(`local_models.installed.${key}`);
@@ -119,11 +116,18 @@ export function InstalledPanel({
           size: formatGb(diskBytes),
         });
 
-  const body = (
-    <div className="space-y-3" data-testid="local-models-installed">
-        {!bare && (
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <PanelHeader title={k("title")} subtitle={subtitle} />
+  return (
+    <Panel className="p-4">
+      <div className="space-y-3" data-testid="local-models-installed">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <PanelHeader title={k("title")} subtitle={subtitle} />
+          <div className="flex flex-wrap items-center gap-1.5">
+            {onBrowse && (
+              <SoftButton onClick={onBrowse} ariaLabel={k("browse")}>
+                <Search className="h-3.5 w-3.5" />
+                {k("browse")}
+              </SoftButton>
+            )}
             {onManage && models.length > 0 && (
               <SoftButton onClick={onManage} ariaLabel={k("manage")}>
                 <Database className="h-3.5 w-3.5" />
@@ -131,7 +135,7 @@ export function InstalledPanel({
               </SoftButton>
             )}
           </div>
-        )}
+        </div>
 
         {error && (
           <p
@@ -213,8 +217,7 @@ export function InstalledPanel({
             })}
           </ul>
         )}
-    </div>
+      </div>
+    </Panel>
   );
-  if (bare) return body;
-  return <Panel className="p-4">{body}</Panel>;
 }

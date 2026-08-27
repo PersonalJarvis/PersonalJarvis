@@ -1,34 +1,34 @@
 /**
- * Overview — the front page of the Local models section, written as three
- * steps rather than a dashboard.
+ * Local models, front page: a grid of jobs, then the server that runs them.
  *
- * Running a model on your own machine is three questions in a fixed order:
- * is there a server, are there models on it, and which model answers for
- * which job. The page is those three questions, one numbered `StepCard`
- * each, whose marker turns into a check once the step is satisfied — so
- * "what is still missing" is a glance. Each card carries at most one primary
- * action, and step 1 carries the one that does everything (`useLocalSetup`:
- * install or start the server, fill every job with the best installed
- * download, fetch only what is missing, verify, and remember the autostart).
+ * The page answers one question — "which model does what on my machine" —
+ * and it answers it the way the machine is actually shaped. Chat, tools &
+ * screen, deep & coding and embeddings are four PEERS, not four steps: you
+ * can fill them in any order, and a number beside each would claim a
+ * sequence that does not exist. So they are a grid of equal cards
+ * (`ModelCard`), each carrying its own model, its own memory bar and its own
+ * picker. Speech sits below them, on its own, because it is the one job
+ * served by a different server and cannot be filled from here.
  *
- * Every job's picker is on screen at every detail level. The Simple page used
- * to fold them away behind a "Change" button, which is half of why the
- * section read as "it keeps resetting my model" (BUG-188). `advanced` adds
- * capability badges, Tune and the read-only jobs; it never removes a control.
+ * Under the grid, `ServerLaunch` adds up what the picks cost and offers the
+ * one button that puts a working server behind them.
+ *
+ * `advanced` adds capability badges, per-model Tune and the read-only jobs.
+ * It never removes a control — the picker is on every card at every detail
+ * level, which is half of what BUG-188 was about.
  *
  * Props take `providerId` — the id of the card that declares
  * `supports_model_pull` — never a provider name.
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Cpu, HardDrive, Layers, Loader2, Search, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 
+import { SoftButton, StatusDot } from "@/components/extensions/primitives";
 import {
-  FactRows,
-  SoftButton,
-  StatTile,
-  StatusDot,
-} from "@/components/extensions/primitives";
-import { useOverview, type LocalModelRole } from "@/hooks/useLocalModels";
+  useOverview,
+  type LocalModelRole,
+  type RoleRow,
+} from "@/hooks/useLocalModels";
 import { switchBrainProvider, useProviders } from "@/hooks/useProviders";
 import { fill, useT } from "@/i18n";
 import {
@@ -38,25 +38,40 @@ import {
 import { cn } from "@/lib/utils";
 
 import { InstalledPanel } from "./InstalledPanel";
-import { formatExpiry } from "./localModelsFormat";
+import { canonical } from "./localSetup";
 import type { SetupStep, SetupSummary } from "./localSetup";
-import { RolesPanel, type RolesPanelProps } from "./RolesPanel";
-import { StepCard, type StepState } from "./StepCard";
+import { ModelCard } from "./ModelCard";
+import { ServerLaunch } from "./ServerLaunch";
 import { useLocalSetup } from "./useLocalSetup";
+import { useRoleActions, IDLE } from "./useRoleActions";
 import { verifyLines } from "./verifyLines";
 
-export interface OverviewPanelProps extends RolesPanelProps {
-  /** Opens the catalogue ("Browse models"); the button hides without it. */
+export interface OverviewPanelProps {
+  /** Id of the pull-capable provider card (found via `supports_model_pull`). */
+  providerId: string;
+  /** Opens the Tune sheet for one installed model; the button hides without it. */
+  onTune?: (model: string) => void;
+  /** Navigates to the API Keys section; shown when another brain is active. */
+  onOpenApiKeys?: () => void;
+  /** Opens the catalogue ("Browse models"); the link hides without it. */
   onBrowse?: () => void;
   /** Opens the full installed ledger (Advanced → Models). */
   onManage?: () => void;
-  /**
-   * Detail level. The switch beside the rail must change what is on screen
-   * HERE too, or it reads as a dead control: Advanced adds the capability
-   * badges, the Tune buttons and the read-only jobs.
-   */
+  /** Adds capability badges, Tune and the read-only jobs. */
   advanced?: boolean;
 }
+
+/**
+ * The jobs the grid shows, in reading order. Four, because these are the
+ * four a local server can fill on its own — speech needs the managed voice
+ * server and is handled apart, and `ack`/`polish` follow other cards.
+ */
+export const GRID_JOBS: readonly LocalModelRole[] = [
+  "chat",
+  "tools_screen",
+  "deep",
+  "embedding",
+];
 
 /** Bytes to a short gigabyte figure ("12.4 GB"); "0 GB" below a megabyte. */
 export function formatGigabytes(bytes: number): string {
@@ -79,14 +94,11 @@ export function OverviewPanel({
   const { providers, refetch: refetchProviders } = useProviders();
   const setup = useLocalSetup(providerId);
 
-  // One round-trip (or the painted snapshot) feeds every card.
   const s = overview.data?.server;
-  const shortlist = { data: overview.data?.recommended };
-  const inventory = { data: overview.data?.inventory };
-  const server = { isLoading: overview.isLoading, isError: overview.isError };
-  // Painted from the snapshot while the live read runs: say so rather than
-  // present a cached machine as the current one.
-  const checking = overview.isFetching && overview.data?.source === "cache";
+  const inventory = overview.data?.inventory;
+  const models = useMemo(() => inventory?.models ?? [], [inventory]);
+  const acceleratorGb = overview.data?.recommended?.accelerator_gb ?? 0;
+  const serverSilent = Boolean(inventory?.error);
 
   const marked = useRef(false);
   useEffect(() => {
@@ -94,184 +106,142 @@ export function OverviewPanel({
     marked.current = true;
     markLocalModels(LOCAL_MODELS_MARK_FIRST_DATA);
   }, [overview.data]);
-  const remote = s?.host_kind === "remote";
+
+  const installedNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const m of models) names.add(canonical(m.name));
+    return names;
+  }, [models]);
+  const actions = useRoleActions(providerId, installedNames);
+
+  const allRows = overview.data?.roles.roles ?? [];
+  const byId = useMemo(() => {
+    const map = new Map<string, RoleRow>();
+    for (const row of allRows) map.set(row.id, row);
+    return map;
+  }, [allRows]);
+  const gridRows = useMemo(
+    () => GRID_JOBS.map((id) => byId.get(id)).filter((r): r is RoleRow => !!r),
+    [byId],
+  );
+  const voiceRow = byId.get("voice") ?? null;
+  // Speech has its own row above; whatever else is advanced follows another
+  // card's pick and belongs in the quiet list at the bottom.
+  const followerRows = allRows.filter((r) => r.advanced && r.id !== "voice");
+
   const serverLabel =
     providers.find((p) => p.id === providerId)?.label ||
     t("local_models.overview.status_generic_server");
-
-  // --- step 1: the server ----------------------------------------------
-  let serverClause = t("local_models.overview.status_checking");
-  let serverTone: "ok" | "warn" | "error" | "busy" = "busy";
-  if (s) {
-    if (s.running) {
-      serverClause = s.version
-        ? fill(t("local_models.overview.status_running"), {
-            server: serverLabel,
-            version: s.version,
-          })
-        : fill(t("local_models.overview.status_running_noversion"), {
-            server: serverLabel,
-          });
-      if (remote)
-        serverClause = fill(t("local_models.overview.status_remote"), {
-          server: serverLabel,
-          url: s.base_url,
-        });
-      serverTone = "ok";
-    } else if (remote) {
-      serverClause = fill(t("local_models.overview.status_unreachable"), {
-        server: serverLabel,
-      });
-      serverTone = "warn";
-    } else if (!s.installed) {
-      serverClause = fill(t("local_models.overview.status_not_installed"), {
-        server: serverLabel,
-      });
-      serverTone = "warn";
-    } else {
-      serverClause = fill(t("local_models.overview.status_stopped"), {
-        server: serverLabel,
-      });
-      serverTone = "warn";
-    }
-  } else if (server.isError) {
-    serverClause = fill(t("local_models.overview.status_unreachable"), {
-      server: serverLabel,
-    });
-    serverTone = "error";
-  }
-
-  const acceleratorGb = shortlist.data?.accelerator_gb ?? 0;
-  const acceleratorSource = shortlist.data?.accelerator_source ?? "";
-
-  // The brain clause only renders once the provider list is here — no gate.
   const activeBrain =
     providers.find((p) => p.tier === "brain" && p.active) ?? null;
   const otherBrainActive =
     activeBrain !== null && activeBrain.id !== providerId;
 
-  // --- step 2: the models ----------------------------------------------
-  const models = inventory.data?.models ?? [];
-  const modelCount = models.length;
-  const serverSilent = Boolean(inventory.data?.error);
-  const gpuValue =
-    acceleratorGb > 0
-      ? `${acceleratorGb.toFixed(1)} GB`
-      : t("local_models.overview.gpu_unknown");
-  const loadedVram = s?.loaded_vram_bytes ?? 0;
-  const gpuHint =
-    acceleratorGb > 0
-      ? loadedVram > 0
-        ? fill(t("local_models.overview.gpu_in_use"), {
-            gb: formatGigabytes(loadedVram),
-          })
-        : t("local_models.overview.gpu_in_use_none")
-      : acceleratorSource
-        ? fill(t("local_models.overview.gpu_source"), {
-            source: acceleratorSource,
-          })
-        : t("local_models.overview.gpu_unknown_hint");
-
-  const loaded = s?.running_models ?? [];
-  const firstExpiry = loaded.length > 0 ? formatExpiry(loaded[0].expires_at) : "";
-  const loadedHint =
-    loaded.length > 0
-      ? [
-          loaded.map((m) => m.name).join(", "),
-          firstExpiry
-            ? fill(t("local_models.overview.loaded_expires"), {
-                when: firstExpiry,
-              })
-            : "",
-        ]
-          .filter(Boolean)
-          .join(" · ")
-      : t("local_models.overview.loaded_none");
-
-  // --- step 3: the jobs -------------------------------------------------
-  const roleRows = overview.data?.roles.roles ?? [];
-  const writableRows = roleRows.filter((r) => !r.advanced && r.writable);
-  const filledRows = writableRows.filter((r) => r.current !== "" && r.installed);
   const roleLabel = useCallback(
-    (role: LocalModelRole) => {
-      const row = roleRows.find((r) => r.id === role);
-      return t(row?.label_key ?? `local_models.role_${role}`);
-    },
-    [roleRows, t],
+    (role: LocalModelRole) => t(byId.get(role)?.label_key ?? `local_models.role_${role}`),
+    [byId, t],
   );
 
-  // --- step states ------------------------------------------------------
-  // "Checking" is busy, not a verdict; a step only claims done on facts.
-  const serverState: StepState = !s
-    ? server.isError
-      ? "attention"
-      : "busy"
-    : s.running
-      ? "done"
-      : "attention";
-  const modelsState: StepState = !inventory.data
-    ? "busy"
-    : serverSilent
-      ? "attention"
-      : modelCount > 0
-        ? "done"
-        : "attention";
-  const jobsState: StepState =
-    writableRows.length === 0
-      ? "busy"
-      : filledRows.length === writableRows.length
-        ? "done"
-        : "attention";
-
-  // A server that is not installed gets a button that NAMES the install:
-  // the click is the consent the dangerous-flagged install route asks for.
-  const needsInstall = Boolean(s && !s.installed && !remote);
-  const setupLabel = needsInstall
-    ? fill(t("local_models.overview.action_setup_install"), {
-        server: serverLabel,
-      })
-    : t("local_models.overview.action_setup");
+  const checking = overview.isFetching && overview.data?.source === "cache";
 
   return (
     <div className="space-y-4" data-testid="local-models-overview-panel">
-      {/* ── 1 · Server ────────────────────────────────────────────────── */}
-      <StepCard
-        step={1}
-        title={t("local_models.overview.step_server_title")}
-        subtitle={t("local_models.overview.step_server_subtitle")}
-        state={serverState}
-        testId="step-server"
-        status={
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <StatusDot tone={serverTone} pulse={serverTone === "busy"} label={serverClause} />
-            {checking && (
-              <span data-testid="overview-checking">
-                <StatusDot tone="busy" pulse label={t("local_models.overview.checking")} />
-              </span>
-            )}
-          </span>
-        }
-        action={
-          <SoftButton
-            primary
-            onClick={setup.run}
-            disabled={setup.busy}
-            className="h-9"
-          >
-            {setup.busy ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
-            {setupLabel}
-          </SoftButton>
-        }
+      {/* One line of context, never a banner: what is off, if anything is. */}
+      {(otherBrainActive || serverSilent || overview.isError || checking) && (
+        <div className="space-y-1.5" data-testid="overview-notices">
+          {checking && (
+            <span data-testid="overview-checking">
+              <StatusDot
+                tone="busy"
+                pulse
+                label={t("local_models.overview.checking")}
+              />
+            </span>
+          )}
+          {serverSilent && (
+            <p
+              className="text-sm text-amber-700 dark:text-amber-400"
+              data-testid="roles-server-silent"
+            >
+              {t("local_models.roles.server_silent")}
+            </p>
+          )}
+          {overview.isError && (
+            <p className="text-sm text-destructive">
+              {overview.error instanceof Error
+                ? overview.error.message
+                : String(overview.error)}
+            </p>
+          )}
+          {otherBrainActive && (
+            <p
+              className="text-sm text-amber-700 dark:text-amber-400"
+              data-testid="overview-brain-clause"
+            >
+              {fill(t("local_models.overview.status_brain_other"), {
+                server: serverLabel,
+                brain: activeBrain?.label ?? "",
+              })}{" "}
+              {onOpenApiKeys && (
+                <button
+                  type="button"
+                  onClick={onOpenApiKeys}
+                  className="font-medium text-primary hover:underline"
+                >
+                  {t("local_models.roles.other_brain_link")}
+                </button>
+              )}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* The grid. Four peers, two columns on a wide pane. */}
+      <div
+        className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4"
+        data-testid="model-card-grid"
       >
-        <p className="text-xs text-muted-foreground" data-testid="setup-hint">
-          {needsInstall
-            ? t("local_models.overview.action_setup_install_hint")
-            : t("local_models.overview.action_setup_hint")}
-        </p>
+        {gridRows.length === 0 && overview.isLoading
+          ? GRID_JOBS.map((id) => <CardSkeleton key={id} />)
+          : gridRows.map((row) => (
+              <ModelCard
+                key={row.id}
+                row={row}
+                models={models}
+                acceleratorGb={acceleratorGb}
+                progress={actions.progress[row.id] ?? IDLE}
+                busy={actions.isBusy(row.id)}
+                onPick={(model) => actions.pick(row.id, model)}
+                onUseRecommended={() => actions.useRecommended(row)}
+                onTune={onTune}
+                advanced={advanced}
+              />
+            ))}
+      </div>
+
+      {actions.writeError && (
+        <p className="text-sm text-destructive">{actions.writeError}</p>
+      )}
+
+      {/* Speech: its own row, because it is served by its own server. */}
+      {voiceRow && (
+        <VoiceRow
+          row={voiceRow}
+          onTune={advanced ? onTune : undefined}
+          t={t}
+        />
+      )}
+
+      <ServerLaunch
+        rows={gridRows}
+        models={models}
+        acceleratorGb={acceleratorGb}
+        server={s}
+        serverLabel={serverLabel}
+        running={Boolean(s?.running)}
+        busy={setup.busy}
+        onRun={setup.run}
+      >
         <SetupProgress
           step={setup.step}
           serverLabel={serverLabel}
@@ -283,171 +253,132 @@ export function OverviewPanel({
           }}
           t={t}
         />
-        <FactRows
-          className="mt-3 !text-sm"
-          rows={[
-            {
-              label: t("local_models.overview.fact_version"),
-              value: s?.version || t("local_models.overview.server_unknown"),
-            },
-            {
-              label: t("local_models.overview.fact_address"),
-              value: s?.base_url ? (
-                <span className="font-mono text-xs">{s.base_url}</span>
-              ) : (
-                ""
-              ),
-            },
-            {
-              label: t("local_models.overview.gpu"),
-              value: (
-                <span>
-                  {gpuValue}
-                  <span className="ml-2 text-xs text-muted-foreground">{gpuHint}</span>
-                </span>
-              ),
-            },
-            {
-              label: t("local_models.overview.fact_brain"),
-              value: activeBrain ? (
-                <span
-                  className={cn(
-                    otherBrainActive && "text-amber-700 dark:text-amber-400",
-                  )}
-                  data-testid="overview-brain-clause"
-                >
-                  {otherBrainActive
-                    ? fill(t("local_models.overview.status_brain_other"), {
-                        server: serverLabel,
-                        brain: activeBrain.label,
-                      })
-                    : fill(t("local_models.overview.status_brain_active"), {
-                        server: serverLabel,
-                      })}
-                </span>
-              ) : (
-                ""
-              ),
-            },
-          ]}
-        />
-      </StepCard>
+      </ServerLaunch>
 
-      {/* ── 2 · Models ───────────────────────────────────────────────── */}
-      <StepCard
-        step={2}
-        title={t("local_models.overview.step_models_title")}
-        subtitle={t("local_models.overview.step_models_subtitle")}
-        state={modelsState}
-        testId="step-models"
-        status={
-          <StatusDot
-            tone={modelsState === "done" ? "ok" : modelsState === "busy" ? "busy" : "warn"}
-            pulse={modelsState === "busy"}
-            label={
-              serverSilent
-                ? t("local_models.overview.models_unknown")
-                : modelCount === 1
-                  ? fill(t("local_models.overview.models_one"), {
-                      size: formatGigabytes(inventory.data?.disk_bytes ?? 0),
-                    })
-                  : fill(t("local_models.overview.models_count"), {
-                      count: modelCount,
-                      size: formatGigabytes(inventory.data?.disk_bytes ?? 0),
-                    })
-            }
-          />
-        }
-        action={
-          <>
-            {onBrowse && (
-              <SoftButton onClick={onBrowse} className="h-9">
-                <Search className="h-4 w-4" />
-                {t("local_models.overview.action_browse")}
-              </SoftButton>
-            )}
-            {onManage && modelCount > 0 && (
-              <SoftButton onClick={onManage} className="h-9">
-                {t("local_models.installed.manage")}
-              </SoftButton>
-            )}
-          </>
-        }
-      >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <StatTile
-            icon={<HardDrive className="h-3.5 w-3.5" />}
-            label={t("local_models.overview.disk")}
-            value={formatGigabytes(s?.disk_bytes ?? 0)}
-            hint={s?.models_dir ?? ""}
-            tone="primary"
-            loading={server.isLoading}
-          />
-          <StatTile
-            icon={<Cpu className="h-3.5 w-3.5" />}
-            label={t("local_models.overview.gpu")}
-            value={gpuValue}
-            hint={gpuHint}
-            tone="primary"
-            loading={server.isLoading}
-          />
-          <StatTile
-            icon={<Layers className="h-3.5 w-3.5" />}
-            label={t("local_models.overview.loaded")}
-            value={String(loaded.length)}
-            hint={loadedHint}
-            tone="primary"
-            loading={server.isLoading}
-          />
-        </div>
-        <div className="mt-3">
-          <InstalledPanel
-            bare
-            models={models}
-            roles={roleRows}
-            diskBytes={inventory.data?.disk_bytes ?? s?.disk_bytes ?? 0}
-            loading={overview.isLoading}
-            error={inventory.data?.error ?? null}
-            onManage={onManage}
-          />
-        </div>
-      </StepCard>
+      <InstalledPanel
+        models={models}
+        roles={allRows}
+        diskBytes={inventory?.disk_bytes ?? s?.disk_bytes ?? 0}
+        loading={overview.isLoading}
+        error={inventory?.error ?? null}
+        onManage={onManage}
+        onBrowse={onBrowse}
+      />
 
-      {/* ── 3 · Jobs ─────────────────────────────────────────────────── */}
-      <StepCard
-        step={3}
-        title={t("local_models.overview.step_jobs_title")}
-        subtitle={t("local_models.overview.step_jobs_subtitle")}
-        state={jobsState}
-        testId="step-jobs"
-        status={
-          writableRows.length > 0 ? (
+      {advanced && followerRows.length > 0 && (
+        <FollowerJobs rows={followerRows} t={t} />
+      )}
+    </div>
+  );
+}
+
+/** A card-shaped placeholder so the grid does not jump when data lands. */
+function CardSkeleton() {
+  return (
+    <div
+      className="h-[15rem] animate-pulse rounded-2xl border border-dashed border-border bg-card/30"
+      data-testid="model-card-skeleton"
+    />
+  );
+}
+
+/**
+ * Speech. Read-only from here: the model is baked into the voice server's
+ * launch command, so the row says what answers a call and where to change it
+ * rather than offering a picker that would fail.
+ */
+function VoiceRow({
+  row,
+  onTune,
+  t,
+}: {
+  row: RoleRow;
+  onTune?: (model: string) => void;
+  t: (key: string) => string;
+}) {
+  const missing = row.current !== "" && !row.installed;
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-border/70 bg-card/40 px-4 py-3"
+      data-testid="voice-row"
+    >
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+          {t(row.label_key)}
+        </p>
+        <div className="mt-1">
+          {row.current ? (
             <StatusDot
-              tone={jobsState === "done" ? "ok" : "warn"}
-              label={fill(t("local_models.overview.jobs_filled"), {
-                filled: filledRows.length,
-                total: writableRows.length,
-              })}
+              tone={missing ? "warn" : "ok"}
+              label={
+                <span className="font-mono text-xs text-foreground/85">
+                  {row.current}
+                  {missing && (
+                    <span className="ml-2 font-sans text-muted-foreground">
+                      {t("local_models.roles.not_installed")}
+                    </span>
+                  )}
+                </span>
+              }
             />
-          ) : null
-        }
-      >
-        <RolesPanel
-          providerId={providerId}
-          onTune={onTune}
-          onOpenApiKeys={onOpenApiKeys}
-          advanced={advanced}
-          onSetup={setup.run}
-          setupBusy={setup.busy}
-        />
-      </StepCard>
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              {row.note || t("local_models.jobs.voice_absent")}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <p className="text-xs text-muted-foreground">
+          {t("local_models.jobs.voice_purpose")}
+        </p>
+        {onTune && row.current && row.installed && (
+          <SoftButton onClick={() => onTune(row.current)} className="h-8">
+            {t("local_models.roles.tune")}
+          </SoftButton>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The jobs that follow another card's pick; read-only, Advanced only. */
+function FollowerJobs({
+  rows,
+  t,
+}: {
+  rows: RoleRow[];
+  t: (key: string) => string;
+}) {
+  return (
+    <div
+      className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border/70 bg-card/40"
+      data-testid="roles-more"
+    >
+      {rows.map((row) => (
+        <div
+          key={row.id}
+          className="grid gap-1 px-4 py-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] sm:items-center"
+        >
+          <span className="text-sm text-foreground">{t(row.label_key)}</span>
+          <span className="text-sm text-muted-foreground">
+            {row.current ? (
+              <span className="font-mono text-xs text-foreground/85">
+                {row.current}
+              </span>
+            ) : (
+              row.note || t("local_models.roles.follows_chat")
+            )}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
 
 /**
- * The set-up flow's one line under the actions: what is happening now, or
- * — once it ended — what was done, in the user's words (role → model), plus
+ * The set-up flow's line inside the launch bar: what is happening now, or
+ * — once it ended — what was done, in the user's words (job → model), plus
  * the one decision the flow leaves to the user: making this server the
  * active brain when another one answers right now.
  */
@@ -470,7 +401,6 @@ function SetupProgress({
   const [brain, setBrain] = useState<
     { state: "idle" } | { state: "switching" } | { state: "done" } | { state: "error"; message: string }
   >({ state: "idle" });
-  // A new run resets the brain line.
   useEffect(() => {
     if (step && step.phase !== "done") setBrain({ state: "idle" });
   }, [step]);
@@ -576,7 +506,10 @@ function SetupProgress({
   }
 
   return (
-    <div className="mt-2 space-y-1 text-xs" data-testid="setup-progress">
+    <div
+      className="mt-3 space-y-1 border-t border-border/70 pt-3 text-xs"
+      data-testid="setup-progress"
+    >
       <StatusDot tone={tone} pulse={tone === "busy"} label={text} />
       {lines.map((line, i) => (
         <p key={i} className="ml-4 text-muted-foreground">
@@ -615,61 +548,20 @@ function SetupProgress({
             {fill(k("setup_brain_button"), { server: serverLabel })}
           </SoftButton>
           {brain.state === "error" && (
-            <span className="text-destructive">
+            <span className={cn("text-destructive")}>
               {fill(k("setup_brain_failed"), { message: brain.message })}
             </span>
           )}
         </div>
       )}
       {step.phase === "done" && brain.state === "done" && (
-        <p className="ml-4 text-emerald-600 dark:text-emerald-400" data-testid="setup-brain-done">
+        <p
+          className="ml-4 text-emerald-600 dark:text-emerald-400"
+          data-testid="setup-brain-done"
+        >
           {fill(k("setup_brain_switched"), { server: serverLabel })}
         </p>
       )}
     </div>
-  );
-}
-
-/** A 44 px SoftButton with icon, label and a one-line hint underneath. */
-export function ActionButton({
-  icon,
-  label,
-  hint,
-  onClick,
-  primary,
-  disabled,
-  testId,
-}: {
-  icon: ReactNode;
-  label: string;
-  hint: string;
-  onClick: () => void;
-  primary?: boolean;
-  disabled?: boolean;
-  testId?: string;
-}) {
-  return (
-    <span data-testid={testId}>
-      <SoftButton
-        primary={primary}
-        onClick={onClick}
-        disabled={disabled}
-        ariaLabel={label}
-        className="h-11 px-3.5 text-left"
-      >
-        <span className="shrink-0">{icon}</span>
-        <span className="flex min-w-0 flex-col leading-tight">
-          <span className="text-xs font-medium">{label}</span>
-          <span
-            className={cn(
-              "truncate text-[11px] font-normal",
-              primary ? "text-primary-foreground/80" : "text-muted-foreground",
-            )}
-          >
-            {hint}
-          </span>
-        </span>
-      </SoftButton>
-    </span>
   );
 }

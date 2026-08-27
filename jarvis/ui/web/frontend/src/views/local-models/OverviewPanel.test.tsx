@@ -36,6 +36,7 @@ import {
   OverviewPanel,
   formatGigabytes,
 } from "@/views/local-models/OverviewPanel";
+import { footprint } from "@/views/local-models/ServerLaunch";
 import type { OverviewResponse } from "@/hooks/useLocalModels";
 import {
   snapshotKey,
@@ -92,6 +93,13 @@ const ROLES = [
   role({
     id: "voice",
     label_key: "local_models.role_voice",
+    current: "qwen3.5:4b",
+    installed: true,
+    qualifying: ["qwen3.5:4b"],
+  }),
+  role({
+    id: "ack",
+    label_key: "local_models.role_ack",
     writable: false,
     advanced: true,
     current: "qwen3.5:4b",
@@ -125,7 +133,7 @@ const SERVER = {
 
 interface Fixture {
   roles?: unknown[];
-  models?: Array<{ name: string }>;
+  models?: Array<{ name: string; size_bytes?: number; capabilities?: string[] }>;
   server?: Record<string, unknown>;
   accelerator_gb?: number;
   /** "404" = a backend without the route (the four legacy reads compose);
@@ -136,14 +144,14 @@ interface Fixture {
 function installFetchMock(fx: Fixture = {}) {
   const models = (fx.models ?? [{ name: "qwen3.5:4b" }]).map((m) => ({
     name: m.name,
-    size_bytes: 1,
+    size_bytes: m.size_bytes ?? 1,
     digest: "",
     modified_at: "",
     family: "",
     parameter_size: "",
     quantization_level: "",
     context_length: null,
-    capabilities: ["completion"],
+    capabilities: m.capabilities ?? ["completion"],
     license: "",
     probed: true,
     used_by: [],
@@ -331,8 +339,28 @@ describe("formatGigabytes", () => {
   });
 });
 
+describe("footprint", () => {
+  it("counts one model once, however many jobs use it", () => {
+    const models = [
+      { name: "a:1", size_bytes: 4 * 1024 ** 3 },
+      { name: "b:1", size_bytes: 9 * 1024 ** 3 },
+    ] as Parameters<typeof footprint>[1];
+    const rows = [
+      { id: "chat", current: "a:1" },
+      { id: "deep", current: "b:1" },
+      { id: "tools_screen", current: "a:1" },
+      { id: "embedding", current: "" },
+    ] as Parameters<typeof footprint>[0];
+    const { totalBytes, largestBytes, distinct } = footprint(rows, models);
+    expect(distinct).toBe(2);
+    expect(totalBytes).toBe(13 * 1024 ** 3);
+    // The largest is what must sit in memory at once — not the sum.
+    expect(largestBytes).toBe(9 * 1024 ** 3);
+  });
+});
+
 describe("OverviewPanel paint-first", () => {
-  it("paints the tiles synchronously from the snapshot while the fetch never answers", () => {
+  it("paints the grid synchronously from the snapshot while the fetch never answers", () => {
     writeOverviewSnapshot("ollama", snapshotPayload());
     vi.stubGlobal(
       "fetch",
@@ -341,19 +369,18 @@ describe("OverviewPanel paint-first", () => {
     renderPanel();
 
     // No await: the snapshot is on screen in the first render.
-    const disk = screen.getByRole("group", {
-      name: "local_models.overview.disk",
-    });
-    expect(disk.textContent).toContain("80 GB");
-    expect(screen.getByTestId("step-server").textContent).toContain(
-      "local_models.overview.status_runningOllama|0.32.15",
+    expect(screen.getByTestId("model-card-chat")).toBeDefined();
+    expect(screen.getByTestId("model-card-current-chat").textContent).toBe(
+      "qwen3.5:4b",
     );
-    expect(screen.getByTestId("role-row-chat")).toBeDefined();
+    expect(screen.getByTestId("server-launch").textContent).toContain(
+      "local_models.launch.server_runningOllama|0.32.15",
+    );
     // The refresh is underway, the snapshot is what is shown -> "Checking…".
     expect(screen.getByTestId("overview-checking")).toBeDefined();
   });
 
-  it("drops 'Checking…' and writes the snapshot once live data arrives", async () => {
+  it("drops the checking line and writes the snapshot once live data arrives", async () => {
     writeOverviewSnapshot("ollama", snapshotPayload());
     installFetchMock({ overview: "live" });
     renderPanel();
@@ -361,10 +388,6 @@ describe("OverviewPanel paint-first", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("overview-checking")).toBeNull(),
     );
-    const disk = screen.getByRole("group", {
-      name: "local_models.overview.disk",
-    });
-    expect(disk.textContent).toContain("12 GB");
     const stored = JSON.parse(
       String(window.localStorage.getItem(snapshotKey("ollama"))),
     );
@@ -375,7 +398,7 @@ describe("OverviewPanel paint-first", () => {
     const fetchMock = installFetchMock({ overview: "live" });
     renderPanel();
 
-    await screen.findByTestId("role-row-chat");
+    await screen.findByTestId("model-card-chat");
     const urls = fetchMock.mock.calls.map(([u]) => String(u));
     expect(urls).toContain(`${BASE}/overview`);
     expect(urls).not.toContain(`${BASE}/roles`);
@@ -386,7 +409,7 @@ describe("OverviewPanel paint-first", () => {
     const fetchMock = installFetchMock({ overview: "404" });
     renderPanel();
 
-    await screen.findByTestId("role-row-chat");
+    await screen.findByTestId("model-card-chat");
     const urls = fetchMock.mock.calls.map(([u]) => String(u));
     expect(urls).toContain(`${BASE}/overview`);
     expect(urls).toContain(`${BASE}/roles`);
@@ -396,181 +419,89 @@ describe("OverviewPanel paint-first", () => {
   });
 });
 
-describe("OverviewPanel", () => {
-  it("step 1 says whether the server runs, on what hardware, and who the brain is", async () => {
+describe("OverviewPanel grid", () => {
+  it("shows the four jobs as peers, in reading order, each with its own picker", async () => {
     installFetchMock();
     renderPanel();
 
-    const status = await screen.findByTestId("step-server");
-    await waitFor(() =>
-      expect(status.textContent).toContain(
-        "local_models.overview.status_runningOllama|0.32.15",
-      ),
+    await screen.findByTestId("model-card-chat");
+    const grid = screen.getByTestId("model-card-grid");
+    const cards = [...grid.querySelectorAll("[data-testid^='model-card-']")].filter(
+      (el) => el.tagName === "ARTICLE",
     );
-    expect(status.textContent).toContain("16.0 GB");
-    expect(status.textContent).toContain(
-      "local_models.overview.status_brain_activeOllama",
-    );
-    // A running server satisfies step 1: the marker is a check, not a "1".
-    expect(status.getAttribute("data-state")).toBe("done");
+    expect(cards.map((c) => c.getAttribute("data-testid"))).toEqual([
+      "model-card-chat",
+      "model-card-tools_screen",
+      "model-card-deep",
+      "model-card-embedding",
+    ]);
+    for (const job of ["chat", "tools_screen", "deep", "embedding"])
+      expect(screen.getByTestId(`role-picker-${job}`)).toBeDefined();
   });
 
-  it("names the other brain in the status sentence when Ollama is not active", async () => {
-    installFetchMock();
-    mockProviders.providers = [
-      { id: "ollama", label: "Ollama", tier: "brain", active: false },
-      { id: "openrouter", label: "OpenRouter", tier: "brain", active: true },
-    ];
-    renderPanel();
-
-    const clause = await screen.findByTestId("overview-brain-clause");
-    expect(clause.textContent).toBe(
-      "local_models.overview.status_brain_otherOllama|OpenRouter",
-    );
-  });
-
-  it("browsing the catalogue is step 2's action", async () => {
-    installFetchMock();
-    const onBrowse = vi.fn();
-    renderPanel({ onBrowse });
-
-    const models = await screen.findByTestId("step-models");
-    fireEvent.click(
-      within(models).getByRole("button", {
-        name: "local_models.overview.action_browse",
-      }),
-    );
-    expect(onBrowse).toHaveBeenCalledTimes(1);
-  });
-
-  it("the detail level adds detail to the jobs but never takes the picker away", async () => {
-    installFetchMock();
-    const { unmount } = renderPanel({ onTune: vi.fn() });
-    await screen.findByTestId("role-row-chat");
-    // Simple: the picker is there, the capability badges and Tune are not.
-    expect(screen.getByTestId("role-picker-chat")).toBeDefined();
-    expect(screen.queryByText("tools")).toBeNull();
-    expect(screen.queryByText("local_models.roles.tune")).toBeNull();
-    unmount();
-
-    installFetchMock();
-    renderPanel({ advanced: true, onTune: vi.fn() });
-    await screen.findByTestId("role-row-chat");
-    expect(screen.getByTestId("role-picker-chat")).toBeDefined();
-    expect(screen.getAllByText("tools").length).toBeGreaterThan(0);
-    expect(screen.getByText("local_models.roles.tune")).toBeDefined();
-  });
-
-  it("keeps 'Set up everything' even when no browse handler is wired", async () => {
-    installFetchMock();
-    renderPanel();
-    await screen.findByTestId("step-server");
-    expect(
-      screen.queryByRole("button", {
-        name: "local_models.overview.action_browse",
-      }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "local_models.overview.action_setup" }),
-    ).toBeDefined();
-  });
-
-  it("names the install on the setup button when the server is not installed", async () => {
-    installFetchMock({ server: { ...SERVER, installed: false, running: false } });
-    renderPanel();
-    // The label follows the server facts, so it settles with the data.
-    expect(
-      await screen.findByRole("button", {
-        name: "local_models.overview.action_setup_installOllama",
-      }),
-    ).toBeDefined();
-  });
-
-  it("shows the three tiles: downloads on disk, graphics memory in use, loaded now", async () => {
-    installFetchMock();
-    renderPanel();
-
-    const disk = await screen.findByRole("group", {
-      name: "local_models.overview.disk",
-    });
-    await waitFor(() => expect(disk.textContent).toContain("12 GB"));
-    expect(disk.textContent).toContain("/home/x/.ollama/models");
-    // How many downloads there are is step 2's own status line.
-    expect(
-      (await screen.findByTestId("step-models")).textContent,
-    ).toContain("local_models.overview.models_one");
-
-    const gpu = screen.getByRole("group", {
-      name: "local_models.overview.gpu",
-    });
-    expect(gpu.textContent).toContain("16.0 GB");
-    expect(gpu.textContent).toContain("local_models.overview.gpu_in_use2.8 GB");
-
-    const loaded = screen.getByRole("group", {
-      name: "local_models.overview.loaded",
-    });
-    expect(loaded.textContent).toContain("1");
-    expect(loaded.textContent).toContain("qwen3.5:4b");
-  });
-
-  it("says 'unknown' for graphics memory when the probe read 0", async () => {
+  it("carries each job's state on the card so the grid reads at a glance", async () => {
     installFetchMock({
-      accelerator_gb: 0,
-      server: { ...SERVER, running: false },
+      roles: ROLES.map((r) =>
+        r.id === "deep" ? { ...r, current: "gone:7b", installed: false } : r,
+      ),
     });
     renderPanel();
 
-    const status = await screen.findByTestId("step-server");
-    await waitFor(() =>
-      expect(status.textContent).toContain(
-        "local_models.overview.status_stoppedOllama",
-      ),
+    await screen.findByTestId("model-card-chat");
+    expect(screen.getByTestId("model-card-chat").dataset.state).toBe("ready");
+    expect(screen.getByTestId("model-card-deep").dataset.state).toBe("missing");
+    expect(screen.getByTestId("model-card-embedding").dataset.state).toBe(
+      "empty",
     );
-    // Named in step 1's facts and again on step 2's tile.
-    expect(
-      screen.getAllByText(/local_models\.overview\.gpu_unknown/).length,
-    ).toBeGreaterThan(0);
+    expect(screen.getByTestId("model-card-deep").textContent).toContain(
+      "local_models.jobs.not_on_disk",
+    );
   });
 
-  it("gives every job its picker straight away, listing more than the qualifying models", async () => {
-    installFetchMock();
-    renderPanel({ advanced: true, onTune: vi.fn() });
+  it("sizes the memory bar from the model against this machine's graphics memory", async () => {
+    installFetchMock({
+      models: [{ name: "qwen3.5:4b", size_bytes: 4 * 1024 ** 3 }],
+      accelerator_gb: 16,
+    });
+    renderPanel();
 
-    await screen.findByTestId("role-row-chat");
-    expect(screen.getByTestId("role-row-tools_screen")).toBeDefined();
-    expect(screen.getByTestId("role-row-deep")).toBeDefined();
-    expect(screen.getByTestId("role-row-embedding")).toBeDefined();
-    expect(screen.queryByText("local_models.role_voice")).toBeNull();
-
-    // No expanding: the control that changes a job is on screen for each one.
-    for (const role of ["chat", "tools_screen", "deep", "embedding"])
-      expect(screen.getByTestId(`role-picker-${role}`)).toBeDefined();
-
-    // Embedding qualifies for nothing installed, yet its picker still offers
-    // the installed downloads — the state that used to leave a user with a
-    // single option and no way to change it (BUG-188).
-    const embedding = screen.getByTestId(
-      "role-picker-embedding",
-    ) as HTMLSelectElement;
-    const offered = [...embedding.options].map((o) => o.value);
-    expect(offered).toContain("qwen3.5:4b");
+    await screen.findByTestId("model-card-chat");
+    const bar = screen.getByTestId("model-card-memory-chat");
+    // 4 of 16 GB.
+    await waitFor(() =>
+      expect(bar.textContent).toContain("local_models.jobs.memory_share25|16.0"),
+    );
     expect(
-      screen.getByText("local_models.roles.download_recommendedqwen3-embedding:4b"),
-    ).toBeDefined();
-
-    fireEvent.click(screen.getByText("local_models.roles.more_roles"));
-    expect(screen.getByText("local_models.role_voice")).toBeDefined();
+      (screen.getByTestId("model-card-memory-fill-chat") as HTMLElement).style.width,
+    ).toBe("25%");
   });
 
-  it("writes the pick through PUT roles/{role}", async () => {
+  it("warns on the card when the model is larger than the graphics memory", async () => {
+    installFetchMock({
+      models: [{ name: "qwen3.5:4b", size_bytes: 20 * 1024 ** 3 }],
+      accelerator_gb: 8,
+    });
+    renderPanel();
+
+    await screen.findByTestId("model-card-chat");
+    const bar = screen.getByTestId("model-card-memory-chat");
+    await waitFor(() =>
+      expect(bar.textContent).toContain("local_models.jobs.memory_over8.0"),
+    );
+    // Clamped, not spilling out of its track.
+    expect(
+      (screen.getByTestId("model-card-memory-fill-chat") as HTMLElement).style.width,
+    ).toBe("100%");
+  });
+
+  it("writes a pick through PUT roles/{role}", async () => {
     const fetchMock = installFetchMock();
     renderPanel();
 
-    await screen.findByTestId("role-row-deep");
-    const select = screen.getByLabelText(
-      "local_models.roles.pick_labellocal_models.role_deep",
-    );
-    fireEvent.change(select, { target: { value: "qwen3.5:4b" } });
+    await screen.findByTestId("model-card-deep");
+    fireEvent.change(screen.getByTestId("role-picker-deep"), {
+      target: { value: "qwen3.5:4b" },
+    });
 
     await waitFor(() => {
       const put = fetchMock.mock.calls.find(
@@ -585,11 +516,11 @@ describe("OverviewPanel", () => {
     });
   });
 
-  it("'Use recommended' pulls a missing model, assigns it, tunes silently and reads back", async () => {
+  it("downloads, assigns and tunes the recommendation from the card", async () => {
     const fetchMock = installFetchMock();
     renderPanel();
 
-    await screen.findByTestId("role-row-chat");
+    await screen.findByTestId("model-card-chat");
     // qwen3.8:27b is recommended for chat but not installed -> download label.
     fireEvent.click(
       screen.getByText("local_models.roles.download_recommendedqwen3.8:27b"),
@@ -604,53 +535,103 @@ describe("OverviewPanel", () => {
     expect(urls).toContain(`PUT ${BASE}/models/qwen3.8%3A27b/options`);
   });
 
-  it("offers one setup button when nothing is installed and fills all four rows", async () => {
-    const fetchMock = installFetchMock({
-      models: [],
-      roles: ROLES.map((r) => ({
-        ...r,
-        current: "",
-        installed: false,
-        qualifying: [],
-      })),
+  it("keeps speech out of the grid and says where it is set", async () => {
+    installFetchMock();
+    renderPanel();
+
+    await screen.findByTestId("model-card-chat");
+    expect(screen.queryByTestId("model-card-voice")).toBeNull();
+    const voice = await screen.findByTestId("voice-row");
+    expect(voice.textContent).toContain("local_models.role_voice");
+    expect(voice.textContent).toContain("local_models.jobs.voice_purpose");
+  });
+
+  it("the detail level adds detail, never takes the picker away", async () => {
+    installFetchMock();
+    const { unmount } = renderPanel({ onTune: vi.fn() });
+    await screen.findByTestId("model-card-chat");
+    expect(screen.getByTestId("role-picker-chat")).toBeDefined();
+    expect(screen.queryByText("tools")).toBeNull();
+    expect(screen.queryByText("local_models.roles.tune")).toBeNull();
+    expect(screen.queryByTestId("roles-more")).toBeNull();
+    unmount();
+
+    installFetchMock();
+    renderPanel({ advanced: true, onTune: vi.fn() });
+    await screen.findByTestId("model-card-chat");
+    expect(screen.getByTestId("role-picker-chat")).toBeDefined();
+    expect(screen.getAllByText("tools").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("local_models.roles.tune").length,
+    ).toBeGreaterThan(0);
+    // The jobs that follow another card's pick.
+    expect(screen.getByTestId("roles-more").textContent).toContain(
+      "local_models.role_ack",
+    );
+  });
+});
+
+describe("OverviewPanel launch bar", () => {
+  it("adds up what the picks cost and names the largest against the card", async () => {
+    installFetchMock({
+      models: [
+        { name: "qwen3.5:4b", size_bytes: 3 * 1024 ** 3 },
+        { name: "qwen3-embedding:4b", size_bytes: 2 * 1024 ** 3 },
+      ],
+      accelerator_gb: 16,
+      roles: ROLES.map((r) =>
+        r.id === "embedding"
+          ? { ...r, current: "qwen3-embedding:4b", installed: true }
+          : r.id === "tools_screen" || r.id === "deep"
+            ? { ...r, current: "qwen3.5:4b", installed: true }
+            : r,
+      ),
     });
     renderPanel();
 
-    await screen.findByTestId("roles-empty");
-    fireEvent.click(screen.getByText("local_models.roles.setup_button"));
-
-    await waitFor(() => {
-      const puts = fetchMock.mock.calls
-        .filter(
-          ([u, i]) =>
-            String(u).startsWith(`${BASE}/roles/`) &&
-            (i as RequestInit)?.method === "PUT",
-        )
-        .map(([u]) => String(u).split("/").pop());
-      expect(puts.sort()).toEqual([
-        "chat",
-        "deep",
-        "embedding",
-        "tools_screen",
-      ]);
-    });
-    const pulls = fetchMock.mock.calls
-      .filter(
-        ([u, i]) =>
-          String(u) === "/api/providers/ollama/pull" &&
-          (i as RequestInit)?.method === "POST",
-      )
-      .map(([, i]) => JSON.parse(String((i as RequestInit).body)).model);
-    // Every role's own pick is fetched — nothing falls back to the chat pick.
-    expect(pulls.sort()).toEqual([
-      "qwen3-embedding:4b",
-      "qwen3.5:4b",
-      "qwen3.8:27b",
-    ]);
-    await screen.findByText("local_models.overview.setup_done");
+    const facts = await screen.findByTestId("launch-facts");
+    // chat + tools + deep share qwen3.5:4b, embedding adds 2 GB -> 5 GB.
+    await waitFor(() =>
+      expect(facts.textContent).toContain(
+        "local_models.launch.total_on_disk5.0 GB",
+      ),
+    );
+    expect(facts.textContent).toContain(
+      "local_models.launch.largest_fits3.0 GB|16.0",
+    );
+    expect(screen.getByTestId("server-launch").textContent).toContain(
+      "local_models.launch.all_picked",
+    );
   });
 
-  it("'Set up everything' keeps a role on its pick, writes the rest, then offers the brain switch", async () => {
+  it("says how many jobs are still open without blocking the button", async () => {
+    installFetchMock();
+    renderPanel();
+
+    const launch = await screen.findByTestId("server-launch");
+    // Only chat is set in the fixture: 1 of 4.
+    await waitFor(() =>
+      expect(launch.textContent).toContain(
+        "local_models.launch.partly_picked1|4",
+      ),
+    );
+    const button = within(screen.getByTestId("launch-run")).getByRole("button");
+    // Filling the rest is exactly what this button is for.
+    expect(button.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("names the install when the server is not there yet", async () => {
+    installFetchMock({ server: { ...SERVER, installed: false, running: false } });
+    renderPanel();
+
+    expect(
+      await screen.findByRole("button", {
+        name: /local_models\.launch\.action_installOllama/,
+      }),
+    ).toBeDefined();
+  });
+
+  it("runs the flow, reports what it did, then offers the brain switch", async () => {
     const fetchMock = installFetchMock({
       roles: ROLES.map((r) =>
         r.id === "tools_screen"
@@ -664,29 +645,21 @@ describe("OverviewPanel", () => {
     ];
     renderPanel();
 
-    await screen.findByTestId("step-server");
+    await screen.findByTestId("launch-run");
     fireEvent.click(
-      screen.getByRole("button", { name: "local_models.overview.action_setup" }),
+      within(screen.getByTestId("launch-run")).getByRole("button"),
     );
 
     const progress = await screen.findByTestId("setup-progress");
     await screen.findByText("local_models.overview.setup_done");
-    // Chat moved to the recommended download, tools & screen kept its pick.
     expect(progress.textContent).toContain(
       "local_models.overview.setup_assignedlocal_models.role_chat|qwen3.8:27b",
     );
     expect(progress.textContent).toContain(
       "local_models.overview.setup_kept_one",
     );
-    // The proof and the boot switch are part of "done".
     expect(progress.textContent).toContain(
       "local_models.verify.server — local_models.verify.ok · local_models.verify.ms12",
-    );
-    expect(progress.textContent).toContain(
-      "local_models.verify.chat — local_models.verify.ok · qwen3.8:27b · 1.8 s",
-    );
-    expect(progress.textContent).toContain(
-      "local_models.verify.embedding — local_models.verify.skipped · No embedding role is configured.",
     );
     expect(progress.textContent).toContain(
       "local_models.overview.setup_autostart_on",
@@ -716,31 +689,40 @@ describe("OverviewPanel", () => {
     ).toBe(true);
     expect(mockProviders.refetch).toHaveBeenCalled();
   });
+});
 
-  it("lists every installed model with what uses it and what it is recommended for", async () => {
+describe("OverviewPanel notices", () => {
+  it("names the active brain when it is not the local server", async () => {
+    installFetchMock();
+    mockProviders.providers = [
+      { id: "gemini", label: "Gemini", tier: "brain", active: true },
+    ];
+    renderPanel({ onOpenApiKeys: vi.fn() });
+
+    const clause = await screen.findByTestId("overview-brain-clause");
+    expect(clause.textContent).toContain(
+      "local_models.overview.status_brain_other" +
+        "local_models.overview.status_generic_server|Gemini",
+    );
+    expect(clause.textContent).toContain("local_models.roles.other_brain_link");
+  });
+
+  it("does not claim the server was silent when it answered with nothing", async () => {
+    installFetchMock({ models: [] });
+    renderPanel();
+    await screen.findByTestId("model-card-chat");
+    expect(screen.queryByTestId("roles-server-silent")).toBeNull();
+  });
+
+  it("lists every installed model, and offers Browse and Manage", async () => {
     installFetchMock({
       models: [{ name: "qwen3.5:4b" }, { name: "qwen3-embedding:4b" }],
-      roles: ROLES.map((r) =>
-        r.id === "embedding"
-          ? { ...r, recommended: "qwen3-embedding:4b" }
-          : r,
-      ),
     });
     const onManage = vi.fn();
-    renderPanel({ onManage });
+    const onBrowse = vi.fn();
+    renderPanel({ onManage, onBrowse });
 
-    await screen.findByTestId("local-models-installed");
     await screen.findByTestId("installed-qwen3.5:4b");
-    // How many downloads and how much disk is step 2's status line; the list
-    // itself no longer repeats it inside the card.
-    expect(
-      (await screen.findByTestId("step-models")).textContent,
-    ).toContain("local_models.overview.models_count2|");
-    // Each line says which roles it is the pick for (the fixture's rows
-    // carry no used_by, so the markers are the recommendations).
-    expect(
-      screen.getByTestId("installed-recommended-qwen3.5:4b").textContent,
-    ).toContain("local_models.role_tools_screen, local_models.role_deep");
     expect(
       screen.getByTestId("installed-recommended-qwen3-embedding:4b").textContent,
     ).toContain("local_models.role_embedding");
@@ -749,18 +731,9 @@ describe("OverviewPanel", () => {
       screen.getByRole("button", { name: "local_models.installed.manage" }),
     );
     expect(onManage).toHaveBeenCalledTimes(1);
-  });
-
-  it("names the active brain when it is not the local server", async () => {
-    installFetchMock();
-    mockProviders.providers = [
-      { id: "gemini", label: "Gemini", tier: "brain", active: true },
-    ];
-    const onOpenApiKeys = vi.fn();
-    renderPanel({ onOpenApiKeys });
-
-    await screen.findByTestId("roles-other-brain");
-    fireEvent.click(screen.getByText("local_models.roles.other_brain_link"));
-    expect(onOpenApiKeys).toHaveBeenCalledTimes(1);
+    fireEvent.click(
+      screen.getByRole("button", { name: "local_models.installed.browse" }),
+    );
+    expect(onBrowse).toHaveBeenCalledTimes(1);
   });
 });
