@@ -250,6 +250,48 @@ class TestClaudeEvents:
         # The cut is at a question, so the first event is one — never half a turn.
         assert events[0]["kind"] == "user_message"
 
+    def test_one_long_task_still_opens_with_its_question(self, tmp_path: Path) -> None:
+        """BUG-196: megabytes of tool output after the prompt never cut the prompt off.
+
+        A pane given one task writes its question at the head of the file and
+        everything after it is the answer; a read that took a fixed tail came
+        back with the answer's torso and the chat stage had nothing above it to
+        scroll to. Three megabytes of tool result here — more than the tail
+        that was read — and the first event is still what the person said.
+        """
+        haystack = "x" * 3_000_000
+        _claude_session(
+            tmp_path,
+            "abc",
+            [
+                _user("fix the scroll", 0),
+                _assistant({"type": "tool_use", "id": "c1", "name": "Read", "input": {}}, 1),
+                _tool_result("c1", haystack, 2),
+                _assistant({"type": "text", "text": "done"}, 3),
+            ],
+        )
+        events = agent_transcript.read_events("claude", "abc", home=tmp_path)
+        assert events is not None
+        assert events[0]["kind"] == "user_message"
+        assert events[0]["payload"]["text"] == "fix the scroll"
+        texts = [ev["payload"]["text"] for ev in events if ev["kind"] == "assistant_text"]
+        assert texts == ["done"]
+
+    def test_a_file_past_the_read_bound_is_read_from_its_tail(self, tmp_path: Path) -> None:
+        """The bound is the one thing that still cuts — and it cuts on a whole line.
+
+        The seek lands mid-object; that fragment is dropped rather than parsed
+        as garbage, and every line after it comes back intact.
+        """
+        rows = [_user(f"q{n}", n) for n in range(5)]
+        _claude_session(tmp_path, "abc", rows)
+        path = tmp_path / "projects" / "C--some--folder" / "abc.jsonl"
+        one = len(json.dumps(rows[-1], ensure_ascii=False)) + 1
+        kept = list(agent_transcript._rows(path, max_bytes=one * 2 + one // 2))
+        assert [row["uuid"] for row in kept] == ["u-3", "u-4"]
+        whole = list(agent_transcript._rows(path))
+        assert [row["uuid"] for row in whole] == [f"u-{n}" for n in range(5)]
+
     def test_no_file_is_none_not_an_error(self, tmp_path: Path) -> None:
         assert agent_transcript.read_events("claude", "nope", home=tmp_path) is None
         assert agent_transcript.read_events("shell", "abc", home=tmp_path) is None

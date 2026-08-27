@@ -13841,3 +13841,41 @@ DOWN alone. When a badge and a bell answer the same question they must
 share the same debounce, or one of them is wrong by construction. And a
 list that only polls is a list that lies for a poll interval — the thing
 that decides a state should say so.
+
+## BUG-196: the Agentic IDE's chat view would not scroll to the top of a long session — the timeline began mid-answer and the prompt that opened it was nowhere (MEDIUM, FIXED 2026-08-27)
+
+**Symptom.** A pane an hour into one task, opened in chat mode: the scrollbar
+sits at the very top and the first thing drawn is "CODING AGENT · Thought for
+1m 20s" — the agent's first thought, not the question it was answering. No
+amount of scrolling reaches the prompt (maintainer screenshot 2026-08-27 11:49,
+T15). It read as a scroll lock; nothing was locked. There was nothing above
+the first row to scroll to.
+
+**Root cause.** `agent_transcript` read the last 2 MB of the CLI's record
+(`MAX_TAIL_BYTES`), and `_last_turns` cut "at a person's message" only when
+there were MORE than `MAX_TURNS` of them — with fewer it returned every event,
+including the torso of the turn the tail had landed in. A pane given one long
+task has its question at the HEAD of the file and megabytes of tool output
+after it: T15's record was 3.6 MB with one prompt in it, and the 2 MB tail held
+zero user messages. The bound was justified as "paying disk for the first
+thousand turns to render the last ten"; measured, a line-by-line pass over the
+21 MB record — the largest on the box — takes 0.08 s, and decoding the 2 MB
+tail as one block took 0.12 s. The bound cost more than it saved and cut the
+one thing a reader scrolls up for.
+
+**Fix.** The record is streamed from its head, one line at a time (`_lines` /
+`_rows` are generators — never the file in one piece), so the turn on stage is
+read from the question that opened it. `MAX_READ_BYTES` (64 MB) replaces the
+tail: past it the read starts that far before the end, the fragment the seek
+lands in is dropped whole, and the first turn shows from wherever that lands —
+a runaway file still draws. The 60-turn window is unchanged. Regression:
+`test_agent_transcript_events.py` ("one long task still opens with its
+question" — 3 MB of tool result after the prompt; "a file past the read bound
+is read from its tail"). Proof on the real files: both the 3.6 MB and the
+21 MB session now open with `user_message`, in 0.017 s and 0.084 s. The live
+backend has the old module loaded; a restart picks the fix up.
+
+**Lesson.** A window on "the recent past" has to open on a turn boundary or it
+opens on garbage — and a cut taken only when a limit is EXCEEDED protects
+nothing when the input is short. Measure a bound before keeping it: this one
+was defended by a cost that was never there.

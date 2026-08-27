@@ -27,12 +27,17 @@ same deal for free by registering an adapter.
 
 ## Bounds
 
-Two, both load-bearing. A long-running session's file reaches megabytes, so the
-read starts from the END of the file and walks backwards only as far as it must
-— a conversation view shows the last stretch, and paying disk for the first
-thousand turns to render the last ten is how a chat surface becomes slower the
-longer it is used. And each block of text is capped, because a tool result can
-be a whole file and this is a conversation, not a file viewer.
+Two, both load-bearing. A conversation view answers with the last
+:data:`MAX_TURNS` exchanges, cut at a person's message and never inside one —
+a turn is shown from what was asked, or not at all. The file is streamed from
+its head, one line at a time, to find those turns: a pane given one long task
+has its question at the HEAD of the file and megabytes of tool output after
+it, and a read that started from the end and stopped short came back with the
+answer's torso and no question (BUG-196). A line-by-line pass over a
+20-megabyte record costs a tenth of a second, less than decoding a fixed tail
+as one block did; :data:`MAX_READ_BYTES` only keeps a runaway file from being
+walked whole on every poll. And each block of text is capped, because a tool
+result can be a whole file and this is a conversation, not a file viewer.
 
 Cross-platform: paths come from :mod:`.agent_sessions`, everything is read as
 UTF-8 with replacement, and nothing here is OS-specific.
@@ -42,7 +47,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -61,13 +66,15 @@ MAX_TURNS = 60
 #: what a person reads, and the pane behind it still holds the raw output.
 MAX_TEXT = 4000
 
-#: How much of the file's tail may be read to find those turns. Generous enough
-#: that MAX_TURNS is reached in one pass for any normal session, bounded so a
-#: pathological file cannot pull megabytes into memory.
-MAX_TAIL_BYTES = 2_000_000
-
-#: Read granularity when walking backwards from the end of the file.
-_CHUNK = 256 * 1024
+#: How much of a file is walked to find those turns — from the head, so the
+#: turn a pane is on is read from the question that opened it, however much
+#: output came after (a 2 MB tail once cut a 3.6 MB session's one prompt off
+#: and drew the answer without it, BUG-196). Far above any real session: the
+#: largest on the maintainer's box is 21 MB and streams in a tenth of a
+#: second. Past the bound the read starts this far before the end, and the
+#: first turn shows from wherever that lands — a runaway file is still a
+#: file, and a torso beats a blank stage.
+MAX_READ_BYTES = 64_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,52 +131,53 @@ def _clip(text: str) -> str:
     return f"{value[:half]}\n\n[…]\n\n{value[-half:]}"
 
 
-def _tail_lines(path: Path, *, max_bytes: int = MAX_TAIL_BYTES) -> list[str]:
-    """The last lines of ``path``, without reading what comes before them.
+def _lines(path: Path, *, max_bytes: int = MAX_READ_BYTES) -> Iterator[str]:
+    """The lines of ``path``, oldest first, streamed — never the file in one piece.
 
-    Walks backwards in chunks and stops at ``max_bytes``. The first line of the
-    result may be a fragment — the caller parses per line and a fragment simply
-    fails to parse, which is the correct outcome for half a JSON object.
+    A file larger than ``max_bytes`` is read from that far before its end. The
+    line the seek lands in is a fragment and is dropped whole, so a caller only
+    ever sees lines that begin where the CLI began them; the last line may
+    still be one the CLI is mid-way through writing, and fails to parse, which
+    is the right outcome for half a JSON object — the next poll sees it whole.
     """
     try:
         size = path.stat().st_size
-    except OSError as exc:
-        logger.debug("Agent transcript: cannot stat {}: {}", path.name, exc)
-        return []
-    want = min(size, max_bytes)
-    try:
         with path.open("rb") as handle:
-            handle.seek(size - want)
-            blob = handle.read(want)
+            skip = size - max_bytes
+            if skip > 0:
+                logger.debug(
+                    "Agent transcript: {} is {} bytes, reading the last {}",
+                    path.name,
+                    size,
+                    max_bytes,
+                )
+                handle.seek(skip)
+                handle.readline()
+            for raw in handle:
+                yield raw.decode("utf-8", "replace")
     except OSError as exc:
         logger.warning("Agent transcript: cannot read {}: {}", path.name, exc)
-        return []
-    text = blob.decode("utf-8", "replace")
-    return text.splitlines()
 
 
-def _rows(path: Path) -> list[dict[str, Any]]:
-    """Every JSON object in the tail of ``path``, oldest first.
+def _rows(path: Path, *, max_bytes: int = MAX_READ_BYTES) -> Iterator[dict[str, Any]]:
+    """Every JSON object in ``path``, oldest first, one at a time.
 
     A line that does not parse is skipped in silence, and that IS the handling:
-    the first line of a tail read is usually half an object, and a CLI writing
-    its file while this reads it will always produce one. Nothing is lost — the
-    next poll sees the complete line.
+    a CLI writing its file while this reads it always leaves a half line at the
+    end, and transcripts interleave plain text with JSONL. Nothing is lost —
+    the next poll sees the complete line.
     """
-    out: list[dict[str, Any]] = []
-    for line in _tail_lines(path):
+    for line in _lines(path, max_bytes=max_bytes):
         stripped = line.strip()
         if not stripped or not stripped.startswith("{"):
             continue
         try:
             payload = json.loads(stripped)
         except (ValueError, TypeError):
-            # Not a JSON line — transcripts interleave plain text with JSONL,
-            # so skipping is the parse contract, not a swallowed failure.
+            # Not a JSON line — the parse contract, not a swallowed failure.
             continue
         if isinstance(payload, dict):
-            out.append(payload)
-    return out
+            yield payload
 
 
 #: Argument names worth showing as a step's headline, best first.
