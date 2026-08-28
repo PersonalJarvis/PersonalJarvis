@@ -3204,27 +3204,31 @@ function PaneAction({
 /**
  * The two tones a pane notice comes in, resolved against the PANE's own ground.
  *
- * Not the app's `--destructive` / amber tokens, and that is the whole reason
- * this table exists rather than a call to the section's shared `Notice`: the
+ * Not the app's `--destructive` tokens, and that is the whole reason this
+ * table exists rather than a call to the section's shared `Notice`: the
  * terminal appearance is a separate setting from the app theme (plenty of
  * people run dark panes in a light app, and the reverse — see the appearance
  * note in ./AgenticGrid). A token picked for the app would land on the wrong
  * ground in exactly those two configurations, which is where a warning is least
- * affordable. The hues are the ones the pane's own palette already uses for
- * yellow and red (./terminalThemes), so a notice reads as part of the terminal
- * rather than as the app leaning in over it.
+ * affordable. The values are the pane's OWN ink (./terminalThemes), so a notice
+ * reads as part of the terminal rather than as the app leaning in over it.
+ *
+ * The two tones no longer differ by hue, so they differ by weight: a warning
+ * takes a half-strength rule and muted ink, an error takes a solid rule and
+ * the pane's full ink. Severity is how much of the pane's contrast the notice
+ * is allowed to spend.
  */
 const NOTICE_TONE: Record<
   "warning" | "error",
   Record<TerminalAppearance, { border: string; text: string }>
 > = {
   warning: {
-    light: { border: "rgba(154,103,0,0.65)", text: "#8a5a00" },
-    dark: { border: "rgba(255,214,10,0.55)", text: "#ffd479" },
+    light: { border: "rgba(43,43,51,0.45)", text: "#54545d" },
+    dark: { border: "rgba(242,242,245,0.38)", text: "#a8a8b4" },
   },
   error: {
-    light: { border: "rgba(192,57,43,0.7)", text: "#b3261e" },
-    dark: { border: "rgba(255,107,94,0.6)", text: "#ff8b80" },
+    light: { border: "rgba(43,43,51,0.85)", text: "#2b2b33" },
+    dark: { border: "rgba(242,242,245,0.8)", text: "#f2f2f5" },
   },
 };
 

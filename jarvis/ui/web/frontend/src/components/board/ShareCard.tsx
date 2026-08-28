@@ -4,12 +4,16 @@ import { REPO_LABEL, type ShareStats } from "@/lib/shareImage";
 import { useT } from "@/i18n";
 
 // ── Palette ───────────────────────────────────────────────────────────
-// A JARVIS-style HUD readout: amber-gold instrument lines on deep ink,
-// a cool cyan secondary, monospace data. Deliberately NOT the generic
-// "dark card + big number" look.
+// A JARVIS-style HUD readout: bright instrument lines on deep ink, a quiet
+// second value for supporting rules, monospace data. Deliberately NOT the
+// generic "dark card + big number" look.
+//
+// The two names are kept: they still describe the ROLES (the primary
+// instrument line and its cooler secondary), and the card is read as a
+// composition of those two weights rather than of two hues.
 const INK = "#07080a";
-const AMBER = "#ffcf2b";
-const CYAN = "#5ad1ff";
+const AMBER = "#f5f4ef";
+const CYAN = "#8a8a92";
 const MONO = '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace';
 
 export interface ShareCardProps extends ShareStats {

@@ -20,7 +20,10 @@
  * the snapshot still captures), so the chip never flashes on screen.
  */
 
-const ACCENT = "#FFD60A"; // --primary signal-yellow
+// The dark theme's --primary. Hardcoded rather than read from the token
+// because the chip is painted onto its own near-black ground (below) and
+// snapshotted for the drag layer, so it never sits on the app's canvas.
+const ACCENT = "#FFFFFF";
 const TITLE_MAX = 64;
 
 function truncate(title: string): string {
