@@ -44,6 +44,9 @@ def classify_release(*, moved: bool) -> str:
 _CLOSE_X_HIT_PX: float = 10.0
 _CLOSE_X_HIT_FRAC: float = 0.14
 _CLOSE_X_CENTRE_FRAC: float = 0.42  # X centre offset from pill centre (mirror of renderer)
+# The Prompt Mode sparkle's centre, mirroring ``renderer.SPARKLE_CENTRE_FRAC``
+# (this module must not import the renderer — see the module docstring).
+_SPARKLE_CENTRE_FRAC: float = 0.33
 
 
 def resolve_click(
@@ -53,6 +56,7 @@ def resolve_click(
     *,
     hovered: bool = False,
     pill_w: float | None = None,
+    prompt_mode: bool = False,
 ) -> str:
     """Resolve a click on the bar into an action by its horizontal zone + state.
 
@@ -86,13 +90,15 @@ def resolve_click(
     draws for these modes — resolved to nothing (BUG-191). The renderer and
     this resolver now agree: a drawn X is a working X.
 
-    The IDLE pill's left control is the Prompt Mode sparkle — the switch that
-    turns every dictation into a written prompt. It sits where the close-X
-    sits on a live bar and is drawn only while the controls are up
-    (``hovered``), so a click on that spot flips the switch instead of
-    starting a session; a click anywhere else on the idle body still talks.
-    Non-destructive, reversible with a second click, and it takes no more of
-    the bar than the X does.
+    The IDLE pill's left control is the Prompt Mode sparkle, and it exists
+    ONLY while ``prompt_mode`` is on — the renderer draws it exactly then, so
+    a click there switches the mode off, and with the mode off the same spot
+    is ordinary body and starts a session. That asymmetry is deliberate
+    (maintainer, 2026-08-28): the bar reports a state the user might have
+    forgotten and offers the way out of it; it is not a place to switch the
+    feature on, which is what the settings card and the front-page pill are
+    for. The glyph mirrors the mic's inset rather than the close-X's, because
+    at the X's offset its left tip drew outside the pill.
 
     ``NOTICE_MODES`` is inert for the same reason and one more. A notice is a
     transient ANSWER, not a control: it appears unrequested, it opens the pill
@@ -115,9 +121,14 @@ def resolve_click(
     if frac >= 0.60:            # right zone → the mic mute toggle (non-destructive)
         return "mute"
     if not active:
-        # Idle: the sparkle on the left (only while the controls are up) flips
-        # Prompt Mode; the rest of the body starts a normal session.
-        if hovered and _on_prompt_sparkle(x, width, pill_w):
+        # Idle: the sparkle on the left switches Prompt Mode OFF; the rest of
+        # the body starts a normal session. Gated on ``prompt_mode`` and not
+        # on ``hovered``, because the renderer draws the sparkle exactly when
+        # the mode is on — hovered or at rest — and a drawn glyph is a working
+        # glyph. With the mode off nothing is drawn there and the spot talks,
+        # which is also why the bar can only ever turn the mode OFF: an unlit
+        # switch would be an advert for a feature that is not running.
+        if prompt_mode and _on_prompt_sparkle(x, width, pill_w):
             return "prompt_mode_toggle"
         return "talk"
     # Active session: the ONLY destructive bar action is the close-X hang-up,
@@ -143,12 +154,16 @@ def _on_close_x(x: float, width: int, pill_w: float | None) -> bool:
 def _on_prompt_sparkle(x: float, width: int, pill_w: float | None) -> bool:
     """Does a click at ``x`` land on the Prompt Mode sparkle?
 
-    The sparkle takes the close-X's slot on the idle pill (the renderer draws
-    it at ``cx - 0.42*pw`` too), so the hit-box is the X's. In production
-    ``pill_w`` is the OPEN pill width — the size the idle pill has while
-    hovered.
+    The sparkle mirrors the MIC rather than sharing the close-X's slot: it is
+    the bigger glyph, and at the X's ``0.42`` its left tip crossed the rim and
+    drew outside the pill (2026-08-28). ``_SPARKLE_CENTRE_FRAC`` restates
+    ``renderer.SPARKLE_CENTRE_FRAC`` — this module stays dependency-free, so
+    it cannot import the renderer; a test pins the two together.
     """
-    return _on_close_x(x, width, pill_w)
+    pw = float(pill_w) if pill_w is not None else float(width)
+    x_glyph = width / 2.0 - _SPARKLE_CENTRE_FRAC * pw
+    hit = max(_CLOSE_X_HIT_PX, _CLOSE_X_HIT_FRAC * pw)
+    return abs(x - x_glyph) <= hit
 
 
 def default_bottom_center(

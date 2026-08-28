@@ -90,18 +90,13 @@ def test_repeated_close_click_does_not_reopen_session(monkeypatch):
     assert fake.hangup_calls == 1
     assert fake.session_calls == 0
 
-    # The guard is bounded: after the backend has reached idle, the X's spot
-    # is the idle pill's left control — the Prompt Mode sparkle (drawn there
-    # while hovered) — so a deliberate click flips that switch rather than
-    # firing a hang-up; the idle BODY still starts a new call.
-    flips: list[int] = []
-    bar.set_on_prompt_mode_toggle(lambda: flips.append(1))
+    # The guard is bounded: after the backend has reached idle, the same area
+    # behaves like the normal idle body and can deliberately start a new call.
+    # (The Prompt Mode sparkle sits further in, at the mic's mirrored inset,
+    # and only exists while that mode is on — so it never shadows this spot.)
     fake._session_active = False
     now[0] += 1.0
     bar._on_click(_x_glyph(), hovered=True)
-    assert flips == [1]
-    assert fake.hangup_calls == 1
-    bar._on_click(R.WIN_W / 2, hovered=True)
     assert fake.session_calls == 1
 
 

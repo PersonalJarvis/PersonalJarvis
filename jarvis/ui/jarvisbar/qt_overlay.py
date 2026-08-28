@@ -1473,6 +1473,7 @@ class QtJarvisBarOverlay:
             # The idle pill is OPEN while its controls are up; the sparkle's
             # hit-box tracks that pill, not the window.
             pill_w=renderer.ACTIVE_W if active else renderer.OPEN_W,
+            prompt_mode=self._prompt_mode,
         )
         if action == "mute":
             callback = self._on_mute_toggle

@@ -447,6 +447,16 @@ _N_DOTS = 7  # dots in the standby row
 _DOT_R_FRAC = 0.16  # dot radius / pill height (small round dots, not chunky)
 _DOTS_SPAN_FRAC = 0.62  # dots span / pill width (matches the bars)
 
+# The Prompt Mode sparkle: where its centre sits (offset from the pill centre,
+# as a fraction of the pill WIDTH — the mirror of the mic's ``+0.33``) and how
+# big it is (fraction of the pill HEIGHT). PUBLIC because
+# ``interaction._on_prompt_sparkle`` must place its hit-box on the same spot,
+# and that module is deliberately dependency-free (no PIL/numpy) so it cannot
+# import this one — it restates the value the way ``_CLOSE_X_CENTRE_FRAC``
+# already does, and the parity is pinned by a test.
+SPARKLE_CENTRE_FRAC = 0.33
+SPARKLE_R_FRAC = 0.30
+
 # MODES / DICTATION_MODES are imported at the top of this module — see the note
 # there. Nothing in this package may restate them (test_mode_parity.py).
 
@@ -853,6 +863,13 @@ class JarvisBarRenderer:
         # Hover splits the bar into controls: LEFT X (hang up, only while a
         # session is live) + RIGHT mic (toggle voice mute for Jarvis).
         x_right = cx + 0.33 * pw  # pulled in so the mic glyph never clips the rim
+        # The Prompt Mode sparkle mirrors the mic rather than sharing the
+        # close-X's slot. Measured on the OPEN pill (68x19 at 1x): the X sits
+        # 5.4 px from the rim and its own radius is 4.9, which just fits; the
+        # sparkle is bigger and at 0.42 its left tip crossed the rim and drew
+        # onto the colour key — a star floating OUTSIDE the pill, which is
+        # what the maintainer saw and could not read (2026-08-28).
+        x_sparkle = cx - SPARKLE_CENTRE_FRAC * pw
         if confirming:
             # The verdict owns the pill alone. Equalizer bars or the orbital
             # core behind a tick would be mush at this pill height — and the
@@ -892,12 +909,13 @@ class JarvisBarRenderer:
                 )
             if active_sess:
                 self._draw_close_x(d, x_left, cy, ph)
-            else:
-                # Idle controls: the left slot is the Prompt Mode switch —
-                # lit while every dictation becomes a prompt, dim while it
-                # does not. Same spot as the close-X, so the hand that knows
-                # where the bar's left control lives finds this one too.
-                self._draw_sparkle(img, x_left, cy, ph, lit=prompt_mode)
+            elif prompt_mode:
+                # The Prompt Mode switch, and ONLY while the mode is on: the
+                # maintainer asked for it to be shown in that mode and in no
+                # other (2026-08-28). It is the way OUT of the mode, not an
+                # advert for a feature that is not running — turning it on
+                # stays with the settings card and the front-page pill.
+                self._draw_sparkle(img, x_sparkle, cy, ph)
             self._draw_mic(img, x_right, cy, ph, muted)
         elif mode == "think":
             self._draw_thinking(d, t, cx, cy, pw, ph)
@@ -907,13 +925,13 @@ class JarvisBarRenderer:
             # Standby with a state worth seeing (idle, not hovered). Muted:
             # always show the slashed mic so the user sees at a glance they're
             # muted AND where to click to unmute (they can't unmute by voice —
-            # Jarvis is deaf while muted). Prompt Mode on: the lit sparkle, so
+            # Jarvis is deaf while muted). Prompt Mode on: the sparkle, so
             # "every dictation comes out rewritten" is never a surprise and
-            # the switch is one hover away.
+            # the switch that ends it is right there.
             if muted:
                 self._draw_mic(img, x_right, cy, ph, muted=True)
             if prompt_mode:
-                self._draw_sparkle(img, cx - 0.42 * pw, cy, ph, lit=True)
+                self._draw_sparkle(img, x_sparkle, cy, ph)
         # idle / standby (not hovered, not muted, Prompt Mode off): a clean
         # EMPTY pill — no dots, no bars. "When nothing is happening, nothing is
         # in the bar."
@@ -941,21 +959,21 @@ class JarvisBarRenderer:
         d.line([(cx - r, cy - r), (cx + r, cy + r)], fill=CLOSE_X, width=w)
         d.line([(cx - r, cy + r), (cx + r, cy - r)], fill=CLOSE_X, width=w)
 
-    def _draw_sparkle(
-        self, img: Image.Image, cx: float, cy: float, ph: float, lit: bool
-    ) -> None:
+    def _draw_sparkle(self, img: Image.Image, cx: float, cy: float, ph: float) -> None:
         """Left-hand control on the resting pill: the Prompt Mode switch.
 
         A four-point star with a smaller companion up and to the right — the
         sparkle mark the app uses for the same switch on its front page, so
-        the two surfaces read as one control. Accent-coloured while ON; the
-        standby dot grey while off (drawn only while the controls are up).
-        Supersampled like the mic, because thin star tips alias at ~30 px.
+        the two surfaces read as one control. Always the accent colour,
+        because it is only ever drawn while the mode is ON: an OFF switch that
+        is invisible is the whole point of it (the bar advertises a state, it
+        does not offer a feature). Supersampled like the mic, because thin
+        star tips alias at ~30 px.
         """
         ss = 4
         layer = Image.new("RGBA", (img.width * ss, img.height * ss), (0, 0, 0, 0))
         ld = ImageDraw.Draw(layer)
-        color = (*(self._accent if lit else DOT_COLOR), 255)
+        color = (*self._accent, 255)
         x, y, p = cx * ss, cy * ss, ph * ss
 
         def star(sx: float, sy: float, r: float) -> None:
@@ -966,9 +984,15 @@ class JarvisBarRenderer:
                 pts.append((sx + rad * math.cos(ang), sy - rad * math.sin(ang)))
             ld.polygon(pts, fill=color)
 
-        r = p * 0.30
+        # Sized and tucked so the whole mark stays INSIDE the pill. The star
+        # has a tip pointing straight up, so the companion's reach above
+        # centre is (offset + its own radius) — kept to 1.08*r, i.e. well
+        # under the pill's half-height, because the 4x LANCZOS downscale rings
+        # a pixel or two past the source and a tip that grazed the rim drew a
+        # magenta fleck of colour key ABOVE the bar (measured 2026-08-28).
+        r = p * SPARKLE_R_FRAC
         star(x - r * 0.15, y + r * 0.15, r)
-        star(x + r * 0.85, y - r * 0.85, r * 0.42)
+        star(x + r * 0.80, y - r * 0.72, r * 0.36)
         small = layer.resize(img.size, Image.Resampling.LANCZOS)
         img.paste(small, (0, 0), small)
 

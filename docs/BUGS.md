@@ -14342,8 +14342,13 @@ came back as a document passed everything.
 
 **Also in this change (feature, maintainer request the same message).** The
 Prompt Mode switch is now a control on the native Jarvis bar: a sparkle in the
-resting pill's left slot, lit while the switch is on and visible without a
-hover, clickable while the controls are up. It has ONE writer
+resting pill's left slot, drawn ONLY while the mode is on and clicked to switch
+it off. Two follow-up corrections the same evening, both from a screenshot: at
+the close-X's inset the mark's tips crossed the rim and drew onto the colour
+key (a magenta fleck and a star floating outside the pill), so it moved to the
+mic's mirrored inset and shrank; and the dim OFF-state sparkle is gone — the
+bar reports a state and offers the way out of it, it does not advertise a
+feature that is not running. It has ONE writer
 (`jarvis/dictation/prompt_mode_switch.py`) and one broadcast
 (`DictationPromptModeChanged`) that the bar, the front-page pill and the
 settings card all redraw from — the mute flag's shape, for the reason mute has

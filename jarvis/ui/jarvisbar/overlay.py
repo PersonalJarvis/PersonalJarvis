@@ -1915,6 +1915,7 @@ class JarvisBarOverlay:
                 self._mode,
                 hovered=hovered,
                 pill_w=pill_w,
+                prompt_mode=getattr(self, "_prompt_mode", False),
             )
             if action == "dictation_stop":
                 # The X while dictating ends the recording and delivers
