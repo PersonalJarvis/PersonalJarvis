@@ -13,7 +13,12 @@ from typing import Any
 
 import pytest
 
-from jarvis.core.config import BrainProviderConfig, JarvisConfig, OllamaModelOptions
+from jarvis.core.config import (
+    BrainProviderConfig,
+    BrainTierConfig,
+    JarvisConfig,
+    OllamaModelOptions,
+)
 from jarvis.local_models import autostart
 
 
@@ -22,9 +27,11 @@ def _cfg(
     primary: str = "openrouter",
     chat: str = "",
     flag: bool | None = None,
+    realtime: str = "gemini-live",
 ) -> JarvisConfig:
     cfg = JarvisConfig()
     cfg.brain.primary = primary
+    cfg.brain.realtime = BrainTierConfig(provider=realtime)
     provider = BrainProviderConfig(model=chat)
     if flag is not None:
         provider.autostart = flag
@@ -35,15 +42,31 @@ def _cfg(
 def test_nothing_is_in_use_on_a_fresh_install() -> None:
     used, why = autostart.in_use(_cfg())
     assert used is False
-    assert "no role" in why
+    assert "neither the active brain nor the active voice" in why
     start, reason = autostart.should_autostart(_cfg())
     assert start is False and reason == why
 
 
-def test_the_active_brain_or_a_configured_role_counts_as_in_use() -> None:
+def test_only_an_active_choice_counts_as_in_use() -> None:
+    """A stored pick is configuration; the accelerator answers to selection.
+
+    What would lie if it broke: the Ollama card keeping a multi-GB model
+    resident after the user switched the brain to a hosted provider, because
+    the card still holds the tag they last chose (BUG-204).
+    """
     assert autostart.in_use(_cfg(primary="ollama")) == (True, "the active brain")
     used, why = autostart.in_use(_cfg(chat="qwen3.5:4b"))
-    assert used and why == "the chat role"
+    assert used is False, why
+
+
+def test_an_active_local_voice_keeps_the_server_in_use() -> None:
+    """The local realtime card answers from this machine's model server."""
+    used, why = autostart.in_use(_cfg(realtime="local-realtime"))
+    assert used and "local-realtime" in why
+    # A hosted voice does not, even with the local card configured as a fallback.
+    cfg = _cfg(realtime="gemini-live")
+    cfg.brain.realtime.fallback_provider = "local-realtime"
+    assert autostart.in_use(cfg)[0] is False
 
 
 def test_the_switch_off_wins_over_use() -> None:
@@ -183,12 +206,68 @@ def test_kick_is_a_no_op_outside_a_loop() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_brain_switch_readies_the_local_server(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_the_brain_switch_readies_and_releases_the_local_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both halves of the gesture: pick it and it starts, leave and it stops."""
     from jarvis.brain import app_control
 
     kicked: list[str] = []
+    released: list[str] = []
     monkeypatch.setattr(autostart, "kick", lambda cfg, **_kw: kicked.append(cfg.brain.primary))
-    app_control._ready_local_server("ollama", _cfg(primary="ollama"))
-    app_control._ready_local_server("openrouter", _cfg())
+    monkeypatch.setattr(autostart, "release", lambda cfg, **_kw: released.append(cfg.brain.primary))
+    app_control._sync_local_server("ollama", _cfg(primary="ollama"))
+    app_control._sync_local_server("openrouter", _cfg())
     assert kicked == ["ollama"]
+    assert released == ["openrouter"]
     await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_release_once_unloads_and_stops_when_nothing_uses_the_server() -> None:
+    stopped: list[str] = []
+
+    async def _unload(root: str) -> list[str]:
+        assert root
+        return ["ornith:9b-voice-32k", "qwen3.5:4b-voice-8k"]
+
+    record = await autostart.release_once(
+        _cfg(chat="qwen3.5:4b"),
+        unload=_unload,
+        stop=lambda: (stopped.append("go") or True, "Ollama stopped."),
+    )
+    assert stopped == ["go"]
+    assert record["stopped"] is True
+    assert record["unloaded"] == ["ornith:9b-voice-32k", "qwen3.5:4b-voice-8k"]
+
+
+@pytest.mark.asyncio
+async def test_release_once_keeps_a_server_something_still_uses() -> None:
+    """A local voice on a hosted brain still needs the model server."""
+
+    async def _unload(_root: str) -> list[str]:
+        raise AssertionError("must not unload")
+
+    record = await autostart.release_once(
+        _cfg(realtime="local-realtime"),
+        unload=_unload,
+        stop=lambda: (_ for _ in ()).throw(AssertionError("must not stop")),
+    )
+    assert record["stopped"] is False and "still uses it" in record["detail"]
+
+
+@pytest.mark.asyncio
+async def test_release_once_never_stops_a_remote_server() -> None:
+    cfg = _cfg()
+    cfg.brain.providers["ollama"].base_url = "http://box.lan:11434"
+    record = await autostart.release_once(
+        cfg,
+        unload=lambda _root: (_ for _ in ()).throw(AssertionError("must not unload")),
+        stop=lambda: (_ for _ in ()).throw(AssertionError("must not stop")),
+    )
+    assert record["stopped"] is False and "remote" in record["detail"]
+
+
+def test_release_is_a_no_op_outside_a_loop() -> None:
+    assert autostart.release(_cfg()) is None
+    assert not any(not t.done() for t in autostart._tasks)

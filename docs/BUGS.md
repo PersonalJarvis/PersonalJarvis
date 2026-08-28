@@ -14351,3 +14351,79 @@ it: three surfaces that can each flip a value must never each own it. See
 `docs/os-parity.md` P-40.
 
 **Related.** BUG-201 (the v6 defect: the example became the job).
+
+## BUG-204: switching the brain to a hosted provider left the local models running — 12 GB of graphics memory held by a voice model nothing was using (HIGH, FIXED 2026-08-28)
+
+**Symptom (maintainer, 2026-08-28).** "I switched the local models on, then off
+again to get the provider back, and I don't know why they still work in the
+background." The app ran fine for most of an afternoon and then froze — the
+window, the Jarvis bar, everything — for stretches of 15 to 41 seconds.
+
+**What the box showed while it was happening.** 14.9 of 16.3 GB of graphics
+memory in use, held by three model servers, with a hosted realtime provider
+(`gemini-live`) doing the actual talking:
+
+| holder | memory |
+| --- | --- |
+| the local realtime speech stack (Qwen3-TTS) | 5.4 GB |
+| `ornith:9b-voice-32k` on Jarvis' own Ollama | 3.0 GB (`UNTIL: 2 hours from now`) |
+| a vision model on a SECOND Ollama | 3.3 GB |
+
+Free RAM was 5.9 of 31.7 GB with 81 GB committed, so the machine was paging.
+
+**Three causes, none of them the local models "misbehaving".**
+
+1. **`in_use()` asked whether a role was CONFIGURED, not whether anything was
+   SELECTED.** `jarvis/local_models/autostart.py` counted any writable role
+   holding a model tag as "local models are in use". The Ollama card keeps its
+   picks when the user switches away — that is what a card is for — so
+   `[brain.providers.ollama] model = "deepseek-r1:14b"` made the answer "in
+   use" permanently. The boot task started the server every launch and warmed
+   the chat pick with a 30-minute keep-alive, whatever the active brain was.
+2. **A switch away from the local server did nothing.** `_ready_local_server`
+   in `jarvis/brain/app_control.py` fired `autostart.kick` on a switch TO the
+   local server and returned early on every other provider. `unload_model`
+   existed but only the Unload button and an assistant tool ever called it, so
+   picking a hosted provider changed who answers and freed nothing.
+3. **`[voice] local_idle_release_minutes` was `0`** — documented as "keep
+   everything loaded while Jarvis runs". The supervisor's idle release, the one
+   mechanism that would have caught the other two, was switched off.
+
+**Two amplifiers found in the same pass.** A second `ollama serve` (from the
+Ollama tray app) was bound to `0.0.0.0:11434` and `[::]:11434` while Jarvis'
+own server held `127.0.0.1:11434`. Windows accepts both binds, so there was no
+error and no clue: a client resolving `localhost` to `::1` reached the tray
+server, one using `127.0.0.1` reached Jarvis'. `ollama ps` listed one model
+while the card held two, and the older "ollama-inventory: localhost did not
+answer" lines belong to the same split. Separately, the app inherits
+`BelowNormal` priority from the autostart task, which is what turned a paging
+machine into 29-second freezes (three of the seven stalls that afternoon sat in
+`GetQueuedCompletionStatus` — the loop was idle and simply not scheduled).
+
+**Fix.**
+
+1. `in_use()` counts an ACTIVE choice only: the active brain is the local
+   server, or the active realtime provider is a local card (spec-derived
+   through `LOCAL_PROVIDERS`, `auth_mode == "none"` — AP-21; a fallback entry
+   does not count). A stored pick is configuration, not consent. A role that
+   needs the server while nothing selects it starts it on demand instead of
+   holding it warm all day.
+2. `autostart.release()` / `release_once()` — the mirror of `kick()`: unload
+   every model `/api/ps` reports, then stop the server via
+   `ollama_runtime.stop_server()`, which only ever touches the pid Jarvis
+   recorded. It refuses while `in_use` still holds (a local voice on a hosted
+   brain still needs the server) and never stops a remote one.
+3. `_ready_local_server` became `_sync_local_server`: `kick` on a switch to the
+   local server, `release` on a switch away. Every switch path — REST, voice
+   gate, CLI, brain tool — already lands there.
+
+`[voice] local_idle_release_minutes` was set back to 15 on the maintainer's
+machine; the supervisor reads it fresh on every monitor tick, so that half took
+effect without a restart.
+
+**Not changed.** `[brain.realtime] fallback_provider = "local-realtime"` stays:
+it is a deliberate setting, and the idle release now returns what it borrows.
+An install that wants no local voice at all clears the fallback.
+
+**Related.** BUG-174 (the other local-models defect whose symptom was "voice on
+local models is unusably slow after a restart" — same stack, different half).

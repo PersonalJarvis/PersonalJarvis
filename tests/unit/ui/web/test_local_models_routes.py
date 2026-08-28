@@ -611,9 +611,13 @@ def test_autostart_round_trip(server: WebServer, fake, monkeypatch) -> None:
     )
     with TestClient(server.app) as client:
         before = client.get(f"{BASE}/runtime/autostart").json()
-        # The default is on, and the fixture's chat role puts the server in use.
-        assert before == {"enabled": True, "in_use": True, "reason": before["reason"]}
-        assert "chat" in before["reason"]
+        # The default is on, but the fixture's stored chat pick is NOT use:
+        # a card keeps its picks while a hosted provider answers (BUG-204).
+        assert before["enabled"] is True and before["in_use"] is False
+        # Selecting the local server as the brain is what puts it in use.
+        server.app.state.config.brain.primary = "ollama"
+        picked = client.get(f"{BASE}/runtime/autostart").json()
+        assert picked["in_use"] is True and "active brain" in picked["reason"]
         off = client.put(f"{BASE}/runtime/autostart", json={"enabled": False}).json()
         assert off["enabled"] is False and "switched off" in off["reason"]
         assert client.get(f"{BASE}/runtime/autostart").json()["enabled"] is False

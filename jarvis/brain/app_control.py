@@ -619,7 +619,7 @@ async def _switch_brain(
             persisted = _persist_brain_primary(provider)
 
     _set_in_memory(cfg, ["brain", "primary"], provider)
-    _ready_local_server(provider, cfg)
+    _sync_local_server(provider, cfg)
     return {
         "ok": True,
         "tier": "brain",
@@ -631,22 +631,37 @@ async def _switch_brain(
     }
 
 
-def _ready_local_server(provider: str, cfg: Any) -> None:
-    """After a switch to the local model server: start it and warm the chat pick.
+def _sync_local_server(provider: str, cfg: Any) -> None:
+    """Bring the local model server in line with the brain that was just picked.
 
-    Fire-and-forget through :func:`jarvis.local_models.autostart.kick`, so
-    "choose local models" is followed by local models answering — not by a
-    two-second connect failure and the fallback on the first turn. Every
-    switch path (REST, voice gate, CLI, brain tool) lands here.
+    Both directions, fire-and-forget, because a provider switch is the whole
+    gesture a user gets:
+
+    * TO the local server — :func:`jarvis.local_models.autostart.kick`, so
+      "choose local models" is followed by local models answering, not by a
+      two-second connect failure and the fallback on the first turn.
+    * AWAY from it — :func:`jarvis.local_models.autostart.release`, so the
+      graphics memory comes back. Without this half the switch only changed
+      who answers: the model stayed resident behind its keep-alive and a
+      6 GB card kept holding it for as long as Jarvis ran (BUG-204). The
+      release refuses while a local voice still runs on the server, and it
+      only ever stops the server this install started.
+
+    Every switch path (REST, voice gate, CLI, brain tool) lands here.
     """
     try:
-        from jarvis.local_models.autostart import SERVER_PROVIDER_ID, kick  # lazy (AP-26)
+        from jarvis.local_models.autostart import (  # lazy (AP-26)
+            SERVER_PROVIDER_ID,
+            kick,
+            release,
+        )
 
-        if provider != SERVER_PROVIDER_ID:
-            return
-        kick(cfg)
-    except Exception:  # noqa: BLE001 — the switch already landed; only the first answer is slower
-        log.debug("local server ready-up after the switch was not scheduled", exc_info=True)
+        if provider == SERVER_PROVIDER_ID:
+            kick(cfg)
+        else:
+            release(cfg)
+    except Exception:  # noqa: BLE001 — the switch already landed; only the server state lags
+        log.debug("local server sync after the switch was not scheduled", exc_info=True)
 
 
 def _switch_tts(provider: str, *, cfg: Any, persist: bool, old: str | None) -> dict[str, Any]:
