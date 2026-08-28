@@ -114,6 +114,7 @@ const SERVER = {
   installed: true,
   binary: "ollama",
   running: true,
+  starting: false,
   version: "0.32.15",
   detail: "",
   base_url: "http://127.0.0.1:11434",

@@ -14454,6 +14454,24 @@ changed nothing on the card. It now applies what it persists:
 16.3 after the switch-off path ran: the managed voice server, both resident
 models and the local server all gone, with a hosted voice still answering.
 
+**The boot window, same session.** The other half the maintainer asked for:
+"when the server is being set up I want a small indicator that it is still
+setting up, and when it is up, that it shows that too." `runtime_status` knew
+three states — not installed, installed-but-stopped, running — and an HTTP
+probe cannot see the fourth: a server this install spawned that has not
+answered its first request yet. The panel rendered that window as "Installed,
+not running", so a Start click looked like it had done nothing, and a model
+still loading read as ready.
+
+- `_owned_process_alive()` — the pid-reuse guard `stop_server` already uses,
+  without the stopping. Only OUR recorded process counts, so a server someone
+  else started never shows a boot window this install cannot observe.
+- `runtime_status` gains `starting` and its own sentence; `_server_from` and
+  `ServerResponse` carry it out, `useLocalModels.ts` mirrors the field (AP-4's
+  five layers), and the dot reads "Starting…" in all three locales.
+- While it lasts, the server query polls every second instead of every
+  fifteen. A boot is over in seconds; a stale "Starting" reads as a hang.
+
 **Related.** BUG-174 (the other local-models defect whose symptom was "voice on
 local models is unusably slow after a restart" — same stack, different half).
 

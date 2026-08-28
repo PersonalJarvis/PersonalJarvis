@@ -1,7 +1,7 @@
 """Ollama runtime lifecycle: detect / install / start without a terminal.
 
-What these tests pin: the three-state truth an HTTP probe cannot give
-(not-installed vs installed-but-stopped vs running), the honest per-OS
+What these tests pin: the four-state truth an HTTP probe cannot give
+(not-installed vs installed-but-stopped vs starting vs running), the honest per-OS
 refusals (no hidden password prompt, no unofficial download URL), and the
 poll-shaped installer contract shared with the managed-server install.
 """
@@ -26,7 +26,7 @@ def _fresh_state(monkeypatch, tmp_path):
     ollama_runtime._reset_for_tests()
 
 
-# ── runtime_status: the three states ─────────────────────────────────────
+# ── runtime_status: the four states ──────────────────────────────────────
 def test_running_server_reports_running(monkeypatch) -> None:
     monkeypatch.setattr(ollama_runtime, "find_binary", lambda: "/usr/bin/ollama")
     monkeypatch.setattr(ollama_runtime, "_server_version", lambda timeout=1.5: "0.9.1")
@@ -67,6 +67,44 @@ def test_a_running_server_counts_as_installed_even_without_a_binary(
     status = ollama_runtime.runtime_status()
     assert status["installed"] is True
     assert status["running"] is True
+
+
+def test_our_own_boot_window_is_starting_not_stopped(monkeypatch) -> None:
+    """A spawned server takes seconds to answer; "Stopped" is a lie meanwhile.
+
+    What would lie if it broke: the panel telling the user their Start click
+    did nothing, so they click again — or read a model as ready while it is
+    still loading (BUG-204).
+    """
+    monkeypatch.setattr(ollama_runtime, "find_binary", lambda: "C:\\x\\ollama.exe")
+    monkeypatch.setattr(ollama_runtime, "_server_version", lambda timeout=1.5: None)
+    monkeypatch.setattr(ollama_runtime, "_owned_process_alive", lambda: True)
+    status = ollama_runtime.runtime_status()
+    assert status["running"] is False
+    assert status["starting"] is True
+    assert "starting" in str(status["detail"])
+
+    # Once it answers, the boot window is over.
+    monkeypatch.setattr(ollama_runtime, "_server_version", lambda timeout=1.5: "0.9.1")
+    settled = ollama_runtime.runtime_status()
+    assert settled["running"] is True and settled["starting"] is False
+
+
+def test_a_server_we_did_not_spawn_never_shows_a_boot_window(monkeypatch) -> None:
+    """Only OUR process can be "starting" — a foreign one we cannot observe."""
+    monkeypatch.setattr(ollama_runtime, "find_binary", lambda: "C:\\x\\ollama.exe")
+    monkeypatch.setattr(ollama_runtime, "_server_version", lambda timeout=1.5: None)
+    monkeypatch.setattr(ollama_runtime, "_owned_process_alive", lambda: False)
+    status = ollama_runtime.runtime_status()
+    assert status["starting"] is False
+    assert "not running" in str(status["detail"])
+
+
+def test_a_recycled_pid_is_not_a_boot_window(monkeypatch) -> None:
+    """The pid-reuse guard: a recorded pid the OS handed to something else."""
+    monkeypatch.setattr(ollama_runtime, "_recorded_pid", lambda: 4242)
+    monkeypatch.setattr(ollama_runtime, "_process_is_ollama", lambda _proc: False)
+    assert ollama_runtime._owned_process_alive() is False
 
 
 # ── start_server ─────────────────────────────────────────────────────────

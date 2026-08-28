@@ -415,6 +415,8 @@ export interface ServerResponse {
   installed: boolean;
   binary: string;
   running: boolean;
+  /** Spawned by this install and not answering yet — shown as "Starting". */
+  starting: boolean;
   version: string;
   detail: string;
   base_url: string;
@@ -1120,7 +1122,11 @@ export function useServer(providerId: string | undefined, enabled = true) {
     queryKey: localModelsKeys.server(providerId ?? ""),
     queryFn: () => getServer(providerId as string),
     enabled: enabled && !!providerId,
-    refetchInterval: 15_000,
+    // A boot is over in seconds, so the "Starting" dot polls every second
+    // while it lasts; a settled server goes back to the slow beat. Fifteen
+    // seconds of a stale "Starting" reads as a hang (BUG-204).
+    refetchInterval: (query) =>
+      (query.state.data as ServerResponse | undefined)?.starting ? 1_000 : 15_000,
     staleTime: 5_000,
     gcTime: SECTION_GC_MS,
   });

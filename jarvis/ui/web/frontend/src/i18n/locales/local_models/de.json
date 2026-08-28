@@ -360,6 +360,7 @@
       "runtime_eyebrow": "Laufzeit",
       "runtime_title": "Lokaler Prozess",
       "status_running": "Läuft",
+      "status_starting": "Startet…",
       "status_stopped": "Installiert, läuft nicht",
       "status_missing": "Nicht installiert",
       "stop": "Stoppen",

@@ -216,22 +216,49 @@ def models_dir(os_name: str | None = None) -> Path:
     return Path.home() / ".ollama" / "models"
 
 
+def _owned_process_alive() -> bool:
+    """Whether the ``ollama serve`` THIS install spawned is still a live Ollama.
+
+    The pid-reuse guard :func:`stop_server` uses, without the stopping: a
+    recorded pid the OS has handed to some other program is not ours.
+    """
+    pid = _recorded_pid()
+    if pid is None:
+        return False
+    import psutil  # lazy (AP-26)
+
+    try:
+        return _process_is_ollama(psutil.Process(pid))
+    except psutil.Error:
+        return False
+
+
 def runtime_status() -> dict[str, object]:
     """The honest runtime picture.
 
-    ``{installed, binary, running, version, detail, base_url, host_kind,
-    models_dir}``. A pure HTTP probe cannot tell "not installed" from
-    "installed but stopped" — and those two states need OPPOSITE buttons
-    (install vs start), so the distinction is the whole point of this
-    function. ``host_kind`` tells the panel whether install/start/stop/log
-    even apply here: a remote server is managed on its own machine.
+    ``{installed, binary, running, starting, version, detail, base_url,
+    host_kind, models_dir}``. A pure HTTP probe cannot tell "not installed"
+    from "installed but stopped" — and those two states need OPPOSITE
+    buttons (install vs start), so the distinction is the whole point of
+    this function. ``host_kind`` tells the panel whether install/start/stop/
+    log even apply here: a remote server is managed on its own machine.
+
+    ``starting`` is the fourth state, and it is not cosmetic: a spawned
+    server takes seconds to answer its first request, and reporting that
+    window as "stopped" told the user their click did nothing — so they
+    clicked again, or read a model as ready that was still loading
+    (BUG-204). Our own process being alive while the port stays quiet IS
+    the boot window; a server someone else started never shows it here.
     """
     binary = find_binary()
     version = _server_version()
     running = version is not None
     installed = bool(binary) or running
+    starting = not running and _owned_process_alive()
     if running:
         detail = f"Ollama is running (version {version})."
+    elif starting:
+        detail = "Ollama is starting — it does not answer yet."
     elif installed:
         detail = "Ollama is installed but not running."
     else:
@@ -241,6 +268,7 @@ def runtime_status() -> dict[str, object]:
         "installed": installed,
         "binary": binary,
         "running": running,
+        "starting": starting,
         "version": version or "",
         "detail": detail,
         "base_url": base_url,

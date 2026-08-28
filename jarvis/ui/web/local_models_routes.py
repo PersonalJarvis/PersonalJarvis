@@ -825,6 +825,9 @@ class ServerResponse(BaseModel):
     installed: bool
     binary: str
     running: bool
+    #: Spawned by this install and not answering yet — the boot window the
+    #: panel shows as "Starting" instead of the misleading "Stopped".
+    starting: bool = False
     version: str
     detail: str
     base_url: str

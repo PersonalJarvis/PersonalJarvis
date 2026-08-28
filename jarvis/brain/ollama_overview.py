@@ -362,6 +362,7 @@ async def _server_from(status: dict[str, object], fallback_root: str) -> dict[st
         "installed": bool(status.get("installed")),
         "binary": str(status.get("binary") or ""),
         "running": bool(status.get("running")),
+        "starting": bool(status.get("starting")),
         "version": str(status.get("version") or ""),
         "detail": str(status.get("detail") or ""),
         "base_url": root,

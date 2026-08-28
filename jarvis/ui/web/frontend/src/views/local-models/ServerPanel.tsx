@@ -398,12 +398,23 @@ export function ServerPanel({
     },
   ];
 
-  const statusTone = data?.running ? "ok" : data?.installed ? "off" : "warn";
+  // Four states, not three: a server this install spawned takes seconds to
+  // answer, and calling that window "Stopped" made people click Start twice
+  // or read a loading model as ready (BUG-204).
+  const statusTone = data?.running
+    ? "ok"
+    : data?.starting
+      ? "warn"
+      : data?.installed
+        ? "off"
+        : "warn";
   const statusLabel = data?.running
     ? t("local_models.server.status_running")
-    : data?.installed
-      ? t("local_models.server.status_stopped")
-      : t("local_models.server.status_missing");
+    : data?.starting
+      ? t("local_models.server.status_starting")
+      : data?.installed
+        ? t("local_models.server.status_stopped")
+        : t("local_models.server.status_missing");
 
   return (
     <div className="space-y-4" data-testid="server-panel">

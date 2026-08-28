@@ -360,6 +360,7 @@
       "runtime_eyebrow": "Tiempo de ejecución",
       "runtime_title": "Proceso local",
       "status_running": "En marcha",
+      "status_starting": "Arrancando…",
       "status_stopped": "Instalado, no está en marcha",
       "status_missing": "No instalado",
       "stop": "Detener",
