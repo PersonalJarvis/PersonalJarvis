@@ -69,7 +69,7 @@ conditions. Follow the action shown in the notice.
 | **Transcription** | Read recent voice sessions turn by turn. |
 | **Run Inspector** | Inspect a recorded run's timing, decisions, tools, and errors. |
 | **Board** | See a local activity, task, and tool-use summary. |
-| **Wiki** | Browse either the Normal Wiki or UltraWiki knowledge experience. |
+| **Wiki** | Browse your knowledge vault. |
 | **Contacts**, **Profile**, and **Instructions** | Store people, facts, memory, and standing preferences. |
 | **Docs** | Search guides, related pages, and the current contents list. |
 | **API Keys** | Choose providers, Pipeline or Realtime, the Control Key, and advanced connections. |
@@ -100,7 +100,7 @@ Large hubs use a top tab bar:
 **Wiki** has one mode switch. Normal shows the vault tree, pages, graph, and
 backlinks. Ultra replaces it with **Overview**, **Explore**, **People**, **Ask**,
 **Sources**, **Contents**, and **Settings**. Switching does not delete either
-store. Read [Wiki and Memory](wiki-and-memory) or [Use UltraWiki](ultrawiki).
+store. Read [Wiki and Memory](wiki-and-memory).
 
 ## Keep an Agentic IDE Workspace Alive
 

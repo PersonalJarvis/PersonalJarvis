@@ -2,7 +2,7 @@
  * Flat map or space: which dimension the memory maps are drawn in.
  *
  * Both graph surfaces — the vault Memory Map in the normal Wiki and the topic
- * map in UltraWiki Explore — read this one preference, so the choice follows
+ * map — read this one preference, so the choice follows
  * the user around instead of having to be made twice. It is a view preference,
  * not knowledge: it lives in localStorage next to the other per-machine view
  * settings (`jarvis.agenticIde.workspaceView`, `jarvis.ui.sound`) rather than
@@ -209,7 +209,7 @@ export interface GraphDimensionHandle {
 }
 
 /**
- * The switch state, shared by every graph on screen: flipping it in UltraWiki
+ * The switch state, shared by every graph on screen: flipping it in one
  * Explore also flips the vault Memory Map, which is what a single preference
  * called "3D" has to mean.
  */

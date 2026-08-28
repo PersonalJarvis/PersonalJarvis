@@ -128,67 +128,67 @@ def test_cache_is_per_folder_and_clearable(repo: Path) -> None:
 
 
 # ------------------------------------------------- naming the module out loud
-# Measured 2026-07-26: asking for a deep dive of "Ultrawiki" returned two
+# Measured 2026-07-26: asking for a deep dive of "AgentChat" returned two
 # report files from docs/reports/ and not one line of the implementation. The
 # composed prompt then told the agent the code "needs to be discovered" — which
 # is the job the file index exists to do.
 def test_a_compound_product_name_finds_its_own_package(tmp_path: Path):
-    """ "UltraWiki" splits to ultra+wiki; the directory is one word, `ultrawiki`.
+    """ "AgentChat" splits to agent+chat; the directory is one word, `agentchat`.
 
     Those never met, so the package was unreachable by the name people write.
     """
-    (tmp_path / "jarvis" / "ultrawiki").mkdir(parents=True)
-    (tmp_path / "jarvis" / "ultrawiki" / "pipeline.py").write_text("x")
-    (tmp_path / "jarvis" / "ultrawiki" / "search.py").write_text("x")
+    (tmp_path / "jarvis" / "agentchat").mkdir(parents=True)
+    (tmp_path / "jarvis" / "agentchat" / "pipeline.py").write_text("x")
+    (tmp_path / "jarvis" / "agentchat" / "search.py").write_text("x")
     (tmp_path / "docs" / "reports").mkdir(parents=True)
     (tmp_path / "docs" / "reports" / "realtime-wiki-deep-dive-2026-07-12.html").write_text("x")
 
     index = file_index.build_index(str(tmp_path))
-    hits = index.suggest("deep dive of the UltraWiki system", limit=5)
+    hits = index.suggest("deep dive of the AgentChat system", limit=5)
 
-    assert any(h.startswith("jarvis/ultrawiki/") for h in hits), hits
+    assert any(h.startswith("jarvis/agentchat/") for h in hits), hits
 
 
 def test_the_lowercase_spelling_still_works(tmp_path: Path):
-    (tmp_path / "jarvis" / "ultrawiki").mkdir(parents=True)
-    (tmp_path / "jarvis" / "ultrawiki" / "pipeline.py").write_text("x")
+    (tmp_path / "jarvis" / "agentchat").mkdir(parents=True)
+    (tmp_path / "jarvis" / "agentchat" / "pipeline.py").write_text("x")
 
-    hits = file_index.build_index(str(tmp_path)).suggest("the ultrawiki pipeline", limit=5)
+    hits = file_index.build_index(str(tmp_path)).suggest("the agentchat pipeline", limit=5)
 
-    assert "jarvis/ultrawiki/pipeline.py" in hits
+    assert "jarvis/agentchat/pipeline.py" in hits
 
 
 def test_source_outranks_a_report_that_merely_shares_the_words(tmp_path: Path):
     """A report named after the topic beat the implementation of it."""
-    (tmp_path / "jarvis" / "ultrawiki").mkdir(parents=True)
-    (tmp_path / "jarvis" / "ultrawiki" / "pipeline.py").write_text("x")
+    (tmp_path / "jarvis" / "agentchat").mkdir(parents=True)
+    (tmp_path / "jarvis" / "agentchat" / "pipeline.py").write_text("x")
     (tmp_path / "docs" / "reports").mkdir(parents=True)
-    (tmp_path / "docs" / "reports" / "ultrawiki-deep-dive.html").write_text("x")
-    (tmp_path / "docs" / "reports" / "ultrawiki-deep-dive.artifact.json").write_text("{}")
+    (tmp_path / "docs" / "reports" / "agentchat-deep-dive.html").write_text("x")
+    (tmp_path / "docs" / "reports" / "agentchat-deep-dive.artifact.json").write_text("{}")
 
-    hits = file_index.build_index(str(tmp_path)).suggest("deep dive of ultrawiki", limit=3)
+    hits = file_index.build_index(str(tmp_path)).suggest("deep dive of agentchat", limit=3)
 
     assert hits[0].startswith("jarvis/"), hits
 
 
 def test_naming_a_package_pulls_in_its_siblings(tmp_path: Path):
-    """ "Review the ultrawiki ranking" should reach the neighbouring modules,
+    """ "Review the agentchat ranking" should reach the neighbouring modules,
     not only the one file whose stem happens to match."""
-    pkg = tmp_path / "jarvis" / "ultrawiki"
+    pkg = tmp_path / "jarvis" / "agentchat"
     pkg.mkdir(parents=True)
     for name in ("pipeline.py", "rerank.py", "embeddings.py", "store.py"):
         (pkg / name).write_text("x")
     (tmp_path / "jarvis" / "speech").mkdir(parents=True)
     (tmp_path / "jarvis" / "speech" / "pipeline.py").write_text("x")
 
-    hits = file_index.build_index(str(tmp_path)).suggest("review the ultrawiki ranking", limit=4)
+    hits = file_index.build_index(str(tmp_path)).suggest("review the agentchat ranking", limit=4)
 
-    in_package = [h for h in hits if h.startswith("jarvis/ultrawiki/")]
+    in_package = [h for h in hits if h.startswith("jarvis/agentchat/")]
     assert len(in_package) >= 2, hits
     # The same-named file in an unrelated package must not crowd them out —
     # being absent entirely is the better outcome, so only its ORDER is pinned.
     if "jarvis/speech/pipeline.py" in hits:
-        assert hits.index("jarvis/ultrawiki/pipeline.py") < hits.index("jarvis/speech/pipeline.py")
+        assert hits.index("jarvis/agentchat/pipeline.py") < hits.index("jarvis/speech/pipeline.py")
 
 
 def test_a_documentation_request_still_reaches_documentation(tmp_path: Path):

@@ -48,8 +48,6 @@ def _cfg(**picks: str) -> JarvisConfig:
         deep_model=picks.get("deep", ""),
         base_url="http://fake-ollama:11434",
     )
-    cfg.ultrawiki.embedding_provider = "ollama"
-    cfg.ultrawiki.embedding_model = picks.get("embedding", "")
     return cfg
 
 
@@ -79,9 +77,7 @@ async def test_embed_probe_returns_the_vector_length() -> None:
 async def test_full_setup_answers_ok_per_role_and_persists(tmp_path: Path) -> None:
     fake = _server()
     probe = _Probe()
-    cfg = _cfg(
-        chat="qwen3.5:4b", tools_screen="qwen3.5:4b", deep="qwen3.5:4b", embedding="embeddinggemma"
-    )
+    cfg = _cfg(chat="qwen3.5:4b", tools_screen="qwen3.5:4b", deep="qwen3.5:4b")
     report = await run_setup_test(cfg, transport=fake.transport(), brain_probe=probe)
 
     assert isinstance(report, assistant_test.TestReport)
@@ -90,7 +86,6 @@ async def test_full_setup_answers_ok_per_role_and_persists(tmp_path: Path) -> No
         "chat": "ok",
         "tools_screen": "ok",
         "deep": "ok",
-        "embedding": "ok",
         "voice": NOT_SET,
     }
     assert report.voice is None
@@ -100,7 +95,6 @@ async def test_full_setup_answers_ok_per_role_and_persists(tmp_path: Path) -> No
     # Persisted to the state file with the badge keys the monitor also writes.
     written = json.loads((tmp_path / "state" / "local_models_health.json").read_text("utf-8"))
     assert written["status"] == "ok" and written["overall"] == "ok"
-    assert written["roles"]["embedding"]["detail"] == "Embeds (768 dimensions)."
     assert written["last_ok"] == written["checked_at"] == report.checked_at
     assert report.to_payload()["roles"]["chat"]["model"] == "qwen3.5:4b"
 
@@ -130,11 +124,11 @@ async def test_server_down_marks_every_configured_role_unreachable() -> None:
     fake = _server()
     fake.offline = True
     probe = _Probe()
-    cfg = _cfg(chat="qwen3.5:4b", embedding="embeddinggemma")
+    cfg = _cfg(chat="qwen3.5:4b", deep="qwen3.5:4b")
     report = await run_setup_test(cfg, transport=fake.transport(), brain_probe=probe)
     assert report.server["ok"] is False
     assert report.roles["chat"].status == "unreachable"
-    assert report.roles["embedding"].status == "unreachable"
+    assert report.roles["deep"].status == "unreachable"
     assert probe.calls == [], "no generation is attempted against a dead server"
     assert report.overall == "error"
 

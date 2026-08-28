@@ -136,7 +136,7 @@ diagnostic. Fix or switch providers before retrying.
   the drop target starts a chat turn with its status and available summary, not
   the generated files themselves.
 - **Wiki** holds selected durable knowledge; chat is not automatically memory.
-  See [Wiki and Memory](wiki-and-memory) or [Use UltraWiki](ultrawiki).
+  See [Wiki and Memory](wiki-and-memory).
 - **Instructions and Persona** holds standing behavior guidance that applies
   beyond one thread.
 

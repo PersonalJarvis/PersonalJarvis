@@ -411,7 +411,7 @@ def meter_stt(provider: Any, sink: UsageSink | None, *, trace_id: TraceIdSource 
     """Wrap an STT provider so every transcription lands in the ledger.
 
     Covers ``transcribe``, ``stream_transcribe`` and ``transcribe_pcm``.
-    ``transcribe_container`` — the UltraWiki path for an already-encoded voice
+    ``transcribe_container`` — the path for an already-encoded voice
     note — is forwarded unmetered: its duration is not derivable without
     decoding the container, and decoding to price it is exactly the kind of
     work that must never appear here.

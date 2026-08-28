@@ -512,33 +512,12 @@ SECRETS: list[SecretSpec] = [
         optional=True,
         prompt=False,
     ),
-    # UltraWiki (semantic memory mode) — app-only slots configured from the
-    # UltraWiki settings section, never in the first-run wizard. The Postgres
-    # connection string is a credential (AP-12) and rides the same chain.
-    SecretSpec(
-        key="ultrawiki_db_url",
-        env_fallback="ULTRAWIKI_DB_URL",
-        label="UltraWiki Postgres Connection String",
-        help_url="https://supabase.com/docs/guides/database/connecting-to-postgres",
-        required_for="UltraWiki cloud/self-hosted store (Supabase, AWS RDS, Google Cloud SQL, own server)",
-        optional=True,
-        prompt=False,
-    ),
-    SecretSpec(
-        key="voyage_api_key",
-        env_fallback="VOYAGE_API_KEY",
-        label="Voyage AI API Key",
-        help_url="https://dash.voyageai.com/api-keys",
-        required_for="UltraWiki embeddings / reranking (Voyage)",
-        optional=True,
-        prompt=False,
-    ),
     SecretSpec(
         key="cohere_api_key",
         env_fallback="COHERE_API_KEY",
         label="Cohere API Key",
         help_url="https://dashboard.cohere.com/api-keys",
-        required_for="UltraWiki embeddings / reranking (Cohere)",
+        required_for="Cohere models (chat, reranking)",
         optional=True,
         prompt=False,
     ),
@@ -547,22 +526,19 @@ SECRETS: list[SecretSpec] = [
         env_fallback="MISTRAL_API_KEY",
         label="Mistral API Key",
         help_url="https://console.mistral.ai/api-keys",
-        required_for="UltraWiki embeddings (Mistral)",
+        required_for="Mistral models",
         optional=True,
         prompt=False,
     ),
-    # Drives the guided Supabase link flow in the UltraWiki storage card: the
-    # token is read-only plumbing (list projects, read the pooler host) and is
-    # never what the store connects with — that stays 'ultrawiki_db_url'. It
-    # belongs in this allowlist because the same slot is already used by the
-    # Supabase CLI integration, and without the entry the app's own secrets
-    # route would refuse to save a token the user just pasted.
+    # Read-only plumbing for the Supabase CLI integration (list projects, read
+    # a host). It belongs in this allowlist because without the entry the app's
+    # own secrets route would refuse to save a token the user just pasted.
     SecretSpec(
         key="supabase_access_token",
         env_fallback="SUPABASE_ACCESS_TOKEN",
         label="Supabase Personal Access Token",
         help_url="https://supabase.com/dashboard/account/tokens",
-        required_for="UltraWiki Supabase store (guided link) and the Supabase CLI",
+        required_for="the Supabase CLI integration",
         optional=True,
         prompt=False,
     ),

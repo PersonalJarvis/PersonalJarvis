@@ -1,7 +1,7 @@
 """Minimal vCard import/export for the contact book — stdlib only.
 
 vCard is a line-folded key/value grammar, not a format that needs a parser
-library (``jarvis.ultrawiki.connectors.export_import`` applies the same
+library (the export-import reader applies the same
 reasoning): unfold continuation lines, split each property at its first
 colon, done. Export writes vCard 3.0 — the flavor Google/Apple/Outlook all
 accept — with CRLF line endings per the RFC. Base64 blobs (photos, keys) are

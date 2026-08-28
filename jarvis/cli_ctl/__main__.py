@@ -44,7 +44,6 @@ from jarvis.cli_ctl.commands import socials as socials_cmd
 from jarvis.cli_ctl.commands import system as system_cmd
 from jarvis.cli_ctl.commands import tasks as tasks_cmd
 from jarvis.cli_ctl.commands import telephony as telephony_cmd
-from jarvis.cli_ctl.commands import ultrawiki as ultrawiki_cmd
 from jarvis.cli_ctl.commands import wiki as wiki_cmd
 from jarvis.cli_ctl.commands import workflows as workflows_cmd
 
@@ -110,7 +109,6 @@ def refresh() -> None:
 app.add_typer(auth_cmd.app, name="auth")
 app.add_typer(system_cmd.app, name="system")
 app.add_typer(tasks_cmd.app, name="tasks")
-app.add_typer(ultrawiki_cmd.app, name="ultrawiki")
 app.add_typer(brain_cmd.app, name="brain")
 app.add_typer(commands_cmd.app, name="commands")
 app.add_typer(computer_use_cmd.app, name="computer-use")

@@ -13,7 +13,7 @@ from jarvis.tasks.templates import (
 )
 from jarvis.tasks.templates.memory_recap import TEMPLATE
 
-_LOCAL_MEMORY_TOOLS = ("wiki-recall", "wiki-list", "wiki-page-read", "ultrawiki-search")
+_LOCAL_MEMORY_TOOLS = ("wiki-recall", "wiki-list", "wiki-page-read")
 
 
 def test_template_is_discovered_and_well_formed() -> None:

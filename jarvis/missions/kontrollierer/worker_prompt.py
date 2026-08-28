@@ -82,7 +82,7 @@ SUPERVISOR_BOUNDARY_DIRECTIVE: Final[str] = (
     "research work, use only the supervisor-granted Jarvis tools that appear "
     "in your tool list: the wiki tools (wiki-list, wiki-recall, "
     "wiki-page-read, wiki-ingest), the semantic knowledge base "
-    "(ultrawiki-search), session memory (awareness-recall), web search "
+    "session memory (awareness-recall), web search "
     "(search_web), and contact lookup (contact-lookup). A tool absent from "
     "your tool list is not available for this mission - do not call it. A "
     "denied or failed supervisor tool call is a normal, recoverable event: "

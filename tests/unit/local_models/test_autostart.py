@@ -21,7 +21,6 @@ def _cfg(
     *,
     primary: str = "openrouter",
     chat: str = "",
-    embedding: str = "",
     flag: bool | None = None,
 ) -> JarvisConfig:
     cfg = JarvisConfig()
@@ -30,9 +29,6 @@ def _cfg(
     if flag is not None:
         provider.autostart = flag
     cfg.brain.providers["ollama"] = provider
-    if embedding:
-        cfg.ultrawiki.embedding_provider = "ollama"
-        cfg.ultrawiki.embedding_model = embedding
     return cfg
 
 
@@ -48,8 +44,6 @@ def test_the_active_brain_or_a_configured_role_counts_as_in_use() -> None:
     assert autostart.in_use(_cfg(primary="ollama")) == (True, "the active brain")
     used, why = autostart.in_use(_cfg(chat="qwen3.5:4b"))
     assert used and why == "the chat role"
-    used, why = autostart.in_use(_cfg(chat="qwen3.5:4b", embedding="embeddinggemma"))
-    assert used and why == "the chat, embedding roles"
 
 
 def test_the_switch_off_wins_over_use() -> None:

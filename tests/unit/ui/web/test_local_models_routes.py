@@ -55,11 +55,6 @@ def writes(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
         "set_brain_provider_model",
         lambda provider, **kw: calls.append(("brain", provider, kw)),
     )
-    monkeypatch.setattr(
-        config_writer,
-        "set_ultrawiki_slot",
-        lambda key, value: calls.append(("ultrawiki", key, value)),
-    )
     return calls
 
 
@@ -71,8 +66,6 @@ def server(tmp_path, monkeypatch: pytest.MonkeyPatch) -> WebServer:
     cfg.brain.providers["ollama"] = BrainProviderConfig(
         model="qwen3.5:4b", deep_model="gemma4:12b-it-qat"
     )
-    cfg.ultrawiki.embedding_provider = "ollama"
-    cfg.ultrawiki.embedding_model = "qwen3-embedding:4b"
     srv = WebServer(cfg, bus=EventBus())
     srv.app.state.config = cfg
     return srv
@@ -102,7 +95,7 @@ def test_inventory_lists_facts_roles_and_loaded_state(server: WebServer, fake) -
     assert chat["capabilities"] == ["completion", "tools", "vision"]
     assert chat["context_length"] == 262_144
     assert rows["gemma4:12b-it-qat"]["used_by"] == ["deep"]
-    assert rows["qwen3-embedding:4b"]["used_by"] == ["embedding"]
+    assert rows["qwen3-embedding:4b"]["used_by"] == []
     assert body["disk_bytes"] == 3_400_000_000 + 7_200_000_000 + 2_500_000_000
     assert body["loaded_vram_bytes"] == 3_000_000_000
     assert [r["name"] for r in body["running"]] == ["qwen3.5:4b"]
@@ -164,20 +157,6 @@ def test_delete_with_reassign_rewrites_the_roles_first(server: WebServer, fake, 
     assert "qwen3.5:4b" not in fake.models
     # The live config agrees with the TOML from now on.
     assert server.app.state.config.brain.providers["ollama"].model == "gemma4:12b-it-qat"
-
-
-def test_delete_reassigns_the_embedding_slot_through_its_own_writer(
-    server: WebServer, fake, writes
-) -> None:
-    fake.add("embeddinggemma:latest", size=300_000_000, capabilities=("embedding",))
-    with TestClient(server.app) as client:
-        resp = client.delete(
-            f"{BASE}/inventory/qwen3-embedding:4b", params={"reassign": "embeddinggemma"}
-        )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["reassigned"] == ["embedding"]
-    assert writes == [("ultrawiki", "embedding_model", "embeddinggemma")]
-    assert server.app.state.config.ultrawiki.embedding_model == "embeddinggemma"
 
 
 def test_delete_rejects_a_replacement_that_is_not_installed(
@@ -257,7 +236,7 @@ def test_roles_list_every_slot_with_pick_qualifying_and_recommendation(
     body = resp.json()
     assert body["error"] is None
     roles = {r["id"]: r for r in body["roles"]}
-    assert list(roles) == ["chat", "voice", "tools_screen", "deep", "embedding", "ack", "polish"]
+    assert list(roles) == ["chat", "voice", "tools_screen", "deep", "ack", "polish"]
     assert roles["chat"]["current"] == "qwen3.5:4b"
     assert roles["chat"]["installed"] is True
     # Installed first: the largest download with tools, not the shortlist's.
@@ -269,7 +248,6 @@ def test_roles_list_every_slot_with_pick_qualifying_and_recommendation(
     assert roles["tools_screen"]["recommended"] == "qwen3.5:4b"
     assert roles["deep"]["recommended"] == "gemma4:12b-it-qat"
     assert roles["voice"]["recommended"] == "qwen3.5:4b"
-    assert roles["embedding"]["qualifying"] == ["qwen3-embedding:4b"]
     assert roles["voice"]["writable"] is True and roles["voice"]["advanced"] is False
     assert roles["ack"]["writable"] is False and roles["ack"]["advanced"] is True
     assert roles["chat"]["label_key"] == "local_models.role_chat"
@@ -280,7 +258,7 @@ def test_roles_keep_rendering_when_the_server_is_offline(server, fake, shortlist
     with TestClient(server.app) as client:
         body = client.get(f"{BASE}/roles").json()
     assert "did not answer" in body["error"]
-    assert len(body["roles"]) == 7
+    assert len(body["roles"]) == 6
     assert body["roles"][0]["qualifying"] == []
 
 
@@ -340,10 +318,10 @@ def test_put_role_refuses_read_only_and_unknown_roles(server, fake, writes) -> N
     with TestClient(server.app) as client:
         ro = client.put(f"{BASE}/roles/ack", json={"model": "x"})
         unknown = client.put(f"{BASE}/roles/nope", json={"model": "x"})
-        empty_embedding = client.put(f"{BASE}/roles/embedding", json={"model": ""})
+        empty_deep = client.put(f"{BASE}/roles/deep", json={"model": None})
     assert ro.status_code == 422
     assert unknown.status_code == 404
-    assert empty_embedding.status_code == 422
+    assert empty_deep.status_code == 422
     assert writes == []
 
 
@@ -643,7 +621,7 @@ def test_autostart_round_trip(server: WebServer, fake, monkeypatch) -> None:
     assert server.app.state.config.brain.providers["ollama"].autostart is False
 
 
-def test_verify_runs_the_five_steps_and_refreshes_the_badge(
+def test_verify_runs_the_four_steps_and_refreshes_the_badge(
     server: WebServer, fake, monkeypatch, tmp_path
 ) -> None:
     from jarvis.local_models import health_monitor
@@ -658,16 +636,12 @@ def test_verify_runs_the_five_steps_and_refreshes_the_badge(
     async def _generate(_cfg, _model: str) -> _Result:
         return _Result()
 
-    async def _embed(_root: str, _model: str) -> int:
-        return 1024
-
     monkeypatch.setattr(health_monitor, "_default_probe", _probe)
     monkeypatch.setattr(health_monitor, "_default_generate", _generate)
 
     async def _capability(_root: str, _model: str) -> str:
         return "Answered the probe."
 
-    monkeypatch.setattr(health_monitor, "_default_embed", _embed)
     monkeypatch.setattr(health_monitor, "_default_tool_call", _capability)
     monkeypatch.setattr(health_monitor, "_default_vision", _capability)
     with TestClient(server.app) as client:
@@ -678,11 +652,9 @@ def test_verify_runs_the_five_steps_and_refreshes_the_badge(
         "chat",
         "voice",
         "tools_screen",
-        "embedding",
     ]
     assert body["steps"][0]["ms"] == 7
     assert body["steps"][1]["model"] == "qwen3.5:4b"
-    assert body["steps"][4]["detail"] == "1024 dimensions."
     assert health_monitor.read_health_record()["status"] == "ok"
 
 

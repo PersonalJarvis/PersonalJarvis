@@ -9,7 +9,7 @@
  * testable on its own and identical wherever a tool name is rendered.
  *
  * The brand set is derived from the SVGs bundled under `src/assets/brands`
- * (the same files the Plugins store and UltraWiki use), so adding a mark
+ * (the same files the Plugins store uses), so adding a mark
  * there lights it up here too — nothing to register. Matching is on
  * underscore-separated TOKENS, never raw substrings: "linear_issues" is
  * Linear, "nonlinear_solver" is not. Multi-token brands ("google_calendar",

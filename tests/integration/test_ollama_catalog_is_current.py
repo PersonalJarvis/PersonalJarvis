@@ -32,11 +32,8 @@ from jarvis.brain.ollama_pull import (
     RECOMMENDED_MODELS,
     ROLE_ORDER,
 )
-from jarvis.core.config import MemoryConfig
 from jarvis.dictation.polish_client import POLISH_FAMILIES
 from jarvis.realtime.local_server import brain_link, tiers
-from jarvis.ultrawiki.embedding_models import CURATED_EMBEDDING_MODELS
-from jarvis.ultrawiki.embeddings import DEFAULT_MODELS
 
 pytestmark = pytest.mark.integration
 
@@ -69,10 +66,7 @@ _RUNTIME_OLLAMA_MODELS = tuple(
         {
             *_SHORTLIST_2026_08_24,
             AckBrainConfig().providers.ollama.model,
-            MemoryConfig().embedding_model,
-            DEFAULT_MODELS["ollama"],
             next(f.default_model for f in POLISH_FAMILIES if f.id == "ollama"),
-            *(model for model, _label in CURATED_EMBEDDING_MODELS["ollama"]),
             *(tier.brain_model for tier in tiers.TIERS),
             *brain_link._PREFERRED_MODELS,
         }

@@ -307,7 +307,7 @@ async def test_parameterless_400_recovers_and_is_remembered() -> None:
 async def test_parameterless_400_is_remembered_across_instances() -> None:
     """Short-lived curator brains must share a proven model capability.
 
-    UltraWiki creates a fresh provider for each distilled item. An
+    The curator creates a fresh provider for each distilled item. An
     instance-only cache therefore paid one rejected request per item even
     though the first accepted retry had already proved the capability.
     """

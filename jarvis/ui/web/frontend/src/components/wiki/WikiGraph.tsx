@@ -123,7 +123,7 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     if (slug) onNodeClickRef.current(slug);
   }, []);
 
-  // Flat canvas or WebGL scene. Shared with the UltraWiki map, and already
+  // Flat canvas or WebGL scene, and already
   // degraded back to flat on a machine that cannot render 3D at all.
   const { dimension } = useGraphDimension();
   const isSpatial = dimension === "3d";

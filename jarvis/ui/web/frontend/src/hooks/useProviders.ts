@@ -1737,7 +1737,7 @@ export interface BrainModelsResult {
   selects?: "model" | "voice";
   /**
    * Why a `curated` list is being shown instead of the provider's own ("no
-   * Gemini API key saved yet"). Optional: only the UltraWiki slot catalog
+   * Gemini API key saved yet"). Optional: only a slot catalog
    * fills it in today. Shown verbatim under the picker.
    */
   reason?: string;

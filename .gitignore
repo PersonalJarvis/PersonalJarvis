@@ -382,13 +382,6 @@ wiki/obsidian-vault/attachments/
 wiki/obsidian-vault/90-attachments/*
 !wiki/obsidian-vault/90-attachments/.gitkeep
 
-# UltraWiki Markdown projection + its manifest. The output directory is
-# user-configurable and can resolve inside the tracked wiki/ tree, so ignore
-# both the repo-relative and root-relative spellings.
-/wiki/ultrawiki-vault/
-/ultrawiki-vault/
-.ultrawiki-manifest.json
-
 # ============================================================
 # Marketing material — LOCAL ONLY, never distributed (maintainer directive
 # 2026-08-06). Personal Jarvis ships a product, not a marketing project: launch

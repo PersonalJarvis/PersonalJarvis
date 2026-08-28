@@ -1659,7 +1659,7 @@ def _read_workspace_file_preview(target: Path) -> dict[str, object]:
     truncated = False
 
     # Lazy import keeps document parsers off the application boot path (AP-26).
-    from jarvis.ultrawiki.extract import MAX_DOCUMENT_BYTES, extract_text
+    from jarvis.documents.extract import MAX_DOCUMENT_BYTES, extract_text
 
     if size <= MAX_DOCUMENT_BYTES:
         extracted = extract_text(target, filename=target.name, mime=media_type)

@@ -339,7 +339,7 @@ class _Entry:
     is_test: bool
     is_doc: bool = False
     #: Directory names above this file, verbatim and lowercased. Kept separate
-    #: from ``path_tokens`` because naming a PACKAGE ("the ultrawiki ranking")
+    #: from ``path_tokens`` because naming a PACKAGE ("the agentchat timeline")
     #: is a much stronger signal than a word that merely appears in the path,
     #: and only the exact, unsplit name can tell the two apart.
     dir_names: frozenset[str] = frozenset()
@@ -386,7 +386,7 @@ class FileIndex:
                 # Shorter paths win ties: the top-level `config.py` is far more
                 # likely meant than a same-named file nested six levels deep.
                 # Then SIZE, because naming a whole package ("a deep dive of
-                # ultrawiki") scores every file in it identically, and falling
+                # agentchat") scores every file in it identically, and falling
                 # through to alphabetical order handed back whatever sorted
                 # first — measured, five files starting at `__init__.py` and
                 # `connector_catalog.py`, none of them the substance. The larger
@@ -481,12 +481,13 @@ def tokenize(text: str) -> set[str]:
 
     Both the PARTS and the WHOLE are kept, and that is load-bearing rather than
     belt-and-braces. Product names are written camelCase and stored lowercase:
-    someone types "UltraWiki", which splits to ``ultra`` + ``wiki``, while the
-    package on disk is the single word ``ultrawiki``. Those two sets never
+    someone types "AgentChat", which splits to ``agent`` + ``chat``, while the
+    directory on disk is the single word ``agentchat``. Those two sets never
     intersect, so before this the index could not find a module by the name its
-    own product uses — measured 2026-07-26, "deep dive of the Ultrawiki system"
-    returned two files from ``docs/reports/`` and no implementation at all.
-    Keeping the joined form makes the two spellings meet.
+    own product uses — measured 2026-07-26 against the same pattern, a
+    "deep dive of the <name> system" query returned two files from
+    ``docs/reports/`` and no implementation at all. Keeping the joined form
+    makes the two spellings meet.
     """
     out: set[str] = set()
     for raw in _TOKEN_RE.findall(text or ""):
@@ -509,7 +510,7 @@ def _score(entry: _Entry, wanted: set[str], *, wants_tests: bool, wants_docs: bo
         return 0.0
     # A hit in the file's own name is what someone means when they name a file.
     # A hit in a parent DIRECTORY used to count as a mild narrowing (1.0), which
-    # badly undersold it: when someone says "the ultrawiki ranking", the package
+    # badly undersold it: when someone says "the agentchat timeline", the package
     # name is the strongest signal in the sentence — every file inside it is a
     # candidate, and the one file elsewhere whose stem happens to match is not.
     # Weighting it at 2.0 is what lets a named module bring its own siblings.
@@ -518,7 +519,7 @@ def _score(entry: _Entry, wanted: set[str], *, wants_tests: bool, wants_docs: bo
     if stem_hits and stem_hits == entry.stem_tokens:
         score += 2.0
     # Naming the PACKAGE outright. Without this, a report named after a subject
-    # ("ultrawiki-deep-dive.html", three matching words in its stem) outscores
+    # ("agentchat-deep-dive.html", three matching words in its stem) outscores
     # every file of the package it discusses, which have one path hit each.
     # The document is about the code; the code is what was asked for.
     if entry.dir_names & wanted:
@@ -529,7 +530,7 @@ def _score(entry: _Entry, wanted: set[str], *, wants_tests: bool, wants_docs: bo
         # Reports and design notes are named AFTER the thing they discuss, so
         # they match its words better than the implementation does — measured,
         # `docs/reports/realtime-wiki-deep-dive.html` beat every source file for
-        # "deep dive of the Ultrawiki system". A coding agent asked to change
+        # a "deep dive of the <name> system" query. A coding agent asked to change
         # behaviour needs the code; it can still reach the document, just not
         # ahead of the thing the document is about.
         score *= 0.4

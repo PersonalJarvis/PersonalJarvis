@@ -65,29 +65,21 @@ def _embed(dims: int | Exception):
     return _fn
 
 
-def _cfg_with_embedding(chat: str, embedding: str) -> JarvisConfig:
-    cfg = _cfg(chat)
-    cfg.ultrawiki.embedding_provider = "ollama"
-    cfg.ultrawiki.embedding_model = embedding
-    return cfg
-
-
 @pytest.mark.asyncio
 async def test_verify_reports_every_step_and_writes_the_record(tmp_path: Path) -> None:
     async def _generate(_cfg: Any, _model: str) -> _Result:
         return _Result("ok")
 
     result = await hm.verify_setup(
-        _cfg_with_embedding("qwen3.5:4b", "embeddinggemma"),
+        _cfg("qwen3.5:4b"),
         probe=_probe(True),
         generate=_generate,
-        embed=_embed(768),
         tool_call=_capability("Called the tool."),
         vision=_capability("Saw the image: white"),
     )
     assert result["ok"] is True and result["status"] == "ok" and result["reason"] == ""
     steps = {s["id"]: s for s in result["steps"]}
-    assert list(steps) == ["server", "chat", "voice", "tools_screen", "embedding"]
+    assert list(steps) == ["server", "chat", "voice", "tools_screen"]
     # Neither the voice nor the screen role is configured here: not run, not passed.
     assert steps["voice"]["ok"] is None and steps["tools_screen"]["ok"] is None
     assert steps["server"]["ok"] is True and "0.32.15" in steps["server"]["detail"]
@@ -98,23 +90,21 @@ async def test_verify_reports_every_step_and_writes_the_record(tmp_path: Path) -
         "detail": "Answered.",
         "ms": steps["chat"]["ms"],
     }
-    assert steps["embedding"]["ok"] is True and "768" in steps["embedding"]["detail"]
     assert _record(tmp_path)["status"] == "ok"
 
 
 @pytest.mark.asyncio
 async def test_verify_names_the_failing_step(tmp_path: Path) -> None:
     async def _generate(_cfg: Any, _model: str) -> _Result:
-        return _Result("ok")
+        raise RuntimeError("/api/generate for 'qwen3.5:4b' failed: not found")
 
     result = await hm.verify_setup(
-        _cfg_with_embedding("qwen3.5:4b", "embeddinggemma"),
+        _cfg("qwen3.5:4b"),
         probe=_probe(True),
         generate=_generate,
-        embed=_embed(RuntimeError("/api/embed for 'embeddinggemma' failed: not found")),
     )
     assert result["ok"] is False and result["status"] == "error"
-    assert result["reason"].startswith("embeddinggemma: ")
+    assert result["reason"].startswith("qwen3.5:4b: ")
     assert "not found" in result["reason"]
     assert _record(tmp_path)["status"] == "error"
 
@@ -128,11 +118,11 @@ async def test_verify_marks_unconfigured_roles_as_not_run_and_a_down_server_firs
 
     nothing = await hm.verify_setup(_cfg(), probe=_probe(True), generate=_generate)
     assert nothing["status"] == "needs_setup"
-    assert [s["ok"] for s in nothing["steps"]] == [True, None, None, None, None]
+    assert [s["ok"] for s in nothing["steps"]] == [True, None, None, None]
 
     down = await hm.verify_setup(_cfg("qwen3.5:4b"), probe=_probe(False), generate=_generate)
     assert down["status"] == "error" and "No Ollama answered" in down["reason"]
-    assert [s["ok"] for s in down["steps"]] == [False, None, None, None, None]
+    assert [s["ok"] for s in down["steps"]] == [False, None, None, None]
     assert down["steps"][1]["model"] == "qwen3.5:4b"
     assert _record(tmp_path)["status"] == "error"
 

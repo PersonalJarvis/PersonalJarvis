@@ -21,8 +21,6 @@ def _cfg() -> JarvisConfig:
     cfg.brain.providers["ollama"] = BrainProviderConfig(
         model="qwen3.5:4b", deep_model="gemma4:12b-it-qat"
     )
-    cfg.ultrawiki.embedding_provider = "ollama"
-    cfg.ultrawiki.embedding_model = "qwen3-embedding:4b"
     cfg.brain.providers["local-realtime"] = BrainProviderConfig(
         launch_command=(
             "python -m server --model_name qwen3.5:4b-voice-8k "
@@ -121,18 +119,13 @@ def writes(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
         "set_brain_provider_model",
         lambda provider, **kw: calls.append(("brain", provider, kw)),
     )
-    monkeypatch.setattr(
-        config_writer,
-        "set_ultrawiki_slot",
-        lambda key, value: calls.append(("ultrawiki", key, value)),
-    )
     return calls
 
 
-def test_the_five_writable_roles_come_first_in_order() -> None:
-    assert ollama_roles.WRITABLE_ROLE_IDS == ("chat", "voice", "tools_screen", "deep", "embedding")
-    assert [r.id for r in ollama_roles.ROLES][5:] == ["ack", "polish"]
-    assert all(r.advanced and not r.writable for r in ollama_roles.ROLES[5:])
+def test_the_four_writable_roles_come_first_in_order() -> None:
+    assert ollama_roles.WRITABLE_ROLE_IDS == ("chat", "voice", "tools_screen", "deep")
+    assert [r.id for r in ollama_roles.ROLES][4:] == ["ack", "polish"]
+    assert all(r.advanced and not r.writable for r in ollama_roles.ROLES[4:])
     # Voice is its own slot, never a mirror of the chat pick.
     voice = ollama_roles.role_spec("voice")
     assert voice.writable and not voice.advanced
@@ -148,7 +141,6 @@ def test_current_pick_reads_every_slot() -> None:
     cfg.brain.providers["ollama"].tool_model = "qwen3.5:4b"
     assert ollama_roles.current_pick(cfg, "tools_screen") == ("qwen3.5:4b", "")
     assert ollama_roles.current_pick(cfg, "deep") == ("gemma4:12b-it-qat", "")
-    assert ollama_roles.current_pick(cfg, "embedding") == ("qwen3-embedding:4b", "")
     # The voice brain is the launch command's model, alias folded to the base tag.
     assert ollama_roles.current_pick(cfg, "voice") == ("qwen3.5:4b", "")
     del cfg.brain.providers["local-realtime"]
@@ -156,15 +148,6 @@ def test_current_pick_reads_every_slot() -> None:
     assert tag == "" and "not installed" in note
     assert ollama_roles.current_pick(cfg, "ack")[0] == cfg.ack_brain.providers.ollama.model
     assert ollama_roles.current_pick(None, "chat") == ("", "")
-
-
-def test_a_slot_served_elsewhere_says_so_instead_of_showing_a_foreign_tag() -> None:
-    cfg = _cfg()
-    cfg.ultrawiki.embedding_provider = "openai"
-    cfg.ultrawiki.embedding_model = "text-embedding-3-small"
-    current, note = ollama_roles.current_pick(cfg, "embedding")
-    assert current == ""
-    assert "openai" in note
 
 
 @pytest.mark.asyncio
@@ -179,7 +162,6 @@ async def test_list_roles_judges_qualifying_models_by_capability(fake, shortlist
     assert by_id["tools_screen"].qualifying == ("qwen3.5:4b",)
     assert by_id["tools_screen"].current == ""
     assert by_id["deep"].qualifying == ("qwen3.5:4b", "gemma4:12b-it-qat")
-    assert by_id["embedding"].qualifying == ("qwen3-embedding:4b",)
 
 
 @pytest.mark.asyncio
@@ -197,7 +179,6 @@ async def test_list_roles_recommends_installed_models_before_the_shortlist(
     assert by_id["tools_screen"].recommended == "qwen3.5:4b"
     # Deep work prefers thinking; the 12B declares it.
     assert by_id["deep"].recommended == "gemma4:12b-it-qat"
-    assert by_id["embedding"].recommended == "qwen3-embedding:4b"
     # A call wants the fast class: the 12B is over the voice size cap.
     assert by_id["voice"].recommended == "qwen3.5:4b"
     assert "fast" in by_id["voice"].recommended_reason
@@ -233,8 +214,6 @@ async def test_list_roles_falls_back_to_the_shortlist_when_nothing_installed_qua
     assert by_id["chat"].recommended == "qwen3.8:27b"
     assert "download" in by_id["chat"].recommended_reason
     assert by_id["deep"].recommended == "ornith:9b"
-    # The embedder is installed and qualifies: no download named there.
-    assert by_id["embedding"].recommended == "qwen3-embedding:4b"
 
 
 def test_pick_installed_prefers_the_roles_capability_over_raw_size() -> None:
@@ -309,7 +288,6 @@ async def test_list_roles_survives_a_failing_shortlist(fake, monkeypatch) -> Non
     # The installed picks do not need the registry; only a download would.
     by_id = {s.spec.id: s for s in states}
     assert by_id["chat"].recommended == "gemma4:12b-it-qat"
-    assert by_id["embedding"].recommended == "qwen3-embedding:4b"
     assert all("download" not in s.recommended_reason for s in states)
 
 
@@ -361,20 +339,6 @@ def test_set_role_reports_when_the_drift_baseline_did_not_follow(
     assert cfg.brain.providers["ollama"].model == "qwen3.5:4b"
 
 
-def test_set_role_embedding_switches_the_wiki_to_ollama_when_needed(writes) -> None:
-    cfg = _cfg()
-    cfg.ultrawiki.embedding_provider = "openai"
-    ollama_roles.set_role("embedding", "embeddinggemma", cfg=cfg)
-    assert writes == [
-        ("ultrawiki", "embedding_provider", "ollama"),
-        ("ultrawiki", "embedding_model", "embeddinggemma"),
-    ]
-    assert cfg.ultrawiki.embedding_provider == "ollama"
-    assert cfg.ultrawiki.embedding_model == "embeddinggemma"
-    with pytest.raises(ValueError):
-        ollama_roles.set_role("embedding", "", cfg=cfg)
-
-
 def test_set_role_voice_rewrites_only_the_launch_command_model(
     writes, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -412,7 +376,6 @@ def test_roles_using_is_latest_tolerant() -> None:
     assert ollama_roles.roles_using(cfg, "qwen3.5:4b") == ["chat", "voice"]
     cfg.brain.providers["ollama"].model = "gemma4"
     assert ollama_roles.roles_using(cfg, "gemma4:latest") == ["chat"]
-    assert ollama_roles.roles_using(cfg, "qwen3-embedding:4b") == ["embedding"]
 
 
 # -- Idle release + the user's own choice --

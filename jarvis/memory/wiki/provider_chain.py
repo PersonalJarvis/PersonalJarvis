@@ -270,7 +270,7 @@ async def complete_with_fallback(
     listing all 8 providers as broken on every journal trigger.
 
     ``record_health=False`` isolates an optional side lane from the normal Wiki
-    health strip. UltraWiki media enrichment uses the same provider machinery,
+    health strip. Media enrichment uses the same provider machinery,
     but an unreadable picture neither means normal Markdown capture is broken
     nor has authority to clear a real capture failure after a later success.
     ``failure_scope`` likewise isolates the short provider cooldown: an image-

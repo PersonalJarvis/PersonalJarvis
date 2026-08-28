@@ -21,7 +21,6 @@ vi.mock("@/hooks/useGraphOrbit", () => ({
   useGraphOrbit: vi.fn(),
 }));
 
-import { EntityGraph3D } from "@/components/ultrawiki/EntityGraph3D";
 import { WikiGraph3D } from "@/components/wiki/WikiGraph3D";
 
 describe("3D graph stage transparency", () => {
@@ -35,24 +34,6 @@ describe("3D graph stage transparency", () => {
         resetSignal={0}
         nodeLabel={() => ""}
         linkLabel={() => ""}
-      />,
-    );
-
-    expect(
-      screen
-        .getByTestId("force-graph-3d")
-        .getAttribute("data-background-color"),
-    ).toBe("rgba(0,0,0,0)");
-  });
-
-  it("lets the wallpaper show through the UltraWiki graph canvas", () => {
-    render(
-      <EntityGraph3D
-        graphData={{ nodes: [], links: [] }}
-        width={800}
-        height={600}
-        selectedKey={null}
-        onSelect={vi.fn()}
       />,
     );
 

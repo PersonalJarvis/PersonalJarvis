@@ -76,10 +76,10 @@ function matchesFilter(m: BrainModel, f: ModelFilter): boolean {
 const STATUS_TONE: Record<ProviderTestStatus, string> = {
   ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600",
   not_configured: "border-border bg-muted text-muted-foreground",
-  bad_key: "border-amber-500/30 bg-amber-500/10 text-amber-600",
-  no_credits: "border-amber-500/30 bg-amber-500/10 text-amber-600",
-  rate_limited: "border-amber-500/30 bg-amber-500/10 text-amber-600",
-  model_unavailable: "border-amber-500/30 bg-amber-500/10 text-amber-600",
+  bad_key: "border-foreground/30 bg-foreground/10 text-foreground",
+  no_credits: "border-foreground/30 bg-foreground/10 text-foreground",
+  rate_limited: "border-foreground/30 bg-foreground/10 text-foreground",
+  model_unavailable: "border-foreground/30 bg-foreground/10 text-foreground",
   unreachable: "border-destructive/30 bg-destructive/10 text-destructive",
   error: "border-destructive/30 bg-destructive/10 text-destructive",
 };
@@ -165,8 +165,8 @@ export function BrainModelSelector({
    */
   visionOnly?: boolean;
   /**
-   * Override where the list comes from. The UltraWiki capability slots pass
-   * their own fetcher (`GET /api/ultrawiki/models/{slot}`) so they get THIS
+   * Override where the list comes from. A capability slot can pass its own
+   * fetcher so it gets THIS
    * picker — searchable, refreshable, with the custom-id escape hatch — rather
    * than a look-alike that would drift from it. Defaults to the per-provider
    * brain catalog, so every existing call site is unchanged.
@@ -624,7 +624,7 @@ export function BrainModelSelector({
 
       <div className="flex flex-wrap items-center gap-2">
         {source === "static" && (
-          <span className="text-[11px] text-amber-600" title={t("apikeys_model.source_static_note")}>
+          <span className="text-[11px] text-foreground" title={t("apikeys_model.source_static_note")}>
             {t("apikeys_model.source_static")}
           </span>
         )}

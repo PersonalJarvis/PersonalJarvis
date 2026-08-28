@@ -68,10 +68,10 @@ def server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WebServer:
     monkeypatch.setattr(cfg_mod, "DATA_DIR", tmp_path)
     cfg = JarvisConfig()
     cfg.ui.dev_mode = True
-    cfg.brain.providers["ollama"] = BrainProviderConfig(base_url="http://fake:11434")
+    cfg.brain.providers["ollama"] = BrainProviderConfig(
+        model="qwen3.5:4b", base_url="http://fake:11434"
+    )
     cfg.brain.worker = BrainTierConfig(provider="openai", model="gpt-x")
-    cfg.ultrawiki.embedding_provider = "ollama"
-    cfg.ultrawiki.embedding_model = "embeddinggemma"
     srv = WebServer(cfg, bus=EventBus())
     srv.app.state.config = cfg
     srv.app.state.agent_chat = AgentChatService(AgentChatStore(":memory:"))
@@ -160,8 +160,22 @@ def test_run_answers_409_while_a_turn_is_running(
 
 
 def test_test_route_runs_the_setup_test_and_health_reads_the_file(
-    server: WebServer, fake: FakeOllamaServer, tmp_path: Path
+    server: WebServer,
+    fake: FakeOllamaServer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The generation seam: every remaining role asks a brain for one real
+    # answer, so the route needs a stub where the embedding role used to
+    # answer straight from the Ollama inventory.
+    from jarvis.local_models import assistant_test
+
+    async def _ok(_cfg, model: str, **_kw) -> assistant_test.RoleCheck:
+        return assistant_test.RoleCheck(
+            model=model, status="ok", latency_ms=1.0, detail="Answered."
+        )
+
+    monkeypatch.setattr(assistant_test, "_generation_check", _ok)
     with TestClient(server.app) as client:
         before = client.get(f"{BASE}/health").json()
         assert before == {
@@ -171,10 +185,10 @@ def test_test_route_runs_the_setup_test_and_health_reads_the_file(
             "last_ok": None,
             "checked_at": None,
         }
-        resp = client.post(f"{BASE}/test", json={"roles": ["embedding"]})
+        resp = client.post(f"{BASE}/test", json={"roles": ["chat"]})
         assert resp.status_code == 200, resp.text
         report = resp.json()
-        assert report["roles"]["embedding"]["status"] == "ok"
+        assert report["roles"]["chat"]["status"] == "ok"
         assert report["overall"] == "ok"
         assert client.post(f"{BASE}/test", json={"roles": ["ack"]}).status_code == 400
         after = client.get(f"{BASE}/health").json()

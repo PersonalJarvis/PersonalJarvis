@@ -246,17 +246,10 @@ async def check_once(
 
 # ── the on-demand proof ───────────────────────────────────────────────────
 
-EmbedFn = Callable[[str, str], Awaitable[int]]
 #: ``(root, model) -> detail`` for the two capability probes below; a probe
 #: raises when the model cannot do the job, and returns one sentence when it
 #: can (what it answered, briefly).
 CapabilityFn = Callable[[str, str], Awaitable[str]]
-
-
-async def _default_embed(root: str, model: str) -> int:
-    from jarvis.brain.ollama_inventory import embed_probe
-
-    return await embed_probe(root, model)
 
 
 #: A 1×1 white PNG — the smallest image a vision model can be asked about.
@@ -394,7 +387,6 @@ async def verify_setup(
     root: str | None = None,
     probe: ProbeFn | None = None,
     generate: GenerateFn | None = None,
-    embed: EmbedFn | None = None,
     tool_call: CapabilityFn | None = None,
     vision: CapabilityFn | None = None,
     persist: bool = True,
@@ -402,11 +394,11 @@ async def verify_setup(
     """Prove the setup works, step by step, and write the health record.
 
     :func:`check_once` is the quiet schedule; this is the answer to a click
-    ("Set up everything", "Run a check"). Five steps, each with how long it
+    ("Set up everything", "Run a check"). Four steps, each with how long it
     took: the server answers, the chat pick produces one real answer, the
-    voice pick calls one tool (what a call turn relies on), the tools &
-    screen pick reads one image, the embedding pick produces one real
-    vector. A step whose role is not configured is reported as not run
+    voice pick calls one tool (what a call turn relies on), and the tools &
+    screen pick reads one image. A step whose role is not configured is
+    reported as not run
     (``ok: None``) rather than as a pass, so "it is set up" is a sentence
     that was tested, not assumed. Returns ``{"ok", "status", "reason",
     "steps"}``; ``status`` uses the badge's vocabulary (``ok`` /
@@ -434,13 +426,11 @@ async def verify_setup(
     )
 
     chat_model = roles.get("chat") or roles.get("deep") or roles.get("tools_screen") or ""
-    embed_model = roles.get("embedding") or ""
     not_run = "Not tested — the server did not answer."
     if not server_ok:
         steps.append(_step("chat", None, model=chat_model, detail=not_run))
         steps.append(_step("voice", None, model=voice_model, detail=not_run))
         steps.append(_step("tools_screen", None, model=screen_model, detail=not_run))
-        steps.append(_step("embedding", None, model=embed_model, detail=not_run))
     else:
         if chat_model:
             started = time.monotonic()
@@ -489,48 +479,6 @@ async def verify_setup(
                 missing="No tools & screen role is configured.",
             )
         )
-        if embed_model:
-            started = time.monotonic()
-            try:
-                dims = await asyncio.wait_for(
-                    (embed or _default_embed)(root, embed_model), timeout=GENERATION_CAP_S
-                )
-                ms = int((time.monotonic() - started) * 1000)
-                if dims > 0:
-                    steps.append(
-                        _step(
-                            "embedding",
-                            True,
-                            model=embed_model,
-                            detail=f"{dims} dimensions.",
-                            ms=ms,
-                        )
-                    )
-                else:
-                    steps.append(
-                        _step(
-                            "embedding",
-                            False,
-                            model=embed_model,
-                            detail="The server answered without a vector.",
-                            ms=ms,
-                        )
-                    )
-            except TimeoutError:
-                steps.append(
-                    _step(
-                        "embedding",
-                        False,
-                        model=embed_model,
-                        detail=f"No vector within {GENERATION_CAP_S:.0f} s.",
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001 — same as the chat step
-                log.info("verify: embedding on %s failed", embed_model, exc_info=True)
-                steps.append(_step("embedding", False, model=embed_model, detail=str(exc)))
-        else:
-            steps.append(_step("embedding", None, detail="No embedding role is configured."))
-
     failed = next((s for s in steps if s["ok"] is False), None)
     if failed is not None:
         status = "error"

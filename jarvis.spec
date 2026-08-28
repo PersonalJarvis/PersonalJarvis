@@ -103,7 +103,7 @@ if PACKAGE_ASSETS.exists():
 
 # Every non-Python file inside the `jarvis` package. PyInstaller collects only
 # modules, so without this the frozen app silently loses its SQL migrations
-# (jarvis/memory, jarvis/ultrawiki), the built-in skills (jarvis/skills/builtin
+# (jarvis/memory), the built-in skills (jarvis/skills/builtin
 # — the boot log says "builtin skill '...' missing from package"), the CLI and
 # skill catalogs, the wiki templates and the marketplace usage cards. Roughly
 # 100 files / 400 KB, so collecting them wholesale costs nothing and closes the

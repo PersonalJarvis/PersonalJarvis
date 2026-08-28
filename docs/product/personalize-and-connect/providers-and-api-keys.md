@@ -248,23 +248,6 @@ Agentic IDE workspace.
 **Advanced > Wiki provider** chooses the model used for classic Wiki
 maintenance. Leaving it blank follows the normal Brain choice.
 
-UltraWiki has a separate provider screen with four capability slots:
-
-- **Storage** keeps the knowledge data. Local storage remains the working
-  floor; changing to a connected cloud store takes effect when the store opens
-  again.
-- **Embedding** creates the vector space used for semantic search. It has no
-  automatic cross-provider fallback. Changing provider or model requires the
-  existing corpus to be embedded again, so the app asks before starting.
-- **Distillation** turns captured material into concise knowledge. Automatic
-  mode uses a ready provider and can cross families.
-- **Rerank** improves result ordering. It can stay off and can cross families
-  when enabled.
-
-Each UltraWiki slot has its own **Test**, model picker where relevant, and
-credential card. Shared keys use the same safe storage and delete warnings as
-the main provider screen.
-
 ## Replace or Remove Access
 
 Select **Replace**, save the new value, and test again. Replacing a key in the
@@ -297,9 +280,8 @@ preference, not permission to use an unsuitable model.
    claiming success.
 
 Fallback never copies credentials, guarantees identical output, or preserves
-the same speed, price, privacy boundary, model, or voice. UltraWiki embeddings
-are intentionally pinned to one vector space; optional Dictation wording and
-reranking may simply be skipped. A local endpoint on another computer is local
+the same speed, price, privacy boundary, model, or voice. Optional Dictation
+wording may simply be skipped. A local endpoint on another computer is local
 to your network, not necessarily to this device.
 
 ## How It Fits Together
@@ -312,7 +294,7 @@ to your network, not necessarily to this device.
    its own feature surface.
 
 Changing the Brain does not silently change Computer Use, speech, Realtime,
-Agents, or UltraWiki. Configure and verify each capability you plan to rely on.
+or Agents. Configure and verify each capability you plan to rely on.
 
 ## Check That It Works
 
@@ -320,9 +302,9 @@ Open **API Keys & Providers > Brain**, select **Test** on the active card, and
 confirm **Works**. Then send a short, non-sensitive chat message and confirm an
 answer appears.
 
-Test Voice input, Voice output, Realtime, Computer Use, Agent subscriptions,
-and every enabled UltraWiki slot separately. They use different providers and
-capabilities even when they share one key.
+Test Voice input, Voice output, Realtime, Computer Use, and Agent
+subscriptions separately. They use different providers and capabilities even
+when they share one key.
 
 ## Troubleshooting
 
@@ -333,7 +315,6 @@ capabilities even when they share one key.
 | A deleted card still looks ready | A shared key, environment value, or CLI login still covers it | Read the shared-access note and remove or disconnect the real source. |
 | A speech change seems ignored | The current turn began before the live switch, or Voice output needs a new Pipeline | Finish the turn, restart voice, and check the active card again. |
 | A subscription card will not connect | The coding CLI is missing, outdated, or signed out | Install the CLI shown on the card, reconnect, then run its **Test**. |
-| UltraWiki asks to rebuild vectors | The embedding provider or model changed | Confirm only if you intend to recreate the corpus vector space. |
 
 ## Next Steps
 

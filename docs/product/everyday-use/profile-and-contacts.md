@@ -25,8 +25,7 @@ your assistant may recognize, message, or call. Wiki context replaces neither.
 | **Profile** | Your identity, languages, devices, communication and work style, values, and feedback preference | Authoritative for these structured preferences |
 | **Contacts** | Another person's name, aliases, relationship, emails, phones, postal address, and short README note | Edit the contact here even if a Wiki page also exists |
 | **People your assistant knows** in Profile | A read-only list of people learned by older memory features | It is not Contacts and cannot edit contact details |
-| **Normal Wiki** | Long-form knowledge about people, projects, decisions, and sources | Its prose can overlap with Profile but does not rewrite it |
-| **UltraWiki People** | Evidence-linked identities, identifiers, events, and merge decisions | It is a research view, not a Profile or Contacts editor |
+| **Wiki** | Long-form knowledge about people, projects, decisions, and sources | Its prose can overlap with Profile but does not rewrite it |
 
 Profile language fields do not change the app's language or voice settings.
 Your photo is shown in Profile, but is not an identity check or conversation
@@ -68,36 +67,18 @@ match is updated; otherwise a contact is created. A spoken address may appear
 entirely in **Street**; use the form to split it. Delete contacts in the app.
 Manual management works without a brain provider.
 
-Contacts has no CSV, vCard, or phone import. UltraWiki's **Import address
-book** copies existing Contacts into UltraWiki, not into Contacts.
+Contacts has no CSV, vCard, or phone import.
 
 ## Understand the Wiki Relationships
 
-In **Normal Wiki** mode, your assistant can maintain a longer living page about
-you, including preferences, relationships, projects, decisions, and sources.
+In the **Wiki**, your assistant can maintain a longer living page about you,
+including preferences, relationships, projects, decisions, and sources.
 Profile remains authoritative for structured fields. If they disagree, correct
 Profile and review the Wiki separately.
 
-Normal Wiki creates a Contact companion page with name, aliases, relationship,
+The Wiki creates a Contact companion page with name, aliases, relationship,
 and README note, but no email, phone, or postal address. Edit the Contact, not
 the managed page section. Deletion archives the page to preserve other notes.
-
-In **UltraWiki** mode, **Explore → People** shows identities built from approved
-sources and evidence, including identifiers, events, open questions, and merge
-history.
-
-To seed UltraWiki from Contacts:
-
-1. Review the records in **Contacts**.
-2. In **UltraWiki → Explore → People**, choose **Import address book**.
-3. Review the report and **Open questions**.
-4. Confirm only evidence-backed same-person merges; reject different people.
-   Undo confirmed merges from merge history when needed.
-
-The import copies names, aliases, emails, phones, and a stable contact identity,
-but not relationship, postal address, or README notes. Rerunning it safely adds
-current identifiers. It neither syncs changes back nor removes UltraWiki
-evidence after Contact deletion, so review both places.
 
 ## Privacy and Provider Processing
 
@@ -106,30 +87,24 @@ not travel with an update. Connected Wiki storage follows its own sync rules.
 
 The brain provider can receive selected Profile context and Contact names,
 aliases, and relationships. Full details are fetched when an action needs them
-and may reach its message, email, or call service. Normal Wiki providers can
-process selected excerpts.
-
-UltraWiki contact seeding needs no AI model. A remote database stores imported
-identifiers remotely, while later search, Ask, extraction, or ranking can send
-selected material to configured providers. A local database alone does not
-guarantee local-only processing.
+and may reach its message, email, or call service. Wiki providers can process
+selected excerpts.
 
 > [!warning] Never put passwords, API keys, recovery codes, private keys, or
-> other credentials in Profile, Contacts, Normal Wiki, or UltraWiki. Add
+> other credentials in Profile, Contacts, or the Wiki. Add
 > provider credentials only through the protected connection screens. See
 > [Privacy and Local Data](privacy-and-local-data) before storing personal data.
 
 Clearing a Profile field does not remove matching Wiki prose. Deleting a
-Contact does not delete chats, service records, an UltraWiki identity, or its
-merge audit. Review every relevant system for complete removal.
+Contact does not delete chats or service records. Review every relevant
+system for complete removal.
 
 ## How It Fits Together
 
 1. Profile supplies structured conversation preferences.
 2. Contacts supplies a name index; actions fetch details when needed.
-3. Normal Wiki adds long-form context and limited companion pages.
-4. UltraWiki connects people through evidence and reviewed merges.
-5. No store automatically becomes authoritative for another.
+3. The Wiki adds long-form context and limited companion pages.
+4. No store automatically becomes authoritative for another.
 
 Persona sets your assistant's baseline character, while Instructions are your
 standing rules. Neither is automatically copied into Profile or Contacts.
@@ -138,7 +113,6 @@ standing rules. Neither is automatically copied into Profile or Contacts.
 
 1. Edit a non-sensitive Profile field, reload, and confirm it remains.
 2. Add a temporary Contact and alias, search it, then delete it.
-3. In UltraWiki, import the address book and check the report.
 
 ## Troubleshooting
 
@@ -149,9 +123,7 @@ standing rules. Neither is automatically copied into Profile or Contacts.
 | A spoken Profile change did not appear | The assistant may not have had the Profile action. Edit the field directly and verify it |
 | **Waiting for your OK** is empty | Continue normally; this setup may write approved knowledge to its Wiki instead |
 | Contact search misses a known detail | Search by name or alias, then open the record to inspect other fields |
-| A deleted Contact still has a Normal Wiki page | The companion page was archived to preserve independent notes; review the archive separately |
-| An UltraWiki import created an open question | Compare the evidence, then confirm or reject the proposed identity merge |
-| A Contact edit is absent from UltraWiki | Run **Import address book** again; UltraWiki does not continuously mirror Contacts |
+| A deleted Contact still has a Wiki page | The companion page was archived to preserve independent notes; review the archive separately |
 
 ## Next Steps
 
@@ -159,6 +131,5 @@ standing rules. Neither is automatically copied into Profile or Contacts.
   and assistant behavior.
 - Read [Wiki and Memory](wiki-and-memory) for Normal Wiki context and person
   pages.
-- Read [UltraWiki](ultrawiki) for evidence, identity review, and merge history.
 - Read [Privacy and Local Data](privacy-and-local-data) before connecting a
   provider or storing sensitive personal information.

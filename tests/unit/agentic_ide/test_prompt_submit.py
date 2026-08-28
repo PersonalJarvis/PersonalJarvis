@@ -36,7 +36,7 @@ from tests.fakes.fake_pty_manager import FakePtyManager
 @pytest.mark.parametrize(
     "payload",
     [
-        "review this. @jarvis/ultrawiki/pipeline.py",
+        "review this. @jarvis/agent_chat/typeahead.py",
         "check @tests/unit/test_x.py",
         "run /effort",
     ],

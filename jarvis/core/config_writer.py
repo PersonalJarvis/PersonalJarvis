@@ -1142,84 +1142,6 @@ def set_wiki_vault_root(vault_root: str, *, path: Path = DEFAULT_CONFIG_FILE) ->
     _patch_table(path, "wiki_integration", "vault_root", vault_root)
 
 
-#: Closed list of ``[ultrawiki]`` slot keys the settings surface may write.
-#: ``enabled`` has its own dedicated setter (the mode switch is a deliberate,
-#: separate act); credentials NEVER go here — the Postgres connection string
-#: lives in the secret chain under ``ultrawiki_db_url`` (AP-12).
-ULTRAWIKI_SLOT_KEYS = (
-    "db_backend",
-    # Which named storage preset the user picked (sqlite / supabase / neon /
-    # postgres). Presentation over ``db_backend``: it decides the card's help
-    # text, dashboard link and connect flow, never how the store opens.
-    "storage_provider",
-    "embedding_provider",
-    "embedding_model",
-    "distill_provider",
-    "distill_model",
-    "rerank_provider",
-    "rerank_model",
-    # Ranking knobs of the read path (design: UltraWiki ranking pipeline).
-    "rerank_min_score",
-    "rrf_keyword_weight",
-    "rrf_vector_weight",
-    "recency_half_life_days",
-    "ollama_endpoint",
-)
-
-#: Slot keys whose value is a NUMBER, not a string. They are written as TOML
-#: floats so a hand-read jarvis.toml shows ``rerank_min_score = 4.0`` rather
-#: than a quoted string that only happens to parse.
-ULTRAWIKI_NUMERIC_SLOT_KEYS = frozenset(
-    {
-        "rerank_min_score",
-        "rrf_keyword_weight",
-        "rrf_vector_weight",
-        "recency_half_life_days",
-    }
-)
-
-
-def set_ultrawiki_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
-    """Persist the UltraWiki mode switch to ``[ultrawiki] enabled``.
-
-    The either-or Wiki mode switch (design D-5): True = UltraWiki captures and
-    answers, False = the normal wiki does. Switching is non-destructive in both
-    directions (D-9) — this writes one flag and never deletes data. TOML-only
-    by design: ``ultrawiki`` is NOT tracked in the drift-guard's reference
-    snapshot, so a plain atomic write is never reverted (same rationale as
-    :func:`set_wiki_vault_root`). The UltraWiki routes apply the change live;
-    this persists the boot default.
-    """
-    _patch_table(path, "ultrawiki", "enabled", bool(enabled))
-
-
-def set_ultrawiki_slot(key: str, value: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
-    """Persist one flat ``[ultrawiki]`` capability-slot key.
-
-    ``key`` must come from the closed :data:`ULTRAWIKI_SLOT_KEYS` list — the
-    storage-backend selector plus the provider/model slots. Values are plain
-    strings; empty string is the documented "unconfigured" sentinel. Secrets
-    are refused by construction: the Postgres connection string rides the
-    secret chain under ``ultrawiki_db_url`` (AP-12), never the TOML. TOML-only,
-    same drift-guard rationale as :func:`set_ultrawiki_enabled`.
-    """
-    if key not in ULTRAWIKI_SLOT_KEYS:
-        raise ValueError(
-            f"unknown [ultrawiki] slot key {key!r} "
-            f"(allowed: {', '.join(ULTRAWIKI_SLOT_KEYS)})"
-        )
-    if key in ULTRAWIKI_NUMERIC_SLOT_KEYS:
-        try:
-            numeric = float(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"[ultrawiki] {key} must be a number, got {value!r}"
-            ) from exc
-        _patch_table(path, "ultrawiki", key, numeric)
-        return
-    _patch_table(path, "ultrawiki", key, str(value))
-
-
 def set_overlay_style(style: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the on-screen overlay style to ``[ui] orb_style`` in jarvis.toml.
 
@@ -2342,7 +2264,7 @@ def set_ollama_model_options(
     a key absent from it is removed from the table, and an empty (or all-
     ``None``) set removes the table like :func:`clear_ollama_model_options`.
     Keys must come from the closed :data:`OLLAMA_MODEL_OPTION_KEYS` list —
-    anything else raises ``ValueError`` (pattern: ``ULTRAWIKI_SLOT_KEYS``).
+    anything else raises ``ValueError``.
     Values pass through :class:`OllamaModelOptions`, so an out-of-range number
     is clamped and a value of the wrong shape is dropped, never written — the
     file holds only what the reader will accept. Returns the values written.
@@ -2350,7 +2272,7 @@ def set_ollama_model_options(
     TOML-only by design, deliberately NOT pinned in ``config-soll.json``: the  # i18n-allow
     table is keyed by arbitrary model tags, and pinning it would bring back the
     "flipped back" symptom (BUG-010 class) the first time a sync helper is
-    missed — the same rationale as ``[ultrawiki]``. The drift-guard therefore
+    missed. The drift-guard therefore
     never touches this table. Atomic write under the module lock (AP-7); the
     tag is written as a quoted key (``"qwen3.5:9b"``) by tomlkit itself.
     """

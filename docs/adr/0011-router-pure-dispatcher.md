@@ -1273,3 +1273,24 @@ by the router brain.
 - `tests/unit/ui/web/test_outputs_routes.py::test_artifact_page_*`
 - frontend: `VisualizationView.test.tsx`, `RunGraphPanel.test.tsx`
 - `tests/unit/brain/test_routing.py` (`create-artifact` in `ROUTER_TOOLS`)
+
+## Amendment: UltraWiki Search retired (2026-08-28)
+
+`ultrawiki-search` leaves `ROUTER_TOOLS` together with the UltraWiki mode it
+answered from. The amendment above stays as the record of why it was added;
+nothing in the router changes shape, the set is simply one entry shorter.
+
+The knowledge surface it fronted does not disappear: `wiki-recall`,
+`wiki-list` and `wiki-page-read` answer the same questions from the Obsidian
+vault, and they were always loaded beside it.
+
+The `requires=` capability gate on `AppCommand`
+(`jarvis/commands/capabilities.py`) goes with it. That seam existed to keep
+the four UltraWiki commands out of a tool set while the mode was off, it had
+no other entry, and a filter with no criterion is dead code. It returns with
+the feature.
+
+### Regression guards
+
+- `tests/unit/brain/test_routing.py` (the set no longer names the tool)
+- `tests/missions/test_worker_capability_parity.py` (the worker grant)

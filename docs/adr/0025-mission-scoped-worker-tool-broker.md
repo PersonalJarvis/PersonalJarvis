@@ -125,3 +125,10 @@ the bus, never bypassed — see ADR-0031. The deny guards, the credential
 boundary, and the completion certificate are unchanged; observed refusals
 (denied/timed-out/errored calls) no longer abort the iteration, only
 integrity failures do (`WorkerToolExecutionSummary.integrity_compromised`).
+
+## Amendment: the UltraWiki grant is gone (2026-08-28)
+
+The dynamic grant list above named `ultrawiki-search` "once its service gate
+goes live". That mode was removed on 2026-08-28, so the name is no longer part of
+any worker grant. The broker itself, the deny guards and the credential
+boundary are untouched.

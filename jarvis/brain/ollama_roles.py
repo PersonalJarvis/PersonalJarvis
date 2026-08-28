@@ -18,9 +18,9 @@ does the curated shortlist's pick (a download) stand in. A user with eleven
 models on disk is told which of them to use, not sent to the catalogue.
 
 Writing goes through the existing config writers only
-(``config_writer.set_brain_provider_model`` / ``set_ultrawiki_slot``), so a
-role change lands in ``jarvis.toml`` AND the drift baseline exactly like a
-pick made on the provider card — the drift guard sees no difference (AP-7,
+(``config_writer.set_brain_provider_model``), so a role change lands in
+``jarvis.toml`` AND the drift baseline exactly like a pick made on the
+provider card — the drift guard sees no difference (AP-7,
 BUG-010 class). The tier defaults stay ``""`` (= plugin-side discovery);
 nothing here pins a model by default.
 """
@@ -137,15 +137,6 @@ ROLES: tuple[RoleSpec, ...] = (
         required=("tools",),
         recommended=("thinking",),
         pull_role="coder",
-    ),
-    RoleSpec(
-        id="embedding",
-        label_key="local_models.role_embedding",
-        config_key="ultrawiki.embedding_model",
-        required=("embedding",),
-        recommended=(),
-        pull_role="embedding",
-        layout="row",
     ),
     # Read-only consumers: the ack and polish models have their own pickers
     # on their own cards, so the rows only say which tag they follow.
@@ -272,13 +263,6 @@ def current_pick(cfg: Any, role_id: str) -> tuple[str, str]:
         )
     if role_id == "deep":
         return _str(getattr(provider, "deep_model", "")), ""
-    if role_id == "embedding":
-        wiki = getattr(cfg, "ultrawiki", None)
-        backend = _str(getattr(wiki, "embedding_provider", ""))
-        model = _str(getattr(wiki, "embedding_model", ""))
-        if backend and backend != "ollama":
-            return "", f"The wiki embeds with {backend}, not with Ollama."
-        return model, ""
     if role_id == "ack":
         ack = getattr(cfg, "ack_brain", None)
         providers = getattr(ack, "providers", None)
@@ -747,17 +731,6 @@ def set_role(role_id: str, model: str, *, cfg: Any = None) -> dict[str, Any]:
         receipt = config_writer.set_brain_provider_model("ollama", deep_model=tag)
         if provider is not None:
             provider.deep_model = tag
-    elif spec.id == "embedding":
-        if not tag:
-            raise ValueError("The embedding role needs a model name; the wiki cannot discover one.")
-        wiki = getattr(cfg, "ultrawiki", None)
-        if _str(getattr(wiki, "embedding_provider", "ollama")) != "ollama":
-            config_writer.set_ultrawiki_slot("embedding_provider", "ollama")
-            if wiki is not None:
-                wiki.embedding_provider = "ollama"
-        config_writer.set_ultrawiki_slot("embedding_model", tag)
-        if wiki is not None:
-            wiki.embedding_model = tag
     return {
         "role": spec.id,
         "model": tag,

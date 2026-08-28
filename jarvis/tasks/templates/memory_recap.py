@@ -40,9 +40,8 @@ each page look at frontmatter `updated:`, facts marked "(as of <date>)", \
 themes and the open items.
 4. Then run `wiki-recall` with 2-3 short keyword queries built from the \
 names and projects you found, plus one for open items (e.g. "open threads", \
-"blocked", "next steps"). Use `ultrawiki-search` for the same queries when \
-it is available and returns hits; ignore it when it reports being disabled. \
-Follow at most 3 promising hits with `wiki-page-read`.
+"blocked", "next steps"). Follow at most 3 promising hits with \
+`wiki-page-read`.
 5. Keep only facts that appear in the tool output. Never invent people, \
 projects, dates or decisions. If you cannot tell whether a note is from this \
 week, treat it as recent background rather than claiming a date.
@@ -96,7 +95,6 @@ TEMPLATE = AutomationTemplate(
         PluginGrant(plugin_id="wiki-recall", scope="read"),
         PluginGrant(plugin_id="wiki-list", scope="read"),
         PluginGrant(plugin_id="wiki-page-read", scope="read"),
-        PluginGrant(plugin_id="ultrawiki-search", scope="read"),
     ),
     requires=("wiki-recall",),
     inputs=(),

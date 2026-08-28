@@ -93,3 +93,14 @@ Rules the decision preserves:
 * **Relevance-gate the knowledge tools like MCP servers** — rejected for
   now: the wiki tools ship ungated today and the new additions are cheap;
   revisit if grant schemas measurably bloat worker context.
+
+## Amendment: UltraWiki row removed (2026-08-28)
+
+The `ultrawiki-search` row of the grant table above described a gate on
+`cfg.ultrawiki.enabled` plus a live `UltraWikiService`. Both are gone with the
+mode (2026-08-28), and so is `_ultrawiki_worker_tool_available()`.
+
+The remaining surface is unchanged: the wiki triple unconditionally,
+`awareness-recall` behind the awareness switch, and the always-on research
+pair. The fail-closed rule that shaped the removed gate still governs every
+gate that stays.

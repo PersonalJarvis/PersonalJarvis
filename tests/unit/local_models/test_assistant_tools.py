@@ -51,8 +51,6 @@ def _cfg(*, hf: bool = False, **picks: str) -> JarvisConfig:
         base_url=ROOT,
         hf_enabled=hf,
     )
-    cfg.ultrawiki.embedding_provider = "ollama"
-    cfg.ultrawiki.embedding_model = picks.get("embedding", "")
     return cfg
 
 
@@ -152,11 +150,11 @@ async def test_safe_reads_run_through_the_executor_on_the_fake_server() -> None:
 
 async def test_test_plan_tool_reports_per_role() -> None:
     fake = _server()
-    tools = build_tools(_cfg(embedding="embeddinggemma"), root=ROOT, transport=fake.transport())
+    tools = build_tools(_cfg(chat="qwen3.5:4b"), root=ROOT, transport=fake.transport())
     executor, _bus = _executor()
-    result = await executor.execute(tools["lm_test_plan"], args={"roles": ["embedding"]})
+    result = await executor.execute(tools["lm_test_plan"], args={"roles": ["chat"]})
     assert result.success, result.error
-    assert result.output["roles"]["embedding"]["status"] == "ok"
+    assert result.output["roles"]["chat"]["status"] == "ok"
     assert result.output["overall"] == "ok"
 
 
@@ -252,14 +250,13 @@ async def test_set_model_options_refuses_keys_the_suggestion_did_not_return() ->
 
 async def test_prompt_renders_with_the_fake_server_and_carries_the_contract() -> None:
     fake = _server()
-    cfg = _cfg(chat="qwen3.5:4b", embedding="embeddinggemma")
+    cfg = _cfg(chat="qwen3.5:4b")
     text = await assistant_prompt.build_system_extra(cfg, root=ROOT, transport=fake.transport())
 
     assert len(text) < 10_000, len(text)
     assert "Ollama server: http://fake-ollama:11434 — running, version 0.32.15" in text
     assert "- qwen3.5:4b · 3.2 GB · completion,tools,vision · ctx 262144" in text
     assert "chat · completion · qwen3.5:4b · yes · brain.providers.ollama.model" in text
-    assert "embedding · embedding · embeddinggemma · yes · ultrawiki.embedding_model" in text
     assert "tools_screen · tools+vision · not set" in text
     assert "CURATED SHORTLIST (reviewed " in text
     assert "qwen3.5:4b · chat · 3.4 · " in text and "· yes · tools+vision" in text

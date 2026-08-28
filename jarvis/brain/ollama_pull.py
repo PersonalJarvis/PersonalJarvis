@@ -211,7 +211,7 @@ RECOMMENDED_MODELS: tuple[RecommendedModel, ...] = (
         purpose="Large agentic coding worker for a big card.",
         role="coder",
     ),
-    # ── embeddings (UltraWiki search) ───────────────────────────────────────
+    # ── embeddings (retrieval; not chat models) ─────────────────────────────
     RecommendedModel(
         id="embeddinggemma",
         label="EmbeddingGemma",

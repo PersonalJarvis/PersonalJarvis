@@ -62,16 +62,6 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
         "reindex",
         "backfill",
     ),
-    "ultrawiki": (
-        'ask "<question>"',
-        "topics",
-        "topic <name>",
-        "moments",
-        "graph",
-        "vault",
-        "export",
-        "register",
-    ),
     "missions": (
         "list",
         "show <id>",

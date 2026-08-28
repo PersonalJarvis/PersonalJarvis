@@ -406,7 +406,6 @@ export function humanizeToolName(name: string): string {
     youtube_music: "YouTube Music",
     linear: "Linear",
     "wiki-recall": "Wiki",
-    "ultrawiki-search": "Wiki",
     "notebooklm-mcp": "NotebookLM",
     run_shell: "Shell",
   };

@@ -144,14 +144,6 @@ ROUTER_TOOLS = frozenset({
     # explicitly store a fact ("merk dir: …") rather than relying on the
     # aggressive-mode VoiceFactBridge heuristic.
     "wiki-ingest",
-    # UltraWiki semantic search (2026-07-25): fused keyword+vector retrieval
-    # with citations over the UltraWiki store — the pull primitive for the
-    # semantic memory mode. Read-only, honest-degradation ladder (disabled
-    # mode steers to the classic wiki-* tools). Direct safe-gated read,
-    # never a spawn; mission workers reach it only through the ADR-0025
-    # broker once the ADR-0030 gate is live (AP-5/AP-14). See ADR-0011
-    # amendment "UltraWiki Search".
-    "ultrawiki-search",
     # CLI-Integration (2026-05-24): virtual loader that expands to one
     # ``cli_<name>`` tool per connected & usable CLI (gcloud, gh, docker, …).
     # This is the MCP/plugin model for command-line tools: only connected
@@ -575,18 +567,6 @@ def _load_tools_for_tier(
                 from jarvis.plugins.tool.wiki_ingest import WikiIngestTool
 
                 inst = WikiIngestTool(curator_resolver=get_running_curator)
-            elif ep.name == "ultrawiki-search":
-                # UltraWiki search: resolver-not-instance — the
-                # UltraWikiService is built by the WebServer AFTER the brain
-                # (mirrors wiki-ingest's lazy curator). Loads even while the
-                # mode is disabled; execute() then answers with the honest
-                # steer-to-wiki error, keeping the tool surface stable
-                # across mode toggles (awareness-recall precedent).
-                from jarvis.plugins.tool.ultrawiki_search import (
-                    build_ultrawiki_service_resolver,
-                )
-
-                inst = cls(service_resolver=build_ultrawiki_service_resolver())
             elif ep.name == "create-skill":
                 # Skill authoring by voice/chat: the tool resolves the live
                 # SkillRegistry (skill_context) and the live BrainManager
@@ -1442,10 +1422,6 @@ def _phase2_full_brain(
                     name="wiki-vault-warmup",
                     daemon=True,
                 ).start()
-                from jarvis.brain.wiki_context import (  # noqa: PLC0415 — sibling import, kept local like the class import above
-                    DEFAULT_ULTRA_LATENCY_BUDGET_MS,
-                )
-
                 manager._wiki_injector = WikiContextInjector(
                     search=search,
                     max_chars=getattr(wiki_cfg, "max_chars", 1500),
@@ -1458,13 +1434,6 @@ def _phase2_full_brain(
                     ),
                     min_relative_score=float(
                         getattr(wiki_cfg, "min_relative_score", 0.35)
-                    ),
-                    ultra_latency_budget_ms=int(
-                        getattr(
-                            wiki_cfg,
-                            "ultra_latency_budget_ms",
-                            DEFAULT_ULTRA_LATENCY_BUDGET_MS,
-                        )
                     ),
                 )
                 log.info(

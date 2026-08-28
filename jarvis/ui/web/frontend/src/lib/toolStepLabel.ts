@@ -61,7 +61,6 @@ const FAMILY_BY_TOOL: Record<string, ToolFamily> = {
   wiki_recall: "wiki",
   wiki_list: "wiki",
   wiki_page_read: "wiki",
-  ultrawiki_search: "wiki",
   wiki_ingest: "wiki_write",
   create_artifact: "artifact",
   run_skill: "skill",

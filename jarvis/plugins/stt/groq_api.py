@@ -219,7 +219,7 @@ class GroqWhisperAPI:
     ) -> Transcript:
         """Transcribe an ENCODED audio file (m4a, opus, mp3, mp4, wav, ...).
 
-        The optional capability the UltraWiki enrichment stage looks for. The
+        The optional capability the media enrichment stage looks for. The
         live microphone path delivers raw PCM, which everything else here
         wraps in a WAV container; an imported voice note is already encoded and
         this endpoint takes those formats directly. Passing the container

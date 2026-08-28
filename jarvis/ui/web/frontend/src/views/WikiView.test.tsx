@@ -83,32 +83,6 @@ function installFetchMock(
         }),
       } as Response;
     }
-    // Which mode owns the Wiki section. These tests are about the NORMAL wiki
-    // body, and that body only renders once the backend has actually said the
-    // mode is off — an unanswered status renders neither body, because
-    // guessing "off" is what dropped Ultra installs back into the normal wiki
-    // after every restart (WikiView.mode-persistence.test.tsx).
-    if (url.startsWith("/api/ultrawiki/status")) {
-      return {
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        json: async () => ({
-          enabled: false,
-          configured: false,
-          started: false,
-          db_backend: "sqlite",
-          backend_in_use: "",
-          slots: {},
-          counts: {},
-          pipeline: { running: false, processed: {} },
-          sources: [],
-          jobs: [],
-          search_legs: {},
-          degradations: [],
-        }),
-      } as Response;
-    }
     for (const prefix of Object.keys(routes)) {
       if (url.startsWith(prefix)) {
         const body = routes[prefix]();

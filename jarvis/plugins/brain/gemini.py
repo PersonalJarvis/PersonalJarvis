@@ -62,7 +62,7 @@ _MAX_CACHE_SLOTS = 4
 _MIN_CACHE_TOKENS = 4096
 
 # Runtime capability memory shared by every short-lived GeminiBrain instance.
-# Curator/UltraWiki calls deliberately instantiate a fresh brain per item, so
+# Curator calls deliberately instantiate a fresh brain per item, so
 # an instance-only rejection cache made every item repeat the same doomed 400
 # probe before succeeding. The process lifetime is the right scope: model
 # capabilities are stable across calls, while a restart naturally re-probes

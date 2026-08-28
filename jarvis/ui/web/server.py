@@ -80,17 +80,6 @@ _WS_SEND_TIMEOUT_S = 3.0
 # a sample instead of letting a visual update queue behind functional frames.
 _WS_LEVEL_SEND_TIMEOUT_S = 0.25
 
-# How long the UltraWiki pipeline WORKER is held back after boot. Its store is
-# opened immediately (reads, search and recall all need it), but the worker
-# grinds through the whole ingest backlog and was measured holding ~1.3 CPU
-# cores continuously for as long as items remain queued. Starting it the
-# instant the backend comes up made that backlog compete with the app's own
-# startup, which is exactly the "everything got sluggish" report AP-26 exists
-# to prevent. The window covers a typical cold start with headroom; nothing is
-# skipped, the same work simply begins once the app is usable. A shutdown
-# inside the window cancels the wait rather than delaying it.
-ULTRAWIKI_PIPELINE_GRACE_S = 20.0
-
 # How long the realtime transport warm is held back after boot. Warming can
 # spawn a provider's app-server and verify a live account, so it must not
 # compete with the wake-model load and the brain/MCP build for CPU and disk
@@ -404,9 +393,6 @@ class WebServer:
         from .telephony_routes import router as telephony_router
         from .tool_model_routes import router as tool_model_router
         from .tools_routes import router as tools_router
-        from .ultrawiki_explore_routes import router as ultrawiki_explore_router
-        from .ultrawiki_identity_routes import router as ultrawiki_identity_router
-        from .ultrawiki_routes import router as ultrawiki_router
         from .update_routes import router as update_router
         from .voice_call_routes import router as voice_call_router
         from .wiki_routes import router as wiki_router
@@ -592,17 +578,6 @@ class WebServer:
         # Forwards WikiPageChanged events from the shared EventBus to
         # subscribed UI clients. WikiWatcher is started in start().
         app.include_router(wiki_ws_router)
-        # UltraWiki (semantic memory mode) — status/activation/sources/sync/
-        # search. The service handle is wired in start() via _init_ultrawiki();
-        # while it is None the routes answer 503 (search answers 409 whenever
-        # the mode switch is off).
-        app.include_router(ultrawiki_router)
-        # The readable Explore surface over the same store — separate module,
-        # same prefix and tag (see ultrawiki_explore_routes for why).
-        app.include_router(ultrawiki_explore_router)
-        # The identity surface over the same store — People, the merge
-        # confirmation queue, and the reversible merge audit trail.
-        app.include_router(ultrawiki_identity_router)
         # ConnectionManager singleton for the global event stream. Attached
         # to MissionBus.subscribe_all() in start().
         app.state.missions_ws_manager = _MissionsConnMgr()
@@ -611,12 +586,6 @@ class WebServer:
         # so the REST routes return 503 instead of crashing.
         app.state.mission_manager = None
         app.state.kontrollierer = None
-        # UltraWikiService is constructed in start() (_init_ultrawiki); None
-        # keeps /api/ultrawiki honest (503 / degraded status) until then.
-        app.state.ultrawiki = None
-        # The named background task that opens the UltraWiki store when the
-        # mode is already on at boot (see _init_ultrawiki); cancelled in stop().
-        self._ultrawiki_start_task: asyncio.Task[None] | None = None
         app.state.mission_tool_approvals = self._mission_tool_approvals
 
         # Board aggregator (personal-mastery dashboard) — the aggregator is
@@ -2576,16 +2545,6 @@ class WebServer:
             )
         _boot_mark("wiki_watcher")
 
-        # UltraWiki (semantic memory mode): construct the service handle ALWAYS
-        # (cheap ctor — in-app activation from a disabled state must work);
-        # the store + staged pipeline only start while [ultrawiki].enabled is
-        # true, and both live off the boot critical path (AP-26).
-        try:
-            await self._init_ultrawiki()
-        except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning("UltraWiki init failed — /api/ultrawiki answers 503")
-        _boot_mark("ultrawiki")
-
         # Voice-session recorder + store for the transcription view.
         # Sub-setup: runs sync (SQLite-WAL, no async loop needed), but is
         # run in start() so the EventBus is guaranteed to be alive.
@@ -3152,61 +3111,6 @@ class WebServer:
                 logger.opt(exception=True).warning("wiki auto-backfill pass failed")
             await asyncio.sleep(interval_s)
 
-    async def _init_ultrawiki(self) -> None:
-        """UltraWiki (semantic memory mode): wire the service handle.
-
-        The constructor is deliberately cheap (no I/O, no heavy import), so it
-        ALWAYS runs — the REST surface must be able to activate the mode from
-        a disabled state in-app. The store and the staged pipeline start only
-        while ``cfg.ultrawiki.enabled`` is true; a later in-app enable reaches
-        ``ensure_started()`` again through the routes (AP-26: nothing here
-        touches the boot-critical or voice path).
-
-        The already-enabled case is dispatched as a NAMED BACKGROUND TASK and
-        never awaited here: opening the store can mean a Postgres connect, and
-        awaiting that inline put a remote host's latency (bounded, but still
-        seconds) directly into the startup sequence. The task is held on an
-        attribute so ``stop()`` can cancel it BEFORE the service shuts down —
-        otherwise a store could finish opening after the shutdown that was
-        supposed to close it, and leak the connection.
-        """
-        from jarvis.ultrawiki.service import UltraWikiService, set_active_service
-
-        service = UltraWikiService(self.cfg, bus=self.bus)
-        self.app.state.ultrawiki = service
-        # The brain's memory surfaces (wiki-recall, the context injector) live
-        # below the web layer and cannot read app.state — the module-level seam
-        # is how they reach the live service (runtime_refs pattern).
-        set_active_service(service)
-        if bool(getattr(getattr(self.cfg, "ultrawiki", None), "enabled", False)):
-            task = asyncio.create_task(
-                service.ensure_started(pipeline_grace_s=ULTRAWIKI_PIPELINE_GRACE_S),
-                name="ultrawiki-start",
-            )
-            self._ultrawiki_start_task = task
-            task.add_done_callback(self._on_ultrawiki_start_done)
-            logger.info("ultrawiki: store + pipeline start dispatched (mode enabled)")
-        else:
-            logger.info("ultrawiki: service constructed (mode disabled — dormant)")
-
-    def _on_ultrawiki_start_done(self, task: asyncio.Task[None]) -> None:
-        """Report the background start honestly — a silent failure would look
-        like a working mode with an empty store."""
-        if self._ultrawiki_start_task is task:
-            self._ultrawiki_start_task = None
-        if task.cancelled():
-            logger.info("ultrawiki: background start cancelled (shutdown)")
-            return
-        exc = task.exception()
-        if exc is not None:
-            logger.opt(exception=exc).warning(
-                "ultrawiki: background start failed — /api/ultrawiki reports it "
-                "as degraded until the next activation: {}",
-                exc,
-            )
-        else:
-            logger.info("ultrawiki: service started (mode enabled)")
-
     def _init_wiki_boot_index(self, *, background: bool = False) -> None:
         """Rebuild the derived FTS view against the active vault.
 
@@ -3672,40 +3576,6 @@ class WebServer:
         if backfill_task is not None:
             backfill_task.cancel()
             self._wiki_backfill_task = None
-
-        # UltraWiki: the service owns the ordering internally — cancel the
-        # pipeline + every sync task (cancel, then wait_for(2 s) each), THEN
-        # close its store. Runs before the store-dependent closes below so no
-        # loop ever ticks against a closed connection.
-        # First the boot-path start task: cancel-then-wait BEFORE shutdown, so
-        # a store cannot finish opening after the shutdown meant to close it.
-        ultrawiki_start_task = getattr(self, "_ultrawiki_start_task", None)
-        if ultrawiki_start_task is not None and not ultrawiki_start_task.done():
-            ultrawiki_start_task.cancel()
-            try:
-                await asyncio.wait_for(ultrawiki_start_task, timeout=2.0)
-            except (TimeoutError, asyncio.CancelledError):
-                pass
-            except Exception as exc:  # noqa: BLE001 — shutdown best-effort
-                logger.opt(exception=exc).debug("UltraWiki start-task cancel failed: {}", exc)
-        self._ultrawiki_start_task = None
-
-        # Clear the brain-facing seam BEFORE the shutdown, so no memory surface
-        # can start a search against a store that is about to close.
-        try:
-            from jarvis.ultrawiki.service import set_active_service
-
-            set_active_service(None)
-        except Exception as exc:  # noqa: BLE001 — shutdown best-effort
-            logger.opt(exception=exc).debug("UltraWiki seam clear failed: {}", exc)
-
-        ultrawiki_service = getattr(self.app.state, "ultrawiki", None)
-        if ultrawiki_service is not None:
-            try:
-                await ultrawiki_service.shutdown()
-            except Exception as exc:  # noqa: BLE001 — shutdown best-effort
-                logger.opt(exception=exc).debug("UltraWiki shutdown failed: {}", exc)
-            self.app.state.ultrawiki = None
 
         # Phase B5 wiki write-wiring: unsubscribe + drain in-flight rollup task.
         wiki_handle = getattr(self, "_wiki_integration_handle", None)

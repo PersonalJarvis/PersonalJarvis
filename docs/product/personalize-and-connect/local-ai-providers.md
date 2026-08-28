@@ -12,7 +12,7 @@ last_reviewed: 2026-08-09
 phase: "-"
 audience: end-user
 tags: [providers, local-ai, ollama, speech-recognition, text-to-speech, privacy, self-hosting]
-related: [providers-and-api-keys, dictation, voice-conversations, ultrawiki]
+related: [providers-and-api-keys, dictation, voice-conversations]
 ---
 
 Local AI can keep the Brain, speech recognition, or spoken voice on hardware
@@ -129,8 +129,8 @@ check its message and disk space, then select **Try again**.
   fallback is hosted, the request may leave the device. Ollama is therefore
   not an airplane-mode setting.
 
-Review every **Active** badge, including tools, Realtime, agents, wording, and
-UltraWiki, before calling a workflow fully local.
+Review every **Active** badge, including tools, Realtime, agents, and wording,
+before calling a workflow fully local.
 
 Weak laptops can use a trusted server. Headless hosts can serve text,
 but cannot offer normal voice without desktop audio devices.
@@ -148,24 +148,16 @@ of deleting runtime folders behind the running app.
 | **Dictation** | Whisper or Nemotron turns speech into text locally. | Polish and translation have a separate local or cloud choice. |
 | **Voice conversations** | Pipeline combines Voice Input, the Brain, and Voice Output. | Realtime bypasses all three selections. |
 | **API Keys & Providers** | Shows installation, readiness, server address, test, and active state. | Making one category local does not change the others. |
-| **UltraWiki** | Ollama can create embeddings and distill new items locally. | Its embedding model is separate from the Brain and never changes by fallback. Changing it rebuilds the index. |
 | **Privacy and local data** | Local inference reduces data sent to model vendors. | History, connected sources, tools, and LAN servers keep their own storage and network rules. |
-
-UltraWiki locks its embedding provider because different models produce
-incompatible search values. If local Ollama embeddings stop, semantic indexing
-pauses while keyword and time search remain available; the app does not
-silently mix in cloud embeddings.
 
 ## Check That It Works
 
 1. Test and activate the local Brain, then send a short message in **Chats**.
 2. In Pipeline, dictate one sentence and check its raw Dictation history.
 3. Start a new Pipeline voice conversation and request a short Piper reply.
-4. If UltraWiki uses Ollama, test its embedding slot under **UltraWiki >
-   Settings**.
 
-Test each path separately. A working Brain does not prove that speech, tools,
-or UltraWiki is local.
+Test each path separately. A working Brain does not prove that speech or
+tools are local.
 
 ## Troubleshooting
 
@@ -177,13 +169,12 @@ or UltraWiki is local.
 | Chat works, but an action or image fails | The model lacks tools or vision | Choose a capable Ollama model or another suitable provider. |
 | Replies are very slow | The model is too large for available memory or compute | Choose a smaller Brain, use Nemotron for faster speech, or move the server. |
 | Local speech is active but unused | Realtime or an old Pipeline session is still running | Select Pipeline, end the voice session, and start a new one. |
-| You still see network use | Another slot, fallback, tool, wording choice, or UltraWiki is hosted | Review all active cards and test the exact feature again. |
+| You still see network use | Another slot, fallback, tool, or wording choice is hosted | Review all active cards and test the exact feature again. |
 
 ## Next Steps
 
 - Read [Providers and API Keys](providers-and-api-keys) for capabilities and
   cross-family fallback.
 - Set up [Dictation](dictation) or [Voice Conversations](voice-conversations).
-- Configure local embeddings in [UltraWiki](ultrawiki).
 - Review [Privacy and Local Data](privacy-and-local-data) before treating a
   workflow as offline.

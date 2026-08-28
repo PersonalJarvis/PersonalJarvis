@@ -31,15 +31,10 @@ Design constraints, all of them load-bearing:
 
 Sources, in priority order — whichever exist, all optional:
 
-1. The UltraWiki entity profile, through a capability-probed public seam
-   (``service.user_profile_markdown()``). The seam does not exist yet; the
-   probe is a ``getattr`` + ``callable`` check, so this degrades to "absent"
-   until the UltraWiki side ships it. Nothing in this module reaches into an
-   UltraWiki store.
-2. The normal wiki's living profile page ``entities/<user-slug>.md``
+1. The wiki's living profile page ``entities/<user-slug>.md``
    (``jarvis.memory.wiki.profile``), resolved through the canonical vault-root
    resolver.
-3. ``data/core_memory.json``.
+2. ``data/core_memory.json``.
 
 Core memory is deliberately consumed LAST. Its content is already injected
 separately by the prompt builder, so it only fills whatever budget the wiki
@@ -388,41 +383,6 @@ def _read_text(path: Path) -> str:
         return ""
 
 
-def _ultrawiki_profile_markdown() -> str:
-    """The UltraWiki entity profile, when that store exposes one.
-
-    Capability probe, never a version check (AP-21): if the live service has a
-    callable ``user_profile_markdown`` returning text, that text wins; anything
-    else — no service, no seam, a raising seam, a non-string — is simply absent.
-    """
-    try:
-        from jarvis.ultrawiki.service import active_search_service  # noqa: PLC0415
-
-        service = active_search_service()
-    except Exception:  # noqa: BLE001 — an unavailable mode is not an error
-        return ""
-    if service is None:
-        return ""
-    seam = getattr(service, "user_profile_markdown", None)
-    if not callable(seam):
-        return ""
-    try:
-        value = seam()
-    except Exception:  # noqa: BLE001 — a broken seam degrades to absent
-        log.debug("identity card: UltraWiki profile seam failed", exc_info=True)
-        return ""
-    if isinstance(value, str):
-        return value
-    # An async seam would leak an un-awaited coroutine; close it and move on.
-    close = getattr(value, "close", None)
-    if callable(close):
-        try:
-            close()
-        except Exception:  # noqa: BLE001
-            log.debug("identity card: could not close a non-text seam result", exc_info=True)
-    return ""
-
-
 def _user_entity_slug(config: Any) -> str:
     raw = ""
     try:
@@ -476,15 +436,12 @@ def collect_sources(config: Any = None) -> tuple[str, Mapping[str, Any] | None, 
     install with none of them yields ``("", None, ())``.
     """
     labels: list[str] = []
-    profile = _ultrawiki_profile_markdown()
-    if profile.strip():
-        labels.append("ultrawiki:profile")
-    else:
-        path = _vault_profile_path(config)
-        if path is not None:
-            profile = _read_text(path)
-            if profile.strip():
-                labels.append(f"vault:entities/{path.stem}.md")
+    profile = ""
+    path = _vault_profile_path(config)
+    if path is not None:
+        profile = _read_text(path)
+        if profile.strip():
+            labels.append(f"vault:entities/{path.stem}.md")
 
     core: Mapping[str, Any] | None = None
     core_path = _core_memory_path(config)

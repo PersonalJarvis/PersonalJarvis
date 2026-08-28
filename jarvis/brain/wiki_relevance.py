@@ -1,7 +1,7 @@
 """Relevance gate for personal-memory context injection.
 
 Deterministic, LLM-free, IO-free guard that decides whether a turn should
-consult the personal memory (wiki vault today, UltraWiki later) at all, and
+consult the personal memory (the wiki vault) at all, and
 which retrieved hits are strong enough to be worth putting in front of the
 model. Pure regex + set arithmetic — no disk, no network, no provider call
 (AP-9/AP-11), so it is safe on the voice critical path and costs microseconds.

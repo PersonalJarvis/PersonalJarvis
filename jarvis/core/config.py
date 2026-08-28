@@ -1628,7 +1628,6 @@ class MemoryConfig(BaseModel):
     # jarvis/memory/. Default to the sqlite store so a fresh install does not
     # point the archival tier at a backend that no longer exists.
     archival_store: str = "sqlite"
-    embedding_model: str = "qwen3-embedding:4b"
     retention_days_recall: int = 90
     data_dir: str = "./data"
     wiki: WikiMemoryConfig = Field(default_factory=WikiMemoryConfig)
@@ -2674,119 +2673,6 @@ class WikiIntegrationConfig(BaseModel):
     # STT); those are frequently all "en"/"auto" even for a non-English
     # speaker, which is why this explicit list exists rather than a guess.
     search_alias_languages: list[str] = Field(default_factory=list)
-
-
-class UltraWikiConfig(BaseModel):
-    """UltraWiki — the semantic memory mode (design: UltraWiki/*.md).
-
-    ``enabled`` is the either-or mode switch of the Wiki section (decision
-    D-5): False = the normal wiki captures and answers, True = UltraWiki
-    does. Switching is non-destructive in both directions (D-9).
-
-    Provider slots follow the bring-your-own doctrine (D-2): empty string =
-    unconfigured, chosen deliberately in the activation wizard. The embedding
-    pair is semi-permanent (D-3 — changing it re-embeds the corpus), so it is
-    only ever written through the guarded settings route. The Postgres
-    connection string is a CREDENTIAL and lives in the secret chain under
-    ``ultrawiki_db_url`` (AP-12), never here.
-
-    ``extra="allow"`` is mandatory (AP-16): future sub-keys must survive the
-    self-mod pre-validate round-trip.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    enabled: bool = False
-    db_backend: str = "sqlite"  # "sqlite" (universal floor) | "postgres"
-    # The named storage preset behind ``db_backend`` — "sqlite" | "supabase" |
-    # "neon" | "postgres". Presentation only (jarvis.ultrawiki.provider_catalog
-    # maps it back to db_backend): it selects the card's help text, dashboard
-    # link and connect flow. Deliberately NOT a second functional enum, so the
-    # store keeps exactly two code paths (AP-4 / BUG-008).
-    storage_provider: str = "sqlite"
-    embedding_provider: str = ""  # "ollama" | "gemini" | "openai" | "voyage" | "mistral" | "cohere"
-    embedding_model: str = ""
-    distill_provider: str = ""  # empty = key-aware brain chain decides
-    distill_model: str = ""
-    rerank_provider: str = ""  # "llm" | "voyage" | "cohere"; empty = stage skipped
-    rerank_model: str = ""  # only for rerank_provider="llm"; empty = cheap tier
-    ollama_endpoint: str = "http://localhost:11434"
-
-    # Share of ONE core the ingest pipeline may occupy (0.01-1.0).
-    #
-    # Indexing a corpus is real work, but it is work nobody is waiting for,
-    # and it used to take whatever it could get: a full core, permanently,
-    # with the whole machine sluggish behind it. The worker now sleeps in
-    # proportion to how long each pass ran, so this is an honest ceiling on
-    # any CPU — the same guarantee on a headless VPS as on a workstation.
-    # Raise it to index faster on a machine nobody is sitting at; lower it if
-    # even this is noticeable. See jarvis.ultrawiki.pipeline.
-    cpu_share: float = 0.05
-
-    # How hard the background lane works at turning pictures into words and
-    # recordings into transcripts:
-    #   "frugal" (default) - one item at a time, and only while every other
-    #                        stage is idle. A photo library is tens of
-    #                        thousands of model calls, so this must never race
-    #                        the import it follows.
-    #   "eager"            - same lane, still one at a time, but it also runs
-    #                        while other stages have work.
-    #   "off"              - nothing is described or transcribed. Photos stay
-    #                        findable by filename, folder and capture date.
-    # Nothing here is a hard requirement: an install with no vision-capable
-    # provider simply keeps its backlog until one appears.
-    media_enrich: str = "frugal"
-
-    # Where the readable Markdown projection is written (the Obsidian vault).
-    # Empty = "wiki/ultrawiki-vault" under the data dir — beside the normal
-    # wiki's own vault and never inside it: UltraWiki writes to its own files,
-    # which is what keeps the mode switch reversible.
-    vault_path: str = ""
-
-    # -- ranking knobs (design: UltraWiki ranking pipeline, 2026-07-25) ------
-    # The absolute 0-10 relevance floor an UNSOLICITED surface (context
-    # injection, volunteered voice answers) must clear. Explicit searches --
-    # the Ask view, the REST route, the CLI -- never apply it: the user asked
-    # and sees the evidence. 0 disables the floor everywhere.
-    rerank_min_score: float = 4.0
-    # Per-leg RRF weights: score(d) = sum(weight / (60 + rank)). 1.0 each is
-    # the article's default; 0 silences a leg without removing it.
-    rrf_keyword_weight: float = 1.0
-    rrf_vector_weight: float = 1.0
-    # The episodic-event leg (jarvis/ultrawiki/events.py). Events are
-    # precomputed answers to "when did X happen", so they are weighted like
-    # any other list rather than allowed to veto one: consensus still decides
-    # (design doc 01, principle 5). 0 silences the leg.
-    rrf_event_weight: float = 1.0
-
-    # -- episodic events (design doc 01, uw_events) --------------------------
-    # Derive events from the distillation that already ran. Costs no extra
-    # model call and nothing on the read path; false stops the derivation and
-    # leaves existing rows untouched.
-    events_enabled: bool = True
-    # Age decay on the fused score: 0.5 ** (age_days / half_life). Stale
-    # answers lose when relevance is otherwise equal. 0 disables the decay
-    # (the epsilon-sized recency tiebreak still settles exact ties).
-    recency_half_life_days: float = 180.0
-
-    # -- word lexicon (jarvis/ultrawiki/lexicon.py) --------------------------
-    # The vocabulary index behind word search: every term the corpus uses,
-    # embedded into the SAME space as the passages, so one word can be
-    # expanded into the ~20 terms nearest it by meaning.
-    #
-    # false stops the background harvest and the term embedding. Word search
-    # keeps working — it falls back to neighbours derived from which words
-    # keep company with the query in real passages, which needs no provider
-    # at all — it is simply blunter. Existing rows are left untouched.
-    lexicon_enabled: bool = True
-    # Ceiling on how many terms ever carry a vector. The vocabulary itself is
-    # unbounded (a term still answers an exact lookup for free); this bounds
-    # the part that costs embedding calls, most-seen terms first. ~20 000
-    # covers the working vocabulary of a personal corpus in several languages
-    # at roughly the cost of embedding 20 000 very short texts, once.
-    lexicon_max_terms: int = 20000
-    # How many neighbours a word search asks for when the caller does not say.
-    word_search_neighbours: int = 20
 
 
 class WikiContextConfig(BaseModel):
@@ -4128,8 +4014,6 @@ class JarvisConfig(BaseModel):
     awareness: AwarenessConfig = Field(default_factory=AwarenessConfig)
     # Phase B5 — wiki write-wiring: SessionRollupWorker + WikiCurator bootstrap (Agent A).
     wiki_integration: WikiIntegrationConfig = Field(default_factory=WikiIntegrationConfig)
-    # UltraWiki — the semantic memory mode of the Wiki section (UltraWiki/*.md).
-    ultrawiki: UltraWikiConfig = Field(default_factory=UltraWikiConfig)
     # Phase B5 — CuratorScheduler (Agent D). Top-level field — Wave-2 cleanup task
     # is to move this into ``WikiIntegrationConfig.scheduler`` and migrate callers.
     wiki_scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)

@@ -171,46 +171,6 @@ Store one self-contained fact or summary through the guarded Wiki curator. The c
 - **Desktop UI section:** `memory`
 - **Voice example (EN):** "store that in my wiki"
 
-## `ultrawiki-ask` — Ask the knowledge base
-
-Answer one question from UltraWiki evidence and return the numbered source citations used for the answer.
-
-- **Endpoint:** `POST /api/ultrawiki/ask`
-- **Arguments:** `question` (string; required); `k` (integer; optional); `area` (string; optional)
-- **Requires confirmation:** no
-- **Desktop UI section:** `memory`
-- **Voice example (EN):** "ask my ultrawiki"
-
-## `people-list` — List the people I know
-
-List the people the knowledge base has identified, newest evidence merged, optionally filtered by a name or an identifier (an e-mail address, a phone number). Use this to answer 'who do you know about' and to look up which stored person a spoken name refers to.
-
-- **Endpoint:** `GET /api/ultrawiki/identity/people`
-- **Arguments:** `q` (string; optional); `limit` (integer; optional)
-- **Requires confirmation:** no
-- **Desktop UI section:** `memory`
-- **Voice example (EN):** "which people do you know about"
-
-## `person-profile` — Show what I know about one person
-
-Read one identified person in full: every known name, e-mail, phone and handle, which identities were merged into them, and which merge proposals are still open. Take the id from people-list; a merged-away id forwards to the surviving person.
-
-- **Endpoint:** `GET /api/ultrawiki/identity/people/{entity_id}`
-- **Arguments:** `entity_id` (integer; required)
-- **Requires confirmation:** no
-- **Desktop UI section:** `memory`
-- **Voice example (EN):** "what do you know about this person"
-
-## `identity-queue-list` — List possible duplicate people
-
-List the pairs the knowledge base suspects are the same person but refused to merge on its own, strongest evidence first. Nothing here has been merged — each pair waits for a human decision.
-
-- **Endpoint:** `GET /api/ultrawiki/identity/queue`
-- **Arguments:** `status` (one of: pending, confirmed, rejected, all; optional); `limit` (integer; optional)
-- **Requires confirmation:** no
-- **Desktop UI section:** `memory`
-- **Voice example (EN):** "which people might be the same person"
-
 ## `session-latest-turn` — Show latest voice turn
 
 Return the latest persisted user transcript and its complete voice turn, optionally restricted to one session.
@@ -416,7 +376,7 @@ Give ONE task to coding terminals — existing ones, brand-new ones, or both —
 Open one or more additional coding terminals in the open workspace, WITHOUT giving them work. Use this only when the user asks for bare panes ('spawn five new Claude Code terminals', 'open two more Codex terminals') — that is a request for workspace panes, never for a background worker. When the new panes are also meant to DO something, use 'agentic-ide-fanout' instead, which opens and briefs them in one step. Pass count, and agent only when the user named one — the accepted ids are listed on the parameter itself, and it is the only list that is right for this install. Omitted, the new panes run whatever the last pane runs. Their call-signs are their positions in the grid (T1, T2, …), assigned by the workspace — the reply's names are the only way to address them, and calling this again never produces a name you picked. CHECK THE REPLY: 'capped' true means the workspace maximum cut the request short — say how many actually opened and name them, never report the full number as done.
 
 - **Endpoint:** `POST /api/agentic-ide/terminals/batch`
-- **Arguments:** `count` (integer; required); `agent` (one of: claude, codex, glm, kimi, opencode; optional)
+- **Arguments:** `count` (integer; required); `agent` (one of: antigravity, claude, codex, cursor, deepseek-harness, glm, grok-build, kimi, opencode; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agentic-ide`
 - **Voice example (EN):** "spawn five new claude code terminals"
@@ -446,7 +406,7 @@ Rearrange the open workspace: put one terminal at another one's place. Nothing i
 Stop and remove every terminal of one coding CLI in the front workspace. Use only when the user explicitly asks to close all Claude Code or all Codex terminals; this is destructive and requires confirmation.
 
 - **Endpoint:** `DELETE /api/agentic-ide/terminals/agent/{agent}`
-- **Arguments:** `agent` (one of: claude, codex, glm, kimi, opencode; required)
+- **Arguments:** `agent` (one of: antigravity, claude, codex, cursor, deepseek-harness, glm, grok-build, kimi, opencode; required)
 - **Requires confirmation:** yes
 - **Desktop UI section:** `agentic-ide`
 - **Voice example (EN):** "close all codex terminals"

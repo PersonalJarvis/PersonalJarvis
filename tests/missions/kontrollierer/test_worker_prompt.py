@@ -109,7 +109,7 @@ def test_supervisor_boundary_names_the_knowledge_surface() -> None:
     """The directive is the one prompt chokepoint — a granted tool the model
     was never told about is dead weight (ADR-0030)."""
     text = SUPERVISOR_BOUNDARY_DIRECTIVE.lower()
-    for name in ("ultrawiki-search", "awareness-recall", "search_web", "contact-lookup"):
+    for name in ("awareness-recall", "search_web", "contact-lookup"):
         assert name in text
     # Honesty clause: gated-off tools are simply absent from the tool list,
     # and the model must not guess-call them (a blind call dirties the

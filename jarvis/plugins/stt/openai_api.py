@@ -236,7 +236,7 @@ class OpenAIWhisperAPI:
     ) -> Transcript:
         """Transcribe an ENCODED audio file (m4a, opus, mp3, mp4, wav, ...).
 
-        The optional capability the UltraWiki enrichment stage looks for. The
+        The optional capability the media enrichment stage looks for. The
         live microphone path delivers raw PCM, which is why everything else
         here wraps PCM in a WAV container — but an imported voice note arrives
         already encoded, and this endpoint accepts those formats directly.

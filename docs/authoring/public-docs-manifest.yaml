@@ -1,7 +1,7 @@
 version: 1
 language: en
 content_root: docs/product
-page_count: 50
+page_count: 48
 navigation_principle: reader-journey
 authoring_contract:
   audience: People using Personal Jarvis, including readers with no software background.
@@ -459,7 +459,6 @@ pages:
       - providers-and-api-keys
       - dictation
       - voice-conversations
-      - ultrawiki
     reader_level: beginner
     maturity: stable
 
@@ -565,57 +564,6 @@ pages:
       - desktop-app-tour
       - troubleshooting
       - app-command-reference
-    reader_level: beginner
-    maturity: stable
-
-  - section: Knowledge and sharing
-    section_order: 4
-    order: 6
-    slug: ultrawiki
-    file: docs/product/knowledge-and-sharing/ultrawiki.md
-    title: Use UltraWiki
-    diataxis: howto
-    summary: Build a searchable knowledge base from approved sources, ask cited questions, and understand where your data is processed.
-    authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/WikiView.tsx
-      - jarvis/ui/web/frontend/src/views/ultrawiki/UltraWikiPanel.tsx
-      - jarvis/ui/web/frontend/src/components/ultrawiki/AskPanel.tsx
-      - jarvis/ui/web/ultrawiki_routes.py
-      - jarvis/ui/web/ultrawiki_explore_routes.py
-      - jarvis/ui/web/ultrawiki_identity_routes.py
-      - jarvis/ultrawiki/service.py
-      - jarvis/ultrawiki/search.py
-      - jarvis/ultrawiki/answer.py
-    related:
-      - wiki-and-memory
-      - connect-ultrawiki-sources
-      - connect-obsidian
-      - privacy-and-local-data
-    reader_level: beginner
-    maturity: stable
-
-  - section: Knowledge and sharing
-    section_order: 4
-    order: 7
-    slug: connect-ultrawiki-sources
-    file: docs/product/knowledge-and-sharing/connect-ultrawiki-sources.md
-    title: Connect UltraWiki Sources
-    diataxis: howto
-    summary: Connect folders, exports, feeds, and supported services to UltraWiki, then control consent, refreshes, and copied data.
-    authoritative_sources:
-      - jarvis/ui/web/frontend/src/components/ultrawiki/SourcesPanel.tsx
-      - jarvis/ui/web/frontend/src/components/ultrawiki/ConnectorPicker.tsx
-      - jarvis/ui/web/ultrawiki_routes.py
-      - jarvis/ultrawiki/connectors/local_folder.py
-      - jarvis/ultrawiki/connectors/custom_source.py
-      - jarvis/ultrawiki/connectors/plugin_bridge.py
-      - jarvis/ultrawiki/media_enrich.py
-      - jarvis/ultrawiki/throughput.py
-    related:
-      - ultrawiki
-      - plugins
-      - connect-obsidian
-      - privacy-and-local-data
     reader_level: beginner
     maturity: stable
 

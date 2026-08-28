@@ -33,7 +33,7 @@ Agents area and Voice hub. This guide uses the neutral words **assistant**,
 |---|---|
 | Talk or type | Saved chats, Pipeline or Realtime voice conversations, and push-to-talk from the current conversation. |
 | Dictate into another app | Local or hosted speech recognition, a personal dictionary, optional wording cleanup, and recent dictation history. |
-| Build useful knowledge | A Normal Wiki for editable notes and an optional UltraWiki for approved sources, semantic search, people, exploration, and cited answers. |
+| Build useful knowledge | A Wiki of editable notes your assistant can search, maintain, and cite. |
 | Use tools safely | App commands, plugins, MCP connections, command-line tools, and supported computer control, all subject to capability and safety checks. |
 | Delegate longer work | Assistant-named Agents run larger missions separately, show progress, and return reviewed results or files. |
 | Work with coding agents | Agentic IDE opens one or more live terminals in a chosen workspace and can focus assistant replies on that workspace. |
@@ -83,7 +83,7 @@ it is not a claim that every enabled feature is offline.
   approving.
 - **Connections:** Plugins and MCP servers add access to other services. Their
   service-side permissions remain an outer boundary even after connection.
-- **Knowledge:** Normal Wiki files remain editable. UltraWiki reads only the
+- **Knowledge:** Wiki files remain editable. The vault reads only the
   sources you add and approve, and switching Wiki modes does not delete either
   store.
 
@@ -105,9 +105,9 @@ routine prompts, especially for account changes, messages, files, computer
 control, locks, heating, or other physical effects.
 
 The assistant does not bypass operating-system permissions, service policies,
-missing hardware, or unavailable models. It does not make every file, account,
-or folder an UltraWiki source; add and approve the sources you want. Chat
-history and other memory features keep their own records.
+missing hardware, or unavailable models. It does not read every file, account,
+or folder; add and approve what you want it to use. Chat history and other
+memory features keep their own records.
 
 ## Understand Platform Differences
 
@@ -137,7 +137,7 @@ about a particular GPU or operating system.
 4. Use [Tour the Desktop App](desktop-app-tour) to find Voice, Wiki, Tasks,
    Outputs, connections, and health indicators.
 5. Add one feature at a time. Try [Dictation](dictation), [Use
-   UltraWiki](ultrawiki), [Connect Home Assistant](connect-home-assistant), or
+   Home Assistant](connect-home-assistant), or
    [Agentic IDE](agentic-ide) only when it matches a real goal.
 
 This order makes failures easier to understand: first prove chat, then test the
