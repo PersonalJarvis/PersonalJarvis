@@ -290,17 +290,40 @@ async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 // Hooks
 // ---------------------------------------------------------------------------
 
-export function useCostSummary(filters: CostFilters) {
+/**
+ * Options for the summary query — shared by `useCostSummary` and the idle
+ * prefetch in `MainView`, so the warm-up fills the very key the section then
+ * reads. Spelling the key twice is how a prefetch silently warms nothing.
+ */
+export function costSummaryQueryOptions(filters: CostFilters) {
   const params = toParams(filters);
-  return useQuery({
+  return {
     queryKey: ["costs", "summary", params.toString()],
-    queryFn: ({ signal }) => getJson<CostSummary>(`/api/costs/summary?${params.toString()}`, signal),
+    queryFn: ({ signal }: { signal?: AbortSignal }) =>
+      getJson<CostSummary>(`/api/costs/summary?${params.toString()}`, signal),
+    staleTime: 10_000,
+  };
+}
+
+/** The daily ledger's options, on the same terms as the summary's. */
+export function costDailyQueryOptions(filters: CostFilters) {
+  const params = toParams(filters);
+  return {
+    queryKey: ["costs", "daily", params.toString()],
+    queryFn: ({ signal }: { signal?: AbortSignal }) =>
+      getJson<CostDailyLedger>(`/api/costs/daily?${params.toString()}`, signal),
+    staleTime: 10_000,
+  };
+}
+
+export function useCostSummary(filters: CostFilters) {
+  return useQuery({
+    ...costSummaryQueryOptions(filters),
     // Spend only moves when a turn finishes, and this is the most expensive
     // read in the app. At thirty seconds a slow answer was still in flight
     // when the next poll fired, so the section spent its whole life queueing
     // behind itself.
     refetchInterval: 120_000,
-    staleTime: 10_000,
     // Without this a filter click empties every table on the page while the
     // new numbers are fetched. Both sibling queries already keep the old
     // rows on screen; the summary is what the eye is actually on.
@@ -316,16 +339,12 @@ export function useCostSummary(filters: CostFilters) {
  * screen.
  */
 export function useCostDaily(filters: CostFilters) {
-  const params = toParams(filters);
   return useQuery({
-    queryKey: ["costs", "daily", params.toString()],
-    queryFn: ({ signal }) =>
-      getJson<CostDailyLedger>(`/api/costs/daily?${params.toString()}`, signal),
     // No poll of its own: this is the same underlying data as the summary,
     // re-read whenever the filters change. Two independent polls over the
     // two heaviest endpoints meant the section refetched everything twice
     // per cycle for numbers that move only when a turn ends.
-    staleTime: 10_000,
+    ...costDailyQueryOptions(filters),
     placeholderData: (prev) => prev,
   });
 }

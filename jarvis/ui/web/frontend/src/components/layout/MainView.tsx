@@ -9,6 +9,11 @@ import {
 } from "react";
 import { QueryClientContext } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
+import {
+  costDailyQueryOptions,
+  costSummaryQueryOptions,
+  EMPTY_FILTERS,
+} from "@/hooks/useCosts";
 import { overviewQueryOptions } from "@/hooks/useLocalModels";
 import { readLocalModelsSeed } from "@/lib/localModelsSeed";
 import { useEventStore } from "@/store/events";
@@ -207,6 +212,13 @@ function scheduleIdle(task: () => void): () => void {
  * stall this is meant to remove. A failed prefetch is ignored — the chunk is
  * simply fetched again on navigation, where Suspense handles it.
  */
+/**
+ * How long after mount the Spend warm-up runs. Past the boot burst — this app
+ * makes about thirty API calls before it settles — and well inside the time it
+ * takes anyone to read the home screen and reach for the sidebar.
+ */
+const SPEND_WARM_DELAY_MS = 2_500;
+
 function useIdleViewPrefetch(): void {
   // Optional on purpose: the shell renders without a QueryClient in some
   // tests, and the data warm-up is a bonus, never a requirement.
@@ -240,9 +252,31 @@ function useIdleViewPrefetch(): void {
     };
 
     cancelSlot = scheduleIdle(pump);
+
+    // Spend, on its own clock rather than at the end of that queue.
+    //
+    // It is the one section whose first read is measured in a second rather
+    // than milliseconds — it aggregates every store the app writes plus the
+    // coding-CLI transcripts — so it is the one where arriving to a finished
+    // page instead of a loading one is the whole difference. Queued behind
+    // twenty module imports, each waiting for its own idle slot, it had not
+    // run twenty-five seconds into a fresh bundle. A plain timer is late
+    // enough to stay out of the boot burst and early enough to beat a click.
+    // The section opens on `EMPTY_FILTERS`, so these are the keys it asks for.
+    const warmSpend = window.setTimeout(() => {
+      if (cancelled || !queryClient) return;
+      void queryClient
+        .prefetchQuery(costSummaryQueryOptions(EMPTY_FILTERS))
+        .catch(() => undefined);
+      void queryClient
+        .prefetchQuery(costDailyQueryOptions(EMPTY_FILTERS))
+        .catch(() => undefined);
+    }, SPEND_WARM_DELAY_MS);
+
     return () => {
       cancelled = true;
       cancelSlot?.();
+      window.clearTimeout(warmSpend);
     };
   }, [queryClient]);
 }
