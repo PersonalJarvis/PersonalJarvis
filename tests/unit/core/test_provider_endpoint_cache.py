@@ -41,6 +41,25 @@ def _write(path: Path, body: str, *, mtime_ns: int | None = None) -> None:
         os.utime(path, ns=(mtime_ns, mtime_ns))
 
 
+def test_the_config_model_is_not_built_to_resolve_a_route(monkeypatch):
+    """Even the first lookup must not construct ``JarvisConfig``.
+
+    Live 2026-08-28: the first ``claude_api._ensure_client`` rebuilt (then
+    deep-copied) the model under the GIL, the overlay stopped pumping, and
+    the window sat on "Not responding" with ``/api/health`` timing out.
+    """
+    calls: list[int] = []
+    real = config_module.load_config
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(config_module, "load_config", counting)
+    resolve_provider_endpoint("claude-api")
+    assert calls == [], "routing must read the TOML mapping, not the pydantic model"
+
+
 def test_the_config_model_is_not_rebuilt_on_a_repeat_call(monkeypatch):
     """The whole point: a second call must not go near ``load_config``."""
     resolve_provider_endpoint("claude-api")  # warm

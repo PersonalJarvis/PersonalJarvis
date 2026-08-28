@@ -46,9 +46,15 @@ def test_none_default_stays_none(monkeypatch):
     assert res.base_url is None
 
 
-def test_loads_config_when_not_injected(monkeypatch):
+def test_loads_config_when_not_injected(monkeypatch, tmp_path):
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: "sk-real")
-    monkeypatch.setattr(cfg, "load_config", lambda: _cfg_with("openai", "https://p/v1"))
+    target = tmp_path / "jarvis.toml"
+    target.write_text(
+        '[brain.providers.openai]\nbase_url = "https://p/v1"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cfg, "resolve_config_path", lambda: target)
+    cfg.clear_config_cache()
     res = resolve_provider_endpoint("openai", vendor_default_base_url=None)
     assert res.base_url == "https://p/v1"
 

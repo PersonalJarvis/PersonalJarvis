@@ -4409,27 +4409,6 @@ class JarvisConfig(BaseModel):
 _TOML_CACHE: dict[Path, tuple[tuple[int, int], dict[str, Any]]] = {}
 _TOML_CACHE_LOCK = threading.Lock()
 
-# Validated ``JarvisConfig`` for a (file identity, profile, env) triple.
-# Callers mutate the object they are handed (the reason the endpoint-route
-# cache exists instead of sharing one model), so this store is PRIVATE:
-# ``load_config`` hands out ``model_copy(deep=True)`` and never the cached
-# instance. The TOML cache stopped the parser stall; this stops the pydantic
-# half that froze the desktop on 2026-07-28 and again on 2026-08-28
-# (``active+gil`` in ``JarvisConfig.__init__`` from
-# ``claude_api._ensure_client`` → ``resolve_provider_endpoint``, window
-# "Not responding", ``/api/health`` timing out).
-_MODEL_CACHE: dict[
-    tuple[Path, tuple[int, int] | None, str | None, tuple[tuple[str, str], ...]],
-    JarvisConfig,
-] = {}
-_MODEL_CACHE_LOCK = threading.Lock()
-# Serialises the expensive ``JarvisConfig(**data)`` so a boot storm of
-# ``resolve_provider_endpoint`` callers cannot all rebuild the model at once
-# (the GIL stall that froze the window). Separate from ``_TOML_CACHE_LOCK``
-# so cache hits stay concurrent and lock order stays BUILD → CACHE, never
-# the reverse.
-_MODEL_BUILD_LOCK = threading.Lock()
-
 
 def _copy_toml_data(value: Any) -> Any:
     """Structural copy of a parsed TOML payload.
@@ -4465,12 +4444,9 @@ def clear_config_cache() -> None:
     other stale too — and a stale route sends a provider's traffic to an address
     the user has already changed.
     """
-    with _MODEL_BUILD_LOCK:
-        with _TOML_CACHE_LOCK:
-            _TOML_CACHE.clear()
-            _ENDPOINT_ROUTE_CACHE.clear()
-        with _MODEL_CACHE_LOCK:
-            _MODEL_CACHE.clear()
+    with _TOML_CACHE_LOCK:
+        _TOML_CACHE.clear()
+        _ENDPOINT_ROUTE_CACHE.clear()
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -4879,55 +4855,29 @@ def load_config(
         # names a file explicitly — a test, a doctor script — gets it read, not
         # rewritten. Process-local guard so repeated loads cost nothing.
         _heal_dictation_hotkeys_once(config_file)
+    if not config_file.exists():
+        # No config file → pure defaults (useful for tests)
+        data: dict[str, Any] = {}
+    else:
+        data = _load_toml(config_file)
 
-    identity: tuple[int, int] | None = None
-    try:
-        info = config_file.stat()
-        identity = (info.st_mtime_ns, info.st_size)
-    except OSError:
-        identity = None
-    profile_key = profile if profile is not None else os.environ.get("JARVIS_PROFILE")
-    env_sig = tuple(
-        sorted((key, value) for key, value in os.environ.items() if key.startswith("JARVIS__"))
-    )
-    cache_key = (config_file, identity, profile_key, env_sig)
-    with _MODEL_CACHE_LOCK:
-        cached = _MODEL_CACHE.get(cache_key)
-        if cached is not None:
-            return cached.model_copy(deep=True)
+    if profile is None:
+        profile = os.environ.get("JARVIS_PROFILE") or data.get("profile", {}).get("name")
 
-    with _MODEL_BUILD_LOCK:
-        with _MODEL_CACHE_LOCK:
-            cached = _MODEL_CACHE.get(cache_key)
-            if cached is not None:
-                return cached.model_copy(deep=True)
+    if profile and profile != "default":
+        profile_file = PROFILES_DIR / f"{profile}.yaml"
+        if profile_file.exists():
+            data = _deep_merge(data, _load_yaml(profile_file))
 
-        if not config_file.exists():
-            # No config file → pure defaults (useful for tests)
-            data: dict[str, Any] = {}
-        else:
-            data = _load_toml(config_file)
-
-        if profile is None:
-            profile = os.environ.get("JARVIS_PROFILE") or data.get("profile", {}).get("name")
-
-        if profile and profile != "default":
-            profile_file = PROFILES_DIR / f"{profile}.yaml"
-            if profile_file.exists():
-                data = _deep_merge(data, _load_yaml(profile_file))
-
-        # Deterministic winner for the worker-tier split-brain BEFORE env
-        # overrides land (env writes into brain.worker and wins regardless).
-        data = _dedupe_worker_tier_tables(data)
-        # Back-compat shim: copy old JARVIS__BRAIN__SUB_JARVIS__* to new
-        # JARVIS__BRAIN__WORKER__* if only the old names are set (process-local).
-        _migrate_worker_env_vars()
-        data = _apply_env_overrides(data)
-        data = _apply_instance_overrides(data)
-        built = JarvisConfig(**data)
-        with _MODEL_CACHE_LOCK:
-            _MODEL_CACHE[cache_key] = built
-            return built.model_copy(deep=True)
+    # Deterministic winner for the worker-tier split-brain BEFORE env
+    # overrides land (env writes into brain.worker and wins regardless).
+    data = _dedupe_worker_tier_tables(data)
+    # Back-compat shim: copy old JARVIS__BRAIN__SUB_JARVIS__* to new
+    # JARVIS__BRAIN__WORKER__* if only the old names are set (process-local).
+    _migrate_worker_env_vars()
+    data = _apply_env_overrides(data)
+    data = _apply_instance_overrides(data)
+    return JarvisConfig(**data)
 
 
 # Ports the dev instance shifts by ``InstanceIdentity.port_offset``: every
@@ -5747,13 +5697,13 @@ class _EndpointRoute:
 #: Reaching ``load_config()`` for it rebuilt the whole ``JarvisConfig`` model
 #: each time: 281 fresh objects per call, handed straight to the garbage
 #: collector. Measured live on 2026-07-28 and again on 2026-08-28: the backend
-#: thread sat ``active+gil`` inside ``JarvisConfig(**data)`` reached through
-#: exactly this function, and while it did, the Tk-drawn overlay stopped
-#: pumping and Windows marked the window "Not responding". The validated
-#: model is now remembered too (``_MODEL_CACHE``), but only privately —
-#: callers still get a deep copy, because a hundred sites mutate the object
-#: they are handed. The routing decision is small, immutable and derived
-#: only from the file, so it can be remembered without a copy.
+#: thread sat ``active+gil`` inside ``JarvisConfig(**data)`` (and, after a
+#: private-model cache, inside ``model_copy(deep=True)``) reached through
+#: exactly this function. Caching the model itself is not an option — a
+#: hundred sites mutate the object they are handed, and a deep copy of it
+#: froze the window just as hard. The routing decision is small, immutable
+#: and derived only from the TOML mapping, so it is remembered without
+#: constructing the model at all.
 _ENDPOINT_ROUTE_CACHE: dict[tuple[tuple[int, int] | None, str, str | None], _EndpointRoute] = {}
 
 
@@ -5771,6 +5721,32 @@ def _endpoint_route(
     return _EndpointRoute(base_url=override or vendor_default_base_url, via_proxy=False)
 
 
+def _endpoint_route_from_mapping(
+    data: dict[str, Any],
+    provider_id: str,
+    vendor_default_base_url: str | None,
+) -> _EndpointRoute:
+    """Same decision as ``_endpoint_route``, from the TOML mapping.
+
+    Used by the production cache so a provider lookup never constructs
+    ``JarvisConfig`` (281 pydantic objects, GIL). Live 2026-08-28: even a
+    ``model_copy(deep=True)`` of that object froze the window the same way.
+    """
+    team = data.get("team_proxy")
+    team_map = team if isinstance(team, dict) else {}
+    url = team_map.get("url")
+    local = team_map.get("local_providers") or ()
+    if team_map.get("enabled") and url and provider_id not in local:
+        return _EndpointRoute(base_url=f"{str(url).rstrip('/')}/p/{provider_id}", via_proxy=True)
+    brain = data.get("brain")
+    providers = brain.get("providers") if isinstance(brain, dict) else None
+    prov = providers.get(provider_id) if isinstance(providers, dict) else None
+    override = prov.get("base_url") if isinstance(prov, dict) else None
+    return _EndpointRoute(
+        base_url=override or vendor_default_base_url, via_proxy=False
+    )
+
+
 def _cached_endpoint_route(
     provider_id: str,
     vendor_default_base_url: str | None,
@@ -5782,8 +5758,9 @@ def _cached_endpoint_route(
     which is what ``config_writer`` announces after every write.
     """
     identity: tuple[int, int] | None = None
+    path = resolve_config_path()
     try:
-        info = resolve_config_path().stat()
+        info = path.stat()
         identity = (info.st_mtime_ns, info.st_size)
     except OSError:
         identity = None
@@ -5794,7 +5771,11 @@ def _cached_endpoint_route(
         if cached is not None:
             return cached
 
-    route = _endpoint_route(load_config(), provider_id, vendor_default_base_url)
+    if path.exists():
+        data = _apply_env_overrides(_load_toml(path))
+    else:
+        data = _apply_env_overrides({})
+    route = _endpoint_route_from_mapping(data, provider_id, vendor_default_base_url)
     if identity is not None:
         _ENDPOINT_ROUTE_CACHE[key] = route
     return route
