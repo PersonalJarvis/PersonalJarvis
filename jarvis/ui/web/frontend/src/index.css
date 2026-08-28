@@ -620,13 +620,39 @@ label,
 
        The mirror rule instead: the canvas becomes the ink (#F7F7F4), and the
        ground drops BELOW the document's darkest value rather than sitting on
-       it. A rail one step darker, a card one step lighter — same family as
-       the light theme, so toggling changes the value, not the temperature. */
-    --background: 60 5% 4%; /* #0A0A09 near-black, warm */
+       it — same family as the light theme, so toggling changes the value, not
+       the temperature.
+
+       --- The surface ramp, and why it is not the light one mirrored ---------
+       Every surface used to sit between 2 % and 12 % lightness, and the nav
+       column at 2 % was DARKER than the page at 4 %. On paper that reads as
+       "one step below"; in the dark it reads as nothing at all, because the
+       eye judges lightness relatively — the four points that separate 92 %
+       from 96 % are plainly visible, and the same four between 2 % and 6 %
+       are not (maintainer, 2026-08-28: "practically every section is the same
+       black").
+
+       So the dark ramp is WIDER than the light one, and the nav column moves
+       ABOVE the page rather than below it. In a dark theme, "one step off the
+       ground" means one step toward the light:
+
+         2 %   stage        full-bleed canvas behind the knowledge graphs
+         4 %   background   the work surface — the black
+         9 %   card         a card on that surface
+        13 %   sidebar      the nav column — Design.md `ink` #26251E, the grey
+        17 %   popover      menus, which must clear the nav column too
+        22 %   secondary    hover and active rows
+
+       Neighbours that can meet on screen are at least four points apart; the
+       nav column now separates from the work surface by nine. The sidebar
+       value is not invented — it is the Design.md's own darkest colour, which
+       is also the value this theme used to use as its background, and which
+       the maintainer correctly read as grey. */
+    --background: 50 8% 4%; /* #0A0A09 near-black, warm */
     --foreground: 60 16% 96%; /* #F7F7F4 — the canvas, inverted into ink */
-    --card: 60 2% 8%; /* #161615 */
+    --card: 50 7% 9%; /* #191815 */
     --card-foreground: 60 16% 96%;
-    --popover: 60 2% 8%;
+    --popover: 50 7% 17%;
     --popover-foreground: 60 16% 96%;
     /* #FFFFFF. The brand is whichever end of the value scale the ground is
        not. Here it does sit one step past --foreground (the canvas #F7F7F4),
@@ -634,9 +660,9 @@ label,
        theme has none above `ink` and keeps the two equal. 19.8:1. */
     --primary: 0 0% 100%;
     --primary-foreground: 60 5% 4%; /* the ground */
-    --secondary: 40 5% 12%; /* #201F1D recessed surface, hover */
+    --secondary: 48 7% 22%; /* #3C3A34 hover, active rows */
     --secondary-foreground: 60 16% 96%;
-    --muted: 40 5% 12%;
+    --muted: 48 7% 22%;
     --muted-foreground: 47 6% 58%; /* #9A978C */
     --accent: 0 0% 100%;
     --accent-foreground: 60 5% 4%;
@@ -646,10 +672,10 @@ label,
     --diff-add-bg: 40 5% 12%;
     --diff-del: 47 6% 58%;
     --diff-del-bg: 60 5% 3%;
-    --border: 60 4% 16%; /* #2A2A27 */
-    --input: 40 5% 12%;
+    --border: 48 6% 20%; /* #37352F */
+    --input: 48 7% 22%;
     --ring: 0 0% 100%;
-    --sidebar: 60 11% 2%; /* #050504 — a step below the ground */
+    --sidebar: 53 12% 13%; /* #25241D — Design.md `ink`, see the ramp note */
 
     --accent-rgb: 247 247 244;
     --scrim-rgb: 0 0 0;
@@ -663,7 +689,7 @@ label,
     --surface-wiki-pane-alpha: 0.36;
     --surface-wiki-stage-alpha: 0.34;
 
-    --stage-bg: 60 5% 4%;
+    --stage-bg: 50 8% 2%;
     --stage-dot-rgb: 255 255 255;
     --stage-dot-strong: 0.5;
     --stage-dot-soft: 0.35;
@@ -3219,8 +3245,10 @@ label,
     filter: none;
   }
 
-  /* The chrome gets a ground of its own on a flat colour: the nav column
-     one step below the page, the top bar on the page itself. */
+  /* The chrome gets a ground of its own on a flat colour: the nav column one
+     step OFF the page — below it on paper, above it in the dark (see the
+     surface ramp note in the token block) — and the top bar on the page
+     itself. */
   :root:not(.jarvis-wallpaper) .jarvis-nav-surface {
     background: hsl(var(--sidebar));
   }
