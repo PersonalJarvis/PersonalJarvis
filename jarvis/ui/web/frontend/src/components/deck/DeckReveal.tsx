@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
  *      corners;
  *   2. a beat later the card MOUNTS and its content wipes in AWAY from the
  *      orb — the centre column top-down, the left cards from their right
- *      edge, the right cards from their left (`revealWipeFor`) — with a gold
+ *      edge, the right cards from their left (`revealWipeFor`) — with an accent
  *      scan bar riding the front and a two-frame flicker, the way a hologram
  *      settles;
  *   3. the wipe lands with a lock flash, and the ghost frame fades once the

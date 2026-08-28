@@ -3,7 +3,7 @@
 This is the desktop twin of the in-app orb (``components/agentic/VoiceOrb.tsx``):
 a luminous, cloud-filled sphere made of softly evolving procedural weather
 rather than a glossy gradient ball. A low-resolution fractal field is colour
-mapped through the product's ivory / gold / amber palette and enlarged with
+mapped through the product's monochrome ramp and enlarged with
 interpolation, which is what produces organic depth without visible bands,
 outlines, rotating particles or image assets. Voice states change pace,
 breathing, turbulence and highlight energy; the colour identity stays stable.
@@ -38,12 +38,12 @@ import numpy as np
 from PIL import Image
 
 # --- Palette (identical to the in-app orb) ---------------------------------
-IVORY = (255.0, 250.0, 235.0)
-PALE_GOLD = (248.0, 226.0, 151.0)
-SIGNAL_GOLD = (231.0, 196.0, 110.0)
-AMBER = (210.0, 147.0, 24.0)
-DEEP_AMBER = (126.0, 66.0, 2.0)
-CLOUD_LIGHT = (255.0, 249.0, 216.0)
+CREST = (250.0, 250.0, 250.0)
+UPPER = (225.0, 225.0, 225.0)
+MID = (197.0, 197.0, 197.0)
+LOWER = (152.0, 152.0, 152.0)
+BASE = (74.0, 74.0, 74.0)
+CLOUD = (248.0, 248.0, 248.0)
 
 #: Field resolution. 48² samples is what keeps the whole renderer affordable
 #: next to speech; the sphere gets its softness from the upscale, not from
@@ -89,7 +89,7 @@ class Motion:
         self.voice_impact = voice_impact
         #: How far the cloud field is allowed to drag the COLOUR ramp out of
         #: its vertical order. At rest it only softens the horizon; while
-        #: thinking it is what makes the ivory, gold and amber visibly churn
+        #: thinking it is what makes the grey stops visibly churn
         #: through each other instead of sitting in bands.
         self.color_churn = color_churn
 
@@ -122,7 +122,7 @@ MOTIONS: dict[str, Motion] = {
     "listen": Motion(0.11, 0.035, 0.016, 0.72, 1.02, 0.98, 0.0, 0.34),
     # Thinking is the one state with nothing to hear, so it has to be the most
     # visibly BUSY: the field races, and the colour ramp churns hard enough
-    # that ivory, gold and amber run through each other (maintainer, 2026-08-06
+    # that the grey stops run through each other (maintainer, 2026-08-06
     # — "the colours mix and that is how it shows it is thinking").
     "think": Motion(0.95, -0.44, 0.010, 0.34, 1.85, 1.08, 0.0, 1.45),
     "speak": Motion(0.34, 0.085, 0.014, 0.82, 1.06, 1.0, 0.11, 0.45),
@@ -463,7 +463,7 @@ class VoiceOrbRenderer:
         )
         weather = cloud_field * 0.76 + detail * 0.24
 
-        # Where a pixel sits on the ivory→amber ramp. Warping it by the cloud
+        # Where a pixel sits on the crest→base ramp. Warping it by the cloud
         # field removes the synthetic horizon band at rest; opening the warp up
         # (``color_churn``) is what makes the palette visibly MIX rather than
         # sit in stripes, and the slow drift keeps that mixing in motion so a
@@ -474,23 +474,23 @@ class VoiceOrbRenderer:
         red, green, blue = self._palette(vertical)
 
         shadow = _smoothstep(0.48, 0.66, 1.0 - weather) * _smoothstep(0.28, 0.95, vertical) * 0.18
-        red = _mix(red, DEEP_AMBER[0], shadow)
-        green = _mix(green, DEEP_AMBER[1], shadow)
-        blue = _mix(blue, DEEP_AMBER[2], shadow)
+        red = _mix(red, BASE[0], shadow)
+        green = _mix(green, BASE[1], shadow)
+        blue = _mix(blue, BASE[2], shadow)
 
-        # Large cream masses form the soft, irregular clouds.
+        # Large pale masses form the soft, irregular clouds.
         cloud = _smoothstep(0.46, 0.64, weather) * (1.0 - vertical * 0.32)
         cloud_mix = cloud * 0.78 * motion.energy
-        red = _mix(red, CLOUD_LIGHT[0], cloud_mix)
-        green = _mix(green, CLOUD_LIGHT[1], cloud_mix)
-        blue = _mix(blue, CLOUD_LIGHT[2], cloud_mix)
+        red = _mix(red, CLOUD[0], cloud_mix)
+        green = _mix(green, CLOUD[1], cloud_mix)
+        blue = _mix(blue, CLOUD[2], cloud_mix)
 
         # A second, quieter field breaks up any remaining uniform areas.
         shimmer = _smoothstep(0.58, 0.76, warp_x * 0.55 + detail * 0.45)
         shimmer_mix = shimmer * 0.24 * motion.energy
-        red = _mix(red, PALE_GOLD[0], shimmer_mix)
-        green = _mix(green, PALE_GOLD[1], shimmer_mix)
-        blue = _mix(blue, PALE_GOLD[2], shimmer_mix)
+        red = _mix(red, UPPER[0], shimmer_mix)
+        green = _mix(green, UPPER[1], shimmer_mix)
+        blue = _mix(blue, UPPER[2], shimmer_mix)
 
         # Restrained spherical shading, with no dark outline or glossy rim.
         edge_shade = _smoothstep(0.7, 1.0, self._radius_field) * 0.1
@@ -508,12 +508,12 @@ class VoiceOrbRenderer:
 
     @staticmethod
     def _palette(vertical: np.ndarray):
-        """Four-stop vertical ramp: ivory → pale gold → signal gold → amber → deep."""
+        """Four-stop vertical ramp: crest → upper → mid → lower → base."""
         stops = (
-            (0.0, 0.22, IVORY, PALE_GOLD),
-            (0.22, 0.5, PALE_GOLD, SIGNAL_GOLD),
-            (0.5, 0.76, SIGNAL_GOLD, AMBER),
-            (0.76, 1.0, AMBER, DEEP_AMBER),
+            (0.0, 0.22, CREST, UPPER),
+            (0.22, 0.5, UPPER, MID),
+            (0.5, 0.76, MID, LOWER),
+            (0.76, 1.0, LOWER, BASE),
         )
         red = np.empty_like(vertical)
         green = np.empty_like(vertical)
@@ -602,11 +602,11 @@ class VoiceOrbRenderer:
         layer[..., 1] = self._color_key[1]
         layer[..., 2] = self._color_key[2]
         # Surviving pixels still carry a little of the falloff in their colour,
-        # so the thin outer reaches read as embers rather than as gold confetti.
+        # so the thin outer reaches read as embers rather than as bright confetti.
         amount = np.clip(strength[visible] / max(_AURA_MAX, 1e-6), 0.35, 1.0)
-        layer[visible, 0] = (AMBER[0] + (SIGNAL_GOLD[0] - AMBER[0]) * amount).astype(np.uint8)
-        layer[visible, 1] = (AMBER[1] + (SIGNAL_GOLD[1] - AMBER[1]) * amount).astype(np.uint8)
-        layer[visible, 2] = (AMBER[2] + (SIGNAL_GOLD[2] - AMBER[2]) * amount).astype(np.uint8)
+        layer[visible, 0] = (LOWER[0] + (MID[0] - LOWER[0]) * amount).astype(np.uint8)
+        layer[visible, 1] = (LOWER[1] + (MID[1] - LOWER[1]) * amount).astype(np.uint8)
+        layer[visible, 2] = (LOWER[2] + (MID[2] - LOWER[2]) * amount).astype(np.uint8)
         return layer
 
     def _compose(self, texture: Image.Image, radius: float, energy: float = 0.0) -> Image.Image:

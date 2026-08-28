@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
  * the corners.
  *
  * The middle is Gigi itself (`JarvisOrb`), moved by the real voice state,
- * with a soft gold glow throwing the dark silhouette forward. It was a PNG
+ * with a soft accent glow throwing the dark silhouette forward. It was a PNG
  * of a glowing sphere until 2026-08-20; the maintainer had asked repeatedly
  * for that picture to go and for the mascot to carry the product, and the
  * picture had earned it — its baked-in white halo read as a grey box on the
@@ -280,7 +280,7 @@ export function DeckOrb({
 /**
  * The orb — the part of the centre a press lands on.
  *
- * Back to front: a soft gold glow wider than the sphere (`.deck-orb-glow`,
+ * Back to front: a soft accent glow wider than the sphere (`.deck-orb-glow`,
  * keyed on the voice state), then the mascot itself (`JarvisOrb`).
  */
 function OrbFace({ voiceState, orbSize }: { voiceState: VoiceState; orbSize: number }) {

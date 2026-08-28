@@ -3,7 +3,7 @@
  *
  * The visual target is a luminous, cloud-filled presence rather than a glossy
  * gradient ball. A low-resolution fractal field is color-mapped through the
- * product's ivory, gold and amber palette, then enlarged with interpolation.
+ * product's monochrome ramp, then enlarged with interpolation.
  * That deliberate softness creates organic depth without visible bands,
  * outlines, rotating particles or image assets.
  *
@@ -28,14 +28,14 @@ interface Motion {
   breathHz: number;
   /** Strength of the domain-warped cloud shapes. */
   turbulence: number;
-  /** Brightness of the cream cloud highlights. */
+  /** Brightness of the pale cloud highlights. */
   energy: number;
   /** Strength of the assistant-speech envelope. */
   voiceImpact: number;
   /**
    * How far the cloud field may drag the COLOUR ramp out of its vertical
    * order. At rest it only softens the horizon; while thinking it is what
-   * makes ivory, gold and amber visibly churn through each other instead of
+   * makes the grey stops visibly churn through each other instead of
    * sitting in bands. Kept in step with the desktop twin (`ui/orb/voice_orb.py`).
    */
   colorChurn: number;
@@ -135,12 +135,12 @@ const LEVEL_SWELL = 0.1;
 
 type Rgb = readonly [number, number, number];
 
-const IVORY: Rgb = [255, 250, 235];
-const PALE_GOLD: Rgb = [248, 226, 151];
-const SIGNAL_GOLD: Rgb = [231, 196, 110];
-const AMBER: Rgb = [210, 147, 24];
-const DEEP_AMBER: Rgb = [126, 66, 2];
-const CLOUD_LIGHT: Rgb = [255, 249, 216];
+const CREST: Rgb = [250, 250, 250];
+const UPPER: Rgb = [225, 225, 225];
+const MID: Rgb = [197, 197, 197];
+const LOWER: Rgb = [152, 152, 152];
+const BASE: Rgb = [74, 74, 74];
+const CLOUD: Rgb = [248, 248, 248];
 // 48² pixels at 20 fps keeps this decorative renderer near 553k value-noise
 // samples per second, leaving the main thread available for terminal streaming.
 const TEXTURE_SIZE = 48;
@@ -257,7 +257,7 @@ function paintWeather(
       );
       const weather = cloudField * 0.76 + detail * 0.24;
 
-      // Where a pixel sits on the ivory→amber ramp. Warping it by the cloud
+      // Where a pixel sits on the crest→base ramp. Warping it by the cloud
       // field removes the synthetic horizon band at rest; opening the warp up
       // makes the palette visibly MIX rather than sit in stripes.
       const vertical = clamp((ny + 1) * 0.5 + (weather - 0.5) * churn + drift);
@@ -265,20 +265,20 @@ function paintWeather(
       let end: Rgb;
       let paletteMix: number;
       if (vertical < 0.22) {
-        start = IVORY;
-        end = PALE_GOLD;
+        start = CREST;
+        end = UPPER;
         paletteMix = vertical / 0.22;
       } else if (vertical < 0.5) {
-        start = PALE_GOLD;
-        end = SIGNAL_GOLD;
+        start = UPPER;
+        end = MID;
         paletteMix = (vertical - 0.22) / 0.28;
       } else if (vertical < 0.76) {
-        start = SIGNAL_GOLD;
-        end = AMBER;
+        start = MID;
+        end = LOWER;
         paletteMix = (vertical - 0.5) / 0.26;
       } else {
-        start = AMBER;
-        end = DEEP_AMBER;
+        start = LOWER;
+        end = BASE;
         paletteMix = (vertical - 0.76) / 0.24;
       }
       let red = mix(start[0], end[0], paletteMix);
@@ -287,23 +287,23 @@ function paintWeather(
 
       const shadow =
         smoothstep(0.48, 0.66, 1 - weather) * smoothstep(0.28, 0.95, vertical) * 0.18;
-      red = mix(red, DEEP_AMBER[0], shadow);
-      green = mix(green, DEEP_AMBER[1], shadow);
-      blue = mix(blue, DEEP_AMBER[2], shadow);
+      red = mix(red, BASE[0], shadow);
+      green = mix(green, BASE[1], shadow);
+      blue = mix(blue, BASE[2], shadow);
 
-      // Large cream masses form the soft, irregular clouds visible in the target.
+      // Large pale masses form the soft, irregular clouds visible in the target.
       const cloud = smoothstep(0.46, 0.64, weather) * (1 - vertical * 0.32);
       const cloudMix = cloud * 0.78 * motion.energy;
-      red = mix(red, CLOUD_LIGHT[0], cloudMix);
-      green = mix(green, CLOUD_LIGHT[1], cloudMix);
-      blue = mix(blue, CLOUD_LIGHT[2], cloudMix);
+      red = mix(red, CLOUD[0], cloudMix);
+      green = mix(green, CLOUD[1], cloudMix);
+      blue = mix(blue, CLOUD[2], cloudMix);
 
       // A second, quieter field breaks up any remaining uniform areas.
       const shimmer = smoothstep(0.58, 0.76, warpX * 0.55 + detail * 0.45);
       const shimmerMix = shimmer * 0.24 * motion.energy;
-      red = mix(red, PALE_GOLD[0], shimmerMix);
-      green = mix(green, PALE_GOLD[1], shimmerMix);
-      blue = mix(blue, PALE_GOLD[2], shimmerMix);
+      red = mix(red, UPPER[0], shimmerMix);
+      green = mix(green, UPPER[1], shimmerMix);
+      blue = mix(blue, UPPER[2], shimmerMix);
 
       // Restrained spherical shading, with no dark outline or glossy rim.
       const radius = Math.sqrt(nx * nx + ny * ny);

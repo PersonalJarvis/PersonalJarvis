@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
  *    scrolling streams (the reasoning trace, terminals).
  *
  * All of it is ONE SVG overlay drawn from the measured size, so the strokes
- * stay hairlines at any width, take their colour from theme tokens (gold on
+ * stay hairlines at any width, take their colour from theme tokens (the accent on
  * both grounds), and never hide the artwork behind the card. Nothing here is
  * decorative for its own sake: the tick rulers give the eye a scale, the
  * corner brackets say "this is a bounded instrument", the lamp says whether
@@ -48,7 +48,7 @@ export function useElementSize<T extends HTMLElement>(): [RefObject<T>, { w: num
 
 /**
  * A soft halo in the theme's own ground colour under every HUD stroke — the
- * SVG twin of the stage's text-shadow readability floor. Gold hairlines on a
+ * SVG twin of the stage's text-shadow readability floor. Accent hairlines on a
  * light theme over a dark picture (or the reverse) would otherwise vanish;
  * with the halo they read on any wallpaper in either appearance.
  */

@@ -233,7 +233,7 @@ export function DeckStandby({
     >
       <HudFrameOverlay variant="bracket" w={stage.w} h={stage.h} live />
 
-      {/* The launch: the whole stage flashes gold for a blink (CSS, on leaving). */}
+      {/* The launch: the whole stage flashes with the accent for a blink (CSS, on leaving). */}
       <div aria-hidden className="deck-launch-flash pointer-events-none absolute inset-0 bg-primary" />
 
       {/* The instrument: the ring with the orb in it, centred on the stage. */}
@@ -452,7 +452,7 @@ function BootTitle({ text, animate }: { text: string; animate: boolean }) {
  * Bezel, tick scale, the four gate arcs at the compass points (dashed while
  * pending, drawn solid when true, dim and short when honestly off), the
  * sweep while the wake word is being listened for, and the one-shot ping.
- * All strokes are theme gold under the HUD halo so they read on any
+ * All strokes are the theme accent under the HUD halo so they read on any
  * wallpaper in either appearance.
  */
 function StandbyRing({
