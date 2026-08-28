@@ -64,17 +64,23 @@ import { cn } from "@/lib/utils";
  * reaches the soft ends. That is the depth cue — the row looks lit from its
  * own centre line instead of flatly filled.
  *
- * ## The colour (maintainer, 2026-08-28)
+ * ## The value ramp (maintainer, 2026-08-28)
  *
- * A measured row runs along a lavender-to-blue ramp; everything unmeasured
- * stays neutral. That is not decoration but the same statement the shapes
- * make: hue appears exactly when the drawing has a real signal behind it,
- * and "ready", "thinking" and a speech we cannot hear stay in
- * `--muted-foreground`. The two hues are the design system's timeline
- * pastels — the palette reserved for in-product agent visualisation, which
- * is precisely what this row is — and they live as `--voice-wave-a/b` in
- * index.css with their own light-mode values, because a pastel tuned for
- * charcoal disappears on warm paper.
+ * No hue. A pastel ramp was tried here and rejected: the interface is black,
+ * white and grey, and a coloured row read as a different product bolted onto
+ * it. What the row needed was not colour but a GRADIENT, so it takes one
+ * along the value scale instead — `--muted-foreground` at the old end of the
+ * tape, `--primary` at the new one.
+ *
+ * That earns its place twice. It stops the row being one flat tone, and it
+ * says something true: the newest sound is the brightest, and every syllable
+ * dims as it travels left and ages out. Unmeasured phases stay flat
+ * `--muted-foreground` — they never reach the bright end, because nothing
+ * measured them.
+ *
+ * Both ends are existing theme tokens, so this introduces no colour
+ * vocabulary of its own and follows light/dark for free: on paper the ramp
+ * runs mid-grey to ink, the exact mirror of grey to white on charcoal.
  *
  * Canvas rather than DOM capsules: forty to sixty shapes repainted every
  * frame are cheap on a 2D context and would be layout work as elements.
@@ -258,7 +264,7 @@ export function StageWaveform({
       last = now;
       if (now - tokensAt > 1000) {
         const next = readTokens(canvas);
-        if (next.waveA !== tokens.waveA || next.muted !== tokens.muted) {
+        if (next.primary !== tokens.primary || next.muted !== tokens.muted) {
           tokens = next;
           fills = buildFills(ctx, width, height, tokens);
         }
@@ -455,12 +461,7 @@ function capsule(ctx: CanvasRenderingContext2D, x: number, y: number, w: number,
   ctx.fill();
 }
 
-type Tokens = {
-  waveA: string;
-  waveB: string;
-  muted: string;
-  error: string;
-};
+type Tokens = { primary: string; muted: string; error: string };
 type Fills = {
   /** Vertical light profile, colourless — the shape mask (see `paint`). */
   mask: string | CanvasGradient;
@@ -496,16 +497,16 @@ function buildFills(
     g.addColorStop(1, `hsl(0 0% 100% / ${CAP_ALPHA})`);
     mask = g;
   }
-  let wave: string | CanvasGradient = `hsl(${tokens.waveB})`;
+  let wave: string | CanvasGradient = `hsl(${tokens.primary})`;
   if (width > 1) {
     // Across the MIDDLE of the row, not its full width. A canvas gradient
     // clamps to its end colours outside the span, so the quiet rims stay
     // solid and the part a conversation actually occupies gets the whole
     // ramp. Anchored edge to edge, the centre only ever sampled the middle
-    // of the gradient and the row read as one flat colour.
+    // of the gradient and the row read as one flat tone.
     const g = ctx.createLinearGradient(width * RAMP_INSET, 0, width * (1 - RAMP_INSET), 0);
-    g.addColorStop(0, `hsl(${tokens.waveA})`);
-    g.addColorStop(1, `hsl(${tokens.waveB})`);
+    g.addColorStop(0, `hsl(${tokens.muted})`);
+    g.addColorStop(1, `hsl(${tokens.primary})`);
     wave = g;
   }
   return { mask, wave, muted: `hsl(${tokens.muted})`, error: `hsl(${tokens.error})` };
@@ -531,8 +532,7 @@ function readTokens(el: HTMLElement): Tokens {
     return raw || fallback;
   };
   return {
-    waveA: token("--voice-wave-a", "267 44% 76%"),
-    waveB: token("--voice-wave-b", "214 51% 75%"),
+    primary: token("--primary", "0 0% 100%"),
     muted: token("--muted-foreground", "47 5% 59%"),
     error: token("--destructive", "0 84% 60%"),
   };
