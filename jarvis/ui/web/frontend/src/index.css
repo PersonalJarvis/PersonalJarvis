@@ -452,7 +452,7 @@ label,
    * exist for; each is a bare `R G B` list meant for `rgb(var(--x) / <alpha>)`.
    */
   :root {
-    /* --- Light: warm paper, dark gold ------------------------------------
+    /* --- Light: warm paper, ink brand -------------------------------------
        The ground is a solid colour by default (2026-08-23, maintainer: the
        app no longer opens on a wallpaper). Warm paper rather than pure
        white, a white card ON the paper so surfaces read as surfaces, and
@@ -463,17 +463,20 @@ label,
     --card-foreground: 60 2% 8%;
     --popover: 0 0% 100%;
     --popover-foreground: 60 2% 8%;
-    /* #A86B00. The signal-yellow of the dark theme is 1.4:1 on paper — a
-       button nobody can read. This is the same gold the light terminal theme
-       already uses for its cursor, at 5.1:1 against --background. */
-    --primary: 38 100% 33%;
-    --primary-foreground: 0 0% 100%; /* white on gold */
+    /* #0A0A0A. The brand carries no hue any more (2026-08-28): a primary
+       action is simply the darkest thing on the page, and the lightest thing
+       on the dark one. Deliberately a step past --foreground (#141413) rather
+       than equal to it — the ink of running text and the voltage of the brand
+       are different jobs, and `text-primary` needs to keep SOME distance from
+       body copy now that it cannot use a colour to get it. 19.8:1 on paper. */
+    --primary: 0 0% 4%;
+    --primary-foreground: 48 33% 97%; /* the paper, not pure white */
     --secondary: 52 29% 95%; /* #F5F4ED recessed surface, hover */
     --secondary-foreground: 60 2% 8%;
     --muted: 52 29% 95%;
     --muted-foreground: 51 6% 40%; /* #6C6A5F */
-    --accent: 38 100% 33%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 0 0% 4%;
+    --accent-foreground: 48 33% 97%;
     --destructive: 6 63% 46%; /* #C0392B — the light terminal's red */
     --destructive-foreground: 0 0% 100%;
     /* Added / removed code in a chat diff. The red is the destructive one, so
@@ -484,15 +487,17 @@ label,
     --diff-del-bg: 6 60% 96%;
     --border: 50 21% 89%; /* #E8E6DC */
     --input: 52 29% 95%;
-    --ring: 38 100% 33%;
+    --ring: 0 0% 4%;
     --radius: 0.75rem;
     /* The navigation column's own ground — a shade below the paper, so the
        rail reads as a rail without a border doing all the work. */
     --sidebar: 48 25% 92%; /* #F0EEE6 */
 
     /* --- Effect channels (see the note above) ---------------------------- */
-    /* The accent as raw channels, for glows / grid lines / halos. */
-    --accent-rgb: 168 107 0;
+    /* The accent as raw channels, for glows / grid lines / halos. Now the ink
+       itself: on paper a "glow" means a faint darkening, not a light source,
+       so every grid and halo built from this reads as a pencil rule. */
+    --accent-rgb: 43 43 51;
     /* What a translucent overlay DARKENS with (backdrops, vignettes, shadows).
        Warm near-black rather than pure black, so a scrim over paper does not
        turn grey-blue. */
@@ -525,12 +530,12 @@ label,
        The full-bleed canvases behind the knowledge maps. They are not chrome:
        a force graph needs its own depth cue, so it gets its own ground, its
        own centre-of-gravity glow, and its own dot field. Light mode exposes
-       the wallpaper while retaining ink-dark stars and gold state cues. */
+       the wallpaper while retaining ink-dark stars and ink state cues. */
     --stage-bg: 45 40% 97%;
     --stage-dot-rgb: 43 43 51;
     --stage-dot-strong: 0.28;
     --stage-dot-soft: 0.16;
-    --stage-wash-rgb: 168 107 0;
+    --stage-wash-rgb: 43 43 51;
     --stage-wash-strength: 0.08;
     --stage-vignette-rgb: 43 40 32;
     --stage-vignette-strength: 0.1;
@@ -552,14 +557,17 @@ label,
     --viz-deliverable: 240 6% 38%; /* neutral — files left behind */
 
     /* Legacy aliases. Kept because they are referenced from a handful of
-       places that predate the token set; both now follow the theme. */
-    --jarvis-yellow: 168 107 0;
-    --jarvis-yellow-dim: 138 90 8;
+       places that predate the token set; all now follow the theme. The names
+       outlived the colour — nothing yellow is left in either — but they stay
+       spelled this way until the call sites are renamed in their own pass,
+       because a rename and a recolour in one commit hides both. */
+    --jarvis-yellow: 43 43 51;
+    --jarvis-yellow-dim: 108 106 95;
     --jarvis-grid: 44 18% 88%;
   }
 
   .dark {
-    /* --- Dark: warm charcoal, signal yellow — the product default --------
+    /* --- Dark: warm charcoal, paper-white brand — the product default ----
        Not pure black any more (2026-08-23): a warm charcoal ground, a rail
        one step darker, a card one step lighter. Same family as the light
        paper, so toggling the theme changes the value, not the temperature. */
@@ -569,14 +577,18 @@ label,
     --card-foreground: 48 23% 95%;
     --popover: 60 2% 18%;
     --popover-foreground: 48 23% 95%;
-    --primary: 50 100% 52%; /* #FFD60A signal-yellow */
-    --primary-foreground: 0 0% 4%; /* black on yellow */
+    /* #FFFFFF. The mirror of the light theme's #0A0A0A: the brand is whichever
+       end of the value scale the ground is not. A step past --foreground
+       (#F5F4EF) for the same reason — body ink and brand voltage stay
+       distinguishable without a hue to separate them. */
+    --primary: 0 0% 100%;
+    --primary-foreground: 60 3% 15%; /* the charcoal ground, not pure black */
     --secondary: 60 2% 21%; /* #363634 recessed surface, hover */
     --secondary-foreground: 48 23% 95%;
     --muted: 60 2% 21%;
     --muted-foreground: 47 5% 59%; /* #9C9A92 */
-    --accent: 50 100% 52%;
-    --accent-foreground: 0 0% 4%;
+    --accent: 0 0% 100%;
+    --accent-foreground: 60 3% 15%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 48 23% 95%;
     --diff-add: 145 55% 65%;
@@ -585,10 +597,10 @@ label,
     --diff-del-bg: 0 45% 12%;
     --border: 40 3% 23%; /* #3B3A38 */
     --input: 60 2% 21%;
-    --ring: 50 100% 52%;
+    --ring: 0 0% 100%;
     --sidebar: 30 3% 12%; /* #1F1E1D */
 
-    --accent-rgb: 255 214 10;
+    --accent-rgb: 245 244 239;
     --scrim-rgb: 0 0 0;
     --sheen-rgb: 255 255 255;
     --shell-rgb: 38 38 36;
@@ -604,7 +616,7 @@ label,
     --stage-dot-rgb: 255 255 255;
     --stage-dot-strong: 0.5;
     --stage-dot-soft: 0.35;
-    --stage-wash-rgb: 255 214 10;
+    --stage-wash-rgb: 245 244 239;
     --stage-wash-strength: 0.055;
     --stage-vignette-rgb: 0 0 0;
     --stage-vignette-strength: 0.62;
@@ -623,8 +635,8 @@ label,
     --viz-result: 152 40% 52%;
     --viz-deliverable: 0 0% 62%;
 
-    --jarvis-yellow: 255 214 10;
-    --jarvis-yellow-dim: 230 190 40;
+    --jarvis-yellow: 245 244 239;
+    --jarvis-yellow-dim: 156 154 146;
     --jarvis-grid: 0 0% 12%;
   }
 }
@@ -923,7 +935,7 @@ label,
 
   /* Accent spot glow — used as an absolute-positioned element. A blurred glow
      is additive light: it works by being BRIGHTER than its ground, which paper
-     already is. On light the same shape becomes a soft gold wash instead. */
+     already is. On light the same shape becomes a soft ink wash instead. */
   .jarvis-glow {
     background: radial-gradient(
       circle at center,
@@ -1171,7 +1183,7 @@ label,
   }
 
   /* The active-state washes (segment pills, "Coding mode" badge, selected
-     rows). Without the card glass underneath, a 15-25% gold wash over
+     rows). Without the card glass underneath, a 15-25% ink wash over
      artwork is no ground at all — the reported "active filter is
      invisible" symptom. */
   .jarvis-section-stage
@@ -1332,11 +1344,11 @@ label,
     color: hsl(var(--primary));
   }
 
-  /* The gold active pills that live in the CHROME (e.g. the "Coding mode"
+  /* The active pills that live in the CHROME (e.g. the "Coding mode"
      badge in the top bar) sit outside the section stage, so the stage's
      card-glass-under-tint rule cannot reach them. Same treatment, scoped to
-     light: the pill gets a real ivory chip under its gold wash instead of
-     15-25% gold over raw artwork. */
+     light: the pill gets a real ivory chip under its ink wash instead of
+     15-25% ink over raw artwork. */
   :root:not(.dark)
     :where(.jarvis-nav-surface, .jarvis-shell-surface)
     :where(button, a, span, div):where(
@@ -1544,7 +1556,7 @@ label,
 
   /* ===========================================================
      Reasoning-trace (chat thinking indicator)
-     A gold light band sweeps through the label text; the core orb
+     A bright band sweeps through the label text; the core orb
      pulses with two expanding rings; the card glow breathes.
      =========================================================== */
   @keyframes thinking-shimmer {
@@ -1556,8 +1568,8 @@ label,
     }
   }
   .thinking-shimmer {
-    /* The travelling band is the ACCENT, not a fixed pale yellow: on paper a
-       #ffe552 highlight passing over grey text is lighter than the text it is
+    /* The travelling band is the ACCENT, not a fixed pale tint: on paper a
+       light highlight passing over grey text is lighter than the text it is
        meant to light up, so the sweep reads as a gap rather than a shine. */
     background: linear-gradient(
       90deg,
@@ -1640,16 +1652,20 @@ label,
     animation: jarvis-spin-slow 40s linear infinite;
   }
 
-  /* Text gradient for the hero. Both stops are derived from the accent so the
-     headline stays readable on either ground — on paper the ramp runs from the
-     gold DOWN into a deeper bronze, because a gradient that brightens toward
-     white is an invisible headline. */
+  /* Text gradient for the hero. Monochrome, the old ramp collapsed: its three
+     stops were all derived from --primary, which is now one end of the value
+     scale, so primary -> primary-mixed-with-foreground came out as white on
+     white. The ramp therefore runs the only direction a hueless palette has —
+     full accent DOWN into the muted ink — which reads as a headline catching
+     light on both grounds instead of a flat fill.
+     (Class name kept: renaming it would touch every call site, and a rename
+     buried inside a recolour hides both.) */
   .text-gradient-yellow {
     background: linear-gradient(
       135deg,
-      hsl(var(--primary) / 0.82) 0%,
-      hsl(var(--primary)) 50%,
-      color-mix(in srgb, hsl(var(--primary)) 72%, hsl(var(--foreground))) 100%
+      hsl(var(--primary)) 0%,
+      hsl(var(--primary)) 45%,
+      hsl(var(--muted-foreground)) 100%
     );
     -webkit-background-clip: text;
     background-clip: text;
@@ -2289,7 +2305,7 @@ label,
      comes up, a gate's arc draws in when that gate turns true, the
      sweep turns only while the wake word is really being listened
      for, and the ping fires once at the moment the boot is done.
-     Colours are theme tokens (gold on both grounds). Reduced motion
+     Colours are theme tokens (the accent on both grounds). Reduced motion
      stops all of it — the still picture carries the same facts.
      =========================================================== */
   .deck-ring-tick[data-ignite="true"] {
@@ -2421,9 +2437,9 @@ label,
      while the main thread is busy mounting the board (the framer
      beats froze and jumped there, seen 2026-08-19). The timings
      mirror HANDOFF: flare 0.6 s, wave 0.95 s (+0.14 s echo), ring
-     0.62 s. Gold from the theme tokens on both grounds.
+     0.62 s. The accent from the theme tokens on both grounds.
      =========================================================== */
-  /* the stage flashes gold for a blink */
+  /* the stage flashes with the accent for a blink */
   .deck-launch-flash {
     opacity: 0;
   }
@@ -2876,7 +2892,7 @@ label,
 
 @layer components {
   /*
-   * Unfinished material in the UltraWiki intake bar. The texture says "there
+   * Unfinished material in an intake bar. The texture says "there
    * is work left here"; the ANIMATION says "and it is moving right now", so
    * it is applied separately (.uw-hatch-live) and only when the backend
    * reports the pipeline actually processing. A hatch scrolling over a paused
@@ -2995,7 +3011,7 @@ label,
     background: transparent;
   }
 
-  /* UltraWiki wraps both projections in one stage. Clear its decorative
+  /* A stage that wraps both projections. Clear its decorative
      layers only for the spatial view so the flat map keeps its depth cues. */
   .jarvis-section-stage .uw-stage[data-dimension="3d"] {
     background: transparent;
