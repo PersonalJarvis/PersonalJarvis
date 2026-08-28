@@ -182,9 +182,53 @@ def disable_windows_app_ghosting() -> bool:
     return True
 
 
+_WM_NULL = 0x0000
+
+
+def thread_message_loop_wake_supported() -> bool:
+    """True where :func:`wake_thread_message_loop` can actually wake a thread.
+
+    Only Windows has a per-thread message queue that a blocked ``GetMessage``
+    waits on; the X11 and Aqua notifiers wait on a socket/pipe and a run loop
+    respectively, and neither has shown the lost-timer sleep this call exists
+    for. Callers use this to skip the waker thread entirely instead of running
+    a loop that can never act.
+    """
+    return sys.platform == "win32"
+
+
+def wake_thread_message_loop(native_thread_id: int) -> bool:
+    """Make a thread blocked in ``GetMessage`` return once, without side effects.
+
+    Posts ``WM_NULL`` — a message every window procedure ignores — to the
+    thread's queue with ``PostThreadMessageW``. The one thing it changes is that
+    the thread's blocking ``GetMessage`` returns, which lets an event loop that
+    sits on top of it (Tcl's Windows notifier, for the Jarvis Bar) run its
+    overdue timers. The Jarvis Bar's Tk thread was found asleep in exactly that
+    call with every ``after`` chain armed and none firing: Tcl's timer wake-up
+    had been lost once, and nothing else on a settled idle bar generates a
+    message, so the bar stayed frozen on its idle pill for the rest of the
+    session (BUG-202). One posted message revived it.
+
+    Non-blocking and never raises. Returns ``True`` when the message was
+    queued, ``False`` off Windows, when the thread has no message queue yet, or
+    when the call could not be made.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes  # noqa: PLC0415 — Windows-only, keep it off the import floor
+
+        return bool(ctypes.windll.user32.PostThreadMessageW(int(native_thread_id), _WM_NULL, 0, 0))
+    except Exception:  # noqa: BLE001 — a failed nudge is reported, never raised
+        return False
+
+
 __all__ = [
     "NO_WINDOW_CREATIONFLAGS",
     "disable_windows_app_ghosting",
     "ensure_standard_streams",
     "resolve_executable",
+    "thread_message_loop_wake_supported",
+    "wake_thread_message_loop",
 ]

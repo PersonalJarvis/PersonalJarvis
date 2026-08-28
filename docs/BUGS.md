@@ -14234,3 +14234,69 @@ a side effect, which is worth ~1 more call per minute under Groq's
 **Related.** BUG-200 (the polish/Prompt Mode pointer under "where to look
 first"); the memory note that Groq's TPM tier caps Prompt Mode at a few
 calls per minute before the chain crosses families.
+
+## BUG-202: the Jarvis Bar stopped reacting — "Hey Jarvis" was answered by voice, dictation delivered text, and the pill stayed collapsed through all of it (HIGH, FIXED 2026-08-28)
+
+**Symptom.** Screenshot 16:03 (`.jarvis/drops/20260828-160318-*.png`): the
+native bar on its resting outline pill. The log for the same minutes shows a
+complete voice turn — `vosk-kws: WAKE fired` 16:02:16, `OrbBridge._on_state:
+LISTENING → CONNECTING → LISTENING → THINKING → SPEAKING`, `_on_audio_out_first
+→ speaking overlay + mouth` — and five hold-key dictations after it, every one
+transcribed and delivered (3, 449, 1 933, 888, 117 chars). The bridge received
+every event and called `show("listen")` on the bar. Nothing was drawn.
+
+**Cause.** The bar's Tk thread was asleep, not dead. `py-spy dump --native` on
+the live app showed thread `jarvisbar-tk-mainloop` in
+`Tcl_DoOneEvent → Tcl_WaitForEvent → GetMessageW`, and a 10 s sample at 1 kHz
+(10 000 samples of that thread) caught it in `mainloop` every single time —
+never in `_schedule_frame`, `_schedule_frame_watchdog`, `_schedule_ui_queue`,
+the z-order guard or the cursor-monitor guard. All five `after` chains were
+armed (nothing had called `stop()`, no "re-arm skipped" warning in the log) and
+none fired: Tcl's Windows notifier had lost the timer wake-up that returns from
+`GetMessage`, once. On a bar whose idle pill had settled (the 2026-08-22 CPU
+diet skips repaints once idle is static) no paint, move or hover produced any
+other message, so the wait never ended. `show("listen")` set `_mode` — the
+frame loop reads it directly — but no frame ran to draw it. The in-Tk watchdog
+of BUG-032 sits in the same timer queue and slept with it.
+
+Proof of the mechanism: posting `WM_NULL` to the bar's window from another
+process (`PostMessageW`, 75 messages over 3 s) put the thread back into its
+callbacks immediately (17 frame samples, 2 watchdog, 3 UI-queue in 2 s), and
+after the posting stopped the loop kept ticking on its own (40 callback samples
+in the next 3 s, 41 in a sample minutes later). One message was the whole cure.
+
+Not the cause, checked on the way: today's Ink & Paper commits touched no
+Python under `jarvis/ui/jarvisbar/` (last change 2026-08-27); no second bar
+window existed (a sibling session's `pytest` run had booted a full desktop app
+with a real bar at 15:36, but its window was gone); `.venv` imports the repo
+tree; the working-tree edits to `audio/capture.py` / `speech/pipeline.py` do
+not touch the level feed; the network was up (Groq answered every dictation).
+
+**Fix.** A wake-up that does not depend on the Tk thread's own timers.
+
+- `process_utils.wake_thread_message_loop(native_thread_id)` posts `WM_NULL`
+  with `PostThreadMessageW` — non-blocking, ignored by every window procedure,
+  and enough to return from `GetMessage` so Tcl runs its overdue timers.
+  `thread_message_loop_wake_supported()` is the capability probe: only a
+  per-thread message queue can be woken this way, so off Windows both are
+  quiet no-ops and no waker thread is started (the X11/Aqua notifiers wait on
+  a socket/pipe and a run loop and have not shown this sleep).
+- `JarvisBarOverlay` records the Tk thread's OS id at start and runs a daemon
+  `jarvisbar-loop-waker` OUTSIDE Tk: every 0.5 s it reads the frame heartbeat
+  `_last_frame_ns` (stamped on every tick, including skipped ones) and posts
+  one wake-up when it is older than 1 s, rate-limited to one per second, with
+  one warning per sleep and an info line when the loop ticks again.
+- `show()` calls the same check with a 250 ms threshold before enqueueing, so
+  a wake reveal after a sleep is drawn on the next tick instead of waiting for
+  the poll.
+
+Tests: `tests/unit/ui/jarvisbar/test_loop_waker.py` (kick on a stale
+heartbeat, none on a fresh one, hold-off before the first frame, one wake per
+window, sleep counter reset on recovery, nothing after `stop()`, `show()` wakes
+at once, the helper and the waker thread are no-ops off Windows, a dead thread
+id reports `False` on Windows).
+
+**Related.** BUG-032 (the in-Tk revival watchdog — still right for a loop that
+died while the thread runs; this is the case where the thread itself waits).
+The `disable_windows_app_ghosting` note in `process_utils` describes the other
+face of a non-pumping Tk thread (the black box around the pill).

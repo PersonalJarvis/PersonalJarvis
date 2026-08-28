@@ -104,6 +104,21 @@ AUDIBLE_HOLD_S = 0.5
 WATCHDOG_INTERVAL_MS = 1000
 FRAME_STALL_THRESHOLD_NS = 2_000_000_000  # 2 s of silence ⇒ the loop is dead
 
+# Loop waker (BUG-202). The watchdog above shares the Tk thread's timer queue
+# with the loop it guards, so it cannot help when the THREAD is the thing that
+# stopped: the Tk mainloop was found asleep in ``GetMessage`` with every after
+# chain armed and none firing — Tcl's Windows notifier had lost its timer
+# wake-up once, and a settled idle bar generates no other message that would
+# return from that wait. From then on ``show("listen")`` set the mode but no
+# frame ever drew it: "Hey Jarvis" answered by voice while the pill stayed
+# collapsed. The cure was one posted message, so a small daemon thread OUTSIDE
+# Tk watches the same heartbeat and posts one whenever it goes stale, and
+# ``show()`` posts at once so a wake reveal never waits for the poll. Both are
+# quiet no-ops where the platform has no per-thread message queue.
+LOOP_WAKER_POLL_S = 0.5
+LOOP_ASLEEP_THRESHOLD_NS = 1_000_000_000  # 1 s without a tick ⇒ the Tk thread is asleep
+SHOW_WAKE_THRESHOLD_NS = 250_000_000  # a reveal after 250 ms of silence kicks at once
+
 # Frame pacing (BUG: "JarvisBar stutters" forensic, 2026-07-10). A 41s GIF
 # capture frame-diffed to only ~5 visual updates/second on average, in a
 # burst-then-freeze pattern (freezes up to 1.25s). Measured root causes, on
@@ -438,6 +453,13 @@ class JarvisBarOverlay:
         # revival watchdog compares against this to tell a living loop from a
         # silently-dead one. 0 = "no frame has run yet" → the watchdog holds off.
         self._last_frame_ns = 0
+        # Loop waker state (BUG-202): the Tk thread's OS thread id (the address
+        # a wake-up message is posted to), the monotonic_ns() of the last kick
+        # (rate limit), and how many kicks the current sleep has taken (one
+        # warning per sleep, not one per poll).
+        self._tk_native_thread_id: int | None = None
+        self._last_wake_ns = 0
+        self._sleep_kicks = 0
         # Idle-static skip bookkeeping (see _IDLE_SETTLE_TICKS docstring above
         # _schedule_frame): tracks how many consecutive ticks have shared the
         # same (effective_mode, hovered, muted) key, so a settled idle pill's
@@ -510,6 +532,10 @@ class JarvisBarOverlay:
         self._mode = mode
         if self._root is None:
             return
+        # A reveal is the moment the user is looking: if the Tk thread has
+        # gone quiet, wake it now rather than at the waker's next poll, so the
+        # mode just set is drawn on the very next tick (BUG-202).
+        self._kick_if_asleep(threshold_ns=SHOW_WAKE_THRESHOLD_NS)
         # Keep accepting state updates while boot is warming so release can show
         # the latest correct mode, but never map the native window before the
         # voice-usable signal. This guard closes the historical bypass where a
@@ -714,6 +740,8 @@ class JarvisBarOverlay:
             log.debug("jarvisbar DPI-awareness setup skipped", exc_info=True)
 
         self._tk_thread_id = threading.get_ident()
+        # The OS-level id is what a wake-up message is addressed to (BUG-202).
+        self._tk_native_thread_id = threading.get_native_id()
 
         # Some window managers map Tk's default-size root eagerly. Hide it
         # before assigning ``self._root`` or applying any styles so that stale
@@ -865,6 +893,7 @@ class JarvisBarOverlay:
         self._schedule_frame()
         self._schedule_ui_queue()
         self._schedule_frame_watchdog()  # independent anti-freeze revival loop
+        self._start_loop_waker()  # outside Tk: wakes the thread itself (BUG-202)
         self._schedule_z_order_guard()
         self._schedule_cursor_monitor_guard()  # follow the mouse across monitors
         if not self._should_start_withdrawn():
@@ -1435,6 +1464,87 @@ class JarvisBarOverlay:
                     self._root.after(WATCHDOG_INTERVAL_MS, self._schedule_frame_watchdog)
                 except Exception:  # noqa: BLE001
                     log.warning("JarvisBar frame watchdog re-arm skipped", exc_info=True)
+
+    # ------------------------------------------------------------------ #
+    # Loop waker — lives OUTSIDE the Tk thread (BUG-202)                  #
+    # ------------------------------------------------------------------ #
+    def _wake_tk_loop(self) -> bool:
+        """Post one no-op message to the Tk thread so a blocked wait returns."""
+        tid = getattr(self, "_tk_native_thread_id", None)
+        if tid is None:
+            return False
+        from jarvis.core.process_utils import wake_thread_message_loop
+
+        return wake_thread_message_loop(tid)
+
+    def _kick_if_asleep(
+        self,
+        *,
+        threshold_ns: int = LOOP_ASLEEP_THRESHOLD_NS,
+        now_ns: int | None = None,
+    ) -> bool:
+        """Wake the Tk thread when the frame heartbeat is older than ``threshold_ns``.
+
+        Safe to call from any thread and at any rate: it reads two integers,
+        posts at most one message per ``LOOP_ASLEEP_THRESHOLD_NS`` window, and
+        holds off entirely before the first frame has been stamped (the loop is
+        still booting, not asleep). Returns ``True`` when a wake-up was posted.
+
+        A wake that does not bring the heartbeat back means the thread is not
+        merely waiting but busy or truly hung; the poll keeps kicking at the
+        rate limit, warns once per sleep, and says when the loop is back.
+        """
+        if not self._running or self._root is None:
+            return False
+        last = getattr(self, "_last_frame_ns", 0)
+        if not last:
+            return False
+        now = time.monotonic_ns() if now_ns is None else now_ns
+        age = now - last
+        if age < threshold_ns:
+            kicks = getattr(self, "_sleep_kicks", 0)
+            if kicks:
+                self._sleep_kicks = 0
+                log.info("JarvisBar Tk loop is ticking again after %d wake-up(s).", kicks)
+            return False
+        if (now - getattr(self, "_last_wake_ns", 0)) < LOOP_ASLEEP_THRESHOLD_NS:
+            return False
+        self._last_wake_ns = now
+        if not self._wake_tk_loop():
+            return False
+        self._sleep_kicks = getattr(self, "_sleep_kicks", 0) + 1
+        if self._sleep_kicks == 1:
+            log.warning(
+                "JarvisBar Tk loop asleep for %.1fs (every timer armed, none firing) — "
+                "posted a wake-up from outside Tk.",
+                age / 1e9,
+            )
+        return True
+
+    def _loop_waker_run(self) -> None:
+        while self._running:
+            time.sleep(LOOP_WAKER_POLL_S)
+            try:
+                self._kick_if_asleep()
+            except Exception:  # noqa: BLE001 — the waker must outlive any one check
+                log.debug("JarvisBar loop waker check failed", exc_info=True)
+
+    def _start_loop_waker(self) -> None:
+        """Start the daemon that wakes a sleeping Tk thread; a no-op elsewhere.
+
+        Only a platform with a per-thread message queue can be woken this way
+        (see ``process_utils.thread_message_loop_wake_supported``); on the
+        others the X11/Aqua notifiers have not shown the lost-timer sleep, so
+        no thread is started rather than one that could never act.
+        """
+        from jarvis.core.process_utils import thread_message_loop_wake_supported
+
+        if not thread_message_loop_wake_supported():
+            log.debug("JarvisBar loop waker not started: no thread message queue here")
+            return
+        threading.Thread(
+            target=self._loop_waker_run, name="jarvisbar-loop-waker", daemon=True
+        ).start()
 
     def _schedule_z_order_guard(self) -> None:
         """Keep a mapped bar above apps that are opened after it.
