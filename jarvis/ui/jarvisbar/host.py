@@ -104,6 +104,8 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
         _call(surface, "set_level", float(msg.get("level", 0.0)))
     elif op == "set_muted":
         _call(surface, "set_muted", bool(msg.get("muted", False)))
+    elif op == "set_prompt_mode":
+        _call(surface, "set_prompt_mode", bool(msg.get("enabled", False)))
     elif op == "set_size_scale":
         _call(surface, "set_size_scale", float(msg.get("scale", 1.0)))
     elif op == "set_follow_cursor":
@@ -219,6 +221,7 @@ class _EchoBar:
         self._stop_evt.set()
 
     def set_on_mute_toggle(self, cb: Any) -> None: ...
+    def set_on_prompt_mode_toggle(self, cb: Any) -> None: ...
     def set_on_voice_action(self, cb: Any) -> None: ...
     def set_on_talk(self, cb: Any) -> None: ...
     def set_on_hangup(self, cb: Any) -> None: ...
@@ -384,6 +387,9 @@ def _wire_surface_events(surface: Any) -> None:
     # the pipeline lives (BUG-191 — this X used to resolve to nothing).
     _call(surface, "set_on_dictation_stop", lambda: emit("dictation_stop"))
     _call(surface, "set_on_mute_toggle", lambda: emit("mute_toggle"))
+    # The idle pill's sparkle: the switch lives in the parent's dictation
+    # config, so the click travels there like the mute toggle does.
+    _call(surface, "set_on_prompt_mode_toggle", lambda: emit("prompt_mode_toggle"))
     # The orb's control row adds one action the bar never had: muting the
     # ASSISTANT's voice. Like talk/hang-up it needs the parent, because the
     # SpeechPipeline whose TTS volume it changes lives there.

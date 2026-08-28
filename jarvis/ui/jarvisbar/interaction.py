@@ -57,7 +57,7 @@ def resolve_click(
     """Resolve a click on the bar into an action by its horizontal zone + state.
 
     Returns one of ``"hangup"`` / ``"dictation_stop"`` / ``"mute"`` / ``"talk"``
-    / ``"none"``.
+    / ``"prompt_mode_toggle"`` / ``"none"``.
 
     The RIGHT zone is the microphone mute toggle (mic muted FOR JARVIS only —
     non-destructive, so it keeps a generous zone). When IDLE, a click anywhere
@@ -86,6 +86,14 @@ def resolve_click(
     draws for these modes — resolved to nothing (BUG-191). The renderer and
     this resolver now agree: a drawn X is a working X.
 
+    The IDLE pill's left control is the Prompt Mode sparkle — the switch that
+    turns every dictation into a written prompt. It sits where the close-X
+    sits on a live bar and is drawn only while the controls are up
+    (``hovered``), so a click on that spot flips the switch instead of
+    starting a session; a click anywhere else on the idle body still talks.
+    Non-destructive, reversible with a second click, and it takes no more of
+    the bar than the X does.
+
     ``NOTICE_MODES`` is inert for the same reason and one more. A notice is a
     transient ANSWER, not a control: it appears unrequested, it opens the pill
     under wherever the pointer happens to be, and it clears itself a moment
@@ -106,7 +114,11 @@ def resolve_click(
     active = mode in ("listen", "think", "speak")
     if frac >= 0.60:            # right zone → the mic mute toggle (non-destructive)
         return "mute"
-    if not active:             # idle middle/left → start a normal session
+    if not active:
+        # Idle: the sparkle on the left (only while the controls are up) flips
+        # Prompt Mode; the rest of the body starts a normal session.
+        if hovered and _on_prompt_sparkle(x, width, pill_w):
+            return "prompt_mode_toggle"
         return "talk"
     # Active session: the ONLY destructive bar action is the close-X hang-up,
     # which must be a deliberate click ON the visible X glyph.
@@ -126,6 +138,17 @@ def _on_close_x(x: float, width: int, pill_w: float | None) -> bool:
     x_glyph = width / 2.0 - _CLOSE_X_CENTRE_FRAC * pw
     hit = max(_CLOSE_X_HIT_PX, _CLOSE_X_HIT_FRAC * pw)
     return abs(x - x_glyph) <= hit
+
+
+def _on_prompt_sparkle(x: float, width: int, pill_w: float | None) -> bool:
+    """Does a click at ``x`` land on the Prompt Mode sparkle?
+
+    The sparkle takes the close-X's slot on the idle pill (the renderer draws
+    it at ``cx - 0.42*pw`` too), so the hit-box is the X's. In production
+    ``pill_w`` is the OPEN pill width — the size the idle pill has while
+    hovered.
+    """
+    return _on_close_x(x, width, pill_w)
 
 
 def default_bottom_center(

@@ -506,7 +506,11 @@ def evenly_spaced(cx: float, span: float, n: int) -> list[float]:
 
 
 def target_pill_size(
-    mode: str, hovered: bool, muted: bool = False, drop_open: bool = False
+    mode: str,
+    hovered: bool,
+    muted: bool = False,
+    drop_open: bool = False,
+    prompt_mode: bool = False,
 ) -> tuple[int, int]:
     """Pick the pill's target (w, h): ACTIVE while a session is live, OPEN on
     hover (to show controls), COLLAPSED at rest. Only a live session is 2x —
@@ -535,10 +539,15 @@ def target_pill_size(
     further: the resting pill is a ~37x6 px sliver with no room to draw a
     legible mark in, while the 2x ACTIVE size would make a passing message look
     like a live session. OPEN is the size at which the answer is readable and
-    still unmistakably not a conversation."""
+    still unmistakably not a conversation.
+
+    ``prompt_mode`` opens the resting pill the way muted does, and for the
+    same reason: the switch that rewrites every dictation is a state the user
+    must be able to see at a glance, and the sparkle that shows it (and turns
+    it off) needs the OPEN pill's room to be legible and clickable."""
     if mode in ("listen", "speak", "think") or mode in DICTATION_MODES:
         return ACTIVE_W, ACTIVE_H
-    if hovered or muted or drop_open or mode in NOTICE_MODES:
+    if hovered or muted or drop_open or prompt_mode or mode in NOTICE_MODES:
         return OPEN_W, OPEN_H
     return COLLAPSED_W, COLLAPSED_H
 
@@ -769,6 +778,7 @@ class JarvisBarRenderer:
         muted: bool = False,
         drop_state: str = DROP_STATE_NONE,
         drop_elapsed: float = 0.0,
+        prompt_mode: bool = False,
     ) -> Image.Image:
         active = mode in ("listen", "speak")
         # "That did not happen" — see NOTICE_MODES. Held separately from the
@@ -792,7 +802,7 @@ class JarvisBarRenderer:
         # live, OPEN on hover (controls), while muted (keep the mute cue +
         # unmute target visible) OR during a drop (landing zone + tick room),
         # COLLAPSED at rest.
-        tw, th = target_pill_size(mode, hovered, muted, drop_open)
+        tw, th = target_pill_size(mode, hovered, muted, drop_open, prompt_mode)
         # Snappy grow/shrink: 0.5 reaches the target in ~4 frames (~70 ms) so the
         # bar pops to full size almost immediately on "Hey Jarvis" instead of
         # crawling there over a third of a second.
@@ -882,18 +892,31 @@ class JarvisBarRenderer:
                 )
             if active_sess:
                 self._draw_close_x(d, x_left, cy, ph)
+            else:
+                # Idle controls: the left slot is the Prompt Mode switch —
+                # lit while every dictation becomes a prompt, dim while it
+                # does not. Same spot as the close-X, so the hand that knows
+                # where the bar's left control lives finds this one too.
+                self._draw_sparkle(img, x_left, cy, ph, lit=prompt_mode)
             self._draw_mic(img, x_right, cy, ph, muted)
         elif mode == "think":
             self._draw_thinking(d, t, cx, cy, pw, ph)
         elif mode in ("listen", "speak"):
             self._draw_bars(d, t, cx, cy, pw, ph)
-        elif muted:
-            # Muted standby (idle, not hovered): always show the slashed mic so
-            # the user sees at a glance they're muted AND where to click to
-            # unmute (they can't unmute by voice — Jarvis is deaf while muted).
-            self._draw_mic(img, x_right, cy, ph, muted=True)
-        # idle / standby (not hovered, not muted): a clean EMPTY pill — no dots,
-        # no bars. "When nothing is happening, nothing is in the bar."
+        elif muted or prompt_mode:
+            # Standby with a state worth seeing (idle, not hovered). Muted:
+            # always show the slashed mic so the user sees at a glance they're
+            # muted AND where to click to unmute (they can't unmute by voice —
+            # Jarvis is deaf while muted). Prompt Mode on: the lit sparkle, so
+            # "every dictation comes out rewritten" is never a surprise and
+            # the switch is one hover away.
+            if muted:
+                self._draw_mic(img, x_right, cy, ph, muted=True)
+            if prompt_mode:
+                self._draw_sparkle(img, cx - 0.42 * pw, cy, ph, lit=True)
+        # idle / standby (not hovered, not muted, Prompt Mode off): a clean
+        # EMPTY pill — no dots, no bars. "When nothing is happening, nothing is
+        # in the bar."
         return img
 
     def _draw_dots(
@@ -917,6 +940,37 @@ class JarvisBarRenderer:
         w = max(2, _STROKE_W)
         d.line([(cx - r, cy - r), (cx + r, cy + r)], fill=CLOSE_X, width=w)
         d.line([(cx - r, cy + r), (cx + r, cy - r)], fill=CLOSE_X, width=w)
+
+    def _draw_sparkle(
+        self, img: Image.Image, cx: float, cy: float, ph: float, lit: bool
+    ) -> None:
+        """Left-hand control on the resting pill: the Prompt Mode switch.
+
+        A four-point star with a smaller companion up and to the right — the
+        sparkle mark the app uses for the same switch on its front page, so
+        the two surfaces read as one control. Accent-coloured while ON; the
+        standby dot grey while off (drawn only while the controls are up).
+        Supersampled like the mic, because thin star tips alias at ~30 px.
+        """
+        ss = 4
+        layer = Image.new("RGBA", (img.width * ss, img.height * ss), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        color = (*(self._accent if lit else DOT_COLOR), 255)
+        x, y, p = cx * ss, cy * ss, ph * ss
+
+        def star(sx: float, sy: float, r: float) -> None:
+            pts = []
+            for k in range(8):
+                ang = math.radians(90 * (k // 2) + 45 * (k % 2))
+                rad = r if k % 2 == 0 else r * 0.36
+                pts.append((sx + rad * math.cos(ang), sy - rad * math.sin(ang)))
+            ld.polygon(pts, fill=color)
+
+        r = p * 0.30
+        star(x - r * 0.15, y + r * 0.15, r)
+        star(x + r * 0.85, y - r * 0.85, r * 0.42)
+        small = layer.resize(img.size, Image.Resampling.LANCZOS)
+        img.paste(small, (0, 0), small)
 
     def _draw_mic(
         self, img: Image.Image, cx: float, cy: float, ph: float, muted: bool

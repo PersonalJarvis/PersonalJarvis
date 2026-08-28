@@ -111,6 +111,7 @@ class SubprocessBarOverlay:
         self._follow_cursor_monitor = bool(follow_cursor_monitor)
         self._mode = "idle"
         self._muted = False
+        self._prompt_mode = False
         # Mirror what the real host does at construction time. A persistent,
         # ungated bar maps itself immediately; a startup-gated or
         # non-persistent bar starts withdrawn. This mirror is load-bearing for
@@ -128,6 +129,7 @@ class SubprocessBarOverlay:
         self._respawn_succeeded = threading.Event()
         self._respawn_exhausted = threading.Event()
         self._on_mute_toggle: Callable[[], None] | None = None
+        self._on_prompt_mode_toggle: Callable[[], None] | None = None
         self._on_talk: Callable[[], None] | None = None
         self._on_hangup: Callable[[], None] | None = None
         self._on_dictation_stop: Callable[[], None] | None = None
@@ -289,6 +291,10 @@ class SubprocessBarOverlay:
         self._muted = bool(muted)
         self._send({"op": "set_muted", "muted": self._muted})
 
+    def set_prompt_mode(self, enabled: bool) -> None:
+        self._prompt_mode = bool(enabled)
+        self._send({"op": "set_prompt_mode", "enabled": self._prompt_mode})
+
     def set_size_scale(self, scale: float) -> None:
         """Forward a live "Bar size" change to the hosted surface.
 
@@ -316,6 +322,9 @@ class SubprocessBarOverlay:
 
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
+
+    def set_on_prompt_mode_toggle(self, callback: Callable[[], None] | None) -> None:
+        self._on_prompt_mode_toggle = callback
 
     def set_on_talk(self, callback: Callable[[], None] | None) -> None:
         self._on_talk = callback
@@ -481,6 +490,8 @@ class SubprocessBarOverlay:
             self._send({"op": "hide"})
         if self._muted:
             self._send({"op": "set_muted", "muted": True})
+        if self._prompt_mode:
+            self._send({"op": "set_prompt_mode", "enabled": True})
         if self._last_level is not None:
             self._send({"op": "set_level", "level": self._last_level})
 
@@ -519,6 +530,10 @@ class SubprocessBarOverlay:
                 cb = self._on_mute_toggle
                 if cb is not None:
                     cb()
+            elif event == "prompt_mode_toggle":
+                cb_prompt = self._on_prompt_mode_toggle
+                if cb_prompt is not None:
+                    cb_prompt()
             elif event == "feedback":
                 pub = self._feedback_publisher
                 if pub is not None:

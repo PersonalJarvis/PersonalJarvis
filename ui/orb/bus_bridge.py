@@ -38,6 +38,8 @@ from typing import TYPE_CHECKING, Any
 from jarvis.core.events import (
     AudioOutFirst,
     DictationCompleted,
+    DictationPromptModeChanged,
+    DictationPromptModeToggleRequested,
     DictationRefused,
     DictationStarted,
     DictationTranscribing,
@@ -393,6 +395,9 @@ class OrbBusBridge:
             # with the real state — defensive getattr keeps surfaces without the
             # method (the mascot orb) working unchanged.
             self._bus.subscribe(VoiceMuteChanged, self._on_voice_mute_changed)
+            # Same shape for the Prompt Mode switch: one writer (the switch
+            # module), one broadcast, and the bar's sparkle mirrors it.
+            self._bus.subscribe(DictationPromptModeChanged, self._on_prompt_mode_changed)
             # ADR-0016 L2 — voice-driven recovery from "orb lost on screen".
             # The local_action_gate publishes OrbResetRequested when the
             # user says "Orb zurück" / "wo bist du" / "reset orb".  # i18n-allow
@@ -409,6 +414,12 @@ class OrbBusBridge:
             setter = getattr(self._orb, "set_on_mute_toggle", None)
             if setter is not None:
                 setter(self._publish_mute_toggle)
+            # The bar's sparkle asks for [dictation].prompt_mode to flip. Same
+            # Tk→asyncio marshal as the mute toggle; the pipeline owns the flip.
+            prompt_setter = getattr(self._orb, "set_on_prompt_mode_toggle", None)
+            if prompt_setter is not None:
+                prompt_setter(self._publish_prompt_mode_toggle)
+            self._seed_prompt_mode()
             # ADR-0016 visible-feedback contract: inject the publisher so
             # the orb stays bus-agnostic. Defensive getattr keeps older
             # orb test doubles working.
@@ -483,6 +494,47 @@ class OrbBusBridge:
             setter(bool(event.muted))
         except Exception:  # noqa: BLE001 — a mirror update must never break the bus
             log.debug("surface set_muted failed", exc_info=True)
+
+    async def _on_prompt_mode_changed(self, event: DictationPromptModeChanged) -> None:
+        """Forward the authoritative Prompt Mode value to the current surface
+        so its sparkle mirrors reality. Defensive getattr: a surface without
+        ``set_prompt_mode`` (the mascot orb) is simply skipped."""
+        setter = getattr(self._orb, "set_prompt_mode", None)
+        if not callable(setter):
+            return
+        try:
+            setter(bool(event.enabled))
+        except Exception:  # noqa: BLE001 — a mirror update must never break the bus
+            log.debug("surface set_prompt_mode failed", exc_info=True)
+
+    def _seed_prompt_mode(self) -> None:
+        """Push the current ``[dictation].prompt_mode`` onto the surface.
+
+        Mute starts false; Prompt Mode starts wherever the user left it, and
+        the live value sits on the pipeline's dictation config. Before the
+        pipeline is registered there is nothing to read and the surface keeps
+        its default (off) until the voice-ready signal runs this again.
+        """
+        setter = getattr(self._orb, "set_prompt_mode", None)
+        if not callable(setter):
+            return
+        try:
+            from jarvis.core.runtime_refs import get_speech_pipeline
+            from jarvis.dictation.prompt_mode import prompt_mode_enabled
+
+            pipeline = get_speech_pipeline()
+            if pipeline is None:
+                return
+            setter(prompt_mode_enabled(getattr(pipeline, "_dictation_cfg", None)))
+        except Exception:  # noqa: BLE001 — a seed must never break the bridge
+            log.debug("prompt mode seed onto the surface failed", exc_info=True)
+
+    def _publish_prompt_mode_toggle(self) -> None:
+        """Called from the surface's UI thread when the sparkle is clicked.
+        Same marshal as ``_publish_mute_toggle``; the pipeline flips the value
+        and answers with ``DictationPromptModeChanged``."""
+        coro = self._bus.publish(DictationPromptModeToggleRequested(source="jarvis_bar"))
+        self._marshal_publish(coro, label="prompt-mode-toggle")
 
     def _publish_visible_feedback(self, mode: str, observed: dict) -> None:
         """Called from the orb's Tk thread after a deiconify. Builds and
@@ -713,6 +765,9 @@ class OrbBusBridge:
         if not event.voice_usable:
             return
         self._voice_usable = True
+        # The pipeline is registered by now, so the bar can learn where the
+        # user left the Prompt Mode switch (attach() may have run too early).
+        self._seed_prompt_mode()
         self._release_bar_startup_gate(event.detail or "voice-ready")
 
     def _release_bar_startup_gate(self, reason: str) -> None:

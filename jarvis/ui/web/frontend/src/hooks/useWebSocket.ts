@@ -30,6 +30,7 @@ import { PANE_ACTIVITY_EVENT } from "@/store/workspacePanes";
 import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
 import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
 import { hydrateUiTheme } from "@/hooks/useTheme";
+import { announceDictationSettings } from "@/hooks/usePromptMode";
 
 let singleton: WSClient | null = null;
 
@@ -461,6 +462,16 @@ export function useWebSocket(): void {
         if (env.event_name === "SecretConfigured") {
           // Trigger only — ApiKeysView refreshes its own provider list.
           window.dispatchEvent(new CustomEvent("jarvis:secret-configured", { detail: env.payload }));
+        }
+
+        if (env.event_name === "DictationPromptModeChanged") {
+          // The switch flipped somewhere this window did not click — the
+          // native Jarvis bar's sparkle, another window — and every pill and
+          // card mirrors the one authoritative value.
+          const p = env.payload as { enabled?: unknown };
+          if (typeof p.enabled === "boolean") {
+            announceDictationSettings({ prompt_mode: p.enabled });
+          }
         }
 
         if (env.event_name === "ContactChanged") {

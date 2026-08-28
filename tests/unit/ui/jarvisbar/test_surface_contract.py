@@ -12,6 +12,7 @@ REQUIRED = [
     "release_startup_gate",
     "set_level",
     "set_muted",
+    "set_prompt_mode",
     "set_size_scale",
     "play_animation",
     "stop_animation",
@@ -20,6 +21,7 @@ REQUIRED = [
     "start_mouth_animation",
     "stop_mouth_animation",
     "set_on_mute_toggle",
+    "set_on_prompt_mode_toggle",
     "set_on_talk",
     "set_on_hangup",
     "set_feedback_publisher",
@@ -69,6 +71,8 @@ def test_methods_safe_without_tk_window():
     bar.set_muted(True)  # _root None → safe atomic write
     assert bar._muted is True
     bar.set_muted(False)
+    bar.set_prompt_mode(True)
+    bar.set_prompt_mode(False)
     assert bar._muted is False
 
     bar.hide()  # _root None → safe no-op
@@ -81,6 +85,7 @@ def test_methods_safe_without_tk_window():
     bar.stop_mouth_animation()
 
     bar.set_on_mute_toggle(lambda: None)
+    bar.set_on_prompt_mode_toggle(lambda: None)
     bar.set_on_talk(lambda: None)
     bar.set_on_hangup(lambda: None)
     bar.set_feedback_publisher(lambda k, d: None)

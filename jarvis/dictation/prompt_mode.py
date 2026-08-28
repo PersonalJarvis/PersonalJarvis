@@ -122,7 +122,16 @@ log = logging.getLogger(__name__)
 #: "write a prompt"), that a message is as large as its brief, and shows
 #: three runs on subjects that have nothing to do with prompt writing. Two
 #: guards back it in code: ``meta_prompt`` and ``echoed_example``.
-PROMPT_MODE_PROMPT_VERSION: Final[int] = 6
+#:
+#: v7 decides when NOT to write. Prompt Mode is on for every dictation, and
+#: the maintainer's next complaint (2026-08-28, same afternoon) was a "yes"
+#: to a question the model had asked coming back as a document, and a real
+#: brief coming back with format rules and placeholder variables he never
+#: spoke. So: a transcript of eight words or fewer never reaches the writer
+#: (``is_short_reply``); the instruction names the answer case and forbids
+#: invented format rules, placeholders and templates; and ``inflated``
+#: rejects a short transcript that grew more than fourfold.
+PROMPT_MODE_PROMPT_VERSION: Final[int] = 7
 
 #: The status a successful Prompt Mode delivery reports on the history row.
 #: Lives in ``POLISH_STATUSES`` (the shared vocabulary) — restated here as a
@@ -200,8 +209,11 @@ they said goes in exactly as spoken, one they did not say does not exist, and \
 a gap they left is left open rather than guessed at or filled with a \
 placeholder. "Das", "es", "the thing from before": the user is in a \
 conversation the model can see, so the reference stays a reference and is \
-never replaced by an invented noun. Drop the filler sounds, the false starts \
-and the self-corrections; keep the corrected version.
+never replaced by an invented noun. No format rules the user did not state \
+(no "answer as markdown", no table with columns they never named), no \
+placeholder variables, no report template: they asked for work, not for a \
+form. Drop the filler sounds, the false starts and the self-corrections; keep \
+the corrected version.
 
 HOW MUCH. The message is as large as its brief. A long dictation with several \
 tasks, constraints and a wanted outcome becomes a structured prompt - a role \
@@ -211,6 +223,13 @@ remark or follow-up ("thanks, please make sure that does not happen again") \
 becomes one or two clear sentences and nothing more: no role, no sections, no \
 criteria the user did not state. Be concrete rather than adjectival: "a \
 markdown table with the columns X, Y, Z", never "make it good".
+
+WHEN IT IS AN ANSWER. The model often asks the user something ("shall I \
+finish this now?", "which of the two?") and the user dictates the reply: \
+"yes", "no, leave it", "okay, go ahead, but skip the tests". That is not a \
+brief and gets no prompt: the message is the answer itself, tidied, in one \
+or two sentences, with every condition the user attached and nothing added. \
+Never a role, never a heading, never a task list for a "yes".
 
 WRITE IT IN THE LANGUAGE THE USER SPOKE. These instructions are in English \
 and that says nothing about your answer: a German transcript gets a German \
@@ -356,6 +375,51 @@ _MIN_LENGTH_SHARE: Final[float] = 0.40
 _MIN_MEASURED_WORDS: Final[int] = 30
 
 _WORD_RE: Final[re.Pattern[str]] = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+# --- Size guards -------------------------------------------------------------
+#
+# Prompt Mode is on for every dictation, and not every dictation is a brief.
+# The model asks "shall I finish this now?" and the user says "yes"; a
+# capable user says "okay, go ahead, but skip the tests". Neither needs a
+# prompt, and the maintainer's complaint (2026-08-28) was exactly that they
+# got one anyway: a role, sections, a task list, for a "yes". Two answers to
+# that, one before the call and one after.
+
+#: A transcript of this many words or fewer never reaches the writer at all.
+#: "Ja.", "Nein, lass das.", "Okay, mach weiter.", "fix the typo on the login
+#: page" — every one of these is complete as spoken, the ordinary polish pass
+#: delivers it with its punctuation, and a prompt written for it could only
+#: add what the user did not say. Deterministic, costs nothing, and it keeps
+#: the fast chain's per-minute token budget for the dictations that need it.
+_MAX_REPLY_WORDS: Final[int] = 8
+
+#: Above that, the writer decides — and is measured. A transcript under
+#: ``_MIN_MEASURED_WORDS`` (30) is a remark, a follow-up or an answer, and its
+#: message may not grow past this multiple of the spoken word count, with a
+#: floor so a ten-word brief may still become a decent paragraph. A message
+#: over the line is the "yes" that came back as a document.
+_INFLATION_FACTOR: Final[float] = 4.0
+_INFLATION_FLOOR_WORDS: Final[int] = 60
+
+
+def is_short_reply(raw: str) -> bool:
+    """True when *raw* is too short to want a prompt written for it."""
+    return len(_WORD_RE.findall(str(raw or ""))) <= _MAX_REPLY_WORDS
+
+
+def looks_inflated(raw: str, prompt: str) -> bool:
+    """True when a short transcript came back as a long document.
+
+    Only over transcripts under the measured length: a real brief is allowed
+    to grow into a structured prompt, and does, but a remark of twenty words
+    has nothing in it that a message of a hundred could be faithful to.
+    """
+    spoken = len(_WORD_RE.findall(str(raw or "")))
+    if spoken >= _MIN_MEASURED_WORDS:
+        return False
+    written = len(_WORD_RE.findall(str(prompt or "")))
+    return written > max(_INFLATION_FLOOR_WORDS, int(spoken * _INFLATION_FACTOR))
+
 
 # --- Level guards ------------------------------------------------------------
 #
@@ -605,6 +669,9 @@ def prompt_guard_reason(raw: str, prompt: str, *, protected: Sequence[str] = ())
     * ``dropped_context`` — under 40 % of the spoken word count. A written
       prompt is normally longer than the dictation; this short means the
       writer summarised instead.
+    * ``inflated`` — a transcript under the measured length came back more
+      than four times its size (floor 60 words). A remark or an answer
+      became a document.
     """
     body = (prompt or "").strip()
     if not body:
@@ -629,6 +696,8 @@ def prompt_guard_reason(raw: str, prompt: str, *, protected: Sequence[str] = ())
             return "dropped_detail"
     if looks_thinned(raw, body):
         return "dropped_context"
+    if looks_inflated(raw, body):
+        return "inflated"
     return ""
 
 
@@ -698,6 +767,10 @@ async def compose_prompt(
             return _result("off")
         if not source.strip():
             return _result("skipped_short", reason="empty_input")
+        if is_short_reply(source):
+            # "Ja.", "Nein, lass das.", "okay, go ahead": complete as spoken.
+            # The ordinary passes punctuate it; a writer could only add.
+            return _result("skipped_short", reason="reply")
 
         from jarvis.dictation import polish as polish_pass
 
@@ -821,6 +894,8 @@ __all__ = [
     "echoes_example",
     "ends_with_sign_off",
     "extract_prompt_block",
+    "is_short_reply",
+    "looks_inflated",
     "looks_thinned",
     "lost_literals",
     "normalize_prompt_text",

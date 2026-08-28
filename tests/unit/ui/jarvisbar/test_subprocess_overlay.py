@@ -136,6 +136,7 @@ def test_surface_calls_become_wire_ops_and_mirror_locally(monkeypatch) -> None:
     surface.hide()
     surface.set_level(0.75)
     surface.set_muted(True)
+    surface.set_prompt_mode(True)
     surface.reassert_z_order()
     surface._on_reset_double_click()
     ops = [m["op"] for m in proc.sent()[1:]]
@@ -144,11 +145,18 @@ def test_surface_calls_become_wire_ops_and_mirror_locally(monkeypatch) -> None:
         "hide",
         "set_level",
         "set_muted",
+        "set_prompt_mode",
         "reassert_z_order",
         "reset_position",
     ]
     assert surface._mode == "speak"
     assert surface._muted is True
+    assert surface._prompt_mode is True
+    # The child's sparkle click comes back as an event and reaches the wired callback.
+    flips: list[int] = []
+    surface.set_on_prompt_mode_toggle(lambda: flips.append(1))
+    surface._dispatch_event({"event": "prompt_mode_toggle"})
+    assert flips == [1]
 
 
 def test_text_and_mouth_methods_are_local_noops(monkeypatch) -> None:

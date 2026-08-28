@@ -439,7 +439,9 @@ class QtJarvisBarOverlay:
         self._last_level_rx_t = 0.0
         self._muted = False
         self._hovered = False
-        self._static_tick_key: tuple[str, bool, bool, str] | None = None
+        # Mirror of ``[dictation].prompt_mode``: lights the idle pill's sparkle.
+        self._prompt_mode = False
+        self._static_tick_key: tuple[str, bool, bool, str, bool] | None = None
         self._static_tick_count = 0
         self._hangup_click_block_until = 0.0
 
@@ -498,6 +500,7 @@ class QtJarvisBarOverlay:
         # The companion has no SpeechPipeline of its own.  The host should map
         # this callback to an IPC event and let the parent perform the action.
         self._on_voice_action: Callable[[str], None] | None = None
+        self._on_prompt_mode_toggle: Callable[[], None] | None = None
 
     # ------------------------------------------------------------------
     # Surface API consumed by OrbBusBridge / the companion host
@@ -552,6 +555,10 @@ class QtJarvisBarOverlay:
         self._muted = bool(muted)
         self._invalidate_static_frame()
 
+    def set_prompt_mode(self, enabled: bool) -> None:
+        self._prompt_mode = bool(enabled)
+        self._invalidate_static_frame()
+
     def set_size_scale(self, scale: float) -> None:
         """Live-resize the bar to a new user "Bar size" multiplier (thread-safe).
 
@@ -571,6 +578,9 @@ class QtJarvisBarOverlay:
 
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
+
+    def set_on_prompt_mode_toggle(self, callback: Callable[[], None] | None) -> None:
+        self._on_prompt_mode_toggle = callback
 
     def set_feedback_publisher(self, callback: Callable[[str, dict], None] | None) -> None:
         self._feedback_publisher = callback
@@ -753,7 +763,13 @@ class QtJarvisBarOverlay:
             # Without the veto the confirmation is never seen: a settled idle
             # bar skips exactly the frames the tick would live in.
             drop_visual = self._current_drop_visual()
-            tick_key = (effective_mode, self._hovered, self._muted, drop_visual)
+            tick_key = (
+                effective_mode,
+                self._hovered,
+                self._muted,
+                drop_visual,
+                self._prompt_mode,
+            )
             if tick_key != self._static_tick_key:
                 self._static_tick_key = tick_key
                 self._static_tick_count = 0
@@ -776,6 +792,7 @@ class QtJarvisBarOverlay:
                 ),
                 hovered=self._hovered,
                 muted=self._muted,
+                prompt_mode=self._prompt_mode,
                 drop_state=drop_visual,
                 drop_elapsed=now - self._drop_visual_t0,
             )
@@ -966,6 +983,7 @@ class QtJarvisBarOverlay:
             self._mode,
             hovered=True,
             muted=self._muted,
+            prompt_mode=self._prompt_mode,
         )
         center_x = renderer.WIN_W / 2.0
         center_y = renderer.pill_center_y(float(pill_h))
@@ -1452,13 +1470,21 @@ class QtJarvisBarOverlay:
             renderer.WIN_W,
             self._mode,
             hovered=is_hovered,
-            pill_w=renderer.ACTIVE_W if active else None,
+            # The idle pill is OPEN while its controls are up; the sparkle's
+            # hit-box tracks that pill, not the window.
+            pill_w=renderer.ACTIVE_W if active else renderer.OPEN_W,
         )
         if action == "mute":
             callback = self._on_mute_toggle
             if callback is not None:
                 self._invoke_callback(callback, "mute-toggle")
                 self._muted = not self._muted
+                self._invalidate_static_frame()
+        elif action == "prompt_mode_toggle":
+            callback = self._on_prompt_mode_toggle
+            if callback is not None:
+                self._invoke_callback(callback, "prompt-mode-toggle")
+                self._prompt_mode = not self._prompt_mode
                 self._invalidate_static_frame()
         elif action in {"talk", "hangup", "dictation_stop"}:
             callback = self._on_voice_action

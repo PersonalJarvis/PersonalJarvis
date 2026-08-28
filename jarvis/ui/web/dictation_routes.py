@@ -1293,6 +1293,18 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 — never fail a save on live-apply
             log.warning("dictation settings live-apply failed: %s", exc)
 
+    # Prompt Mode has mirrors outside this screen — the sparkle on the native
+    # Jarvis bar, the pill on the front page — and they learn of a flip from
+    # one event, the same one the bar's own toggle raises.
+    if "prompt_mode" in updates:
+        from jarvis.dictation.prompt_mode_switch import announce_prompt_mode
+
+        await announce_prompt_mode(
+            bool(validated.prompt_mode),
+            bus=getattr(request.app.state, "bus", None),
+            source="settings",
+        )
+
     return {
         "ok": True,
         "settings": {

@@ -46,6 +46,8 @@ from jarvis.dictation.prompt_mode import (
     echoes_example,
     ends_with_sign_off,
     extract_prompt_block,
+    is_short_reply,
+    looks_inflated,
     looks_thinned,
     lost_literals,
     normalize_prompt_text,
@@ -250,8 +252,92 @@ def test_every_example_answer_clears_the_fidelity_guards_for_its_transcript() ->
         assert not asks_for_a_prompt(transcript, answer)
 
 
-def test_the_prompt_version_names_the_v6_revision() -> None:
-    assert prompt_mode.PROMPT_MODE_PROMPT_VERSION == 6
+def test_the_prompt_version_names_the_v7_revision() -> None:
+    assert prompt_mode.PROMPT_MODE_PROMPT_VERSION == 7
+
+
+def test_the_instruction_names_the_answer_case() -> None:
+    """A "yes" to a question the model asked is not a brief. Measured
+    2026-08-28: it came back as a role, sections and a task list."""
+    system = build_prompt_mode_prompt()
+    assert "WHEN IT IS AN ANSWER" in system
+    assert "the message is the answer itself, tidied" in system
+    assert 'never a task list for a "yes"' in system
+
+
+def test_the_instruction_forbids_invented_format_rules_and_placeholders() -> None:
+    """The live output carried "Formatierungs- & Strukturvorgaben" and an
+    "Input-Variablen / Platzhalter" section with {frontend_config}-style
+    variables the user never spoke - a form, where work was asked for."""
+    system = build_prompt_mode_prompt()
+    assert "No format rules the user did not state" in system
+    assert "no placeholder variables, no report template" in system
+
+
+# --------------------------------------------------------------------------- #
+# Size: when no prompt is wanted at all
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "spoken",
+    [
+        "Ja.",
+        "Nein, lass das.",
+        "Okay, mach weiter.",
+        "yes go ahead",
+        "fix the typo on the login page",
+        "Ja, mach das fertig und push es dann.",
+    ],
+)
+def test_a_reply_of_eight_words_or_fewer_wants_no_prompt(spoken: str) -> None:
+    assert is_short_reply(spoken)
+
+
+def test_a_nine_word_remark_reaches_the_writer() -> None:
+    assert not is_short_reply("bitte mach das fertig und lass die tests dabei weg")
+
+
+@pytest.mark.asyncio
+async def test_a_short_reply_never_calls_the_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The one place the fast chain's per-minute budget is cheapest to
+    save: a "yes" costs no call at all and lands as spoken."""
+    chain = _install(monkeypatch, FakeChain())
+    out = await compose_prompt("Ja, mach das.", cfg=_cfg(), language="de")
+    assert out.status == "skipped_short"
+    assert out.reason == "reply"
+    assert out.text == "Ja, mach das."
+    assert chain.calls == []
+
+
+def test_a_short_transcript_that_grew_fourfold_is_inflated() -> None:
+    spoken = (
+        "ja mach das bitte fertig aber lass die tests weg die brauchen wir "
+        "nicht mehr und sag mir bescheid"
+    )
+    honest = (
+        "Ja, mach das bitte fertig. Lass die Tests weg, die brauchen wir nicht "
+        "mehr. Sag mir Bescheid."
+    )
+    assert not looks_inflated(spoken, honest)
+    document = "## Rolle\nDu bist ein Entwickler.\n\n## Aufgabe\n" + " ".join(["Wort"] * 80) + "."
+    assert looks_inflated(spoken, document)
+    assert prompt_guard_reason(spoken, document) == "inflated"
+
+
+def test_a_ten_word_brief_may_still_become_a_paragraph() -> None:
+    """The floor: sixty words for a brief of ten, so a real small task can
+    be written up properly."""
+    spoken = "fix the blank screen on a wrong password in AuthHandler please"
+    written = "Fix the blank screen in AuthHandler on a wrong password. " + " ".join(["word"] * 50)
+    assert not looks_inflated(spoken, written)
+
+
+def test_a_real_brief_is_never_measured_for_inflation() -> None:
+    """Thirty words and up is a brief, and a brief may grow into a
+    structured prompt - that is the feature."""
+    spoken = " ".join(["wort"] * 30)
+    assert not looks_inflated(spoken, " ".join(["wort"] * 400))
 
 
 def test_protected_terms_are_listed_in_the_shared_block() -> None:

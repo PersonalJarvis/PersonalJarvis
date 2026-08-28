@@ -1005,6 +1005,33 @@ class VoiceMuteToggleRequested(Event):
     source: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class DictationPromptModeToggleRequested(Event):
+    """A surface asked for ``[dictation].prompt_mode`` to be flipped.
+
+    Publishers: the Jarvis bar's sparkle control, forwarded by
+    ``ui/orb/bus_bridge.py``. Like ``VoiceMuteToggleRequested`` the caller does
+    not know the current value: the speech pipeline owns the flip in
+    ``_on_prompt_mode_toggle_requested`` (it holds the live dictation config)
+    and answers with ``DictationPromptModeChanged``.
+    """
+    source: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class DictationPromptModeChanged(Event):
+    """Authoritative broadcast that ``[dictation].prompt_mode`` changed.
+
+    Emitted AFTER the value is on disk and in the live config, by the one
+    switch writer (``jarvis/dictation/prompt_mode_switch.py``) whichever
+    surface asked — the settings screen, the bar's sparkle. Every mirror of
+    the switch (the bar, the front-page pill, the settings card) redraws from
+    this event, so no two of them can disagree about a value the user just set.
+    """
+    enabled: bool = False
+    source: str = ""
+
+
 # Show / raise the main desktop window (user-facing gesture, e.g. an overlay
 # right-click).
 

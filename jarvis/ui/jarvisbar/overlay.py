@@ -501,6 +501,7 @@ class JarvisBarOverlay:
         self._cur_work: tuple[int, int, int, int] | None = None
         self._level_unsub: Callable[[], None] | None = None
         self._on_mute_toggle: Callable[[], None] | None = None
+        self._on_prompt_mode_toggle: Callable[[], None] | None = None
         # Interaction callbacks let the macOS companion host forward actions
         # to the parent process, where the live SpeechPipeline is registered.
         # They stay optional so Windows/Linux keep their existing in-process
@@ -513,6 +514,9 @@ class JarvisBarOverlay:
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
         self._hovered = False  # mouse over the bar → reveal the close cross
+        # Mirror of ``[dictation].prompt_mode`` (the bridge keeps it current
+        # from DictationPromptModeChanged): lights the idle pill's sparkle.
+        self._prompt_mode = False
         # True only on a macOS root whose "-transparent" attribute took; the
         # frame loop then converts frames to RGBA (renderer.key_to_alpha).
         self._mac_transparent = False
@@ -619,6 +623,15 @@ class JarvisBarOverlay:
         atomic bool write — the frame loop reads it; no Tk marshal needed."""
         self._muted = bool(muted)
 
+    def set_prompt_mode(self, enabled: bool) -> None:
+        """Mirror ``[dictation].prompt_mode`` onto the bar's sparkle.
+
+        Called by OrbBusBridge on every DictationPromptModeChanged (from this
+        bar, the settings screen or the front-page pill), so the lit sparkle
+        and the switch behind it never disagree. Plain atomic bool write —
+        the frame loop reads it; no Tk marshal needed."""
+        self._prompt_mode = bool(enabled)
+
     def set_size_scale(self, scale: float) -> None:
         """Live-resize the bar to a new user "Bar size" multiplier.
 
@@ -643,6 +656,9 @@ class JarvisBarOverlay:
 
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
+
+    def set_on_prompt_mode_toggle(self, callback: Callable[[], None] | None) -> None:
+        self._on_prompt_mode_toggle = callback
 
     def set_on_talk(self, callback: Callable[[], None] | None) -> None:
         """Register the idle-body click action for an external host."""
@@ -1340,7 +1356,14 @@ class JarvisBarOverlay:
             static_capable = effective_mode == "idle" or (
                 effective_mode in ("listen", "speak") and silent
             )
-            tick_key = (effective_mode, self._hovered, self._muted, drop_visual, silent)
+            tick_key = (
+                effective_mode,
+                self._hovered,
+                self._muted,
+                drop_visual,
+                silent,
+                getattr(self, "_prompt_mode", False),
+            )
             if tick_key != self._static_tick_key:
                 self._static_tick_key = tick_key
                 self._static_tick_count = 0
@@ -1364,6 +1387,7 @@ class JarvisBarOverlay:
                     level,
                     hovered=self._hovered,
                     muted=self._muted,
+                    prompt_mode=getattr(self, "_prompt_mode", False),
                     drop_state=drop_visual,
                     # Same getattr guard as the level stamp above, and for the
                     # same reason: a ``__new__``-built test/hot-reload instance
@@ -1882,7 +1906,9 @@ class JarvisBarOverlay:
             active = self._mode in ("listen", "think", "speak") or (
                 self._mode in DICTATION_MODES
             )
-            pill_w = renderer.ACTIVE_W if active else None
+            # The idle pill is OPEN while its controls are up, and the
+            # sparkle's hit-box has to track that pill, not the window.
+            pill_w = renderer.ACTIVE_W if active else renderer.OPEN_W
             action = interaction.resolve_click(
                 click_x,
                 renderer.WIN_W,
@@ -1922,6 +1948,17 @@ class JarvisBarOverlay:
                 if cb is not None:
                     cb()
                     self._muted = not self._muted
+            elif action == "prompt_mode_toggle":
+                # The idle pill's sparkle: ask the parent to flip
+                # [dictation].prompt_mode (the pipeline owns the switch and
+                # answers with DictationPromptModeChanged → set_prompt_mode).
+                # Optimistic local flip for the next frame, only when a
+                # callback is wired — a boot-race click must not light a
+                # sparkle with nothing behind it.
+                cb = self._on_prompt_mode_toggle
+                if cb is not None:
+                    cb()
+                    self._prompt_mode = not getattr(self, "_prompt_mode", False)
             elif action == "hangup":
                 callback = self._on_hangup
                 if callback is not None:

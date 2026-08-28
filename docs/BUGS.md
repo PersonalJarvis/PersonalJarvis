@@ -14300,3 +14300,54 @@ id reports `False` on Windows).
 died while the thread runs; this is the case where the thread itself waits).
 The `disable_windows_app_ghosting` note in `process_utils` describes the other
 face of a non-pumping Tk thread (the black box around the pill).
+
+## BUG-203: Prompt Mode wrote a full prompt for a one-word answer — "shall I finish this?" / "yes" came back as a role, sections and format rules nobody asked for (MEDIUM, FIXED 2026-08-28)
+
+**Symptom.** Two complaints on the v6 output, the same afternoon it shipped.
+First, size: Prompt Mode is on for every dictation, and a dictation is often
+not a brief. The model asks "soll ich das jetzt wirklich fertig machen?", the <!-- i18n-allow -->
+user says "ja" — and what lands in the field is a written-out prompt. The
+maintainer's words: "bei so kurzen Antworten, wo eigentlich kein Prompt <!-- i18n-allow -->
+formuliert werden müsste, wird trotzdem so ein riesen ausführlicher Block <!-- i18n-allow -->
+geschrieben."  <!-- i18n-allow -->
+Second, invention: a real brief (the local-models check) came back correct in
+substance but carrying a **Formatierungs- & Strukturvorgaben** section
+demanding markdown output and a table with named columns, plus an
+**Input-Variablen / Platzhalter** section of `{frontend_config}`-style
+variables — none of it spoken. In his words, a JSON-ish form where he had
+asked for work.  <!-- i18n-allow -->
+
+**Root cause.** v6 decided how to write and never whether to write. The
+instruction sized the message to its brief, but every transcript reached the
+writer, and the one long worked example carried format rules and a
+placeholder section that a fast model reproduced as part of "what a prompt
+looks like". Nothing in the guards measured growth: `dropped_context` catches
+a message that is too SHORT for its transcript; a two-word transcript that
+came back as a document passed everything.
+
+**Fix (v7), in `jarvis/dictation/prompt_mode.py`.**
+
+1. `is_short_reply` — a transcript of eight words or fewer never reaches the
+   writer at all. "Ja.", "Nein, lass das.", "okay, go ahead", "fix the typo on
+   the login page" are complete as spoken; the ordinary polish pass punctuates
+   them. Deterministic, costs no model call, and it hands the fast chain's
+   per-minute budget back to the dictations that need it.
+2. The instruction names the case out loud (WHEN IT IS AN ANSWER: the message
+   is the answer itself, tidied, never a role or a task list for a "yes") and
+   forbids what the user did not say — no format rules, no placeholder
+   variables, no report template.
+3. `inflated` — a transcript under the measured length (30 words) whose
+   message grew past four times its size, floor 60 words, is rejected and the
+   dictation falls through to the ordinary passes.
+
+**Also in this change (feature, maintainer request the same message).** The
+Prompt Mode switch is now a control on the native Jarvis bar: a sparkle in the
+resting pill's left slot, lit while the switch is on and visible without a
+hover, clickable while the controls are up. It has ONE writer
+(`jarvis/dictation/prompt_mode_switch.py`) and one broadcast
+(`DictationPromptModeChanged`) that the bar, the front-page pill and the
+settings card all redraw from — the mute flag's shape, for the reason mute has
+it: three surfaces that can each flip a value must never each own it. See
+`docs/os-parity.md` P-40.
+
+**Related.** BUG-201 (the v6 defect: the example became the job).
