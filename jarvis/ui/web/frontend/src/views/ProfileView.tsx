@@ -1,3 +1,30 @@
+/**
+ * ProfileView — the profile as ONE view, never a scrolling page.
+ *
+ * Layout doctrine: the whole section is a single viewport. Nothing here is
+ * reached by scrolling the page; the view is three standing rails that each
+ * scroll inside themselves only when their own content overflows.
+ *
+ *   ┌───────────────────────────────────────────────────────────────────┐
+ *   │ ViewHeader                                                        │
+ *   ├──────────────┬────────────────────────────┬───────────────────────┤
+ *   │  The Plate   │  The Ledger                │  The Margin           │
+ *   │  sigil +     │  every cluster, every      │  the open question,   │
+ *   │  portrait,   │  field, editable in place  │  the review queue,    │
+ *   │  who you are │                            │  the people           │
+ *   └──────────────┴────────────────────────────┴───────────────────────┘
+ *
+ * The single non-negotiable of that shape is an unbroken `min-h-0` chain from
+ * the root to each rail: a flex/grid child defaults to `min-height: auto` and
+ * refuses to shrink below its content, which is what silently turns a
+ * "one viewport" layout back into a scrolling page.
+ *
+ * USER.md is the one thing that cannot honestly fit a rail, so it opens as a
+ * drawer over the view instead of living at the bottom of a long page.
+ *
+ * The mark in the plate is `Sigil` — geometry derived from which fields are
+ * inked, delivering the generative mark `views/profile/ledger.ts` describes.
+ */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -13,6 +40,7 @@ import {
   FileText,
   Clock,
   ChevronRight,
+  ChevronDown,
   Lock,
   Pencil,
   Plus,
@@ -22,13 +50,13 @@ import {
   Loader2,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
-import { BoardCard } from "@/components/board/BoardCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { getWSClient } from "@/hooks/useWebSocket";
 import { useT } from "@/i18n";
+import { Sigil } from "@/views/profile/Sigil";
 import {
   CLUSTER_FIELD_KEYS,
   CLUSTER_ORDER,
@@ -85,6 +113,13 @@ interface ReviewsResponse {
   total: number;
 }
 
+interface RawProfileResponse {
+  content: string;
+  path: string;
+  mtime_ms: number | null;
+  size_bytes: number;
+}
+
 // ----------------------------------------------------------------------
 // Fetching helpers
 // ----------------------------------------------------------------------
@@ -133,6 +168,29 @@ function Dot() {
   return <span className="px-1.5 text-muted-foreground/40">·</span>;
 }
 
+/** A rail's section heading — small caps, hairline rule, no box. */
+function RailHeading({
+  title,
+  count,
+  right,
+}: {
+  title: string;
+  count?: string | number;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-baseline gap-2 border-b border-sheen/[0.06] pb-1.5">
+      <h3 className="font-display text-[11px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
+        {title}
+      </h3>
+      {count !== undefined && count !== "" && (
+        <span className="text-[11px] tabular-nums text-muted-foreground/60">{count}</span>
+      )}
+      <span className="ml-auto flex items-center">{right}</span>
+    </div>
+  );
+}
+
 // ----------------------------------------------------------------------
 // ProfileView — Root
 // ----------------------------------------------------------------------
@@ -145,12 +203,15 @@ export function ProfileView() {
     retry: false,
   });
 
-  const [activeSlug, setActiveSlug] = useState<string | null>(null);
+  const [sourceOpen, setSourceOpen] = useState(false);
+  // Pointing at a field in the ledger lights its spoke in the sigil, which
+  // makes the mark a live legend instead of an ornament.
+  const [hoveredField, setHoveredField] = useState<string | null>(null);
 
   const meta = (data?.user.meta ?? {}) as Record<string, unknown>;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col overflow-hidden">
       <ViewHeader
         icon={<UserCircle2 className="h-4 w-4 text-primary" />}
         title={t("profile_view.title")}
@@ -172,65 +233,52 @@ export function ProfileView() {
       {error && <ErrorState error={error} onRetry={() => refetch()} />}
 
       {data && (
-        <div className="flex-1 overflow-y-auto scrollbar-jarvis">
-          <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-4 p-5 lg:gap-5 lg:p-6">
-            <div className="profile-rise" style={{ animationDelay: "0ms" }}>
-              <HeroIntro data={data} meta={meta} />
-            </div>
-
-            <AskCard meta={meta} />
-
-            <div className="profile-rise" style={{ animationDelay: "140ms" }}>
-              <div className="mb-3 mt-2 px-1">
-                <h3 className="font-display text-sm font-semibold">
-                  {t("profile_view.section_knowledge")}
-                </h3>
-                <p className="text-xs text-muted-foreground">
-                  {t("profile_view.section_knowledge_sub")}
-                </p>
-              </div>
-              <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
-                {CLUSTER_ORDER.map((cid) => (
-                  <ClusterCard
-                    key={cid}
-                    cid={cid}
-                    meta={meta}
-                    className={cid === "relationship" ? "lg:col-span-2" : undefined}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="profile-rise" style={{ animationDelay: "210ms" }}>
-              <PeopleSection
-                people={data.people}
-                activeSlug={activeSlug}
-                onSelect={setActiveSlug}
-              />
-            </div>
-
-            <div className="profile-rise" style={{ animationDelay: "280ms" }}>
-              <ReviewsCard reviewsCount={data.reviews_count} />
-            </div>
-
-            <div className="profile-rise" style={{ animationDelay: "350ms" }}>
-              <SourceCard />
-            </div>
-          </div>
+        // One viewport. On lg+ the three rails stand side by side and scroll
+        // individually; below that they stack and the container takes over the
+        // scrolling — the honest degradation for a window too narrow to hold
+        // three rails at a readable width.
+        <div
+          className={cn(
+            "grid min-h-0 flex-1 grid-cols-1 overflow-y-auto scrollbar-jarvis",
+            "lg:grid-cols-[minmax(250px,300px)_minmax(0,1fr)_minmax(290px,340px)]",
+            "lg:overflow-hidden",
+          )}
+        >
+          <PlateRail
+            data={data}
+            meta={meta}
+            highlight={hoveredField}
+            onOpenSource={() => setSourceOpen(true)}
+          />
+          <LedgerRail meta={meta} onHoverField={setHoveredField} />
+          <MarginRail data={data} meta={meta} />
         </div>
       )}
+
+      {sourceOpen && <SourceDrawer onClose={() => setSourceOpen(false)} />}
     </div>
   );
 }
 
 // ----------------------------------------------------------------------
-// Hero — an open stage, no container. Just the portrait, one warm
-// sentence, and a single quiet summary line on the page background.
-// The sidebar already frames the page; boxing the greeting again is what
-// made earlier drafts feel manufactured.
+// The Plate — portrait inside the generative sigil, and who you are
 // ----------------------------------------------------------------------
+//
+// The left rail is deliberately the only region that never scrolls on a
+// normal window: it is the fixed identity of the view, the thing the eye
+// returns to. Everything in it is derived, nothing is a decorative filler.
 
-function HeroIntro({ data, meta }: { data: ProfileResponse; meta: Record<string, unknown> }) {
+function PlateRail({
+  data,
+  meta,
+  highlight,
+  onOpenSource,
+}: {
+  data: ProfileResponse;
+  meta: Record<string, unknown>;
+  highlight: string | null;
+  onOpenSource: () => void;
+}) {
   const t = useT();
   const name = data.user.name?.trim() || null;
 
@@ -243,7 +291,10 @@ function HeroIntro({ data, meta }: { data: ProfileResponse; meta: Record<string,
   const headline = address
     ? t(`profile_view.stage_headline.${stage.key}`).replace("{0}", `, ${address}`)
     : t("profile_view.hero_name_placeholder");
-  const sub = name ? t("profile_view.hero_sub") : t("profile_view.no_user_hint");
+
+  const ratio = t("profile_view.entries_ratio")
+    .replace("{0}", String(filled))
+    .replace("{1}", String(TOTAL_FIELDS));
 
   const peopleLine =
     data.people.length === 1
@@ -251,38 +302,70 @@ function HeroIntro({ data, meta }: { data: ProfileResponse; meta: Record<string,
       : t("profile_view.people_known").replace("{0}", String(data.people.length));
 
   return (
-    <header className="flex items-start gap-5 px-1 pb-3 pt-5 lg:gap-6 lg:pt-9">
-      <AvatarBlock name={name} hasAvatar={!!data.has_avatar} />
-      <div className="min-w-0">
-        <h1 className="font-display text-[1.85rem] font-semibold leading-[1.12] tracking-tight lg:text-[2.35rem]">
-          {headline}
-        </h1>
-        <p className="mt-2.5 max-w-xl text-sm leading-relaxed text-muted-foreground">{sub}</p>
-        <p className="mt-3.5 flex flex-wrap items-center text-[13px] text-muted-foreground">
-          <span className="font-medium text-foreground/90">
-            {t("profile_view.entries_ratio")
-              .replace("{0}", String(filled))
-              .replace("{1}", String(TOTAL_FIELDS))}
+    <aside className="profile-rise flex flex-col px-6 py-6 lg:min-h-0 lg:overflow-y-auto lg:py-8 scrollbar-jarvis">
+      {/* The plate floats in the middle of its rail; only the source-file link
+          is anchored to the foot. Top-aligning it left a tall empty gap that
+          read as unfinished rather than as breathing room. */}
+      <div className="flex flex-col gap-5 lg:my-auto">
+        {/* The mark. The sigil's ring reads the ledger; the portrait sits in it. */}
+        <div className="relative mx-auto h-[188px] w-[188px] shrink-0">
+          <Sigil
+            meta={meta}
+            label={ratio}
+            highlight={highlight}
+            className="absolute inset-0 h-full w-full text-foreground"
+          />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <AvatarBlock name={name} hasAvatar={!!data.has_avatar} />
+          </div>
+        </div>
+
+        <div className="min-w-0 text-center">
+          <h1 className="font-display text-[1.45rem] font-semibold leading-[1.15] tracking-tight">
+            {headline}
+          </h1>
+          <p className="mt-1.5 text-[11px] font-medium uppercase tracking-[0.13em] text-muted-foreground">
+            {t(`profile_view.stages.${stage.key}`)}
+          </p>
+        </div>
+
+        {/* One quiet summary line, then the two counters that matter. */}
+        <div className="flex flex-col items-center gap-2.5 border-y border-sheen/[0.06] py-3.5">
+          <span className="text-[13px] font-medium tabular-nums text-foreground/90">{ratio}</span>
+          <span className="flex items-center text-[11px] text-muted-foreground">
+            {peopleLine}
+            {data.reviews_count > 0 && (
+              <>
+                <Dot />
+                <span className="font-medium text-foreground/90">
+                  {data.reviews_count} {t("profile_view.reviews_count")}
+                </span>
+              </>
+            )}
           </span>
-          <Dot />
-          {t(`profile_view.stages.${stage.key}`)}
-          {data.people.length > 0 && (
-            <>
-              <Dot />
-              {peopleLine}
-            </>
-          )}
-          {data.reviews_count > 0 && (
-            <>
-              <Dot />
-              <span className="text-primary">
-                {data.reviews_count} {t("profile_view.reviews_count")}
-              </span>
-            </>
-          )}
+        </div>
+
+        <p className="text-center text-xs leading-relaxed text-muted-foreground">
+          {name ? t("profile_view.hero_sub") : t("profile_view.no_user_hint")}
         </p>
       </div>
-    </header>
+
+      {/* USER.md — the raw truth behind every row, one click away. */}
+      <button
+        type="button"
+        onClick={onOpenSource}
+        className="mt-6 flex items-center gap-2.5 rounded-xl border border-sheen/[0.07] bg-sheen/[0.02] px-3.5 py-3 text-left transition-colors hover:border-primary/40 hover:bg-sheen/[0.05] lg:mt-0"
+      >
+        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-xs font-medium">{t("profile_view.section_source")}</span>
+          <span className="block truncate font-mono text-[10px] text-muted-foreground">
+            {data.user.path}
+          </span>
+        </span>
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+      </button>
+    </aside>
   );
 }
 
@@ -294,6 +377,9 @@ function HeroIntro({ data, meta }: { data: ProfileResponse; meta: Record<string,
 // GET /api/profile/avatar (see profile_routes.py). A hidden <input
 // type="file"> is .click()'d to open the OS picker; a cache-bust query
 // param forces the <img> to reload after a replace/delete.
+//
+// Sitting at the centre of the sigil, it carries no chrome of its own: the
+// remove control only appears on hover/focus so the mark stays clean.
 
 function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: boolean }) {
   const t = useT();
@@ -347,7 +433,7 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
   const busy = upload.isPending || remove.isPending;
 
   return (
-    <div className="flex shrink-0 flex-col items-center gap-2">
+    <div className="group/avatar relative">
       <input
         ref={inputRef}
         type="file"
@@ -363,7 +449,7 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
         disabled={busy}
         title={hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload")}
         aria-label={hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload")}
-        className="group relative flex h-[4.5rem] w-[4.5rem] items-center justify-center overflow-hidden rounded-full border border-sheen/[0.09] bg-sheen/[0.04] outline-none transition-colors hover:border-primary/50 focus-visible:border-primary"
+        className="relative flex h-[7rem] w-[7rem] items-center justify-center overflow-hidden rounded-full border border-sheen/[0.09] bg-sheen/[0.04] outline-none transition-colors hover:border-primary/50 focus-visible:border-primary"
       >
         {hasAvatar ? (
           <img
@@ -373,15 +459,15 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
             draggable={false}
           />
         ) : name ? (
-          <span className="font-display text-xl font-semibold tracking-tight text-primary">
+          <span className="font-display text-2xl font-semibold tracking-tight text-foreground/80">
             {initials(name)}
           </span>
         ) : (
-          <UserCircle2 className="h-8 w-8 text-muted-foreground/50" />
+          <UserCircle2 className="h-9 w-9 text-muted-foreground/50" />
         )}
 
         {/* Hover/focus affordance — a camera scrim that invites the click. */}
-        <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-background/70 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100">
+        <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-background/70 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-hover/avatar:opacity-100 group-focus-visible/avatar:opacity-100">
           <Camera className="h-5 w-5 text-primary" />
         </span>
 
@@ -392,84 +478,107 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
         )}
       </button>
 
-      {/* Always-visible controls — no hover hunting. */}
-      <div className="flex items-center gap-1">
+      {hasAvatar && (
         <button
           type="button"
-          onClick={openPicker}
+          onClick={() => remove.mutate()}
           disabled={busy}
-          className="rounded-full border border-sheen/[0.08] bg-sheen/[0.03] px-2.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+          title={t("profile_view.avatar_remove")}
+          aria-label={t("profile_view.avatar_remove")}
+          className="absolute bottom-0 right-0 rounded-full border border-sheen/[0.1] bg-background p-1.5 text-muted-foreground opacity-0 outline-none transition-all hover:border-destructive/40 hover:text-destructive focus-visible:opacity-100 group-hover/avatar:opacity-100"
         >
-          {hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload")}
+          <Trash2 className="h-3 w-3" />
         </button>
-        {hasAvatar && (
-          <button
-            type="button"
-            onClick={() => remove.mutate()}
-            disabled={busy}
-            title={t("profile_view.avatar_remove")}
-            aria-label={t("profile_view.avatar_remove")}
-            className="rounded-full border border-sheen/[0.08] bg-sheen/[0.03] p-1.5 text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
-          >
-            <Trash2 className="h-3 w-3" />
-          </button>
-        )}
-      </div>
+      )}
     </div>
   );
 }
 
 // ----------------------------------------------------------------------
-// Ask card — ONE question at a time, with the sentence to speak
+// The Ledger — every cluster, every field, nothing behind a tab
 // ----------------------------------------------------------------------
+//
+// The old view capped blanks at two per card and stacked five cards down a
+// scrolling page. In a one-viewer the opposite is right: eighteen fields fit
+// a viewport comfortably in two columns, so everything the ledger holds is
+// visible at once and a blank line is as informative as a written one.
 
-function AskCard({ meta }: { meta: Record<string, unknown> }) {
+function LedgerRail({
+  meta,
+  onHoverField,
+}: {
+  meta: Record<string, unknown>;
+  onHoverField: (field: string | null) => void;
+}) {
   const t = useT();
-  const [idx, setIdx] = useState(0);
-
-  const open = useMemo(() => collectOpenQuestions(meta, TOTAL_FIELDS), [meta]);
-  if (open.length === 0) return null;
-
-  const q = open[idx % open.length];
 
   return (
-    <div className="profile-rise" style={{ animationDelay: "70ms" }}>
-      <BoardCard className="p-5 lg:p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
-              <Sparkles className="mr-1 h-3.5 w-3.5 text-primary" />
-              {t("profile_view.ask_title")}
-              <Dot />
-              {t(`profile_view.clusters.${q.cluster}.label`)}
-            </div>
-            <p className="mt-2 font-display text-lg font-semibold tracking-tight lg:text-xl">
-              {t(`profile_view.questions.${q.field}`)}
-            </p>
-            <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full border border-primary/25 bg-primary/[0.07] px-3 py-1.5 text-xs text-primary">
-              <Mic className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">
-                {t("profile_view.ask_say_prefix")}: “{t(`profile_view.says.${q.field}`)}”
-              </span>
-            </div>
-          </div>
+    <section className="flex min-w-0 flex-col border-t border-border px-6 py-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:py-8 scrollbar-jarvis">
+      <div className="profile-rise" style={{ animationDelay: "60ms" }}>
+        <h2 className="font-display text-base font-semibold tracking-tight">
+          {t("profile_view.section_knowledge")}
+        </h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {t("profile_view.section_knowledge_sub")}
+        </p>
+      </div>
 
-          <div className="flex shrink-0 flex-col items-end gap-2">
-            <span className="text-[11px] tabular-nums text-muted-foreground">
-              {(idx % open.length) + 1}/{open.length}
-            </span>
-            <button
-              type="button"
-              data-testid="ask-next"
-              onClick={() => setIdx((i) => i + 1)}
-              className="inline-flex items-center gap-1 rounded-full border border-sheen/[0.08] bg-sheen/[0.03] px-3 py-1.5 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-primary/[0.06]"
-            >
-              {t("profile_view.ask_next")}
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
+      {/* One continuous column, capped at a comfortable measure. Two balanced
+          columns halved the content's height and left the lower half of the
+          viewport empty; a single run of clusters fills the rail the way a
+          ledger page fills a sheet, and the leader dots make the wide rows
+          read cleanly. */}
+      <div className="mt-5 max-w-[46rem]">
+        {CLUSTER_ORDER.map((cid, i) => (
+          <div
+            key={cid}
+            className="profile-rise mb-6 last:mb-0"
+            style={{ animationDelay: `${100 + i * 45}ms` }}
+          >
+            <ClusterGroup cid={cid} meta={meta} onHoverField={onHoverField} />
           </div>
-        </div>
-      </BoardCard>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ClusterGroup({
+  cid,
+  meta,
+  onHoverField,
+}: {
+  cid: ClusterId;
+  meta: Record<string, unknown>;
+  onHoverField: (field: string | null) => void;
+}) {
+  const t = useT();
+  const data = clusterDataOf(meta, cid);
+  const fields = CLUSTER_FIELD_KEYS[cid];
+  const filled = clusterFilledCount(meta, cid);
+
+  return (
+    <div>
+      <RailHeading
+        title={t(`profile_view.clusters.${cid}.label`)}
+        count={`${filled}/${fields.length}`}
+      />
+      <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground/80">
+        {t(`profile_view.clusters.${cid}.description`)}
+      </p>
+      {/* Every row carries its own quiet pencil — learned fields can be
+          overwritten or cleared, blank ones filled in, all edited in place. */}
+      <dl className="mt-1.5">
+        {fields.map((key) => (
+          <EditableFieldRow
+            key={key}
+            cid={cid}
+            fieldKey={key}
+            value={data[key]}
+            onHover={onHoverField}
+          />
+        ))}
+      </dl>
     </div>
   );
 }
@@ -551,10 +660,13 @@ function EditableFieldRow({
   cid,
   fieldKey,
   value,
+  onHover,
 }: {
   cid: ClusterId;
   fieldKey: string;
   value: unknown;
+  /** Reports the pointed-at field up to the sigil. Keyboard focus counts. */
+  onHover?: (field: string | null) => void;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -582,7 +694,11 @@ function EditableFieldRow({
     setDraft("");
     setEditing(false);
   };
-  const mutate = (operation: FieldOp, v?: unknown, opts?: { keepOpen?: boolean; clearDraft?: boolean }) => {
+  const mutate = (
+    operation: FieldOp,
+    v?: unknown,
+    opts?: { keepOpen?: boolean; clearDraft?: boolean },
+  ) => {
     edit.mutate(
       { cluster: cid, field: fieldKey, operation, value: v },
       {
@@ -612,17 +728,38 @@ function EditableFieldRow({
   // ------------------------------------------------------------------ display
   if (!editing) {
     return (
-      <div className="group flex items-baseline justify-between gap-4 border-b border-sheen/[0.05] py-2 last:border-b-0">
-        <dt className={cn("shrink-0 text-xs", empty ? "text-muted-foreground/60" : "text-muted-foreground")}>
+      <div
+        className="group flex items-baseline gap-2 py-[0.3rem]"
+        onMouseEnter={() => onHover?.(fieldKey)}
+        onMouseLeave={() => onHover?.(null)}
+        onFocus={() => onHover?.(fieldKey)}
+        onBlur={() => onHover?.(null)}
+      >
+        <dt
+          className={cn(
+            "shrink-0 text-xs transition-colors",
+            empty
+              ? "text-muted-foreground/55 group-hover:text-muted-foreground"
+              : "text-muted-foreground group-hover:text-foreground",
+          )}
+        >
           {label}
         </dt>
-        <dd className="flex min-w-0 max-w-[72%] items-center justify-end gap-1">
+        {/* Leader dots. An empty baseline-aligned flex item puts its bottom
+            border exactly on the text baseline, which is what carries the eye
+            from a field's name across to its value — and what makes the
+            column read as a ledger line rather than a wide, empty row. */}
+        <span
+          aria-hidden="true"
+          className="min-w-[1rem] flex-1 border-b border-dotted border-sheen/[0.18] transition-colors group-hover:border-sheen/[0.32]"
+        />
+        <dd className="flex min-w-0 max-w-[68%] items-center justify-end gap-1">
           {kind === "list" && !empty ? (
             <div className="flex flex-wrap justify-end gap-1">
               {(value as unknown[]).map((item) => (
                 <span
                   key={String(item)}
-                  className="rounded-full border border-sheen/[0.08] bg-sheen/[0.04] px-2 py-0.5 text-xs font-medium"
+                  className="rounded-full border border-sheen/[0.08] bg-sheen/[0.04] px-2 py-0.5 text-[11px] font-medium"
                 >
                   {String(item)}
                 </span>
@@ -632,9 +769,7 @@ function EditableFieldRow({
             <span
               className={cn(
                 "leading-snug [overflow-wrap:anywhere]",
-                empty
-                  ? "text-xs italic text-muted-foreground/45"
-                  : "text-sm font-medium",
+                empty ? "text-xs italic text-muted-foreground/45" : "text-[13px] font-medium",
               )}
             >
               {empty ? t("profile_view.field_unknown") : renderValue(t, value)}
@@ -657,9 +792,9 @@ function EditableFieldRow({
 
   // ------------------------------------------------------------------- editing
   return (
-    <div className="group flex items-baseline justify-between gap-4 border-b border-sheen/[0.05] py-2 last:border-b-0">
-      <dt className="shrink-0 text-xs text-muted-foreground">{label}</dt>
-      <dd className="flex min-w-0 max-w-[72%] flex-col items-end gap-1.5">
+    <div className="group flex items-baseline justify-between gap-3 py-[0.3rem]">
+      <dt className="shrink-0 text-xs text-foreground">{label}</dt>
+      <dd className="flex min-w-0 max-w-[68%] flex-col items-end gap-1.5">
         {kind === "bool" ? (
           <div className="flex items-center gap-1">
             {([true, false] as const).map((b) => (
@@ -680,7 +815,13 @@ function EditableFieldRow({
             ))}
             <IconBtn icon={X} onClick={cancel} title={t("profile_view.raw_cancel")} disabled={busy} />
             {!empty && (
-              <IconBtn icon={Trash2} onClick={() => mutate("clear")} title={t("profile_view.field_clear")} tone="danger" disabled={busy} />
+              <IconBtn
+                icon={Trash2}
+                onClick={() => mutate("clear")}
+                title={t("profile_view.field_clear")}
+                tone="danger"
+                disabled={busy}
+              />
             )}
           </div>
         ) : kind === "list" ? (
@@ -690,7 +831,7 @@ function EditableFieldRow({
                 {(value as unknown[]).map((item) => (
                   <span
                     key={String(item)}
-                    className="inline-flex items-center gap-1 rounded-full border border-sheen/[0.1] bg-sheen/[0.05] py-0.5 pl-2 pr-1 text-xs font-medium"
+                    className="inline-flex items-center gap-1 rounded-full border border-sheen/[0.1] bg-sheen/[0.05] py-0.5 pl-2 pr-1 text-[11px] font-medium"
                   >
                     {String(item)}
                     <button
@@ -718,12 +859,24 @@ function EditableFieldRow({
                   if (e.key === "Escape") cancel();
                 }}
                 placeholder={t("profile_view.field_add_placeholder")}
-                className="w-32 min-w-0 rounded border border-primary/40 bg-background/60 px-2 py-1 text-sm outline-none focus:border-primary"
+                className="w-28 min-w-0 rounded border border-primary/40 bg-background/60 px-2 py-1 text-sm outline-none focus:border-primary"
               />
-              <IconBtn icon={Plus} onClick={addItem} title={t("profile_view.field_add")} tone="primary" disabled={busy} />
+              <IconBtn
+                icon={Plus}
+                onClick={addItem}
+                title={t("profile_view.field_add")}
+                tone="primary"
+                disabled={busy}
+              />
               <IconBtn icon={Check} onClick={cancel} title={t("profile_view.raw_save")} disabled={busy} />
               {!empty && (
-                <IconBtn icon={Trash2} onClick={() => mutate("clear")} title={t("profile_view.field_clear")} tone="danger" disabled={busy} />
+                <IconBtn
+                  icon={Trash2}
+                  onClick={() => mutate("clear")}
+                  title={t("profile_view.field_clear")}
+                  tone="danger"
+                  disabled={busy}
+                />
               )}
             </div>
           </>
@@ -741,10 +894,22 @@ function EditableFieldRow({
               placeholder={t("profile_view.field_value_placeholder")}
               className="min-w-0 flex-1 rounded border border-primary/40 bg-background/60 px-2 py-1 text-right text-sm outline-none focus:border-primary"
             />
-            <IconBtn icon={Check} onClick={saveScalar} title={t("profile_view.raw_save")} tone="primary" disabled={busy} />
+            <IconBtn
+              icon={Check}
+              onClick={saveScalar}
+              title={t("profile_view.raw_save")}
+              tone="primary"
+              disabled={busy}
+            />
             <IconBtn icon={X} onClick={cancel} title={t("profile_view.raw_cancel")} disabled={busy} />
             {!empty && (
-              <IconBtn icon={Trash2} onClick={() => mutate("clear")} title={t("profile_view.field_clear")} tone="danger" disabled={busy} />
+              <IconBtn
+                icon={Trash2}
+                onClick={() => mutate("clear")}
+                title={t("profile_view.field_clear")}
+                tone="danger"
+                disabled={busy}
+              />
             )}
           </div>
         )}
@@ -754,106 +919,80 @@ function EditableFieldRow({
 }
 
 // ----------------------------------------------------------------------
-// Cluster cards — quiet rows; learned first, blanks capped at two
+// The Margin — what the ledger still wants: a question, the queue, the people
 // ----------------------------------------------------------------------
 
-function ClusterCard({
-  cid,
+function MarginRail({
+  data,
   meta,
-  className,
 }: {
-  cid: ClusterId;
+  data: ProfileResponse;
   meta: Record<string, unknown>;
-  className?: string;
 }) {
-  const t = useT();
-  const data = clusterDataOf(meta, cid);
-  const fields = CLUSTER_FIELD_KEYS[cid];
-  const filled = clusterFilledCount(meta, cid);
+  return (
+    <aside className="flex min-w-0 flex-col gap-6 border-t border-border px-5 py-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:py-8 scrollbar-jarvis">
+      <div className="profile-rise" style={{ animationDelay: "80ms" }}>
+        <AskCard meta={meta} />
+      </div>
+      <div className="profile-rise" style={{ animationDelay: "150ms" }}>
+        <ReviewsSection reviewsCount={data.reviews_count} />
+      </div>
+      <div className="profile-rise" style={{ animationDelay: "220ms" }}>
+        <PeopleSection people={data.people} />
+      </div>
+    </aside>
+  );
+}
 
-  const known = fields.filter((k) => !isEmptyValue(data[k]));
-  const blanks = fields.filter((k) => isEmptyValue(data[k]));
-  const blanksShown = blanks.slice(0, 2);
-  const blanksHidden = blanks.length - blanksShown.length;
+// ----------------------------------------------------------------------
+// Ask card — ONE question at a time, with the sentence to speak
+// ----------------------------------------------------------------------
+
+function AskCard({ meta }: { meta: Record<string, unknown> }) {
+  const t = useT();
+  const [idx, setIdx] = useState(0);
+
+  const open = useMemo(() => collectOpenQuestions(meta, TOTAL_FIELDS), [meta]);
+  if (open.length === 0) return null;
+
+  const q = open[idx % open.length];
 
   return (
-    <BoardCard className={cn("p-5", className)}>
-      <div className="flex items-baseline justify-between gap-3">
-        <h4 className="font-display text-sm font-semibold">
-          {t(`profile_view.clusters.${cid}.label`)}
-        </h4>
-        <span className="text-[11px] tabular-nums text-muted-foreground">
-          {filled}/{fields.length}
+    <div className="rounded-2xl border border-sheen/[0.08] bg-sheen/[0.03] p-4">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        <Sparkles className="h-3.5 w-3.5" />
+        {t("profile_view.ask_title")}
+        <span className="ml-auto tabular-nums text-muted-foreground/60">
+          {(idx % open.length) + 1}/{open.length}
         </span>
       </div>
-      <p className="mt-0.5 text-xs text-muted-foreground">
-        {t(`profile_view.clusters.${cid}.description`)}
+
+      <p className="mt-2.5 font-display text-base font-semibold leading-snug tracking-tight">
+        {t(`profile_view.questions.${q.field}`)}
       </p>
 
-      {/* Each row carries its own quiet pencil — learned fields can be
-          overwritten or cleared, blank ones filled in, all edited in place. */}
-      <dl className="mt-3">
-        {known.map((key) => (
-          <EditableFieldRow key={key} cid={cid} fieldKey={key} value={data[key]} />
-        ))}
-        {blanksShown.map((key) => (
-          <EditableFieldRow key={key} cid={cid} fieldKey={key} value={data[key]} />
-        ))}
-      </dl>
-      {blanksHidden > 0 && (
-        <div className="pt-2.5 text-[11px] text-muted-foreground/60">
-          {t("profile_view.more_to_learn").replace("{0}", String(blanksHidden))}
-        </div>
-      )}
-    </BoardCard>
-  );
-}
-
-// ----------------------------------------------------------------------
-// Loading / Error
-// ----------------------------------------------------------------------
-
-function LoadingState() {
-  const t = useT();
-  return (
-    <div className="flex flex-1 items-center justify-center">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <RefreshCw className="h-4 w-4 animate-spin" /> {t("common.loading")}
+      <div className="mt-3 flex items-start gap-2 rounded-xl border border-sheen/[0.07] bg-background/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+        <Mic className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0">
+          {t("profile_view.ask_say_prefix")}:{" "}
+          <span className="font-medium text-foreground/90">
+            “{t(`profile_view.says.${q.field}`)}”
+          </span>
+        </span>
       </div>
-    </div>
-  );
-}
 
-function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
-  const t = useT();
-  const status = (error as Error & { status?: number }).status;
-  if (status === 503) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-8">
-        <BoardCard glow className="max-w-md p-8 text-center">
-          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-sheen/[0.08] bg-sheen/[0.04]">
-            <UserCircle2 className="h-6 w-6 text-primary" />
-          </div>
-          <h3 className="font-display text-lg font-semibold tracking-tight">
-            {t("profile_view.hero_name_placeholder")}
-          </h3>
-          <p className="mt-2 text-sm text-muted-foreground">{error.message}</p>
-          <p className="mt-4 text-xs text-muted-foreground/70">
-            {t("profile_view.no_user_hint")}
-          </p>
-          <Button className="mt-6" size="sm" variant="outline" onClick={onRetry}>
-            <RefreshCw className="mr-2 h-3.5 w-3.5" /> {t("apikeys_view.retry")}
-          </Button>
-        </BoardCard>
-      </div>
-    );
-  }
-  return (
-    <div className="p-6">
-      <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-        {t("common.error_generic")}: {error.message}
-        <button className="ml-2 underline" onClick={onRetry}>
-          {t("apikeys_view.retry")}
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <span className="text-[11px] text-muted-foreground/70">
+          {t(`profile_view.clusters.${q.cluster}.label`)}
+        </span>
+        <button
+          type="button"
+          data-testid="ask-next"
+          onClick={() => setIdx((i) => i + 1)}
+          className="inline-flex items-center gap-1 rounded-full border border-sheen/[0.08] bg-sheen/[0.03] px-3 py-1 text-[11px] font-medium transition-colors hover:border-primary/40 hover:bg-sheen/[0.07]"
+        >
+          {t("profile_view.ask_next")}
+          <ChevronRight className="h-3 w-3" />
         </button>
       </div>
     </div>
@@ -861,190 +1000,10 @@ function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
 }
 
 // ----------------------------------------------------------------------
-// People — quiet list rows + detail card
-// ----------------------------------------------------------------------
-
-function PeopleSection({
-  people,
-  activeSlug,
-  onSelect,
-}: {
-  people: PersonSummary[];
-  activeSlug: string | null;
-  onSelect: (slug: string | null) => void;
-}) {
-  const t = useT();
-  const active = useMemo(
-    () => people.find((p) => p.slug === activeSlug) ?? null,
-    [people, activeSlug],
-  );
-
-  return (
-    <div className={cn("grid gap-4 lg:gap-5", people.length > 0 && "lg:grid-cols-[1fr_320px]")}>
-      <BoardCard className="p-5">
-        <div className="flex items-baseline justify-between gap-3">
-          <h3 className="font-display text-sm font-semibold">
-            {t("profile_view.section_people")}
-          </h3>
-          {people.length > 0 && (
-            <span className="text-[11px] tabular-nums text-muted-foreground">
-              {people.length}
-            </span>
-          )}
-        </div>
-
-        {people.length === 0 ? (
-          <EmptyHint
-            icon={UsersIcon}
-            title={t("profile_view.people_empty_title")}
-            body={t("profile_view.people_empty_body")}
-          />
-        ) : (
-          <ul className="-mx-2 mt-2.5">
-            {people.map((p) => (
-              <PersonRow
-                key={p.slug}
-                person={p}
-                active={p.slug === activeSlug}
-                onClick={() => onSelect(p.slug === activeSlug ? null : p.slug)}
-              />
-            ))}
-          </ul>
-        )}
-      </BoardCard>
-
-      {people.length > 0 && <PersonDetail person={active} onClose={() => onSelect(null)} />}
-    </div>
-  );
-}
-
-function PersonRow({
-  person,
-  active,
-  onClick,
-}: {
-  person: PersonSummary;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={onClick}
-        className={cn(
-          "flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors",
-          active ? "bg-primary/[0.07]" : "hover:bg-sheen/[0.04]",
-        )}
-      >
-        <span
-          className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
-            active
-              ? "border-primary/40 bg-primary/15 text-primary"
-              : "border-sheen/[0.08] bg-sheen/[0.05] text-foreground/80",
-          )}
-        >
-          {initials(person.name)}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-baseline gap-2">
-            <span className="truncate text-sm font-medium">{person.name}</span>
-            {person.aliases.length > 0 && (
-              <span className="truncate text-[11px] italic text-muted-foreground">
-                aka {person.aliases.join(", ")}
-              </span>
-            )}
-          </span>
-        </span>
-        <span className="shrink-0 rounded-full border border-sheen/[0.08] bg-sheen/[0.03] px-2 py-0.5 text-[10px] text-muted-foreground">
-          {person.relationship}
-        </span>
-        <ChevronRight
-          className={cn(
-            "h-4 w-4 shrink-0 transition-all",
-            active ? "translate-x-0.5 text-primary" : "text-muted-foreground/40",
-          )}
-        />
-      </button>
-    </li>
-  );
-}
-
-function PersonDetail({
-  person,
-  onClose,
-}: {
-  person: PersonSummary | null;
-  onClose: () => void;
-}) {
-  const t = useT();
-  if (!person) {
-    return (
-      <BoardCard className="hidden items-center justify-center p-6 lg:flex">
-        <div className="text-center text-xs text-muted-foreground">
-          {t("profile_view.person_detail_hint")}
-        </div>
-      </BoardCard>
-    );
-  }
-
-  return (
-    <BoardCard className="h-fit p-5">
-      <div className="mb-4 flex items-start gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-sm font-semibold text-primary">
-          {initials(person.name)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-display text-base font-semibold">{person.name}</div>
-          <div className="text-xs text-muted-foreground">{person.relationship}</div>
-        </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={onClose}
-          title={t("profile_view.close_tooltip")}
-        >
-          <X className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-
-      <dl className="space-y-3 border-t border-sheen/[0.06] pt-4 text-xs">
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-muted-foreground">{t("profile_view.person_relationship")}</dt>
-          <dd className="font-medium text-foreground">{person.relationship}</dd>
-        </div>
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-muted-foreground">{t("profile_view.person_aliases")}</dt>
-          <dd className="text-right">
-            {person.aliases.length === 0 ? (
-              <span className="italic text-muted-foreground/60">
-                {t("profile_view.person_no_aliases")}
-              </span>
-            ) : (
-              <span className="text-foreground/90">{person.aliases.join(" · ")}</span>
-            )}
-          </dd>
-        </div>
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-muted-foreground">Slug</dt>
-          <dd className="truncate font-mono text-foreground">{person.slug}</dd>
-        </div>
-      </dl>
-
-      <p className="mt-4 flex items-start gap-2 rounded-xl bg-sheen/[0.03] p-2.5 text-[10px] leading-relaxed text-muted-foreground">
-        <Inbox className="mt-0.5 h-3 w-3 shrink-0" />
-        {t("profile_view.person_file_hint").replace("{0}", person.slug)}
-      </p>
-    </BoardCard>
-  );
-}
-
-// ----------------------------------------------------------------------
 // Reviews — observations waiting for the user's OK
 // ----------------------------------------------------------------------
 
-function ReviewsCard({ reviewsCount }: { reviewsCount: number }) {
+function ReviewsSection({ reviewsCount }: { reviewsCount: number }) {
   const t = useT();
   const queryClient = useQueryClient();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -1057,10 +1016,9 @@ function ReviewsCard({ reviewsCount }: { reviewsCount: number }) {
 
   const accept = useMutation({
     mutationFn: (idx: number) =>
-      fetchJson<{ ok: boolean; applied: number }>(
-        `/api/profile/reviews/${idx}/accept`,
-        { method: "POST" },
-      ),
+      fetchJson<{ ok: boolean; applied: number }>(`/api/profile/reviews/${idx}/accept`, {
+        method: "POST",
+      }),
     onSuccess: (res) => {
       pushToast(
         "success",
@@ -1076,10 +1034,7 @@ function ReviewsCard({ reviewsCount }: { reviewsCount: number }) {
 
   const reject = useMutation({
     mutationFn: (idx: number) =>
-      fetchJson<{ ok: boolean }>(
-        `/api/profile/reviews/${idx}/reject`,
-        { method: "POST" },
-      ),
+      fetchJson<{ ok: boolean }>(`/api/profile/reviews/${idx}/reject`, { method: "POST" }),
     onSuccess: () => {
       pushToast("info", t("profile_view.reject_tooltip"));
       queryClient.invalidateQueries({ queryKey: ["profile"] });
@@ -1097,34 +1052,30 @@ function ReviewsCard({ reviewsCount }: { reviewsCount: number }) {
   const items = data?.reviews ?? [];
 
   return (
-    <BoardCard className="p-5">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="flex items-baseline gap-2.5">
-          <h3 className="font-display text-sm font-semibold">
-            {t("profile_view.section_reviews")}
-          </h3>
-          {reviewsCount > 0 && (
-            <span className="rounded-full border border-primary/30 bg-primary/[0.08] px-2 py-0.5 text-[10px] font-medium tabular-nums text-primary">
-              {reviewsCount} {t("profile_view.review_open")}
-            </span>
-          )}
-        </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => refetch()}
-          disabled={isRefetching}
-          title={t("profile_view.reload_tooltip")}
-        >
-          <RefreshCw className={cn("h-3.5 w-3.5", isRefetching && "animate-spin")} />
-        </Button>
-      </div>
+    <div>
+      <RailHeading
+        title={t("profile_view.section_reviews")}
+        count={reviewsCount > 0 ? `${reviewsCount} ${t("profile_view.review_open")}` : ""}
+        right={
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isRefetching}
+            title={t("profile_view.reload_tooltip")}
+            aria-label={t("profile_view.reload_tooltip")}
+            className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+          >
+            <RefreshCw className={cn("h-3 w-3", isRefetching && "animate-spin")} />
+          </button>
+        }
+      />
 
       {isLoading && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <RefreshCw className="h-3.5 w-3.5 animate-spin" /> {t("profile_view.raw_loading")}
+        <div className="mt-2.5 flex items-center gap-2 text-xs text-muted-foreground">
+          <RefreshCw className="h-3 w-3 animate-spin" /> {t("profile_view.raw_loading")}
         </div>
       )}
+
       {error &&
         ((error as Error & { status?: number }).status === 503 ? (
           // 503 = the Curator subsystem is intentionally not running (e.g.
@@ -1140,7 +1091,7 @@ function ReviewsCard({ reviewsCount }: { reviewsCount: number }) {
         ) : (
           <div
             data-testid="reviews-error"
-            className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
+            className="mt-2.5 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive"
           >
             {error.message}
           </div>
@@ -1155,7 +1106,7 @@ function ReviewsCard({ reviewsCount }: { reviewsCount: number }) {
       )}
 
       {items.length > 0 && (
-        <ul className="space-y-2.5">
+        <ul className="mt-2.5 space-y-2">
           {items.map((c) => (
             <ReviewRow
               key={c.idx}
@@ -1167,11 +1118,11 @@ function ReviewsCard({ reviewsCount }: { reviewsCount: number }) {
           ))}
         </ul>
       )}
-    </BoardCard>
+    </div>
   );
 }
 
-// Calm in-card empty state shared by People and Reviews.
+/** Calm in-rail empty state shared by People and Reviews. */
 function EmptyHint({
   icon: Icon,
   title,
@@ -1184,18 +1135,20 @@ function EmptyHint({
   testId?: string;
 }) {
   return (
-    <div data-testid={testId} className="mt-2 flex items-center gap-3.5 py-2">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-sheen/[0.07] bg-sheen/[0.03]">
-        <Icon className="h-4.5 w-4.5 h-[18px] w-[18px] text-muted-foreground" />
+    <div data-testid={testId} className="mt-2.5 flex items-start gap-3 py-1">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-sheen/[0.07] bg-sheen/[0.03]">
+        <Icon className="h-[15px] w-[15px] text-muted-foreground" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">{title}</div>
-        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{body}</p>
+        <div className="text-xs font-medium">{title}</div>
+        <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{body}</p>
       </div>
     </div>
   );
 }
 
+/** One review candidate, sized for the margin rail: the quote leads, the
+ *  cluster→field path and the verdict buttons sit under it. */
 function ReviewRow({
   candidate,
   pending,
@@ -1208,80 +1161,190 @@ function ReviewRow({
   onReject: () => void;
 }) {
   const t = useT();
-  const conf = candidate.confidence;
-  const confColor =
-    conf >= 0.7 ? "text-muted-foreground" : conf >= 0.5 ? "text-foreground" : "text-muted-foreground";
 
   return (
-    <li className="rounded-xl border border-sheen/[0.06] bg-sheen/[0.02] p-4 transition-colors hover:border-primary/25">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1 space-y-2">
-          {candidate.evidence && (
-            <blockquote className="text-sm italic leading-snug text-foreground/90">
-              “{candidate.evidence}”
-            </blockquote>
-          )}
-          <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <span>
-              {candidate.is_person
-                ? `${t("profile_view.review_subject_user")} → ${candidate.person_name}`
-                : t("profile_view.review_subject_user")}
-            </span>
-            <Dot />
-            <span>{candidate.cluster}</span>
-            <ChevronRight className="h-3 w-3 text-muted-foreground/40" />
-            <span className="font-medium text-foreground">{candidate.field}</span>
-            <Badge variant="outline" className="text-[10px]">
-              {candidate.operation}
-            </Badge>
-          </div>
-          <div className="text-sm">
-            <span className="text-muted-foreground">{t("profile_view.review_value")}: </span>
-            <span className="font-medium text-foreground [overflow-wrap:anywhere]">
-              {renderValue(t, candidate.value) || "—"}
-            </span>
-          </div>
-          {candidate.reason && (
-            <p className="text-[11px] text-muted-foreground/70">
-              {t("profile_view.review_reason")}: {candidate.reason}
-            </p>
-          )}
-        </div>
+    <li className="rounded-xl border border-sheen/[0.06] bg-sheen/[0.02] p-3 transition-colors hover:border-primary/25">
+      {candidate.evidence && (
+        <blockquote className="text-xs italic leading-snug text-foreground/90">
+          “{candidate.evidence}”
+        </blockquote>
+      )}
 
-        <div className="flex shrink-0 flex-col items-end gap-2.5">
-          <span className={cn("text-sm font-semibold tabular-nums", confColor)}>
-            {(conf * 100).toFixed(0)}%
-          </span>
-          <div className="flex gap-1.5">
-            <Button
-              size="sm"
-              variant="default"
-              disabled={pending}
-              onClick={onAccept}
-              title={t("profile_view.accept_tooltip")}
-            >
-              <Check className="mr-1.5 h-3.5 w-3.5" />
-              {t("profile_view.review_confirm")}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pending}
-              onClick={onReject}
-              title={t("profile_view.reject_tooltip")}
-            >
-              <X className="mr-1.5 h-3.5 w-3.5" />
-              {t("profile_view.review_strike")}
-            </Button>
-          </div>
-        </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+        <span>
+          {candidate.is_person
+            ? `${t("profile_view.review_subject_user")} → ${candidate.person_name}`
+            : t("profile_view.review_subject_user")}
+        </span>
+        <Dot />
+        <span>{candidate.cluster}</span>
+        <ChevronRight className="h-3 w-3 text-muted-foreground/40" />
+        <span className="font-medium text-foreground">{candidate.field}</span>
+        <Badge variant="outline" className="text-[10px]">
+          {candidate.operation}
+        </Badge>
+        <span className="ml-auto font-semibold tabular-nums text-foreground/80">
+          {(candidate.confidence * 100).toFixed(0)}%
+        </span>
+      </div>
+
+      <div className="mt-1.5 text-xs">
+        <span className="text-muted-foreground">{t("profile_view.review_value")}: </span>
+        <span className="font-medium text-foreground [overflow-wrap:anywhere]">
+          {renderValue(t, candidate.value) || "—"}
+        </span>
+      </div>
+
+      {candidate.reason && (
+        <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground/70">
+          {t("profile_view.review_reason")}: {candidate.reason}
+        </p>
+      )}
+
+      <div className="mt-2.5 flex gap-1.5">
+        <Button
+          size="sm"
+          variant="default"
+          className="h-7 flex-1 text-[11px]"
+          disabled={pending}
+          onClick={onAccept}
+          title={t("profile_view.accept_tooltip")}
+        >
+          <Check className="mr-1 h-3 w-3" />
+          {t("profile_view.review_confirm")}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 flex-1 text-[11px]"
+          disabled={pending}
+          onClick={onReject}
+          title={t("profile_view.reject_tooltip")}
+        >
+          <X className="mr-1 h-3 w-3" />
+          {t("profile_view.review_strike")}
+        </Button>
       </div>
     </li>
   );
 }
 
 // ----------------------------------------------------------------------
-// Source card — live USER.md with in-place editing
+// People — quiet rows that expand in place
+// ----------------------------------------------------------------------
+//
+// A side-by-side list + detail card cannot fit a 320px rail, so the detail
+// opens inside the row instead. One click selects and expands — the row-click
+// doctrine the rest of the app follows.
+
+function PeopleSection({ people }: { people: PersonSummary[] }) {
+  const t = useT();
+  const [openSlug, setOpenSlug] = useState<string | null>(null);
+
+  return (
+    <div>
+      <RailHeading
+        title={t("profile_view.section_people")}
+        count={people.length > 0 ? people.length : ""}
+      />
+
+      {people.length === 0 ? (
+        <EmptyHint
+          icon={UsersIcon}
+          title={t("profile_view.people_empty_title")}
+          body={t("profile_view.people_empty_body")}
+        />
+      ) : (
+        <ul className="mt-1.5">
+          {people.map((p) => (
+            <PersonRow
+              key={p.slug}
+              person={p}
+              open={p.slug === openSlug}
+              onToggle={() => setOpenSlug(p.slug === openSlug ? null : p.slug)}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function PersonRow({
+  person,
+  open,
+  onToggle,
+}: {
+  person: PersonSummary;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const t = useT();
+
+  return (
+    <li className="border-b border-sheen/[0.05] last:border-b-0">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2.5 py-2 text-left transition-colors"
+      >
+        <span
+          className={cn(
+            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold transition-colors",
+            open
+              ? "border-primary/40 bg-primary/10 text-primary"
+              : "border-sheen/[0.08] bg-sheen/[0.05] text-foreground/80",
+          )}
+        >
+          {initials(person.name)}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs font-medium">{person.name}</span>
+          <span className="block truncate text-[10px] text-muted-foreground">
+            {person.relationship}
+          </span>
+        </span>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-muted-foreground/50 transition-transform",
+            open && "rotate-180 text-primary",
+          )}
+        />
+      </button>
+
+      {open && (
+        <div className="pb-3 pl-[2.375rem] pr-1">
+          <dl className="space-y-1.5 text-[11px]">
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="text-muted-foreground">{t("profile_view.person_relationship")}</dt>
+              <dd className="font-medium text-foreground">{person.relationship}</dd>
+            </div>
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="text-muted-foreground">{t("profile_view.person_aliases")}</dt>
+              <dd className="text-right [overflow-wrap:anywhere]">
+                {person.aliases.length === 0 ? (
+                  <span className="italic text-muted-foreground/60">
+                    {t("profile_view.person_no_aliases")}
+                  </span>
+                ) : (
+                  <span className="text-foreground/90">{person.aliases.join(" · ")}</span>
+                )}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-sheen/[0.03] p-2 text-[10px] leading-relaxed text-muted-foreground">
+            <Inbox className="mt-0.5 h-3 w-3 shrink-0" />
+            {t("profile_view.person_file_hint").replace("{0}", person.slug)}
+          </p>
+        </div>
+      )}
+    </li>
+  );
+}
+
+// ----------------------------------------------------------------------
+// Source drawer — live USER.md, over the view instead of below it
 // ----------------------------------------------------------------------
 //
 // Data flow: GET /api/profile/raw → React-Query cache. Live sync via WS:
@@ -1289,15 +1352,11 @@ function ReviewRow({
 // streams it to the UI, and the subscriber below invalidates both profile
 // queries — the file content is current seconds after a write. The pulse
 // badge gives visual feedback when an update lands.
+//
+// It is a drawer and not a rail because a Markdown file is the one piece of
+// this view that genuinely needs a full column of height to be readable.
 
-interface RawProfileResponse {
-  content: string;
-  path: string;
-  mtime_ms: number | null;
-  size_bytes: number;
-}
-
-function SourceCard() {
+function SourceDrawer({ onClose }: { onClose: () => void }) {
   const t = useT();
   const queryClient = useQueryClient();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -1310,13 +1369,12 @@ function SourceCard() {
   const [draft, setDraft] = useState("");
   const [editBaseMtime, setEditBaseMtime] = useState<number | null>(null);
 
-  const { data, isLoading, error, refetch, isRefetching, dataUpdatedAt } =
-    useQuery<RawProfileResponse, Error>({
-      queryKey: ["profile", "raw"],
-      queryFn: () => fetchJson<RawProfileResponse>("/api/profile/raw"),
-      retry: false,
-      staleTime: 0,
-    });
+  const { data, isLoading, error, refetch, isRefetching } = useQuery<RawProfileResponse, Error>({
+    queryKey: ["profile", "raw"],
+    queryFn: () => fetchJson<RawProfileResponse>("/api/profile/raw"),
+    retry: false,
+    staleTime: 0,
+  });
 
   // Live-subscribe to ProfileUpdated events from the bus.
   useEffect(() => {
@@ -1325,7 +1383,7 @@ function SourceCard() {
     const unsubscribe = client.subscribe((raw) => {
       const env = raw as { event_name?: unknown };
       if (env.event_name !== "ProfileUpdated") return;
-      // Knowledge cards always refresh…
+      // Knowledge rows always refresh…
       queryClient.invalidateQueries({ queryKey: ["profile"] });
       // …but never replace the raw text while the user is editing it — that
       // would wipe their draft mid-keystroke.
@@ -1336,6 +1394,15 @@ function SourceCard() {
     });
     return unsubscribe;
   }, [queryClient, editing]);
+
+  // Escape closes — but never out from under an unsaved draft.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !editing) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editing, onClose]);
 
   const save = useMutation({
     mutationFn: async (content: string) => {
@@ -1384,125 +1451,184 @@ function SourceCard() {
   }, [data?.mtime_ms]);
 
   return (
-    <BoardCard className="p-5">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="font-display text-sm font-semibold">
-          {t("profile_view.section_source")}
-        </h3>
+    <div className="absolute inset-0 z-30 flex flex-col bg-background/80 backdrop-blur-sm">
+      {/* The scrim closes the drawer; the sheet below stops the click. */}
+      <button
+        type="button"
+        aria-label={t("profile_view.close_tooltip")}
+        onClick={() => !editing && onClose()}
+        className="absolute inset-0 cursor-default outline-none"
+        tabIndex={-1}
+      />
 
-        <div className="flex items-center gap-2.5 text-[11px] text-muted-foreground">
-          {editing ? (
-            <>
-              <span className="flex items-center gap-1.5">
-                <Lock className="h-3 w-3 text-primary/70" />
-                <span className="hidden sm:inline">{t("profile_view.raw_editing_hint")}</span>
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setEditing(false)}
-                disabled={save.isPending}
-              >
-                {t("profile_view.raw_cancel")}
-              </Button>
-              <Button
-                size="sm"
-                variant="default"
-                onClick={() => save.mutate(draft)}
-                disabled={save.isPending}
-              >
-                <Save className={cn("mr-1.5 h-3.5 w-3.5", save.isPending && "animate-pulse")} />
-                {save.isPending ? t("profile_view.raw_saving") : t("profile_view.raw_save")}
-              </Button>
-            </>
-          ) : (
-            <>
-              {isPulsing && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-muted-foreground/15 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-muted-foreground opacity-75" />
-                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-                  </span>
-                  {t("profile_view.just_updated")}
+      <div className="profile-rise relative m-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-sheen/[0.09] bg-card shadow-[0_24px_60px_-24px_rgba(0,0,0,0.8)] lg:m-6">
+        <header className="flex flex-wrap items-center gap-2.5 border-b border-sheen/[0.07] px-4 py-3">
+          <FileText className="h-4 w-4 shrink-0 text-primary" />
+          <div className="min-w-0">
+            <div className="font-display text-sm font-semibold">
+              {t("profile_view.section_source")}
+            </div>
+            {data && (
+              <div className="truncate font-mono text-[10px] text-muted-foreground">{data.path}</div>
+            )}
+          </div>
+
+          <div className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
+            {editing ? (
+              <>
+                <span className="hidden items-center gap-1.5 sm:flex">
+                  <Lock className="h-3 w-3 text-primary/70" />
+                  {t("profile_view.raw_editing_hint")}
                 </span>
-              )}
-              {lastUpdate && (
-                <span className="hidden items-center gap-1 sm:inline-flex">
-                  <Clock className="h-3 w-3" />
-                  {lastUpdate.toLocaleString()}
-                </span>
-              )}
-              {data && <span>{(data.size_bytes / 1024).toFixed(1)} KB</span>}
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => refetch()}
-                disabled={isRefetching}
-                title={t("profile_view.reload_tooltip")}
-              >
-                <RefreshCw className={cn("h-3.5 w-3.5", isRefetching && "animate-spin")} />
-              </Button>
-              {data && (
-                // Prominent, labelled entry point — a bare pencil icon was too
-                // easy to miss. This is THE way to start editing USER.md.
                 <Button
                   size="sm"
-                  variant="outline"
-                  onClick={startEditing}
-                  className="border-primary/50 font-semibold text-primary hover:bg-primary/10 hover:text-primary"
+                  variant="ghost"
+                  onClick={() => setEditing(false)}
+                  disabled={save.isPending}
                 >
-                  <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                  {t("profile_view.raw_edit")}
+                  {t("profile_view.raw_cancel")}
                 </Button>
-              )}
-            </>
+                <Button
+                  size="sm"
+                  variant="default"
+                  onClick={() => save.mutate(draft)}
+                  disabled={save.isPending}
+                >
+                  <Save className={cn("mr-1.5 h-3.5 w-3.5", save.isPending && "animate-pulse")} />
+                  {save.isPending ? t("profile_view.raw_saving") : t("profile_view.raw_save")}
+                </Button>
+              </>
+            ) : (
+              <>
+                {isPulsing && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-muted-foreground/15 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-muted-foreground opacity-75" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-muted-foreground" />
+                    </span>
+                    {t("profile_view.just_updated")}
+                  </span>
+                )}
+                {lastUpdate && (
+                  <span className="hidden items-center gap-1 md:inline-flex">
+                    <Clock className="h-3 w-3" />
+                    {lastUpdate.toLocaleString()}
+                  </span>
+                )}
+                {data && <span className="tabular-nums">{(data.size_bytes / 1024).toFixed(1)} KB</span>}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => refetch()}
+                  disabled={isRefetching}
+                  title={t("profile_view.reload_tooltip")}
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5", isRefetching && "animate-spin")} />
+                </Button>
+                {data && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={startEditing}
+                    className="border-primary/50 font-semibold text-primary hover:bg-primary/10 hover:text-primary"
+                  >
+                    <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                    {t("profile_view.raw_edit")}
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={onClose}
+                  title={t("profile_view.close_tooltip")}
+                  aria-label={t("profile_view.close_tooltip")}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </>
+            )}
+          </div>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {isLoading && (
+            <div className="flex items-center gap-2 p-5 text-sm text-muted-foreground">
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" /> {t("profile_view.raw_loading")}
+            </div>
           )}
+
+          {error && (
+            <div className="m-4 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+              {error.message}
+            </div>
+          )}
+
+          {data &&
+            (editing ? (
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                spellCheck={false}
+                autoFocus
+                aria-label="USER.md"
+                className="block h-full w-full resize-none bg-transparent p-5 font-mono text-[11px] leading-relaxed text-foreground/90 outline-none scrollbar-jarvis"
+              />
+            ) : (
+              <pre className="h-full overflow-auto whitespace-pre-wrap break-words p-5 font-mono text-[11px] leading-relaxed text-foreground/90 scrollbar-jarvis">
+                {data.content || t("profile_view.raw_empty")}
+              </pre>
+            ))}
         </div>
       </div>
+    </div>
+  );
+}
 
-      {isLoading && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <RefreshCw className="h-3.5 w-3.5 animate-spin" /> {t("profile_view.raw_loading")}
-        </div>
-      )}
+// ----------------------------------------------------------------------
+// Loading / Error
+// ----------------------------------------------------------------------
 
-      {error && (
-        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          {error.message}
-        </div>
-      )}
+function LoadingState() {
+  const t = useT();
+  return (
+    <div className="flex flex-1 items-center justify-center">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <RefreshCw className="h-4 w-4 animate-spin" /> {t("common.loading")}
+      </div>
+    </div>
+  );
+}
 
-      {data && (
-        <div
-          className={cn(
-            "overflow-hidden rounded-xl border bg-scrim/30 transition-shadow",
-            editing ? "border-primary/40" : "border-sheen/[0.06]",
-            isPulsing && !editing && "ring-1 ring-muted-foreground/40",
-          )}
-        >
-          <div className="flex items-center gap-2.5 border-b border-sheen/[0.05] bg-sheen/[0.02] px-3.5 py-2.5">
-            <FileText className="h-3.5 w-3.5 text-primary" />
-            <span className="truncate font-mono text-[10px] text-muted-foreground">{data.path}</span>
-            <span className="ml-auto font-mono text-[10px] text-muted-foreground/50">
-              {editing ? `${(new Blob([draft]).size / 1024).toFixed(1)} KB` : new Date(dataUpdatedAt).toLocaleTimeString()}
-            </span>
+function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
+  const t = useT();
+  const status = (error as Error & { status?: number }).status;
+  if (status === 503) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-8">
+        <div className="max-w-md rounded-2xl border border-sheen/[0.08] bg-sheen/[0.03] p-8 text-center">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-sheen/[0.08] bg-sheen/[0.04]">
+            <UserCircle2 className="h-6 w-6 text-primary" />
           </div>
-          {editing ? (
-            <textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              spellCheck={false}
-              autoFocus
-              aria-label="USER.md"
-              className="block h-[60vh] max-h-[640px] min-h-[360px] w-full resize-y bg-transparent p-4 font-mono text-[11px] leading-relaxed text-foreground/90 outline-none scrollbar-jarvis"
-            />
-          ) : (
-            <pre className="max-h-[480px] overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-[11px] leading-relaxed text-foreground/90 scrollbar-jarvis">
-              {data.content || t("profile_view.raw_empty")}
-            </pre>
-          )}
+          <h3 className="font-display text-lg font-semibold tracking-tight">
+            {t("profile_view.hero_name_placeholder")}
+          </h3>
+          <p className="mt-2 text-sm text-muted-foreground">{error.message}</p>
+          <p className="mt-4 text-xs text-muted-foreground/70">{t("profile_view.no_user_hint")}</p>
+          <Button className="mt-6" size="sm" variant="outline" onClick={onRetry}>
+            <RefreshCw className="mr-2 h-3.5 w-3.5" /> {t("apikeys_view.retry")}
+          </Button>
         </div>
-      )}
-    </BoardCard>
+      </div>
+    );
+  }
+  return (
+    <div className="p-6">
+      <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+        {t("common.error_generic")}: {error.message}
+        <button className="ml-2 underline" onClick={onRetry}>
+          {t("apikeys_view.retry")}
+        </button>
+      </div>
+    </div>
   );
 }
