@@ -616,21 +616,24 @@ label,
 
          2 %   stage        full-bleed canvas behind the knowledge graphs
          4 %   background   the work surface — the black
+         6 %   sidebar      the nav column — a breath off the ground
          9 %   card         a card on that surface
-        13 %   sidebar      the nav column — Design.md `ink` #26251E, the grey
-        17 %   popover      menus, which must clear the nav column too
-        22 %   secondary    hover and active rows
+        12 %   secondary    hover and active rows
+        15 %   popover      menus
 
-       Neighbours that can meet on screen are at least four points apart; the
-       nav column now separates from the work surface by nine. The sidebar
-       value is not invented — it is the Design.md's own darkest colour, which
-       is also the value this theme used to use as its background, and which
-       the maintainer correctly read as grey. */
+       The ZONE whispers and the ELEMENTS on it speak. A first attempt put the
+       nav column nine points above the page and it read as a grey band bolted
+       onto the app rather than as a surface (maintainer, 2026-08-28, against a
+       measured reference: that editor separates its rail from its editor by
+       1.6 points, and lets the active row jump 5). These proportions match it
+       — two points for the zone, five to eight for anything sitting on it —
+       on our warm hue rather than its neutral grey, and on the near-black the
+       maintainer approved. */
     --background: 50 8% 4%; /* #0A0A09 near-black, warm */
     --foreground: 60 16% 96%; /* #F7F7F4 — the canvas, inverted into ink */
     --card: 50 7% 9%; /* #191815 */
     --card-foreground: 60 16% 96%;
-    --popover: 50 7% 17%;
+    --popover: 48 7% 15%;
     --popover-foreground: 60 16% 96%;
     /* #FFFFFF. The brand is whichever end of the value scale the ground is
        not. Here it does sit one step past --foreground (the canvas #F7F7F4),
@@ -638,9 +641,9 @@ label,
        theme has none above `ink` and keeps the two equal. 19.8:1. */
     --primary: 0 0% 100%;
     --primary-foreground: 60 5% 4%; /* the ground */
-    --secondary: 48 7% 22%; /* #3C3A34 hover, active rows */
+    --secondary: 48 7% 12%; /* #21201C hover, active rows */
     --secondary-foreground: 60 16% 96%;
-    --muted: 48 7% 22%;
+    --muted: 48 7% 12%;
     --muted-foreground: 47 6% 58%; /* #9A978C */
     --accent: 0 0% 100%;
     --accent-foreground: 60 5% 4%;
@@ -650,10 +653,10 @@ label,
     --diff-add-bg: 40 5% 12%;
     --diff-del: 47 6% 58%;
     --diff-del-bg: 60 5% 3%;
-    --border: 48 6% 20%; /* #37352F */
-    --input: 48 7% 22%;
+    --border: 48 6% 18%; /* #322F2B */
+    --input: 48 7% 12%;
     --ring: 0 0% 100%;
-    --sidebar: 53 12% 13%; /* #25241D — Design.md `ink`, see the ramp note */
+    --sidebar: 50 8% 6%; /* #11100E — two points off the ground, no more */
 
     --accent-rgb: 247 247 244;
     --scrim-rgb: 0 0 0;
