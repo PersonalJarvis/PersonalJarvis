@@ -109,18 +109,52 @@ logs/
 /*.bmp
 /*.mp4
 /*.mov
+# Screen recordings. OBS-style capture writes multi-GB .avi next to whatever
+# directory it was pointed at; a single one of these outweighs the whole repo.
+/*.avi
+/*.webm
+/*.mkv
 /*.log
-# OS screenshot dumps anywhere in the tree (Windows / macOS naming).
-Screenshot *.png
-Bildschirmfoto *.png
-Screen Shot *.png
-# External screenshot-tool captures (e.g. ShareX) named "<foreground-process>_<random>.png"
-# — e.g. pythonw_AbCd123456.png. They land ANYWHERE in the tree when a capture is taken
-# while a repo-owned window is focused, and are never load-bearing assets. The root-only
-# "/*.png" rule above misses the ones that drop into a subdir, so match these by name in
-# every directory. The real fix is to point the screenshot tool's save folder out of the repo.
-pythonw_*.png
-ShareX_*.png
+# OS screenshot dumps anywhere in the tree (Windows / macOS naming). Extension-free
+# so the .jpg and .mp4 variants of the same dialog are caught too.
+Screenshot *
+Bildschirmfoto *
+Screen Shot *
+# Screenshot-tool captures named "<foreground-process>_<random>" — e.g.
+# pythonw_AbCd123456.png. The name records which window was in front when the shot
+# was taken, NOT which tool wrote the file: ShareX itself saves to its own folder.
+# These land in the tree because a capture handed to a coding agent is copied into
+# the working directory under its original name, so they appear in subdirectories
+# too and the root-only "/*.png" rules above miss them.
+#
+# Verified 2026-08-28: two such captures (jarvis/ui/web/frontend/pythonw_*.png)
+# did reach the public history this way before the first of these rules existed.
+# Written without an extension so the .gif and .mp4 variants are covered as well;
+# checked against `git ls-files` — no tracked path starts with any of these.
+pythonw_*
+ShareX_*
+chrome_*
+Cursor_*
+ChatGPT_*
+Discord_*
+Hermes_*
+explorer_*
+PersonalJarvis_*
+PersonalJarvisDev_*
+bridgespace-tauri_*
+# Phone photos synced in from a camera roll (Google Pixel naming).
+PXL_*
+# Images pasted into a coding agent's prompt: the harness writes them to the
+# working directory. A Stop hook removes the .png ones immediately; this catches
+# the .gif and .webp variants it misses. Extension-scoped so the tracked
+# clipboard-list-*.js icon bundle is not swept up with them.
+clipboard-*.png
+clipboard-*.gif
+clipboard-*.jpg
+clipboard-*.webp
+clipboard-*.mp4
+# Generated images downloaded from a chat assistant.
+ChatGPT Image *
 
 # Canonical home for development/verification screenshots (see CLAUDE.md).
 # The app's boot sweep consolidates stray root captures here and auto-prunes
@@ -313,9 +347,14 @@ video/*.png
 /jarvis-agents-rename-handoff.md
 /jarvis-antwortverhalten-fixes.md
 /voice-assistant-system-prompt.md
-# Editor-generated untitled notes dropped at the repo root (personal scratch).
+# Editor-generated untitled notes (personal scratch) — a Google Docs export keeps
+# the placeholder title as its filename. Matched in EVERY directory, not just the
+# root: five of these reached the public history, and four of the paths that
+# carried them were subdirectories (Aufgaben/, ReviewSubagent/, SubAgentenSt/,
+# "Jarvis  Long-Term Memory/"), which a root-anchored rule cannot see.
 # i18n-allow: literal filename a German-locale editor generates
-/Unbenanntes Dokument*
+Unbenanntes Dokument*
+Untitled document*
 
 # Codex-session visualization artifacts (generated HTML analysis pages; the
 # tracked .codex/ agent definitions stay versioned).
