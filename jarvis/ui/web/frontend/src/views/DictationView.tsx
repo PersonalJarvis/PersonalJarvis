@@ -171,10 +171,10 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
           {/* --- Insertion warning: the silent-failure paths, made loud. --- */}
           {blocked && (
             <div
-              className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4"
+              className="flex items-start gap-3 rounded-lg border border-foreground/40 bg-foreground/10 p-4"
               data-testid="dictation-insert-warning"
             >
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
               <div className="min-w-0">
                 <h4 className="font-display text-sm font-semibold">
                   {t("dictation.cannot_insert_title")}

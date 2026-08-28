@@ -156,7 +156,7 @@ function PaneRow({
       data-testid={`interrupted-pane-${pane.name}`}
       className={cn(
         "rounded-lg border p-3",
-        pane.continuable ? "border-border bg-card/60" : "border-amber-500/40 bg-amber-500/10",
+        pane.continuable ? "border-border bg-card/60" : "border-foreground/40 bg-foreground/10",
       )}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -180,7 +180,7 @@ function PaneRow({
             </p>
           )}
           {!pane.continuable && (
-            <p className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-200">
+            <p className="mt-1.5 flex items-start gap-1.5 text-xs text-foreground">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               {pane.blocked_reason}
             </p>
@@ -317,7 +317,7 @@ export function ContinueInterrupted({
             // rule the rest of the toolbar follows (TOOLBAR_BTN in AgenticGrid).
             "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
             waiting
-              ? "bg-amber-500/15 text-amber-200 hover:bg-amber-500/25"
+              ? "bg-foreground/15 text-foreground hover:bg-foreground/25"
               : "text-muted-foreground hover:bg-secondary hover:text-foreground",
           )}
         >
@@ -326,7 +326,7 @@ export function ContinueInterrupted({
           {waiting && (
             <span
               data-testid="continue-interrupted-count"
-              className="rounded bg-amber-500/25 px-1.5 py-0.5 font-mono text-[10px]"
+              className="rounded bg-foreground/25 px-1.5 py-0.5 font-mono text-[10px]"
             >
               {offer.count}
             </span>

@@ -240,7 +240,7 @@ export function SkillCreateDialog({
                 className={
                   aiOk
                     ? "flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-300"
-                    : "flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300"
+                    : "flex items-start gap-2 rounded-md border border-foreground/40 bg-foreground/10 p-3 text-xs text-foreground"
                 }
               >
                 {aiOk ? (

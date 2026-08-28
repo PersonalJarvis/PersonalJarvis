@@ -525,7 +525,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
                 <p className="text-xs text-muted-foreground">{t("tasks_view.create.plugins_loading")}</p>
               ) : plugins.length === 0 ? (
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-400/80" />
+                  <AlertTriangle className="h-3.5 w-3.5 text-foreground/80" />
                   {t("tasks_view.create.plugins_empty")}
                 </p>
               ) : (
@@ -564,8 +564,8 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
                 </div>
               )}
               {hasElevatedGrant && (
-                <p className="flex items-start gap-1.5 rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] leading-relaxed text-amber-200/90">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400/80" />
+                <p className="flex items-start gap-1.5 rounded-lg border border-foreground/30 bg-foreground/5 px-3 py-2 text-[11px] leading-relaxed text-foreground/90">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/80" />
                   {t("tasks_view.create.unattended_hint")}
                 </p>
               )}

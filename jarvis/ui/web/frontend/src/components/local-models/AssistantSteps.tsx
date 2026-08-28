@@ -78,7 +78,7 @@ function Mark({ tone }: { tone: Tone }) {
   if (tone === "run") return <Loader2 className="h-3 w-3 animate-spin text-primary" />;
   if (tone === "fail") return <X className="h-3 w-3 text-destructive" />;
   if (tone === "ask")
-    return <span className="h-1.5 w-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />;
+    return <span className="h-1.5 w-1.5 rounded-full bg-foreground" />;
   return <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />;
 }
 
@@ -174,7 +174,7 @@ function ToolStep({
   return (
     <StepRow tone={tone} label={label} meta={seconds(block.durationMs)} detail={detail}>
       {tone === "ask" && block.approval && onDecide && (
-        <div className="ml-6 mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/[0.07] px-3 py-2">
+        <div className="ml-6 mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-foreground/40 bg-foreground/[0.07] px-3 py-2">
           <span className="text-[13px] text-foreground">{block.approval.summary}</span>
           <div className="ml-auto flex gap-1.5">
             <button

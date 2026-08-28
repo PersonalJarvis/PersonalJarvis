@@ -14,7 +14,7 @@ export function StatChip({
   tone?: "default" | "warn" | "breach";
 }) {
   const valueCls =
-    tone === "breach" ? "text-rose-300" : tone === "warn" ? "text-amber-300" : "text-foreground";
+    tone === "breach" ? "text-rose-300" : tone === "warn" ? "text-foreground" : "text-foreground";
   return (
     <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-2">
       <div className="text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">

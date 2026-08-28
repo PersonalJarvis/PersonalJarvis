@@ -193,7 +193,7 @@ function AutostartRow() {
           {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
 
           {!supported && !loading && (
-            <p className="mt-3 text-xs text-amber-500">
+            <p className="mt-3 text-xs text-foreground">
               {config?.detail || t("settings_view.autostart.unsupported")}
             </p>
           )}

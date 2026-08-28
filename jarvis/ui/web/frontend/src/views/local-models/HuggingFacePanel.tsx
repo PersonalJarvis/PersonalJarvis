@@ -521,7 +521,7 @@ function FileRow({
             className={cn(
               "text-xs",
               file.fit === "tight"
-                ? "text-amber-600 dark:text-amber-400"
+                ? "text-foreground"
                 : file.fit === "comfortable"
                   ? "text-emerald-600 dark:text-emerald-400"
                   : "text-muted-foreground",
@@ -534,7 +534,7 @@ function FileRow({
           {file.filename}
         </div>
         {file.fit === "tight" && file.fit_note && (
-          <div className="text-[11px] text-amber-600 dark:text-amber-400">
+          <div className="text-[11px] text-foreground">
             {file.fit_note}
           </div>
         )}

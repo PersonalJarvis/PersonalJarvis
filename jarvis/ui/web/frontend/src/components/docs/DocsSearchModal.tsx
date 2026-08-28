@@ -125,7 +125,7 @@ export function DocsSearchModal({ open, onOpenChange, onSelect }: Props) {
                         {r.section}
                       </span>
                     </div>
-                    <div className="ml-5 line-clamp-2 text-xs text-muted-foreground [&>mark]:bg-yellow-500/30 [&>mark]:text-foreground">
+                    <div className="ml-5 line-clamp-2 text-xs text-muted-foreground [&>mark]:bg-foreground/30 [&>mark]:text-foreground">
                       {renderSearchSnippet(r.snippet)}
                     </div>
                   </Command.Item>

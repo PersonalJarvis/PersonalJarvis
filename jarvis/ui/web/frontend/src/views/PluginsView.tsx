@@ -1196,7 +1196,7 @@ function PluginTableRow({
               {plugin.fromMarketplace && <MarketplaceBadge publisher={plugin.publisher} />}
               {plugin.selfUploaded && (
                 <span
-                  className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[9px] font-medium uppercase tracking-wider text-amber-500"
+                  className="rounded-full border border-foreground/40 bg-foreground/10 px-1.5 text-[9px] font-medium uppercase tracking-wider text-foreground"
                   title={translate("plugin_upload.unreviewed")}
                 >
                   {translate("plugin_upload.self_badge")}
@@ -1285,7 +1285,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
             {plugin.fromMarketplace && <MarketplaceBadge publisher={plugin.publisher} />}
             {plugin.selfUploaded && (
               <span
-                className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[9px] font-medium uppercase tracking-wider text-amber-500"
+                className="rounded-full border border-foreground/40 bg-foreground/10 px-1.5 text-[9px] font-medium uppercase tracking-wider text-foreground"
                 title={translate("plugin_upload.unreviewed")}
               >
                 {translate("plugin_upload.self_badge")}
@@ -1318,7 +1318,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
                 className={cn(
                   "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                   needsReconnect
-                    ? "border border-amber-500/50 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
+                    ? "border border-foreground/50 bg-foreground/10 text-foreground hover:bg-foreground/20"
                     : "bg-primary text-primary-foreground hover:bg-primary/90",
                 )}
               >
@@ -1348,7 +1348,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
       />
 
       {plugin.status === "needs_reauth" ? (
-        <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs">
+        <div className="mt-4 rounded-md border border-foreground/40 bg-foreground/10 px-3 py-2.5 text-xs">
           <ReauthExplanation plugin={plugin} />
         </div>
       ) : null}
@@ -1371,7 +1371,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
               {
                 label: translate("plugins_view.fact_connection"),
                 value: (
-                  <span className={cn(plugin.longevity === "provider_limited" && "text-amber-500")}>
+                  <span className={cn(plugin.longevity === "provider_limited" && "text-foreground")}>
                     {LONGEVITY_LABEL[plugin.longevity]}
                     {plugin.longevityNote ? (
                       <span className="block text-xs text-muted-foreground">{plugin.longevityNote}</span>
@@ -1435,8 +1435,8 @@ function AttentionBanner({
     : `${plugins.length} connections need reconnecting`;
 
   return (
-    <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-3 py-2">
-      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+    <div className="mb-4 flex items-center gap-3 rounded-lg border border-foreground/30 bg-foreground/[0.07] px-3 py-2">
+      <AlertTriangle className="h-4 w-4 shrink-0 text-foreground" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-[13px] font-medium text-foreground">{headline}</p>
         <p className="truncate text-xs text-muted-foreground">
@@ -1456,7 +1456,7 @@ function AttentionBanner({
       <button
         type="button"
         onClick={onJump}
-        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 text-xs font-medium text-amber-500 transition-colors hover:bg-amber-500/20"
+        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-foreground/40 bg-foreground/10 px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-foreground/20"
       >
         {one ? "Jump to it" : "Jump to first"}
         <ArrowRight className="h-3.5 w-3.5" />
@@ -1537,7 +1537,7 @@ export function LongevityBadge({ plugin }: { plugin: Plugin }) {
       title={plugin.longevityNote ?? LONGEVITY_LABEL[plugin.longevity]}
       className={cn(
         "text-[9px] font-medium uppercase tracking-wider",
-        limited ? "text-amber-500/80" : "text-muted-foreground/45",
+        limited ? "text-foreground/80" : "text-muted-foreground/45",
       )}
     >
       {LONGEVITY_LABEL[plugin.longevity]}
@@ -1571,13 +1571,13 @@ export function ReauthExplanation({ plugin, inline }: { plugin: Plugin; inline?:
   const fix = plugin.longevity === "provider_limited" ? plugin.longevityNote : undefined;
 
   if (inline) {
-    return <span className="text-amber-500/90">{headline}</span>;
+    return <span className="text-foreground/90">{headline}</span>;
   }
 
   return (
     <>
       <p
-        className="truncate text-xs text-amber-500/90"
+        className="truncate text-xs text-foreground/90"
         title={
           retrying
             ? `${headline}. Jarvis retries this once a day; reconnect to fix it now.`
@@ -1672,7 +1672,7 @@ export function ConnectIconButton({
         disabled={busy}
         aria-busy={busy}
         className={cn(
-          "grid h-7 w-7 shrink-0 place-items-center rounded-full border border-amber-500/50 bg-amber-500/10 text-amber-500 transition-all hover:bg-amber-500/20 group-hover:scale-105",
+          "grid h-7 w-7 shrink-0 place-items-center rounded-full border border-foreground/50 bg-foreground/10 text-foreground transition-all hover:bg-foreground/20 group-hover:scale-105",
           busy && "cursor-not-allowed opacity-60 group-hover:scale-100",
         )}
         aria-label="Reconnect plugin"
@@ -2228,11 +2228,11 @@ export function PkceConnectDialog({
 
         <div className="space-y-3 px-5 py-4">
           {isGoogle && (
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-[11px] leading-relaxed">
-              <p className="font-medium text-amber-300">
+            <div className="rounded-md border border-foreground/40 bg-foreground/10 px-3 py-2.5 text-[11px] leading-relaxed">
+              <p className="font-medium text-foreground">
                 Keep it connected permanently
               </p>
-              <p className="mt-1 text-amber-200/90">
+              <p className="mt-1 text-foreground/90">
                 Google drops the connection every 7 days while your OAuth app is
                 in "Testing". Publish your app to <strong>In production</strong>{" "}
                 (it can stay unverified for personal use) so it never expires.
@@ -2241,7 +2241,7 @@ export function PkceConnectDialog({
                 href="https://console.cloud.google.com/auth/audience"
                 target="_blank"
                 rel="noreferrer"
-                className="mt-1.5 inline-flex items-center gap-1 font-medium text-amber-300 underline underline-offset-2 hover:text-amber-200"
+                className="mt-1.5 inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-2 hover:text-foreground"
               >
                 Open Google Cloud Console <ExternalLink className="h-3 w-3" />
               </a>
@@ -2251,7 +2251,7 @@ export function PkceConnectDialog({
           {fam && (
             <div>
               {clientRequired && (
-                <p className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+                <p className="mb-2 rounded-md border border-foreground/40 bg-foreground/10 px-3 py-2 text-[11px] leading-relaxed text-foreground">
                   This installation has no {fam.label} OAuth client yet. Add
                   your own Client ID below before browser sign-in can start.
                 </p>
@@ -2652,7 +2652,7 @@ export function PatConnectDialog({
               disabled={isPending}
             />
             {token && expectedPrefix && !prefixOk && (
-              <p className="mt-1.5 text-[11px] text-amber-400">
+              <p className="mt-1.5 text-[11px] text-foreground">
                 Should start with{" "}
                 <span className="font-mono">{expectedPrefix}_</span>
               </p>
@@ -2681,7 +2681,7 @@ export function PatConnectDialog({
                 first person who messages it claim access instead.
               </p>
               {userIdTrimmed !== "" && !userIdOk && (
-                <p className="mt-1 text-[11px] text-amber-400">
+                <p className="mt-1 text-[11px] text-foreground">
                   User id must be digits only.
                 </p>
               )}

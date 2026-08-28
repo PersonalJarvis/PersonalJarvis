@@ -383,7 +383,7 @@ function TabButton({
           aria-hidden="true"
           className={cn(
             "h-[7px] w-[7px] shrink-0 rounded-full",
-            indicator === "error" ? "bg-destructive" : "bg-amber-500",
+            indicator === "error" ? "bg-destructive" : "bg-foreground",
           )}
         />
       ) : (

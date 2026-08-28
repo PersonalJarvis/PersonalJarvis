@@ -41,13 +41,13 @@ import { cn } from "@/lib/utils";
  */
 const BAR_CLASS: Record<string, string> = {
   normal: "bg-primary",
-  warning: "bg-orange-500",
+  warning: "bg-foreground",
   critical: "bg-destructive",
 };
 
 const PERCENT_CLASS: Record<string, string> = {
   normal: "text-foreground",
-  warning: "text-orange-500",
+  warning: "text-foreground",
   critical: "text-destructive",
 };
 

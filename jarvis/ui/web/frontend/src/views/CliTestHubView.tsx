@@ -89,7 +89,7 @@ const RISK_STYLES: Record<RiskTier, RiskStyle> = {
   },
   ask: {
     label: "ask",
-    badge: "border-amber-500/40 bg-amber-500/10 text-amber-500",
+    badge: "border-foreground/40 bg-foreground/10 text-foreground",
     Icon: ShieldAlert,
   },
   block: {

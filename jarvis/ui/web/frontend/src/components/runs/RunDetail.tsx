@@ -163,7 +163,7 @@ function LatencyChip({ status }: { status: string }) {
   const cls =
     status === "breach"
       ? "border-rose-500/30 bg-rose-500/10 text-rose-300"
-      : "border-amber-400/30 bg-amber-400/10 text-amber-300";
+      : "border-foreground/30 bg-foreground/10 text-foreground";
   return (
     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${cls}`}>
       latency {status}

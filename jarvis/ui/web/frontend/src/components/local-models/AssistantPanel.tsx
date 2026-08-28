@@ -388,7 +388,7 @@ export function AssistantPanel({
 
           {blocked && (
             <div
-              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-foreground/40 bg-foreground/10 px-4 py-3 text-sm"
               data-testid="assistant-blocked"
             >
               <span>{blocked}</span>

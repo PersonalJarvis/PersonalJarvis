@@ -20,7 +20,7 @@ export interface StatusUpdateView {
 const PROFILE_BADGE_CLASS: Record<StatusUpdateView["profile_used"], string> = {
   minimal: "border-muted-foreground/40 bg-muted/30 text-muted-foreground",
   standard: "border-primary/40 bg-primary/10 text-primary",
-  detailed: "border-amber-400/40 bg-amber-400/10 text-amber-400",
+  detailed: "border-foreground/40 bg-foreground/10 text-foreground",
 };
 
 function formatTimestamp(ns: number): string {

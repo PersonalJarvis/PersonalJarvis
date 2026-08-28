@@ -166,7 +166,7 @@ export function FinishStep({ onb, goBack, summaries, gaps }: StepProps) {
         <StepSection label={t("onboarding.finish.gaps_label")}>
           <div
             data-testid="onboarding-gaps"
-            className="space-y-3 border-l-2 border-amber-500/70 py-1 pl-4"
+            className="space-y-3 border-l-2 border-foreground/70 py-1 pl-4"
           >
             <p className="text-[15px] font-medium text-foreground">
               {t("onboarding.finish.gaps_intro")}

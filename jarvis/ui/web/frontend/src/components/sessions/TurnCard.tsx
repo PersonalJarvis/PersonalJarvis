@@ -261,7 +261,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
         {/* Tools */}
         {turn.tool_calls.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-            <Wrench className="h-3 w-3 text-amber-400" />
+            <Wrench className="h-3 w-3 text-foreground" />
             <span className="text-muted-foreground">Tools:</span>
             {turn.tool_calls.map((tc) => (
               <Badge
@@ -308,7 +308,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
               {turn.awaiting_confirmation && (
                 <Badge
                   variant="outline"
-                  className="ml-1 border-amber-400/40 text-[9px] text-amber-300"
+                  className="ml-1 border-foreground/40 text-[9px] text-foreground"
                 >
                   Awaiting confirmation
                 </Badge>
@@ -376,7 +376,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
         {(turn.think_ms > 0 || turn.speak_ms > 0) && (
           <div className="grid grid-cols-2 gap-2 border-t border-border/50 pt-2 text-[11px]">
             <div className="flex items-center gap-1.5">
-              <Hourglass className="h-3 w-3 text-amber-300" />
+              <Hourglass className="h-3 w-3 text-foreground" />
               <span className="text-muted-foreground">{t("turn_card.thought")}</span>
               <span className="font-mono text-foreground/90">
                 {turn.think_ms > 0 ? formatMs(turn.think_ms) : "—"}

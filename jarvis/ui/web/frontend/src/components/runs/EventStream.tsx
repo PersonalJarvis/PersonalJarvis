@@ -27,7 +27,7 @@ const LANE: Record<string, { dot: string; chip: string; text: string }> = {
   lifecycle: { dot: "bg-slate-400", chip: "bg-slate-400/10 text-slate-300 ring-slate-400/25", text: "text-slate-300" },
   speech: { dot: "bg-emerald-400", chip: "bg-emerald-400/10 text-emerald-300 ring-emerald-400/25", text: "text-emerald-300" },
   brain: { dot: "bg-violet-400", chip: "bg-violet-400/10 text-violet-300 ring-violet-400/25", text: "text-violet-300" },
-  tool: { dot: "bg-amber-400", chip: "bg-amber-400/10 text-amber-300 ring-amber-400/25", text: "text-amber-300" },
+  tool: { dot: "bg-foreground", chip: "bg-foreground/10 text-foreground ring-foreground/25", text: "text-foreground" },
   agent: { dot: "bg-fuchsia-400", chip: "bg-fuchsia-400/10 text-fuchsia-300 ring-fuchsia-400/25", text: "text-fuchsia-300" },
   vision: { dot: "bg-sky-400", chip: "bg-sky-400/10 text-sky-300 ring-sky-400/25", text: "text-sky-300" },
   latency: { dot: "bg-cyan-400", chip: "bg-cyan-400/10 text-cyan-300 ring-cyan-400/25", text: "text-cyan-300" },
@@ -155,7 +155,7 @@ export function EventStream({
       </div>
 
       {truncated && (
-        <div className="rounded-md border border-amber-400/30 bg-amber-400/5 px-2 py-1 text-[10px] text-amber-300">
+        <div className="rounded-md border border-foreground/30 bg-foreground/5 px-2 py-1 text-[10px] text-foreground">
           {t("run_inspector.stream.truncated")}
         </div>
       )}

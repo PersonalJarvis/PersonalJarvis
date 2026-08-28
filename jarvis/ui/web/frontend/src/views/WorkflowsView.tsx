@@ -204,7 +204,7 @@ function IntegrationsBanner({
                   {iss.name}:
                 </span>{" "}
                 {iss.has_partial && (
-                  <span className="text-amber-300">
+                  <span className="text-foreground">
                     {iss.has_partial} —{" "}
                   </span>
                 )}

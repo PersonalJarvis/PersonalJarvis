@@ -85,7 +85,7 @@ const STATUS_DOT: Record<OutputStatus, string> = {
   success: "bg-emerald-400",
   error: "bg-destructive",
   running: "bg-primary animate-pulse",
-  cancelled: "bg-amber-400",
+  cancelled: "bg-foreground",
   unknown: "bg-muted-foreground/50",
 };
 
@@ -204,14 +204,14 @@ export function OutputPreview({
             className={cn(
               "flex gap-3 rounded-xl border p-4",
               needsReview || status === "cancelled"
-                ? "border-amber-400/30 bg-amber-400/5"
+                ? "border-foreground/30 bg-foreground/5"
                 : "border-destructive/30 bg-destructive/5",
             )}
           >
             <AlertTriangle
               className={cn(
                 "mt-0.5 h-4 w-4 shrink-0",
-                needsReview || status === "cancelled" ? "text-amber-400" : "text-destructive",
+                needsReview || status === "cancelled" ? "text-foreground" : "text-destructive",
               )}
               aria-hidden
             />

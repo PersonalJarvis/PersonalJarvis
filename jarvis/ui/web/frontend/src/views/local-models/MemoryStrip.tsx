@@ -52,7 +52,7 @@ export function MemoryStrip({ resident, roleLabel }: MemoryStripProps) {
         <p
           className={cn(
             "text-xs font-medium tabular-nums",
-            resident.over ? "text-amber-700 dark:text-amber-400" : "text-foreground",
+            resident.over ? "text-foreground" : "text-foreground",
           )}
           data-testid="memory-strip-total"
         >

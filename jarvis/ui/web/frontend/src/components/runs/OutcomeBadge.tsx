@@ -12,8 +12,8 @@ const OUTCOME_STYLE: Record<string, OutcomeStyle> = {
   },
   partial: {
     label: "Partial",
-    dot: "bg-amber-400",
-    badge: "bg-amber-400/10 text-amber-300 ring-amber-400/25",
+    dot: "bg-foreground",
+    badge: "bg-foreground/10 text-foreground ring-foreground/25",
   },
   failed: {
     label: "Failed",

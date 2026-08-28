@@ -8,7 +8,7 @@ const LAYER_COLOR: Record<string, string> = {
   brain:      "bg-violet-500",
   voice:      "bg-emerald-500",
   audio:      "bg-emerald-500",
-  tool:       "bg-amber-500",
+  tool:       "bg-foreground",
   skill:      "bg-sky-500",
   ui:         "bg-blue-500",
   harness:    "bg-fuchsia-500",

@@ -140,7 +140,7 @@ export function InstalledPanel({
 
         {error && (
           <p
-            className="text-sm text-amber-700 dark:text-amber-400"
+            className="text-sm text-foreground"
             data-testid="installed-error"
           >
             {error}

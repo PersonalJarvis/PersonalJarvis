@@ -128,7 +128,7 @@ export function AIProfileCard() {
               kind="haerter"
               icon={<Zap className="h-3 w-3" />}
               label={t("board_view.feedback_harder")}
-              colorClass="border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+              colorClass="border-foreground/40 bg-foreground/10 text-foreground hover:bg-foreground/20"
               active={lastFeedback === "haerter"}
               disabled={feedback.isPending}
               onClick={() => handleFeedback("haerter")}
@@ -148,7 +148,7 @@ export function AIProfileCard() {
         </div>
       )}
       {regen.data && !regen.data.ok && regen.data.reason && (
-        <div className="text-xs text-amber-400">
+        <div className="text-xs text-foreground">
           {regen.data.reason}
         </div>
       )}

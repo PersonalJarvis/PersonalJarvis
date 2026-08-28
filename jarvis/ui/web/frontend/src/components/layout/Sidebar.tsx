@@ -79,11 +79,11 @@ const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
   thinking: { dot: "bg-primary", pulse: true },
   speaking: { dot: "bg-primary", pulse: true },
   // The user muted or suspended the pipeline: neither working nor broken.
-  paused: { dot: "bg-amber-400", pulse: false },
+  paused: { dot: "bg-foreground", pulse: false },
   error: { dot: "bg-destructive", pulse: false },
   // Not a supervisor state — the surface's own "a realtime transport is
   // negotiating" phase, which no backend state covers.
-  connecting: { dot: "bg-amber-400", pulse: true },
+  connecting: { dot: "bg-foreground", pulse: true },
 };
 
 export interface SidebarProps {
@@ -775,7 +775,7 @@ function NavRow({
             data-testid={`nav-warn-${item.id}`}
             role="status"
             aria-label={warnTitle}
-            className="h-2 w-2 shrink-0 rounded-full bg-amber-500 ring-2 ring-background"
+            className="h-2 w-2 shrink-0 rounded-full bg-foreground ring-2 ring-background"
           />
         )}
         {badge !== undefined && badge > 0 && (

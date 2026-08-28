@@ -103,7 +103,7 @@ export function AgentInstructionsView() {
             {t("agent_instructions.chars").replace("{0}", String(draft.length))}
           </span>
           {trimmedEmpty && (
-            <span className="text-[11px] text-amber-500">
+            <span className="text-[11px] text-foreground">
               {t("agent_instructions.empty_hint")}
             </span>
           )}

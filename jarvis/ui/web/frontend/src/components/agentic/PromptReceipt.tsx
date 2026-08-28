@@ -215,7 +215,7 @@ export function PromptReceipt({
         }
       : submitted === false
         ? {
-            icon: <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400" />,
+            icon: <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-foreground" />,
             label: "Prompt typed, not started",
             note: "it is sitting in this pane's input box — press Enter here to run it",
           }

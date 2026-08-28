@@ -14,7 +14,7 @@ import type { DecisionStep } from "./types";
 
 const KIND_META: Record<string, { icon: string; cls: string }> = {
   tier: { icon: "◆", cls: "text-slate-300" },
-  route: { icon: "→", cls: "text-amber-300" },
+  route: { icon: "→", cls: "text-foreground" },
   risk: { icon: "⚖", cls: "text-rose-300" },
   brain: { icon: "🧠", cls: "text-violet-300" },
   mission: { icon: "⚙", cls: "text-fuchsia-300" },

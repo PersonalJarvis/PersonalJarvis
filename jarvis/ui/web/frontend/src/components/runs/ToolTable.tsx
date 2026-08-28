@@ -19,7 +19,7 @@ import type { ToolCall } from "./types";
 const RISK_STYLE: Record<string, string> = {
   safe: "text-emerald-400/80",
   monitor: "text-sky-300/80",
-  ask: "text-amber-300/90",
+  ask: "text-foreground/90",
   block: "text-rose-300",
 };
 

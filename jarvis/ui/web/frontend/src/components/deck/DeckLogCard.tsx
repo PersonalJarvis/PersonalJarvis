@@ -36,7 +36,7 @@ const TAG_TONE: Record<JournalKind, string> = {
   think: "text-primary",
   done: "text-primary",
   tool: "text-emerald-700 dark:text-emerald-400",
-  say: "text-amber-700 dark:text-amber-300",
+  say: "text-foreground",
   worker: "text-emerald-700 dark:text-emerald-400",
   control: "text-violet-700 dark:text-violet-400",
   look: "text-violet-700 dark:text-violet-400",

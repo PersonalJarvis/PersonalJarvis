@@ -1210,7 +1210,7 @@ function ReviewRow({
   const t = useT();
   const conf = candidate.confidence;
   const confColor =
-    conf >= 0.7 ? "text-emerald-400" : conf >= 0.5 ? "text-amber-400" : "text-muted-foreground";
+    conf >= 0.7 ? "text-emerald-400" : conf >= 0.5 ? "text-foreground" : "text-muted-foreground";
 
   return (
     <li className="rounded-xl border border-sheen/[0.06] bg-sheen/[0.02] p-4 transition-colors hover:border-primary/25">

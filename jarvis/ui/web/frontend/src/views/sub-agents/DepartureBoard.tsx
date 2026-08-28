@@ -329,7 +329,7 @@ function Notice({
         "flex items-center gap-2 rounded-xl border px-3.5 py-2.5 text-sm",
         tone === "error"
           ? "border-destructive/30 bg-destructive/10 text-destructive"
-          : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+          : "border-foreground/30 bg-foreground/10 text-foreground",
       )}
     >
       <CircleAlert className="h-4 w-4 shrink-0" />

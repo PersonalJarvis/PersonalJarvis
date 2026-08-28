@@ -92,7 +92,7 @@ export function ExtensionsView() {
                     <span
                       aria-label={t("extensions.attention_dot")}
                       title={t("extensions.attention_dot")}
-                      className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+                      className="h-1.5 w-1.5 shrink-0 rounded-full bg-foreground"
                     />
                   )}
                 </button>

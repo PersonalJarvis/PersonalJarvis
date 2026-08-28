@@ -182,9 +182,9 @@ type CrewState = "working" | "waiting" | "asking" | "starting" | "failed" | "exi
 // (CLOUD.md "Frontend theming").
 const CREW_TONE: Record<CrewState, string> = {
   working: "text-primary",
-  starting: "text-amber-700 dark:text-amber-400",
+  starting: "text-foreground",
   waiting: "text-sky-700 dark:text-sky-400",
-  asking: "text-amber-700 dark:text-amber-400",
+  asking: "text-foreground",
   failed: "text-destructive",
   exited: "text-muted-foreground",
   idle: "text-muted-foreground",

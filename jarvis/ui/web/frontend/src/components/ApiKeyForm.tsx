@@ -407,7 +407,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
       {scopeQuestion}
       {fmt && !fmt.match && fmt.detected && (
         <div className="space-y-1">
-          <p className="flex items-start gap-1 text-xs text-amber-500">
+          <p className="flex items-start gap-1 text-xs text-foreground">
             <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
             <span>
               {t("apikeys_view.format_mismatch").replace("{0}", fmt.detected.label)}

@@ -331,7 +331,7 @@ export function TuneSheet({ providerId, model, onClose }: TuneSheetProps) {
           </p>
         )}
         {suggested.isError && (
-          <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+          <p className="mt-2 text-xs text-foreground">
             {suggested.error instanceof Error
               ? suggested.error.message
               : k("suggested_failed")}
@@ -375,7 +375,7 @@ export function TuneSheet({ providerId, model, onClose }: TuneSheetProps) {
         </Knob>
         {overSuggested && typeof draft.num_ctx === "number" && (
           <p
-            className="text-xs text-amber-600 dark:text-amber-400"
+            className="text-xs text-foreground"
             data-testid="tune-ctx-warning"
           >
             {fill(k("num_ctx_over_suggested"), {

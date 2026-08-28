@@ -386,7 +386,7 @@ export function BrowserRealtimeControl() {
       {notice && !error && (
         <div
           data-testid="realtime-provider-notice"
-          className="mt-1 text-[10px] leading-snug text-amber-600 dark:text-amber-400"
+          className="mt-1 text-[10px] leading-snug text-foreground"
           aria-live="polite"
         >
           {notice}

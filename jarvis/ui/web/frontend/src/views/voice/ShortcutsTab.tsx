@@ -144,10 +144,10 @@ export function ShortcutsTab({ hideHeader = false }: ShortcutsTabProps = {}) {
 
           {pttIsToggle && (
             <div
-              className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+              className="flex items-start gap-3 rounded-lg border border-foreground/40 bg-foreground/10 p-3"
               data-testid="shortcuts-mode-notice"
             >
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
               <div className="min-w-0 flex-1">
                 <p className="text-xs text-muted-foreground">
                   {t("voice.shortcuts.mode_notice")}
@@ -180,7 +180,7 @@ export function ShortcutsTab({ hideHeader = false }: ShortcutsTabProps = {}) {
               />
               {row.action === "paste_last" && insertionBlocked && (
                 <p
-                  className="text-[11px] text-amber-500"
+                  className="text-[11px] text-foreground"
                   data-testid="shortcuts-paste-last-blocked"
                 >
                   {t("voice.shortcuts.paste_last_blocked")}

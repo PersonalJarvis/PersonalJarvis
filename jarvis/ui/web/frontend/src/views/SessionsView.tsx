@@ -50,9 +50,9 @@ export function SessionsView() {
       />
 
       {errorMessage && /HTTP 503/.test(errorMessage) && (
-        <div className="border-b border-amber-400/30 bg-amber-400/10 px-5 py-3 text-sm text-amber-200">
+        <div className="border-b border-foreground/30 bg-foreground/10 px-5 py-3 text-sm text-foreground">
           <div className="font-medium">{t("sessions_view.recorder_disabled")}</div>
-          <div className="mt-0.5 text-xs text-amber-200/80">
+          <div className="mt-0.5 text-xs text-foreground/80">
             {t("sessions_view.recorder_hint_a")}{" "}
             <code className="font-mono">[sessions]</code>{" "}
             {t("sessions_view.recorder_hint_b")}{" "}

@@ -42,7 +42,7 @@ export function RunList({
               <div className="flex items-center gap-1.5 pl-4 text-[10px] tabular-nums text-muted-foreground">
                 <span>{r.turn_count} turns</span>
                 {r.duration_s !== null && <span>· {r.duration_s.toFixed(1)}s</span>}
-                {slow && <span className="text-amber-400/80">· slow</span>}
+                {slow && <span className="text-foreground/80">· slow</span>}
               </div>
               {r.feature_tags.length > 0 && (
                 <div className="pl-4">

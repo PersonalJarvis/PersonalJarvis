@@ -288,7 +288,7 @@ export function WorkspaceLauncher({
                   </span>
                   <Button
                     variant="subtle"
-                    className="h-6 px-2 text-amber-200/90"
+                    className="h-6 px-2 text-foreground/90"
                     onClick={onOpenClis}
                   >
                     {t("workspace_launcher.wizard.open_clis")}

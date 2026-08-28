@@ -24,14 +24,14 @@ const ICON_FOR_KIND = {
 const STYLE_FOR_KIND: Record<Toast["kind"], string> = {
   info: "border-border bg-card/95 text-foreground",
   success: "border-primary/40 bg-card/95 text-foreground shadow-[0_0_24px_rgba(255,214,10,0.15)]",
-  warning: "border-amber-500/40 bg-card/95 text-foreground",
+  warning: "border-foreground/40 bg-card/95 text-foreground",
   error: "border-destructive/50 bg-card/95 text-foreground",
 };
 
 const ACCENT_FOR_KIND: Record<Toast["kind"], string> = {
   info: "text-muted-foreground",
   success: "text-primary",
-  warning: "text-amber-500",
+  warning: "text-foreground",
   error: "text-destructive",
 };
 

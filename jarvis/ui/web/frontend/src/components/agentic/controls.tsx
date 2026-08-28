@@ -240,7 +240,7 @@ export function Notice({
         "flex flex-wrap items-center gap-x-2 gap-y-1 border-l-2 py-1 pl-3 text-sm",
         tone === "error"
           ? "border-destructive/70 text-destructive"
-          : "border-amber-400/70 text-amber-200/90",
+          : "border-foreground/70 text-foreground/90",
       )}
     >
       {children}

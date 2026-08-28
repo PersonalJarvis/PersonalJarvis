@@ -222,7 +222,7 @@ export function PluginUploadDialog({
                   // Said before the yes, not discovered after it: nobody
                   // vouched for this entry, and the card will show no
                   // publisher because there is none to show.
-                  <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                  <p className="rounded-md border border-foreground/40 bg-foreground/10 px-3 py-2 text-xs text-foreground">
                     {t("plugin_upload.unreviewed")}
                   </p>
                 )}

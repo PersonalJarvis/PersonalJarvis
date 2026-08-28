@@ -415,12 +415,12 @@ export function DeckStandby({
 const TAG_TONE: Record<GateState, string> = {
   pending: "text-muted-foreground",
   ok: "text-primary",
-  off: "text-amber-700 dark:text-amber-300",
+  off: "text-foreground",
 };
 const TEXT_TONE: Record<GateState, string> = {
   pending: "text-foreground/70",
   ok: "text-foreground/90",
-  off: "text-amber-700 dark:text-amber-300",
+  off: "text-foreground",
 };
 
 /** The boot title: the name, letter by letter, in the display face. */

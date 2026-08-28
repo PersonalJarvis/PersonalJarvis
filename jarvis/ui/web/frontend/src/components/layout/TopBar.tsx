@@ -293,7 +293,7 @@ function RestartButton() {
       className={cn(
         "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70",
         confirming || forceArmed
-          ? "border-amber-500/60 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
+          ? "border-foreground/60 bg-foreground/10 text-foreground hover:bg-foreground/20"
           : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/50 hover:text-foreground",
       )}
     >
@@ -496,7 +496,7 @@ function UpdateButton() {
         className={cn(
           "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70",
           forceArmed
-            ? "border-amber-500/60 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
+            ? "border-foreground/60 bg-foreground/10 text-foreground hover:bg-foreground/20"
             : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20",
         )}
       >

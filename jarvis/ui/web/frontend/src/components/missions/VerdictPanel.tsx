@@ -35,7 +35,7 @@ const VERDICT_STYLE: Record<CriticVerdict, { className: string; label: string }>
     label: "approve",
   },
   revise: {
-    className: "border-amber-400/40 bg-amber-400/10 text-amber-300",
+    className: "border-foreground/40 bg-foreground/10 text-foreground",
     label: "revise",
   },
   reject: {

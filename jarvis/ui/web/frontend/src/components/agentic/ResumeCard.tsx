@@ -15,7 +15,7 @@
  * 2026-08-11).
  *
  * Each of those now carries a light partner in the pairing the rest of the app
- * already uses (`text-amber-800 dark:text-amber-200`, and the equivalents for
+ * already uses (`text-foreground`, and the equivalents for
  * fills and borders). The gold "continues" cue lost its `/85` for the same
  * reason: `--primary` is tuned to 5.1:1 on paper, and the alpha was spending
  * a fifth of that on nothing.
@@ -262,14 +262,14 @@ function TerminalTile({
       className={cn(
         "group relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2.5 border border-border/60 bg-background/35 p-2.5 transition-colors hover:border-border hover:bg-background/70",
         pane.resumable && pane.available && "border-primary/25",
-        !pane.available && "border-amber-600/45 dark:border-amber-400/25",
+        !pane.available && "border-foreground/45 dark:border-foreground/25",
       )}
     >
       <span
         className={cn(
           "absolute inset-y-0 left-0 w-0.5",
           !pane.available
-            ? "bg-amber-600/80 dark:bg-amber-300/70"
+            ? "bg-foreground/80 dark:bg-foreground/70"
             : pane.resumable
               ? "bg-primary/80"
               : "bg-muted-foreground/35",
@@ -285,7 +285,7 @@ function TerminalTile({
             className={cn(
               "shrink-0 text-[9px] font-medium uppercase tracking-[0.12em]",
               !pane.available
-                ? "text-amber-800 dark:text-amber-200"
+                ? "text-foreground"
                 : pane.resumable
                   ? "text-primary"
                   : "text-muted-foreground",
@@ -374,7 +374,7 @@ function WorkspaceRow({
               ))}
             </div>
             {!space.folder_exists && (
-              <p className="mt-2 flex items-center gap-1.5 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+              <p className="mt-2 flex items-center gap-1.5 text-xs leading-relaxed text-foreground">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                 {t("workspace_launcher.resume.folder_missing")}
               </p>
@@ -404,7 +404,7 @@ function WorkspaceRow({
               </span>
             )}
             {unavailable > 0 && (
-              <span className="text-amber-800 dark:text-amber-200">
+              <span className="text-foreground">
                 {fill(t("workspace_launcher.resume.unavailable_count"), {
                   count: unavailable,
                 })}
@@ -428,7 +428,7 @@ function WorkspaceRow({
               style={{ width: `${(fresh / total) * 100}%` }}
             />
             <span
-              className="bg-amber-600/80 dark:bg-amber-300/70"
+              className="bg-foreground/80 dark:bg-foreground/70"
               style={{ width: `${(unavailable / total) * 100}%` }}
             />
           </div>
@@ -505,7 +505,7 @@ function FleetManifest({
                       prompts: item.prompts,
                     })}
                     {item.unavailable > 0 && (
-                      <span className="text-amber-800 dark:text-amber-200">
+                      <span className="text-foreground">
                         {` · ${fill(
                           t("workspace_launcher.resume.fleet_unavailable"),
                           { count: item.unavailable },
@@ -525,7 +525,7 @@ function FleetManifest({
                   style={{ width: `${(item.fresh / total) * 100}%` }}
                 />
                 <span
-                  className="bg-amber-600/80 dark:bg-amber-300/70"
+                  className="bg-foreground/80 dark:bg-foreground/70"
                   style={{ width: `${(item.unavailable / total) * 100}%` }}
                 />
               </div>
@@ -547,7 +547,7 @@ function FleetManifest({
           <span>{t("workspace_launcher.resume.conversation_fact")}</span>
         </li>
         <li className="flex gap-2.5">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-800 dark:text-amber-200" />
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />
           <span>{t("workspace_launcher.resume.availability_fact")}</span>
         </li>
       </ul>
@@ -673,7 +673,7 @@ export function ResumeCard({
               {t("workspace_launcher.resume.legend_fresh")}
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 bg-amber-600/90 dark:bg-amber-300/80" />
+              <span className="h-1.5 w-1.5 bg-foreground/90 dark:bg-foreground/80" />
               {t("workspace_launcher.resume.legend_unavailable")}
             </span>
           </div>
@@ -761,7 +761,7 @@ export function ResumeCard({
       </dl>
 
       {unavailable > 0 && (
-        <p className="mt-3 flex items-center gap-2 border-l-2 border-amber-600/70 bg-amber-600/[0.07] px-3 py-2 text-xs text-amber-900 dark:border-amber-300/70 dark:bg-amber-300/[0.04] dark:text-amber-100">
+        <p className="mt-3 flex items-center gap-2 border-l-2 border-foreground/70 bg-foreground/[0.07] px-3 py-2 text-xs text-foreground dark:border-foreground/70 dark:bg-foreground/[0.04] dark:text-foreground">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           {fill(t("workspace_launcher.resume.unavailable_warning"), {
             count: unavailable,

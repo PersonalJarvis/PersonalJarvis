@@ -129,7 +129,7 @@ export function ScreenContextGroup() {
           {settings?.enabled && status && (
             <p
               className={`mt-1.5 text-[11px] ${
-                status.available ? "text-emerald-400" : "text-amber-400"
+                status.available ? "text-emerald-400" : "text-foreground"
               }`}
               aria-live="polite"
             >

@@ -78,9 +78,9 @@ export function getToolAppearance(
       return {
         Icon: Code2,
         label: agentBrandNow(),
-        bg: "bg-orange-950",
-        ring: "ring-orange-500",
-        iconColor: "text-orange-300",
+        bg: "bg-foreground",
+        ring: "ring-foreground",
+        iconColor: "text-foreground",
       };
     }
     if (matches(args, "codex")) {
@@ -208,9 +208,9 @@ export function getToolAppearance(
       return {
         Icon: Folder,
         label: "Explorer",
-        bg: "bg-amber-950",
-        ring: "ring-amber-500",
-        iconColor: "text-amber-300",
+        bg: "bg-foreground",
+        ring: "ring-foreground",
+        iconColor: "text-foreground",
       };
     }
     if (matches(args, "http") || matches(args, "www") || matches(args, ".com")) {
@@ -246,9 +246,9 @@ export function getToolAppearance(
     return {
       Icon: MessageSquare,
       label: "Remember",
-      bg: "bg-amber-950",
-      ring: "ring-amber-500",
-      iconColor: "text-amber-300",
+      bg: "bg-foreground",
+      ring: "ring-foreground",
+      iconColor: "text-foreground",
     };
   }
 

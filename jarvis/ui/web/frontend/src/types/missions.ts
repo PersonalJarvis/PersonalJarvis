@@ -384,7 +384,7 @@ export const MISSION_STATE_BADGE: Record<MissionState, MissionStateBadgeMeta> = 
   },
   LOOPING: {
     labelKey: "mission_state.looping",
-    className: "border-amber-400/40 bg-amber-400/10 text-amber-300",
+    className: "border-foreground/40 bg-foreground/10 text-foreground",
     iconName: "RotateCcw",
   },
   APPROVED: {
@@ -404,7 +404,7 @@ export const MISSION_STATE_BADGE: Record<MissionState, MissionStateBadgeMeta> = 
   },
   TIMED_OUT: {
     labelKey: "mission_state.timed_out",
-    className: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+    className: "border-foreground/40 bg-foreground/10 text-foreground",
     iconName: "Skull",
   },
 };

@@ -534,7 +534,7 @@ function WakeWordPanel() {
           {/* Any-phrase enablement: install the local speech pack in-app so
               an arbitrary wake word works, instead of silently degrading. */}
           {showNeedsWhisperHint && (
-            <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-500">
+            <div className="mt-3 rounded-md border border-foreground/40 bg-foreground/10 p-3 text-xs text-foreground">
               <p>{t("settings_view.wake_word.needs_whisper_hint")}</p>
 
               {installStatus.state === "idle" && (
@@ -615,7 +615,7 @@ function WakeWordPanel() {
               className={`mt-3 rounded-md border p-3 text-xs ${
                 selfTest.data.ok
                   ? "border-primary/40 bg-primary/10 text-foreground"
-                  : "border-amber-500/40 bg-amber-500/10 text-amber-500"
+                  : "border-foreground/40 bg-foreground/10 text-foreground"
               }`}
             >
               <p>{selfTest.data.message}</p>
@@ -635,7 +635,7 @@ function WakeWordPanel() {
             <div
               className={`mt-3 rounded-md border p-3 text-xs ${
                 result.degraded
-                  ? "border-amber-500/40 bg-amber-500/10 text-amber-500"
+                  ? "border-foreground/40 bg-foreground/10 text-foreground"
                   : "border-primary/40 bg-primary/10 text-foreground"
               }`}
             >

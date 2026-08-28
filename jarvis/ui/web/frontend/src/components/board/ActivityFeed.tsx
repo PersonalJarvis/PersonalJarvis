@@ -120,7 +120,7 @@ function FeedRow({
         <span>·</span>
         <span className={cn(
           item.visibility === "public" && "text-emerald-300",
-          item.visibility === "private" && "text-amber-300",
+          item.visibility === "private" && "text-foreground",
         )}>{item.visibility}</span>
       </header>
       <ItemBody item={item} />

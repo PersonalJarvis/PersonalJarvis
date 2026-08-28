@@ -13,7 +13,7 @@ interface StatsCardProps {
 const TONE: Record<NonNullable<StatsCardProps["tone"]>, string> = {
   default: "border-border bg-card/40 text-foreground",
   success: "border-emerald-500/30 bg-emerald-500/5 text-emerald-200",
-  warn: "border-amber-500/30 bg-amber-500/5 text-amber-200",
+  warn: "border-foreground/30 bg-foreground/5 text-foreground",
 };
 
 /** Compact large number + label for board metrics. */

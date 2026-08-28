@@ -54,7 +54,7 @@ export function CatalogueCard({
       </div>
 
       {needsSomething && (
-        <p className="mt-2 truncate text-[11px] text-amber-600 dark:text-amber-400/90">
+        <p className="mt-2 truncate text-[11px] text-foreground/90">
           {fill(t("automations_view.needs"), { tools: humanizeMissing(template.missing) })}
         </p>
       )}

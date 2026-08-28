@@ -264,7 +264,7 @@ function ViewerContent({
   return (
     <div className="mx-auto w-full max-w-5xl p-5 sm:p-8">
       {preview?.truncated && (
-        <div role="note" className="mb-4 border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-xs text-amber-500">
+        <div role="note" className="mb-4 border-l-2 border-foreground bg-foreground/5 px-3 py-2 text-xs text-foreground">
           {t("agentic_grid.viewer.truncated")}
         </div>
       )}

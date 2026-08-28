@@ -399,7 +399,7 @@ function DockIcon({
             data-testid={`nav-warn-${item.id}`}
             role="status"
             aria-label={warnTitle}
-            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-500 ring-2 ring-background"
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-foreground ring-2 ring-background"
           />
         ) : live ? (
           <span

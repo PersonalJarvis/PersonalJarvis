@@ -166,7 +166,7 @@ export function buildGroups(
 
 const TONE_TEXT: Record<FitTone, string> = {
   ok: "text-emerald-600 dark:text-emerald-400",
-  warn: "text-amber-700 dark:text-amber-400",
+  warn: "text-foreground",
   bad: "text-destructive",
   muted: "text-muted-foreground",
 };

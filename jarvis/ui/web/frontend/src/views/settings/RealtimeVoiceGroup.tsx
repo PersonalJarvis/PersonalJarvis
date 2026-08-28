@@ -88,7 +88,7 @@ export function RealtimeVoiceGroup() {
           {on && lastStartError && (
             <p
               data-testid="realtime-last-start-error"
-              className="mt-1 text-[11px] leading-snug text-amber-600 dark:text-amber-400"
+              className="mt-1 text-[11px] leading-snug text-foreground"
               aria-live="polite"
             >
               {t("voice_state.connect_failed")
@@ -99,7 +99,7 @@ export function RealtimeVoiceGroup() {
           {offerDetail && (
             <p
               data-testid="realtime-transport-offer-detail"
-              className="mt-1 text-[11px] leading-snug text-amber-600 dark:text-amber-400"
+              className="mt-1 text-[11px] leading-snug text-foreground"
               aria-live="polite"
             >
               {offerDetail}

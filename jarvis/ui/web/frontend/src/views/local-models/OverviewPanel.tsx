@@ -168,7 +168,7 @@ export function OverviewPanel({
           )}
           {serverSilent && (
             <p
-              className="text-sm text-amber-700 dark:text-amber-400"
+              className="text-sm text-foreground"
               data-testid="roles-server-silent"
             >
               {t("local_models.roles.server_silent")}
@@ -183,7 +183,7 @@ export function OverviewPanel({
           )}
           {otherBrainActive && (
             <p
-              className="text-sm text-amber-700 dark:text-amber-400"
+              className="text-sm text-foreground"
               data-testid="overview-brain-clause"
             >
               {fill(t("local_models.overview.status_brain_other"), {
@@ -364,7 +364,7 @@ function SideJobRow({
       </div>
       <div className="flex items-center gap-2 lg:justify-end">
         {missing && (
-          <span className="text-xs text-amber-700 dark:text-amber-400">
+          <span className="text-xs text-foreground">
             {t("local_models.jobs.not_on_disk")}
           </span>
         )}
@@ -551,7 +551,7 @@ function SetupProgress({
       ))}
       {step.phase === "done" && otherBrain && brain.state !== "done" && (
         <div
-          className="ml-4 flex flex-wrap items-center gap-2 text-amber-700 dark:text-amber-400"
+          className="ml-4 flex flex-wrap items-center gap-2 text-foreground"
           data-testid="setup-brain"
         >
           <span>

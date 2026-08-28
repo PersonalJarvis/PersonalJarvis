@@ -585,7 +585,7 @@ function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
             "h-[7px] w-[7px] shrink-0 rounded-full",
             live
               ? "bg-emerald-500 shadow-[0_0_0_3px_rgb(16_185_129/0.18)]"
-              : "bg-amber-500",
+              : "bg-foreground",
           )}
         />
         <span className="font-medium text-foreground">
@@ -805,7 +805,7 @@ function CardHint({
   children: React.ReactNode;
 }) {
   return (
-    <p className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+    <p className="flex items-start gap-1.5 text-xs text-foreground">
       <Icon className="mt-0.5 h-3 w-3 shrink-0" />
       <span>{children}</span>
     </p>
@@ -903,12 +903,12 @@ function CliTestControl({
           <span
             className={cn(
               "inline-flex items-center gap-1.5 text-xs",
-              result.ok ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
+              result.ok ? "text-emerald-600 dark:text-emerald-400" : "text-foreground",
             )}
           >
             <span
               aria-hidden="true"
-              className={cn("h-[7px] w-[7px] rounded-full", result.ok ? "bg-emerald-500" : "bg-amber-500")}
+              className={cn("h-[7px] w-[7px] rounded-full", result.ok ? "bg-emerald-500" : "bg-foreground")}
             />
             {result.message}
           </span>

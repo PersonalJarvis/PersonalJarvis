@@ -118,7 +118,7 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
   working: {
     state: "working",
     label: "working",
-    className: "text-amber-400",
+    className: "text-foreground",
     icon: "spinner",
     hint: "Working — its screen is still changing.",
   },
@@ -162,7 +162,7 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
 const DONE: Look = {
   state: "done",
   label: "done",
-  className: "text-amber-400",
+  className: "text-foreground",
   icon: "check",
   glow: true,
   hint: "Finished and waiting at its prompt. That it stopped, not that the work is right.",
@@ -180,7 +180,7 @@ const DONE: Look = {
 const IDLE: Look = {
   state: "idle",
   label: "idle",
-  className: "text-amber-400/60",
+  className: "text-foreground/60",
   icon: "ring",
   hint: "Waiting at its prompt. Nothing has been sent to it yet.",
 };

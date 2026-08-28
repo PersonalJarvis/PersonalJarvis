@@ -193,7 +193,7 @@ function DeleteDrawer({
       </p>
       {conflict && (
         <p
-          className="text-sm text-amber-600 dark:text-amber-400"
+          className="text-sm text-foreground"
           data-testid="delete-conflict"
         >
           {conflict}
@@ -395,7 +395,7 @@ export function InventoryPanel({ providerId }: InventoryPanelProps) {
       )}
       {inventory.data?.error && (
         <p
-          className="text-sm text-amber-600 dark:text-amber-400"
+          className="text-sm text-foreground"
           data-testid="inventory-server-error"
         >
           {inventory.data.error}

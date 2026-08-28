@@ -46,7 +46,7 @@ export function StoryComposer({ onClose }: StoryComposerProps) {
         />
         <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
           <span>{t("story_composer.expiry_hint")}</span>
-          <span className={cn(remaining < 30 && "text-amber-400")}>
+          <span className={cn(remaining < 30 && "text-foreground")}>
             {`${remaining} ${t("story_composer.characters")}`}
           </span>
         </div>

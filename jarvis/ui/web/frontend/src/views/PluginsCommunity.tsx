@@ -576,7 +576,7 @@ function Notice({
       className={cn(
         "flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
         tone === "muted" && "border-border bg-card/40 text-muted-foreground",
-        tone === "warn" && "border-amber-500/40 bg-amber-500/5 text-amber-500",
+        tone === "warn" && "border-foreground/40 bg-foreground/5 text-foreground",
         tone === "error" &&
           "border-destructive/40 bg-destructive/5 text-destructive",
       )}
@@ -645,7 +645,7 @@ function ContentsPanel({ name }: { name: string }) {
               {file.text}
             </pre>
             {file.truncated && (
-              <p className="bg-card/60 px-2.5 py-1.5 text-[11px] text-amber-500">
+              <p className="bg-card/60 px-2.5 py-1.5 text-[11px] text-foreground">
                 Shown up to 256 kB — the published file is longer. Open the
                 source to read the rest.
               </p>
@@ -749,7 +749,7 @@ function CommunityPluginRow({
           <h4 className="min-w-0 max-w-full truncate text-sm font-semibold tracking-tight text-foreground">
             {name}
           </h4>
-          <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-amber-500/80">
+          <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-foreground/80">
             Community · not reviewed
           </span>
           {plugin.installed && (
@@ -839,7 +839,7 @@ function CommunitySkillRow({
           <h4 className="min-w-0 max-w-full truncate text-sm font-semibold tracking-tight text-foreground">
             {skill.title}
           </h4>
-          <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-amber-500/80">
+          <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-foreground/80">
             Community · not reviewed
           </span>
           {skill.flavor === "portable" && (
@@ -988,7 +988,7 @@ export function WallpaperPreviewDialog({
           >
             {paper.installed ? paper.title : `Install ${paper.title}?`}
           </h2>
-          <p className="text-[11px] uppercase tracking-wider text-amber-500/80">
+          <p className="text-[11px] uppercase tracking-wider text-foreground/80">
             Community wallpaper · not reviewed
             {paper.installed ? " · installed" : ""}
           </p>
@@ -1095,7 +1095,7 @@ export function SkillInstallConsentDialog({
           >
             {skill.installed ? skill.title : `Install ${skill.title}?`}
           </h2>
-          <p className="text-[11px] uppercase tracking-wider text-amber-500/80">
+          <p className="text-[11px] uppercase tracking-wider text-foreground/80">
             Community skill · not reviewed
             {skill.installed ? " · installed" : ""}
           </p>
@@ -1220,7 +1220,7 @@ export function InstallConsentDialog({
             >
               {plugin.installed ? name : `Install ${name}?`}
             </h2>
-            <p className="text-[11px] uppercase tracking-wider text-amber-500/80">
+            <p className="text-[11px] uppercase tracking-wider text-foreground/80">
               Community plugin · not reviewed
               {plugin.installed ? " · installed" : ""}
             </p>

@@ -71,12 +71,12 @@ export function StatusTab() {
         </div>
       )}
 
-      <div className="rounded-md border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-[11px] text-amber-100">
-        <div className="flex items-center gap-2 font-display text-xs font-semibold text-amber-300">
+      <div className="rounded-md border border-foreground/40 bg-foreground/10 px-4 py-3 text-[11px] text-foreground">
+        <div className="flex items-center gap-2 font-display text-xs font-semibold text-foreground">
           <ShieldAlert className="h-3.5 w-3.5" />
           {t("status_tab.hard_blacklist_title")}
         </div>
-        <p className="mt-1 text-amber-100/90">
+        <p className="mt-1 text-foreground/90">
           {t("status_tab.hard_blacklist_body")}
         </p>
       </div>

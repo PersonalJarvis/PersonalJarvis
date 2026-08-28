@@ -219,7 +219,7 @@ export function PromptHistoryButton({
                     )}
                   </span>
                   {!history.complete && (
-                    <span className="text-[10px] text-amber-500">
+                    <span className="text-[10px] text-foreground">
                       {t("agentic_grid.history.partial")}
                     </span>
                   )}
@@ -323,7 +323,7 @@ function HistoryRow({
           item.submitted === true
             ? "bg-emerald-500"
             : item.submitted === false
-              ? "bg-amber-500"
+              ? "bg-foreground"
               : "bg-muted-foreground",
         )}
         aria-hidden="true"

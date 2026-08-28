@@ -218,7 +218,7 @@ export function WikiProviderCard() {
                 </span>
               </p>
               {resolved.ready === false && (
-                <p className="text-[11px] text-amber-500">
+                <p className="text-[11px] text-foreground">
                   {t("wiki_provider.resolved_fallback_warning")}
                 </p>
               )}

@@ -100,7 +100,7 @@ const RUN_DOT: Record<OutputStatus, string> = {
   success: "bg-emerald-400",
   error: "bg-destructive",
   running: "bg-primary animate-pulse",
-  cancelled: "bg-amber-400",
+  cancelled: "bg-foreground",
   unknown: "bg-muted-foreground/50",
 };
 

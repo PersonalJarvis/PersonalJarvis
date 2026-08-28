@@ -553,7 +553,7 @@ export function StatusDot({
   const color = {
     ok: "bg-emerald-500",
     off: "bg-muted-foreground/40",
-    warn: "bg-amber-500",
+    warn: "bg-foreground",
     error: "bg-destructive",
     busy: "bg-primary",
   }[tone];
@@ -691,7 +691,7 @@ export function StatTile({
         {icon ? (
           <span
             className={cn(
-              tone === "warn" && "text-amber-500",
+              tone === "warn" && "text-foreground",
               tone === "danger" && "text-destructive",
               tone === "primary" && "text-primary",
               // Emerald carries a meaning the token set has no name for

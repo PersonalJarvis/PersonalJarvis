@@ -40,11 +40,11 @@ const STATUS_BADGE: Record<OutputStatus, string> = {
   error: "border-destructive/40 bg-destructive/10 text-destructive",
   running: "border-primary/40 bg-primary/10 text-primary",
   // Deliberate user abort — amber, not the destructive red of a failure.
-  cancelled: "border-amber-400/40 bg-amber-400/10 text-amber-400",
+  cancelled: "border-foreground/40 bg-foreground/10 text-foreground",
   unknown: "border-border bg-secondary/40 text-muted-foreground",
 };
 
-const NEEDS_REVIEW_BADGE = "border-amber-400/40 bg-amber-400/10 text-amber-300";
+const NEEDS_REVIEW_BADGE = "border-foreground/40 bg-foreground/10 text-foreground";
 
 /** Review ended without approval, but a genuine deliverable was retained. */
 export function runNeedsReview(run: OutputSummary): boolean {
@@ -262,7 +262,7 @@ export function RunNotes({ run, className }: { run: OutputSummary; className?: s
           className={cn(
             "rounded-xl border p-3",
             needsReview || isCancelled
-              ? "border-amber-400/30 bg-amber-400/5"
+              ? "border-foreground/30 bg-foreground/5"
               : "border-destructive/30 bg-destructive/5",
           )}
         >

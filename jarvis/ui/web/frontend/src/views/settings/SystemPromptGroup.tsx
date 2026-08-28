@@ -106,7 +106,7 @@ export function SystemPromptGroup() {
               {t("settings_view.system_prompt.chars").replace("{0}", String(draft.length))}
             </span>
             {trimmedEmpty && (
-              <span className="text-[11px] text-amber-500">
+              <span className="text-[11px] text-foreground">
                 {t("settings_view.system_prompt.empty_hint")}
               </span>
             )}

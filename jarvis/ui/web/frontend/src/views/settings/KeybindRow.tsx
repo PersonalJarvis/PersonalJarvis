@@ -748,7 +748,7 @@ export function KeybindRow({
         showValidation
           ? isError
             ? "text-destructive"
-            : "text-amber-400"
+            : "text-foreground"
           : "text-muted-foreground"
       }`}
     >

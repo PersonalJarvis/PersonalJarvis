@@ -370,7 +370,7 @@ export function MarketplaceView() {
       </div>
 
       {offline && (
-        <p className="flex items-center gap-2 border-b border-border bg-amber-500/10 px-6 py-2 text-xs text-amber-700 dark:text-amber-300">
+        <p className="flex items-center gap-2 border-b border-border bg-foreground/10 px-6 py-2 text-xs text-foreground">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           {status === "unavailable"
             ? t("marketplace.status_unavailable")
@@ -1139,7 +1139,7 @@ function Destination({ entry, t }: { entry: Entry; t: Translate }) {
   return (
     <div className="space-y-2">
       {entry.seedConflict && (
-        <p className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+        <p className="flex items-start gap-2 rounded-lg border border-foreground/40 bg-foreground/10 px-3 py-2 text-xs text-foreground">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {t("marketplace.seed_conflict")}
         </p>
@@ -1193,7 +1193,7 @@ function LandingToast({
         <div
           className={cn(
             "grid h-8 w-8 shrink-0 place-items-center rounded-lg",
-            ready ? "bg-primary/15 text-primary" : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+            ready ? "bg-primary/15 text-primary" : "bg-foreground/15 text-foreground",
           )}
         >
           {ready ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}

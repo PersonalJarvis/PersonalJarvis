@@ -487,7 +487,7 @@ function Notice({
         // appearances instead of borrowing one that only reads in the dark.
         tone === "error"
           ? "border-destructive/40 bg-destructive/10 text-destructive"
-          : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+          : "border-foreground/40 bg-foreground/10 text-foreground",
       )}
     >
       <span className="mt-0.5 shrink-0">{icon}</span>

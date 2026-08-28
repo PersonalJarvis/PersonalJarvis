@@ -83,7 +83,7 @@ const TONE_TEXT: Record<StoryTone, string> = {
   neutral: "text-muted-foreground",
   busy: "text-primary",
   ok: "text-emerald-600 dark:text-emerald-400",
-  warn: "text-amber-600 dark:text-amber-400",
+  warn: "text-foreground",
   error: "text-destructive",
 };
 
@@ -91,7 +91,7 @@ const STAMP: Record<StoryTone, string> = {
   neutral: "border-border text-muted-foreground",
   busy: "border-primary/60 text-primary",
   ok: "border-emerald-500/60 text-emerald-600 dark:text-emerald-400",
-  warn: "border-amber-500/60 text-amber-600 dark:text-amber-400",
+  warn: "border-foreground/60 text-foreground",
   error: "border-destructive/60 text-destructive",
 };
 
@@ -855,7 +855,7 @@ function TranscriptFold({
       {open && (
         <div className="border-t border-border/70">
           {(truncated || dropped > 0) && (
-            <div className="px-5 py-2 text-xs text-amber-600 dark:text-amber-400">
+            <div className="px-5 py-2 text-xs text-foreground">
               {dropped > 0 ? fill(t("subagents_view.transcript_dropped"), { n: dropped }) : t("subagents_view.transcript_truncated")}
             </div>
           )}

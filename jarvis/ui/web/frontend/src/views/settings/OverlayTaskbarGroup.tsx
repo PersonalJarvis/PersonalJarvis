@@ -353,7 +353,7 @@ function OverlayStylePanel() {
 
           {needsRestart && (
             <div className="mt-3 flex flex-wrap items-center gap-3">
-              <p className="text-xs text-amber-500">
+              <p className="text-xs text-foreground">
                 {t("settings_view.overlay_style.restart_required")}
               </p>
               <button

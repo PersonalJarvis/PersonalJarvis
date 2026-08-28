@@ -434,7 +434,7 @@ function TreeLevel({
       {directory.truncated && (
         <div
           role="note"
-          className="py-1 pr-2 text-[10px] leading-relaxed text-amber-500"
+          className="py-1 pr-2 text-[10px] leading-relaxed text-foreground"
           style={{ paddingLeft: `${depth * 12 + 21}px` }}
         >
           {t("agentic_grid.explorer.truncated")}

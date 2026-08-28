@@ -52,7 +52,7 @@ export function RerunButton({
 
   const tone =
     action === "continue"
-      ? "border-amber-400/40 bg-amber-400/10 text-amber-400 hover:bg-amber-400/20"
+      ? "border-foreground/40 bg-foreground/10 text-foreground hover:bg-foreground/20"
       : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20";
   const sizing =
     size === "sm" ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-[11px]";

@@ -66,7 +66,7 @@ const DOT_CLASS: Record<TaskState, string> = {
   completed: "bg-emerald-500",
   failed: "bg-destructive",
   cancelled: "bg-muted-foreground/50",
-  interrupted: "bg-amber-500",
+  interrupted: "bg-foreground",
 };
 
 /** A coloured state dot with the localized state as its accessible name. */

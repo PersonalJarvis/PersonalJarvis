@@ -105,7 +105,7 @@ const KINDS: Record<
   needs_input: {
     key: "agentic_grid.notifications.kind_needs_input",
     icon: CircleHelp,
-    tone: "text-amber-400",
+    tone: "text-foreground",
   },
   exited: {
     key: "agentic_grid.notifications.kind_exited",

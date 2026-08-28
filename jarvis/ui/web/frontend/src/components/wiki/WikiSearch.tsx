@@ -130,7 +130,7 @@ function highlightSnippet(snippet: string, pattern: RegExp | null): JSX.Element 
     <>
       {parts.map((part, idx) =>
         idx % 2 === 1 ? (
-          <mark key={idx} className="bg-amber-400/30 text-foreground">
+          <mark key={idx} className="bg-foreground/30 text-foreground">
             {part}
           </mark>
         ) : (

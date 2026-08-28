@@ -232,7 +232,7 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
       )}
 
       {error && (
-        <p className="px-1 text-[11px] text-amber-600" role="alert">
+        <p className="px-1 text-[11px] text-foreground" role="alert">
           {error}
         </p>
       )}
@@ -563,7 +563,7 @@ function AccountRow({
       <p
         className={cn(
           "flex items-start gap-1.5 pl-6 text-[11px]",
-          account.connected ? "text-muted-foreground" : "text-amber-600",
+          account.connected ? "text-muted-foreground" : "text-foreground",
         )}
       >
         <KeyRound className="mt-0.5 h-3 w-3 shrink-0" />
@@ -575,7 +575,7 @@ function AccountRow({
           draining twice as fast. So it is said out loud, next to the row that
           duplicates another, rather than left to be deduced from a usage page. */}
       {account.warning && (
-        <p className="flex items-start gap-1.5 pl-6 text-[11px] text-amber-600">
+        <p className="flex items-start gap-1.5 pl-6 text-[11px] text-foreground">
           <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
           <span className="min-w-0 break-words">{account.warning}</span>
         </p>
@@ -670,7 +670,7 @@ function LoginFlowBox({
         <span
           className={cn(
             "min-w-0 flex-1 break-words text-[11px]",
-            failed ? "text-amber-600" : "text-muted-foreground",
+            failed ? "text-foreground" : "text-muted-foreground",
           )}
         >
           {flow.status === "starting"

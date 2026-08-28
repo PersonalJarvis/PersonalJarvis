@@ -410,7 +410,7 @@ export function FeedbackView() {
     },
     not_configured: {
       text: t("feedback.result_not_configured"),
-      cls: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+      cls: "border-foreground/40 bg-foreground/10 text-foreground",
     },
     github_opened: {
       text: t("feedback.result_github_opened"),
@@ -418,7 +418,7 @@ export function FeedbackView() {
     },
     github_opened_trimmed: {
       text: t("feedback.result_github_trimmed"),
-      cls: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+      cls: "border-foreground/40 bg-foreground/10 text-foreground",
     },
   };
 

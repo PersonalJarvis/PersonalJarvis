@@ -117,7 +117,7 @@ function FitNote({ fit, note }: { fit?: string; note?: string }) {
       className={cn(
         "text-xs",
         fit === "tight"
-          ? "text-amber-600 dark:text-amber-400"
+          ? "text-foreground"
           : "text-muted-foreground",
       )}
     >
@@ -373,7 +373,7 @@ function RecommendedList({
         t={t}
       />
       {!data.server_reachable && data.message && (
-        <p className="text-xs text-amber-600 dark:text-amber-400">
+        <p className="text-xs text-foreground">
           {data.message}
         </p>
       )}

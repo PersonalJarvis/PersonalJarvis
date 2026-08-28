@@ -72,7 +72,7 @@ function Key({
     : selected
       ? "border-primary bg-primary/20 text-primary"
       : boundLabel
-        ? "border-amber-500/50 bg-amber-500/10 text-amber-200"
+        ? "border-foreground/50 bg-foreground/10 text-foreground"
         : bindable
           ? // Hover stays clearly weaker than the "pressed" fill — a full
             // bg-accent hover read as "this key is pressed" in live testing.
@@ -95,7 +95,7 @@ function Key({
     >
       <span className="truncate">{cap.label}</span>
       {boundLabel && !pressed && (
-        <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
+        <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-foreground" />
       )}
     </button>
   );
@@ -217,7 +217,7 @@ export function KeyboardMap({
           {t("settings_view.keybinds.keyboard.legend_selected")}
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400" />
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-foreground" />
           {t("settings_view.keybinds.keyboard.legend_bound")}
         </span>
         <span className="ml-auto">

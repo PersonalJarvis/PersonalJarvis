@@ -52,9 +52,9 @@ const LEVEL_STYLE: Record<
     bar: "text-sky-400",
   },
   modify: {
-    chip: "border-amber-500/30 bg-amber-500/10 text-amber-500",
-    text: "text-amber-500",
-    bar: "text-amber-500",
+    chip: "border-foreground/30 bg-foreground/10 text-foreground",
+    text: "text-foreground",
+    bar: "text-foreground",
   },
   destructive: {
     chip: "border-destructive/40 bg-destructive/10 text-destructive",

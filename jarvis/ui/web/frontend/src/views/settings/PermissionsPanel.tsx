@@ -119,7 +119,7 @@ export function PermissionRows({
   return (
     <div className="space-y-2">
       {snapshot?.app_identity.stable === false && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-500">
+        <div className="flex items-start gap-2 rounded-lg border border-foreground/40 bg-foreground/5 p-3 text-xs text-foreground">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           {t("permissions.identity_warning")}
         </div>
@@ -127,7 +127,7 @@ export function PermissionRows({
       {/* A rebuild changed the app's signature, so macOS discarded every
           recorded grant. Without this the app just looks amnesic. */}
       {snapshot?.identity_reset && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-500">
+        <div className="flex items-start gap-2 rounded-lg border border-foreground/40 bg-foreground/5 p-3 text-xs text-foreground">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           {t("permissions.identity_reset")}
         </div>
@@ -149,8 +149,8 @@ export function PermissionRows({
         </p>
       )}
       {snapshot?.restart_required && !deferRestartNote && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
-          <p className="text-xs text-amber-500">{t("permissions.restart_required")}</p>
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-foreground/40 bg-foreground/5 p-3">
+          <p className="text-xs text-foreground">{t("permissions.restart_required")}</p>
           <Button size="sm" disabled={restarting} onClick={() => void restartApp()}>
             {restarting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
             {t(restarting ? "permissions.restarting" : "permissions.restart_now")}
@@ -225,7 +225,7 @@ function PermissionRow({
           className={`rounded-full px-2 py-1 text-[10px] font-medium uppercase tracking-wide ${
             ready
               ? "bg-emerald-500/10 text-emerald-500"
-              : "bg-amber-500/10 text-amber-500"
+              : "bg-foreground/10 text-foreground"
           }`}
         >
           {t(`permissions.status.${statusKey}`)}
@@ -250,7 +250,7 @@ function PermissionRow({
         )}
       </div>
       {showStaleHint && (
-        <p className="mt-2 text-xs text-amber-500">{t("permissions.stale_grant_hint")}</p>
+        <p className="mt-2 text-xs text-foreground">{t("permissions.stale_grant_hint")}</p>
       )}
     </div>
   );

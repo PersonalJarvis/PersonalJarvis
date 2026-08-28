@@ -13,7 +13,7 @@ const VARIANTS: Record<CalloutType, { className: string; icon: typeof Info }> = 
   },
   warning: {
     className:
-      "border-l-amber-500/60 bg-amber-500/10 text-amber-100",
+      "border-l-amber-500/60 bg-foreground/10 text-foreground",
     icon: AlertTriangle,
   },
   tip: {

@@ -179,7 +179,7 @@ export function ToolApprovalPanel({
   return (
     <ScrollArea className="h-full">
       <div className="space-y-3 p-3">
-        <div className="rounded-md border border-amber-400/30 bg-amber-400/10 p-2.5 text-[11px] text-amber-100/90">
+        <div className="rounded-md border border-foreground/30 bg-foreground/10 p-2.5 text-[11px] text-foreground/90">
           {t("mission_tool_approvals.scope_notice")}
         </div>
 
@@ -204,12 +204,12 @@ export function ToolApprovalPanel({
                 "rounded-lg border bg-card/50 p-3 shadow-sm",
                 expired
                   ? "border-border/60 opacity-70"
-                  : "border-amber-400/40",
+                  : "border-foreground/40",
               )}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-300">
+                  <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-foreground">
                     <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
                     {t("mission_tool_approvals.pending_title")}
                   </div>
@@ -256,7 +256,7 @@ export function ToolApprovalPanel({
                   <dd
                     className={cn(
                       "text-right font-mono text-[10px]",
-                      expired ? "text-destructive" : "text-amber-300",
+                      expired ? "text-destructive" : "text-foreground",
                     )}
                     title={new Date(expiresAtMs).toLocaleString(language)}
                   >
@@ -341,7 +341,7 @@ export function ToolApprovalPanel({
                   <Button
                     variant="outline"
                     size="sm"
-                    className="border-amber-400/50 bg-amber-400/10 text-amber-200 hover:bg-amber-400/20 hover:text-amber-100"
+                    className="border-foreground/50 bg-foreground/10 text-foreground hover:bg-foreground/20 hover:text-foreground"
                     onClick={() => setConfirmingTraceId(approval.trace_id)}
                     disabled={decision.isPending}
                   >
@@ -406,7 +406,7 @@ function riskClassName(riskTier: string): string {
     case "block":
       return "border-destructive/60 bg-destructive/10 text-destructive";
     case "ask":
-      return "border-amber-400/50 bg-amber-400/10 text-amber-300";
+      return "border-foreground/50 bg-foreground/10 text-foreground";
     case "monitor":
       return "border-sky-400/50 bg-sky-400/10 text-sky-300";
     default:

@@ -37,7 +37,7 @@ describe("what the badge shows", () => {
     const badge = pill({ status: "live", activity: "waiting", worked: true });
     expect(badge.textContent).toBe("");
     expect(badge.getAttribute("data-icon")).toBe("check");
-    expect(badge.className).toContain("text-amber-400");
+    expect(badge.className).toContain("text-foreground");
   });
 
   it("hollows the dot — rather than recolouring it — for an unused pane", () => {
@@ -48,7 +48,7 @@ describe("what the badge shows", () => {
     const badge = pill({ status: "live", activity: "waiting", worked: false });
     expect(badge.textContent).toBe("");
     expect(badge.getAttribute("data-icon")).toBe("ring");
-    expect(badge.className).toContain("text-amber-400/60");
+    expect(badge.className).toContain("text-foreground/60");
   });
 
   it("keeps blue for the one state that wants something from you now", () => {

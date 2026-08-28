@@ -59,19 +59,19 @@ export function InputIsolationBanner() {
       data-testid="input-isolation-banner"
       data-reason={report.reason}
       role="alert"
-      className="border-b-2 border-amber-500/50 bg-amber-500/10 text-amber-100"
+      className="border-b-2 border-foreground/50 bg-foreground/10 text-foreground"
     >
       <div className="flex items-start gap-3 px-4 py-2.5">
-        <KeyboardOff className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" aria-hidden />
+        <KeyboardOff className="mt-0.5 h-5 w-5 shrink-0 text-foreground" aria-hidden />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold leading-tight">
             {t("input_isolation.title")}
           </p>
-          <p className="mt-0.5 text-xs leading-snug text-amber-200/90">
+          <p className="mt-0.5 text-xs leading-snug text-foreground/90">
             {t("input_isolation.impact")}
           </p>
           {!report.can_restart_unelevated && (
-            <p className="mt-1 text-xs leading-snug text-amber-200/70">
+            <p className="mt-1 text-xs leading-snug text-foreground/70">
               {t("input_isolation.manual_hint")}
             </p>
           )}

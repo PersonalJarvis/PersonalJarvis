@@ -101,7 +101,7 @@ interface TelephonyCall {
 type CallStatus = "ringing" | "in_progress" | "completed" | "failed" | "no_audio";
 
 const CALL_STATUS_STYLE: Record<CallStatus, string> = {
-  ringing: "bg-amber-500/10 text-amber-600",
+  ringing: "bg-foreground/10 text-foreground",
   in_progress: "bg-primary/10 text-primary",
   completed: "bg-emerald-500/10 text-emerald-600",
   failed: "bg-destructive/10 text-destructive",

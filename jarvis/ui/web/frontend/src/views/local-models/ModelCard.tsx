@@ -90,9 +90,9 @@ const RING: Record<ModelCardState, string> = {
   unknown: "border-border",
   // Amber and red carry meanings the token set has no name for; the accent
   // stays for the memory bar and the primary button.
-  slow: "border-amber-500/40",
+  slow: "border-foreground/40",
   unfit: "border-destructive/50",
-  missing: "border-amber-500/50",
+  missing: "border-foreground/50",
   empty: "border-dashed border-border",
   blocked: "border-border/60",
 };
@@ -100,9 +100,9 @@ const RING: Record<ModelCardState, string> = {
 const VERDICT_TONE: Record<ModelCardState, string> = {
   ready: "text-emerald-600 dark:text-emerald-400",
   unknown: "text-muted-foreground",
-  slow: "text-amber-700 dark:text-amber-400",
+  slow: "text-foreground",
   unfit: "text-destructive",
-  missing: "text-amber-700 dark:text-amber-400",
+  missing: "text-foreground",
   empty: "text-muted-foreground",
   blocked: "text-muted-foreground",
 };
@@ -330,7 +330,7 @@ export function ModelCard({
             <div
               className={cn(
                 "h-full transition-[width] duration-500 ease-out",
-                overBudget ? "bg-amber-500" : "bg-primary",
+                overBudget ? "bg-foreground" : "bg-primary",
               )}
               style={{
                 width: `${Math.min(100, Math.round((weightsGb / Math.max(acceleratorGb, totalGb, 0.01)) * 100))}%`,
@@ -338,7 +338,7 @@ export function ModelCard({
               data-testid={`model-card-memory-fill-${row.id}`}
             />
             <div
-              className={cn("h-full", overBudget ? "bg-amber-500/50" : "bg-primary/40")}
+              className={cn("h-full", overBudget ? "bg-foreground/50" : "bg-primary/40")}
               style={{
                 width: `${Math.min(100, Math.round((contextGb / Math.max(acceleratorGb, totalGb, 0.01)) * 100))}%`,
               }}

@@ -238,7 +238,7 @@ function ConnectionBadge({ connected }: { connected: boolean }) {
         "flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[10px] uppercase tracking-wider",
         connected
           ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
-          : "border-amber-400/40 bg-amber-400/10 text-amber-300",
+          : "border-foreground/40 bg-foreground/10 text-foreground",
       )}
     >
       {connected ? (
@@ -330,9 +330,9 @@ function ReasoningPanel() {
             return (
               <li
                 key={`${env.event_id}-${idx}`}
-                className="rounded border border-amber-400/40 bg-amber-400/10 p-2 text-xs"
+                className="rounded border border-foreground/40 bg-foreground/10 p-2 text-xs"
               >
-                <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-amber-300">
+                <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-foreground">
                   <span>iter #{p.iteration} → {p.next_model}</span>
                   <span className="font-mono">w{p.worker_id.slice(0, 8)}</span>
                 </div>

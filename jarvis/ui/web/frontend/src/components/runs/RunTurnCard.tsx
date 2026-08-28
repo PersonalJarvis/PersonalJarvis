@@ -119,9 +119,9 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
 
         {/* Triggered capabilities — the per-turn headline */}
         {triggered.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-amber-400/20 bg-amber-400/5 px-2 py-1.5 text-[11px]">
-            <Zap className="h-3.5 w-3.5 shrink-0 text-amber-400" />
-            <span className="font-medium uppercase tracking-wider text-amber-300/90">
+          <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-foreground/20 bg-foreground/5 px-2 py-1.5 text-[11px]">
+            <Zap className="h-3.5 w-3.5 shrink-0 text-foreground" />
+            <span className="font-medium uppercase tracking-wider text-foreground/90">
               {t("run_inspector.triggered")}
             </span>
             <FeatureBadges tags={triggered} />
@@ -157,7 +157,7 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
         {(turn.think_ms > 0 || turn.speak_ms > 0) && (
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1">
-              <Brain className="h-3 w-3 text-amber-300" /> {fmtMs(turn.think_ms)} thinking
+              <Brain className="h-3 w-3 text-foreground" /> {fmtMs(turn.think_ms)} thinking
             </span>
             <span className="flex items-center gap-1">
               <Hourglass className="h-3 w-3 text-primary" /> {fmtMs(turn.speak_ms)} speaking
