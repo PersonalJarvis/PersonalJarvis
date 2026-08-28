@@ -1,7 +1,13 @@
 import { useEffect, useRef, type MutableRefObject } from "react";
 
 import type { WaveformPhase } from "@/components/overlay/VoiceWaveform";
-import { ATTACK_TAU_S, COLUMN_MS, RELEASE_TAU_S, clamp01 } from "@/components/overlay/voiceBars";
+import {
+  ATTACK_TAU_S,
+  COLUMN_MS,
+  RELEASE_TAU_S,
+  clamp01,
+  ringValue,
+} from "@/components/overlay/voiceBars";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,11 +24,21 @@ import { cn } from "@/lib/utils";
  *   - at rest it breathes: a slow, low travelling wave, so the bar reads as
  *     alive-and-waiting rather than switched off (that is what the person
  *     sees most of the time);
- *   - while listening the capsules follow the microphone, spreading from the
- *     centre outwards (the classic voice-visualiser shape), with the
- *     overlay's own attack/release and scroll cadence;
+ *   - while listening it is a TAPE: the newest microphone sample enters at
+ *     the right edge and the whole row travels left, on the overlay's own
+ *     attack/release and column cadence;
  *   - thinking and speaking are a sweep, connecting a pulse, error a
  *     still red row.
+ *
+ * ## Why it scrolls (maintainer, 2026-08-28)
+ *
+ * This row used to mirror the level outwards from the centre, and that is
+ * the one shape it must not have: mirroring draws every syllable TWICE, so
+ * a sentence becomes a symmetric blob and nothing in it can be told apart.
+ * Scrolling keeps one peak per syllable, travelling, which is what lets
+ * somebody look at the bar and see the words they just said. `ringValue`
+ * (components/overlay/voiceBars) is the shared reader for exactly this, so
+ * the front page and the overlay pill now scroll the same way.
  *
  * ## The shape (maintainer, 2026-08-28)
  *
@@ -136,21 +152,23 @@ export function StageWaveform({
       const cx0 = (width - rowW) / 2 + BAR_W / 2;
       const mid = height / 2;
       for (let i = 0; i < count; i += 1) {
+        const t = count > 1 ? i / (count - 1) : 0.5;
         const v = clamp01(shaped[i] ?? 0);
         const h = Math.min(height, BAR_MIN + span * v);
         const w = DOT_W + (BAR_W - DOT_W) * bloom(v);
-        ctx.globalAlpha = alphas[i] ?? 1;
+        // The rim taper is ALPHA ONLY, and narrow. It used to shrink the
+        // capsules at both ends too, which on a scrolling row flattened
+        // every syllable exactly as it entered — the row would swallow the
+        // first thing you said. Fading it in instead keeps the measurement
+        // intact and still lets the tape dissolve into the card.
+        ctx.globalAlpha = (alphas[i] ?? 1) * edge(t);
         capsule(ctx, cx0 + i * ROW_PITCH - w / 2, mid - h / 2, w, h);
       }
       ctx.globalAlpha = 1;
     };
 
-    /** How present a column is: a quiet floor that the activity lifts. The
-     *  floor itself thins towards both rims, so the row ends in whispers. */
-    const presence = (t: number, v: number) => {
-      const floor = DOT_ALPHA * (0.3 + 0.7 * rim(t));
-      return floor + (1 - floor) * v;
-    };
+    /** How present a column is: a quiet floor that the activity lifts. */
+    const presence = (v: number) => DOT_ALPHA + (1 - DOT_ALPHA) * v;
 
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
@@ -186,7 +204,7 @@ export function StageWaveform({
           const wave = reduced ? 0 : 0.5 + 0.5 * Math.sin(breath * 2 + t * 6.283 * 1.2);
           const v = IDLE_SWELL * wave * rim(t);
           shaped[i] = v;
-          alphas[i] = presence(t, 0.34 * wave * rim(t));
+          alphas[i] = presence(0.34 * wave * rim(t));
         }
         paint(shaped, alphas, fills.muted);
         return;
@@ -199,30 +217,31 @@ export function StageWaveform({
           const t = i / Math.max(1, count - 1);
           const v = 0.16 * pulse * rim(t);
           shaped[i] = v;
-          alphas[i] = presence(t, 0.5 * pulse * rim(t));
+          alphas[i] = presence(0.5 * pulse * rim(t));
         }
         paint(shaped, alphas, fills.primary);
         return;
       }
 
       if (p === "working" || p === "speaking") {
-        // A sweep: a bright band travelling the row, faster when speaking.
+        // A sweep: a bright band travelling the row right to left, the
+        // same direction the measured tape runs, faster when speaking.
         const period = p === "speaking" ? 1.1 : 1.8;
         sweep = reduced ? 0.5 : (sweep + dt / period) % 1;
         for (let i = 0; i < count; i += 1) {
           const t = i / Math.max(1, count - 1);
-          const d = Math.abs(((t - sweep + 1.5) % 1) - 0.5); // 0 at the band
+          const d = Math.abs(((t + sweep + 1.5) % 1) - 0.5); // 0 at the band
           const gain = reduced ? 0.4 : Math.max(0, 1 - d / 0.22);
           const base = p === "speaking" ? 0.12 : 0.08;
           const v = (base + 0.62 * gain) * rim(t);
           shaped[i] = v;
-          alphas[i] = presence(t, Math.min(1, 0.25 + gain) * rim(t));
+          alphas[i] = presence(Math.min(1, 0.25 + gain) * rim(t));
         }
         paint(shaped, alphas, fills.primary);
         return;
       }
 
-      // listening: the microphone, spreading from the centre outwards.
+      // listening: the microphone as a tape running right to left.
       const target = clamp01(levelRef.current);
       const tau = target > level ? ATTACK_TAU_S : RELEASE_TAU_S;
       level += (target - level) * (1 - Math.exp(-dt / tau));
@@ -232,19 +251,14 @@ export function StageWaveform({
         history[head] = level;
         head = (head + 1) % count;
       }
-      const half = Math.floor(count / 2);
       for (let i = 0; i < count; i += 1) {
-        // Distance from the centre decides how old a sample this capsule
-        // shows: the newest in the middle, older ones further out on both
-        // sides.
-        const t = i / Math.max(1, count - 1);
-        const dist = Math.abs(i - (count - 1) / 2);
-        const age = reduced ? 0 : Math.min(half, Math.round(dist));
-        const idx = (head - 1 - age + count * 2) % count;
-        const raw = reduced ? level : Math.max(history[idx] ?? 0, age === 0 ? level : 0);
-        const v = clamp01(raw) * rim(t);
+        // `ringValue` reads the history oldest-first, so column 0 is the
+        // far left and the last column is the sample from this instant:
+        // a syllable appears at the right edge and walks out of the left.
+        // Reduced motion holds the plain level instead — a meter, no travel.
+        const v = reduced ? level : clamp01(ringValue(history, head, i));
         shaped[i] = v;
-        alphas[i] = presence(t, v);
+        alphas[i] = presence(v);
       }
       paint(shaped, alphas, fills.primary);
     };
@@ -301,9 +315,22 @@ const BLOOM_KNEE = 0.14;
 /** Idle swell, kept under the bloom knee so resting stays dotty. */
 const IDLE_SWELL = 0.05;
 
-/** Smooth 0..1 rim envelope — 0 at both edges, 1 from `RIM` inwards. */
+/** How narrow the alpha fade at each end of the tape is, as a row fraction.
+ *  Small on purpose: the right edge is where a syllable ARRIVES, so it has
+ *  to be readable within a couple of columns. */
+const EDGE = 0.06;
+
+/** Smooth 0..1 rim envelope — 0 at both edges, 1 from `RIM` inwards. Shapes
+ *  the DECORATIVE phases, which draw a silhouette rather than a measurement. */
 function rim(t: number): number {
   const d = Math.min(t, 1 - t) / RIM;
+  return d >= 1 ? 1 : d * d * (3 - 2 * d);
+}
+
+/** The alpha fade every phase gets at both ends, so the row dissolves into
+ *  the card instead of stopping at a hard column. */
+function edge(t: number): number {
+  const d = Math.min(t, 1 - t) / EDGE;
   return d >= 1 ? 1 : d * d * (3 - 2 * d);
 }
 
