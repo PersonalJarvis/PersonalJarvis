@@ -14568,3 +14568,50 @@ test file. Every consumer used to monkeypatch it to a fixed pair, so the
 function producing those pairs had no coverage: the Apple branch and the
 "nothing readable" fallback had never been executed. All legs are driven through
 fakes, so the suite proves them on a headless container too.
+
+## BUG-207: the shortlist kept recommending an embedding model for a job that no longer exists (MEDIUM, FIXED 2026-08-28)
+
+**Symptom.** The Local models catalogue marked `qwen3-embedding:4b` as the
+recommended download for an "Embedding" role — but the section's role list has
+no embedding slot, so there was nowhere to put it. The verify panel promised
+"one embedding" as a step it never ran, the empty-state offered to download
+"the recommended chat and embedding models", and the health badge carried a
+permanent `model_unavailable` for the same role.
+
+**Cause.** Removing the UltraWiki semantic memory (5118ce130, 2026-08-28) took
+the embedding slot out of `ollama_roles.ROLES` but left every other half of the
+feature standing:
+
+* `ollama_pull.ROLE_ORDER` still listed `"embedding"`, and two curated entries
+  still carried `role="embedding"`, so `recommendations()` kept ranking and
+  recommending them.
+* `assistant_test._embedding_check` became unreachable — the runner derives its
+  roles from `WRITABLE_ROLE_IDS`, and passing `"embedding"` explicitly raises.
+* Four user-facing strings in all three locales still described the embedding
+  step.
+* `write_health_record()` starts from `payload = dict(previous)`, so the last
+  embedding result was carried forward on every badge update. A merge writer
+  cannot drop a key by construction: the entry would have outlived the role
+  indefinitely.
+
+The mirror image of "finish a feature everywhere" — a REMOVAL landed everywhere
+but one place, and the leftovers each looked like a live feature.
+
+**Fix.** The role is gone from the shortlist vocabulary and the curated list;
+the dead check and its dispatch are deleted; the four strings now describe what
+verify actually does (server, chat, voice); and `_without_retired_roles()`
+prunes results for roles the list no longer has on the way out. The pruner
+returns a COPY — `since` is derived from the previous record afterwards, and
+mutating it in place would freeze that clock.
+
+**Kept on purpose.** `inventory.embed_probe` and the `"embedding"` capability
+word stay: an embedding model already on disk still appears in the ledger with
+its capability, and the probe has its own test. Only the ROLE is retired.
+
+**Guard.** `test_the_shortlist_only_advertises_roles_a_slot_can_take` asserts
+every `ROLE_ORDER` entry maps to a `ROLES` slot, so the next retirement cannot
+leave an orphan behind; three tests in `test_health_monitor.py` cover the prune
+and the `since` clock.
+
+**Related.** BUG-205 (the other half of this audit — two surfaces disagreeing
+about one machine) and BUG-206 (the accelerator probe).

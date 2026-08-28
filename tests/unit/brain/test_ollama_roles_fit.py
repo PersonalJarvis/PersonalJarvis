@@ -95,7 +95,6 @@ async def test_list_roles_carries_the_verdict_on_the_current_pick(shortlist) -> 
     assert by_id["chat"].current_fit == "fits"
     assert [c[0] for c in by_id["chat"].choices] == ["qwen3.5:4b", "blind:7b"]
     assert by_id["chat"].spec.layout == "card"
-    assert by_id["embedding"].spec.layout == "row"
     assert by_id["ack"].spec.layout == "footnote"
 
 
@@ -124,7 +123,9 @@ def test_download_picks_respect_the_jobs_gates() -> None:
     assert voice == ["blind:9b", "small:4b"]  # under 6 GB, not installed, largest first
     screen = ollama_roles.role_spec("tools_screen")
     assert [t for t, *_ in ollama_roles.download_picks(screen, rows)] == ["big:27b", "small:4b"]
-    assert ollama_roles.download_picks(ollama_roles.role_spec("embedding"), rows) == ()
+    # A role whose job none of these rows serves gets nothing rather than a
+    # chat model dressed up as a pick (`deep` pulls the "coder" shortlist).
+    assert ollama_roles.download_picks(ollama_roles.role_spec("deep"), rows) == ()
 
 
 def test_set_role_voice_refuses_when_nothing_reached_the_toml(monkeypatch) -> None:

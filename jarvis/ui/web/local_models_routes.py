@@ -80,7 +80,7 @@ class LocalModelRow(BaseModel):
     capabilities: list[str]
     license: str
     probed: bool
-    #: Role ids (``chat`` / ``tools_screen`` / ``deep`` / ``embedding``) whose
+    #: Role ids (``chat`` / ``voice`` / ``tools_screen`` / ``deep``) whose
     #: configured pick is this download.
     used_by: list[str] = Field(default_factory=list)
     #: Present when ``/api/ps`` lists it — the download itself or one of its
@@ -287,7 +287,7 @@ async def delete_inventory_model(
 ) -> DeleteResponse:
     """Remove a download from the server (``DELETE /api/delete``).
 
-    409 while a configured role (chat / tools & screen / deep / embeddings)
+    409 while a configured role (chat / voice / tools & screen / deep)
     still names the model and no ``reassign`` is given; with one, the roles
     are rewritten through the config writers first, then the delete runs.
     """
@@ -348,7 +348,7 @@ def _reassign_roles(cfg: Any, roles: list[str], target: str) -> list[str]:
     """Persist ``target`` for every role in ``roles`` through the roles module.
 
     One writer per slot lives in :mod:`jarvis.brain.ollama_roles` (chat, voice,
-    tools/screen, deep, embedding); going through it keeps the delete path
+    tools/screen, deep); going through it keeps the delete path
     honest for the voice slot, whose pick is not a plain config field.
     """
     from jarvis.brain.ollama_roles import set_role
@@ -987,7 +987,7 @@ async def put_autostart(
 
 
 class VerifyStep(BaseModel):
-    #: ``server`` | ``chat`` | ``voice`` | ``tools_screen`` | ``embedding``.
+    #: ``server`` | ``chat`` | ``voice`` | ``tools_screen`` | ``deep``.
     id: str
     #: ``None`` = not run (the role is not configured, or the server is down).
     ok: bool | None
@@ -1006,8 +1006,8 @@ class VerifyResponse(BaseModel):
 
 @router.post("/verify", response_model=VerifyResponse)
 async def post_verify(provider_id: str, request: Request) -> VerifyResponse:
-    """Prove the setup works — the server, one real chat answer, one real
-    embedding — and refresh the sidebar's health badge with the result."""
+    """Prove the setup works — the server answers, the chat model answers, and
+    the voice round trip returns audio — then refresh the sidebar's badge."""
     _require_pull_capable(provider_id)
     from jarvis.local_models import health_monitor
 

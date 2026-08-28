@@ -243,3 +243,73 @@ async def test_a_failing_check_never_ends_the_schedule() -> None:
     await asyncio.wait_for(gate.wait(), timeout=2.0)
     await monitor.stop()
     assert monitor.runs == 2
+
+
+# ── Retired roles must not outlive the role list ─────────────────────────
+
+
+def test_a_retired_role_is_dropped_from_the_record(monkeypatch, tmp_path) -> None:
+    """The record is written by MERGING, so a role's last result used to outlive
+    the role itself: when the embedding slot went with the UltraWiki semantic
+    memory, its `model_unavailable` entry stayed in the file for good and the
+    badge kept reporting a job the section does not show (BUG-207)."""
+    monkeypatch.setattr(cfg_mod, "DATA_DIR", tmp_path)
+    path = hm.health_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "status": "degraded",
+                "roles": {
+                    "chat": {"model": "qwen3.5:4b", "status": "ok"},
+                    "embedding": {"model": "qwen3-embedding:4b", "status": "model_unavailable"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert hm.write_health_record("ok", "everything answered") is True
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert set(saved["roles"]) == {"chat"}
+    assert saved["roles"]["chat"]["status"] == "ok"
+
+
+def test_pruning_does_not_disturb_the_since_clock(monkeypatch, tmp_path) -> None:
+    """`since` is derived from the PREVIOUS record, so the pruner has to hand
+    back a copy — mutating the original in place would make every write look
+    like an unchanged status and freeze the clock."""
+    monkeypatch.setattr(cfg_mod, "DATA_DIR", tmp_path)
+    path = hm.health_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "since": "2026-08-01T00:00:00+00:00",
+                "roles": {"embedding": {"model": "gone", "status": "model_unavailable"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    hm.write_health_record(
+        "degraded", "the chat model stopped answering", checked_at="2026-08-28T12:00:00+00:00"
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    # The status CHANGED, so the clock restarts rather than keeping August 1st.
+    assert saved["since"] == "2026-08-28T12:00:00+00:00"
+    assert saved["roles"] == {}
+
+
+def test_a_role_the_list_still_has_is_kept(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(cfg_mod, "DATA_DIR", tmp_path)
+    path = hm.health_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"roles": {"chat": {"status": "ok"}, "deep": {"status": "ok"}}}),
+        encoding="utf-8",
+    )
+    hm.write_health_record("ok", "fine")
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert set(saved["roles"]) == {"chat", "deep"}

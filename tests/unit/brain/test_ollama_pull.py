@@ -466,7 +466,6 @@ async def test_an_installed_role_stops_being_recommended(fake_tags, monkeypatch)
     assert not any("vision" in m["recommended_for"] for m in result["models"])
     # Other roles are untouched — one installed model does not silence the rest.
     assert any(m["recommended"] for m in result["models"] if m["role"] == "coder")
-    assert any(m["recommended"] for m in result["models"] if m["role"] == "embedding")
 
 
 async def test_real_registry_sizes_replace_the_estimates(fake_tags, monkeypatch) -> None:
@@ -479,7 +478,7 @@ async def test_real_registry_sizes_replace_the_estimates(fake_tags, monkeypatch)
     assert by_id["qwen3.5"]["size_gb"] == 9.0
     # A model the registry did not answer for keeps its curated estimate rather
     # than vanishing or reporting zero.
-    assert by_id["qwen3-embedding:4b"]["size_gb"] > 0
+    assert by_id["qwen3-vl:2b"]["size_gb"] == 1.9
 
 
 async def test_an_offline_registry_leaves_a_usable_panel(fake_tags, monkeypatch) -> None:
@@ -556,3 +555,16 @@ async def test_installed_models_reads_the_shared_snapshot_when_fresh(
     # Aliases count as "on the server" for the bookkeeping, even though the
     # ledger hides them.
     assert installed == {"qwen3.5:latest", "qwen3.5-latest-jarvis-ab12cd34:latest"}
+
+
+def test_the_shortlist_only_advertises_roles_a_slot_can_take() -> None:
+    """A "recommended" download for a job nothing can be assigned to is worse
+    than offering none: the embedding role went with the UltraWiki semantic
+    memory, and the shortlist kept urging `qwen3-embedding:4b` on people who
+    then had nowhere to put it (BUG-207)."""
+    from jarvis.brain.ollama_roles import ROLES
+
+    assignable = {spec.pull_role for spec in ROLES}
+    orphaned = set(pull.ROLE_ORDER) - assignable
+    assert not orphaned, f"shortlist roles with no slot to fill: {sorted(orphaned)}"
+    assert {m.role for m in pull.RECOMMENDED_MODELS} <= set(pull.ROLE_ORDER)

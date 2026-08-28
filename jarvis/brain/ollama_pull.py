@@ -60,13 +60,21 @@ _OVERHEAD_GB = 2.0
 
 
 #: The jobs a local install has to fill. Each one is a separate decision — a
-#: machine needs a chat model AND an embedder, they do not substitute for each
-#: other — so the shortlist offers a best pick per role rather than one ranked
-#: list where the embedder looks like a weak chat model.
-Role = Literal["chat", "vision", "coder", "embedding"]
+#: machine needs a chat model AND a model that can see a screen, they do not
+#: substitute for each other — so the shortlist offers a best pick per role
+#: rather than one ranked list where a specialist looks like a weak chat model.
+#:
+#: ``embedding`` was retired with the UltraWiki semantic memory (2026-08-28):
+#: nothing in the product embeds locally any more — the remaining wiki searches
+#: by term overlap — and `ollama_roles.ROLES` has no slot to assign an embedder
+#: to. Advertising a "recommended" download for a job that cannot be filled is
+#: worse than offering nothing (BUG-207). An embedding model already installed
+#: still appears in the ledger with its capability; only the shortlist role is
+#: gone.
+Role = Literal["chat", "vision", "coder"]
 
 #: Display order of the roles, most-load-bearing first.
-ROLE_ORDER: tuple[Role, ...] = ("chat", "vision", "coder", "embedding")
+ROLE_ORDER: tuple[Role, ...] = ("chat", "vision", "coder")
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,23 +218,6 @@ RECOMMENDED_MODELS: tuple[RecommendedModel, ...] = (
         size_gb=21.2,
         purpose="Large agentic coding worker for a big card.",
         role="coder",
-    ),
-    # ── embeddings (retrieval; not chat models) ─────────────────────────────
-    RecommendedModel(
-        id="embeddinggemma",
-        label="EmbeddingGemma",
-        size_gb=0.6,
-        purpose="Embeddings for search on any machine. Not a chat model.",
-        role="embedding",
-        tools=False,
-    ),
-    RecommendedModel(
-        id="qwen3-embedding:4b",
-        label="Qwen 3 Embedding 4B",
-        size_gb=2.5,
-        purpose="Higher-capacity current multilingual embeddings for retrieval.",
-        role="embedding",
-        tools=False,
     ),
 )
 

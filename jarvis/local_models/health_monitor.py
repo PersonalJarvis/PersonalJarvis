@@ -129,11 +129,46 @@ def read_health_record() -> dict[str, Any]:
     }
 
 
+def _without_retired_roles(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop per-role results for roles this install no longer has.
+
+    The record is written by MERGING into the previous one, so a role's last
+    result outlives the role itself: when the embedding slot was retired with
+    the UltraWiki semantic memory, its `model_unavailable` entry stayed in the
+    file for good, and the badge kept reporting a job the section does not show
+    and the user cannot fix (BUG-207). A merge writer cannot clean that up by
+    construction, so it is pruned on the way out instead.
+
+    Unknown-but-current roles are kept: the role list is the authority, and a
+    role added since this file was written is not stale.
+    """
+    pruned = dict(payload)  # a COPY: the caller still reads `previous` afterwards
+    roles = payload.get("roles")
+    if not isinstance(roles, dict):
+        return pruned
+    try:
+        from jarvis.brain.ollama_roles import WRITABLE_ROLE_IDS  # noqa: PLC0415 — lazy (AP-26)
+
+        live = set(WRITABLE_ROLE_IDS)
+    except Exception:  # noqa: BLE001 — without the role list, prune nothing
+        log.debug("local-models: role list unavailable; keeping every health entry")
+        return pruned
+    kept = {name: result for name, result in roles.items() if name in live}
+    if len(kept) != len(roles):
+        log.info(
+            "local-models: dropped %d retired role(s) from the health record: %s",
+            len(roles) - len(kept),
+            ", ".join(sorted(set(roles) - live)),
+        )
+    pruned["roles"] = kept
+    return pruned
+
+
 def write_health_record(status: str, reason: str, *, checked_at: str | None = None) -> bool:
     """Merge the badge keys into the health file; ``since`` holds while the status does."""
     stamp = checked_at or _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
     previous = load_last_report() or {}
-    payload = dict(previous)
+    payload = _without_retired_roles(previous)
     payload["status"] = status
     payload["reason"] = reason
     payload["checked_at"] = stamp

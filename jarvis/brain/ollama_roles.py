@@ -1,10 +1,11 @@
 """The model slots Ollama fills, read and written from ONE place.
 
-Today the local brain is spread over five config keys the user never sees
+Today the local brain is spread over four config keys the user never sees
 side by side: the chat model, the voice model (the managed voice server's
-brain, baked into its launch command), the tool/screen model, the deep model
-and the wiki's embedding model — plus two read-only consumers (the quick ack,
-dictation polish) that pin their own tag.
+brain, baked into its launch command), the tool/screen model and the deep
+model — plus two read-only consumers (the quick ack, dictation polish) that
+pin their own tag. The wiki's embedding slot was retired with the UltraWiki
+semantic memory (2026-08-28); nothing embeds locally any more.
 This module names every slot as a :class:`RoleSpec`, reads its current pick
 from a loaded config, judges which INSTALLED downloads qualify for it (by the
 capabilities ``/api/show`` declares) and recommends one, so the "Local
@@ -245,9 +246,9 @@ def current_pick(cfg: Any, role_id: str) -> tuple[str, str]:
     """``(tag, note)`` the config holds for ``role_id``.
 
     ``tag`` is ``""`` for discovery; ``note`` is one sentence when the slot
-    is served by something other than Ollama (the wiki embedding with a
-    cloud provider, dictation polish on another provider), so the row can
-    say so instead of showing an unrelated tag as if Ollama ran it.
+    is served by something other than Ollama (dictation polish on another
+    provider, say), so the row can say so instead of showing an unrelated tag
+    as if Ollama ran it.
     """
     if cfg is None:
         return "", ""
@@ -672,7 +673,7 @@ def set_role(role_id: str, model: str, *, cfg: Any = None) -> dict[str, Any]:
     which case the drift guard may revert it and the caller should say so.
 
     Raises ``ValueError`` for an unknown or read-only role, and for an empty
-    embedding model (the wiki needs a name; there is no discovery there).
+    model on a slot that cannot discover one (the voice server needs a name).
     """
     spec = role_spec(role_id)
     if not spec.writable:

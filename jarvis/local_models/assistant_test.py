@@ -6,9 +6,8 @@ runner asks the server (``probe_host``), then makes one REAL call per
 configured role: a 1-token generation for the chat / deep / tools_screen
 roles (through :func:`jarvis.brain.provider_test.run_provider_test`, so the
 status vocabulary is the one the API-keys cards already speak), a
-capability assertion on top for ``tools_screen``, an embedding round trip
-for the embedding role, and — only when the managed voice server is
-configured — the voice smoke probe. The report is persisted to
+capability assertion on top for ``tools_screen``, and — only when the managed
+voice server is configured — the voice smoke probe. The report is persisted to
 ``DATA_DIR/state/local_models_health.json`` so the section badge and the
 health monitor read the same file.
 """
@@ -50,7 +49,6 @@ HEALTH_FILE_NAME = "local_models_health.json"
 
 #: The generation-tested roles and the role whose pick embeds.
 _GENERATION_ROLES: tuple[str, ...] = ("chat", "tools_screen", "deep")
-_EMBEDDING_ROLE = "embedding"
 _VOICE_ROLE = "voice"
 
 _DEFAULT_TIMEOUT_S = 90.0
@@ -238,26 +236,6 @@ async def _capability_check(root: str, check: RoleCheck, *, transport: Any) -> R
     return RoleCheck(check.model, "ok", check.latency_ms, "Answered; declares tools + vision.")
 
 
-async def _embedding_check(root: str, model: str, *, transport: Any) -> RoleCheck:
-    import time
-
-    from jarvis.brain import ollama_inventory as inventory
-    from jarvis.brain.provider_test import ERROR, MODEL_UNAVAILABLE, UNREACHABLE
-
-    started = time.perf_counter()
-    try:
-        dim = await inventory.embed_probe(root, model, transport=transport)
-    except inventory.OllamaModelNotFound as exc:
-        return RoleCheck(model, MODEL_UNAVAILABLE, _ms(started), str(exc))
-    except inventory.OllamaServerError as exc:
-        text = str(exc)
-        status = UNREACHABLE if "No Ollama" in text or "unreachable" in text.lower() else ERROR
-        return RoleCheck(model, status, _ms(started), text)
-    if dim <= 0:
-        return RoleCheck(model, ERROR, _ms(started), f"{model} returned no embedding vector.")
-    return RoleCheck(model, "ok", _ms(started), f"Embeds ({dim} dimensions).")
-
-
 async def _voice_check(
     cfg: Any,
     *,
@@ -351,9 +329,7 @@ async def run_setup_test(
         if not server.get("ok"):
             checks[role] = RoleCheck(model, UNREACHABLE, 0.0, str(server.get("detail") or ""))
             continue
-        if role == _EMBEDDING_ROLE:
-            checks[role] = await _embedding_check(root, model, transport=transport)
-        elif role in _GENERATION_ROLES:
+        if role in _GENERATION_ROLES:
             check = await _generation_check(
                 cfg, model, timeout_s=timeout_s, brain_probe=brain_probe
             )
