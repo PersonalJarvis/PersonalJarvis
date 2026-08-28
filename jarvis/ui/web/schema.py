@@ -48,10 +48,23 @@ class WSWelcome(BaseModel):
 
 
 class WSAudioLevel(BaseModel):
-    """Ephemeral normalized microphone level for lightweight UI animation."""
+    """Ephemeral normalized voice levels for lightweight UI animation.
+
+    Both directions of the conversation, because a bar that draws one of them
+    and mimes the other is telling half a truth: ``input`` is the microphone
+    (``jarvis.audio.mic_level``), ``output`` is what the speakers are emitting
+    (``jarvis.audio.level_tap``, which already schedules each level for the
+    moment its audio block becomes AUDIBLE rather than the moment PortAudio
+    accepted it — so the number a client draws is in step with what the person
+    hears).
+
+    ``output`` carries a default so a client parsing an older server, or a
+    server with no player at all, still validates.
+    """
 
     type: Literal["audio.level"] = "audio.level"
     input: float = Field(ge=0.0, le=1.0)
+    output: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 # ----------------------------------------------------------------------

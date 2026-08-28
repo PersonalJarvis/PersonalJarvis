@@ -577,6 +577,28 @@ label,
     --viz-result: 53 12% 13%; /* full ink — the run's landing */
     --viz-deliverable: 47 6% 43%; /* files left behind */
 
+    /* --- Voice waveform ---------------------------------------------------
+       The ONE place in the app that carries more than one hue, and it is not
+       a brand colour: these are the design system's timeline pastels
+       (lavender `timeline-edit`, pastel blue `timeline-read`), whose whole
+       job is in-product agent visualisation. The Jarvis bar's waveform is
+       exactly that — a live picture of the agent listening and speaking —
+       so it draws its capsules along a lavender-to-blue ramp instead of a
+       flat accent. Retiring the brand hue made the interface monochrome; it
+       did not retire this palette, and the row of capsules is the surface it
+       was reserved for.
+
+       The two are pulled a little further apart than the raw pastels, and
+       the ramp is laid across the MIDDLE of the row rather than its full
+       width (see buildFills): a conversation lives in the centre of the
+       tape, so a gradient anchored at the outer edges would only ever show
+       its middle and read as one flat colour.
+
+       Light mode keeps the same two hues and drops the lightness: the
+       pastels are tuned for a charcoal ground and vanish on warm paper. */
+    --voice-wave-a: 272 40% 56%; /* lavender, oldest end of the tape */
+    --voice-wave-b: 205 55% 45%; /* blue, newest end of the tape */
+
     /* Legacy aliases. Kept because they are referenced from a handful of
        places that predate the token set; all now follow the theme. The names
        outlived the colour — nothing yellow is left in either — but they stay
@@ -664,6 +686,11 @@ label,
     --viz-tool: 47 6% 58%;
     --viz-result: 0 0% 100%;
     --viz-deliverable: 47 6% 58%;
+
+    /* Voice waveform — the timeline pastels at their documented values;
+       see :root for why this surface is allowed a hue at all. */
+    --voice-wave-a: 272 45% 74%; /* lavender, near #C0A8DD */
+    --voice-wave-b: 205 62% 70%; /* blue, near #9FBBE0 */
 
     --jarvis-yellow: 247 247 244;
     --jarvis-yellow-dim: 154 151 140;

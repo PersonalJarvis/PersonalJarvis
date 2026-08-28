@@ -104,6 +104,12 @@ class WebServer:
         self._mic_level_sessions: set[str] = set()
         self._mic_level_unsub: Callable[[], None] | None = None
         self._mic_level_latest = 0.0
+        # The assistant's own voice, from jarvis.audio.level_tap. It rides the
+        # SAME frame and the same coalescing as the microphone: two directions
+        # of one conversation, one ~30 Hz channel, so adding it costs no extra
+        # WebSocket traffic.
+        self._tts_level_latest = 0.0
+        self._tts_level_unsub: Callable[[], None] | None = None
         self._mic_level_revision = 0
         self._mic_level_task: asyncio.Task[None] | None = None
         self._server: uvicorn.Server | None = None
@@ -1644,12 +1650,18 @@ class WebServer:
                 )
 
     def _ensure_mic_level_bridge(self) -> None:
-        """Tap the existing microphone stream while a web UI is connected."""
+        """Tap both voice levels while a web UI is connected.
+
+        The microphone and the assistant's own output. ``level_tap`` only
+        computes its RMS while something is subscribed, so a web client
+        connecting is what turns that measurement on — and disconnecting turns
+        it back off.
+        """
         if self._mic_level_unsub is not None or not self._mic_level_sessions:
             return
 
         # Lazy import keeps audio modules off the web server's startup path.
-        from jarvis.audio import mic_level
+        from jarvis.audio import level_tap, mic_level
 
         loop = asyncio.get_running_loop()
 
@@ -1661,15 +1673,27 @@ class WebServer:
                 # and this handoff. The subscriber is removed during teardown.
                 logger.opt(exception=exc).debug("Microphone level loop is closed")
 
+        def _receive_tts(level: float) -> None:
+            try:
+                loop.call_soon_threadsafe(self._queue_tts_level, float(level))
+            except RuntimeError as exc:
+                logger.opt(exception=exc).debug("Output level loop is closed")
+
         self._mic_level_unsub = mic_level.subscribe(_receive)
+        self._tts_level_unsub = level_tap.subscribe(_receive_tts)
 
     def _stop_mic_level_bridge(self) -> None:
         unsubscribe = self._mic_level_unsub
         self._mic_level_unsub = None
+        unsubscribe_tts = self._tts_level_unsub
+        self._tts_level_unsub = None
         self._mic_level_latest = 0.0
+        self._tts_level_latest = 0.0
         self._mic_level_revision += 1
         if unsubscribe is not None:
             unsubscribe()
+        if unsubscribe_tts is not None:
+            unsubscribe_tts()
 
         task = self._mic_level_task
         if task is not None and task is not asyncio.current_task() and not task.done():
@@ -1693,13 +1717,25 @@ class WebServer:
         if self._mic_level_task is None or self._mic_level_task.done():
             self._mic_level_task = asyncio.create_task(self._drain_mic_levels())
 
+    def _queue_tts_level(self, level: float) -> None:
+        """Same coalescing as the microphone, for the assistant's own voice."""
+        if not self._mic_level_sessions:
+            return
+        self._tts_level_latest = min(1.0, max(0.0, level)) if math.isfinite(level) else 0.0
+        self._mic_level_revision += 1
+        if self._mic_level_task is None or self._mic_level_task.done():
+            self._mic_level_task = asyncio.create_task(self._drain_mic_levels())
+
     async def _drain_mic_levels(self) -> None:
         """Send only the freshest level; functional WS traffic has priority."""
         sent_revision = -1
         try:
             while self._mic_level_sessions and sent_revision != self._mic_level_revision:
                 sent_revision = self._mic_level_revision
-                frame = WSAudioLevel(input=self._mic_level_latest).model_dump()
+                frame = WSAudioLevel(
+                    input=self._mic_level_latest,
+                    output=self._tts_level_latest,
+                ).model_dump()
                 await asyncio.gather(
                     *(
                         self._send_mic_level(session_id, frame)

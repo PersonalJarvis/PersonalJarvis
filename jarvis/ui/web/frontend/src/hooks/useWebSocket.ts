@@ -9,6 +9,7 @@ import {
   isForThisWindow,
 } from "@/lib/dictationTarget";
 import { clearVoiceInputLevel, setVoiceInputLevel } from "@/lib/voiceInputLevel";
+import { clearVoiceOutputLevel, setVoiceOutputLevel } from "@/lib/voiceOutputLevel";
 import {
   SECTION_LABELS,
   VOICE_STATES,
@@ -79,6 +80,7 @@ export function useWebSocket(): void {
         setWarming(code === 1013 || Boolean(info?.authRetryPending));
         setConnected(false);
         clearVoiceInputLevel("native");
+        clearVoiceOutputLevel("native");
       },
       onMessage: (raw) => {
         const welcome = WSWelcome.safeParse(raw);
@@ -115,6 +117,10 @@ export function useWebSocket(): void {
         const audioLevel = WSAudioLevel.safeParse(raw);
         if (audioLevel.success) {
           setVoiceInputLevel(audioLevel.data.input, "native");
+          // Absent (older backend) leaves the tap where it was rather than
+          // asserting silence — see lib/voiceOutputLevel on 0 vs null.
+          const out = audioLevel.data.output;
+          if (out !== undefined) setVoiceOutputLevel(out, "native");
           return;
         }
 
@@ -214,6 +220,7 @@ export function useWebSocket(): void {
             // A state boundary invalidates the previous phase's sample. Native
             // capture will immediately supply a fresh value while listening.
             clearVoiceInputLevel("native");
+            clearVoiceOutputLevel("native");
             // The live-transcript box has no other reset path: without this,
             // the last utterance of a session survives into READY/IDLE and the
             // next session, masquerading as a frozen live transcript (live
@@ -676,6 +683,7 @@ export function useWebSocket(): void {
 
     return () => {
       clearVoiceInputLevel("native");
+      clearVoiceOutputLevel("native");
       client.close();
       singleton = null;
       mounted.current = false;

@@ -18,7 +18,11 @@ import {
   setBrowserVoiceInputOwnership,
   setVoiceInputLevel,
 } from "@/lib/voiceInputLevel";
-import { clearVoiceOutputLevel, setVoiceOutputLevel } from "@/lib/voiceOutputLevel";
+import {
+  clearVoiceOutputLevel,
+  setBrowserVoiceOutputOwnership,
+  setVoiceOutputLevel,
+} from "@/lib/voiceOutputLevel";
 
 type ConnectionState = "idle" | "connecting" | "connected" | "error";
 
@@ -135,7 +139,8 @@ export function BrowserRealtimeControl() {
     setSpokenText("");
     levelRef.current = 0;
     clearVoiceInputLevel("browser");
-    clearVoiceOutputLevel();
+    clearVoiceOutputLevel("browser");
+    setBrowserVoiceOutputOwnership(false);
     setBrowserVoiceInputOwnership(false);
     setVoice("idle");
     await client?.disconnect();
@@ -152,7 +157,7 @@ export function BrowserRealtimeControl() {
     setEffectiveProvider("");
     levelRef.current = 0;
     clearVoiceInputLevel("browser");
-    clearVoiceOutputLevel();
+    clearVoiceOutputLevel("browser");
     await previousClient?.disconnect();
     if (connectionGenerationRef.current !== generation) return;
 
@@ -178,8 +183,8 @@ export function BrowserRealtimeControl() {
         },
         onOutputLevel: (value) => {
           if (!isCurrent()) return;
-          if (value === null) clearVoiceOutputLevel();
-          else setVoiceOutputLevel(value);
+          if (value === null) clearVoiceOutputLevel("browser");
+          else setVoiceOutputLevel(value, "browser");
         },
         onStatus: (status, payload) => {
           if (!isCurrent()) return;
@@ -306,9 +311,12 @@ export function BrowserRealtimeControl() {
   ]);
 
   useEffect(() => {
-    setBrowserVoiceInputOwnership(
-      visible && (state === "connecting" || state === "connected"),
-    );
+    // This surface owns BOTH directions while it is live: it holds the
+    // microphone and it plays the reply, so the backend's own levels for
+    // either one would be a second, unsynchronised opinion.
+    const owns = visible && (state === "connecting" || state === "connected");
+    setBrowserVoiceInputOwnership(owns);
+    setBrowserVoiceOutputOwnership(owns);
   }, [state, visible]);
 
   useEffect(() => {
@@ -321,6 +329,7 @@ export function BrowserRealtimeControl() {
       const client = clientRef.current;
       clientRef.current = null;
       setBrowserVoiceInputOwnership(false);
+      setBrowserVoiceOutputOwnership(false);
       if (client) void client.disconnect();
     },
     [],

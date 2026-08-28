@@ -27,10 +27,14 @@ export const WSWelcome = z.object({
 });
 export type WSWelcomeT = z.infer<typeof WSWelcome>;
 
-/** Ephemeral normalized native-microphone level for canvas animation. */
+/** Ephemeral normalized native voice levels for canvas animation — the
+ *  microphone and the assistant's own output. `output` is optional so a page
+ *  talking to an older backend still parses the frame; absent means "this
+ *  server cannot tell us", which is NOT the same as a measured zero. */
 export const WSAudioLevel = z.object({
   type: z.literal("audio.level"),
   input: z.number().min(0).max(1),
+  output: z.number().min(0).max(1).optional(),
 });
 export type WSAudioLevelT = z.infer<typeof WSAudioLevel>;
 

@@ -64,14 +64,24 @@ import { cn } from "@/lib/utils";
  * reaches the soft ends. That is the depth cue — the row looks lit from its
  * own centre line instead of flatly filled.
  *
+ * ## The colour (maintainer, 2026-08-28)
+ *
+ * A measured row runs along a lavender-to-blue ramp; everything unmeasured
+ * stays neutral. That is not decoration but the same statement the shapes
+ * make: hue appears exactly when the drawing has a real signal behind it,
+ * and "ready", "thinking" and a speech we cannot hear stay in
+ * `--muted-foreground`. The two hues are the design system's timeline
+ * pastels — the palette reserved for in-product agent visualisation, which
+ * is precisely what this row is — and they live as `--voice-wave-a/b` in
+ * index.css with their own light-mode values, because a pastel tuned for
+ * charcoal disappears on warm paper.
+ *
  * Canvas rather than DOM capsules: forty to sixty shapes repainted every
  * frame are cheap on a 2D context and would be layout work as elements.
- * Colours are read from the theme tokens on the element itself, so the
+ * Every colour is read from the theme tokens on the element itself, so the
  * drawing follows light/dark and the wallpaper floor without a single
- * literal — the brand carries no hue any more, so the row travels along the
- * VALUE scale (dim dot → full accent) where a coloured visualiser would
- * travel along a hue. Reduced motion keeps the information (a level meter)
- * and drops the decoration (no breathing, no sweep, no scroll).
+ * literal. Reduced motion keeps the information (a level meter) and drops
+ * the decoration (no breathing, no sweep, no scroll).
  */
 export function StageWaveform({
   levelRef,
@@ -118,7 +128,7 @@ export function StageWaveform({
     // rare, a frame is not.
     let tokens = readTokens(canvas);
     let tokensAt = 0;
-    let fills = buildFills(ctx, height, tokens);
+    let fills = buildFills(ctx, width, height, tokens);
 
     let history: number[] = [];
     let head = 0;
@@ -141,7 +151,7 @@ export function StageWaveform({
       // The tallest capsule stops short of the box: the row needs air above
       // and below or a loud syllable reads as a clipped block.
       span = Math.max(2, height * TALLEST - BAR_MIN);
-      fills = buildFills(ctx, height, tokens);
+      fills = buildFills(ctx, width, height, tokens);
       const next = Math.max(6, Math.floor((width + BAR_GAP) / ROW_PITCH));
       if (next !== count) {
         count = next;
@@ -155,9 +165,15 @@ export function StageWaveform({
      * input the geometry is derived from, so every phase describes WHAT it
      * has to say and the drawing stays one place.
      */
-    const paint = (shaped: number[], alphas: number[], fill: string | CanvasGradient) => {
+    const paint = (shaped: number[], alphas: number[], tint: string | CanvasGradient) => {
       ctx.clearRect(0, 0, width, height);
-      ctx.fillStyle = fill;
+      // Pass 1 draws the capsules as a MASK: white, carrying only the
+      // vertical light profile and each column's own opacity. Pass 2 (below)
+      // pours the colour in through it. Two gradients for the whole frame
+      // instead of one per capsule, and the hue ramp and the lit core stay
+      // independent of each other.
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = fills.mask;
       // Columns sit on a fixed pitch and every capsule is drawn around its
       // column's CENTRE, so a blooming capsule grows outwards in both
       // directions instead of pushing the row sideways.
@@ -177,7 +193,15 @@ export function StageWaveform({
         ctx.globalAlpha = (alphas[i] ?? 1) * edge(t);
         capsule(ctx, cx0 + i * ROW_PITCH - w / 2, mid - h / 2, w, h);
       }
+      // Pass 2: colour, kept only where the mask is. `source-in` multiplies
+      // the incoming alpha by what is already there, so every capsule keeps
+      // the shape and the light it was just given and takes the ramp's hue
+      // at its own position in the row.
       ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-in";
+      ctx.fillStyle = tint;
+      ctx.fillRect(0, 0, width, height);
+      ctx.globalCompositeOperation = "source-over";
     };
 
     /** How present a column is: a quiet floor that the activity lifts. */
@@ -225,7 +249,7 @@ export function StageWaveform({
         shaped[i] = v;
         alphas[i] = presence(v);
       }
-      paint(shaped, alphas, fills.primary);
+      paint(shaped, alphas, fills.wave);
     };
 
     const frame = (now: number) => {
@@ -234,9 +258,9 @@ export function StageWaveform({
       last = now;
       if (now - tokensAt > 1000) {
         const next = readTokens(canvas);
-        if (next.primary !== tokens.primary || next.muted !== tokens.muted) {
+        if (next.waveA !== tokens.waveA || next.muted !== tokens.muted) {
           tokens = next;
-          fills = buildFills(ctx, height, tokens);
+          fills = buildFills(ctx, width, height, tokens);
         }
         tokensAt = now;
       }
@@ -277,7 +301,7 @@ export function StageWaveform({
           shaped[i] = v;
           alphas[i] = presence(0.5 * pulse * rim(t));
         }
-        paint(shaped, alphas, fills.primary);
+        paint(shaped, alphas, fills.muted);
         return;
       }
 
@@ -309,7 +333,7 @@ export function StageWaveform({
           shaped[i] = v;
           alphas[i] = presence(Math.min(1, 0.25 + gain) * rim(t));
         }
-        paint(shaped, alphas, fills.primary);
+        paint(shaped, alphas, fills.muted);
         return;
       }
 
@@ -431,11 +455,19 @@ function capsule(ctx: CanvasRenderingContext2D, x: number, y: number, w: number,
   ctx.fill();
 }
 
-type Tokens = { primary: string; muted: string; error: string };
+type Tokens = {
+  waveA: string;
+  waveB: string;
+  muted: string;
+  error: string;
+};
 type Fills = {
-  primary: string | CanvasGradient;
-  muted: string | CanvasGradient;
-  error: string | CanvasGradient;
+  /** Vertical light profile, colourless — the shape mask (see `paint`). */
+  mask: string | CanvasGradient;
+  /** The row's hue ramp, left to right. */
+  wave: string | CanvasGradient;
+  muted: string;
+  error: string;
 };
 
 /**
@@ -448,19 +480,39 @@ type Fills = {
  * reference gets from a violet-to-blue ramp, spelled in value because the
  * brand no longer carries a hue.
  */
-function buildFills(ctx: CanvasRenderingContext2D, height: number, tokens: Tokens): Fills {
-  const make = (triple: string): string | CanvasGradient => {
-    if (height <= 1) return `hsl(${triple})`;
+function buildFills(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  tokens: Tokens,
+): Fills {
+  let mask: string | CanvasGradient = "#fff";
+  if (height > 1) {
     const g = ctx.createLinearGradient(0, 0, 0, height);
-    g.addColorStop(0, `hsl(${triple} / ${CAP_ALPHA})`);
-    g.addColorStop(0.34, `hsl(${triple} / ${SHOULDER_ALPHA})`);
-    g.addColorStop(0.5, `hsl(${triple} / 1)`);
-    g.addColorStop(0.66, `hsl(${triple} / ${SHOULDER_ALPHA})`);
-    g.addColorStop(1, `hsl(${triple} / ${CAP_ALPHA})`);
-    return g;
-  };
-  return { primary: make(tokens.primary), muted: make(tokens.muted), error: make(tokens.error) };
+    g.addColorStop(0, `hsl(0 0% 100% / ${CAP_ALPHA})`);
+    g.addColorStop(0.34, `hsl(0 0% 100% / ${SHOULDER_ALPHA})`);
+    g.addColorStop(0.5, "hsl(0 0% 100%)");
+    g.addColorStop(0.66, `hsl(0 0% 100% / ${SHOULDER_ALPHA})`);
+    g.addColorStop(1, `hsl(0 0% 100% / ${CAP_ALPHA})`);
+    mask = g;
+  }
+  let wave: string | CanvasGradient = `hsl(${tokens.waveB})`;
+  if (width > 1) {
+    // Across the MIDDLE of the row, not its full width. A canvas gradient
+    // clamps to its end colours outside the span, so the quiet rims stay
+    // solid and the part a conversation actually occupies gets the whole
+    // ramp. Anchored edge to edge, the centre only ever sampled the middle
+    // of the gradient and the row read as one flat colour.
+    const g = ctx.createLinearGradient(width * RAMP_INSET, 0, width * (1 - RAMP_INSET), 0);
+    g.addColorStop(0, `hsl(${tokens.waveA})`);
+    g.addColorStop(1, `hsl(${tokens.waveB})`);
+    wave = g;
+  }
+  return { mask, wave, muted: `hsl(${tokens.muted})`, error: `hsl(${tokens.error})` };
 }
+
+/** Where the hue ramp starts and ends, as a fraction of the row. */
+const RAMP_INSET = 0.22;
 
 /** Strength of the lit core at the caps and at the shoulders. */
 const CAP_ALPHA = 0.45;
@@ -479,7 +531,8 @@ function readTokens(el: HTMLElement): Tokens {
     return raw || fallback;
   };
   return {
-    primary: token("--primary", "0 0% 100%"),
+    waveA: token("--voice-wave-a", "267 44% 76%"),
+    waveB: token("--voice-wave-b", "214 51% 75%"),
     muted: token("--muted-foreground", "47 5% 59%"),
     error: token("--destructive", "0 84% 60%"),
   };
