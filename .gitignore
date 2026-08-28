@@ -164,6 +164,11 @@ ChatGPT Image *
 # Sub-Agent-Sandbox-Outputs (Research-/Demo-Drops, kein Projekt-Code)
 examples/
 github-research/
+# The marketing website is its OWN git repo living in website/, so one
+# folder holds both projects. Ignored on purpose: without this line git
+# records it as a gitlink and leaks the site's path and commit ids into
+# this public repo. Never remove it; never stage anything under it.
+website/
 # Phase-6 worker-isolation parent (worktrees + per-mission Jarvis-Agent state).
 # Each mission gets a fresh `git worktree` under here; never commit.
 jarvis-agent-outputs/
