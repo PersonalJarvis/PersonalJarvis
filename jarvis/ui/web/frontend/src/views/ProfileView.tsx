@@ -2,31 +2,36 @@
  * ProfileView — the profile as ONE view, never a scrolling page.
  *
  * Layout doctrine: the whole section is a single viewport. Nothing here is
- * reached by scrolling the page; the view is three standing rails that each
- * scroll inside themselves only when their own content overflows.
+ * reached by scrolling the page; the view is a thin identity strip over three
+ * standing rails that each scroll inside themselves only when their own
+ * content overflows.
  *
  *   ┌───────────────────────────────────────────────────────────────────┐
  *   │ ViewHeader                                                        │
- *   ├──────────────┬────────────────────────────┬───────────────────────┤
- *   │  The Plate   │  The Ledger                │  The Margin           │
- *   │  sigil +     │  every cluster, every      │  the open question,   │
- *   │  portrait,   │  field, editable in place  │  the review queue,    │
- *   │  who you are │                            │  the people           │
- *   └──────────────┴────────────────────────────┴───────────────────────┘
+ *   ├───────────────────────────────────────────────────────────────────┤
+ *   │ [portrait]  who you are · stage        things learned · people    │
+ *   ├────────────────────┬──────────────────────┬───────────────────────┤
+ *   │  The Ledger        │  The Source          │  The Margin           │
+ *   │  every cluster,    │  USER.md rendered as │  the open question,   │
+ *   │  every field,      │  the document it is, │  the review queue,    │
+ *   │  editable in place │  editable in place   │  the people           │
+ *   └────────────────────┴──────────────────────┴───────────────────────┘
+ *
+ * The two halves of the middle answer different questions and are worth
+ * seeing at the same time: the ledger is USER.md's front matter as structured
+ * fields, the source rail is the prose the curator writes underneath it. That
+ * pairing is why the file is rendered in place rather than hidden behind a
+ * button — reading the profile and reading the file are the same act.
  *
  * The single non-negotiable of that shape is an unbroken `min-h-0` chain from
  * the root to each rail: a flex/grid child defaults to `min-height: auto` and
  * refuses to shrink below its content, which is what silently turns a
  * "one viewport" layout back into a scrolling page.
- *
- * USER.md is the one thing that cannot honestly fit a rail, so it opens as a
- * drawer over the view instead of living at the bottom of a long page.
- *
- * The mark in the plate is `Sigil` — geometry derived from which fields are
- * inked, delivering the generative mark `views/profile/ledger.ts` describes.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   UserCircle2,
   Users as UsersIcon,
@@ -56,7 +61,7 @@ import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { getWSClient } from "@/hooks/useWebSocket";
 import { useT } from "@/i18n";
-import { Sigil } from "@/views/profile/Sigil";
+import { PROSE_BASE, splitFrontMatter } from "@/components/outputs/MarkdownProse";
 import {
   CLUSTER_FIELD_KEYS,
   CLUSTER_ORDER,
@@ -203,11 +208,6 @@ export function ProfileView() {
     retry: false,
   });
 
-  const [sourceOpen, setSourceOpen] = useState(false);
-  // Pointing at a field in the ledger lights its spoke in the sigil, which
-  // makes the mark a live legend instead of an ornament.
-  const [hoveredField, setHoveredField] = useState<string | null>(null);
-
   const meta = (data?.user.meta ?? {}) as Record<string, unknown>;
 
   return (
@@ -233,51 +233,47 @@ export function ProfileView() {
       {error && <ErrorState error={error} onRetry={() => refetch()} />}
 
       {data && (
-        // One viewport. On lg+ the three rails stand side by side and scroll
-        // individually; below that they stack and the container takes over the
-        // scrolling — the honest degradation for a window too narrow to hold
-        // three rails at a readable width.
-        <div
-          className={cn(
-            "grid min-h-0 flex-1 grid-cols-1 overflow-y-auto scrollbar-jarvis",
-            "lg:grid-cols-[minmax(250px,300px)_minmax(0,1fr)_minmax(290px,340px)]",
-            "lg:overflow-hidden",
-          )}
-        >
-          <PlateRail
-            data={data}
-            meta={meta}
-            highlight={hoveredField}
-            onOpenSource={() => setSourceOpen(true)}
-          />
-          <LedgerRail meta={meta} onHoverField={setHoveredField} />
-          <MarginRail data={data} meta={meta} />
-        </div>
-      )}
+        <>
+          <IdentityStrip data={data} meta={meta} />
 
-      {sourceOpen && <SourceDrawer onClose={() => setSourceOpen(false)} />}
+          {/* One viewport. On lg+ the three rails stand side by side and
+              scroll individually; below that they stack and the container
+              takes over the scrolling — the honest degradation for a window
+              too narrow to hold three rails at a readable width. */}
+          <div
+            className={cn(
+              "grid min-h-0 flex-1 grid-cols-1 overflow-y-auto scrollbar-jarvis",
+              "lg:grid-cols-[minmax(320px,1fr)_minmax(0,1.15fr)_minmax(280px,330px)]",
+              "lg:overflow-hidden",
+            )}
+          >
+            <LedgerRail meta={meta} />
+            <SourceRail />
+            <MarginRail data={data} meta={meta} />
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
 // ----------------------------------------------------------------------
-// The Plate — portrait inside the generative sigil, and who you are
+// Identity strip — the portrait and who you are, on one line
 // ----------------------------------------------------------------------
 //
-// The left rail is deliberately the only region that never scrolls on a
-// normal window: it is the fixed identity of the view, the thing the eye
-// returns to. Everything in it is derived, nothing is a decorative filler.
+// Everything a person needs to recognise the page as theirs, in the height of
+// a toolbar: the portrait (which is also the upload control), how Jarvis
+// addresses them, the acquaintance stage, and the two counts. It replaced a
+// full-height left rail built around a generative mark — that rail spent a
+// third of the viewport on ornament, and ornament is not what this view is
+// for. The facts stayed; the furniture went.
 
-function PlateRail({
+function IdentityStrip({
   data,
   meta,
-  highlight,
-  onOpenSource,
 }: {
   data: ProfileResponse;
   meta: Record<string, unknown>;
-  highlight: string | null;
-  onOpenSource: () => void;
 }) {
   const t = useT();
   const name = data.user.name?.trim() || null;
@@ -302,75 +298,35 @@ function PlateRail({
       : t("profile_view.people_known").replace("{0}", String(data.people.length));
 
   return (
-    <aside className="profile-rise flex flex-col px-6 py-6 lg:min-h-0 lg:overflow-y-auto lg:py-8 scrollbar-jarvis">
-      {/* The plate floats in the middle of its rail; only the source-file link
-          is anchored to the foot. Top-aligning it left a tall empty gap that
-          read as unfinished rather than as breathing room. */}
-      <div className="flex flex-col gap-5 lg:my-auto">
-        {/* The mark. The sigil's ring reads the ledger; the portrait sits in it. */}
-        <div className="relative mx-auto h-[188px] w-[188px] shrink-0">
-          <Sigil
-            meta={meta}
-            label={ratio}
-            highlight={highlight}
-            className="absolute inset-0 h-full w-full text-foreground"
-          />
-          <div className="absolute inset-0 flex items-center justify-center">
-            <AvatarBlock name={name} hasAvatar={!!data.has_avatar} />
-          </div>
-        </div>
+    <div className="profile-rise flex items-center gap-3.5 border-b border-border px-6 py-3">
+      <AvatarButton name={name} hasAvatar={!!data.has_avatar} />
 
-        <div className="min-w-0 text-center">
-          <h1 className="font-display text-[1.45rem] font-semibold leading-[1.15] tracking-tight">
-            {headline}
-          </h1>
-          <p className="mt-1.5 text-[11px] font-medium uppercase tracking-[0.13em] text-muted-foreground">
-            {t(`profile_view.stages.${stage.key}`)}
-          </p>
-        </div>
-
-        {/* One quiet summary line, then the two counters that matter. */}
-        <div className="flex flex-col items-center gap-2.5 border-y border-sheen/[0.06] py-3.5">
-          <span className="text-[13px] font-medium tabular-nums text-foreground/90">{ratio}</span>
-          <span className="flex items-center text-[11px] text-muted-foreground">
-            {peopleLine}
-            {data.reviews_count > 0 && (
-              <>
-                <Dot />
-                <span className="font-medium text-foreground/90">
-                  {data.reviews_count} {t("profile_view.reviews_count")}
-                </span>
-              </>
-            )}
-          </span>
-        </div>
-
-        <p className="text-center text-xs leading-relaxed text-muted-foreground">
-          {name ? t("profile_view.hero_sub") : t("profile_view.no_user_hint")}
-        </p>
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+        <h1 className="font-display text-[15px] font-semibold tracking-tight">{headline}</h1>
+        <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+          {t(`profile_view.stages.${stage.key}`)}
+        </span>
       </div>
 
-      {/* USER.md — the raw truth behind every row, one click away. */}
-      <button
-        type="button"
-        onClick={onOpenSource}
-        className="mt-6 flex items-center gap-2.5 rounded-xl border border-sheen/[0.07] bg-sheen/[0.02] px-3.5 py-3 text-left transition-colors hover:border-primary/40 hover:bg-sheen/[0.05] lg:mt-0"
-      >
-        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1">
-          <span className="block text-xs font-medium">{t("profile_view.section_source")}</span>
-          <span className="block truncate font-mono text-[10px] text-muted-foreground">
-            {data.user.path}
-          </span>
-        </span>
-        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
-      </button>
-    </aside>
+      <div className="ml-auto flex shrink-0 items-center text-[11px] text-muted-foreground">
+        <span className="font-medium tabular-nums text-foreground/90">{ratio}</span>
+        <Dot />
+        {peopleLine}
+        {data.reviews_count > 0 && (
+          <>
+            <Dot />
+            <span className="font-medium text-foreground/90">
+              {data.reviews_count} {t("profile_view.reviews_count")}
+            </span>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
 // ----------------------------------------------------------------------
-// AvatarBlock — round portrait; the photo itself is the upload trigger
+// AvatarButton — the portrait, and the whole upload control
 // ----------------------------------------------------------------------
 //
 // The avatar bytes live under user_data_dir()/data and are served by
@@ -378,10 +334,11 @@ function PlateRail({
 // type="file"> is .click()'d to open the OS picker; a cache-bust query
 // param forces the <img> to reload after a replace/delete.
 //
-// Sitting at the centre of the sigil, it carries no chrome of its own: the
-// remove control only appears on hover/focus so the mark stays clean.
+// At strip height there is no room for labelled buttons, so the portrait is
+// the control: click to pick a file, and a small remove badge appears on
+// hover or keyboard focus once there is a picture to remove.
 
-function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: boolean }) {
+function AvatarButton({ name, hasAvatar }: { name: string | null; hasAvatar: boolean }) {
   const t = useT();
   const queryClient = useQueryClient();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -433,7 +390,7 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
   const busy = upload.isPending || remove.isPending;
 
   return (
-    <div className="group/avatar relative">
+    <div className="group/avatar relative shrink-0">
       <input
         ref={inputRef}
         type="file"
@@ -449,7 +406,7 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
         disabled={busy}
         title={hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload")}
         aria-label={hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload")}
-        className="relative flex h-[7rem] w-[7rem] items-center justify-center overflow-hidden rounded-full border border-sheen/[0.09] bg-sheen/[0.04] outline-none transition-colors hover:border-primary/50 focus-visible:border-primary"
+        className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-sheen/[0.09] bg-sheen/[0.04] outline-none transition-colors hover:border-primary/50 focus-visible:border-primary"
       >
         {hasAvatar ? (
           <img
@@ -459,21 +416,20 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
             draggable={false}
           />
         ) : name ? (
-          <span className="font-display text-2xl font-semibold tracking-tight text-foreground/80">
+          <span className="font-display text-xs font-semibold tracking-tight text-foreground/80">
             {initials(name)}
           </span>
         ) : (
-          <UserCircle2 className="h-9 w-9 text-muted-foreground/50" />
+          <UserCircle2 className="h-5 w-5 text-muted-foreground/50" />
         )}
 
-        {/* Hover/focus affordance — a camera scrim that invites the click. */}
-        <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-background/70 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-hover/avatar:opacity-100 group-focus-visible/avatar:opacity-100">
-          <Camera className="h-5 w-5 text-primary" />
+        <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-background/70 opacity-0 transition-opacity duration-200 group-hover/avatar:opacity-100 group-focus-visible/avatar:opacity-100">
+          <Camera className="h-3.5 w-3.5 text-primary" />
         </span>
 
         {busy && (
           <span className="absolute inset-0 flex items-center justify-center rounded-full bg-background/70">
-            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
           </span>
         )}
       </button>
@@ -485,9 +441,9 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
           disabled={busy}
           title={t("profile_view.avatar_remove")}
           aria-label={t("profile_view.avatar_remove")}
-          className="absolute bottom-0 right-0 rounded-full border border-sheen/[0.1] bg-background p-1.5 text-muted-foreground opacity-0 outline-none transition-all hover:border-destructive/40 hover:text-destructive focus-visible:opacity-100 group-hover/avatar:opacity-100"
+          className="absolute -bottom-1 -right-1 rounded-full border border-sheen/[0.1] bg-background p-1 text-muted-foreground opacity-0 outline-none transition-all hover:border-destructive/40 hover:text-destructive focus-visible:opacity-100 group-hover/avatar:opacity-100"
         >
-          <Trash2 className="h-3 w-3" />
+          <Trash2 className="h-2.5 w-2.5" />
         </button>
       )}
     </div>
@@ -503,17 +459,11 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
 // a viewport comfortably in two columns, so everything the ledger holds is
 // visible at once and a blank line is as informative as a written one.
 
-function LedgerRail({
-  meta,
-  onHoverField,
-}: {
-  meta: Record<string, unknown>;
-  onHoverField: (field: string | null) => void;
-}) {
+function LedgerRail({ meta }: { meta: Record<string, unknown> }) {
   const t = useT();
 
   return (
-    <section className="flex min-w-0 flex-col border-t border-border px-6 py-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:py-8 scrollbar-jarvis">
+    <section className="flex min-w-0 flex-col px-6 py-6 lg:min-h-0 lg:overflow-y-auto lg:py-7 scrollbar-jarvis">
       <div className="profile-rise" style={{ animationDelay: "60ms" }}>
         <h2 className="font-display text-base font-semibold tracking-tight">
           {t("profile_view.section_knowledge")}
@@ -523,19 +473,18 @@ function LedgerRail({
         </p>
       </div>
 
-      {/* One continuous column, capped at a comfortable measure. Two balanced
-          columns halved the content's height and left the lower half of the
-          viewport empty; a single run of clusters fills the rail the way a
-          ledger page fills a sheet, and the leader dots make the wide rows
-          read cleanly. */}
-      <div className="mt-5 max-w-[46rem]">
+      {/* One continuous run of clusters. Balanced CSS columns halved the
+          content's height and left the lower viewport empty; a single column
+          fills the rail the way a ledger page fills a sheet, and the leader
+          dots keep even a wide row readable. */}
+      <div className="mt-4">
         {CLUSTER_ORDER.map((cid, i) => (
           <div
             key={cid}
             className="profile-rise mb-6 last:mb-0"
             style={{ animationDelay: `${100 + i * 45}ms` }}
           >
-            <ClusterGroup cid={cid} meta={meta} onHoverField={onHoverField} />
+            <ClusterGroup cid={cid} meta={meta} />
           </div>
         ))}
       </div>
@@ -543,15 +492,7 @@ function LedgerRail({
   );
 }
 
-function ClusterGroup({
-  cid,
-  meta,
-  onHoverField,
-}: {
-  cid: ClusterId;
-  meta: Record<string, unknown>;
-  onHoverField: (field: string | null) => void;
-}) {
+function ClusterGroup({ cid, meta }: { cid: ClusterId; meta: Record<string, unknown> }) {
   const t = useT();
   const data = clusterDataOf(meta, cid);
   const fields = CLUSTER_FIELD_KEYS[cid];
@@ -570,13 +511,7 @@ function ClusterGroup({
           overwritten or cleared, blank ones filled in, all edited in place. */}
       <dl className="mt-1.5">
         {fields.map((key) => (
-          <EditableFieldRow
-            key={key}
-            cid={cid}
-            fieldKey={key}
-            value={data[key]}
-            onHover={onHoverField}
-          />
+          <EditableFieldRow key={key} cid={cid} fieldKey={key} value={data[key]} />
         ))}
       </dl>
     </div>
@@ -660,13 +595,10 @@ function EditableFieldRow({
   cid,
   fieldKey,
   value,
-  onHover,
 }: {
   cid: ClusterId;
   fieldKey: string;
   value: unknown;
-  /** Reports the pointed-at field up to the sigil. Keyboard focus counts. */
-  onHover?: (field: string | null) => void;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -728,13 +660,7 @@ function EditableFieldRow({
   // ------------------------------------------------------------------ display
   if (!editing) {
     return (
-      <div
-        className="group flex items-baseline gap-2 py-[0.3rem]"
-        onMouseEnter={() => onHover?.(fieldKey)}
-        onMouseLeave={() => onHover?.(null)}
-        onFocus={() => onHover?.(fieldKey)}
-        onBlur={() => onHover?.(null)}
-      >
+      <div className="group flex items-baseline gap-2 py-[0.3rem]">
         <dt
           className={cn(
             "shrink-0 text-xs transition-colors",
@@ -1344,19 +1270,23 @@ function PersonRow({
 }
 
 // ----------------------------------------------------------------------
-// Source drawer — live USER.md, over the view instead of below it
+// The Source — USER.md, rendered as the document it is
 // ----------------------------------------------------------------------
 //
 // Data flow: GET /api/profile/raw → React-Query cache. Live sync via WS:
 // every Curator merge publishes ProfileUpdated on the bus, the WS server
 // streams it to the UI, and the subscriber below invalidates both profile
-// queries — the file content is current seconds after a write. The pulse
-// badge gives visual feedback when an update lands.
+// queries — the file is current seconds after a write. The pulse badge gives
+// visual feedback when an update lands.
 //
-// It is a drawer and not a rail because a Markdown file is the one piece of
-// this view that genuinely needs a full column of height to be readable.
+// The file is rendered, not dumped as monospace: the curator writes real
+// prose under the front matter ("Observations over time", "Active projects"),
+// and reading it as a document is the point of having it on the page. The
+// front matter itself is split off — the ledger to the left already IS that
+// block, drawn as fields. Editing switches the same rail to the raw text, so
+// nothing is hidden from the person who wants to fix a line by hand.
 
-function SourceDrawer({ onClose }: { onClose: () => void }) {
+function SourceRail() {
   const t = useT();
   const queryClient = useQueryClient();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -1383,7 +1313,7 @@ function SourceDrawer({ onClose }: { onClose: () => void }) {
     const unsubscribe = client.subscribe((raw) => {
       const env = raw as { event_name?: unknown };
       if (env.event_name !== "ProfileUpdated") return;
-      // Knowledge rows always refresh…
+      // The ledger always refreshes…
       queryClient.invalidateQueries({ queryKey: ["profile"] });
       // …but never replace the raw text while the user is editing it — that
       // would wipe their draft mid-keystroke.
@@ -1394,15 +1324,6 @@ function SourceDrawer({ onClose }: { onClose: () => void }) {
     });
     return unsubscribe;
   }, [queryClient, editing]);
-
-  // Escape closes — but never out from under an unsaved draft.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !editing) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [editing, onClose]);
 
   const save = useMutation({
     mutationFn: async (content: string) => {
@@ -1444,143 +1365,171 @@ function SourceDrawer({ onClose }: { onClose: () => void }) {
     setEditing(true);
   };
 
+  // Escape leaves edit mode, the way it cancels every other inline editor
+  // in this view. The draft is dropped, which is why the button says Cancel.
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setEditing(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editing]);
+
   const isPulsing = Date.now() < pulseUntil;
   const lastUpdate = useMemo(() => {
     if (!data?.mtime_ms) return null;
     return new Date(data.mtime_ms);
   }, [data?.mtime_ms]);
 
+  // The front matter is the ledger's own content; showing it twice would just
+  // be the same facts in a worse format.
+  //
+  // The curator's anchors (`<!-- curator:observations:start -->`) mark where
+  // it splices its own writes. They are machinery, not text — and because
+  // react-markdown escapes raw HTML instead of rendering it, leaving them in
+  // prints them verbatim on the page. Strip them, then close the run of blank
+  // lines they leave behind.
+  const body = useMemo(() => {
+    if (!data) return "";
+    return splitFrontMatter(data.content)
+      .body.replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/[ \t]+$/gm, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }, [data]);
+
   return (
-    <div className="absolute inset-0 z-30 flex flex-col bg-background/80 backdrop-blur-sm">
-      {/* The scrim closes the drawer; the sheet below stops the click. */}
-      <button
-        type="button"
-        aria-label={t("profile_view.close_tooltip")}
-        onClick={() => !editing && onClose()}
-        className="absolute inset-0 cursor-default outline-none"
-        tabIndex={-1}
-      />
+    <section className="flex min-w-0 flex-col border-t border-border lg:min-h-0 lg:border-l lg:border-t-0">
+      <div className="flex flex-wrap items-center gap-2 border-b border-sheen/[0.06] px-5 py-2.5">
+        <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <h2 className="font-display text-[11px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
+          {t("profile_view.section_source")}
+        </h2>
+        {data && (
+          <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/60">
+            {data.path}
+          </span>
+        )}
 
-      <div className="profile-rise relative m-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-sheen/[0.09] bg-card shadow-[0_24px_60px_-24px_rgba(0,0,0,0.8)] lg:m-6">
-        <header className="flex flex-wrap items-center gap-2.5 border-b border-sheen/[0.07] px-4 py-3">
-          <FileText className="h-4 w-4 shrink-0 text-primary" />
-          <div className="min-w-0">
-            <div className="font-display text-sm font-semibold">
-              {t("profile_view.section_source")}
-            </div>
-            {data && (
-              <div className="truncate font-mono text-[10px] text-muted-foreground">{data.path}</div>
-            )}
-          </div>
-
-          <div className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
-            {editing ? (
-              <>
-                <span className="hidden items-center gap-1.5 sm:flex">
-                  <Lock className="h-3 w-3 text-primary/70" />
-                  {t("profile_view.raw_editing_hint")}
+        <div className="ml-auto flex items-center gap-1.5 text-[10px] text-muted-foreground">
+          {editing ? (
+            <>
+              <span className="hidden items-center gap-1.5 xl:flex">
+                <Lock className="h-3 w-3 text-primary/70" />
+                {t("profile_view.raw_editing_hint")}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-2 text-[11px]"
+                onClick={() => setEditing(false)}
+                disabled={save.isPending}
+              >
+                {t("profile_view.raw_cancel")}
+              </Button>
+              <Button
+                size="sm"
+                variant="default"
+                className="h-6 px-2 text-[11px]"
+                onClick={() => save.mutate(draft)}
+                disabled={save.isPending}
+              >
+                <Save className={cn("mr-1 h-3 w-3", save.isPending && "animate-pulse")} />
+                {save.isPending ? t("profile_view.raw_saving") : t("profile_view.raw_save")}
+              </Button>
+            </>
+          ) : (
+            <>
+              {isPulsing && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-muted-foreground/15 px-2 py-0.5 font-semibold text-muted-foreground">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-muted-foreground opacity-75" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-muted-foreground" />
+                  </span>
+                  {t("profile_view.just_updated")}
                 </span>
+              )}
+              {lastUpdate && (
+                <span className="hidden items-center gap-1 xl:inline-flex">
+                  <Clock className="h-3 w-3" />
+                  {lastUpdate.toLocaleDateString()}
+                </span>
+              )}
+              {data && <span className="tabular-nums">{(data.size_bytes / 1024).toFixed(1)} KB</span>}
+              <button
+                type="button"
+                onClick={() => refetch()}
+                disabled={isRefetching}
+                title={t("profile_view.reload_tooltip")}
+                aria-label={t("profile_view.reload_tooltip")}
+                className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+              >
+                <RefreshCw className={cn("h-3 w-3", isRefetching && "animate-spin")} />
+              </button>
+              {data && (
                 <Button
                   size="sm"
-                  variant="ghost"
-                  onClick={() => setEditing(false)}
-                  disabled={save.isPending}
+                  variant="outline"
+                  className="h-6 px-2 text-[11px]"
+                  onClick={startEditing}
                 >
-                  {t("profile_view.raw_cancel")}
+                  <Pencil className="mr-1 h-3 w-3" />
+                  {t("profile_view.raw_edit")}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={() => save.mutate(draft)}
-                  disabled={save.isPending}
-                >
-                  <Save className={cn("mr-1.5 h-3.5 w-3.5", save.isPending && "animate-pulse")} />
-                  {save.isPending ? t("profile_view.raw_saving") : t("profile_view.raw_save")}
-                </Button>
-              </>
-            ) : (
-              <>
-                {isPulsing && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-muted-foreground/15 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-muted-foreground opacity-75" />
-                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-                    </span>
-                    {t("profile_view.just_updated")}
-                  </span>
-                )}
-                {lastUpdate && (
-                  <span className="hidden items-center gap-1 md:inline-flex">
-                    <Clock className="h-3 w-3" />
-                    {lastUpdate.toLocaleString()}
-                  </span>
-                )}
-                {data && <span className="tabular-nums">{(data.size_bytes / 1024).toFixed(1)} KB</span>}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => refetch()}
-                  disabled={isRefetching}
-                  title={t("profile_view.reload_tooltip")}
-                >
-                  <RefreshCw className={cn("h-3.5 w-3.5", isRefetching && "animate-spin")} />
-                </Button>
-                {data && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={startEditing}
-                    className="border-primary/50 font-semibold text-primary hover:bg-primary/10 hover:text-primary"
-                  >
-                    <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                    {t("profile_view.raw_edit")}
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={onClose}
-                  title={t("profile_view.close_tooltip")}
-                  aria-label={t("profile_view.close_tooltip")}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              </>
-            )}
-          </div>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {isLoading && (
-            <div className="flex items-center gap-2 p-5 text-sm text-muted-foreground">
-              <RefreshCw className="h-3.5 w-3.5 animate-spin" /> {t("profile_view.raw_loading")}
-            </div>
+              )}
+            </>
           )}
-
-          {error && (
-            <div className="m-4 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-              {error.message}
-            </div>
-          )}
-
-          {data &&
-            (editing ? (
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                spellCheck={false}
-                autoFocus
-                aria-label="USER.md"
-                className="block h-full w-full resize-none bg-transparent p-5 font-mono text-[11px] leading-relaxed text-foreground/90 outline-none scrollbar-jarvis"
-              />
-            ) : (
-              <pre className="h-full overflow-auto whitespace-pre-wrap break-words p-5 font-mono text-[11px] leading-relaxed text-foreground/90 scrollbar-jarvis">
-                {data.content || t("profile_view.raw_empty")}
-              </pre>
-            ))}
         </div>
       </div>
-    </div>
+
+      <div className="min-h-0 flex-1 lg:overflow-hidden">
+        {isLoading && (
+          <div className="flex items-center gap-2 px-5 py-4 text-xs text-muted-foreground">
+            <RefreshCw className="h-3 w-3 animate-spin" /> {t("profile_view.raw_loading")}
+          </div>
+        )}
+
+        {error && (
+          <div className="m-4 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+            {error.message}
+          </div>
+        )}
+
+        {data &&
+          (editing ? (
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              spellCheck={false}
+              autoFocus
+              aria-label="USER.md"
+              className="block h-full min-h-[24rem] w-full resize-none bg-transparent px-5 py-4 font-mono text-[11px] leading-relaxed text-foreground/90 outline-none scrollbar-jarvis"
+            />
+          ) : (
+            <div className="h-full overflow-y-auto px-5 py-4 scrollbar-jarvis">
+              {body ? (
+                <article
+                  data-testid="profile-source-markdown"
+                  className={cn(
+                    PROSE_BASE,
+                    "max-w-none text-[13px]",
+                    "prose-headings:font-display prose-h1:text-lg prose-h2:mt-6 prose-h2:text-sm",
+                    "prose-h2:uppercase prose-h2:tracking-[0.1em] prose-h2:text-muted-foreground",
+                    "prose-h3:text-[13px] prose-p:leading-relaxed",
+                  )}
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+                </article>
+              ) : (
+                <p className="text-xs italic text-muted-foreground/60">
+                  {t("profile_view.raw_empty")}
+                </p>
+              )}
+            </div>
+          ))}
+      </div>
+    </section>
   );
 }
 
