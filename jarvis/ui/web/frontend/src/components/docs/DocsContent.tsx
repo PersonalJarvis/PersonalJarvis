@@ -134,7 +134,7 @@ function DocsContentInner({
             {data.section}
           </span>
         </nav>
-        <h1 className="m-0 text-pretty text-3xl font-semibold tracking-tight">
+        <h1 className="m-0 text-pretty text-3xl tracking-tight">
           {data.title}
         </h1>
         <p className="mt-3 max-w-2xl text-pretty text-base leading-7 text-muted-foreground">

@@ -473,7 +473,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
                         aria-hidden
                         className={cn(
                           "h-[7px] w-[7px] rounded-full",
-                          effective ? "bg-emerald-500" : "bg-muted-foreground/40",
+                          effective ? "bg-muted-foreground" : "bg-muted-foreground/40",
                         )}
                       />
                       {p.active

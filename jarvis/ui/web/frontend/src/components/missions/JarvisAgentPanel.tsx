@@ -21,7 +21,7 @@ import type { JarvisAgentReattachStatus, JarvisAgentWorkerSnapshot } from "@/typ
 import { useMissionsStore } from "./store";
 
 const REATTACH_STYLE: Record<JarvisAgentReattachStatus, string> = {
-  live: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
+  live: "border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground",
   ended: "border-zinc-500/40 bg-zinc-500/10 text-zinc-300",
   killed: "border-destructive/50 bg-destructive/15 text-destructive",
   unknown: "border-foreground/40 bg-foreground/10 text-foreground",

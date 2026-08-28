@@ -192,11 +192,11 @@ export function JarvisDock() {
   const stateClass = {
     idle: "border-border bg-card/70",
     bloom:
-      "scale-105 border-primary/70 bg-primary/15 ring-2 ring-primary/40 shadow-[0_0_30px_rgb(var(--accent-rgb)/0.28)] animate-[dock-breathe_2.2s_ease-in-out_infinite]",
+      "scale-105 border-primary/70 bg-primary/15 ring-2 ring-primary/40 animate-[dock-breathe_2.2s_ease-in-out_infinite]",
     armed:
-      "scale-110 border-primary bg-primary/25 ring-2 ring-primary shadow-[0_0_46px_rgb(var(--accent-rgb)/0.5)]",
+      "scale-110 border-primary bg-primary/25 ring-2 ring-primary",
     flash:
-      "scale-110 border-emerald-400 bg-emerald-400/15 ring-2 ring-emerald-400 shadow-[0_0_40px_rgba(52,211,153,0.5)]",
+      "scale-110 border-muted-foreground bg-muted-foreground/15 ring-2 ring-muted-foreground",
   }[state];
 
   const label = flash
@@ -238,7 +238,7 @@ export function JarvisDock() {
         }}
         onDrop={handleDrop}
         className={cn(
-          "fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full border px-3 py-2 shadow-lg backdrop-blur transition-all duration-300 ease-out",
+          "fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full border px-3 py-2 backdrop-blur transition-all duration-300 ease-out",
           visible ? "opacity-100" : "pointer-events-none opacity-0",
           stateClass,
         )}
@@ -247,7 +247,7 @@ export function JarvisDock() {
         {flash && (
           <span
             aria-hidden
-            className="pointer-events-none absolute inset-0 rounded-full ring-2 ring-emerald-400/70 animate-[dock-ripple_0.9s_ease-out_forwards]"
+            className="pointer-events-none absolute inset-0 rounded-full ring-2 ring-muted-foreground/70 animate-[dock-ripple_0.9s_ease-out_forwards]"
           />
         )}
 
@@ -268,7 +268,7 @@ export function JarvisDock() {
           <span
             className={cn(
               "whitespace-nowrap text-xs font-medium",
-              flash ? "text-emerald-300" : "text-primary",
+              flash ? "text-muted-foreground" : "text-primary",
             )}
           >
             {label}

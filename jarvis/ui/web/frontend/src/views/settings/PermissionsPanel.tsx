@@ -110,7 +110,7 @@ export function PermissionRows({
   if (items.length === 0 || snapshot?.platform !== "darwin") {
     return (
       <div className="flex items-start gap-2 rounded-lg border border-border bg-background/40 p-3 text-xs text-muted-foreground">
-        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         {t("permissions.not_required")}
       </div>
     );
@@ -224,7 +224,7 @@ function PermissionRow({
         <span
           className={`rounded-full px-2 py-1 text-[10px] font-medium uppercase tracking-wide ${
             ready
-              ? "bg-emerald-500/10 text-emerald-500"
+              ? "bg-muted-foreground/10 text-muted-foreground"
               : "bg-foreground/10 text-foreground"
           }`}
         >

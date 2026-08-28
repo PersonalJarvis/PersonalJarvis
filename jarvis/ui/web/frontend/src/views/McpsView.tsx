@@ -614,7 +614,7 @@ function RemoveConfirmDialog({
       role="dialog"
       aria-label={t("mcps_view.remove_title")}
     >
-      <div className="w-[420px] rounded-lg border border-border bg-card p-6 shadow-xl">
+      <div className="w-[420px] rounded-lg border border-border bg-card p-6">
         <h3 className="flex items-center gap-2 text-base font-semibold">
           <Trash2 className="h-4 w-4 text-destructive" />
           {t("mcps_view.remove_title")}
@@ -727,7 +727,7 @@ function ConfigModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60 backdrop-blur-sm">
-      <div className="flex w-full max-w-3xl flex-col rounded-xl border border-border bg-card shadow-xl">
+      <div className="flex w-full max-w-3xl flex-col rounded-xl border border-border bg-card">
         <div className="flex items-start justify-between gap-4 border-b border-border p-6">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">

@@ -12,7 +12,7 @@ interface StatsCardProps {
 
 const TONE: Record<NonNullable<StatsCardProps["tone"]>, string> = {
   default: "border-border bg-card/40 text-foreground",
-  success: "border-emerald-500/30 bg-emerald-500/5 text-emerald-200",
+  success: "border-muted-foreground/30 bg-muted-foreground/5 text-muted-foreground",
   warn: "border-foreground/30 bg-foreground/5 text-foreground",
 };
 
@@ -37,7 +37,7 @@ export function StatsCard({
         {icon}
         <span>{label}</span>
       </div>
-      <div className="font-display text-3xl font-semibold leading-none">
+      <div className="font-display text-3xl leading-none">
         {value}
       </div>
       {sublabel && (

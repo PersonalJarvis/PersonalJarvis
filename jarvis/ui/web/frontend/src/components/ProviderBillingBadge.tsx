@@ -27,7 +27,7 @@ const META: Record<Billing, { labelKey: string; icon: typeof CreditCard; classNa
   local: {
     labelKey: "provider_billing.local",
     icon: Laptop,
-    className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    className: "border-muted-foreground/30 bg-muted-foreground/10 text-muted-foreground",
   },
 };
 

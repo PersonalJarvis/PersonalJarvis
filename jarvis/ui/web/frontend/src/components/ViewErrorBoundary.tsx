@@ -115,7 +115,7 @@ export class ViewErrorBoundary extends Component<
         <div className="flex flex-1 items-center justify-center p-6">
           <div
             className={cn(
-              "w-full max-w-xl rounded-lg border bg-card/80 p-5 shadow-xl",
+              "w-full max-w-xl rounded-lg border bg-card/80 p-5",
               stale ? "border-border" : "border-destructive/30",
             )}
           >

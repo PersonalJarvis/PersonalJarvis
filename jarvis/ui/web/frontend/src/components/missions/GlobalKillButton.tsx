@@ -57,7 +57,7 @@ export function GlobalKillButton() {
             if (e.target === e.currentTarget) setOpen(false);
           }}
         >
-          <div className="card-outline mx-4 w-full max-w-md bg-card p-5 shadow-2xl">
+          <div className="card-outline mx-4 w-full max-w-md bg-card p-5">
             <div className="flex items-start gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-destructive/40 bg-destructive/10">
                 <AlertTriangle className="h-5 w-5 text-destructive" />

@@ -167,7 +167,7 @@ export function ChatInput() {
     <div
       data-testid="chat-composer"
       className={cn(
-        "flex flex-col gap-2 rounded-2xl border border-border bg-card p-3 shadow-[0_1px_2px_rgb(var(--scrim-rgb)/0.05),0_8px_24px_rgb(var(--scrim-rgb)/0.06)] transition-[border-color,box-shadow]",
+        "flex flex-col gap-2 rounded-2xl border border-border bg-card p-3 transition-[border-color,box-shadow]",
         "focus-within:border-primary/40",
       )}
     >

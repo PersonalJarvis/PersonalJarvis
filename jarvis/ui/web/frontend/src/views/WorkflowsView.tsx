@@ -260,7 +260,7 @@ function DashboardStats({
         value={String(summary?.total ?? 0)}
       />
       <StatBadge
-        icon={<Power className="h-3.5 w-3.5 text-emerald-400" />}
+        icon={<Power className="h-3.5 w-3.5 text-muted-foreground" />}
         label={t("workflows_view.stat_active")}
         value={String(summary?.enabled ?? 0)}
       />
@@ -344,7 +344,7 @@ function WorkflowCard({
     <article
       className={cn(
         "card-outline overflow-hidden transition-all",
-        "hover:shadow-[0_0_24px_rgb(var(--accent-rgb)/0.08)]",
+        "",
       )}
     >
       <header className="flex items-start gap-3 p-4">
@@ -537,7 +537,7 @@ function RunRow({ run }: { run: WorkflowRun }) {
         className="flex w-full items-center gap-3 p-2 text-left text-xs"
       >
         {run.state === "completed" ? (
-          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+          <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
         ) : run.state === "failed" ? (
           <AlertCircle className="h-3.5 w-3.5 text-destructive" />
         ) : run.state === "running" ? (
@@ -583,7 +583,7 @@ function RunStepsDetail({ runId }: { runId: string }) {
             className={cn(
               "w-20 shrink-0",
               s.success === 1
-                ? "text-emerald-400"
+                ? "text-muted-foreground"
                 : s.success === 0
                   ? "text-destructive"
                   : "text-primary",

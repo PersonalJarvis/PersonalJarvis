@@ -98,7 +98,7 @@ const RING: Record<ModelCardState, string> = {
 };
 
 const VERDICT_TONE: Record<ModelCardState, string> = {
-  ready: "text-emerald-600 dark:text-emerald-400",
+  ready: "text-muted-foreground",
   unknown: "text-muted-foreground",
   slow: "text-foreground",
   unfit: "text-destructive",
@@ -467,7 +467,7 @@ function CardProgress({
       text = t("local_models.roles.progress_tuning");
       break;
     case "done":
-      tone = "text-emerald-600 dark:text-emerald-400";
+      tone = "text-muted-foreground";
       text = progress.readback ?? t("local_models.roles.progress_done");
       break;
     default:

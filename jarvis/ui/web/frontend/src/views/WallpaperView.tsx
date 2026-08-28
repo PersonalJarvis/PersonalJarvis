@@ -492,7 +492,7 @@ function WallpaperPreview({
           onLoad={() => setLoaded(true)}
           onError={() => setLoaded(true)}
           className={cn(
-            "max-h-full max-w-full rounded-lg object-contain shadow-2xl transition-opacity duration-200",
+            "max-h-full max-w-full rounded-lg object-contain transition-opacity duration-200",
             loaded ? "opacity-100" : "opacity-0",
           )}
         />

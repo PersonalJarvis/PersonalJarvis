@@ -512,7 +512,7 @@ function UpdateButton() {
         )}
       </button>
       {showNotes && status.notes && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-80 rounded-md border border-border bg-background p-3 text-left shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 w-80 rounded-md border border-border bg-background p-3 text-left">
           <div className="mb-1 text-xs font-semibold text-foreground">
             {t("topbar.update_available")} · v{shownVersion}
           </div>

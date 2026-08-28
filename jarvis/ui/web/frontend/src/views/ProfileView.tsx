@@ -1210,7 +1210,7 @@ function ReviewRow({
   const t = useT();
   const conf = candidate.confidence;
   const confColor =
-    conf >= 0.7 ? "text-emerald-400" : conf >= 0.5 ? "text-foreground" : "text-muted-foreground";
+    conf >= 0.7 ? "text-muted-foreground" : conf >= 0.5 ? "text-foreground" : "text-muted-foreground";
 
   return (
     <li className="rounded-xl border border-sheen/[0.06] bg-sheen/[0.02] p-4 transition-colors hover:border-primary/25">
@@ -1418,10 +1418,10 @@ function SourceCard() {
           ) : (
             <>
               {isPulsing && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-muted-foreground/15 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
                   <span className="relative flex h-1.5 w-1.5">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-muted-foreground opacity-75" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-muted-foreground" />
                   </span>
                   {t("profile_view.just_updated")}
                 </span>
@@ -1477,7 +1477,7 @@ function SourceCard() {
           className={cn(
             "overflow-hidden rounded-xl border bg-scrim/30 transition-shadow",
             editing ? "border-primary/40" : "border-sheen/[0.06]",
-            isPulsing && !editing && "ring-1 ring-emerald-500/40 shadow-[0_0_20px_rgba(16,185,129,0.15)]",
+            isPulsing && !editing && "ring-1 ring-muted-foreground/40",
           )}
         >
           <div className="flex items-center gap-2.5 border-b border-sheen/[0.05] bg-sheen/[0.02] px-3.5 py-2.5">

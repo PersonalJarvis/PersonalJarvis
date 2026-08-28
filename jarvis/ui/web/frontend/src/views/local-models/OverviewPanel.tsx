@@ -589,7 +589,7 @@ function SetupProgress({
       )}
       {step.phase === "done" && brain.state === "done" && (
         <p
-          className="ml-4 text-emerald-600 dark:text-emerald-400"
+          className="ml-4 text-muted-foreground"
           data-testid="setup-brain-done"
         >
           {fill(k("setup_brain_switched"), { server: serverLabel })}

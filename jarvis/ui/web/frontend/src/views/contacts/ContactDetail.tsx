@@ -332,7 +332,7 @@ export function ContactDetail({
           onClick={() => !calling && setConfirmCall(null)}
         >
           <div
-            className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-xl"
+            className="w-full max-w-sm rounded-xl border border-border bg-card p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="font-display text-base font-semibold">

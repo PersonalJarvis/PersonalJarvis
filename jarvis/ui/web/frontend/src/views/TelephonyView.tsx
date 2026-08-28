@@ -103,7 +103,7 @@ type CallStatus = "ringing" | "in_progress" | "completed" | "failed" | "no_audio
 const CALL_STATUS_STYLE: Record<CallStatus, string> = {
   ringing: "bg-foreground/10 text-foreground",
   in_progress: "bg-primary/10 text-primary",
-  completed: "bg-emerald-500/10 text-emerald-600",
+  completed: "bg-muted-foreground/10 text-muted-foreground",
   failed: "bg-destructive/10 text-destructive",
   no_audio: "bg-muted text-muted-foreground",
 };
@@ -508,7 +508,7 @@ function StatusCard({ status }: { status: TelephonyStatus }) {
           className={cn(
             "mt-1 h-2 w-2 shrink-0 rounded-full",
             reachable
-              ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.7)]"
+              ? "bg-muted-foreground"
               : "bg-muted-foreground",
           )}
         />
@@ -601,7 +601,7 @@ function StatusBadge({ ok, configured }: { ok: boolean; configured: boolean }) {
   }
   if (ok) {
     return (
-      <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
+      <span className="shrink-0 rounded-full bg-muted-foreground/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
         {t("telephony_view.status.badge_live")}
       </span>
     );
@@ -866,7 +866,7 @@ function CredentialsCard({
           className={cn(
             "rounded-md border p-3 text-xs break-words",
             testResult.reachable
-              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700"
+              ? "border-muted-foreground/30 bg-muted-foreground/5 text-muted-foreground"
               : "border-destructive/30 bg-destructive/5 text-destructive",
           )}
         >

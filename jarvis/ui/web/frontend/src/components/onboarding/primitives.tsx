@@ -177,7 +177,7 @@ export function StatusLine({
       data-testid={testId}
       className={cn(
         "border-l-2 py-1 pl-3 text-sm leading-relaxed",
-        tone === "ok" && "border-emerald-500/70 text-emerald-700 dark:text-emerald-400",
+        tone === "ok" && "border-muted-foreground/70 text-muted-foreground",
         tone === "warning" && "border-foreground/70 text-foreground",
         tone === "error" && "border-destructive/70 text-destructive",
         tone === "muted" && "border-border text-muted-foreground",

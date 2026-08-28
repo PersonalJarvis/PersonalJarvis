@@ -252,7 +252,7 @@ export function WorkspaceTerminal({
         </div>
         <span className="text-[10px] uppercase tracking-wider">
           {status === "live" ? (
-            <span className="text-emerald-400">live</span>
+            <span className="text-muted-foreground">live</span>
           ) : status === "error" ? (
             <span className="flex items-center gap-1 text-destructive">
               <AlertCircle className="h-3 w-3" />

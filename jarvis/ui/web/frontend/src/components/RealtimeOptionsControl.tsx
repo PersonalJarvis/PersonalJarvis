@@ -319,7 +319,7 @@ function RealtimeModelRow({
       {open && (
         <ul
           id={panelId}
-          className="absolute left-16 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-xl scrollbar-jarvis"
+          className="absolute left-16 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-md border border-border bg-popover p-1 scrollbar-jarvis"
         >
           <ModelOption
             label={t("apikeys_view.realtime_provider_default")}

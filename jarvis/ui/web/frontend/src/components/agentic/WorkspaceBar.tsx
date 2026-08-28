@@ -364,7 +364,7 @@ export function WorkspaceBar({
                 className={cn(
                   "flex items-center gap-1",
                   ordinalOnly &&
-                    "absolute top-0 z-30 rounded-control border border-border bg-secondary p-0.5 shadow-lg",
+                    "absolute top-0 z-30 rounded-control border border-border bg-secondary p-0.5",
                   ordinalOnly && overlayAlignment,
                 )}
                 onSubmit={(event) => {
@@ -487,7 +487,7 @@ export function WorkspaceBar({
                 className={cn(
                   "flex items-center gap-1",
                   ordinalOnly &&
-                    "absolute top-0 z-30 rounded-control border border-border bg-secondary p-0.5 shadow-lg",
+                    "absolute top-0 z-30 rounded-control border border-border bg-secondary p-0.5",
                   ordinalOnly && overlayAlignment,
                 )}
               >

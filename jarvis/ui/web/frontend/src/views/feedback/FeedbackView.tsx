@@ -402,7 +402,7 @@ export function FeedbackView() {
   const resultBanner: Record<ResultKind, { text: string; cls: string }> = {
     sent: {
       text: t("feedback.result_sent"),
-      cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+      cls: "border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground",
     },
     error: {
       text: t("feedback.result_error"),

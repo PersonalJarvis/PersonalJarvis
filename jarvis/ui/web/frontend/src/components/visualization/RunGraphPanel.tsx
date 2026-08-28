@@ -84,7 +84,7 @@ const clampZoom = (value: number): number =>
   Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
 
 const NODE_DOT: Record<string, string> = {
-  done: "bg-emerald-400",
+  done: "bg-muted-foreground",
   failed: "bg-destructive",
   running: "bg-primary animate-pulse",
   skipped: "bg-muted-foreground/40",
@@ -555,7 +555,7 @@ function GraphCanvas({
               data-category={category}
               style={{ left: node.x, top: node.y, width: NODE_W, height: NODE_H }}
               className={cn(
-                "absolute flex items-center gap-2.5 rounded-xl border bg-card px-3 text-left shadow-sm transition-colors",
+                "absolute flex items-center gap-2.5 rounded-xl border bg-card px-3 text-left transition-colors",
                 /* A thought is not an action: reasoning cards wear a dashed
                  * frame, the visual grammar of "internal, produced nothing". */
                 reasoning && "border-dashed",

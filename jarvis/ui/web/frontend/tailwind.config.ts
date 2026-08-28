@@ -67,23 +67,41 @@ const config: Config = {
         sheen: "rgb(var(--sheen-rgb) / <alpha-value>)",
         scrim: "rgb(var(--scrim-rgb) / <alpha-value>)",
       },
+      /*
+       * The radius scale, stated outright rather than derived from --radius.
+       *
+       * Derivation was the problem it looks like the solution to: with
+       * `--radius` at 0.75rem, `md` (10px), `lg` (12px) and Tailwind's own
+       * `xl` (12px) all landed within two pixels, so ten class names produced
+       * about four distinguishable shapes and nothing read as contained by
+       * anything else. The two hand-added steps (`control`, `surface`) were a
+       * patch over that, and `surface` had drifted to exactly `md`.
+       *
+       * These are the Design.md's six values. Aliases are pointed AT them
+       * rather than deleted -- `xl` resolves to the same 12px as `lg`, `3xl`
+       * to the same 16px as `2xl` -- so the scale collapses without touching
+       * ~1,350 class usages, and a stray `rounded-3xl` can no longer invent a
+       * seventh shape.
+       *
+       *   4px   inline tags, chips          (sm)
+       *   6px   compact rows, dense controls (control)
+       *   8px   buttons, inputs             (md, surface)
+       *   12px  cards, panes                (lg, xl)
+       *   16px  large feature cards, rare   (2xl, 3xl)
+       *   pill  badges, avatars             (full)
+       */
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
-        /*
-         * Two tighter steps for dense, tool-shaped surfaces — the Agentic IDE's
-         * launcher above all (see components/agentic/controls.tsx).
-         *
-         * They exist because the three above do not separate: `--radius` is
-         * 0.75rem, so `md`, `lg` and Tailwind's own `xl` all land between 10 and
-         * 12 px. That is a fine radius for a settings card and no radius scale
-         * at all for a screen that stacks a 32 px control inside a row inside a
-         * panel — everything came out equally round, so nothing read as
-         * contained by anything else. Additive: no existing class changes.
-         */
+        none: "0px",
+        sm: "4px",
         control: "6px",
-        surface: "10px",
+        DEFAULT: "6px",
+        md: "8px",
+        surface: "8px",
+        lg: "12px",
+        xl: "12px",
+        "2xl": "16px",
+        "3xl": "16px",
+        full: "9999px",
       },
       keyframes: {
         "accordion-down": {

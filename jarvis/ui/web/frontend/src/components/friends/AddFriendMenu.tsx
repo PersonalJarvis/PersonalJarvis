@@ -79,7 +79,7 @@ export function AddFriendMenu({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-xl border border-border bg-card shadow-xl">
+      <div className="w-full max-w-md rounded-xl border border-border bg-card">
         <header className="flex items-center justify-between border-b border-border px-5 py-3">
           <h2 className="flex items-center gap-2 font-display text-sm font-semibold">
             <Plus className="h-4 w-4 text-primary" />

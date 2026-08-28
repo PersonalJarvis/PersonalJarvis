@@ -31,7 +31,7 @@ const KNOWN_AXES = ["correctness", "completeness", "side_effects", "security"];
 
 const VERDICT_STYLE: Record<CriticVerdict, { className: string; label: string }> = {
   approve: {
-    className: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
+    className: "border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground",
     label: "approve",
   },
   revise: {
@@ -121,7 +121,7 @@ function VerdictCard({ verdict }: { verdict: CriticVerdictReady }) {
             ? ShieldAlert
             : Shield;
           const tone = axis.pass === true
-            ? "text-emerald-300"
+            ? "text-muted-foreground"
             : axis.pass === false
             ? "text-destructive"
             : "text-muted-foreground";

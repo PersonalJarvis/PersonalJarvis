@@ -82,7 +82,7 @@ type T = (key: string) => string;
 const TONE_TEXT: Record<StoryTone, string> = {
   neutral: "text-muted-foreground",
   busy: "text-primary",
-  ok: "text-emerald-600 dark:text-emerald-400",
+  ok: "text-muted-foreground",
   warn: "text-foreground",
   error: "text-destructive",
 };
@@ -90,7 +90,7 @@ const TONE_TEXT: Record<StoryTone, string> = {
 const STAMP: Record<StoryTone, string> = {
   neutral: "border-border text-muted-foreground",
   busy: "border-primary/60 text-primary",
-  ok: "border-emerald-500/60 text-emerald-600 dark:text-emerald-400",
+  ok: "border-muted-foreground/60 text-muted-foreground",
   warn: "border-foreground/60 text-foreground",
   error: "border-destructive/60 text-destructive",
 };

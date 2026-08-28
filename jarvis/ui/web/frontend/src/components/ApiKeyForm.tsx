@@ -299,7 +299,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
     return (
       <div className="space-y-2">
         <div className="flex h-9 min-w-0 items-center gap-2.5 rounded-control border border-border bg-background/60 pl-3 pr-1.5">
-          <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+          <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span className="shrink-0 text-xs font-medium text-foreground">
             {t("apikeys_view.key_saved_label")}
           </span>
@@ -426,7 +426,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
           random string has no way to tell "right kind of key" from "garbage" —
           this answers it before they hit Save. Format only, never validity. */}
       {fmt && keyFormatConfirmed(fmt) && (
-        <p className="flex items-start gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+        <p className="flex items-start gap-1 text-xs text-muted-foreground">
           <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" />
           <span>{t("apikeys_view.format_match_hint")}</span>
         </p>

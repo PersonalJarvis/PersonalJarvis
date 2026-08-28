@@ -45,7 +45,7 @@ export function DocsSearchModal({ open, onOpenChange, onSelect }: Props) {
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none" />
-        <Dialog.Content className="fixed left-1/2 top-[15%] z-50 w-[min(640px,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-lg border border-border bg-card shadow-2xl data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none">
+        <Dialog.Content className="fixed left-1/2 top-[15%] z-50 w-[min(640px,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-lg border border-border bg-card data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none">
           <Dialog.Title className="sr-only">{t("docs.search_modal_title")}</Dialog.Title>
           <Dialog.Description className="sr-only">
             {t("docs.search_hint")}

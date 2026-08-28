@@ -215,7 +215,7 @@ function ModelActions({
     const writable = roles.filter((r) => r.writable);
     return (
       <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
           <Check className="h-3.5 w-3.5" />
           {t("local_models.catalogue.installed")}
         </span>
@@ -295,7 +295,7 @@ function PullLine({ pull, t }: { pull: PullState | null; t: Translate }) {
   if (p.state === "done") {
     return (
       <p
-        className="text-xs text-emerald-600 dark:text-emerald-400"
+        className="text-xs text-muted-foreground"
         data-testid="catalogue-pull-line"
       >
         {fill(t("local_models.catalogue.pull_done"), { model: pull.model })}
@@ -687,7 +687,7 @@ function LibraryList({
                           {m.name}
                         </span>
                         {m.installed && (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400">
+                          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
                             <Check className="h-3 w-3" />
                             {t("local_models.catalogue.installed")}
                           </span>

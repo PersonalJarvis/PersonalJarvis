@@ -603,7 +603,7 @@ export function TuneSheet({ providerId, model, onClose }: TuneSheetProps) {
         </div>
         {readback && (
           <p
-            className="text-sm text-emerald-600 dark:text-emerald-400"
+            className="text-sm text-muted-foreground"
             data-testid="tune-readback"
           >
             {readback}

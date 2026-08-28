@@ -74,7 +74,7 @@ function matchesFilter(m: BrainModel, f: ModelFilter): boolean {
 
 // Mirrors TEST_STATUS_TONE in ApiKeysView (kept local to avoid a circular import).
 const STATUS_TONE: Record<ProviderTestStatus, string> = {
-  ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600",
+  ok: "border-muted-foreground/30 bg-muted-foreground/10 text-muted-foreground",
   not_configured: "border-border bg-muted text-muted-foreground",
   bad_key: "border-foreground/30 bg-foreground/10 text-foreground",
   no_credits: "border-foreground/30 bg-foreground/10 text-foreground",

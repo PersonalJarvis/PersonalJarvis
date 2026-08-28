@@ -82,7 +82,7 @@ export function markdownTitle(text: string | null | undefined): string | null {
 
 /** Status as a word plus a dot — the one place colour carries meaning here. */
 const STATUS_DOT: Record<OutputStatus, string> = {
-  success: "bg-emerald-400",
+  success: "bg-muted-foreground",
   error: "bg-destructive",
   running: "bg-primary animate-pulse",
   cancelled: "bg-foreground",
@@ -535,7 +535,7 @@ function DigestFacts({ digest }: { digest: CodeDigest }) {
               {digest.diff.length === 1
                 ? t("visualization.preview_file_changed_one")
                 : t("visualization.preview_files_changed").replace("{0}", String(digest.diff.length))}
-              <span className="ml-2 text-emerald-500">+{added}</span>
+              <span className="ml-2 text-muted-foreground">+{added}</span>
               <span className="ml-1.5 text-destructive">−{removed}</span>
             </span>
           </>
@@ -578,7 +578,7 @@ function DigestFacts({ digest }: { digest: CodeDigest }) {
                 {f.path}
               </code>
               <span className="shrink-0 font-mono text-[11px] tabular-nums">
-                <span className="text-emerald-500">+{f.added}</span>
+                <span className="text-muted-foreground">+{f.added}</span>
                 <span className="ml-1.5 text-destructive">−{f.removed}</span>
               </span>
             </li>

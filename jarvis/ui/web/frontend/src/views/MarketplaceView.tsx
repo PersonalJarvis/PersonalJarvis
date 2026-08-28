@@ -821,7 +821,7 @@ function Hero({
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {t("marketplace.hero_eyebrow")}
           </p>
-          <h3 className="mt-1 font-display text-2xl font-semibold tracking-tight text-foreground">
+          <h3 className="mt-1 font-display text-2xl tracking-tight text-foreground">
             {t("marketplace.hero_title")}
           </h3>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
@@ -854,7 +854,7 @@ function Hero({
 function Stat({ value, label }: { value: number; label: string }) {
   return (
     <div className="rounded-xl border border-border/70 bg-background/50 px-4 py-3 text-center">
-      <dd className="font-display text-2xl font-semibold tabular-nums tracking-tight text-foreground">
+      <dd className="font-display text-2xl tabular-nums tracking-tight text-foreground">
         {value}
       </dd>
       <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</dt>
@@ -949,7 +949,7 @@ function EntryDrawer({
         onClick={onClose}
         className="absolute inset-0 bg-background/70 backdrop-blur-sm"
       />
-      <aside className="relative flex h-full w-full max-w-md flex-col border-l border-border bg-card shadow-2xl">
+      <aside className="relative flex h-full w-full max-w-md flex-col border-l border-border bg-card">
         <header className="flex items-start gap-3 border-b border-border px-5 py-4">
           <div className="min-w-0 flex-1">
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -1189,7 +1189,7 @@ function LandingToast({
   const ready = result.ready !== false;
   return (
     <div className="pointer-events-none absolute -z-10 inset-x-0 bottom-0 z-50 flex justify-center p-5">
-      <div className="pointer-events-auto flex w-full max-w-lg items-start gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-xl">
+      <div className="pointer-events-auto flex w-full max-w-lg items-start gap-3 rounded-xl border border-border bg-card px-4 py-3">
         <div
           className={cn(
             "grid h-8 w-8 shrink-0 place-items-center rounded-lg",

@@ -980,7 +980,7 @@ export function WallpaperPreviewDialog({
         if (e.target === e.currentTarget && !isPending) onCancel();
       }}
     >
-      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card">
         <header className="border-b border-border px-5 py-4">
           <h2
             id="community-wallpaper-title"
@@ -1087,7 +1087,7 @@ export function SkillInstallConsentDialog({
         if (e.target === e.currentTarget && !isPending) onCancel();
       }}
     >
-      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card">
         <header className="border-b border-border px-5 py-4">
           <h2
             id="community-skill-install-title"
@@ -1210,7 +1210,7 @@ export function InstallConsentDialog({
         if (e.target === e.currentTarget && !isPending) onCancel();
       }}
     >
-      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card">
         <header className="flex items-center gap-3 border-b border-border px-5 py-4">
           <CommunityTile plugin={plugin} />
           <div className="min-w-0">

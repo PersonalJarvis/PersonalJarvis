@@ -53,7 +53,7 @@ function ToolCard({ data }: NodeProps<Node<ToolNodeData>>) {
     entry.status === "running"
       ? "ring-sky-400 ring-2 animate-pulse"
       : entry.status === "completed"
-        ? "ring-emerald-400 ring-2"
+        ? "ring-muted-foreground ring-2"
         : entry.status === "failed"
           ? "ring-red-400 ring-2"
           : "ring-zinc-600 ring-1";
@@ -64,11 +64,11 @@ function ToolCard({ data }: NodeProps<Node<ToolNodeData>>) {
       animate={{ scale: 1, opacity: 1 }}
       exit={{ scale: 0.7, opacity: 0 }}
       transition={{ type: "spring", stiffness: 300, damping: 24 }}
-      className={`w-[${TOOL_NODE_WIDTH}px] rounded-2xl ${appearance.bg} ${statusRing} p-3 shadow-lg backdrop-blur-sm flex flex-col items-center gap-2`}
+      className={`w-[${TOOL_NODE_WIDTH}px] rounded-2xl ${appearance.bg} ${statusRing} p-3 backdrop-blur-sm flex flex-col items-center gap-2`}
       style={{ width: TOOL_NODE_WIDTH }}
     >
       <div
-        className={`w-14 h-14 rounded-full ${appearance.bg} border border-zinc-700 flex items-center justify-center shadow-inner`}
+        className={`w-14 h-14 rounded-full ${appearance.bg} border border-zinc-700 flex items-center justify-center`}
       >
         <Icon className={`h-7 w-7 ${appearance.iconColor}`} />
       </div>
@@ -275,7 +275,7 @@ function ToolDetailSheet({
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: 300, opacity: 0 }}
       transition={{ type: "spring", stiffness: 250, damping: 28 }}
-      className="absolute bottom-4 left-4 right-4 z-20 max-h-[45%] rounded-2xl bg-zinc-900/95 border border-zinc-800 backdrop-blur-md shadow-2xl flex flex-col"
+      className="absolute bottom-4 left-4 right-4 z-20 max-h-[45%] rounded-2xl bg-zinc-900/95 border border-zinc-800 backdrop-blur-md flex flex-col"
     >
       <header className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3 min-w-0">

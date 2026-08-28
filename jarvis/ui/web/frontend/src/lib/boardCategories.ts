@@ -36,7 +36,7 @@ export const CATEGORY_META: Record<
   browser: { icon: Globe, accent: "text-sky-400", bar: "bg-sky-400", glow: "" },
   mail: { icon: Mail, accent: "text-rose-400", bar: "bg-rose-400", glow: "" },
   community: { icon: Users, accent: "text-violet-400", bar: "bg-violet-400", glow: "" },
-  knowledge: { icon: BookOpen, accent: "text-emerald-400", bar: "bg-emerald-400", glow: "" },
+  knowledge: { icon: BookOpen, accent: "text-muted-foreground", bar: "bg-muted-foreground", glow: "" },
   system: { icon: Settings2, accent: "text-zinc-400", bar: "bg-zinc-400", glow: "" },
 };
 

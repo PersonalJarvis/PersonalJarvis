@@ -389,7 +389,7 @@ export const MISSION_STATE_BADGE: Record<MissionState, MissionStateBadgeMeta> = 
   },
   APPROVED: {
     labelKey: "mission_state.approved",
-    className: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
+    className: "border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground",
     iconName: "CheckCircle2",
   },
   FAILED: {

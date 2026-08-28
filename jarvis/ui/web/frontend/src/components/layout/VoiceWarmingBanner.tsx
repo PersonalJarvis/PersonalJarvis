@@ -55,7 +55,7 @@ export function VoiceWarmingBanner() {
         // on a bright wallpaper and disappear (the banner spans raw artwork).
         warming
           ? "border-foreground/30 bg-foreground/10 text-foreground"
-          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
+          : "border-muted-foreground/30 bg-muted-foreground/10 text-muted-foreground",
       )}
     >
       {warming ? (

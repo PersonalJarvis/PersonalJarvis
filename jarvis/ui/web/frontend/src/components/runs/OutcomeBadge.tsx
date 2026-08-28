@@ -7,8 +7,8 @@ type OutcomeStyle = { label: string; dot: string; badge: string };
 const OUTCOME_STYLE: Record<string, OutcomeStyle> = {
   success: {
     label: "Success",
-    dot: "bg-emerald-400",
-    badge: "bg-emerald-400/10 text-emerald-300 ring-emerald-400/25",
+    dot: "bg-muted-foreground",
+    badge: "bg-muted-foreground/10 text-muted-foreground ring-muted-foreground/25",
   },
   partial: {
     label: "Partial",

@@ -13,7 +13,7 @@ interface VoiceModeBadgeProps {
 
 const MODE_STYLES: Record<KnownVoiceMode, string> = {
   realtime:
-    "border-primary/70 bg-primary/20 text-primary shadow-[0_0_14px_hsl(var(--primary)/0.12)]",
+    "border-primary/70 bg-primary/20 text-primary",
   pipeline:
     "border-sky-500/50 bg-sky-500/15 text-sky-700 dark:text-sky-300",
   unknown: "border-border bg-muted/70 text-muted-foreground",

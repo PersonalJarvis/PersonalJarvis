@@ -172,7 +172,7 @@ export function EditContextMenu() {
       onKeyDown={onMenuKeyDown}
       // Positioned in the layout effect above, once its real size is known.
       style={{ width: MENU_WIDTH, visibility: "hidden" }}
-      className="fixed z-[100] overflow-hidden rounded-md border border-border bg-background py-1 shadow-lg"
+      className="fixed z-[100] overflow-hidden rounded-md border border-border bg-background py-1"
     >
       <MenuItem
         icon={Scissors}

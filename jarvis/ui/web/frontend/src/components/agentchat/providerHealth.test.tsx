@@ -194,7 +194,7 @@ describe("the health dot in the provider picker", () => {
 
     const working = screen.getByTestId("provider-health-grok");
     expect(working.getAttribute("data-health")).toBe("ok");
-    expect(working.className).toContain("bg-emerald-500");
+    expect(working.className).toContain("bg-muted-foreground");
   });
 
   it("draws no dot at all before the sweep lands", async () => {

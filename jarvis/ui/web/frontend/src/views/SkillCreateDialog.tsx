@@ -180,7 +180,7 @@ export function SkillCreateDialog({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex max-h-[88vh] w-[640px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+      <div className="flex max-h-[88vh] w-[640px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-card">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div className="flex items-center gap-3">
@@ -239,7 +239,7 @@ export function SkillCreateDialog({
               <div
                 className={
                   aiOk
-                    ? "flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-300"
+                    ? "flex items-start gap-2 rounded-md border border-muted-foreground/40 bg-muted-foreground/10 p-3 text-xs text-muted-foreground"
                     : "flex items-start gap-2 rounded-md border border-foreground/40 bg-foreground/10 p-3 text-xs text-foreground"
                 }
               >

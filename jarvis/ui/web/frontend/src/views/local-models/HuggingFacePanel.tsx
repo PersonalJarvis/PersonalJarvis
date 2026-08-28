@@ -523,7 +523,7 @@ function FileRow({
               file.fit === "tight"
                 ? "text-foreground"
                 : file.fit === "comfortable"
-                  ? "text-emerald-600 dark:text-emerald-400"
+                  ? "text-muted-foreground"
                   : "text-muted-foreground",
             )}
           >

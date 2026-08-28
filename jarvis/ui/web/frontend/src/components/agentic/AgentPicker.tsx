@@ -285,7 +285,7 @@ export function AgentPickerMenu({
           // the backend registered, and that is six entries on a machine with
           // the usual set installed — more than fits under a button near the
           // top of a laptop screen.
-          "z-50 max-h-[70vh] w-[17rem] overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl scrollbar-jarvis",
+          "z-50 max-h-[70vh] w-[17rem] overflow-y-auto rounded-lg border border-border bg-card p-1 scrollbar-jarvis",
           "animate-in fade-in-0 zoom-in-95 duration-150",
           // The caller's anchoring classes describe a box INSIDE its own
           // element ("right-2 top-full"), which is the very thing a detached

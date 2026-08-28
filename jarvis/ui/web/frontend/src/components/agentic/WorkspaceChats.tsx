@@ -629,7 +629,7 @@ function SessionMenu({
       data-pane={pane.name}
       onKeyDown={onMenuKeyDown}
       style={{ width: MENU_WIDTH, visibility: "hidden" }}
-      className="fixed z-[100] overflow-hidden rounded-md border border-border bg-background py-1 shadow-lg"
+      className="fixed z-[100] overflow-hidden rounded-md border border-border bg-background py-1"
     >
       <button
         type="button"
@@ -688,7 +688,7 @@ function ConfirmCloseTerminal({
         if (event.key === "Escape" && !busy) onCancel();
       }}
     >
-      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-xl">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5">
         <h3 className="font-display text-base font-semibold">
           {fill(t("ide_chats.close_title"), { name: pane.name })}
         </h3>

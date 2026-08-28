@@ -664,7 +664,7 @@ function CliDetailPage({
                     rows={data.secret_keys.map((sk) => ({
                       label: sk.env_var,
                       value: data.secrets_set[sk.name] ? (
-                        <span className="text-emerald-500">
+                        <span className="text-muted-foreground">
                           ●●●●● {t("clis_view.secret_set")}
                         </span>
                       ) : (
@@ -775,7 +775,7 @@ function PatternList({
             key={pattern}
             className={cn(
               "break-all font-mono text-xs",
-              tone === "deny" ? "text-destructive/80" : "text-emerald-500/90",
+              tone === "deny" ? "text-destructive/80" : "text-muted-foreground/90",
             )}
           >
             {pattern}
@@ -875,7 +875,7 @@ function DialogShell({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60 backdrop-blur-sm">
       <div
         className={cn(
-          "flex w-full flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl",
+          "flex w-full flex-col overflow-hidden rounded-xl border border-border bg-card",
           width,
         )}
       >
@@ -1390,7 +1390,7 @@ function UsageDrawer({ name, onClose }: { name: string; onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-scrim/60 backdrop-blur-sm">
-      <div className="flex w-[560px] max-w-full flex-col border-l border-border bg-card shadow-2xl">
+      <div className="flex w-[560px] max-w-full flex-col border-l border-border bg-card">
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-sm font-semibold">
@@ -1457,7 +1457,7 @@ function UsageDrawer({ name, onClose }: { name: string; onClose: () => void }) {
                       <span
                         className={cn(
                           "shrink-0 font-mono text-xs tabular-nums",
-                          e.exit_code === 0 ? "text-emerald-500" : "text-destructive",
+                          e.exit_code === 0 ? "text-muted-foreground" : "text-destructive",
                         )}
                       >
                         {e.exit_code === 0 ? "✓" : e.exit_code !== null ? `✗ ${e.exit_code}` : "…"}

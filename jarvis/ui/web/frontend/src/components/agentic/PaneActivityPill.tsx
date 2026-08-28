@@ -294,7 +294,15 @@ export function durationLabel(since: number, now: number): string {
   return hours === 1 ? "1 hour" : `${hours} hours`;
 }
 
-/** The soft self-coloured halo a mark that holds something for you wears. */
+/**
+ * The soft self-coloured halo a mark that holds something for you wears.
+ *
+ * Kept through the no-shadows pass (Design.md) on purpose. These are not
+ * elevation: they take `currentColor`, sit on a glyph rather than a surface,
+ * and are the only thing separating "finished, waiting for you" from
+ * "finished". Removing them would delete a state, not a decoration — the same
+ * reason the animated glows in index.css stayed.
+ */
 const GLOW = "shadow-[0_0_5px_currentColor]";
 /** The same halo for a stroked icon, where a box shadow would draw a square. */
 const GLOW_STROKE = "drop-shadow-[0_0_3px_currentColor]";

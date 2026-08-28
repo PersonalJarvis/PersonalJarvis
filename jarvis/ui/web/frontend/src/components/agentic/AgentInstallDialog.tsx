@@ -132,7 +132,7 @@ export function AgentInstallDialog({
         aria-modal="true"
         aria-label={`Install ${displayName}`}
         data-testid={`agent-install-dialog-${agent}`}
-        className="flex h-[32rem] max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
+        className="flex h-[32rem] max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-card"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className="flex items-center gap-3 border-b border-border px-4 py-3">
@@ -191,7 +191,7 @@ export function AgentInstallDialog({
               data-testid={`agent-install-done-${agent}`}
               /* Both appearances explicitly: emerald-400 is legible on the
                  dark app and washes out to nearly nothing on paper. */
-              className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-400"
+              className="flex items-center gap-2 text-sm font-medium text-muted-foreground"
             >
               <Check className="h-4 w-4" />
               <span>

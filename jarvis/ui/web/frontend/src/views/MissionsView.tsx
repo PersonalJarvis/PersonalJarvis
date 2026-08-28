@@ -237,7 +237,7 @@ function ConnectionBadge({ connected }: { connected: boolean }) {
       className={cn(
         "flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[10px] uppercase tracking-wider",
         connected
-          ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+          ? "border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground"
           : "border-foreground/40 bg-foreground/10 text-foreground",
       )}
     >

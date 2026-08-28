@@ -202,7 +202,7 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
                         status?.active
                           ? "animate-pulse bg-primary"
                           : status?.available
-                            ? "bg-emerald-500"
+                            ? "bg-muted-foreground"
                             : "bg-muted-foreground/50"
                       }`}
                     />

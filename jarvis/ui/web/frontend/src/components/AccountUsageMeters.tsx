@@ -204,7 +204,7 @@ export function AccountUsageMeters({
             aria-hidden="true"
             className={cn(
               "h-1.5 w-1.5 rounded-full",
-              live ? "bg-emerald-500" : "bg-muted-foreground/50",
+              live ? "bg-muted-foreground" : "bg-muted-foreground/50",
             )}
           />
           {live

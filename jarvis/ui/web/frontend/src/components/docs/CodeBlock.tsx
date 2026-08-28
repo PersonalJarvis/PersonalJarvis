@@ -168,7 +168,7 @@ export function CodeBlock({ language, code, chrome = true }: CodeBlockProps) {
           }
         >
           {copied ? (
-            <Check className="h-3 w-3 text-emerald-400" aria-hidden="true" />
+            <Check className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
           ) : (
             <Copy className="h-3 w-3" aria-hidden="true" />
           )}

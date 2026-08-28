@@ -793,7 +793,7 @@ function BulkDeleteConfirmDialog({
       role="dialog"
       aria-label={t("skills_view.bulk_delete_title")}
     >
-      <div className="w-[420px] rounded-lg border border-border bg-card p-6 shadow-xl">
+      <div className="w-[420px] rounded-lg border border-border bg-card p-6">
         <h3 className="flex items-center gap-2 text-base font-semibold">
           <Trash2 className="h-4 w-4 text-destructive" />
           {t("skills_view.bulk_delete_title")}
@@ -848,7 +848,7 @@ function DeleteConfirmDialog({
       role="dialog"
       aria-label={t("skills_view.delete_title")}
     >
-      <div className="w-[400px] rounded-lg border border-border bg-card p-6 shadow-xl">
+      <div className="w-[400px] rounded-lg border border-border bg-card p-6">
         <h3 className="flex items-center gap-2 text-base font-semibold">
           <Trash2 className="h-4 w-4 text-destructive" />
           {t("skills_view.delete_title")}
@@ -1348,7 +1348,7 @@ function AdminPassDialog({
   const t = useT();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60">
-      <div className="w-[400px] rounded-lg border border-border bg-card p-6 shadow-xl">
+      <div className="w-[400px] rounded-lg border border-border bg-card p-6">
         <h3 className="flex items-center gap-2 text-base font-semibold">
           <Lock className="h-4 w-4" />
           {t("skills_view.admin_password")}
@@ -1565,7 +1565,7 @@ function LinkHealthChip({ entry }: { entry: LinkHealthEntry | null }) {
   const { color, label } = useMemo(() => {
     if (!entry) return { color: "bg-muted-foreground/40", label: "not checked" };
     if (entry.status === 0) return { color: "bg-destructive", label: "no network" };
-    if (entry.ok) return { color: "bg-emerald-500", label: `HTTP ${entry.status}` };
+    if (entry.ok) return { color: "bg-muted-foreground", label: `HTTP ${entry.status}` };
     return { color: "bg-destructive", label: `HTTP ${entry.status}` };
   }, [entry]);
   const stale = entry && !entry.fresh;

@@ -172,7 +172,7 @@ export function AuthGate({ children }: AuthGateProps) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
       <form
-        className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-xl"
+        className="w-full max-w-sm rounded-xl border border-border bg-card p-6"
         onSubmit={submit}
       >
         <div className="mb-5 flex items-start gap-3">

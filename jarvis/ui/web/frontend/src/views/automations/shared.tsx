@@ -63,7 +63,7 @@ const DOT_CLASS: Record<TaskState, string> = {
   scheduled: "bg-primary",
   running: "bg-primary animate-pulse",
   paused: "bg-muted-foreground/50",
-  completed: "bg-emerald-500",
+  completed: "bg-muted-foreground",
   failed: "bg-destructive",
   cancelled: "bg-muted-foreground/50",
   interrupted: "bg-foreground",

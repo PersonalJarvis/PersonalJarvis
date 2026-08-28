@@ -244,7 +244,7 @@ export function WorkspaceLauncher({
             </p>
             <h2
               id="workspace-launcher-title"
-              className="mt-2 text-xl font-semibold tracking-tight text-foreground sm:text-2xl"
+              className="mt-2 text-xl tracking-tight text-foreground sm:text-2xl"
             >
               {activeTitle}
             </h2>
@@ -760,7 +760,7 @@ function WorkspaceReview({
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
       <div className="min-w-0">
         <SectionLabel>{t("workspace_launcher.wizard.workspace")}</SectionLabel>
-        <h4 className="mt-3 truncate text-2xl font-semibold tracking-tight text-foreground">
+        <h4 className="mt-3 truncate text-2xl tracking-tight text-foreground">
           {leafName(folder)}
         </h4>
         <code className="mt-2 block break-all font-mono text-xs leading-relaxed text-muted-foreground">

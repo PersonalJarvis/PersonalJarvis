@@ -112,7 +112,7 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex h-[85vh] w-[920px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+      <div className="flex h-[85vh] w-[920px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-card">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div className="flex items-center gap-3">
@@ -356,7 +356,7 @@ function DropdownPicker({
           />
         </svg>
       </summary>
-      <div className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-md border border-border bg-popover shadow-lg">
+      <div className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-md border border-border bg-popover">
         {options.map((opt) => (
           <button
             key={opt.value}
@@ -394,7 +394,7 @@ function DropdownPicker({
 // ----------------------------------------------------------------------
 
 const TRUST_COLORS: Record<string, string> = {
-  official: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  official: "bg-muted-foreground/15 text-muted-foreground border-muted-foreground/30",
   verified: "bg-blue-500/15 text-blue-400 border-blue-500/30",
   community: "bg-foreground/15 text-foreground border-foreground/30",
   experimental: "bg-rose-500/15 text-rose-400 border-rose-500/30",

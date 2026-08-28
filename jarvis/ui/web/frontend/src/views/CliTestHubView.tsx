@@ -78,7 +78,7 @@ interface RiskStyle {
 const RISK_STYLES: Record<RiskTier, RiskStyle> = {
   safe: {
     label: "safe",
-    badge: "border-emerald-500/40 bg-emerald-500/10 text-emerald-500",
+    badge: "border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground",
     Icon: ShieldCheck,
   },
   monitor: {
@@ -920,7 +920,7 @@ function ExitCodeBadge({
       className={cn(
         "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium tabular-nums",
         ok
-          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"
+          ? "border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground"
           : "border-destructive/50 bg-destructive/10 text-destructive",
       )}
     >
@@ -938,7 +938,7 @@ function StepExitCode({ code }: { code: number | null }) {
     <span
       className={cn(
         "tabular-nums",
-        code === 0 ? "text-emerald-500" : "text-destructive",
+        code === 0 ? "text-muted-foreground" : "text-destructive",
       )}
     >
       exit {code}

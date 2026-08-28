@@ -288,7 +288,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
                 }
                 className={cn(
                   "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-popover",
-                  broken ? "bg-destructive" : "bg-emerald-500",
+                  broken ? "bg-destructive" : "bg-muted-foreground",
                 )}
               />
             )}
@@ -420,7 +420,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       // the thing it looks like is a target people miss.
       {...files.dragHandlers}
       className={cn(
-        "relative flex flex-col gap-2 rounded-2xl border border-border bg-card p-3 shadow-[0_1px_2px_rgb(var(--scrim-rgb)/0.05),0_8px_24px_rgb(var(--scrim-rgb)/0.06)] transition-[border-color,box-shadow]",
+        "relative flex flex-col gap-2 rounded-2xl border border-border bg-card p-3 transition-[border-color,box-shadow]",
         "focus-within:border-primary/40",
         files.dragging && "border-primary/60",
       )}

@@ -17,7 +17,7 @@ import { useT } from "@/i18n";
 import type { ToolCall } from "./types";
 
 const RISK_STYLE: Record<string, string> = {
-  safe: "text-emerald-400/80",
+  safe: "text-muted-foreground/80",
   monitor: "text-sky-300/80",
   ask: "text-foreground/90",
   block: "text-rose-300",
@@ -79,7 +79,7 @@ export function ToolTable({ tools }: { tools: ToolCall[] }) {
                 </span>
               )}
               <span
-                className={`shrink-0 font-mono text-[10px] ${tool.success ? "text-emerald-400" : "text-rose-300"}`}
+                className={`shrink-0 font-mono text-[10px] ${tool.success ? "text-muted-foreground" : "text-rose-300"}`}
               >
                 {tool.exit_code != null ? `exit ${tool.exit_code}` : tool.success ? "ok" : "fail"}
               </span>

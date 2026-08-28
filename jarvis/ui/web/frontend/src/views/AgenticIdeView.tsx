@@ -1235,7 +1235,7 @@ function CodingModeIntro({
   const second = terminals[1] ?? terminals[0] ?? "T2";
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-surface border border-border bg-card p-5 shadow-2xl">
+      <div className="w-full max-w-md rounded-surface border border-border bg-card p-5">
         <h3 className="font-display text-base font-semibold">
           Coding mode is on
         </h3>

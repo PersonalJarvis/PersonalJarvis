@@ -432,7 +432,7 @@ export function ObsidianSetupDialog({
       }}
     >
       <div
-        className="relative w-full max-w-xl rounded-2xl border border-border bg-card p-6 shadow-2xl"
+        className="relative w-full max-w-xl rounded-2xl border border-border bg-card p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <button

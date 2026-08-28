@@ -184,7 +184,7 @@ export function ContactEditDialog({
       onClick={requestClose}
     >
       <div
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto scrollbar-jarvis rounded-xl border border-border bg-card p-6 shadow-xl"
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto scrollbar-jarvis rounded-xl border border-border bg-card p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="mb-4 flex items-center gap-3">
@@ -381,7 +381,7 @@ export function ContactEditDialog({
             className="fixed inset-0 z-[60] flex items-center justify-center bg-scrim/60 backdrop-blur-sm"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="w-full max-w-xs rounded-xl border border-border bg-card p-5 shadow-xl">
+            <div className="w-full max-w-xs rounded-xl border border-border bg-card p-5">
               <h4 className="font-display text-sm font-semibold">
                 {t("contacts.discardTitle")}
               </h4>

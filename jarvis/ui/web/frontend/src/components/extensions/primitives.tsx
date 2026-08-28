@@ -202,7 +202,7 @@ export function ActionMenu({
           role="menu"
           aria-label={label}
           className={cn(
-            "absolute z-40 mt-1 min-w-[200px] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg",
+            "absolute z-40 mt-1 min-w-[200px] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground",
             align === "end" ? "right-0" : "left-0",
           )}
         >
@@ -551,7 +551,7 @@ export function StatusDot({
   pulse?: boolean;
 }) {
   const color = {
-    ok: "bg-emerald-500",
+    ok: "bg-muted-foreground",
     off: "bg-muted-foreground/40",
     warn: "bg-foreground",
     error: "bg-destructive",
@@ -697,7 +697,7 @@ export function StatTile({
               // Emerald carries a meaning the token set has no name for
               // ("finished cleanly") and needs its own value per theme: the
               // 400 shade glows on charcoal and drops to ~2:1 on paper.
-              tone === "success" && "text-emerald-600 dark:text-emerald-400",
+              tone === "success" && "text-muted-foreground",
             )}
           >
             {icon}

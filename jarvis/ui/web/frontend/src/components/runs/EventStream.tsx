@@ -25,7 +25,7 @@ import type { RawEvent } from "./types";
 // instead of rendering unstyled (BUG-008 string contract).
 const LANE: Record<string, { dot: string; chip: string; text: string }> = {
   lifecycle: { dot: "bg-slate-400", chip: "bg-slate-400/10 text-slate-300 ring-slate-400/25", text: "text-slate-300" },
-  speech: { dot: "bg-emerald-400", chip: "bg-emerald-400/10 text-emerald-300 ring-emerald-400/25", text: "text-emerald-300" },
+  speech: { dot: "bg-muted-foreground", chip: "bg-muted-foreground/10 text-muted-foreground ring-muted-foreground/25", text: "text-muted-foreground" },
   brain: { dot: "bg-violet-400", chip: "bg-violet-400/10 text-violet-300 ring-violet-400/25", text: "text-violet-300" },
   tool: { dot: "bg-foreground", chip: "bg-foreground/10 text-foreground ring-foreground/25", text: "text-foreground" },
   agent: { dot: "bg-fuchsia-400", chip: "bg-fuchsia-400/10 text-fuchsia-300 ring-fuchsia-400/25", text: "text-fuchsia-300" },

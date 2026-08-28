@@ -199,7 +199,7 @@ function AutostartRow() {
           )}
 
           {instantStartActive && (
-            <p className="mt-3 text-xs text-emerald-500">
+            <p className="mt-3 text-xs text-muted-foreground">
               {t("settings_view.autostart.instant_start_active")}
             </p>
           )}

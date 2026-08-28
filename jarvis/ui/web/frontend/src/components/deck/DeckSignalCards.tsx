@@ -243,7 +243,7 @@ export function ApiStatsCard({ className }: { className?: string }) {
               </ul>
             )}
             {usage.lastCacheHit && (
-              <span className="font-mono text-[9px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+              <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
                 {t("deck.api_cache_hit")}
               </span>
             )}

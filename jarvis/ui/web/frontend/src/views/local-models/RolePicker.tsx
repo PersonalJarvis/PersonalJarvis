@@ -165,7 +165,7 @@ export function buildGroups(
 }
 
 const TONE_TEXT: Record<FitTone, string> = {
-  ok: "text-emerald-600 dark:text-emerald-400",
+  ok: "text-muted-foreground",
   warn: "text-foreground",
   bad: "text-destructive",
   muted: "text-muted-foreground",
@@ -267,7 +267,7 @@ export function RolePicker({
 
       {open && (
         <div
-          className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-border bg-card shadow-xl"
+          className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-border bg-card"
           data-testid={`role-picker-popover-${row.id}`}
         >
           <label className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">

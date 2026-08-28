@@ -220,7 +220,7 @@ function TrendTooltip(props: {
     metric === "cost" ? formatMoney(v, eurPerUsd, currency) : formatTokens(v);
 
   return (
-    <div className="min-w-[170px] rounded-lg border border-border bg-popover/95 px-3 py-2 text-xs shadow-xl backdrop-blur">
+    <div className="min-w-[170px] rounded-lg border border-border bg-popover/95 px-3 py-2 text-xs backdrop-blur">
       <div className="mb-1.5 font-medium text-foreground">
         {formatBucketFull(String(label ?? ""), bucket)}
       </div>

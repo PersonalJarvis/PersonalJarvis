@@ -138,7 +138,7 @@ export function QuickTooltip({
             }}
             className={cn(
               "pointer-events-none z-[70] rounded-lg border border-border/90 bg-card px-2.5 py-1.5",
-              "text-[11.5px] leading-snug text-foreground shadow-[0_10px_28px_-14px_rgba(0,0,0,0.85)]",
+              "text-[11.5px] leading-snug text-foreground",
               position && "animate-in fade-in-0 zoom-in-95 duration-100",
             )}
           >

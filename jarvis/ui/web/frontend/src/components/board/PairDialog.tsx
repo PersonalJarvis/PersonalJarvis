@@ -36,7 +36,7 @@ export function PairDialog({ onClose }: PairDialogProps) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl"
+        className="w-full max-w-md rounded-xl border border-border bg-card p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="mb-4 flex items-center gap-3">
@@ -146,7 +146,7 @@ export function PairDialog({ onClose }: PairDialogProps) {
               {t("pair_dialog.accept_button")}
             </button>
             {accept.data && (
-              <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2 text-xs text-emerald-200">
+              <div className="rounded-md border border-muted-foreground/30 bg-muted-foreground/5 p-2 text-xs text-muted-foreground">
                 {`${t("pair_dialog.paired_with")} ${accept.data.owner_display_name}.`}
               </div>
             )}

@@ -239,7 +239,7 @@ function FolderHeadline({ folder, subtitle }: { folder: string; subtitle: string
   const t = useT();
   return (
     <div className="flex flex-col items-center text-center" data-testid="chat-folder-headline">
-      <h1 className="flex items-center gap-3 font-display text-3xl font-semibold tracking-tight text-foreground [text-wrap:balance]">
+      <h1 className="flex items-center gap-3 font-display text-3xl tracking-tight text-foreground [text-wrap:balance]">
         <FolderCode className="h-[30px] w-[30px] shrink-0 text-muted-foreground" aria-hidden />
         <span>{fill(t("agent_chat.empty_title_agent"), { folder: folderLeaf(folder) })}</span>
       </h1>

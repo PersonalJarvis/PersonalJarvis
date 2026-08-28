@@ -260,7 +260,7 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
               offline
             </span>
           ) : connected ? (
-            <span className="text-emerald-400">live</span>
+            <span className="text-muted-foreground">live</span>
           ) : (
             <span className="text-muted-foreground">{t("pty_terminal.connecting")}</span>
           )}

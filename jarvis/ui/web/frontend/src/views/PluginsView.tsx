@@ -1836,7 +1836,7 @@ function OAuthRedirectDialog({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <h2 className="font-display text-base font-semibold tracking-tight">
@@ -2011,7 +2011,7 @@ function DeviceCodeDialog({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <h2 className="font-display text-base font-semibold tracking-tight">
@@ -2065,7 +2065,7 @@ function DeviceCodeDialog({
                     e.preventDefault();
                     void openExternalUrl(verificationUriComplete ?? verificationUri);
                   }}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgb(var(--accent-rgb)/0.4)]"
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
                 >
                   Open {pluginName}
                   <ExternalLink className="h-3 w-3" />
@@ -2203,7 +2203,7 @@ export function PkceConnectDialog({
         if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card">
         <header className="flex items-center gap-3 border-b border-border px-5 py-4">
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
             <img
@@ -2414,7 +2414,7 @@ function DisconnectConfirmDialog({
         if (e.target === e.currentTarget && !isPending) onCancel();
       }}
     >
-      <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+      <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
@@ -2557,7 +2557,7 @@ export function PatConnectDialog({
         if (e.target === e.currentTarget && !isPending) onClose();
       }}
     >
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
@@ -2604,7 +2604,7 @@ export function PatConnectDialog({
                 e.preventDefault();
                 void openExternalUrl(auth.token_creation_url);
               }}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgb(var(--accent-rgb)/0.4)]"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
             >
               Open {plugin.name} tokens
               <ExternalLink className="h-3 w-3" />
@@ -2708,7 +2708,7 @@ export function PatConnectDialog({
             type="button"
             onClick={submit}
             disabled={!canSubmit}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgb(var(--accent-rgb)/0.4)] disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isPending ? (
               <>

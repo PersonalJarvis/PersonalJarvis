@@ -16,7 +16,7 @@ import { useMissionsStore } from "./store";
 const ACTOR_COLOR: Record<string, string> = {
   hauptjarvis: "text-primary",
   kontrollierer: "text-sky-300",
-  worker: "text-emerald-300",
+  worker: "text-muted-foreground",
   critic: "text-purple-300",
   ui: "text-muted-foreground",
   system: "text-muted-foreground",

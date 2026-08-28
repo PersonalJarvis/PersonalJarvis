@@ -119,7 +119,7 @@ function FeedRow({
         <span>{new Date(item.created_at).toLocaleString("de-DE")}</span>
         <span>·</span>
         <span className={cn(
-          item.visibility === "public" && "text-emerald-300",
+          item.visibility === "public" && "text-muted-foreground",
           item.visibility === "private" && "text-foreground",
         )}>{item.visibility}</span>
       </header>

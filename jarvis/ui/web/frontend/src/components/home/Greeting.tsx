@@ -32,7 +32,7 @@ export function Greeting({
       )}
       data-testid="home-greeting"
     >
-      <h1 className="flex items-center gap-3 font-display text-3xl font-semibold tracking-tight text-foreground [text-wrap:balance]">
+      <h1 className="flex items-center gap-3 font-display text-3xl tracking-tight text-foreground [text-wrap:balance]">
         <img
           src="/jarvis-logo.png"
           width={30}

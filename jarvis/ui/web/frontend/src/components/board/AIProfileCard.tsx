@@ -110,7 +110,7 @@ export function AIProfileCard() {
               kind="trifft"
               icon={<Check className="h-3 w-3" />}
               label={t("board_view.feedback_correct")}
-              colorClass="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+              colorClass="border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20"
               active={lastFeedback === "trifft"}
               disabled={feedback.isPending}
               onClick={() => handleFeedback("trifft")}

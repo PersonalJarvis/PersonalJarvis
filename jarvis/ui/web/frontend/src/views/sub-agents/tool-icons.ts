@@ -69,7 +69,7 @@ export function getToolAppearance(
       label: "Shell",
       bg: "bg-zinc-900",
       ring: "ring-zinc-600",
-      iconColor: "text-emerald-300",
+      iconColor: "text-muted-foreground",
     };
   }
 
@@ -87,17 +87,17 @@ export function getToolAppearance(
       return {
         Icon: Code2,
         label: "Codex",
-        bg: "bg-emerald-950",
-        ring: "ring-emerald-500",
-        iconColor: "text-emerald-300",
+        bg: "bg-muted-foreground",
+        ring: "ring-muted-foreground",
+        iconColor: "text-muted-foreground",
       };
     }
     return {
       Icon: Server,
       label: "Harness",
-      bg: "bg-emerald-950",
-      ring: "ring-emerald-500",
-      iconColor: "text-emerald-300",
+      bg: "bg-muted-foreground",
+      ring: "ring-muted-foreground",
+      iconColor: "text-muted-foreground",
     };
   }
 
@@ -181,9 +181,9 @@ export function getToolAppearance(
       return {
         Icon: Music,
         label: "Spotify",
-        bg: "bg-emerald-950",
-        ring: "ring-emerald-500",
-        iconColor: "text-emerald-400",
+        bg: "bg-muted-foreground",
+        ring: "ring-muted-foreground",
+        iconColor: "text-muted-foreground",
       };
     }
     if (matches(args, "github")) {

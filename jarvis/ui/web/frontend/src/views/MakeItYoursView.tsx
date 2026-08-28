@@ -518,7 +518,7 @@ function AgentCard({
           <span className="font-medium">{agent.display_name}</span>
         </div>
         {agent.installed ? (
-          <span className="flex items-center gap-1 text-xs text-emerald-400">
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
             <Check className="h-3.5 w-3.5" />
             {agent.version ?? t("make_it_yours.installed")}
           </span>

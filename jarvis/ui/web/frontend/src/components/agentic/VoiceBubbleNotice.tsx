@@ -56,7 +56,7 @@ const KINDS: Record<
   completed: {
     key: "agentic_grid.notifications.kind_completed",
     icon: CheckCircle2,
-    tone: "text-emerald-400",
+    tone: "text-muted-foreground",
   },
   needs_input: {
     key: "agentic_grid.notifications.kind_needs_input",
@@ -158,7 +158,7 @@ export function VoiceBubbleNotice({
       className={cn(
         "pointer-events-auto flex w-full shrink-0 items-center gap-2.5",
         "rounded-2xl border border-border/50 bg-background/90 px-3 py-2.5",
-        "text-left shadow-xl backdrop-blur",
+        "text-left backdrop-blur",
       )}
     >
       {onJump ? (

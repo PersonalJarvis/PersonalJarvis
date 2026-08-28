@@ -79,7 +79,7 @@ function Mark({ tone }: { tone: Tone }) {
   if (tone === "fail") return <X className="h-3 w-3 text-destructive" />;
   if (tone === "ask")
     return <span className="h-1.5 w-1.5 rounded-full bg-foreground" />;
-  return <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />;
+  return <Check className="h-3 w-3 text-muted-foreground" />;
 }
 
 function StepRow({

@@ -201,7 +201,7 @@ export function ToolApprovalPanel({
             <article
               key={approval.trace_id}
               className={cn(
-                "rounded-lg border bg-card/50 p-3 shadow-sm",
+                "rounded-lg border bg-card/50 p-3",
                 expired
                   ? "border-border/60 opacity-70"
                   : "border-foreground/40",
@@ -410,7 +410,7 @@ function riskClassName(riskTier: string): string {
     case "monitor":
       return "border-sky-400/50 bg-sky-400/10 text-sky-300";
     default:
-      return "border-emerald-400/50 bg-emerald-400/10 text-emerald-300";
+      return "border-muted-foreground/50 bg-muted-foreground/10 text-muted-foreground";
   }
 }
 

@@ -36,7 +36,7 @@ import {
 } from "@/hooks/useOutputs";
 
 const STATUS_BADGE: Record<OutputStatus, string> = {
-  success: "border-emerald-400/40 bg-emerald-400/10 text-emerald-400",
+  success: "border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground",
   error: "border-destructive/40 bg-destructive/10 text-destructive",
   running: "border-primary/40 bg-primary/10 text-primary",
   // Deliberate user abort — amber, not the destructive red of a failure.

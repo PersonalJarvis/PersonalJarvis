@@ -176,7 +176,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
         {/* User */}
         {turn.user_text && (
           <div className="space-y-1">
-            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-emerald-400">
+            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
               <Mic2 className="h-3 w-3" />
               User
               <Badge variant="secondary" className="ml-1 text-[9px]">
@@ -194,7 +194,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
                 </Badge>
               )}
             </div>
-            <div className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-emerald-400/20 bg-emerald-400/5 p-2 text-sm [overflow-wrap:anywhere]">
+            <div className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-muted-foreground/20 bg-muted-foreground/5 p-2 text-sm [overflow-wrap:anywhere]">
               {polished ?? turn.user_text}
             </div>
             {/* The original is never more than one click away. A transcript is

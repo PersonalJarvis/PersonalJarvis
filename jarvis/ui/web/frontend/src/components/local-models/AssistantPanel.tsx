@@ -544,7 +544,7 @@ export function AssistantPanel({
         <div className="mx-auto w-full max-w-[46rem]">
           <form
             className={cn(
-              "flex items-end gap-2 rounded-2xl border border-border bg-background px-2.5 py-2 shadow-sm",
+              "flex items-end gap-2 rounded-2xl border border-border bg-background px-2.5 py-2",
               "transition-colors focus-within:border-primary/60",
               !activeSessionId && "opacity-60",
             )}

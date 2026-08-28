@@ -127,7 +127,7 @@ function TrendTooltip(props: {
   const you = payload.find((p) => p.dataKey === "you")?.value ?? 0;
   const jarvis = payload.find((p) => p.dataKey === "jarvis")?.value ?? 0;
   return (
-    <div className="rounded-lg border border-sheen/10 bg-[#0c0c0c]/95 px-3 py-2 text-xs shadow-xl backdrop-blur">
+    <div className="rounded-lg border border-sheen/10 bg-[#0c0c0c]/95 px-3 py-2 text-xs backdrop-blur">
       <div className="mb-1.5 font-medium text-foreground">{fmtFull(label)}</div>
       <Row color={TREND_YOU} label={t("board_view.hero.you_spoke")} value={you} />
       <Row color={TREND_JARVIS} label={t("board_view.hero.jarvis_spoke")} value={jarvis} />

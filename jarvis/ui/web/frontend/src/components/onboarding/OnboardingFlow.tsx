@@ -182,7 +182,7 @@ export function OnboardingFlow({
                   .replace("{1}", String(steps.length).padStart(2, "0"))}
               </span>
             </p>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground [text-wrap:balance] sm:text-3xl xl:text-4xl">
+            <h1 className="mt-2 text-2xl tracking-tight text-foreground [text-wrap:balance] sm:text-3xl xl:text-4xl">
               {title}
             </h1>
             <p className="mt-2 max-w-3xl text-[15px] leading-relaxed text-muted-foreground xl:text-base">

@@ -182,7 +182,7 @@ function SummaryBar({
         value={String(summary?.total ?? jobCount)}
       />
       <StatChip
-        icon={<Play className="h-3.5 w-3.5 text-emerald-400" />}
+        icon={<Play className="h-3.5 w-3.5 text-muted-foreground" />}
         label={t("conductor_view.stat_active")}
         value={String(summary?.enabled ?? 0)}
       />
@@ -373,7 +373,7 @@ function TimelineRow({
           : Clock;
   const color =
     run.state === "completed"
-      ? "text-emerald-400"
+      ? "text-muted-foreground"
       : run.state === "failed"
         ? "text-destructive"
         : run.state === "running"
@@ -514,7 +514,7 @@ function JobEditorModal({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="flex max-h-[80vh] w-[min(860px,90vw)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
+        className="flex max-h-[80vh] w-[min(860px,90vw)] flex-col overflow-hidden rounded-xl border border-border bg-card"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3">

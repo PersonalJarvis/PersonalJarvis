@@ -64,7 +64,7 @@ export function OpenWithDialog({
       role="presentation"
     >
       <div
-        className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-xl"
+        className="w-full max-w-sm rounded-xl border border-border bg-card p-5"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

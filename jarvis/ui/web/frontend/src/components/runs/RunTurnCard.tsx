@@ -111,8 +111,8 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
 
         {/* User */}
         {turn.user_text && (
-          <Block icon={<Mic2 className="h-3 w-3" />} label="User" accent="text-emerald-400"
-                 box="border-emerald-400/20 bg-emerald-400/5">
+          <Block icon={<Mic2 className="h-3 w-3" />} label="User" accent="text-muted-foreground"
+                 box="border-muted-foreground/20 bg-muted-foreground/5">
             {turn.user_text}
           </Block>
         )}

@@ -347,7 +347,7 @@ export function PaneRecap({
             }}
             className={cn(
               "z-[60] flex max-h-[70vh] flex-col gap-3 rounded-xl border border-border/90 bg-card p-4 text-left",
-              "shadow-[0_18px_48px_-22px_rgba(0,0,0,0.85)]",
+              "",
               "animate-in fade-in-0 zoom-in-95 duration-150",
               anchor.placement === "below"
                 ? "slide-in-from-top-1"

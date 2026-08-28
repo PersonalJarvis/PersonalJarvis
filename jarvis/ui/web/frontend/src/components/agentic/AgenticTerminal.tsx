@@ -2405,7 +2405,7 @@ export function AgenticTerminal({
       </div>
       {(dragging || attaching) && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
-          <div className="flex items-center gap-2 rounded-xl border border-primary/50 bg-card px-4 py-2.5 text-sm shadow-lg">
+          <div className="flex items-center gap-2 rounded-xl border border-primary/50 bg-card px-4 py-2.5 text-sm">
             {attaching ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin text-primary" />

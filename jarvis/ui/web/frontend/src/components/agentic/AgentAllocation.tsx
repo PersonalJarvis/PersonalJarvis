@@ -455,7 +455,7 @@ export function AgentAllocation({
                 </Button>
                 <div
                   data-testid={`allocation-stepper-${agent.name}`}
-                  className="grid grid-cols-[2.5rem_6.5rem_2.5rem] items-center overflow-hidden rounded-control border border-border bg-background shadow-inner transition-colors focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/20"
+                  className="grid grid-cols-[2.5rem_6.5rem_2.5rem] items-center overflow-hidden rounded-control border border-border bg-background transition-colors focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/20"
                 >
                   <button
                     type="button"

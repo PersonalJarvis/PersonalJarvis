@@ -9,7 +9,7 @@ const DIATAXIS_VARIANTS: Record<DocDiataxis, string> = {
   reference:
     "bg-slate-500/15 text-slate-300 border-slate-500/30",
   explanation:
-    "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
+    "bg-muted-foreground/15 text-muted-foreground border-muted-foreground/30",
   troubleshooting:
     "bg-foreground/15 text-foreground border-foreground/30",
   adr:

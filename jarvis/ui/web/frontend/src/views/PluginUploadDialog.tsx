@@ -119,7 +119,7 @@ export function PluginUploadDialog({
         void collectDroppedFiles(event.dataTransfer).then(inspect);
       }}
     >
-      <div className="flex max-h-full w-[640px] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+      <div className="flex max-h-full w-[640px] flex-col overflow-hidden rounded-lg border border-border bg-card">
         <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
           <div>
             <h3 className="flex items-center gap-2 text-base font-semibold">

@@ -35,7 +35,7 @@ export function ScrollToEndButton({
       title={label}
       className={cn(
         "absolute -top-3 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center",
-        "rounded-full border border-border bg-card/95 text-muted-foreground shadow-md backdrop-blur",
+        "rounded-full border border-border bg-card/95 text-muted-foreground backdrop-blur",
         "transition-colors hover:border-primary/40 hover:text-foreground",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className,

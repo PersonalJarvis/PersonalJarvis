@@ -25,7 +25,7 @@ export function BackendConnectionSection() {
     <div className="rounded-lg border border-border bg-card/60 p-4">
       <header className="mb-3 flex items-center gap-2">
         {status.data?.enabled ? (
-          <PlugZap className="h-4 w-4 text-emerald-400" />
+          <PlugZap className="h-4 w-4 text-muted-foreground" />
         ) : (
           <Plug className="h-4 w-4 text-muted-foreground" />
         )}

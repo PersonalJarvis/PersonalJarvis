@@ -584,7 +584,7 @@ function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
           className={cn(
             "h-[7px] w-[7px] shrink-0 rounded-full",
             live
-              ? "bg-emerald-500 shadow-[0_0_0_3px_rgb(16_185_129/0.18)]"
+              ? "bg-muted-foreground shadow-[0_0_0_3px_rgb(16_185_129/0.18)]"
               : "bg-foreground",
           )}
         />
@@ -903,12 +903,12 @@ function CliTestControl({
           <span
             className={cn(
               "inline-flex items-center gap-1.5 text-xs",
-              result.ok ? "text-emerald-600 dark:text-emerald-400" : "text-foreground",
+              result.ok ? "text-muted-foreground" : "text-foreground",
             )}
           >
             <span
               aria-hidden="true"
-              className={cn("h-[7px] w-[7px] rounded-full", result.ok ? "bg-emerald-500" : "bg-foreground")}
+              className={cn("h-[7px] w-[7px] rounded-full", result.ok ? "bg-muted-foreground" : "bg-foreground")}
             />
             {result.message}
           </span>

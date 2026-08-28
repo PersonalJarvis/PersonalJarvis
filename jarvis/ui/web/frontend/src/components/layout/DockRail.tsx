@@ -287,7 +287,7 @@ export function DockRail({ className }: { className?: string }) {
               exit={{ opacity: 0, x: -4 }}
               transition={reduced ? { duration: 0 } : { duration: 0.12, ease: "easeOut" }}
               style={{ top: labelViewportTop, left: labelLeft, y: "-50%" }}
-              className="pointer-events-none fixed z-[70] flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-background/95 px-2 py-1 text-xs text-foreground shadow-md backdrop-blur"
+              className="pointer-events-none fixed z-[70] flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-background/95 px-2 py-1 text-xs text-foreground backdrop-blur"
             >
               {resolveNavLabel(t, hoveredItem)}
               {hoveredItem.beta && (

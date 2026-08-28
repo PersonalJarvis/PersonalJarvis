@@ -40,7 +40,7 @@ export function DocsOverview({ onSelect }: Props) {
           <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
           {t("docs_overview.eyebrow")}
         </div>
-        <h1 className="text-3xl font-semibold tracking-tight text-foreground lg:text-4xl">
+        <h1 className="text-3xl tracking-tight text-foreground lg:text-4xl">
           {t("docs_overview.title")}
         </h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">

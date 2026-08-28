@@ -381,7 +381,7 @@ function SelectedFile({
               className={iconBtn}
             >
               {copied ? (
-                <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                <Check className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
               ) : (
                 <Copy className="h-3.5 w-3.5" aria-hidden="true" />
               )}
@@ -522,7 +522,7 @@ function ArtifactBody({
         <img
           src={artifactInlineUrl(slug, file.path)}
           alt={deliverableDisplayPath(file.path)}
-          className="max-h-full max-w-full rounded-md shadow-sm"
+          className="max-h-full max-w-full rounded-md"
         />
       </div>
     );

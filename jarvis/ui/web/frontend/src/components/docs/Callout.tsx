@@ -18,7 +18,7 @@ const VARIANTS: Record<CalloutType, { className: string; icon: typeof Info }> = 
   },
   tip: {
     className:
-      "border-l-emerald-500/60 bg-emerald-500/10 text-emerald-100",
+      "border-l-emerald-500/60 bg-muted-foreground/10 text-muted-foreground",
     icon: Lightbulb,
   },
   note: {

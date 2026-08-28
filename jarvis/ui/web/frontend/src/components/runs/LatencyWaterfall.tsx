@@ -1,7 +1,7 @@
 import type { LatencyEntry } from "./types";
 
 const BAR: Record<string, string> = {
-  ok: "bg-emerald-400/70", warn: "bg-foreground/80", breach: "bg-destructive/80",
+  ok: "bg-muted-foreground/70", warn: "bg-foreground/80", breach: "bg-destructive/80",
 };
 
 export function LatencyWaterfall({ entries }: { entries: LatencyEntry[] }) {

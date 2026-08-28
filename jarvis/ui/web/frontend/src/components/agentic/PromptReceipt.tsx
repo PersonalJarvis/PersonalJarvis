@@ -209,7 +209,7 @@ export function PromptReceipt({
   const verdict =
     submitted === true
       ? {
-          icon: <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" />,
+          icon: <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />,
           label: "Prompt sent",
           note: "the agent took it and started",
         }

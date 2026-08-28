@@ -305,7 +305,7 @@ function ConversationRow({
         <Icon
           className={cn(
             "mt-0.5 h-3.5 w-3.5 shrink-0",
-            isVoice ? "text-emerald-400" : "text-primary/80",
+            isVoice ? "text-muted-foreground" : "text-primary/80",
           )}
         />
         <span className="min-w-0 flex-1">
@@ -483,7 +483,7 @@ function EmptyState() {
         <MascotGigi size={96} reactToVoice enableComments={false} />
       </div>
       <h3
-        className="profile-rise font-display text-3xl font-semibold tracking-tight text-foreground sm:text-4xl"
+        className="profile-rise font-display text-3xl tracking-tight text-foreground sm:text-4xl"
         style={{ animationDelay: "80ms" }}
       >
         {warming ? t("chats_view.warming_title") : t("chats_view.empty_title")}

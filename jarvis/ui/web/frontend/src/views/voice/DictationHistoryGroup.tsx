@@ -242,7 +242,7 @@ function HistoryRow({
           className="rounded p-1 text-muted-foreground transition hover:text-foreground"
         >
           {copied ? (
-            <Check className="h-3.5 w-3.5 text-emerald-500" />
+            <Check className="h-3.5 w-3.5 text-muted-foreground" />
           ) : (
             <Copy className="h-3.5 w-3.5" />
           )}

@@ -100,7 +100,7 @@ const KINDS: Record<
   completed: {
     key: "agentic_grid.notifications.kind_completed",
     icon: CheckCircle2,
-    tone: "text-emerald-400",
+    tone: "text-muted-foreground",
   },
   needs_input: {
     key: "agentic_grid.notifications.kind_needs_input",
@@ -350,7 +350,7 @@ export function PaneNotifications({ onJump, onScreen = true }: PaneNotifications
               width: anchor.width,
               maxHeight: anchor.maxHeight,
             }}
-            className="z-[60] flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
+            className="z-[60] flex flex-col overflow-hidden rounded-xl border border-border bg-card"
           >
             <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
               <Bell className="h-4 w-4 shrink-0 text-muted-foreground" />

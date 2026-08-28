@@ -406,7 +406,7 @@ export function InventoryPanel({ providerId }: InventoryPanelProps) {
           className={cn(
             "text-sm",
             notice.tone === "ok"
-              ? "text-emerald-600 dark:text-emerald-400"
+              ? "text-muted-foreground"
               : "text-destructive",
           )}
           data-testid="inventory-notice"

@@ -145,7 +145,7 @@ export function PromptHistoryButton({
           className={cn(
             "fixed left-1/2 top-1/2 z-[90] flex max-h-[82dvh] w-[min(940px,calc(100vw-2rem))]",
             "-translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border",
-            "bg-card shadow-[0_28px_90px_-24px_rgba(0,0,0,0.75)] outline-none",
+            "bg-card outline-none",
             "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none",
           )}
         >
@@ -260,7 +260,7 @@ export function PromptHistoryButton({
                         copyState === "failed"
                           ? "border-destructive/40 text-destructive"
                           : copyState === "copied"
-                            ? "border-emerald-500/30 text-emerald-500"
+                            ? "border-muted-foreground/30 text-muted-foreground"
                             : "border-border text-foreground hover:border-primary/40 hover:bg-primary/10",
                       )}
                     >
@@ -321,7 +321,7 @@ function HistoryRow({
         className={cn(
           "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
           item.submitted === true
-            ? "bg-emerald-500"
+            ? "bg-muted-foreground"
             : item.submitted === false
               ? "bg-foreground"
               : "bg-muted-foreground",
