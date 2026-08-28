@@ -160,7 +160,10 @@ async def _inventory(root: str) -> Check:
     try:
         snapshot = await inventory.cached_snapshot(root)
     except Exception as exc:  # noqa: BLE001 — an unreachable server is a verdict, not a crash
-        return Check("inventory", FAIL, f"The server at {root} did not answer: {exc}", {})
+        # WARN, not FAIL: a stopped server is the NORMAL state of a fresh user
+        # PC, and this script's whole point is to run there. A failure has to
+        # mean "something is wrong", or nobody reads the failures.
+        return Check("inventory", WARN, f"The server at {root} did not answer: {exc}", {})
     visible = [m.name for m in snapshot.models]
     hidden = sorted(set(snapshot.all_names) - set(visible))
     facts = {"visible": len(visible), "hidden_aliases": hidden, "server": root}
@@ -187,6 +190,8 @@ async def _roles(root: str, cfg: Any) -> Check:
         states, error = await ollama_roles.list_roles(root, cfg)
     except Exception as exc:  # noqa: BLE001 — report, never raise out of a preflight
         return Check("roles", FAIL, f"The role list could not be built: {exc}", {})
+    # A slot pointing at a model the server does not list is only a defect when
+    # the server ANSWERED; an unreachable one lists nothing by definition.
     rows = [
         {
             "id": s.spec.id,
@@ -226,8 +231,14 @@ async def _card_parity(root: str) -> Check:
 
     try:
         snapshot = await inventory.cached_snapshot(root)
-    except Exception as exc:  # noqa: BLE001 — already reported by the inventory check
-        return Check("card-parity", FAIL, f"The server at {root} did not answer: {exc}", {})
+    except Exception:  # noqa: BLE001 — already reported by the inventory check
+        return Check(
+            "card-parity",
+            WARN,
+            "Not checked: the server did not answer, so neither surface has a "
+            "list to compare. Start it and run this again.",
+            {},
+        )
     visible = {m.name for m in snapshot.models}
     offered_by_card = {n for n in snapshot.all_names if not n.endswith(":cloud")}
     only_on_card = sorted(offered_by_card - visible)
