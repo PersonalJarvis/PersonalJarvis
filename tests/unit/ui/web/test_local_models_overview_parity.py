@@ -132,8 +132,12 @@ def test_the_route_answers_live_then_the_cache(server: WebServer, fake, tmp_path
         assert forced["source"] == "live"
         assert forced["server"]["running"] is False
         assert "did not answer" in forced["inventory"]["error"]
+    # The offline sweep is a truthful answer NOW but a ruinous head start
+    # later, so `is_paintable` keeps it off disk: the last honest snapshot
+    # survives the outage that would otherwise wipe it (BUG-188).
     saved = json.loads((tmp_path / ollama_overview.SNAPSHOT_FILE_NAME).read_text("utf-8"))
-    assert saved["payload"]["server"]["running"] is False
+    assert saved["payload"]["server"]["running"] is True
+    assert saved["payload"]["inventory"]["disk_bytes"] == 3_400_000_000
 
 
 def test_the_overview_refuses_cards_without_a_pull_api(server: WebServer, fake) -> None:
