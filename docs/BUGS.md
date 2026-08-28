@@ -14425,6 +14425,30 @@ effect without a restart.
 it is a deliberate setting, and the idle release now returns what it borrows.
 An install that wants no local voice at all clears the fallback.
 
+**The switch, same session.** In the maintainer's words: "you need a switch
+between ON and OFF that simply works when you turn it off." The Server tab's
+switch only decided what the NEXT launch would do, which is why turning it off
+changed nothing on the card. It now applies what it persists:
+
+- `PUT /runtime/autostart` — off stops the managed voice server, unloads every
+  resident model and stops the local server; on readies it the way picking the
+  local brain does. One click is the whole gesture in both directions.
+- `supervisor.ensure_running` refuses an ambient spawn while the switch is off
+  (`refused:local-models-off`). An ACTIVE choice still wins, so picking the
+  local card is still "on" — but a realtime FALLBACK can no longer pull a
+  5.4 GB speech stack onto the card behind a hosted voice, which is exactly how
+  this one got there.
+- `should_autostart` names the one case where off cannot mean gone: the active
+  brain IS the local server, so switching local models off would leave nothing
+  to answer on. The sentence says so instead of leaving a resident model
+  unexplained.
+- The control reads "Local models on" in all three locales, and its description
+  says what off does now.
+
+**Measured on the maintainer's machine.** Graphics memory 15.7 GB → 3.2 GB of
+16.3 after the switch-off path ran: the managed voice server, both resident
+models and the local server all gone, with a hosted voice still answering.
+
 **Related.** BUG-174 (the other local-models defect whose symptom was "voice on
 local models is unusably slow after a restart" — same stack, different half).
 
