@@ -1,14 +1,18 @@
-"""The jarvis-bar's idle LEFT control is the Prompt Mode switch.
+"""The jarvis-bar's idle LEFT control: pause Prompt Mode, and bring it back.
 
-Maintainer request 2026-08-28: "when Prompt Mode is on, the bar should offer
-a way to switch it off when I hover over it." The sparkle takes the close-X's
-slot on the resting pill — lit in the accent while every dictation becomes a
-prompt, visible at a glance without a hover (the pill opens like it does for
-mute), dim while off and only drawn while the controls are up. A click on it
-fires the wired ``_on_prompt_mode_toggle`` (the OrbBusBridge points it at
-``DictationPromptModeToggleRequested``) and optimistically flips the local
-mirror; the authoritative ``DictationPromptModeChanged`` is reconciled via
-``set_prompt_mode``, exactly like the mute button.
+Two levels, because the maintainer asked for two (2026-08-28). The SETTING
+lives in jarvis.toml and belongs to the settings card and the front-page
+pill; with it off the bar draws nothing at all. The PAUSE is the bar's own,
+runtime-only: the sparkle is there while the setting is on, a click holds the
+rewriting only until the same button is pressed again, and the mark takes a
+red slash — the muted mic's language — so that second click is obvious. The
+setting is never written from here, which is the whole point: the first
+version turned it off for good, and then there was no way back.
+
+A click fires the wired ``_on_prompt_mode_toggle`` (the OrbBusBridge points
+it at ``DictationPromptModePauseToggleRequested``) and optimistically flips
+the local mirror; the authoritative ``DictationPromptModeChanged`` carries
+both levels and is reconciled via ``set_prompt_mode``, exactly like mute.
 
 Every surface carries the same two methods (the Tk bar, the Qt bar, the IPC
 proxy, the null surface) and the host protocol carries the op and the event —
@@ -16,6 +20,8 @@ pinned here so no renderer can silently lack the control.
 """
 
 from __future__ import annotations
+
+import pytest
 
 from jarvis.ui.jarvisbar import host, interaction
 from jarvis.ui.jarvisbar import renderer as R
@@ -133,9 +139,12 @@ def test_a_live_bar_keeps_the_close_x_untouched() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_sparkle_click_fires_toggle_and_optimistically_clears(monkeypatch) -> None:
+def test_the_click_pauses_and_a_second_click_brings_it_back(monkeypatch) -> None:
+    """The headline. The first version switched the setting off, the sparkle
+    vanished with it, and the mode could not be brought back from the bar at
+    all — which is exactly what the maintainer reported."""
     bar = JarvisBarOverlay()
-    bar.set_prompt_mode(True)  # the only state in which the sparkle exists
+    bar.set_prompt_mode(True)  # the setting; the sparkle exists only then
     fired: list[int] = []
     bar.set_on_prompt_mode_toggle(lambda: fired.append(1))
     fake = _FakePipeline()
@@ -143,31 +152,34 @@ def test_sparkle_click_fires_toggle_and_optimistically_clears(monkeypatch) -> No
 
     bar._on_click(_sparkle_x(), hovered=True)
     assert fired == [1]
-    assert bar._prompt_mode is False  # optimistic flip → the sparkle goes
-    assert fake.session_calls == 0  # the switch is not a session start
+    assert bar._prompt_mode_paused is True  # struck through on the next frame
+    assert bar._prompt_mode is True, "the SETTING must survive a pause"
+    assert fake.session_calls == 0  # the control is not a session start
 
-    # ...and with the mode off the same spot is ordinary bar again.
     bar._on_click(_sparkle_x(), hovered=True)
-    assert fired == [1]
-    assert fake.session_calls == 1
+    assert fired == [1, 1]
+    assert bar._prompt_mode_paused is False  # ...and back, in one click
+    assert bar._prompt_mode is True
 
 
-def test_no_callback_means_no_false_flip(monkeypatch) -> None:
-    """A boot-race click before the bridge wired the toggle must not clear the
-    sparkle with nothing behind it (mirrors the mute button's rule)."""
+def test_no_callback_means_no_false_pause(monkeypatch) -> None:
+    """A boot-race click before the bridge wired the toggle must not strike the
+    sparkle through with nothing behind it (mirrors the mute button's rule)."""
     bar = JarvisBarOverlay()
     bar.set_prompt_mode(True)
     _patch_pipeline(monkeypatch, _FakePipeline())
     bar._on_click(_sparkle_x(), hovered=True)
-    assert bar._prompt_mode is True
+    assert bar._prompt_mode_paused is False
 
 
-def test_set_prompt_mode_mirrors_the_authoritative_value() -> None:
+def test_set_prompt_mode_mirrors_both_levels() -> None:
     bar = JarvisBarOverlay()
     bar.set_prompt_mode(True)
-    assert bar._prompt_mode is True
+    assert (bar._prompt_mode, bar._prompt_mode_paused) == (True, False)
+    bar.set_prompt_mode(True, True)
+    assert (bar._prompt_mode, bar._prompt_mode_paused) == (True, True)
     bar.set_prompt_mode(0)
-    assert bar._prompt_mode is False
+    assert (bar._prompt_mode, bar._prompt_mode_paused) == (False, False)
 
 
 # --------------------------------------------------------------------------- #
@@ -253,14 +265,43 @@ def test_prompt_mode_is_visible_on_the_resting_bar() -> None:
     assert _warmth(ink) < _warmth([(231, 196, 110)])
 
 
-def test_no_part_of_the_sparkle_is_drawn_outside_the_pill() -> None:
+def test_the_paused_sparkle_is_red_and_struck_through() -> None:
+    """The maintainer asked for the muted mic's language, and for the reason
+    it works: he already knows that mark means "off right now, click to bring
+    it back". So the paused state is the same glyph in MUTED_RED with a slash
+    across it, not a second icon to learn."""
+    on = _settled(prompt_mode=True)
+    paused = _settled(prompt_mode=True, prompt_mode_paused=True)
+    changed = _differing(on, paused)
+    assert changed, "pausing must change what the bar draws"
+
+    # Warm gold → red: the red channel holds, the green drops away.
+    def greenness(pixels) -> float:
+        return sum(p[1] for p in pixels) / max(1, len(pixels))
+
+    assert greenness([q for _, q in changed]) < greenness([p for p, _ in changed])
+
+    # The slash adds ink rather than removing it.
+    def ink(img) -> int:
+        arr = R.key_to_alpha(img)
+        return sum(
+            1
+            for r, g, b, a in arr.get_flattened_data()
+            if a and (r, g, b) not in (R.PILL_BG, R.PILL_BORDER)
+        )
+
+    assert ink(paused) > ink(on)
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_no_part_of_the_sparkle_is_drawn_outside_the_pill(paused: bool) -> None:
     """The defect the maintainer photographed: the mark's tips crossed the rim
     and drew onto the colour key, so the bar wore a magenta fleck and a star
     that looked like a stray artefact instead of a control. Every pixel the
     switch adds must land inside the pill — with room to spare, because the 4x
     LANCZOS downscale rings a pixel or two past the shape it drew."""
     off = R.key_to_alpha(_settled())
-    on = R.key_to_alpha(_settled(prompt_mode=True))
+    on = R.key_to_alpha(_settled(prompt_mode=True, prompt_mode_paused=paused))
     ph = float(R.OPEN_H)
     cy = R.pill_center_y(ph)
     top, bottom = cy - ph / 2.0, cy + ph / 2.0
@@ -288,14 +329,15 @@ class _RecordingSurface:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
 
-    def set_prompt_mode(self, enabled: bool) -> None:
-        self.calls.append(("set_prompt_mode", enabled))
+    def set_prompt_mode(self, enabled: bool, paused: bool = False) -> None:
+        self.calls.append(("set_prompt_mode", enabled, paused))
 
 
 def test_host_dispatches_the_set_prompt_mode_op() -> None:
     surface = _RecordingSurface()
-    assert host.dispatch(surface, {"op": "set_prompt_mode", "enabled": True}) is True
-    assert ("set_prompt_mode", True) in surface.calls
+    msg = {"op": "set_prompt_mode", "enabled": True, "paused": True}
+    assert host.dispatch(surface, msg) is True
+    assert ("set_prompt_mode", True, True) in surface.calls
 
 
 def test_the_null_surface_accepts_both_methods() -> None:

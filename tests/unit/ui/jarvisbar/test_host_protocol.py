@@ -45,8 +45,8 @@ class _RecordingBar:
     def set_muted(self, muted: bool) -> None:
         self.calls.append(("set_muted", muted))
 
-    def set_prompt_mode(self, enabled: bool) -> None:
-        self.calls.append(("set_prompt_mode", enabled))
+    def set_prompt_mode(self, enabled: bool, paused: bool = False) -> None:
+        self.calls.append(("set_prompt_mode", enabled, paused))
 
     def set_size_scale(self, scale: float) -> None:
         self.calls.append(("set_size_scale", scale))
@@ -114,7 +114,7 @@ def test_dispatch_maps_every_op_onto_the_surface() -> None:
         {"op": "hide"},
         {"op": "set_level", "level": 0.5},
         {"op": "set_muted", "muted": True},
-        {"op": "set_prompt_mode", "enabled": True},
+        {"op": "set_prompt_mode", "enabled": True, "paused": True},
         {"op": "set_size_scale", "scale": 1.4},
         {"op": "set_persistent", "enabled": False},
         {"op": "release_startup_gate"},
@@ -133,7 +133,7 @@ def test_dispatch_maps_every_op_onto_the_surface() -> None:
     assert ("show", "listen") in bar.calls
     assert ("set_level", 0.5) in bar.calls
     assert ("set_muted", True) in bar.calls
-    assert ("set_prompt_mode", True) in bar.calls
+    assert ("set_prompt_mode", True, True) in bar.calls
     assert ("set_size_scale", 1.4) in bar.calls
     assert ("play_animation", "wave", {"x": 1}) in bar.calls
     assert ("show_listening_transcript", "hi", 9) in bar.calls

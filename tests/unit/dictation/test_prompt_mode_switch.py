@@ -19,7 +19,12 @@ import pytest
 
 from jarvis.core import config_writer
 from jarvis.core.events import DictationPromptModeChanged
-from jarvis.dictation.prompt_mode_switch import announce_prompt_mode, apply_prompt_mode
+from jarvis.dictation import prompt_mode
+from jarvis.dictation.prompt_mode_switch import (
+    announce_prompt_mode,
+    apply_prompt_mode,
+    toggle_prompt_mode_pause,
+)
 
 
 class _Bus:
@@ -32,6 +37,14 @@ class _Bus:
 
 class _Cfg:
     prompt_mode = False
+
+
+@pytest.fixture(autouse=True)
+def _no_pause() -> Any:
+    """Process-wide module state; never leak it between tests."""
+    prompt_mode.set_prompt_mode_paused(False)
+    yield
+    prompt_mode.set_prompt_mode_paused(False)
 
 
 @pytest.mark.asyncio
@@ -95,3 +108,53 @@ async def test_a_broken_bus_never_breaks_the_flip(monkeypatch: pytest.MonkeyPatc
     cfg = _Cfg()
     assert await apply_prompt_mode(False, dictation_cfg=cfg, bus=_DeadBus(), source="t")
     assert cfg.prompt_mode is False
+
+
+# --------------------------------------------------------------------------- #
+# The pause: the bar's hold, which is NOT a settings change
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_the_pause_never_touches_the_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The maintainer's report in one test: the bar must hold the feature, not
+    switch it off, or there is no way back to it from the bar."""
+
+    def _never(key: str, value: Any) -> None:
+        raise AssertionError("a pause must not write jarvis.toml")
+
+    monkeypatch.setattr(config_writer, "set_dictation_setting", _never)
+    bus, cfg = _Bus(), _Cfg()
+    cfg.prompt_mode = True
+
+    assert await toggle_prompt_mode_pause(cfg=cfg, bus=bus, source="jarvis_bar") is True
+    assert cfg.prompt_mode is True, "the setting survives the pause"
+    assert prompt_mode.prompt_mode_paused() is True
+    assert (bus.published[0].enabled, bus.published[0].paused) == (True, True)
+
+    assert await toggle_prompt_mode_pause(cfg=cfg, bus=bus, source="jarvis_bar") is False
+    assert prompt_mode.prompt_mode_paused() is False
+    assert (bus.published[1].enabled, bus.published[1].paused) == (True, False)
+
+
+@pytest.mark.asyncio
+async def test_there_is_nothing_to_pause_when_the_setting_is_off() -> None:
+    """No hold on a feature that is not running — and the bar draws no control
+    there either, so this is belt and braces."""
+    bus, cfg = _Bus(), _Cfg()  # prompt_mode stays False
+    assert await toggle_prompt_mode_pause(cfg=cfg, bus=bus, source="jarvis_bar") is False
+    assert prompt_mode.prompt_mode_paused() is False
+    assert bus.published == []
+
+
+@pytest.mark.asyncio
+async def test_writing_the_setting_clears_the_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A switch the user just turned on must not come back held down by a
+    click they made an hour ago."""
+    monkeypatch.setattr(config_writer, "set_dictation_setting", lambda key, value: None)
+    prompt_mode.set_prompt_mode_paused(True)
+    bus, cfg = _Bus(), _Cfg()
+
+    assert await apply_prompt_mode(True, dictation_cfg=cfg, bus=bus, source="settings")
+    assert prompt_mode.prompt_mode_paused() is False
+    assert bus.published[0].paused is False

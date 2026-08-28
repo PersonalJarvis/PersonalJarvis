@@ -517,6 +517,9 @@ class JarvisBarOverlay:
         # Mirror of ``[dictation].prompt_mode`` (the bridge keeps it current
         # from DictationPromptModeChanged): lights the idle pill's sparkle.
         self._prompt_mode = False
+        # ...and whether the bar is holding it (the sparkle's red slash).
+        # A runtime hold only: the setting on disk is untouched.
+        self._prompt_mode_paused = False
         # True only on a macOS root whose "-transparent" attribute took; the
         # frame loop then converts frames to RGBA (renderer.key_to_alpha).
         self._mac_transparent = False
@@ -623,14 +626,17 @@ class JarvisBarOverlay:
         atomic bool write — the frame loop reads it; no Tk marshal needed."""
         self._muted = bool(muted)
 
-    def set_prompt_mode(self, enabled: bool) -> None:
-        """Mirror ``[dictation].prompt_mode`` onto the bar's sparkle.
+    def set_prompt_mode(self, enabled: bool, paused: bool = False) -> None:
+        """Mirror ``[dictation].prompt_mode`` and its pause onto the sparkle.
 
         Called by OrbBusBridge on every DictationPromptModeChanged (from this
-        bar, the settings screen or the front-page pill), so the lit sparkle
-        and the switch behind it never disagree. Plain atomic bool write —
-        the frame loop reads it; no Tk marshal needed."""
+        bar, the settings screen or the front-page pill), so the sparkle and
+        the switch behind it never disagree. ``enabled`` is the setting —
+        false draws nothing at all; ``paused`` is this bar's runtime hold and
+        strikes the mark through in red. Plain atomic bool writes; the frame
+        loop reads them, no Tk marshal needed."""
         self._prompt_mode = bool(enabled)
+        self._prompt_mode_paused = bool(paused)
 
     def set_size_scale(self, scale: float) -> None:
         """Live-resize the bar to a new user "Bar size" multiplier.
@@ -1363,6 +1369,7 @@ class JarvisBarOverlay:
                 drop_visual,
                 silent,
                 getattr(self, "_prompt_mode", False),
+                getattr(self, "_prompt_mode_paused", False),
             )
             if tick_key != self._static_tick_key:
                 self._static_tick_key = tick_key
@@ -1388,6 +1395,7 @@ class JarvisBarOverlay:
                     hovered=self._hovered,
                     muted=self._muted,
                     prompt_mode=getattr(self, "_prompt_mode", False),
+                    prompt_mode_paused=getattr(self, "_prompt_mode_paused", False),
                     drop_state=drop_visual,
                     # Same getattr guard as the level stamp above, and for the
                     # same reason: a ``__new__``-built test/hot-reload instance
@@ -1950,16 +1958,19 @@ class JarvisBarOverlay:
                     cb()
                     self._muted = not self._muted
             elif action == "prompt_mode_toggle":
-                # The idle pill's sparkle: ask the parent to flip
-                # [dictation].prompt_mode (the pipeline owns the switch and
-                # answers with DictationPromptModeChanged → set_prompt_mode).
-                # Optimistic local flip for the next frame, only when a
-                # callback is wired — a boot-race click must not light a
-                # sparkle with nothing behind it.
+                # The idle pill's sparkle: ask the parent to PAUSE or resume
+                # Prompt Mode (the pipeline owns the hold and answers with
+                # DictationPromptModeChanged → set_prompt_mode). The setting
+                # itself is never touched here. Optimistic local flip for the
+                # next frame, only when a callback is wired — a boot-race
+                # click must not strike the mark through with nothing behind
+                # it.
                 cb = self._on_prompt_mode_toggle
                 if cb is not None:
                     cb()
-                    self._prompt_mode = not getattr(self, "_prompt_mode", False)
+                    self._prompt_mode_paused = not getattr(
+                        self, "_prompt_mode_paused", False
+                    )
             elif action == "hangup":
                 callback = self._on_hangup
                 if callback is not None:

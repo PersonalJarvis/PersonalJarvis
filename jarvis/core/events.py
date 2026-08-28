@@ -1006,14 +1006,18 @@ class VoiceMuteToggleRequested(Event):
 
 
 @dataclass(frozen=True, slots=True)
-class DictationPromptModeToggleRequested(Event):
-    """A surface asked for ``[dictation].prompt_mode`` to be flipped.
+class DictationPromptModePauseToggleRequested(Event):
+    """A surface asked to PAUSE or RESUME Prompt Mode — not to change it.
 
     Publishers: the Jarvis bar's sparkle control, forwarded by
-    ``ui/orb/bus_bridge.py``. Like ``VoiceMuteToggleRequested`` the caller does
-    not know the current value: the speech pipeline owns the flip in
-    ``_on_prompt_mode_toggle_requested`` (it holds the live dictation config)
-    and answers with ``DictationPromptModeChanged``.
+    ``ui/orb/bus_bridge.py``. The pause is a runtime hold with no home on
+    disk: ``[dictation].prompt_mode`` stays exactly as the user set it and the
+    settings card keeps showing it on, while dictations are delivered
+    unrewritten until the same control is clicked again (maintainer,
+    2026-08-28). Like ``VoiceMuteToggleRequested`` the caller does not know
+    the current value: the speech pipeline owns the flip in
+    ``_on_prompt_mode_pause_toggle_requested`` (it holds the live dictation
+    config) and answers with ``DictationPromptModeChanged``.
     """
     source: str = ""
 
@@ -1027,8 +1031,15 @@ class DictationPromptModeChanged(Event):
     surface asked — the settings screen, the bar's sparkle. Every mirror of
     the switch (the bar, the front-page pill, the settings card) redraws from
     this event, so no two of them can disagree about a value the user just set.
+
+    ``enabled`` is the SETTING on disk; ``paused`` is the runtime hold a
+    surface can put on it. Both travel together so no mirror has to ask a
+    second question to know what to draw: nothing at all when ``enabled`` is
+    false, the plain mark when it is true, the struck-through mark when it is
+    true and ``paused``.
     """
     enabled: bool = False
+    paused: bool = False
     source: str = ""
 
 

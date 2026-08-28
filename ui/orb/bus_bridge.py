@@ -39,7 +39,7 @@ from jarvis.core.events import (
     AudioOutFirst,
     DictationCompleted,
     DictationPromptModeChanged,
-    DictationPromptModeToggleRequested,
+    DictationPromptModePauseToggleRequested,
     DictationRefused,
     DictationStarted,
     DictationTranscribing,
@@ -496,14 +496,15 @@ class OrbBusBridge:
             log.debug("surface set_muted failed", exc_info=True)
 
     async def _on_prompt_mode_changed(self, event: DictationPromptModeChanged) -> None:
-        """Forward the authoritative Prompt Mode value to the current surface
-        so its sparkle mirrors reality. Defensive getattr: a surface without
+        """Forward the authoritative Prompt Mode state to the current surface
+        so its sparkle mirrors reality — both levels, the setting and the
+        runtime pause. Defensive getattr: a surface without
         ``set_prompt_mode`` (the mascot orb) is simply skipped."""
         setter = getattr(self._orb, "set_prompt_mode", None)
         if not callable(setter):
             return
         try:
-            setter(bool(event.enabled))
+            setter(bool(event.enabled), bool(event.paused))
         except Exception:  # noqa: BLE001 — a mirror update must never break the bus
             log.debug("surface set_prompt_mode failed", exc_info=True)
 
@@ -520,12 +521,16 @@ class OrbBusBridge:
             return
         try:
             from jarvis.core.runtime_refs import get_speech_pipeline
-            from jarvis.dictation.prompt_mode import prompt_mode_enabled
+            from jarvis.dictation.prompt_mode import (
+                prompt_mode_configured,
+                prompt_mode_paused,
+            )
 
             pipeline = get_speech_pipeline()
             if pipeline is None:
                 return
-            setter(prompt_mode_enabled(getattr(pipeline, "_dictation_cfg", None)))
+            cfg = getattr(pipeline, "_dictation_cfg", None)
+            setter(prompt_mode_configured(cfg), prompt_mode_paused())
         except Exception:  # noqa: BLE001 — a seed must never break the bridge
             log.debug("prompt mode seed onto the surface failed", exc_info=True)
 
@@ -533,8 +538,10 @@ class OrbBusBridge:
         """Called from the surface's UI thread when the sparkle is clicked.
         Same marshal as ``_publish_mute_toggle``; the pipeline flips the value
         and answers with ``DictationPromptModeChanged``."""
-        coro = self._bus.publish(DictationPromptModeToggleRequested(source="jarvis_bar"))
-        self._marshal_publish(coro, label="prompt-mode-toggle")
+        coro = self._bus.publish(
+            DictationPromptModePauseToggleRequested(source="jarvis_bar")
+        )
+        self._marshal_publish(coro, label="prompt-mode-pause")
 
     def _publish_visible_feedback(self, mode: str, observed: dict) -> None:
         """Called from the orb's Tk thread after a deiconify. Builds and

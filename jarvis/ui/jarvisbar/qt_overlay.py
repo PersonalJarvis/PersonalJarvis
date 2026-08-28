@@ -441,7 +441,8 @@ class QtJarvisBarOverlay:
         self._hovered = False
         # Mirror of ``[dictation].prompt_mode``: lights the idle pill's sparkle.
         self._prompt_mode = False
-        self._static_tick_key: tuple[str, bool, bool, str, bool] | None = None
+        self._prompt_mode_paused = False
+        self._static_tick_key: tuple[str, bool, bool, str, bool, bool] | None = None
         self._static_tick_count = 0
         self._hangup_click_block_until = 0.0
 
@@ -555,8 +556,9 @@ class QtJarvisBarOverlay:
         self._muted = bool(muted)
         self._invalidate_static_frame()
 
-    def set_prompt_mode(self, enabled: bool) -> None:
+    def set_prompt_mode(self, enabled: bool, paused: bool = False) -> None:
         self._prompt_mode = bool(enabled)
+        self._prompt_mode_paused = bool(paused)
         self._invalidate_static_frame()
 
     def set_size_scale(self, scale: float) -> None:
@@ -769,6 +771,7 @@ class QtJarvisBarOverlay:
                 self._muted,
                 drop_visual,
                 self._prompt_mode,
+                self._prompt_mode_paused,
             )
             if tick_key != self._static_tick_key:
                 self._static_tick_key = tick_key
@@ -793,6 +796,7 @@ class QtJarvisBarOverlay:
                 hovered=self._hovered,
                 muted=self._muted,
                 prompt_mode=self._prompt_mode,
+                prompt_mode_paused=self._prompt_mode_paused,
                 drop_state=drop_visual,
                 drop_elapsed=now - self._drop_visual_t0,
             )
@@ -1484,8 +1488,8 @@ class QtJarvisBarOverlay:
         elif action == "prompt_mode_toggle":
             callback = self._on_prompt_mode_toggle
             if callback is not None:
-                self._invoke_callback(callback, "prompt-mode-toggle")
-                self._prompt_mode = not self._prompt_mode
+                self._invoke_callback(callback, "prompt-mode-pause")
+                self._prompt_mode_paused = not self._prompt_mode_paused
                 self._invalidate_static_frame()
         elif action in {"talk", "hangup", "dictation_stop"}:
             callback = self._on_voice_action

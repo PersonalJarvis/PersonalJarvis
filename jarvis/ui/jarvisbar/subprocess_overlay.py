@@ -112,6 +112,7 @@ class SubprocessBarOverlay:
         self._mode = "idle"
         self._muted = False
         self._prompt_mode = False
+        self._prompt_mode_paused = False
         # Mirror what the real host does at construction time. A persistent,
         # ungated bar maps itself immediately; a startup-gated or
         # non-persistent bar starts withdrawn. This mirror is load-bearing for
@@ -291,9 +292,16 @@ class SubprocessBarOverlay:
         self._muted = bool(muted)
         self._send({"op": "set_muted", "muted": self._muted})
 
-    def set_prompt_mode(self, enabled: bool) -> None:
+    def set_prompt_mode(self, enabled: bool, paused: bool = False) -> None:
         self._prompt_mode = bool(enabled)
-        self._send({"op": "set_prompt_mode", "enabled": self._prompt_mode})
+        self._prompt_mode_paused = bool(paused)
+        self._send(
+            {
+                "op": "set_prompt_mode",
+                "enabled": self._prompt_mode,
+                "paused": self._prompt_mode_paused,
+            }
+        )
 
     def set_size_scale(self, scale: float) -> None:
         """Forward a live "Bar size" change to the hosted surface.
@@ -491,7 +499,13 @@ class SubprocessBarOverlay:
         if self._muted:
             self._send({"op": "set_muted", "muted": True})
         if self._prompt_mode:
-            self._send({"op": "set_prompt_mode", "enabled": True})
+            self._send(
+                {
+                    "op": "set_prompt_mode",
+                    "enabled": True,
+                    "paused": self._prompt_mode_paused,
+                }
+            )
         if self._last_level is not None:
             self._send({"op": "set_level", "level": self._last_level})
 

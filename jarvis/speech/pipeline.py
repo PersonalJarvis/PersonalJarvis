@@ -60,7 +60,7 @@ from jarvis.core.events import (
     AudioOutFirst,
     BrainTTFT,
     DictationCompleted,
-    DictationPromptModeToggleRequested,
+    DictationPromptModePauseToggleRequested,
     DictationRefused,
     DictationStarted,
     DictationTranscribing,
@@ -3043,7 +3043,8 @@ class SpeechPipeline:
             # holds the live dictation config, so it owns the flip and answers
             # with DictationPromptModeChanged for every mirror of the switch.
             self._bus.subscribe(
-                DictationPromptModeToggleRequested, self._on_prompt_mode_toggle_requested
+                DictationPromptModePauseToggleRequested,
+                self._on_prompt_mode_pause_toggle_requested,
             )
             # Wave 0 (omni-latency): perceived time-to-first-audio (ack OR
             # brain, whichever speaks first) feeds the per-turn latency tracker.
@@ -4368,23 +4369,20 @@ class SpeechPipeline:
         except Exception:  # noqa: BLE001
             log.exception("VoiceMuteChanged publish failed")
 
-    async def _on_prompt_mode_toggle_requested(
-        self, event: DictationPromptModeToggleRequested
+    async def _on_prompt_mode_pause_toggle_requested(
+        self, event: DictationPromptModePauseToggleRequested
     ) -> None:
-        """Flip ``[dictation].prompt_mode`` and broadcast the new value.
+        """Pause or resume Prompt Mode and broadcast the new state.
 
         Idempotent like the mute toggle: the caller does not know the current
-        state. The write goes through the one switch writer
-        (:mod:`jarvis.dictation.prompt_mode_switch`) — the path the settings
-        screen takes too — so disk, the live config and every surface agree.
+        state. Deliberately NOT a settings write — the value in jarvis.toml is
+        left alone, so the settings card keeps showing the switch on and one
+        more click on the bar brings the rewriting back.
         """
-        from jarvis.dictation.prompt_mode import prompt_mode_enabled
-        from jarvis.dictation.prompt_mode_switch import apply_prompt_mode
+        from jarvis.dictation.prompt_mode_switch import toggle_prompt_mode_pause
 
-        cfg = getattr(self, "_dictation_cfg", None)
-        await apply_prompt_mode(
-            not prompt_mode_enabled(cfg),
-            dictation_cfg=cfg,
+        await toggle_prompt_mode_pause(
+            cfg=getattr(self, "_dictation_cfg", None),
             bus=self._bus,
             source=event.source or "unknown",
         )

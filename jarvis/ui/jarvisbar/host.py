@@ -105,7 +105,12 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
     elif op == "set_muted":
         _call(surface, "set_muted", bool(msg.get("muted", False)))
     elif op == "set_prompt_mode":
-        _call(surface, "set_prompt_mode", bool(msg.get("enabled", False)))
+        _call(
+            surface,
+            "set_prompt_mode",
+            bool(msg.get("enabled", False)),
+            bool(msg.get("paused", False)),
+        )
     elif op == "set_size_scale":
         _call(surface, "set_size_scale", float(msg.get("scale", 1.0)))
     elif op == "set_follow_cursor":

@@ -118,6 +118,8 @@ class FakeChain:
 @pytest.fixture(autouse=True)
 def _fresh_breaker() -> None:
     polish.reset_polish_state()
+    # The pause is process-wide module state; never leak it between tests.
+    prompt_mode.set_prompt_mode_paused(False)
 
 
 def _cfg(**overrides: Any) -> DictationConfig:
@@ -661,6 +663,49 @@ async def test_off_returns_the_raw_text_without_a_call(
 ) -> None:
     chain = _install(monkeypatch, FakeChain())
     out = await compose_prompt(RAW, cfg=DictationConfig())
+    assert (out.status, out.text) == ("off", RAW)
+    assert chain.calls == []
+
+
+# --------------------------------------------------------------------------- #
+# The setting and the pause on top of it
+# --------------------------------------------------------------------------- #
+
+
+def test_the_setting_and_the_pause_are_separate_questions() -> None:
+    """Two levels, because the maintainer asked for two: the setting is the
+    feature, the pause is "not for the next few dictations". A surface that
+    draws the switch asks the first; the dictation path asks the second."""
+    cfg = _cfg()
+    assert prompt_mode.prompt_mode_configured(cfg) is True
+    assert prompt_mode.prompt_mode_enabled(cfg) is True
+
+    prompt_mode.set_prompt_mode_paused(True)
+    assert prompt_mode.prompt_mode_configured(cfg) is True, "the SETTING is untouched"
+    assert prompt_mode.prompt_mode_enabled(cfg) is False, "this dictation is not rewritten"
+    assert prompt_mode.prompt_mode_paused() is True
+
+    prompt_mode.set_prompt_mode_paused(False)
+    assert prompt_mode.prompt_mode_enabled(cfg) is True
+
+
+def test_a_pause_on_a_switch_that_is_off_changes_nothing() -> None:
+    off = DictationConfig()
+    prompt_mode.set_prompt_mode_paused(True)
+    assert prompt_mode.prompt_mode_configured(off) is False
+    assert prompt_mode.prompt_mode_enabled(off) is False
+
+
+@pytest.mark.asyncio
+async def test_a_paused_switch_delivers_the_transcript_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pause has to reach the dictation path itself, not just the picture
+    on the bar — that is the whole point of routing it through
+    ``prompt_mode_enabled``."""
+    chain = _install(monkeypatch, FakeChain())
+    prompt_mode.set_prompt_mode_paused(True)
+    out = await compose_prompt(RAW, cfg=_cfg())
     assert (out.status, out.text) == ("off", RAW)
     assert chain.calls == []
 

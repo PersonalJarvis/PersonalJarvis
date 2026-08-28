@@ -1295,14 +1295,19 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
 
     # Prompt Mode has mirrors outside this screen — the sparkle on the native
     # Jarvis bar, the pill on the front page — and they learn of a flip from
-    # one event, the same one the bar's own toggle raises.
+    # one event, the same one the bar's own control raises. Writing the
+    # setting also clears the bar's runtime pause, so a switch the user just
+    # turned on is never held down by a click they made an hour ago.
     if "prompt_mode" in updates:
+        from jarvis.dictation.prompt_mode import set_prompt_mode_paused
         from jarvis.dictation.prompt_mode_switch import announce_prompt_mode
 
+        set_prompt_mode_paused(False)
         await announce_prompt_mode(
             bool(validated.prompt_mode),
             bus=getattr(request.app.state, "bus", None),
             source="settings",
+            paused=False,
         )
 
     return {

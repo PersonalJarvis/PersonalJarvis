@@ -456,6 +456,9 @@ _DOTS_SPAN_FRAC = 0.62  # dots span / pill width (matches the bars)
 # already does, and the parity is pinned by a test.
 SPARKLE_CENTRE_FRAC = 0.33
 SPARKLE_R_FRAC = 0.30
+#: Half-length of the paused state's slash, as a fraction of the pill height.
+#: Slightly longer than the star's radius so its ends clear the mark.
+SPARKLE_SLASH_FRAC = 0.30
 
 # MODES / DICTATION_MODES are imported at the top of this module — see the note
 # there. Nothing in this package may restate them (test_mode_parity.py).
@@ -789,6 +792,7 @@ class JarvisBarRenderer:
         drop_state: str = DROP_STATE_NONE,
         drop_elapsed: float = 0.0,
         prompt_mode: bool = False,
+        prompt_mode_paused: bool = False,
     ) -> Image.Image:
         active = mode in ("listen", "speak")
         # "That did not happen" — see NOTICE_MODES. Held separately from the
@@ -910,12 +914,13 @@ class JarvisBarRenderer:
             if active_sess:
                 self._draw_close_x(d, x_left, cy, ph)
             elif prompt_mode:
-                # The Prompt Mode switch, and ONLY while the mode is on: the
-                # maintainer asked for it to be shown in that mode and in no
-                # other (2026-08-28). It is the way OUT of the mode, not an
-                # advert for a feature that is not running — turning it on
-                # stays with the settings card and the front-page pill.
-                self._draw_sparkle(img, x_sparkle, cy, ph)
+                # The Prompt Mode switch, and ONLY while the SETTING is on:
+                # the maintainer asked for it to be shown in that mode and in
+                # no other (2026-08-28). Struck through while paused, which is
+                # the state the same click puts it in — so the mark is never
+                # an advert for a feature that is not switched on, and always
+                # the way back to one that is merely on hold.
+                self._draw_sparkle(img, x_sparkle, cy, ph, paused=prompt_mode_paused)
             self._draw_mic(img, x_right, cy, ph, muted)
         elif mode == "think":
             self._draw_thinking(d, t, cx, cy, pw, ph)
@@ -931,7 +936,7 @@ class JarvisBarRenderer:
             if muted:
                 self._draw_mic(img, x_right, cy, ph, muted=True)
             if prompt_mode:
-                self._draw_sparkle(img, x_sparkle, cy, ph)
+                self._draw_sparkle(img, x_sparkle, cy, ph, paused=prompt_mode_paused)
         # idle / standby (not hovered, not muted, Prompt Mode off): a clean
         # EMPTY pill — no dots, no bars. "When nothing is happening, nothing is
         # in the bar."
@@ -959,20 +964,31 @@ class JarvisBarRenderer:
         d.line([(cx - r, cy - r), (cx + r, cy + r)], fill=CLOSE_X, width=w)
         d.line([(cx - r, cy + r), (cx + r, cy - r)], fill=CLOSE_X, width=w)
 
-    def _draw_sparkle(self, img: Image.Image, cx: float, cy: float, ph: float) -> None:
+    def _draw_sparkle(
+        self, img: Image.Image, cx: float, cy: float, ph: float, paused: bool = False
+    ) -> None:
         """Left-hand control on the resting pill: the Prompt Mode switch.
 
         A four-point star with a smaller companion up and to the right — the
         sparkle mark the app uses for the same switch on its front page, so
-        the two surfaces read as one control. Always the accent colour,
-        because it is only ever drawn while the mode is ON: an OFF switch that
-        is invisible is the whole point of it (the bar advertises a state, it
-        does not offer a feature). Supersampled like the mic, because thin
-        star tips alias at ~30 px.
+        the two surfaces read as one control. Drawn only while the SETTING is
+        on, so it never advertises a feature nobody switched on.
+
+        ``paused`` gives it the muted mic's language: the same glyph in the
+        muted red with a diagonal slash through it. That is deliberate reuse —
+        the user already knows that mark means "this is off right now, click
+        to bring it back", which is exactly what a paused switch is.
+        Supersampled like the mic, because thin star tips alias at ~30 px.
         """
         ss = 4
         layer = Image.new("RGBA", (img.width * ss, img.height * ss), (0, 0, 0, 0))
         ld = ImageDraw.Draw(layer)
+        # The STAR keeps the accent in both states — struck through means the
+        # mark unchanged with a line over it, and it is also what keeps the
+        # paused control recognisable as the same control. Colouring the star
+        # red too was measured and rejected: at this size a red star under a
+        # red slash is one blob, and a gap cut through the star to separate
+        # them left a red hash nobody would read as a sparkle (2026-08-28).
         color = (*self._accent, 255)
         x, y, p = cx * ss, cy * ss, ph * ss
 
@@ -993,6 +1009,18 @@ class JarvisBarRenderer:
         r = p * SPARKLE_R_FRAC
         star(x - r * 0.15, y + r * 0.15, r)
         star(x + r * 0.80, y - r * 0.72, r * 0.36)
+        if paused:
+            # The slash, in the muted mic's red and at the mic's angle. It
+            # reaches slightly past the star so it reads as a line ACROSS the
+            # mark, and a fill-coloured line laid down first leaves a thin gap
+            # so the stroke sits on top of the star instead of melting into
+            # it. Sized from the pill height, and short enough that neither
+            # the stroke nor the LANCZOS ringing reaches the rim.
+            s = p * SPARKLE_SLASH_FRAC
+            stroke = max(1, round(_STROKE_W * 0.85 * ss))
+            ends = [(x - s, y + s), (x + s, y - s)]
+            ld.line(ends, fill=(*PILL_BG, 255), width=round(stroke * 1.4))
+            ld.line(ends, fill=(*MUTED_RED, 255), width=stroke)
         small = layer.resize(img.size, Image.Resampling.LANCZOS)
         img.paste(small, (0, 0), small)
 

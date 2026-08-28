@@ -505,9 +505,56 @@ def echoes_example(raw: str, prompt: str) -> bool:
     return len(shared - _shingles(raw)) >= _ECHO_MIN_SHINGLES
 
 
-def prompt_mode_enabled(cfg: Any) -> bool:
-    """``[dictation].prompt_mode`` — off on any config that has not heard of it."""
+# --- The switch, and the pause on top of it ---------------------------------
+#
+# Two levels, because the maintainer asked for two (2026-08-28):
+#
+#   * ``[dictation].prompt_mode`` is the SETTING. It lives in jarvis.toml, the
+#     settings card and the front-page pill own it, and turning it off means
+#     the feature is not in use at all — the bar then shows nothing.
+#   * the PAUSE is a runtime flag with no home on disk. The bar's sparkle
+#     toggles it: "not for the next few dictations", with the setting left
+#     exactly as it was, so one click brings it back. It resets on restart and
+#     whenever the setting itself is written, because a switch the user just
+#     turned on must not come back paused from a click they made yesterday.
+#
+# Process-wide module state, like the polish pass's breaker: the dictation
+# path, the REST routes and the bar all live in the desktop process, and a bool
+# assignment is atomic under CPython, so no lock earns its keep here.
+_paused: bool = False
+
+
+def prompt_mode_configured(cfg: Any) -> bool:
+    """The SETTING alone — ``[dictation].prompt_mode``, ignoring the pause.
+
+    What a surface asks when it wants to know whether to show the switch at
+    all. Off on any config that has not heard of the key.
+    """
     return bool(getattr(cfg, "prompt_mode", False))
+
+
+def prompt_mode_paused() -> bool:
+    """Whether the switch is paused from the bar. Never persisted."""
+    return _paused
+
+
+def set_prompt_mode_paused(paused: bool) -> bool:
+    """Set the runtime pause; returns the value now in force."""
+    global _paused
+    _paused = bool(paused)
+    return _paused
+
+
+def prompt_mode_enabled(cfg: Any) -> bool:
+    """Whether THIS dictation is to be rewritten: the setting, minus the pause.
+
+    Every call site that asks "does Prompt Mode apply right now" asks this
+    one, so pausing from the bar reaches the live dictation path, the REST
+    dictation route and the polish probe without any of them knowing a pause
+    exists. A surface that wants to draw the switch asks
+    :func:`prompt_mode_configured` instead.
+    """
+    return prompt_mode_configured(cfg) and not _paused
 
 
 def build_prompt_mode_prompt(protected_terms: Sequence[str] = ()) -> str:
@@ -900,7 +947,10 @@ __all__ = [
     "lost_literals",
     "normalize_prompt_text",
     "prompt_guard_reason",
+    "prompt_mode_configured",
     "prompt_mode_enabled",
+    "prompt_mode_paused",
+    "set_prompt_mode_paused",
     "strip_closing_sign_off",
     "timeout_budget_s",
     "transcript_literals",

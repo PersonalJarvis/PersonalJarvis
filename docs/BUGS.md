@@ -14342,13 +14342,23 @@ came back as a document passed everything.
 
 **Also in this change (feature, maintainer request the same message).** The
 Prompt Mode switch is now a control on the native Jarvis bar: a sparkle in the
-resting pill's left slot, drawn ONLY while the mode is on and clicked to switch
-it off. Two follow-up corrections the same evening, both from a screenshot: at
-the close-X's inset the mark's tips crossed the rim and drew onto the colour
-key (a magenta fleck and a star floating outside the pill), so it moved to the
-mic's mirrored inset and shrank; and the dim OFF-state sparkle is gone — the
-bar reports a state and offers the way out of it, it does not advertise a
-feature that is not running. It has ONE writer
+resting pill's left slot, drawn ONLY while the SETTING is on. Three follow-up
+corrections the same evening, all from screenshots: at the close-X's inset the
+mark's tips crossed the rim and drew onto the colour key (a magenta fleck and a
+star floating outside the pill), so it moved to the mic's mirrored inset and
+shrank; the dim OFF-state sparkle is gone, because the bar reports a state and
+offers the way out of it rather than advertising a feature nobody switched on;
+and the click PAUSES instead of switching the setting off. That last one was a
+real dead end: the first version wrote `prompt_mode = false`, the sparkle went
+with it, and there was then no way back to the mode from the bar at all. The
+pause is runtime-only state in `prompt_mode._paused`, read by
+`prompt_mode_enabled` so it reaches the dictation path, the REST dictation
+route and the polish probe alike; `prompt_mode_configured` answers the separate
+question a surface asks before drawing the switch. It clears on restart and on
+any write of the setting, so a switch just turned on is never held down by an
+old click. Paused draws the same accent star with a red slash — the muted mic's
+language, chosen after a red star under a red slash measured as one unreadable
+blob at this size. It has ONE writer
 (`jarvis/dictation/prompt_mode_switch.py`) and one broadcast
 (`DictationPromptModeChanged`) that the bar, the front-page pill and the
 settings card all redraw from — the mute flag's shape, for the reason mute has
