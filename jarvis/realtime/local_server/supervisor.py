@@ -1178,6 +1178,38 @@ def _uses_loopback_bind(command: str) -> bool:
     return host is not None and _is_loopback(host.strip().strip("[]"))
 
 
+def _local_models_switched_off() -> str:
+    """``"refused:local-models-off"`` when the switch is off and nothing chose us.
+
+    The Local models switch means what it says: no local model server starts
+    on its own while it is off (BUG-204). A fallback quietly spawning a
+    multi-GB speech stack — and the model server behind it — while a hosted
+    provider is the SELECTED voice is precisely what the user switched off.
+
+    An active choice still wins: picking the local card IS turning it on, so
+    only ambient starts are refused. An unreadable setting never refuses —
+    the voice path must not go silent over a config hiccup.
+    """
+    try:
+        from jarvis.core.config import load_config, ollama_autostart  # lazy (AP-26)
+        from jarvis.local_models.autostart import in_use  # lazy (AP-26)
+
+        cfg = load_config()
+        if ollama_autostart(cfg):
+            return ""
+        used, _why = in_use(cfg)
+        if used:
+            return ""
+    except Exception:  # noqa: BLE001 — a settings hiccup must never mute the voice path
+        log.debug("supervisor: local-models switch unreadable; allowing the spawn", exc_info=True)
+        return ""
+    log.info(
+        "local-realtime supervisor: not spawning — local models are switched off and "
+        "nothing active selects them"
+    )
+    return "refused:local-models-off"
+
+
 def ensure_running(
     *,
     launch_command: str,
@@ -1204,6 +1236,9 @@ def ensure_running(
     command = (launch_command or "").strip()
     if not command:
         return "refused:no-launch-command"
+    switched_off = _local_models_switched_off()
+    if switched_off:
+        return switched_off
     host, port = _host_port(base_url)
     if not _is_loopback(host):
         return "refused:not-local"

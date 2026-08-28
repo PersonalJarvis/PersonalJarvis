@@ -68,6 +68,7 @@ RunFn = Callable[[Any], Awaitable[dict[str, Any]]]
 StopFn = Callable[[], tuple[bool, str]]
 UnloadFn = Callable[[str], Awaitable[list[str]]]
 ReleaseFn = Callable[[Any], Awaitable[dict[str, Any]]]
+VoiceStopFn = Callable[[], Awaitable[bool]]
 
 #: Live task references — a fire-and-forget task must be held somewhere or
 #: the loop may drop it mid-run.
@@ -126,11 +127,20 @@ def in_use(cfg: Any) -> tuple[bool, str]:
 
 
 def should_autostart(cfg: Any) -> tuple[bool, str]:
-    """``(start, why)`` — the boot decision, in one sentence either way."""
+    """``(start, why)`` — the boot decision, in one sentence either way.
+
+    The off sentence names the one case where "off" cannot mean "gone": the
+    active brain or voice is itself the local server, so switching local
+    models off would leave Jarvis with nothing to answer on. The user reads
+    that instead of watching a model stay resident with no explanation.
+    """
     from jarvis.core.config import ollama_autostart  # lazy (AP-26)
 
     if not ollama_autostart(cfg):
-        return False, "autostart is switched off in the Server tab"
+        used, why = in_use(cfg)
+        if used:
+            return False, f"local models are switched off, but {why} still runs on them"
+        return False, "local models are switched off"
     used, why = in_use(cfg)
     if not used:
         return False, why
@@ -294,29 +304,57 @@ def kick(cfg: Any, *, run: RunFn | None = None) -> asyncio.Task[None] | None:
     return _remember(loop.create_task(_now(), name="local-models-kick"))
 
 
+async def _stop_local_voice_server() -> bool:
+    """Stop the managed local speech server, if this install is running one.
+
+    It is a local model too — the biggest one on the card — and it holds the
+    model server open as its brain, so releasing the accelerator without it
+    frees nothing. Only ever the process this install owns
+    (``owned_only=True``); a foreign one is left alone.
+    """
+    try:
+        from jarvis.realtime.local_server import supervisor  # lazy (AP-26)
+
+        ok, detail = await asyncio.to_thread(supervisor.stop, owned_only=True)
+    except Exception as exc:  # noqa: BLE001 — no managed voice server is the normal case
+        log.debug("local-models: managed voice server not stopped (%s)", exc, exc_info=True)
+        return False
+    if ok:
+        log.info("local-models: managed voice server stopped — %s", detail)
+    return bool(ok)
+
+
 async def release_once(
     cfg: Any,
     *,
     unload: UnloadFn | None = None,
     stop: StopFn | None = None,
+    voice_stop: VoiceStopFn | None = None,
 ) -> dict[str, Any]:
-    """Hand the accelerator back: unload what is resident, stop our server.
+    """Hand the accelerator back: stop the local voice stack and our server.
 
-    Returns ``{"stopped", "unloaded", "detail"}`` — ``unloaded`` the models
-    freed, ``stopped`` whether the server this install spawned was stopped,
-    ``detail`` one sentence. Refuses while :func:`in_use` still holds (a
-    local voice may keep answering on a hosted brain), and the runtime only
-    ever stops the pid Jarvis recorded, so a server the user started from
-    the tray or a terminal is left alone. Never raises.
+    Returns ``{"stopped", "unloaded", "voice_stopped", "detail"}`` — the
+    models freed, whether the server this install spawned was stopped, and
+    whether a managed voice server went with it. Refuses while
+    :func:`in_use` still holds (a local voice may keep answering on a hosted
+    brain), and the runtime only ever stops the pid Jarvis recorded, so a
+    server the user started from the tray or a terminal is left alone.
+    Never raises.
     """
     from jarvis.brain import ollama_runtime  # lazy (AP-26)
     from jarvis.local_models.health_monitor import server_root  # lazy (AP-26)
 
-    record: dict[str, Any] = {"stopped": False, "unloaded": [], "detail": ""}
+    record: dict[str, Any] = {
+        "stopped": False,
+        "unloaded": [],
+        "voice_stopped": False,
+        "detail": "",
+    }
     used, why = in_use(cfg)
     if used:
         record["detail"] = f"kept running — {why} still uses it"
         return record
+    record["voice_stopped"] = await (voice_stop or _stop_local_voice_server)()
     root = server_root(cfg)
     if ollama_runtime.host_kind(root) == "remote":
         record["detail"] = f"The server at {root} is remote; this install does not stop it."
@@ -349,8 +387,9 @@ def release(cfg: Any, *, run: ReleaseFn | None = None) -> asyncio.Task[None] | N
         try:
             record = await (run or release_once)(cfg)
             log.info(
-                "local-models: server released after the brain switch — stopped=%s unloaded=%r %s",
+                "local-models: released — stopped=%s voice_stopped=%s unloaded=%r %s",
                 record.get("stopped"),
+                record.get("voice_stopped"),
                 record.get("unloaded"),
                 record.get("detail") or "",
             )

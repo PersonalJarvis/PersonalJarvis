@@ -26,6 +26,24 @@ from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.realtime.local_server import supervisor
 
 
+@pytest.fixture(autouse=True)
+def _local_models_switch_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the Local models switch ON for the cases that pin the spawn path.
+
+    ``ensure_running`` refuses an ambient spawn while the switch is off
+    (BUG-204). Without a pinned config every case in this file would read
+    whatever jarvis.toml the machine happens to have and refuse for a reason
+    it is not testing. The switch's own test re-pins the config itself.
+    """
+    from jarvis.core.config import BrainProviderConfig, JarvisConfig
+
+    cfg = JarvisConfig()
+    provider = BrainProviderConfig()
+    provider.autostart = True
+    cfg.brain.providers["ollama"] = provider
+    monkeypatch.setattr("jarvis.core.config.load_config", lambda: cfg)
+
+
 def _spawn_ready(monkeypatch, tmp_path: Path) -> list[dict[str, Any]]:
     """Common arrangement: closed port, no pidfile, fake Popen, tmp data dir.
 
@@ -83,6 +101,47 @@ def test_model_switch_never_interrupts_an_active_voice_call(monkeypatch, tmp_pat
 
 
 # ── Address parsing ──────────────────────────────────────────────────────
+def test_the_local_models_switch_refuses_an_ambient_spawn(monkeypatch) -> None:
+    """Off means no local model server starts on its own (BUG-204).
+
+    What would lie if it broke: a realtime FALLBACK quietly spawning a
+    multi-GB speech stack while a hosted provider is the selected voice and
+    the user has switched local models off.
+    """
+    from jarvis.core.config import BrainProviderConfig, BrainTierConfig, JarvisConfig
+
+    def _cfg(*, primary: str, realtime: str, autostart: bool) -> JarvisConfig:
+        cfg = JarvisConfig()
+        cfg.brain.primary = primary
+        cfg.brain.realtime = BrainTierConfig(provider=realtime)
+        provider = BrainProviderConfig()
+        provider.autostart = autostart
+        cfg.brain.providers["ollama"] = provider
+        return cfg
+
+    off = _cfg(primary="openrouter", realtime="gemini-live", autostart=False)
+    monkeypatch.setattr("jarvis.core.config.load_config", lambda: off)
+    assert supervisor._local_models_switched_off() == "refused:local-models-off"
+    assert (
+        supervisor.ensure_running(
+            launch_command="speech-to-speech --mode realtime",
+            base_url="ws://127.0.0.1:8765",
+            reason="fallback",
+        )
+        == "refused:local-models-off"
+    )
+
+    # An ACTIVE choice still wins: picking the local card IS turning it on.
+    chosen = _cfg(primary="openrouter", realtime="local-realtime", autostart=False)
+    monkeypatch.setattr("jarvis.core.config.load_config", lambda: chosen)
+    assert supervisor._local_models_switched_off() == ""
+
+    # And the switch being ON never refuses.
+    on = _cfg(primary="openrouter", realtime="gemini-live", autostart=True)
+    monkeypatch.setattr("jarvis.core.config.load_config", lambda: on)
+    assert supervisor._local_models_switched_off() == ""
+
+
 def test_host_port_parses_the_configured_address() -> None:
     assert supervisor._host_port("http://localhost:8765") == ("localhost", 8765)
     assert supervisor._host_port("http://127.0.0.1:9000/v1") == ("127.0.0.1", 9000)

@@ -14425,6 +14425,30 @@ effect without a restart.
 it is a deliberate setting, and the idle release now returns what it borrows.
 An install that wants no local voice at all clears the fallback.
 
+**The switch, same session.** In the maintainer's words: "you need a switch
+between ON and OFF that simply works when you turn it off." The Server tab's
+switch only decided what the NEXT launch would do, which is why turning it off
+changed nothing on the card. It now applies what it persists:
+
+- `PUT /runtime/autostart` — off stops the managed voice server, unloads every
+  resident model and stops the local server; on readies it the way picking the
+  local brain does. One click is the whole gesture in both directions.
+- `supervisor.ensure_running` refuses an ambient spawn while the switch is off
+  (`refused:local-models-off`). An ACTIVE choice still wins, so picking the
+  local card is still "on" — but a realtime FALLBACK can no longer pull a
+  5.4 GB speech stack onto the card behind a hosted voice, which is exactly how
+  this one got there.
+- `should_autostart` names the one case where off cannot mean gone: the active
+  brain IS the local server, so switching local models off would leave nothing
+  to answer on. The sentence says so instead of leaving a resident model
+  unexplained.
+- The control reads "Local models on" in all three locales, and its description
+  says what off does now.
+
+**Measured on the maintainer's machine.** Graphics memory 15.7 GB → 3.2 GB of
+16.3 after the switch-off path ran: the managed voice server, both resident
+models and the local server all gone, with a hosted voice still answering.
+
 **Related.** BUG-174 (the other local-models defect whose symptom was "voice on
 local models is unusably slow after a restart" — same stack, different half).
 
@@ -14467,3 +14491,57 @@ runs on any machine, which is also how Apple Silicon and AMD get reported.
 **Not changed.** A pick already saved as an alias keeps working: the brain tier
 deliberately accepts a model id that is not in the catalogue, so an existing
 configuration is shown rather than silently reset.
+
+## BUG-206: an AMD or Intel graphics card was invisible to every local-model fit verdict (MEDIUM, FIXED 2026-08-28)
+
+**Symptom.** On a machine with a discrete AMD card, every "will this model run
+here?" verdict was judged against system RAM alone. A 20 GB model on a box with
+a 16 GB Radeon and 32 GB of RAM read "Runs comfortably in 32 GB of memory" — it
+does not; it spills to the processor and crawls. The Local models overview
+showed "Graphics memory unknown" at the same time, so the panel was honest while
+the verdict beside it was not.
+
+**Cause.** `usable_accelerator_gb` knew exactly two sources: `nvidia-smi` (or
+pynvml) and Apple-Silicon unified memory. Everything else returned
+`(0.0, "none")`, and `fit_verdict` then skipped its accelerator branch entirely
+and fell through to the RAM rule — the same rule that was already found
+backwards for GPU boxes when the NVIDIA path was added. The 0 was correctly
+DOCUMENTED as "unknown accelerator", but the fit verdict could not distinguish
+"unknown" from "absent".
+
+**Fix.** Two vendor-neutral sources between the NVIDIA leg and the Apple leg:
+
+1. `_ollama_reported_gb()` — the `inference compute` record the server writes at
+   startup, which names `library=CUDA` / `ROCm` / `Metal` and a `total=` for the
+   device it will ACTUALLY use. One pattern therefore reads a card that would
+   otherwise need three vendor SDKs, and it reports the budget the server
+   decided on rather than one this process guessed for it. Best-effort by
+   nature: the line is written once per start and rotates away with the log.
+2. The OS's own inventory, which needs neither a running server nor a vendor
+   tool — the display-class registry key `HardwareInformation.qwMemorySize` on
+   Windows (the 64-bit field; the WMI `AdapterRAM` most code reaches for is a
+   32-bit one that reports 4 GB for every larger card), and
+   `mem_info_vram_total` / `lmem_total_bytes` under `/sys/class/drm` on Linux,
+   which `amdgpu` and `i915` both publish.
+
+Cross-checked on the maintainer's box 2026-08-28: all three sources agreed on
+the same card — nvidia-smi 15.92 GiB, the Ollama record 15.9 GiB, the registry
+15.92 GiB.
+
+**A Mac gains from source 1 too.** macOS hands the GPU only part of the unified
+memory, so `apple-unified` (total RAM) overstates it. Where Ollama has already
+named the real Metal budget, that figure now wins; the RAM figure stays as the
+fallback for a Mac that has never started the server.
+
+**Deliberately NOT widened: the realtime voice stack.** `derive_launch_command`
+maps any non-`nvidia-smi` source to `mps`, so letting an AMD reading through
+would have cleared the memory floor and then launched with a torch device the
+box does not have. `preflight._DRIVEABLE_SOURCES` narrows the shared probe back
+to the two sources that stack can drive, keeping its honest "no supported
+accelerator" refusal exactly as `docs/os-parity.md` P-28 describes it.
+
+**Guard.** `tests/unit/hardware/test_accelerator_probe.py` — the probe's first
+test file. Every consumer used to monkeypatch it to a fixed pair, so the
+function producing those pairs had no coverage: the Apple branch and the
+"nothing readable" fallback had never been executed. All legs are driven through
+fakes, so the suite proves them on a headless container too.

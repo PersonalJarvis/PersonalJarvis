@@ -76,6 +76,18 @@ def test_the_switch_off_wins_over_use() -> None:
     assert start is True and "the active brain" in reason
 
 
+def test_the_off_sentence_names_what_still_runs_on_the_server() -> None:
+    """Off cannot mean gone while the active brain IS the local server.
+
+    What would lie if it broke: the switch reading "off" beside a model that
+    is still resident, with nothing on screen saying why (BUG-204).
+    """
+    _start, reason = autostart.should_autostart(_cfg(primary="ollama", flag=False))
+    assert "switched off" in reason and "the active brain still runs on them" in reason
+    _start, reason = autostart.should_autostart(_cfg(flag=False))
+    assert reason == "local models are switched off"
+
+
 def test_the_default_is_on_even_without_an_ollama_card() -> None:
     from jarvis.core.config import ollama_autostart
 
@@ -226,17 +238,25 @@ async def test_the_brain_switch_readies_and_releases_the_local_server(
 @pytest.mark.asyncio
 async def test_release_once_unloads_and_stops_when_nothing_uses_the_server() -> None:
     stopped: list[str] = []
+    voice: list[str] = []
 
     async def _unload(root: str) -> list[str]:
         assert root
         return ["ornith:9b-voice-32k", "qwen3.5:4b-voice-8k"]
 
+    async def _voice_stop() -> bool:
+        voice.append("go")
+        return True
+
     record = await autostart.release_once(
         _cfg(chat="qwen3.5:4b"),
         unload=_unload,
         stop=lambda: (stopped.append("go") or True, "Ollama stopped."),
+        voice_stop=_voice_stop,
     )
     assert stopped == ["go"]
+    # The speech stack is the biggest local model of the three; it goes too.
+    assert voice == ["go"] and record["voice_stopped"] is True
     assert record["stopped"] is True
     assert record["unloaded"] == ["ornith:9b-voice-32k", "qwen3.5:4b-voice-8k"]
 
@@ -248,10 +268,14 @@ async def test_release_once_keeps_a_server_something_still_uses() -> None:
     async def _unload(_root: str) -> list[str]:
         raise AssertionError("must not unload")
 
+    async def _voice_stop() -> bool:
+        raise AssertionError("must not stop the voice server")
+
     record = await autostart.release_once(
         _cfg(realtime="local-realtime"),
         unload=_unload,
         stop=lambda: (_ for _ in ()).throw(AssertionError("must not stop")),
+        voice_stop=_voice_stop,
     )
     assert record["stopped"] is False and "still uses it" in record["detail"]
 
@@ -260,10 +284,15 @@ async def test_release_once_keeps_a_server_something_still_uses() -> None:
 async def test_release_once_never_stops_a_remote_server() -> None:
     cfg = _cfg()
     cfg.brain.providers["ollama"].base_url = "http://box.lan:11434"
+
+    async def _voice_stop() -> bool:
+        return False
+
     record = await autostart.release_once(
         cfg,
         unload=lambda _root: (_ for _ in ()).throw(AssertionError("must not unload")),
         stop=lambda: (_ for _ in ()).throw(AssertionError("must not stop")),
+        voice_stop=_voice_stop,
     )
     assert record["stopped"] is False and "remote" in record["detail"]
 

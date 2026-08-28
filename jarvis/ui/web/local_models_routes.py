@@ -955,7 +955,14 @@ async def get_autostart(provider_id: str, request: Request) -> AutostartResponse
 async def put_autostart(
     provider_id: str, body: AutostartBody, request: Request
 ) -> AutostartResponse:
-    """Switch "start the server with Jarvis" on or off (persisted)."""
+    """Switch local models on or off — persisted AND applied to what runs now.
+
+    Off means off (BUG-204): the switch stops the managed voice server,
+    unloads every resident model and stops the server this install started,
+    instead of only deciding what the NEXT launch does. On readies the
+    server the same way picking the local brain does, so one click is the
+    whole gesture in both directions.
+    """
     _require_pull_capable(provider_id)
     from jarvis.local_models import autostart
 
@@ -967,6 +974,10 @@ async def put_autostart(
             provider.autostart = bool(body.enabled)
         except Exception:  # noqa: BLE001 — a frozen config object still has the TOML write
             log.debug("local-models: in-memory autostart update skipped", exc_info=True)
+    if body.enabled:
+        autostart.kick(cfg)
+    else:
+        autostart.release(cfg)
     used, _why = autostart.in_use(cfg)
     _start, reason = autostart.should_autostart(cfg)
     return AutostartResponse(enabled=bool(body.enabled), in_use=used, reason=reason)
