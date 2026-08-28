@@ -1650,6 +1650,7 @@ class DesktopApp:
         # The wake-critical Phase-A warm-up gates VoiceBootStatus(ready=True) on
         # this import; prefetching still overlaps all subsequent backend work.
         from jarvis.speech.warmup_prefetch import (
+            start_anthropic_import_prefetch,
             start_tts_import_prefetch,
             start_wake_import_prefetch,
         )
@@ -1659,6 +1660,12 @@ class DesktopApp:
         # from the wake import and remains a logged no-op for another provider
         # or a headless host without the optional dependency.
         start_tts_import_prefetch()
+        # Anthropic SDK import is the GIL stall that froze the desktop
+        # window on 2026-08-28 (worker thread in ``from anthropic import
+        # AsyncAnthropic``; Tk bar stopped pumping; health timed out).
+        # Prefetch here so the first recap/wiki/claude-api turn is a cache
+        # hit. Not voice-gated: those callers run with voice off too.
+        start_anthropic_import_prefetch()
 
         # Start the audio-device settle after the shell paint too. Phase A then
         # reuses the result instead of re-paying the blocking stability poll.

@@ -8,12 +8,15 @@ Pins the contract:
 * the starter spawns a daemon thread when voice is enabled;
 * the starter is a no-op when ``JARVIS_VOICE`` disables voice.
 """
+
 from __future__ import annotations
 
 import threading
 
 from jarvis.speech.warmup_prefetch import (
+    prefetch_anthropic_imports,
     prefetch_wake_imports,
+    start_anthropic_import_prefetch,
     start_wake_import_prefetch,
 )
 
@@ -58,3 +61,26 @@ def test_start_noop_for_off_and_false_tokens(monkeypatch) -> None:
     for token in ("off", "FALSE", " 0 "):
         monkeypatch.setenv("JARVIS_VOICE", token)
         assert start_wake_import_prefetch(importer=lambda: None) is None
+
+
+def test_anthropic_prefetch_returns_true_on_successful_import() -> None:
+    called: list[int] = []
+    assert prefetch_anthropic_imports(lambda: called.append(1)) is True
+    assert called == [1]
+
+
+def test_anthropic_prefetch_swallows_import_error() -> None:
+    def _boom() -> None:
+        raise ImportError("no anthropic on this host")
+
+    assert prefetch_anthropic_imports(_boom) is False
+
+
+def test_anthropic_prefetch_is_not_gated_on_voice(monkeypatch) -> None:
+    monkeypatch.setenv("JARVIS_VOICE", "0")
+    done = threading.Event()
+    thread = start_anthropic_import_prefetch(importer=done.set)
+    assert thread is not None
+    assert thread.daemon is True
+    thread.join(timeout=2)
+    assert done.is_set()

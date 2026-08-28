@@ -184,6 +184,7 @@ def test_desktop_voice_start_does_not_wait_for_brain_ready(monkeypatch, tmp_path
         "jarvis.speech.warmup_prefetch",
         start_wake_import_prefetch=lambda: None,
         start_tts_import_prefetch=lambda: None,
+        start_anthropic_import_prefetch=lambda: None,
     )
     _install_fake_module(
         monkeypatch,
@@ -204,12 +205,19 @@ def test_desktop_voice_start_does_not_wait_for_brain_ready(monkeypatch, tmp_path
         monkeypatch,
         "jarvis.state.chat_store",
         ChatStore=_FakeChatStore,
+        ChatMessage=type("ChatMessage", (), {}),
         default_chats_db_path=lambda _data_dir: tmp_path / "chats.db",
     )
     _install_fake_module(
         monkeypatch,
         "jarvis.state.supervisor",
         Supervisor=_FakeSupervisor,
+        SupervisorState=type("SupervisorState", (), {}),
+    )
+    _install_fake_module(
+        monkeypatch,
+        "jarvis.state.turn_trace",
+        TurnTraceCollector=lambda _bus: SimpleNamespace(),
     )
     _install_fake_module(
         monkeypatch,

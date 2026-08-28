@@ -1092,6 +1092,30 @@ def _process_age_seconds(pid: int) -> float | None:
         return None
 
 
+def _health_answers(port: int, *, timeout: float = 2.0) -> bool:
+    """True only when ``/api/health`` returns 200. A timeout is False.
+
+    Deliberately stricter than ``desktop_app._default_lock_holder_health``,
+    which treats a bound-but-silent port as alive so a GIL hitch during boot
+    is not evicted. Recovery needs the opposite: a window we raised whose
+    server never answers is the frozen-screen case (live 2026-08-28: title
+    focus succeeded, health timed out, every further click just raised the
+    corpse).
+    """
+    try:
+        import httpx
+    except Exception:  # noqa: BLE001 — cannot probe → do not claim a freeze
+        return True
+    try:
+        response = httpx.get(
+            f"http://127.0.0.1:{int(port)}/api/health",
+            timeout=timeout,
+        )
+    except Exception:  # noqa: BLE001 — connect fail, timeout, reset
+        return False
+    return response.status_code == 200
+
+
 def _recover_from_already_running(
     error: Exception,
     *,
@@ -1105,6 +1129,7 @@ def _recover_from_already_running(
     now=None,
     booting_grace: float = 20.0,
     discover_pid=None,
+    health=None,
 ):
     """The lock is held. Bring the holder forward — or, with consent, evict it.
 
@@ -1112,18 +1137,21 @@ def _recover_from_already_running(
     and the lock could then be taken, else ``None`` (the caller exits 3).
 
     The honest case — a healthy instance with a window — is handled by focusing
-    it, exactly as before. The case that used to be a silent exit is a holder
-    that is alive but has NO window to bring forward (a previous instance whose
-    teardown wedged, or a lock the eviction logic could not reclaim): the user
-    clicked, nothing happened, and every further click did the same until the
-    stuck process died on its own. Now that turns into one native Yes/No box,
-    and Yes terminates the holder and takes the lock. No consent, no kill: the
-    default button is No and any failure to ask counts as No.
+    it, exactly as before. Two stuck cases used to be silent:
 
-    A holder that is only a few seconds old and has no window yet is not
-    stuck — it is still booting (the Restart helper used to spawn extras that
-    landed here and offered to kill the copy that was about to appear). Wait
-    out the remaining boot grace and try to focus again before asking.
+    * a holder that is alive but has NO window to bring forward (teardown
+      wedged, or a lock the eviction logic could not reclaim);
+    * a holder whose window IS still on screen but whose server no longer
+      answers (a GIL stall, a hung overlay thread). Focusing that window
+      is not recovery — it is the frozen screen the user already has.
+
+    Both turn into one native Yes/No box, and Yes terminates the holder and
+    takes the lock. No consent, no kill: the default button is No and any
+    failure to ask counts as No.
+
+    A holder that is only a few seconds old and has no window yet (or has a
+    window that has not answered health yet) is not stuck — it is still
+    booting. Wait out the remaining boot grace before asking.
     """
     from loguru import logger
 
@@ -1146,17 +1174,39 @@ def _recover_from_already_running(
         focused = bool(focus())
     except Exception as exc:  # noqa: BLE001
         logger.warning("launcher: focusing the running instance failed: {}", exc)
-    logger.warning(
-        "launcher: {} — {}",
-        error,
-        "brought its window forward" if focused else "NO window found",
-    )
-    if focused:
-        return None
 
     meta = None
     with contextlib.suppress(Exception):
         meta = read_meta()
+    port = None
+    if isinstance(meta, dict) and meta.get("port") is not None:
+        with contextlib.suppress(Exception):
+            port = int(meta["port"])
+
+    def _answers() -> bool | None:
+        """None = not probed (no port / no checker). False = frozen."""
+        if health is None or port is None:
+            return None
+        try:
+            return bool(health(port))
+        except Exception:  # noqa: BLE001 — a probe crash is not a freeze
+            return None
+
+    answering = _answers()
+    frozen_window = bool(focused) and answering is False
+    logger.warning(
+        "launcher: {} — {}",
+        error,
+        "window is frozen (raised, health silent)"
+        if frozen_window
+        else ("brought its window forward" if focused else "NO window found"),
+    )
+    # A raised window is recovery only when the holder still answers, or
+    # when we did not probe (tests / no port). A silent health check is
+    # the frozen desktop: keep going so we can ask.
+    if focused and not frozen_window:
+        return None
+
     discover = discover_pid or _discover_holder_pid
     pid = None
     with contextlib.suppress(Exception):
@@ -1178,27 +1228,32 @@ def _recover_from_already_running(
             while now() < deadline:
                 sleep(0.5)
                 try:
-                    if focus():
-                        logger.info(
-                            "launcher: booting holder pid={} grew a window — focusing it",
-                            pid,
-                        )
-                        return None
+                    focused = bool(focus())
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "launcher: focusing the booting instance failed: {}", exc
+                    logger.warning("launcher: focusing the booting instance failed: {}", exc)
+                    focused = False
+                answering = _answers()
+                frozen_window = bool(focused) and answering is False
+                if focused and not frozen_window:
+                    logger.info(
+                        "launcher: booting holder pid={} grew a window — focusing it",
+                        pid,
                     )
-                    # keep waiting; a transient focus miss is not "stuck"
+                    return None
             try:
                 focused = bool(focus())
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "launcher: final focus of booting holder failed: {}", exc
-                )
+                logger.warning("launcher: final focus of booting holder failed: {}", exc)
                 focused = False
-            if focused:
+            answering = _answers()
+            frozen_window = bool(focused) and answering is False
+            if focused and not frozen_window:
                 return None
-            logger.info("launcher: booting holder pid={} never grew a window", pid)
+            logger.info(
+                "launcher: booting holder pid={} {}",
+                pid,
+                "grew a frozen window" if frozen_window else "never grew a window",
+            )
     if pid is None or pid == os.getpid():
         _report_startup_failure(
             f"{APP_DISPLAY_NAME} reports that it is already running, but no window "
@@ -1207,14 +1262,24 @@ def _recover_from_already_running(
         )
         return None
 
+    if frozen_window:
+        stuck_detail = (
+            f"{APP_DISPLAY_NAME} is already running (process {pid}), but its "
+            "window is frozen and not answering. It is probably stuck.\n\n"
+            "Stop that process and start fresh?"
+        )
+    else:
+        stuck_detail = (
+            f"{APP_DISPLAY_NAME} is already running (process {pid}), but it has no "
+            "window that could be brought to the front. It is probably stuck.\n\n"
+            "Stop that process and start fresh?"
+        )
     consented = False
     try:
         consented = bool(
             ask(
                 f"{APP_DISPLAY_NAME} is already running",
-                f"{APP_DISPLAY_NAME} is already running (process {pid}), but it has no "
-                "window that could be brought to the front. It is probably stuck.\n\n"
-                "Stop that process and start fresh?",
+                stuck_detail,
             )
         )
     except Exception as exc:  # noqa: BLE001
@@ -1266,7 +1331,11 @@ def _run_desktop(cfg, use_lock: bool) -> int:
             lock = acquire_single_instance_lock()
         except SingleInstanceError as exc:
             print(f"{APP_DISPLAY_NAME} is already running.", file=sys.stderr)
-            lock = _recover_from_already_running(exc, focus=focus_existing_instance_robust)
+            lock = _recover_from_already_running(
+                exc,
+                focus=focus_existing_instance_robust,
+                health=_health_answers,
+            )
             if lock is None:
                 return 3
 

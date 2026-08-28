@@ -87,11 +87,106 @@ def _recover(calls: _Calls):
     )
 
 
+def test_health_answers_treats_a_timeout_as_dead(monkeypatch):
+    """A bound port that never replies is the frozen desktop, not 'alive'."""
+    import sys
+    from types import ModuleType
+
+    class _Timeout(Exception):
+        pass
+
+    fake = ModuleType("httpx")
+
+    def _get(url, timeout=2.0):
+        raise _Timeout("read timeout")
+
+    fake.get = _get  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "httpx", fake)
+    assert launcher._health_answers(47821) is False
+
+
 def test_a_healthy_holder_is_focused_and_never_asked_about(monkeypatch):
     calls = _Calls(focused=True, meta={"pid": 4242, "port": 47821}, consent=True)
     assert _recover(calls) is None
     assert calls.asked == []
     assert calls.terminated == []
+
+
+def test_a_frozen_window_is_asked_about_not_just_raised():
+    """A window we can raise is not recovery when the server is silent.
+
+    Live 2026-08-28: the GIL-stalled desktop still had a title, so the
+    second click brought the frozen window forward and exited. The user
+    kept staring at a corpse.
+    """
+    calls = _Calls(focused=True, meta={"pid": 4242, "port": 47821}, consent=False)
+    result = launcher._recover_from_already_running(
+        RuntimeError("Jarvis is already running (pid=4242)."),
+        focus=calls.focus,
+        read_meta=calls.read_meta,
+        ask=calls.ask,
+        terminate=calls.terminate,
+        acquire=calls.acquire,
+        process_age=lambda _pid: None,
+        discover_pid=_meta_pid,
+        health=lambda _port: False,
+    )
+    assert result is None
+    assert calls.asked
+    assert calls.terminated == []
+    title, message = calls.asked[0]
+    assert "frozen" in message
+    assert "4242" in message
+
+
+def test_a_frozen_window_is_evicted_on_yes():
+    calls = _Calls(focused=True, meta={"pid": 4242, "port": 47821}, consent=True)
+    lock = launcher._recover_from_already_running(
+        RuntimeError("Jarvis is already running (pid=4242)."),
+        focus=calls.focus,
+        read_meta=calls.read_meta,
+        ask=calls.ask,
+        terminate=calls.terminate,
+        acquire=calls.acquire,
+        process_age=lambda _pid: None,
+        discover_pid=_meta_pid,
+        health=lambda _port: False,
+    )
+    assert isinstance(lock, _Lock)
+    assert calls.terminated == [4242]
+
+
+def test_a_young_frozen_window_is_waited_for_until_health_returns():
+    """Boot can miss a 2 s health check. Do not offer to kill it yet."""
+
+    class _Booting(_Calls):
+        def __init__(self):
+            super().__init__(focused=True, meta={"pid": 4242, "port": 47821}, consent=True)
+            self.health_n = 0
+
+        def health(self, _port):
+            self.health_n += 1
+            return self.health_n >= 4
+
+    calls = _Booting()
+    clock = {"t": 0.0}
+    result = launcher._recover_from_already_running(
+        RuntimeError("Jarvis is already running (pid=4242)."),
+        focus=calls.focus,
+        read_meta=calls.read_meta,
+        ask=calls.ask,
+        terminate=calls.terminate,
+        acquire=calls.acquire,
+        process_age=lambda _pid: 2.0,
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+        now=lambda: clock["t"],
+        booting_grace=5.0,
+        health=calls.health,
+    )
+    assert result is None
+    assert calls.asked == []
+    assert calls.terminated == []
+    assert calls.health_n >= 4
 
 
 def test_a_young_holder_is_waited_for_not_killed():

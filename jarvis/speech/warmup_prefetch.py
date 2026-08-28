@@ -28,6 +28,7 @@ itself — never slower than today, only faster. A missing openWakeWord (headles
 VPS base install with no ``[desktop]`` extra) is a logged no-op, never an error,
 so the cloud-first boot is unaffected.
 """
+
 from __future__ import annotations
 
 import os
@@ -41,6 +42,8 @@ __all__ = [
     "start_wake_import_prefetch",
     "prefetch_tts_imports",
     "start_tts_import_prefetch",
+    "prefetch_anthropic_imports",
+    "start_anthropic_import_prefetch",
 ]
 
 # Mirror the gate the speech stack itself uses (``_start_speech_and_orb``):
@@ -140,6 +143,51 @@ def start_tts_import_prefetch(
         target=prefetch_tts_imports,
         args=(importer,),
         name="tts-import-prefetch",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def prefetch_anthropic_imports(importer: Callable[[], None] | None = None) -> bool:
+    """Eagerly import the Anthropic SDK, off the first-turn path.
+
+    Why: ``claude_api._ensure_client`` does ``from anthropic import
+    AsyncAnthropic`` on a worker thread (BUG-189 moved it off the event
+    loop). The import still holds the GIL for pydantic model generation.
+    On 2026-08-28 that worker sat in the SDK's datetime regex compile
+    long enough that the in-process Jarvis Bar stopped pumping, Windows
+    marked the process not-responding, and every HTTP route including
+    ``/api/health`` timed out — a frozen window with no Restart that
+    still worked.
+
+    Firing the import once, early, in a daemon thread collapses the later
+    ``_ensure_client`` to a ``sys.modules`` hit. Fail-closed: a host
+    without the optional SDK is a logged no-op. Not gated on
+    ``JARVIS_VOICE`` — recap, wiki and the consolidator reach this
+    import with voice off.
+    """
+
+    def _default_import() -> None:
+        from anthropic import AsyncAnthropic  # noqa: F401, PLC0415 — eager warm import
+
+    do_import = importer or _default_import
+    try:
+        do_import()
+        return True
+    except Exception as exc:  # noqa: BLE001 — a prefetch must never break boot
+        logger.debug("Anthropic-import prefetch skipped (SDK unavailable): {}", exc)
+        return False
+
+
+def start_anthropic_import_prefetch(
+    *, importer: Callable[[], None] | None = None
+) -> threading.Thread:
+    """Run :func:`prefetch_anthropic_imports` in a daemon thread."""
+    thread = threading.Thread(
+        target=prefetch_anthropic_imports,
+        args=(importer,),
+        name="anthropic-import-prefetch",
         daemon=True,
     )
     thread.start()
