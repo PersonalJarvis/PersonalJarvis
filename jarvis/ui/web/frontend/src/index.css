@@ -479,12 +479,16 @@ label,
     --accent-foreground: 48 33% 97%;
     --destructive: 6 63% 46%; /* #C0392B — the light terminal's red */
     --destructive-foreground: 0 0% 100%;
-    /* Added / removed code in a chat diff. The red is the destructive one, so
-       a deleted line and a failed step speak with the same voice. */
-    --diff-add: 145 55% 24%;
-    --diff-add-bg: 145 50% 95%;
-    --diff-del: 6 60% 40%;
-    --diff-del-bg: 6 60% 96%;
+    /* Added / removed code in a chat diff. Green and red were always the
+       weaker half of this signal: a diff already carries + and - in its
+       gutter, so hue was reinforcement, not information. Monochrome the pair
+       says it more directly — an added line comes FORWARD (full ink on a
+       raised ground) and a deleted one RECEDES (muted ink, struck through,
+       see .diff-line-del). Strike-through is the move colour cannot make. */
+    --diff-add: 60 2% 8%;
+    --diff-add-bg: 52 29% 95%;
+    --diff-del: 51 6% 40%;
+    --diff-del-bg: 48 20% 96%;
     --border: 50 21% 89%; /* #E8E6DC */
     --input: 52 29% 95%;
     --ring: 0 0% 4%;
@@ -541,20 +545,26 @@ label,
     --stage-vignette-strength: 0.1;
 
     /* --- Run-graph node categories (Visualization) -----------------------
-       The n8n-style family hues behind `nodeSpec.ts`. Only the card's icon
-       tile reads `hsl(var(--viz-*))` — QUIET accents against the brand, not
-       a rainbow. Light values are darker ink for warm paper. */
-    --viz-trigger: 38 100% 33%; /* the brand gold — the run's ignition */
-    --viz-reasoning: 258 35% 46%; /* muted violet — the worker thinking */
-    --viz-terminal: 190 50% 30%; /* muted cyan — shell commands */
-    --viz-file: 210 50% 38%; /* muted blue — file writes/edits */
-    --viz-search: 168 45% 28%; /* muted teal — read/grep/glob */
-    --viz-web: 232 35% 46%; /* muted indigo — fetch/web */
-    --viz-integration: 24 60% 38%; /* muted orange — MCP / external tools */
-    --viz-agent: 292 35% 40%; /* muted magenta — sub-agent spawns */
-    --viz-tool: 240 6% 38%; /* neutral — unrecognised tools */
-    --viz-result: 152 45% 28%; /* muted green — the run's landing */
-    --viz-deliverable: 240 6% 38%; /* neutral — files left behind */
+       Eleven family hues used to distinguish what a step in a run did. They
+       are now two values, not eleven, because the glyph on the tile already
+       says which kind of step it is and a graph is read node by node rather
+       than scanned as a field — eleven hues were closer to a rainbow than to
+       a system, and the one thing they never encoded was ORDER.
+
+       What survives is the only distinction worth a value: where a run starts
+       and where it lands are full ink, everything in between is neutral. Only
+       the card's icon tile reads `hsl(var(--viz-*))`. */
+    --viz-trigger: 60 2% 8%; /* full ink — the run's ignition */
+    --viz-reasoning: 51 6% 40%; /* the worker thinking */
+    --viz-terminal: 51 6% 40%; /* shell commands */
+    --viz-file: 51 6% 40%; /* file writes/edits */
+    --viz-search: 51 6% 40%; /* read/grep/glob */
+    --viz-web: 51 6% 40%; /* fetch/web */
+    --viz-integration: 51 6% 40%; /* MCP / external tools */
+    --viz-agent: 51 6% 40%; /* sub-agent spawns */
+    --viz-tool: 51 6% 40%; /* unrecognised tools */
+    --viz-result: 60 2% 8%; /* full ink — the run's landing */
+    --viz-deliverable: 51 6% 40%; /* files left behind */
 
     /* Legacy aliases. Kept because they are referenced from a handful of
        places that predate the token set; all now follow the theme. The names
@@ -591,10 +601,10 @@ label,
     --accent-foreground: 60 3% 15%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 48 23% 95%;
-    --diff-add: 145 55% 65%;
-    --diff-add-bg: 145 40% 11%;
-    --diff-del: 0 70% 72%;
-    --diff-del-bg: 0 45% 12%;
+    --diff-add: 48 23% 95%;
+    --diff-add-bg: 60 2% 21%;
+    --diff-del: 47 5% 59%;
+    --diff-del-bg: 60 3% 11%;
     --border: 40 3% 23%; /* #3B3A38 */
     --input: 60 2% 21%;
     --ring: 0 0% 100%;
@@ -621,19 +631,20 @@ label,
     --stage-vignette-rgb: 0 0 0;
     --stage-vignette-strength: 0.62;
 
-    /* Run-graph node categories — quiet accents on matte black (see :root).
-       Saturation stays low so signal-yellow remains the only loud voice. */
-    --viz-trigger: 50 100% 52%;
-    --viz-reasoning: 258 45% 70%;
-    --viz-terminal: 187 40% 56%;
-    --viz-file: 210 50% 64%;
-    --viz-search: 168 35% 52%;
-    --viz-web: 232 45% 70%;
-    --viz-integration: 24 55% 58%;
-    --viz-agent: 292 40% 66%;
-    --viz-tool: 0 0% 62%;
-    --viz-result: 152 40% 52%;
-    --viz-deliverable: 0 0% 62%;
+    /* Run-graph node categories — see :root. Ignition and landing take the
+       full accent; every step between them is neutral and leaves the telling
+       to its glyph. */
+    --viz-trigger: 0 0% 100%;
+    --viz-reasoning: 47 5% 59%;
+    --viz-terminal: 47 5% 59%;
+    --viz-file: 47 5% 59%;
+    --viz-search: 47 5% 59%;
+    --viz-web: 47 5% 59%;
+    --viz-integration: 47 5% 59%;
+    --viz-agent: 47 5% 59%;
+    --viz-tool: 47 5% 59%;
+    --viz-result: 0 0% 100%;
+    --viz-deliverable: 47 5% 59%;
 
     --jarvis-yellow: 245 244 239;
     --jarvis-yellow-dim: 156 154 146;
@@ -3209,9 +3220,16 @@ label,
     color: hsl(var(--diff-add));
   }
 
+  /* Struck through, not just dimmed. With no red to say "removed", the line
+     has to show it: the rule is drawn in the line's own muted ink so it reads
+     as a cancellation rather than as a second underline, and it is scoped to
+     whole diff LINES — the "+12 -3" counters below must stay legible. */
   .diff-line-del {
     background-color: hsl(var(--diff-del-bg));
     color: hsl(var(--diff-del));
+    text-decoration: line-through;
+    text-decoration-color: hsl(var(--diff-del) / 0.55);
+    text-decoration-thickness: 1px;
   }
 
   /* The same two inks with no ground, for the "+12 -3" on a row. */
