@@ -654,7 +654,7 @@ export function Sidebar({
               : footerTooltip
           }
         >
-          <div className="h-2 w-2 shrink-0 rounded-full bg-primary shadow-[0_0_8px_rgba(255,214,10,0.7)]" />
+          <div className="h-2 w-2 shrink-0 rounded-full bg-primary shadow-[0_0_8px_rgb(var(--accent-rgb)/0.7)]" />
           {!railed && (
           <div className="flex-1 min-w-0">
             <div

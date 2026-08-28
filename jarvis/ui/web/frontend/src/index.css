@@ -2180,10 +2180,10 @@ label,
   .deck-orb-glow {
     background: radial-gradient(
       circle,
-      rgba(248, 226, 151, 0.5) 0%,
-      rgba(231, 196, 110, 0.28) 38%,
-      rgba(210, 147, 24, 0.1) 58%,
-      rgba(210, 147, 24, 0) 70%
+      rgba(225, 225, 225, 0.5) 0%,
+      rgba(197, 197, 197, 0.28) 38%,
+      rgba(152, 152, 152, 0.1) 58%,
+      rgba(152, 152, 152, 0) 70%
     );
     opacity: calc(0.6 + var(--orb-level, 0) * 0.4);
     transform: translate(-50%, -50%) scale(calc(1 + var(--orb-level, 0) * 0.18));

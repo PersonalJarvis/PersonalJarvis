@@ -53,7 +53,7 @@ interface Point {
 const AXIS_TINT = "hsl(0 0% 50%)";
 const TOKEN_COLORS = {
   tokens_in: "hsl(199 90% 62%)",
-  tokens_out: "hsl(50 100% 52%)",
+  tokens_out: "hsl(var(--primary))",
   tokens_cached: "hsl(268 72% 68%)",
 } as const;
 

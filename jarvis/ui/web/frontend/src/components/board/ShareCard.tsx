@@ -51,14 +51,14 @@ export const ShareCard = forwardRef<HTMLDivElement, ShareCardProps>(
           overflow: "hidden",
         }}
       >
-        {/* Atmosphere: amber glow top-left, cyan whisper bottom-right */}
+        {/* Atmosphere: a bright wash top-left, a quiet one bottom-right */}
         <div
           style={{
             position: "absolute",
             inset: 0,
             background:
-              "radial-gradient(60% 50% at 18% 8%, rgba(255,207,43,0.16), transparent 60%)," +
-              "radial-gradient(55% 45% at 92% 100%, rgba(90,209,255,0.10), transparent 60%)",
+              "radial-gradient(60% 50% at 18% 8%, rgba(245,244,239,0.16), transparent 60%)," +
+              "radial-gradient(55% 45% at 92% 100%, rgba(138,138,146,0.14), transparent 60%)",
           }}
         />
         {/* Blueprint grid */}
@@ -102,8 +102,8 @@ export const ShareCard = forwardRef<HTMLDivElement, ShareCardProps>(
                   height: 64,
                   borderRadius: "50%",
                   border: `1.5px solid ${AMBER}`,
-                  background: "rgba(255,207,43,0.06)",
-                  boxShadow: "0 0 24px -6px rgba(255,207,43,0.5)",
+                  background: "rgba(245,244,239,0.06)",
+                  boxShadow: "0 0 24px -6px rgba(245,244,239,0.5)",
                 }}
               >
                 <img src="/jarvis-mark-256.png" width={38} height={38} alt="" style={{ display: "block" }} />
@@ -150,7 +150,7 @@ export const ShareCard = forwardRef<HTMLDivElement, ShareCardProps>(
                 lineHeight: 0.9,
                 letterSpacing: "-0.04em",
                 color: "#fff",
-                textShadow: "0 0 60px rgba(255,207,43,0.22)",
+                textShadow: "0 0 60px rgba(245,244,239,0.22)",
               }}
             >
               {nf(userWords)}

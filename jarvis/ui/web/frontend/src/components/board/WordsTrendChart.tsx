@@ -10,7 +10,7 @@ import {
 import type { HeatmapCell } from "@/hooks/useBoard";
 import { useT } from "@/i18n";
 
-export const TREND_YOU = "hsl(50 100% 52%)"; // signal yellow (primary)
+export const TREND_YOU = "hsl(var(--primary))"; // signal yellow (primary)
 export const TREND_JARVIS = "hsl(199 90% 64%)"; // soft sky
 
 interface WordsTrendChartProps {

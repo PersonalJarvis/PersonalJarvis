@@ -192,9 +192,9 @@ export function JarvisDock() {
   const stateClass = {
     idle: "border-border bg-card/70",
     bloom:
-      "scale-105 border-primary/70 bg-primary/15 ring-2 ring-primary/40 shadow-[0_0_30px_rgba(255,214,10,0.28)] animate-[dock-breathe_2.2s_ease-in-out_infinite]",
+      "scale-105 border-primary/70 bg-primary/15 ring-2 ring-primary/40 shadow-[0_0_30px_rgb(var(--accent-rgb)/0.28)] animate-[dock-breathe_2.2s_ease-in-out_infinite]",
     armed:
-      "scale-110 border-primary bg-primary/25 ring-2 ring-primary shadow-[0_0_46px_rgba(255,214,10,0.5)]",
+      "scale-110 border-primary bg-primary/25 ring-2 ring-primary shadow-[0_0_46px_rgb(var(--accent-rgb)/0.5)]",
     flash:
       "scale-110 border-emerald-400 bg-emerald-400/15 ring-2 ring-emerald-400 shadow-[0_0_40px_rgba(52,211,153,0.5)]",
   }[state];

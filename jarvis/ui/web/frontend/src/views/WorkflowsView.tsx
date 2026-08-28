@@ -344,7 +344,7 @@ function WorkflowCard({
     <article
       className={cn(
         "card-outline overflow-hidden transition-all",
-        "hover:shadow-[0_0_24px_rgba(255,214,10,0.08)]",
+        "hover:shadow-[0_0_24px_rgb(var(--accent-rgb)/0.08)]",
       )}
     >
       <header className="flex items-start gap-3 p-4">

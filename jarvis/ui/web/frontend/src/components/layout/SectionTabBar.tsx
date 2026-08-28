@@ -58,7 +58,7 @@ function PrimaryTab({
       {active && (
         <span
           aria-hidden
-          className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary shadow-[0_0_8px_rgba(255,214,10,0.6)]"
+          className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary shadow-[0_0_8px_rgb(var(--accent-rgb)/0.6)]"
         />
       )}
     </button>

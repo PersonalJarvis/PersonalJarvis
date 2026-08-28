@@ -482,8 +482,8 @@ export function WikiGraph3D({
       // last cut accidentally drew.
       if (spokeFromSun(link)) {
         return themeRef.current === "dark"
-          ? "rgba(255, 214, 10, 0.16)"
-          : "rgba(168, 107, 0, 0.22)";
+          ? "rgb(var(--accent-rgb)/0.16)"
+          : "rgb(var(--accent-rgb)/0.22)";
       }
       return LINK_REST;
     },
@@ -626,8 +626,8 @@ export function WikiGraph3D({
       linkDirectionalParticleColor={(link: RenderEdge) =>
         spokeFromSun(link)
           ? themeRef.current === "dark"
-            ? "#ffe680"
-            : "#a86b00"
+            ? "hsl(var(--primary))"
+            : "hsl(var(--primary))"
           : PARTICLE_COLOUR
       }
       onNodeClick={handleNodeClick}

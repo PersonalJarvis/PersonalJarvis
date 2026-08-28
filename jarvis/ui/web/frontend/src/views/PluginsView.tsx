@@ -2065,7 +2065,7 @@ function DeviceCodeDialog({
                     e.preventDefault();
                     void openExternalUrl(verificationUriComplete ?? verificationUri);
                   }}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgba(255,214,10,0.4)]"
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgb(var(--accent-rgb)/0.4)]"
                 >
                   Open {pluginName}
                   <ExternalLink className="h-3 w-3" />
@@ -2604,7 +2604,7 @@ export function PatConnectDialog({
                 e.preventDefault();
                 void openExternalUrl(auth.token_creation_url);
               }}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgba(255,214,10,0.4)]"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgb(var(--accent-rgb)/0.4)]"
             >
               Open {plugin.name} tokens
               <ExternalLink className="h-3 w-3" />
@@ -2708,7 +2708,7 @@ export function PatConnectDialog({
             type="button"
             onClick={submit}
             disabled={!canSubmit}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgba(255,214,10,0.4)] disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgb(var(--accent-rgb)/0.4)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isPending ? (
               <>
