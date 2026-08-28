@@ -459,6 +459,7 @@ export function CostsView() {
               metric={metric}
               currency={currency}
               eurPerUsd={eurPerUsd}
+              loading={summary.isLoading}
             />
           </div>
         </Panel>
@@ -583,18 +584,26 @@ export function CostsView() {
           ) : null}
         </Panel>
 
-        <p className="px-1 pb-2 text-[11px] leading-relaxed text-muted-foreground">
-          {fill(t("costs_view.footnote"), {
-            sources: (data?.sources_present ?? []).join(", ") || "—",
-            rate: eurPerUsd.toFixed(2),
-            rateSource: t(
-              data?.currency.source === "config"
-                ? "costs_view.rate_from_config"
-                : "costs_view.rate_default",
-            ),
-            estimated: money(totals?.estimated_usd ?? 0),
-          })}
-        </p>
+        {/*
+          Held back until there is an answer. Rendered against no data it read
+          "Read from —. $0.00 of the total was priced here…", which names the
+          stores as missing and the estimate as nil — two claims the section
+          cannot make yet.
+        */}
+        {data ? (
+          <p className="px-1 pb-2 text-[11px] leading-relaxed text-muted-foreground">
+            {fill(t("costs_view.footnote"), {
+              sources: data.sources_present.join(", ") || "—",
+              rate: eurPerUsd.toFixed(2),
+              rateSource: t(
+                data.currency.source === "config"
+                  ? "costs_view.rate_from_config"
+                  : "costs_view.rate_default",
+              ),
+              estimated: money(totals?.estimated_usd ?? 0),
+            })}
+          </p>
+        ) : null}
       </div>
     </ScrollArea>
   );
@@ -658,7 +667,7 @@ function AreaSwitch({
               "flex flex-1 items-center justify-center gap-1.5 rounded-[10px] px-3 py-1.5 text-xs font-medium transition-colors sm:flex-none",
               "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
               active
-                ? "bg-card text-foreground shadow-sm"
+                ? "bg-card text-foreground"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -1299,7 +1308,7 @@ function RatesTable({
                 <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <span className="truncate text-foreground">{rate.model}</span>
                 {!rate.known ? (
-                  <span className="shrink-0 rounded border border-amber-500/40 px-1.5 py-0.5 text-[10px] text-amber-500">
+                  <span className="shrink-0 rounded border border-foreground/40 px-1.5 py-0.5 text-[10px] text-foreground">
                     {t("costs_view.rate_unknown")}
                   </span>
                 ) : null}
@@ -1626,6 +1635,7 @@ function DayReport({
               metric={metric}
               currency={currency}
               eurPerUsd={eurPerUsd}
+              loading={summary.isLoading}
             />
           </div>
         </Panel>
@@ -1881,7 +1891,7 @@ function TokenSplitBar({
   const parts = [
     { id: "tokens_in", value: tokensIn, color: "hsl(199 90% 62%)" },
     { id: "tokens_cached", value: tokensCached, color: "hsl(268 72% 68%)" },
-    { id: "tokens_out", value: tokensOut, color: "hsl(50 100% 52%)" },
+    { id: "tokens_out", value: tokensOut, color: "hsl(var(--primary))" },
   ];
   const total = parts.reduce((sum, p) => sum + p.value, 0);
 

@@ -705,16 +705,37 @@ export function StatTile({
         ) : null}
         <span className="truncate">{label}</span>
       </div>
-      <div
-        className={cn(
-          "mt-1.5 truncate font-display text-[22px] font-semibold tabular-nums tracking-tight text-foreground",
-          loading && "opacity-40",
-        )}
-        title={typeof value === "string" ? value : undefined}
-      >
-        {value}
-      </div>
-      {hint ? (
+      {/*
+        A tile with nothing to show yet shows nothing — never a dimmed zero.
+        `loading` here means "no answer has arrived", so the number underneath
+        it is a placeholder the caller had to invent, and a faded "$0.00" reads
+        as a total, not as a wait. The skeleton is the same height as the
+        number so the row does not jump when it lands.
+      */}
+      {loading ? (
+        <div
+          className="mt-1.5 h-[26px] py-1"
+          role="status"
+          aria-label={`${label}: …`}
+        >
+          <div className="h-[18px] w-20 animate-pulse rounded bg-foreground/15" />
+        </div>
+      ) : (
+        <div
+          className={cn(
+            "mt-1.5 truncate font-display text-[22px] font-semibold tabular-nums",
+            "tracking-tight text-foreground",
+          )}
+          title={typeof value === "string" ? value : undefined}
+        >
+          {value}
+        </div>
+      )}
+      {loading ? (
+        <div className="mt-0.5 h-[15px] py-[3px]">
+          <div className="h-[9px] w-28 animate-pulse rounded bg-foreground/10" />
+        </div>
+      ) : hint ? (
         <div
           className="mt-0.5 truncate text-[11px] text-muted-foreground"
           title={typeof hint === "string" ? hint : undefined}

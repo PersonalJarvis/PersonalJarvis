@@ -4928,6 +4928,7 @@
     "metric_cost": "Coste",
     "metric_tokens": "Tokens",
     "chart_empty": "No hubo gasto en este periodo.",
+    "chart_loading": "Leyendo el registro…",
     "total": "Total",
     "tokens_in": "Entrada",
     "tokens_out": "Salida",

@@ -4928,6 +4928,7 @@
     "metric_cost": "Cost",
     "metric_tokens": "Tokens",
     "chart_empty": "Nothing spent in this range.",
+    "chart_loading": "Reading the ledger…",
     "total": "Total",
     "tokens_in": "In",
     "tokens_out": "Out",

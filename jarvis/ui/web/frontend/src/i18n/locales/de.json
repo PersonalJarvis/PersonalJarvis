@@ -4928,6 +4928,7 @@
     "metric_cost": "Kosten",
     "metric_tokens": "Tokens",
     "chart_empty": "In diesem Zeitraum wurde nichts ausgegeben.",
+    "chart_loading": "Das Buch wird gelesen…",
     "total": "Gesamt",
     "tokens_in": "Rein",
     "tokens_out": "Raus",

@@ -39,6 +39,12 @@ interface Props {
   eurPerUsd: number;
   /** Bar the pointer selects; clicking it filters the section to that bucket. */
   onSelect?: (key: string) => void;
+  /**
+   * No answer has arrived yet. Without this the chart cannot tell "nothing was
+   * spent" from "nobody has told me yet", and it announced the first as the
+   * second for as long as the read took.
+   */
+  loading?: boolean;
 }
 
 interface Point {
@@ -57,6 +63,13 @@ const TOKEN_COLORS = {
   tokens_cached: "hsl(268 72% 68%)",
 } as const;
 
+/**
+ * Heights of the waiting chart's bars, as percentages. Fixed rather than
+ * random so the skeleton does not reshuffle on every render, and uneven so it
+ * reads as a chart rather than a progress bar.
+ */
+const SKELETON_BARS = [38, 52, 30, 61, 44, 72, 35, 58, 47, 66, 29, 55, 40, 63, 33] as const;
+
 export function CostTrendChart({
   series,
   bucket,
@@ -64,6 +77,7 @@ export function CostTrendChart({
   currency,
   eurPerUsd,
   onSelect,
+  loading = false,
 }: Props) {
   const t = useT();
 
@@ -92,6 +106,25 @@ export function CostTrendChart({
   );
 
   if (data.length === 0) {
+    // A chart-shaped wait, so the panel keeps its height and the eye has
+    // somewhere to rest — rather than a sentence claiming a result.
+    if (loading) {
+      return (
+        <div
+          className="flex h-full min-h-[180px] items-end gap-1.5 px-2 pb-6"
+          role="status"
+          aria-label={t("costs_view.chart_loading")}
+        >
+          {SKELETON_BARS.map((height, i) => (
+            <div
+              key={i}
+              className="flex-1 animate-pulse rounded-sm bg-foreground/10"
+              style={{ height: `${height}%` }}
+            />
+          ))}
+        </div>
+      );
+    }
     return (
       <div className="flex h-full min-h-[180px] items-center justify-center text-xs text-muted-foreground">
         {t("costs_view.chart_empty")}
