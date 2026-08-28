@@ -26,9 +26,12 @@ import { cn } from "@/lib/utils";
  *     sees most of the time);
  *   - while listening it is a TAPE: the newest microphone sample enters at
  *     the right edge and the whole row travels left, on the overlay's own
- *     attack/release and column cadence;
- *   - thinking and speaking are a sweep, connecting a pulse, error a
- *     still red row.
+ *     attack/release and its own slower column cadence;
+ *   - while the assistant SPEAKS it is the same tape, fed by the level of
+ *     the audio actually leaving for the speaker — but only where this
+ *     device can measure that (see `outputLevelRef`);
+ *   - thinking, connecting, and speaking we cannot hear are a sweep; error
+ *     is a still red row.
  *
  * ## Why it scrolls (maintainer, 2026-08-28)
  *
@@ -72,17 +75,26 @@ import { cn } from "@/lib/utils";
  */
 export function StageWaveform({
   levelRef,
+  outputLevelRef,
   phase,
   className,
 }: {
   /** Normalised 0..1 microphone level, written by the audio callback. */
   levelRef: MutableRefObject<number>;
+  /**
+   * Normalised 0..1 level of the ASSISTANT's voice, or `null` where this
+   * device cannot observe it (lib/voiceOutputLevel). Absent and `null` both
+   * mean the same thing to the drawing: fall back to the sweep.
+   */
+  outputLevelRef?: { current: number | null };
   phase: WaveformPhase;
   className?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const phaseRef = useRef<WaveformPhase>(phase);
   phaseRef.current = phase;
+  const outRef = useRef<{ current: number | null } | undefined>(outputLevelRef);
+  outRef.current = outputLevelRef;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -112,6 +124,7 @@ export function StageWaveform({
     let head = 0;
     let level = 0;
     let carryMs = 0;
+    let peak = 0;
     let sweep = 0;
     let breath = 0;
     let last = performance.now();
@@ -170,6 +183,51 @@ export function StageWaveform({
     /** How present a column is: a quiet floor that the activity lifts. */
     const presence = (v: number) => DOT_ALPHA + (1 - DOT_ALPHA) * v;
 
+    /**
+     * Advance and draw the measured tape from one 0..1 level.
+     *
+     * Called for the microphone while listening and for the assistant's own
+     * voice while it speaks, so the row stays ONE instrument reading whoever
+     * currently holds the conversation — both are real measurements, which
+     * is the only thing that entitles this drawing to look like a waveform.
+     *
+     * A column is a WINDOW, not an instant: it banks the loudest level seen
+     * since the last one. Sampling the level at the column boundary instead
+     * would drop a short consonant that happened to fall between two ticks.
+     */
+    const tape = (target: number, dt: number) => {
+      const tau = target > level ? ATTACK_TAU_S : RELEASE_TAU_S;
+      level += (target - level) * (1 - Math.exp(-dt / tau));
+      peak = Math.max(peak, level);
+      carryMs += dt * 1000;
+      while (carryMs >= STAGE_COLUMN_MS) {
+        carryMs -= STAGE_COLUMN_MS;
+        history[head] = peak;
+        head = (head + 1) % count;
+        peak = level;
+      }
+      const shaped: number[] = new Array<number>(count);
+      const alphas: number[] = new Array<number>(count);
+      for (let i = 0; i < count; i += 1) {
+        // `ringValue` reads the history oldest-first, so column 0 is the far
+        // left and the last column is this instant: a syllable appears at
+        // the right edge and walks out of the left. Reduced motion holds the
+        // plain level instead — a meter, no travel.
+        const raw = reduced ? level : clamp01(ringValue(history, head, i));
+        // `LOUDNESS` is a DISPLAY curve, applied here and never to the
+        // stored history: the meter behind it (lib/levelMeter) deliberately
+        // spends most of its range on ordinary speech, so feeding it
+        // straight into the height made every word slam the ceiling
+        // (maintainer, 2026-08-28: it deflects far too much). Bending it
+        // keeps the ORDER — louder is still taller — and gives a shout
+        // somewhere left to go.
+        const v = raw <= 0 ? 0 : raw ** LOUDNESS;
+        shaped[i] = v;
+        alphas[i] = presence(v);
+      }
+      paint(shaped, alphas, fills.primary);
+    };
+
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
       const dt = Math.min((now - last) / 1000, 0.1);
@@ -223,6 +281,20 @@ export function StageWaveform({
         return;
       }
 
+      if (p === "speaking") {
+        // The assistant's own voice, when this device can actually hear it:
+        // the browser realtime surface plays the reply itself, so the
+        // playback worklet measures the very samples going to the speaker.
+        // When the backend speaks through the OS device the page sees
+        // nothing, `out` is null, and the sweep below takes over rather than
+        // inventing a waveform.
+        const out = outRef.current?.current;
+        if (typeof out === "number") {
+          tape(clamp01(out), dt);
+          return;
+        }
+      }
+
       if (p === "working" || p === "speaking") {
         // A sweep: a bright band travelling the row right to left, the
         // same direction the measured tape runs, faster when speaking.
@@ -241,26 +313,9 @@ export function StageWaveform({
         return;
       }
 
-      // listening: the microphone as a tape running right to left.
-      const target = clamp01(levelRef.current);
-      const tau = target > level ? ATTACK_TAU_S : RELEASE_TAU_S;
-      level += (target - level) * (1 - Math.exp(-dt / tau));
-      carryMs += dt * 1000;
-      while (carryMs >= COLUMN_MS) {
-        carryMs -= COLUMN_MS;
-        history[head] = level;
-        head = (head + 1) % count;
-      }
-      for (let i = 0; i < count; i += 1) {
-        // `ringValue` reads the history oldest-first, so column 0 is the
-        // far left and the last column is the sample from this instant:
-        // a syllable appears at the right edge and walks out of the left.
-        // Reduced motion holds the plain level instead — a meter, no travel.
-        const v = reduced ? level : clamp01(ringValue(history, head, i));
-        shaped[i] = v;
-        alphas[i] = presence(v);
-      }
-      paint(shaped, alphas, fills.primary);
+      // listening, and speaking wherever the assistant's voice is observable:
+      // a measured tape running right to left.
+      tape(clamp01(levelRef.current), dt);
     };
 
     measure();
@@ -295,8 +350,26 @@ const ROW_PITCH = BAR_W + BAR_GAP;
  *  rest state is a round dot rather than a dash. */
 const BAR_MIN = 5;
 
-/** Fraction of the box the loudest capsule may take. */
-const TALLEST = 0.8;
+/** Fraction of the box the loudest capsule may take. Leaves real headroom
+ *  on purpose: a bar that a normal sentence already fills has nothing left
+ *  to say when somebody raises their voice. */
+const TALLEST = 0.62;
+
+/** Display exponent on the measured level (see `tape`). Above 1, so an
+ *  ordinary word sits around half the box and the top belongs to a shout. */
+const LOUDNESS = 1.6;
+
+/** How much time one column of the tape covers.
+ *
+ * Twice the overlay pill's cadence, and derived from it so the relationship
+ * stays visible: the small pill is a glance, this row is meant to be READ,
+ * and at 33 ms the whole width held barely a second and a half — a single
+ * word smeared across a third of the bar and left again before you had
+ * looked at it (maintainer, 2026-08-28: run it a little slower). At 66 ms
+ * a word is a compact group of capsules and the row holds a whole sentence.
+ * Nothing is thrown away to get there: each column banks the PEAK of its
+ * window. */
+const STAGE_COLUMN_MS = COLUMN_MS * 2;
 
 /** How present a resting dot is at the centre of the row. Visible as a row,
  *  quiet enough that the measured part of the drawing is the part that

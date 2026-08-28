@@ -50,6 +50,8 @@ class PcmCapture extends AudioWorkletProcessor {
 
 class PcmPlayback extends AudioWorkletProcessor {
   private readonly queue = new JitterBufferedPcm16Queue(sampleRate);
+  private levelSum = 0;
+  private levelCount = 0;
 
   constructor() {
     super();
@@ -72,6 +74,22 @@ class PcmPlayback extends AudioWorkletProcessor {
     // streams at wall clock. Zero-filling a starved quantum instead is what
     // chopped the voice on this surface.
     this.queue.render(out);
+    // Throttled (~30 Hz) OUTPUT-level messages, the mirror of PcmCapture's.
+    // Measured on the samples this processor just wrote, so the number is the
+    // audio actually leaving for the speaker at that instant — the only
+    // honest source for a "Jarvis is speaking" waveform, and the reason the
+    // front-page bar can draw a real tape there instead of a stand-in sweep.
+    // A silent quantum reports 0 rather than nothing: "the tap is alive and
+    // there is nothing to hear" and "there is no tap here" must stay
+    // distinguishable on the other end.
+    for (let i = 0; i < out.length; i++) this.levelSum += out[i] * out[i];
+    this.levelCount += out.length;
+    if (this.levelCount >= sampleRate / 30) {
+      const rms = Math.sqrt(this.levelSum / this.levelCount);
+      this.port.postMessage({ type: "level", rms });
+      this.levelSum = 0;
+      this.levelCount = 0;
+    }
     return true;
   }
 }

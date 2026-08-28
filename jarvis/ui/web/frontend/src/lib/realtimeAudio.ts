@@ -20,6 +20,13 @@ export type RealtimeCallbacks = {
   onAudio?: () => void;
   /** Normalized 0..1 microphone input level, ~30 Hz while capturing. */
   onInputLevel?: (level: number) => void;
+  /**
+   * Normalized 0..1 level of the ASSISTANT's voice, ~30 Hz while a session
+   * is open, measured on the samples the playback worklet writes. `null`
+   * when the tap goes away, so a renderer can tell "silent" from "not
+   * observable here" (see lib/voiceOutputLevel).
+   */
+  onOutputLevel?: (level: number | null) => void;
 };
 
 export type RealtimeAudioOptions = {
@@ -34,6 +41,14 @@ export type RealtimeAudioOptions = {
    */
   startBudgetMs?: number;
 };
+
+/**
+ * How long after the last PCM packet the playback tap still counts as the
+ * source of what is audible. Comfortably longer than the worklet's jitter
+ * reserve, so the tail of a sentence keeps its levels, and far shorter than
+ * a turn, so the browser-speech fallback never inherits them.
+ */
+const OUTPUT_TAP_TTL_MS = 600;
 
 /** Historical fixed budget for one realtime start attempt. */
 const DEFAULT_START_BUDGET_MS = 20_000;
@@ -304,6 +319,17 @@ export class RealtimeAudioClient {
   private ready = false;
   private intentionalClose = false;
   private inputMeter = new LevelMeter();
+  // Its own normalizer: the assistant's voice and the room's microphone have
+  // different noise floors and dynamics, and one shared adaptive floor would
+  // let whichever is louder decide the other one's scale.
+  private outputMeter = new LevelMeter();
+  // When PCM last reached the playback worklet. The worklet renders (and so
+  // measures) whatever is in its queue, which is silence whenever the reply
+  // is NOT coming through it — most importantly during the SpeechSynthesis
+  // fallback, where the voice is audible but never passes this graph.
+  // Reporting that silence would be a lie in the other direction, so the tap
+  // only speaks while it is the thing making the sound.
+  private lastPcmAt = Number.NEGATIVE_INFINITY;
   private browserSpeech = new BrowserSpeechFallback();
   private webRtcTransport: RealtimeWebRtcTransport;
   private webRtcOfferSdp: string | null = null;
@@ -362,6 +388,13 @@ export class RealtimeAudioClient {
       const source = this.ctx.createMediaStreamSource(this.stream);
       this.captureNode = new AudioWorkletNode(this.ctx, "pcm-capture");
       this.playbackNode = new AudioWorkletNode(this.ctx, "pcm-playback");
+      this.playbackNode.port.onmessage = (event: MessageEvent) => {
+        const data = event.data as { type?: string; rms?: number } | null;
+        if (data && data.type === "level" && typeof data.rms === "number") {
+          const live = performance.now() - this.lastPcmAt <= OUTPUT_TAP_TTL_MS;
+          this.cb.onOutputLevel?.(live ? this.outputMeter.push(data.rms) : null);
+        }
+      };
       // Keep the capture worklet in the active audio graph without feeding the
       // microphone back to the user. Browser AEC still sees the real playback
       // node connected below and can remove it from captured audio.
@@ -602,6 +635,7 @@ export class RealtimeAudioClient {
     const converted = this.playbackResampler?.process(pcm) ?? pcm;
     if (converted.byteLength === 0) return;
     this.playbackNode?.port.postMessage({ type: "pcm", data: converted }, [converted]);
+    this.lastPcmAt = performance.now();
     this.cb.onAudio?.();
   }
 
@@ -670,6 +704,9 @@ export class RealtimeAudioClient {
     this.stream = null;
     this.ctx = null;
     this.inputMeter.reset();
+    this.outputMeter.reset();
     this.cb.onInputLevel?.(0);
+    // null, not 0: playback is gone, so nothing may keep drawing a voice.
+    this.cb.onOutputLevel?.(null);
   }
 }

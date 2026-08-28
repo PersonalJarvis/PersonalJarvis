@@ -18,6 +18,7 @@ import {
   setBrowserVoiceInputOwnership,
   setVoiceInputLevel,
 } from "@/lib/voiceInputLevel";
+import { clearVoiceOutputLevel, setVoiceOutputLevel } from "@/lib/voiceOutputLevel";
 
 type ConnectionState = "idle" | "connecting" | "connected" | "error";
 
@@ -134,6 +135,7 @@ export function BrowserRealtimeControl() {
     setSpokenText("");
     levelRef.current = 0;
     clearVoiceInputLevel("browser");
+    clearVoiceOutputLevel();
     setBrowserVoiceInputOwnership(false);
     setVoice("idle");
     await client?.disconnect();
@@ -150,6 +152,7 @@ export function BrowserRealtimeControl() {
     setEffectiveProvider("");
     levelRef.current = 0;
     clearVoiceInputLevel("browser");
+    clearVoiceOutputLevel();
     await previousClient?.disconnect();
     if (connectionGenerationRef.current !== generation) return;
 
@@ -172,6 +175,11 @@ export function BrowserRealtimeControl() {
           if (!isCurrent()) return;
           levelRef.current = value;
           setVoiceInputLevel(value, "browser");
+        },
+        onOutputLevel: (value) => {
+          if (!isCurrent()) return;
+          if (value === null) clearVoiceOutputLevel();
+          else setVoiceOutputLevel(value);
         },
         onStatus: (status, payload) => {
           if (!isCurrent()) return;

@@ -5,6 +5,7 @@ import { useEventStore, type VoiceState } from "@/store/events";
 import type { WaveformPhase } from "@/components/overlay/VoiceWaveform";
 import { StageWaveform } from "@/components/home/StageWaveform";
 import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
+import { voiceOutputLevelRef } from "@/lib/voiceOutputLevel";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
@@ -112,14 +113,18 @@ export function JarvisBar({ phase, hint }: { phase: WaveformPhase; hint: string 
       data-active={callActive || undefined}
       className={cn(
         "group flex w-full cursor-pointer select-none flex-col gap-2 rounded-2xl border border-border bg-card px-4 pb-2.5 pt-4 text-left",
-        "shadow-[0_1px_2px_rgb(var(--scrim-rgb)/0.05),0_8px_24px_rgb(var(--scrim-rgb)/0.06)] transition-[border-color,box-shadow]",
+        "transition-[border-color,box-shadow]",
         "hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         "aria-disabled:cursor-default aria-disabled:opacity-80 aria-disabled:hover:border-border",
         callActive && "border-primary/50",
       )}
     >
       <div className="h-14 w-full">
-        <StageWaveform levelRef={voiceInputLevelRef} phase={phase} />
+        <StageWaveform
+          levelRef={voiceInputLevelRef}
+          outputLevelRef={voiceOutputLevelRef}
+          phase={phase}
+        />
       </div>
       <div className="flex items-center gap-2">
         <span
