@@ -251,3 +251,57 @@ def test_summary_says_whether_the_cli_index_is_still_counting(client: TestClient
     assert isinstance(index["complete"], bool)
     assert index["files_indexed"] + index["files_pending"] == index["files_known"]
     assert index["complete"] == (index["files_pending"] == 0)
+
+
+# ---------------------------------------------------------------------------
+# The section is a read model over live databases, so how OFTEN it re-reads
+# them is part of its contract: the four panels of one page load, and the poll
+# that follows, must cost one pass over the stores rather than one each.
+# ---------------------------------------------------------------------------
+
+
+def test_one_page_load_reads_the_stores_once(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """All four panels share a cache entry.
+
+    The open end of a range used to carry a millisecond timestamp into the
+    cache key, so two requests a millisecond apart never agreed on one and the
+    cache could not hit. The section then re-read every store four times per
+    page and again on every poll — the section's whole cost, paid four times.
+    """
+    from jarvis.ui.web import costs_routes
+
+    reads = 0
+    real = costs_routes.collect_entries
+
+    def counting(*args: object, **kwargs: object) -> object:
+        nonlocal reads
+        reads += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(costs_routes, "collect_entries", counting)
+    costs_routes._cache._key = None  # noqa: SLF001 — a cold section, as on open
+
+    for panel in ("summary", "daily", "entries"):
+        assert client.get(f"/api/costs/{panel}?days=30").status_code == 200
+
+    assert reads == 1, f"one page load re-read the stores {reads} times"
+
+
+def test_an_explicit_window_is_reported_exactly(client: TestClient) -> None:
+    """Snapping the open end must not move a window the caller pinned.
+
+    The daily drill-down asks for one exact day. Rounding its bounds would
+    silently redraw a different day than the one that was clicked.
+    """
+    since = NOW_MS - 86_400_000
+    body = client.get(f"/api/costs/summary?since_ms={since}&until_ms={NOW_MS}").json()
+    assert body["since_ms"] == since
+    assert body["until_ms"] == NOW_MS
+
+
+def test_a_rolling_window_keeps_its_exact_width(client: TestClient) -> None:
+    """Snapping moves the end, never the width — the chart's grain depends on it."""
+    body = client.get("/api/costs/summary?days=30").json()
+    assert body["until_ms"] - body["since_ms"] == 30 * 24 * 60 * 60 * 1000

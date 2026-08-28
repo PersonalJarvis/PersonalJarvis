@@ -214,6 +214,7 @@ export interface CostPricing {
 // Query state shared by the summary and the line items
 // ---------------------------------------------------------------------------
 
+
 export interface CostFilters {
   /** Rolling window in days; `0` means everything ever recorded. */
   days: number;
@@ -273,8 +274,14 @@ function toParams(f: CostFilters): URLSearchParams {
   return params;
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+/**
+ * React Query hands every queryFn an `AbortSignal`; forwarding it is what makes
+ * leaving the section actually stop the work. These reads are the most
+ * expensive in the app, so an abandoned one left running keeps a server thread
+ * busy on an answer nobody will look at.
+ */
+async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return (await res.json()) as T;
 }
@@ -287,11 +294,17 @@ export function useCostSummary(filters: CostFilters) {
   const params = toParams(filters);
   return useQuery({
     queryKey: ["costs", "summary", params.toString()],
-    queryFn: () => getJson<CostSummary>(`/api/costs/summary?${params.toString()}`),
-    // Spend only moves when a turn finishes; a slow poll keeps an open
-    // section current without re-reading three SQLite files every second.
-    refetchInterval: 30_000,
+    queryFn: ({ signal }) => getJson<CostSummary>(`/api/costs/summary?${params.toString()}`, signal),
+    // Spend only moves when a turn finishes, and this is the most expensive
+    // read in the app. At thirty seconds a slow answer was still in flight
+    // when the next poll fired, so the section spent its whole life queueing
+    // behind itself.
+    refetchInterval: 120_000,
     staleTime: 10_000,
+    // Without this a filter click empties every table on the page while the
+    // new numbers are fetched. Both sibling queries already keep the old
+    // rows on screen; the summary is what the eye is actually on.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -306,8 +319,12 @@ export function useCostDaily(filters: CostFilters) {
   const params = toParams(filters);
   return useQuery({
     queryKey: ["costs", "daily", params.toString()],
-    queryFn: () => getJson<CostDailyLedger>(`/api/costs/daily?${params.toString()}`),
-    refetchInterval: 30_000,
+    queryFn: ({ signal }) =>
+      getJson<CostDailyLedger>(`/api/costs/daily?${params.toString()}`, signal),
+    // No poll of its own: this is the same underlying data as the summary,
+    // re-read whenever the filters change. Two independent polls over the
+    // two heaviest endpoints meant the section refetched everything twice
+    // per cycle for numbers that move only when a turn ends.
     staleTime: 10_000,
     placeholderData: (prev) => prev,
   });
@@ -325,7 +342,8 @@ export function useCostEntries(
   params.set("offset", String(offset));
   return useQuery({
     queryKey: ["costs", "entries", params.toString()],
-    queryFn: () => getJson<CostEntriesPage>(`/api/costs/entries?${params.toString()}`),
+    queryFn: ({ signal }) =>
+      getJson<CostEntriesPage>(`/api/costs/entries?${params.toString()}`, signal),
     staleTime: 10_000,
     placeholderData: (prev) => prev,
   });
@@ -334,7 +352,7 @@ export function useCostEntries(
 export function useCostPricing(days: number, enabled: boolean) {
   return useQuery({
     queryKey: ["costs", "pricing", days],
-    queryFn: () => getJson<CostPricing>(`/api/costs/pricing?days=${days}`),
+    queryFn: ({ signal }) => getJson<CostPricing>(`/api/costs/pricing?days=${days}`, signal),
     enabled,
     staleTime: 5 * 60_000,
   });

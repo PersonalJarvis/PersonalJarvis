@@ -44,6 +44,11 @@ _FALLBACK_EUR_PER_USD = 0.92
 
 _DAY_MS = 24 * 60 * 60 * 1000
 
+#: Grain the open end of a range snaps to, so the panels of one page load share
+#: an entry-cache key. Matches ``_EntryCache._TTL_S`` — a finer grain would
+#: expire the key before the cache does and defeat the point.
+_RANGE_GRAIN_MS = 15_000
+
 
 # ---------------------------------------------------------------------------
 # Response models
@@ -245,9 +250,20 @@ class _EntryCache:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        # Held for the read itself, so the four panels of one page load share
+        # a single pass over the stores instead of racing each other through
+        # it. The handlers run in the threadpool, so without this a page open
+        # is four concurrent reads of the same rows off the same disk.
+        self._compute_lock = threading.Lock()
         self._key: tuple[Any, ...] | None = None
         self._entries: list[CostEntry] = []
         self._at = 0.0
+
+    def _fresh(self, key: tuple[Any, ...]) -> list[CostEntry] | None:
+        with self._lock:
+            if self._key == key and (time.monotonic() - self._at) < self._TTL_S:
+                return self._entries
+        return None
 
     def get(self, sources: CostSources, since_ms: int, until_ms: int) -> list[CostEntry]:
         key = (
@@ -256,23 +272,30 @@ class _EntryCache:
             since_ms,
             until_ms,
         )
-        now = time.monotonic()
-        with self._lock:
-            if self._key == key and (now - self._at) < self._TTL_S:
-                return self._entries
-        # The coding-CLI source pre-aggregates, so it has to know the grain
-        # the report will draw at before it reads a row.
+        hit = self._fresh(key)
+        if hit is not None:
+            return hit
+        with self._compute_lock:
+            # Someone may have filled it while we queued for the read.
+            hit = self._fresh(key)
+            if hit is not None:
+                return hit
+            # The coding-CLI source pre-aggregates, so it has to know the grain
+            # the report will draw at before it reads a row.
+            entries = collect_entries(
+                sources,
+                since_ms=since_ms,
+                until_ms=until_ms,
+                bucket_ms=bucket_ms_for(since_ms, until_ms),
+            )
+            with self._lock:
+                self._key = key
+                self._entries = entries
+                self._at = time.monotonic()
+        # Armed only after the read: the scanner walks the same gigabytes this
+        # request just read, and starting it first makes the page wait behind
+        # its own background job.
         _refresher.nudge(sources.cli_index_dir)
-        entries = collect_entries(
-            sources,
-            since_ms=since_ms,
-            until_ms=until_ms,
-            bucket_ms=bucket_ms_for(since_ms, until_ms),
-        )
-        with self._lock:
-            self._key = key
-            self._entries = entries
-            self._at = now
         return entries
 
 
@@ -305,7 +328,12 @@ class _IndexRefresher:
     """
 
     _MIN_GAP_S = 60.0
-    _CATCH_UP_GAP_S = 3.0
+    # A three-second gap after a twenty-second read is an 87 % duty cycle: on a
+    # machine whose transcripts outgrow one catch-up pass the scanner never
+    # leaves this mode, and it holds the disk the whole app reads from. Equal
+    # gap and budget halve that while still reading far faster than transcripts
+    # are written; the badge keeps saying how much is left.
+    _CATCH_UP_GAP_S = 20.0
     _BUDGET_S = 20.0
 
     def __init__(self) -> None:
@@ -355,9 +383,13 @@ _refresher = _IndexRefresher()
 class _IndexStatusCache:
     """``index_state`` walks the transcript folders (a few thousand ``stat``
     calls); the summary is polled every 30 s and re-requested on every filter
-    click, so the walk is shared for a short while rather than repeated."""
+    click, so the walk is shared for a short while rather than repeated.
 
-    _TTL_S = 10.0
+    The TTL outlives that poll on purpose. At ten seconds against a thirty-second
+    poll it expired before every request, so each one paid for the full walk —
+    the badge costing more than the numbers it sits beside."""
+
+    _TTL_S = 45.0
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -447,8 +479,14 @@ def _range(days: int, since_ms: int | None, until_ms: int | None) -> tuple[int, 
 
     ``days=0`` means "everything ever recorded" — the section is also a
     lifetime ledger, not only a rolling window.
+
+    The open end is snapped to the entry cache's own grain. At millisecond
+    resolution every request carried a different "now" into the cache key, so
+    the cache could never hit and the four panels of one page each re-read the
+    stores. Only the end moves; the window keeps its exact width, so the chart
+    draws at the same grain either way.
     """
-    now = int(time.time() * 1000)
+    now = int(time.time() * 1000) // _RANGE_GRAIN_MS * _RANGE_GRAIN_MS
     end = until_ms if until_ms is not None else now
     if since_ms is not None:
         return since_ms, end
@@ -479,7 +517,7 @@ def _split(values: list[str] | None) -> set[str]:
 
 
 @router.get("/summary", response_model=CostSummary, summary="Spend and token totals")
-async def get_summary(
+def get_summary(
     request: Request,
     days: Annotated[int, Query(ge=0, le=3650)] = 30,
     since_ms: Annotated[int | None, Query(ge=0)] = None,
@@ -526,7 +564,7 @@ _DAY_TOP_PROVIDERS = 8
 
 
 @router.get("/daily", response_model=DailyLedger, summary="One row per calendar day")
-async def get_daily(
+def get_daily(
     request: Request,
     days: Annotated[int, Query(ge=0, le=3650)] = 30,
     since_ms: Annotated[int | None, Query(ge=0)] = None,
@@ -591,7 +629,7 @@ async def get_daily(
 
 
 @router.get("/entries", response_model=EntriesPage, summary="Individual spend line items")
-async def get_entries(
+def get_entries(
     request: Request,
     days: Annotated[int, Query(ge=0, le=3650)] = 30,
     since_ms: Annotated[int | None, Query(ge=0)] = None,
@@ -634,7 +672,7 @@ async def get_entries(
 
 
 @router.get("/pricing", response_model=PricingResponse, summary="Rate card per model")
-async def get_pricing(
+def get_pricing(
     request: Request,
     days: Annotated[int, Query(ge=0, le=3650)] = 30,
 ) -> PricingResponse:
