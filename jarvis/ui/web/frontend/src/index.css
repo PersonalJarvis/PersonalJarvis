@@ -452,32 +452,43 @@ label,
    * exist for; each is a bare `R G B` list meant for `rgb(var(--x) / <alpha>)`.
    */
   :root {
-    /* --- Light: warm paper, ink brand -------------------------------------
-       The ground is a solid colour by default (2026-08-23, maintainer: the
-       app no longer opens on a wallpaper). Warm paper rather than pure
-       white, a white card ON the paper so surfaces read as surfaces, and
-       hairlines a touch warmer than grey. */
-    --background: 48 33% 97%; /* #FAF9F5 warm paper */
-    --foreground: 60 2% 8%; /* #141413 ink */
+    /* --- Light: the Design.md's palette, taken literally -------------------
+       Every value below is that document's own: `canvas`, `ink`,
+       `surface-card`, `surface-strong`, `hairline`, `hairline-soft`,
+       `semantic-error`. The ground is a solid colour by default
+       (2026-08-23, maintainer: the app no longer opens on a wallpaper).
+
+       ONE correction. The document's `muted` (#807D72) scores 3.84:1 on its
+       own canvas — under the 4.5:1 body text needs. On a marketing page it
+       sets sub-titles; here it carries secondary text in dense lists, so it
+       keeps the document's exact hue and saturation and drops four points of
+       lightness to #747167 (4.55:1). */
+    --background: 60 16% 96%; /* #F7F7F4 — Design.md `canvas` */
+    --foreground: 53 12% 13%; /* #26251E — Design.md `ink` */
     --card: 0 0% 100%; /* white card on paper */
-    --card-foreground: 60 2% 8%;
+    --card-foreground: 53 12% 13%;
     --popover: 0 0% 100%;
-    --popover-foreground: 60 2% 8%;
-    /* #0A0A0A. The brand carries no hue any more (2026-08-28): a primary
-       action is simply the darkest thing on the page, and the lightest thing
-       on the dark one. Deliberately a step past --foreground (#141413) rather
-       than equal to it — the ink of running text and the voltage of the brand
-       are different jobs, and `text-primary` needs to keep SOME distance from
-       body copy now that it cannot use a colour to get it. 19.8:1 on paper. */
-    --primary: 0 0% 4%;
-    --primary-foreground: 48 33% 97%; /* the paper, not pure white */
-    --secondary: 52 29% 95%; /* #F5F4ED recessed surface, hover */
-    --secondary-foreground: 60 2% 8%;
-    --muted: 52 29% 95%;
-    --muted-foreground: 51 6% 40%; /* #6C6A5F */
-    --accent: 0 0% 4%;
-    --accent-foreground: 48 33% 97%;
-    --destructive: 6 63% 46%; /* #C0392B — the light terminal's red */
+    --popover-foreground: 53 12% 13%;
+    /* #26251E — the Design.md's `ink`, and equal to --foreground on purpose.
+       That document uses one value for three jobs: display type, emphasis
+       (`body-strong`, "Same as ink"), and the filled surface of a primary
+       action (`button-download`, `pricing-tier-featured`). It has no separate
+       "primary text" colour, so neither do we.
+
+       The cost is real and named here rather than engineered around: with no
+       hue and no separate value, `text-primary` cannot make a word louder on
+       its own. Emphasis is carried by weight in running text and by a filled
+       chip for state; the 857 uses of bg-/border-/ring-primary are unaffected,
+       since they read against the surface and the hairline. 14.3:1 on canvas. */
+    --primary: 53 12% 13%;
+    --primary-foreground: 60 16% 96%; /* the canvas, not pure white */
+    --secondary: 50 11% 89%; /* #E6E5E0 — Design.md `surface-strong` */
+    --secondary-foreground: 53 12% 13%;
+    --muted: 50 11% 89%;
+    --muted-foreground: 47 6% 43%; /* #747167 — Design.md `muted`, see note above */
+    --accent: 53 12% 13%;
+    --accent-foreground: 60 16% 96%;
+    --destructive: 345 64% 49%; /* #C0392B — the light terminal's red */
     --destructive-foreground: 0 0% 100%;
     /* Added / removed code in a chat diff. Green and red were always the
        weaker half of this signal: a diff already carries + and - in its
@@ -485,34 +496,34 @@ label,
        says it more directly — an added line comes FORWARD (full ink on a
        raised ground) and a deleted one RECEDES (muted ink, struck through,
        see .diff-line-del). Strike-through is the move colour cannot make. */
-    --diff-add: 60 2% 8%;
-    --diff-add-bg: 52 29% 95%;
-    --diff-del: 51 6% 40%;
-    --diff-del-bg: 48 20% 96%;
-    --border: 50 21% 89%; /* #E8E6DC */
-    --input: 52 29% 95%;
-    --ring: 0 0% 4%;
+    --diff-add: 53 12% 13%;
+    --diff-add-bg: 50 11% 89%;
+    --diff-del: 47 6% 43%;
+    --diff-del-bg: 51 18% 94%;
+    --border: 50 11% 89%; /* #E6E5E0 — Design.md `hairline` */
+    --input: 50 11% 89%;
+    --ring: 53 12% 13%;
     --radius: 0.75rem;
     /* The navigation column's own ground — a shade below the paper, so the
        rail reads as a rail without a border doing all the work. */
-    --sidebar: 48 25% 92%; /* #F0EEE6 */
+    --sidebar: 51 18% 92%; /* #EFEEE8 — Design.md `hairline-soft` */
 
     /* --- Effect channels (see the note above) ---------------------------- */
     /* The accent as raw channels, for glows / grid lines / halos. Now the ink
        itself: on paper a "glow" means a faint darkening, not a light source,
        so every grid and halo built from this reads as a pencil rule. */
-    --accent-rgb: 43 43 51;
+    --accent-rgb: 38 37 30;
     /* What a translucent overlay DARKENS with (backdrops, vignettes, shadows).
        Warm near-black rather than pure black, so a scrim over paper does not
        turn grey-blue. */
-    --scrim-rgb: 43 40 32;
+    --scrim-rgb: 38 37 30;
     /* What a translucent overlay LIGHTENS with (hatching, glass rims, sheen).
        In light mode "highlight" means going darker, so this is the ink colour —
        the two swap roles between themes, which is exactly the point. */
-    --sheen-rgb: 43 43 51;
+    --sheen-rgb: 38 37 30;
     /* The ground colour of the app shell as channels, for glass pills that
        must read as "the app, blurred" rather than a grey rectangle. */
-    --shell-rgb: 250 249 245;
+    --shell-rgb: 247 247 244;
 
     /* Light mode changes the interface ink, not the chosen wallpaper. Fully
        transparent surfaces were tried first, but with user-chosen wallpapers
@@ -535,13 +546,13 @@ label,
        a force graph needs its own depth cue, so it gets its own ground, its
        own centre-of-gravity glow, and its own dot field. Light mode exposes
        the wallpaper while retaining ink-dark stars and ink state cues. */
-    --stage-bg: 45 40% 97%;
-    --stage-dot-rgb: 43 43 51;
+    --stage-bg: 60 16% 96%;
+    --stage-dot-rgb: 38 37 30;
     --stage-dot-strong: 0.28;
     --stage-dot-soft: 0.16;
-    --stage-wash-rgb: 43 43 51;
+    --stage-wash-rgb: 38 37 30;
     --stage-wash-strength: 0.08;
-    --stage-vignette-rgb: 43 40 32;
+    --stage-vignette-rgb: 38 37 30;
     --stage-vignette-strength: 0.1;
 
     /* --- Run-graph node categories (Visualization) -----------------------
@@ -554,66 +565,74 @@ label,
        What survives is the only distinction worth a value: where a run starts
        and where it lands are full ink, everything in between is neutral. Only
        the card's icon tile reads `hsl(var(--viz-*))`. */
-    --viz-trigger: 60 2% 8%; /* full ink — the run's ignition */
-    --viz-reasoning: 51 6% 40%; /* the worker thinking */
-    --viz-terminal: 51 6% 40%; /* shell commands */
-    --viz-file: 51 6% 40%; /* file writes/edits */
-    --viz-search: 51 6% 40%; /* read/grep/glob */
-    --viz-web: 51 6% 40%; /* fetch/web */
-    --viz-integration: 51 6% 40%; /* MCP / external tools */
-    --viz-agent: 51 6% 40%; /* sub-agent spawns */
-    --viz-tool: 51 6% 40%; /* unrecognised tools */
-    --viz-result: 60 2% 8%; /* full ink — the run's landing */
-    --viz-deliverable: 51 6% 40%; /* files left behind */
+    --viz-trigger: 53 12% 13%; /* full ink — the run's ignition */
+    --viz-reasoning: 47 6% 43%; /* the worker thinking */
+    --viz-terminal: 47 6% 43%; /* shell commands */
+    --viz-file: 47 6% 43%; /* file writes/edits */
+    --viz-search: 47 6% 43%; /* read/grep/glob */
+    --viz-web: 47 6% 43%; /* fetch/web */
+    --viz-integration: 47 6% 43%; /* MCP / external tools */
+    --viz-agent: 47 6% 43%; /* sub-agent spawns */
+    --viz-tool: 47 6% 43%; /* unrecognised tools */
+    --viz-result: 53 12% 13%; /* full ink — the run's landing */
+    --viz-deliverable: 47 6% 43%; /* files left behind */
 
     /* Legacy aliases. Kept because they are referenced from a handful of
        places that predate the token set; all now follow the theme. The names
        outlived the colour — nothing yellow is left in either — but they stay
        spelled this way until the call sites are renamed in their own pass,
        because a rename and a recolour in one commit hides both. */
-    --jarvis-yellow: 43 43 51;
-    --jarvis-yellow-dim: 108 106 95;
-    --jarvis-grid: 44 18% 88%;
+    --jarvis-yellow: 38 37 30;
+    --jarvis-yellow-dim: 128 125 114;
+    --jarvis-grid: 50 11% 89%;
   }
 
   .dark {
-    /* --- Dark: warm charcoal, paper-white brand — the product default ----
-       Not pure black any more (2026-08-23): a warm charcoal ground, a rail
-       one step darker, a card one step lighter. Same family as the light
-       paper, so toggling the theme changes the value, not the temperature. */
-    --background: 60 3% 15%; /* #262624 charcoal */
-    --foreground: 48 23% 95%; /* #F5F4EF */
-    --card: 60 2% 18%; /* #30302E */
-    --card-foreground: 48 23% 95%;
-    --popover: 60 2% 18%;
-    --popover-foreground: 48 23% 95%;
-    /* #FFFFFF. The mirror of the light theme's #0A0A0A: the brand is whichever
-       end of the value scale the ground is not. A step past --foreground
-       (#F5F4EF) for the same reason — body ink and brand voltage stay
-       distinguishable without a hue to separate them. */
-    --primary: 0 0% 100%;
-    --primary-foreground: 60 3% 15%; /* the charcoal ground, not pure black */
-    --secondary: 60 2% 21%; /* #363634 recessed surface, hover */
-    --secondary-foreground: 48 23% 95%;
-    --muted: 60 2% 21%;
-    --muted-foreground: 47 5% 59%; /* #9C9A92 */
-    --accent: 0 0% 100%;
-    --accent-foreground: 60 3% 15%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 48 23% 95%;
-    --diff-add: 48 23% 95%;
-    --diff-add-bg: 60 2% 21%;
-    --diff-del: 47 5% 59%;
-    --diff-del-bg: 60 3% 11%;
-    --border: 40 3% 23%; /* #3B3A38 */
-    --input: 60 2% 21%;
-    --ring: 0 0% 100%;
-    --sidebar: 30 3% 12%; /* #1F1E1D */
+    /* --- Dark: derived, because the Design.md has none --------------------
+       That document describes a warm-cream page; its darkest value is
+       #26251E `ink`, and ink is a TEXT colour. The app had been using very
+       nearly that value (#262624) as its background, which is exactly why
+       the dark theme read as grey — it was the document's ink used as paper
+       (maintainer, 2026-08-28). This reverses the 2026-08-23 move away from
+       black.
 
-    --accent-rgb: 245 244 239;
+       The mirror rule instead: the canvas becomes the ink (#F7F7F4), and the
+       ground drops BELOW the document's darkest value rather than sitting on
+       it. A rail one step darker, a card one step lighter — same family as
+       the light theme, so toggling changes the value, not the temperature. */
+    --background: 60 5% 4%; /* #0A0A09 near-black, warm */
+    --foreground: 60 16% 96%; /* #F7F7F4 — the canvas, inverted into ink */
+    --card: 60 2% 8%; /* #161615 */
+    --card-foreground: 60 16% 96%;
+    --popover: 60 2% 8%;
+    --popover-foreground: 60 16% 96%;
+    /* #FFFFFF. The brand is whichever end of the value scale the ground is
+       not. Here it does sit one step past --foreground (the canvas #F7F7F4),
+       because on a near-black ground there is headroom for it; the light
+       theme has none above `ink` and keeps the two equal. 19.8:1. */
+    --primary: 0 0% 100%;
+    --primary-foreground: 60 5% 4%; /* the ground */
+    --secondary: 40 5% 12%; /* #201F1D recessed surface, hover */
+    --secondary-foreground: 60 16% 96%;
+    --muted: 40 5% 12%;
+    --muted-foreground: 47 6% 58%; /* #9A978C */
+    --accent: 0 0% 100%;
+    --accent-foreground: 60 5% 4%;
+    --destructive: 349 76% 62%;
+    --destructive-foreground: 60 16% 96%;
+    --diff-add: 60 16% 96%;
+    --diff-add-bg: 40 5% 12%;
+    --diff-del: 47 6% 58%;
+    --diff-del-bg: 60 5% 3%;
+    --border: 60 4% 16%; /* #2A2A27 */
+    --input: 40 5% 12%;
+    --ring: 0 0% 100%;
+    --sidebar: 60 11% 2%; /* #050504 — a step below the ground */
+
+    --accent-rgb: 247 247 244;
     --scrim-rgb: 0 0 0;
     --sheen-rgb: 255 255 255;
-    --shell-rgb: 38 38 36;
+    --shell-rgb: 10 10 9;
 
     --surface-card-alpha: 0.6;
     --surface-panel-alpha: 0.58;
@@ -622,11 +641,11 @@ label,
     --surface-wiki-pane-alpha: 0.36;
     --surface-wiki-stage-alpha: 0.34;
 
-    --stage-bg: 0 0% 4%;
+    --stage-bg: 60 5% 4%;
     --stage-dot-rgb: 255 255 255;
     --stage-dot-strong: 0.5;
     --stage-dot-soft: 0.35;
-    --stage-wash-rgb: 245 244 239;
+    --stage-wash-rgb: 247 247 244;
     --stage-wash-strength: 0.055;
     --stage-vignette-rgb: 0 0 0;
     --stage-vignette-strength: 0.62;
@@ -635,20 +654,20 @@ label,
        full accent; every step between them is neutral and leaves the telling
        to its glyph. */
     --viz-trigger: 0 0% 100%;
-    --viz-reasoning: 47 5% 59%;
-    --viz-terminal: 47 5% 59%;
-    --viz-file: 47 5% 59%;
-    --viz-search: 47 5% 59%;
-    --viz-web: 47 5% 59%;
-    --viz-integration: 47 5% 59%;
-    --viz-agent: 47 5% 59%;
-    --viz-tool: 47 5% 59%;
+    --viz-reasoning: 47 6% 58%;
+    --viz-terminal: 47 6% 58%;
+    --viz-file: 47 6% 58%;
+    --viz-search: 47 6% 58%;
+    --viz-web: 47 6% 58%;
+    --viz-integration: 47 6% 58%;
+    --viz-agent: 47 6% 58%;
+    --viz-tool: 47 6% 58%;
     --viz-result: 0 0% 100%;
-    --viz-deliverable: 47 5% 59%;
+    --viz-deliverable: 47 6% 58%;
 
-    --jarvis-yellow: 245 244 239;
-    --jarvis-yellow-dim: 156 154 146;
-    --jarvis-grid: 0 0% 12%;
+    --jarvis-yellow: 247 247 244;
+    --jarvis-yellow-dim: 154 151 140;
+    --jarvis-grid: 60 4% 8%;
   }
 }
 
