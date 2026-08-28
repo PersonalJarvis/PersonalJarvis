@@ -17,7 +17,7 @@ import {
 import { useT } from "@/i18n";
 import { openExternalUrl } from "@/lib/openExternal";
 
-const ONLINE_DOCS_URL = "https://personaljarvis.ai/docs/";
+const ONLINE_DOCS_URL = "https://github.com/PersonalJarvis/PersonalJarvis/tree/main/docs";
 interface Props {
   onSelect: (slug: string) => void;
 }

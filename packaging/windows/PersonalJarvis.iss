@@ -33,7 +33,7 @@
 
 #define AppName "Personal Jarvis"
 #define AppPublisher "Personal Jarvis"
-#define AppUrl "https://personaljarvis.ai"
+#define AppUrl "https://github.com/PersonalJarvis/PersonalJarvis"
 #define GuiExeName "PersonalJarvis.exe"
 #define CliExeName "jarvis.exe"
 #define UserDataDirDisplay "%LOCALAPPDATA%\Jarvis"

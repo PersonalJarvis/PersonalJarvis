@@ -332,7 +332,7 @@ describe("MarketplaceView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Storefront/ }));
 
-    expect(openExternalUrl).toHaveBeenCalledWith("https://personaljarvis.ai/marketplace/");
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/PersonalJarvis/marketplace");
   });
 
   it("opens the Publish Studio in the app instead of sending people to the website", async () => {

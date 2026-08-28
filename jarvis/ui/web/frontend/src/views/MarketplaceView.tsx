@@ -59,7 +59,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** The public storefront — the same catalogue, on the web. */
-const MARKETPLACE_WEB_URL = "https://personaljarvis.ai/marketplace/";
+const MARKETPLACE_WEB_URL = "https://github.com/PersonalJarvis/marketplace";
 
 type Kind = "plugin" | "skill" | "wallpaper";
 type KindFilter = "all" | Kind | "mine";

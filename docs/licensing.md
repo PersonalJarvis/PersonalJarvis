@@ -60,7 +60,7 @@ and it creates no duty to hunt them down:
 - **Blog posts, press coverage, and third-party listings.** Not yours to fix.
 
 What does have to be current is anything that states the license **as of
-today**: this repository, personaljarvis.ai, package listings, app-store
+today**: this repository, package listings, app-store
 descriptions, and pinned posts. Those are the checklist below.
 
 ## Third-party components
@@ -78,6 +78,4 @@ dependency's terms change either. Nothing is relicensed by being included here.
 - [ ] Repository social preview — `assets/brand/social-preview.png` is already
       re-rendered and reads "APACHE 2.0". GitHub does not take it from the
       repository: upload it under Settings -> General -> Social preview.
-- [ ] personaljarvis.ai (the `webui` repo) — any license mention on the
-      storefront.
 - [ ] The GitHub release notes for 2.0.0 — lead with the license change.

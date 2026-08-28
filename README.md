@@ -42,7 +42,6 @@ walks you through language, wake word, and keys once. [Full install notes below]
   <a href="https://pypi.org/project/personal-jarvis/"><img alt="PyPI: personal-jarvis" src="https://img.shields.io/pypi/v/personal-jarvis?style=for-the-badge&labelColor=242424&color=e7c46e" /></a>
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/License-Apache_2.0-e7c46e?style=for-the-badge&labelColor=242424" /></a>
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
-  <a href="https://personaljarvis.ai/"><img alt="Personal Jarvis website" src="https://img.shields.io/badge/Website-personaljarvis.ai-e7c46e?style=for-the-badge&labelColor=242424" /></a>
 </p>
 
 ---

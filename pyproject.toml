@@ -245,7 +245,7 @@ dependencies = [
 # These are the sidebar of the PyPI project page — for many visitors the first
 # and only place they meet the project, so every route out of it is listed.
 [project.urls]
-Homepage = "https://personaljarvis.ai/"
+Homepage = "https://github.com/PersonalJarvis/PersonalJarvis"
 Repository = "https://github.com/PersonalJarvis/PersonalJarvis"
 Issues = "https://github.com/PersonalJarvis/PersonalJarvis/issues"
 Documentation = "https://github.com/PersonalJarvis/PersonalJarvis/blob/main/README.md"

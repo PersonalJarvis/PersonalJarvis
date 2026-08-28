@@ -164,13 +164,6 @@ ChatGPT Image *
 # Sub-Agent-Sandbox-Outputs (Research-/Demo-Drops, kein Projekt-Code)
 examples/
 github-research/
-
-# The marketing website (personal-jarvis-webui) lives here as its OWN git repo
-# with its own remote, so one folder holds both projects. It is ignored on
-# purpose: without this line git would record it as a gitlink and leak the
-# private site's path and commit ids into this public repo. Never remove it,
-# and never stage anything under it from here.
-website/
 # Phase-6 worker-isolation parent (worktrees + per-mission Jarvis-Agent state).
 # Each mission gets a fresh `git worktree` under here; never commit.
 jarvis-agent-outputs/

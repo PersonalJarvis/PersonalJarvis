@@ -1,7 +1,7 @@
 /**
  * The install commands for one marketplace listing, drawn as a small terminal.
  *
- * The same block the storefront on personaljarvis.ai shows above its listings
+ * The same block the community registry's README shows above its listings
  * (`src/components/marketplace/InstallTerminal.astro` over there), so a user
  * who saw a command on the website recognises it here — one install language
  * across both surfaces.

@@ -2,7 +2,7 @@
  * The marketplace install commands — the lines that add a listing.
  *
  * Both stores show the same lines: this file inside the app, and the website's
- * `src/lib/install-standard.ts` on personaljarvis.ai. A visitor who reads a
+ * the community registry's own README. A visitor who reads a
  * command on the storefront and a user who reads it in the Plugins view have
  * to see the same string, or one of the two is advertising a command that does
  * not work. `installStandard.test.ts` pins the exact output, so a rename on

@@ -70,6 +70,6 @@ describe("DocsOverview", () => {
       screen.getByRole("link", { name: /open redesigned online docs/i }),
     );
 
-    expect(openSpy).toHaveBeenCalledWith("https://personaljarvis.ai/docs/");
+    expect(openSpy).toHaveBeenCalledWith("https://github.com/PersonalJarvis/PersonalJarvis/tree/main/docs");
   });
 });

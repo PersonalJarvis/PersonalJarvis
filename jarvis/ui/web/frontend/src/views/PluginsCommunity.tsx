@@ -29,7 +29,7 @@ import { useEventStore } from "@/store/events";
 // ---------------------------------------------------------------------------
 
 /** The storefront's submit page — where "Publish your own" sends authors. */
-export const MARKETPLACE_SUBMIT_URL = "https://personaljarvis.ai/marketplace/submit";
+export const MARKETPLACE_SUBMIT_URL = "https://github.com/PersonalJarvis/marketplace";
 
 // Wire types — mirror /api/marketplace/community (see marketplace_routes.py).
 export interface CommunityPluginWire {

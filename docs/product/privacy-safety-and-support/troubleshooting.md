@@ -115,8 +115,8 @@ documentation** while it builds the search index.
   endless loading state.
 - If only Docs fails, do not replace a provider key. Online providers do not
   build the local documentation index.
-- Select **Open redesigned online docs** to use the hosted copy at
-  [personaljarvis.ai/docs](https://personaljarvis.ai/docs/) while the local
+- Select **Open redesigned online docs** to read the same pages at
+  [the docs on GitHub](https://github.com/PersonalJarvis/PersonalJarvis/tree/main/docs) while the local
   index recovers.
 - If the page list is visible but a title is missing, clear the sidebar filter.
   Use the magnifying-glass search, or `Ctrl+K` on Windows and Linux or
