@@ -14178,3 +14178,59 @@ for 20).**
 
 **Related.** BUG-185 (bias-prompt recitation), the composer seam fix of the
 same day (two dictations joined without a space, `lib/dictationTarget.ts`).
+
+## BUG-201: Prompt Mode answered a one-line follow-up with a prompt about writing prompts — "Erstelle einen klaren, professionellen Prompt, der das Modell anweist …" under a "Rolle / Systemkontext" heading (HIGH, FIXED 2026-08-28) <!-- i18n-allow -->
+
+**Symptom.** The maintainer dictated "Okay, sehr gut. Danke dir auf jeden <!-- i18n-allow -->
+Fall. Kannst du bitte auch achten, dass es nicht mehr vorkommt?" with Prompt <!-- i18n-allow -->
+Mode on. What landed in the field (history row 14:03:57 UTC, `groq`,
+1.6 s) was a four-section document — **Rolle / Systemkontext**, **Aufgabe &
+Zielsetzung**, **Kontext & Richtlinien**, … — whose task line read
+"Erstelle einen klaren, professionellen Prompt, der das Modell anweist, ein <!-- i18n-allow -->
+zuvor genanntes unerwünschtes Verhalten … zu vermeiden", with the thing the <!-- i18n-allow -->
+user had referred to as "es" replaced by a placeholder
+`[UNERWÜNSCHTES_ELEMENT]`. In the maintainer's words: it did not turn the <!-- i18n-allow -->
+transcript into a prompt, it handed out a prompt for formulating a prompt.
+
+**Root cause.** The v5 instruction (`jarvis/dictation/prompt_mode.py`)
+taught the job with exactly one worked example, and that example was the
+maintainer's own reference run ABOUT this feature: a transcript asking for
+a prompt that improves the auto-prompt mode, answered by Gemini with a
+system prompt for a prompt writer ("Du bist der spezialisierte
+Prompt-Engineering-Core …", a five-item section list, quality criteria).
+For a capable model with the instruction read carefully, that is one run of
+the job. For the fast model on the polish chain (`gpt-oss-120b`), the
+example became the job: the output copied the example's section list and
+its level — a prompt whose task is "write a prompt" — for a transcript that
+had asked for nothing of the kind. Nothing in the instruction said who the
+message speaks for, and nothing in the guards looked at the level; they
+measured lost literals and length only, and this answer had dropped none
+and was long.
+
+**Fix (v6).** Three things, all in `prompt_mode.py`:
+
+1. The instruction says who speaks to whom — the message speaks for the
+   user and addresses the model doing the work; its task is the user's
+   task and never "write a prompt" — and that a message is as large as
+   its brief: a long dictation becomes a structured prompt, a follow-up
+   becomes one or two sentences, a reference the user made ("es", "das")
+   stays a reference and is never replaced by an invented placeholder.
+2. The examples are three runs on subjects far from prompt writing — a
+   settings-page bug with a file name and a number, a German one-line
+   follow-up, an English one-line aside — held as data, so the instruction
+   is rendered from them and the guard reads the same strings.
+3. Two deterministic level guards, fail-open like the rest:
+   `meta_prompt` (a task verb meeting "prompt" inside one clause, in German
+   or English, when the transcript never said the word — a user who asked
+   for a prompt may still get one) and `echoed_example` (an 8-word run
+   copied from a long example answer that the transcript itself does not
+   contain). The live output is rejected as `meta_prompt`.
+
+Verified live on the same transcript: "Bitte achte darauf, dass das Problem <!-- i18n-allow -->
+nicht mehr vorkommt." The instruction shrank from ~1.8k to ~1.2k tokens as <!-- i18n-allow -->
+a side effect, which is worth ~1 more call per minute under Groq's
+8 000-TPM on-demand tier.
+
+**Related.** BUG-200 (the polish/Prompt Mode pointer under "where to look
+first"); the memory note that Groq's TPM tier caps Prompt Mode at a few
+calls per minute before the chain crosses families.

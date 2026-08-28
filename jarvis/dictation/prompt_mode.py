@@ -19,10 +19,19 @@ all, and got back a structured, professional prompt with a role, a workflow
 and quality criteria. That is the output this feature is for, and every rule
 that forbade markdown or headings was forbidding exactly it.
 
-So: say what the job is, show one run of it, and let the model write. The
-example carries what a page of rules used to, because a shown run outweighs a
+So: say what the job is, show a few runs of it, and let the model write. The
+examples carry what a page of rules used to, because a shown run outweighs a
 written rule — measured on this very prompt, where a rule about language lost
 to an example in the other language.
+
+That cuts both ways, and v6 is the proof. v5's single example was the
+maintainer's run about THIS feature — a transcript asking for a prompt that
+improves the auto-prompt mode, answered with a system prompt for a prompt
+writer. A fast model read the example as the job: a one-line "please make
+sure that does not happen again" came back as a role, a section list and the
+task "Erstelle einen klaren, professionellen Prompt" (2026-08-28). So the
+examples now sit on subjects far from prompt writing, come in three sizes,
+and the instruction says out loud who speaks to whom.
 
 What is guarded and what is not
 -------------------------------
@@ -30,10 +39,11 @@ Not guarded: shape. A prompt may be markdown, may carry headings, lists,
 sections and a role line — that is what a good prompt looks like, and v3's
 ``markdown`` rejection was this feature refusing its own purpose.
 
-Guarded: fidelity and damage. The message must not be empty, must not stop
-mid-sentence, must carry every literal the user spoke and every protected
-spelling, and must not collapse to a fraction of what was said. All
-deterministic, all fail-open — a rejection delivers the transcript to the
+Guarded: fidelity, damage and level. The message must not be empty, must not
+stop mid-sentence, must carry every literal the user spoke and every protected
+spelling, must not collapse to a fraction of what was said, must not assign
+prompt writing the user never asked for, and must not copy a worked example.
+All deterministic, all fail-open — a rejection delivers the transcript to the
 ordinary passes, and the raw words are never lost.
 
 Then two deterministic finishes: typographic debris a fast model leaves in
@@ -98,7 +108,21 @@ log = logging.getLogger(__name__)
 #: What survives from v4 is what was never about shape: the fidelity guards
 #: (a literal the user spoke must be in the prompt, the prompt must not
 #: collapse to a fraction of the transcript) and the sign-off trim.
-PROMPT_MODE_PROMPT_VERSION: Final[int] = 5
+#:
+#: v6 fixes the one thing v5's example taught wrong. That example was the
+#: maintainer's run ABOUT this feature: its transcript asked for a prompt to
+#: improve the auto-prompt mode, and its answer was a system prompt for a
+#: prompt writer. Handed a fast model, the example became the job. Measured
+#: live 2026-08-28: "Kannst du bitte auch achten, dass es nicht mehr
+#: vorkommt?" came back as "**Rolle / Systemkontext:** ... Erstelle einen
+#: klaren, professionellen Prompt, der das Modell anweist ..." — the example's
+#: section list, and a prompt whose task is "write a prompt". The user had
+#: asked for a one-line follow-up. So v6 says out loud who speaks to whom
+#: (the message speaks for the user, its task is the user's task, never
+#: "write a prompt"), that a message is as large as its brief, and shows
+#: three runs on subjects that have nothing to do with prompt writing. Two
+#: guards back it in code: ``meta_prompt`` and ``echoed_example``.
+PROMPT_MODE_PROMPT_VERSION: Final[int] = 6
 
 #: The status a successful Prompt Mode delivery reports on the history row.
 #: Lives in ``POLISH_STATUSES`` (the shared vocabulary) — restated here as a
@@ -150,103 +174,122 @@ _SIGN_OFF_SENTENCE_RE: Final[re.Pattern[str]] = re.compile(
 )
 
 # The instruction. Short on purpose — see the module docstring and the version
-# note above. The example is the maintainer's own reference run: his dictated
-# transcript, and the prompt Gemini wrote for it when asked for nothing but a
-# prompt. It is the specification; everything above it is context for reading
-# it.
-_SYSTEM_PROMPT: Final[str] = """\
-A user is dictating to Jarvis Voice. They want every transcript of theirs \
-turned automatically into a finished, professional prompt for an AI model - \
-that is the whole feature, and you are the part of it that writes.
+# note above. The examples are the specification; everything above them is
+# context for reading them. Their subjects are deliberately far from prompt
+# writing (a settings page, a follow-up, a colour): v5's example was a run
+# ABOUT this feature, and a fast model turned the example into the job.
+_INSTRUCTION: Final[str] = """\
+A user is dictating to Jarvis Voice. Whatever they say is turned automatically \
+into the message they will send to an AI model - usually a coding agent they \
+are already talking to. You write that message in the user's place, and it \
+lands in their input field as if they had typed it.
 
-Below is one transcript. Write the prompt it is asking for.
+Below is one transcript. Write the message it is asking for.
 
-Take what they said as the brief: their goal, the context and constraints \
-they stated, every separate task they mentioned. Everything comes from the \
-transcript - a file, name, number, quoted string or error message they said \
-goes in exactly as spoken, one they did not say does not exist, and a gap \
-they left is left open rather than guessed at. Drop the filler sounds, the \
-false starts and the self-corrections; keep the corrected version.
+WHO SPEAKS TO WHOM. The message speaks for the user and addresses the model \
+that will do the work. Its task is the user's task: if the transcript asks for \
+a bug to be fixed, the message asks the model to fix the bug. It never asks \
+the model to write, create, improve or optimise a prompt - that is your job, \
+and it is done when you hand the message over. A message whose task is "write \
+a prompt" is the one wrong answer this job has.
+
+WHAT GOES IN. Take what they said as the brief: their goal, the context and \
+constraints they stated, every separate task they mentioned. Everything comes \
+from the transcript - a file, name, number, quoted string or error message \
+they said goes in exactly as spoken, one they did not say does not exist, and \
+a gap they left is left open rather than guessed at or filled with a \
+placeholder. "Das", "es", "the thing from before": the user is in a \
+conversation the model can see, so the reference stays a reference and is \
+never replaced by an invented noun. Drop the filler sounds, the false starts \
+and the self-corrections; keep the corrected version.
+
+HOW MUCH. The message is as large as its brief. A long dictation with several \
+tasks, constraints and a wanted outcome becomes a structured prompt - a role \
+and system context, the tasks in order, the guardrails, the expected result, \
+with headings, lists, markdown, sections wherever they serve it. A short \
+remark or follow-up ("thanks, please make sure that does not happen again") \
+becomes one or two clear sentences and nothing more: no role, no sections, no \
+criteria the user did not state. Be concrete rather than adjectival: "a \
+markdown table with the columns X, Y, Z", never "make it good".
 
 WRITE IT IN THE LANGUAGE THE USER SPOKE. These instructions are in English \
 and that says nothing about your answer: a German transcript gets a German \
-prompt, a Spanish one a Spanish prompt, and that includes the headings and \
+message, a Spanish one a Spanish message, and that includes the headings and \
 the section names, not just the sentences between them. A transcript that \
 mixes languages keeps the mix.
 
-Structure it the way a good prompt is structured and use whatever serves that \
-- a role and system context, the task and the outcome it has to reach, the \
-context and guardrails, the output format, headings, lists, markdown, \
-sections. Be concrete rather than adjectival: "a markdown table with the \
-columns X, Y, Z", never "make it good".
-
-Put the prompt, and nothing else, between <prompt> and </prompt>. No \
+Put the message, and nothing else, between <prompt> and </prompt>. No \
 introduction of your own in front of it, no comment after it, and no closing \
 line of thanks - it ends on its last piece of substance.
 
-Here is one run of this job, from a dictated transcript to the prompt written \
-for it.
-
-Transcript: "Hallo, kannst du mir bitte ein Prompt schreiben? Und zwar möchte \
-ich, dass du es hier verbesserst. Ich möchte, dass du bitte für mich einen \
-Deep Dive machst und mir dabei hilfst, den Modus, welchen wir eingebaut haben \
-in Jarvis Voice, diesen Auto-Prompt-Modus zu verbessern, dass die Prompts \
-besser geschrieben werden, in einem professionelleren Stil. Ich möchte, dass. \
-Sich das Modell, und zwar das Tool-Modell, welches damit verbunden wird, mehr \
-darüber nachdenkt und den Prompt nicht zu schnell schreibt. Mit einer \
-Nachdenkzeit von 5 bis 7 Sekunden, dass wirklich ein guter Prompt geschrieben \
-wird, aber auch nicht zu lange nachgedacht wird. Es muss halt eine gute \
-Mischung darin entstehen. Diese Prompt sollen in einem guten und \
-professionellen Modell professionellen Stil geschrieben sein."
-Answer:
-<prompt>
-Du bist der spezialisierte Prompt-Engineering-Core für Jarvis Voice. Deine \
-Aufgabe ist es, rohe, unpräzise oder gesprochene Nutzeranweisungen in \
-hochgradig strukturierte, professionelle und präzise Prompts zu \
-transformieren.
-
-Bevor du die finale Antwort ausgibst, MUSST du einen strukturierten \
-Denkprozess (Reasoning Step) durchlaufen, um den Prompt systematisch zu \
-optimieren.
-
-### ARBEITSABLAUF (2-Phasen-Prozess)
-
-Führe bei jeder Anfrage ausnahmslos folgende zwei Schritte aus:
-
-#### PHASE 1: <thinking> (Tiefenanalyse & Konstruktion)
-Nutze diese Phase, um den Kontext systematisch zu durchdenken:
-1. **Intenterkennung:** Was ist das eigentliche Kernziel des Nutzers hinter \
-der gesprochenen Eingabe?
-2. **Kontext- & Rollenbestimmung:** Welche Rolle/Expertise passt am besten zu \
-diesem Ziel?
-3. **Strukturelle Mängel & Lücken:** Welche Parameter fehlen (Format, \
-Tonalität, Einschränkungen, Zielgruppe)?
-4. **Optimierungsstrategie:** Wie muss der Prompt formuliert werden, um \
-Fehlinterpretationen zu minimieren und maximale Detailtiefe zu sichern?
-
-#### PHASE 2: <optimized_prompt> (Finale Ausgabe)
-Gib ausschließlich den fertigen, sofort einsatzbereiten Prompt aus. Dieser \
-muss folgenden Aufbau haben:
-- **Rolle / Systemkontext:** Definition der Persona und des Wissensbereichs.
-- **Aufgabe & Zielsetzung:** Glasklare Beschreibung des Outputs.
-- **Kontext & Richtlinien:** Wichtige Rahmenbedingungen, Einschränkungen und \
-Do's/Don'ts.
-- **Formatierungs- & Strukturvorgaben:** Exakte Vorgabe von \
-Markdown-Elementen, Tabellen oder Codeblöcken.
-- **Input-Variable / Platzhalter:** Wo die tatsächlichen Nutzerdaten \
-eingefügt werden.
-
-### QUALITÄTSKRITERIEN FÜR DEN FINALEN PROMPT
-
-* **Präzision statt Floskeln:** Keine vagen Adjektive ("mache es gut"), \
-sondern konkrete Handlungsanweisungen ("nutze eine Markdown-Tabelle mit \
-Spalten X, Y, Z").
-* **Professioneller Tonfall:** Formuliere den Prompt in einem klaren, \
-autoritativen und direktiven Ton.
-* **Kein Meta-Gerede:** Schreibe in Phase 2 keine Einleitung wie "Hier ist \
-dein Prompt" - starte direkt mit dem Prompt-Inhalt.
-</prompt>\
+Three runs of this job follow, each from a dictated transcript to the message \
+written for it. They show the shape and the size. Their subjects have nothing \
+to do with the transcript you will get, so nothing from them is reused.\
 """
+
+# The worked examples, as data: the instruction is rendered from them and the
+# ``echoed_example`` guard reads the same strings, so an answer that copies an
+# example instead of writing from the transcript is caught against exactly
+# what the model was shown. Three sizes on purpose - a long brief with a file
+# name, a number and a constraint; a one-line German follow-up; a one-line
+# English aside - because "as large as its brief" is the rule a fast model
+# most reliably learns from seeing rather than reading.
+_EXAMPLES: Final[tuple[tuple[str, str], ...]] = (
+    (
+        "Ähm, hallo, kannst du dir bitte mal die Einstellungsseite anschauen, "
+        "also die Seite Diktat, da ist der Schalter für, ähm, für die Sprache, "
+        "nein, für die Übersetzung, der speichert nicht. Ich schalte den an, "
+        "gehe raus, komme wieder rein und er ist wieder aus. Ich glaube das "
+        "liegt in der settings_view.tsx oder wie die heißt. Und wenn du schon "
+        "dabei bist, die Ladezeit von der Seite ist mit über 3 Sekunden viel "
+        "zu lang, das war früher unter einer Sekunde. Bitte erst analysieren, "
+        "dann fixen, und schreib mir am Ende kurz, was die Ursache war. Und "
+        "bitte keine anderen Dateien anfassen.",
+        "## Rolle\n"
+        "Du bist ein erfahrener Frontend-Entwickler und arbeitest in diesem "
+        "Repository.\n"
+        "\n"
+        "## Aufgabe\n"
+        'Zwei Probleme auf der Einstellungsseite "Diktat", in dieser '
+        "Reihenfolge:\n"
+        "\n"
+        "1. **Der Übersetzungs-Schalter speichert nicht.** Er wird "
+        "eingeschaltet; nach dem Verlassen und erneuten Öffnen der Seite "
+        "steht er wieder auf aus. Vermutete Stelle: `settings_view.tsx` (der "
+        "Dateiname ist aus dem Gedächtnis, bitte prüfen).\n"
+        "2. **Die Seite lädt zu langsam.** Aktuell über 3 Sekunden, früher "
+        "unter einer Sekunde. Finde heraus, was die Zeit kostet, und bring sie "
+        "wieder unter eine Sekunde.\n"
+        "\n"
+        "## Vorgehen\n"
+        "- Erst analysieren und die Ursache benennen, dann fixen.\n"
+        "- Nur die Dateien anfassen, die für diese beiden Punkte nötig sind - "
+        "keine weiteren Änderungen.\n"
+        "\n"
+        "## Ergebnis\n"
+        "Am Ende eine kurze Zusammenfassung: Was war jeweils die Ursache, was "
+        "wurde geändert.",
+    ),
+    (
+        "Okay super, danke dir. Kannst du bitte drauf achten, dass das nicht nochmal passiert?",
+        "Gut, danke. Bitte sorge dafür, dass genau das nicht noch einmal vorkommt.",
+    ),
+    (
+        "um yeah and can you also make the, the error message red, like the "
+        "other ones, and that's it",
+        "Also make that error message red, matching the other error messages. Nothing else.",
+    ),
+)
+
+
+def _render_examples() -> str:
+    return "\n\n".join(
+        f'Transcript: "{transcript}"\nAnswer:\n<prompt>\n{answer}\n</prompt>'
+        for transcript, answer in _EXAMPLES
+    )
+
+
+_SYSTEM_PROMPT: Final[str] = f"{_INSTRUCTION}\n\n{_render_examples()}"
 
 # Typographic debris a fast model writes into identifiers and paths. Measured
 # live 2026-08-27: gpt-oss on the fast chain joined "Jarvis‑Bar" and
@@ -313,6 +356,89 @@ _MIN_LENGTH_SHARE: Final[float] = 0.40
 _MIN_MEASURED_WORDS: Final[int] = 30
 
 _WORD_RE: Final[re.Pattern[str]] = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+# --- Level guards ------------------------------------------------------------
+#
+# The failure v6 answers is not a lost literal but a wrong LEVEL: the writer
+# delivered a prompt whose task is "write a prompt", or reproduced the worked
+# example instead of writing from the transcript. Both are deterministic to
+# spot and both fail open like the rest.
+
+# A task verb followed, within one clause, by the word "prompt" - in the two
+# languages the writer is most often asked to write. "Erstelle einen klaren,
+# professionellen Prompt" is the live 2026-08-28 output; "write a system
+# prompt that" is its English twin. A message that names prompt engineering
+# as its subject is the same defect by another route.
+_META_PROMPT_RE: Final[re.Pattern[str]] = re.compile(
+    r"""
+    \b(?:
+        erstell\w*|schreib\w*|formulier\w*|verfass\w*|generier\w*|entw[iü]rf\w*|
+        entwerf\w*|optimier\w*|verbesser\w*|bau\w*|
+        write|writes|create|creates|draft|drafts|generate|generates|compose|
+        composes|produce|produces|craft|crafts|design|designs|build|builds|
+        optimi[sz]e|optimi[sz]es|improve|improves|rewrite|rewrites
+    )\b[^.!?\n]{0,60}?\bprompts?\b
+    | \bprompt[- ]?engineer
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+#: A run of this many words copied verbatim from a worked example is an echo,
+#: never a coincidence: the examples' subjects are chosen to be far from
+#: anything the user dictates. Measured in 6-word shingles, three of which is
+#: an 8-word run - long enough that a stock phrase both a user and an example
+#: happen to use ("erst analysieren, dann fixen") stays under it.
+_ECHO_SHINGLE_WORDS: Final[int] = 6
+_ECHO_MIN_SHINGLES: Final[int] = 3
+
+
+def _shingles(text: str) -> set[tuple[str, ...]]:
+    words = [w.casefold() for w in _WORD_RE.findall(str(text or ""))]
+    n = _ECHO_SHINGLE_WORDS
+    return {tuple(words[i : i + n]) for i in range(len(words) - n + 1)}
+
+
+#: Only the long, structured answers are echo material. A one-line example
+#: ("Bitte sorge dafür, dass genau das nicht noch einmal vorkommt.") is a
+#: sentence any honest answer to a similar follow-up might also be, and
+#: rejecting that would punish the writer for learning the size rule.
+_ECHO_MIN_EXAMPLE_WORDS: Final[int] = 30
+_EXAMPLE_SHINGLES: Final[set[tuple[str, ...]]] = set().union(
+    *(
+        _shingles(answer)
+        for _, answer in _EXAMPLES
+        if len(_WORD_RE.findall(answer)) >= _ECHO_MIN_EXAMPLE_WORDS
+    )
+)
+
+
+def asks_for_a_prompt(raw: str, prompt: str) -> bool:
+    """True when *prompt* tells its reader to write a prompt the user never asked for.
+
+    The user's own words decide: a transcript that says "prompt" ("kannst du
+    mir bitte ein Prompt schreiben") may legitimately want one written, and
+    the message may then say so. One that never mentions a prompt cannot have
+    asked for one, so a message that assigns prompt writing has answered on
+    the wrong level - it wrote the writer's own job description instead of
+    the user's message.
+    """
+    if "prompt" in str(raw or "").casefold():
+        return False
+    return bool(_META_PROMPT_RE.search(str(prompt or "")))
+
+
+def echoes_example(raw: str, prompt: str) -> bool:
+    """True when *prompt* reproduces a worked example instead of the transcript.
+
+    Counts the 6-word runs *prompt* shares with the examples' answers and the
+    transcript does not contain itself; three of them (an 8-word verbatim
+    run) is the writer copying what it was shown. Words only, case-folded, so
+    punctuation and markdown play no part.
+    """
+    shared = _shingles(prompt) & _EXAMPLE_SHINGLES
+    if len(shared) < _ECHO_MIN_SHINGLES:
+        return False
+    return len(shared - _shingles(raw)) >= _ECHO_MIN_SHINGLES
 
 
 def prompt_mode_enabled(cfg: Any) -> bool:
@@ -465,6 +591,11 @@ def prompt_guard_reason(raw: str, prompt: str, *, protected: Sequence[str] = ())
 
     * ``empty`` — nothing came back worth pasting.
     * ``truncated`` — stopped mid-sentence. Reads as complete, is not.
+    * ``meta_prompt`` — the message tells its reader to write a prompt, and
+      the user never said the word. The writer answered on the wrong level:
+      it wrote its own job description instead of the user's message.
+    * ``echoed_example`` — an 8-word run copied from a worked example. The
+      writer reproduced what it was shown instead of what it was given.
     * ``lost_protected_term`` — a spelling the user protected was in the
       transcript and is not in the prompt. The dictionary exists because the
       recognizer gets these wrong; a writer that drops one has undone that.
@@ -480,6 +611,10 @@ def prompt_guard_reason(raw: str, prompt: str, *, protected: Sequence[str] = ())
         return "empty"
     if looks_truncated(body):
         return "truncated"
+    if asks_for_a_prompt(raw, body):
+        return "meta_prompt"
+    if echoes_example(raw, body):
+        return "echoed_example"
     source = (raw or "").casefold()
     target = body.casefold()
     for term in protected or ():
@@ -680,8 +815,10 @@ async def _call_chain(
 __all__ = [
     "PROMPT_MODE_PROMPT_VERSION",
     "STATUS_PROMPTED",
+    "asks_for_a_prompt",
     "build_prompt_mode_prompt",
     "compose_prompt",
+    "echoes_example",
     "ends_with_sign_off",
     "extract_prompt_block",
     "looks_thinned",

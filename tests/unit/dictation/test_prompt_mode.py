@@ -10,13 +10,15 @@ them. So:
    asserted. A prompt may be markdown, may have headings, sections and a role
    line — that is what a good prompt looks like, and v3's ``markdown``
    rejection was this feature refusing its own purpose.
-2. **The worked example IS the specification.** It is the maintainer's own
-   reference run (2026-08-27), and a shown run outweighs a written rule —
-   measured on this very prompt, where a rule about language lost to an
-   example in the other language.
-3. **The guards are damage and fidelity, never shape.** Empty, truncated, a
-   literal the user spoke gone missing, a prompt collapsed to a fraction of
-   the transcript. Nothing about style, structure or register.
+2. **The worked examples ARE the specification.** A shown run outweighs a
+   written rule — measured on this very prompt, where a rule about language
+   lost to an example in the other language. Which is also why their
+   subjects stay far from prompt writing: v5's example was a run ABOUT this
+   feature, and a fast model turned the example into the job (2026-08-28).
+3. **The guards are damage, fidelity and level, never shape.** Empty,
+   truncated, a literal the user spoke gone missing, a prompt collapsed to a
+   fraction of the transcript, a message whose task is "write a prompt", a
+   copy of a worked example. Nothing about style, structure or register.
 4. **Fail-open in every direction.** Off, empty, no provider, a provider that
    dies, one that is slow, an answer that is debris: each hands the user their
    own words back with a status that says why.
@@ -38,8 +40,10 @@ from jarvis.dictation import polish, prompt_mode
 from jarvis.dictation.polish import POLISH_STATUSES
 from jarvis.dictation.prompt_mode import (
     STATUS_PROMPTED,
+    asks_for_a_prompt,
     build_prompt_mode_prompt,
     compose_prompt,
+    echoes_example,
     ends_with_sign_off,
     extract_prompt_block,
     looks_thinned,
@@ -138,8 +142,38 @@ def test_the_instruction_stays_short() -> None:
 
 def test_the_instruction_says_what_the_job_is() -> None:
     system = build_prompt_mode_prompt()
-    assert "turned automatically into a finished, professional prompt" in system
-    assert "Write the prompt it is asking for" in system
+    assert "turned automatically into the message they will send" in system
+    assert "Write the message it is asking for" in system
+
+
+def test_the_instruction_says_who_speaks_to_whom() -> None:
+    """The v6 defect in one sentence: the writer delivered its own job
+    description ("Erstelle einen ... Prompt") instead of the user's message.
+    The instruction now names the level out loud, and names the one wrong
+    answer."""
+    system = build_prompt_mode_prompt()
+    assert "The message speaks for the user" in system
+    assert "Its task is the user's task" in system
+    assert "It never asks the model to write, create, improve or optimise a prompt" in system
+    assert 'A message whose task is "write a prompt" is the one wrong answer' in system
+
+
+def test_the_instruction_sizes_the_message_to_its_brief() -> None:
+    """A one-line follow-up came back as a role and a section list. The rule
+    is written AND shown (the short examples below)."""
+    system = build_prompt_mode_prompt()
+    assert "The message is as large as its brief" in system
+    assert "becomes one or two clear sentences and nothing more" in system
+    assert "no role, no sections, no criteria the user did not state" in system
+
+
+def test_a_reference_the_user_made_is_kept_not_replaced() -> None:
+    """The live output replaced "es" with a placeholder [UNERWÜNSCHTES_ELEMENT]
+    the user never spoke. The model the user is talking to can see the
+    conversation; the reference is the right thing to hand over."""
+    system = build_prompt_mode_prompt()
+    assert "filled with a placeholder" in system
+    assert "the reference stays a reference" in system
 
 
 def test_nothing_in_the_instruction_forbids_the_shape_of_a_good_prompt() -> None:
@@ -180,20 +214,44 @@ def test_the_language_rule_is_loud_because_the_example_is_german() -> None:
     assert "includes the headings and the section names" in system
 
 
-def test_the_worked_example_is_the_maintainers_reference_run() -> None:
-    """One run, shown whole: his dictated transcript and the prompt that was
-    written for it. It carries what a page of rules used to."""
+def test_three_worked_examples_in_three_sizes() -> None:
+    """Shown whole, transcript and message each. A long brief becomes a
+    structured markdown prompt (the shape v3 would have thrown away); a
+    German one-liner and an English one-liner stay one-liners."""
     system = build_prompt_mode_prompt()
-    assert system.count("Transcript: ") == 1
-    assert "kannst du mir bitte ein Prompt schreiben" in system
-    assert "Du bist der spezialisierte Prompt-Engineering-Core" in system
-    # The example output is exactly the shape v3 would have thrown away.
-    assert "### ARBEITSABLAUF" in system
-    assert "**Rolle / Systemkontext:**" in system
+    assert system.count("Transcript: ") == 3
+    assert system.count("Answer:\n<prompt>\n") == 3 and system.count("\n</prompt>") == 3
+    long_answer, short_de, short_en = (answer for _, answer in prompt_mode._EXAMPLES)
+    assert "## Rolle" in long_answer and "## Aufgabe" in long_answer
+    assert "`settings_view.tsx`" in long_answer
+    assert len(short_de.splitlines()) == 1 and "##" not in short_de
+    assert len(short_en.splitlines()) == 1 and "##" not in short_en
 
 
-def test_the_prompt_version_names_the_v5_revision() -> None:
-    assert prompt_mode.PROMPT_MODE_PROMPT_VERSION == 5
+def test_no_worked_example_is_about_prompt_writing() -> None:
+    """v5's example was the maintainer's run ABOUT this feature — a transcript
+    asking for a prompt to improve the auto-prompt mode, answered with a
+    system prompt for a prompt writer. A fast model turned the example into
+    the job. The subjects now stay far from it, and stay there."""
+    for transcript, answer in prompt_mode._EXAMPLES:
+        assert "prompt" not in transcript.casefold(), transcript
+        assert "prompt" not in answer.casefold(), answer
+    system = build_prompt_mode_prompt()
+    assert "Prompt-Engineering-Core" not in system
+    assert "**Rolle / Systemkontext:**" not in system
+
+
+def test_every_example_answer_clears_the_fidelity_guards_for_its_transcript() -> None:
+    """An example that the guards themselves would reject teaches the model
+    to write what gets thrown away."""
+    for transcript, answer in prompt_mode._EXAMPLES:
+        assert lost_literals(transcript, answer) == []
+        assert not looks_thinned(transcript, answer)
+        assert not asks_for_a_prompt(transcript, answer)
+
+
+def test_the_prompt_version_names_the_v6_revision() -> None:
+    assert prompt_mode.PROMPT_MODE_PROMPT_VERSION == 6
 
 
 def test_protected_terms_are_listed_in_the_shared_block() -> None:
@@ -250,6 +308,118 @@ def test_a_structured_markdown_prompt_passes() -> None:
     """The headline of v5. Under v3 this same answer was ``markdown`` and the
     user got their raw transcript instead of the prompt they asked for."""
     assert prompt_guard_reason(RAW, GOOD) == ""
+
+
+# --------------------------------------------------------------------------- #
+# Level guards: the writer's job description is not the user's message
+# --------------------------------------------------------------------------- #
+
+#: The live failure, 2026-08-28 14:03 UTC, verbatim from the history row.
+FOLLOW_UP = (
+    "Okay, sehr gut. Danke dir auf jeden Fall. Kannst du bitte auch achten, "
+    "dass es nicht mehr vorkommt?"
+)
+META = (
+    "**Rolle / Systemkontext:**\n"
+    "Du bist ein KI-Assistent, der darauf spezialisiert ist, Anweisungen "
+    "präzise umzusetzen und dabei sicherzustellen, dass unerwünschte "
+    "Verhaltensweisen oder Ausgaben nicht mehr auftreten.\n\n"
+    "**Aufgabe & Zielsetzung:**\n"
+    "Erstelle einen klaren, professionellen Prompt, der das Modell anweist, "
+    "ein zuvor genanntes unerwünschtes Verhalten/Problem vollständig zu "
+    "vermeiden. Der Prompt soll sicherstellen, dass das betreffende Element "
+    "**nicht mehr vorkommt** und gleichzeitig die gewünschte Funktionalität "
+    "erhalten bleibt.\n\n"
+    "**Kontext & Richtlinien:**\n"
+    "- Das zu vermeidende Element ist im ursprünglichen Nutzer-Feedback nicht "
+    "explizit genannt; verwende einen Platzhalter **[UNERWÜNSCHTES_ELEMENT]** "
+    "an dessen Stelle."
+)
+
+
+def test_the_live_failure_is_rejected_as_meta_prompt() -> None:
+    """The user said "please make sure that does not happen again" and got a
+    prompt whose task is "Erstelle einen ... Prompt". Wrong level, and the
+    transcript never said the word, so it cannot have asked for one."""
+    assert prompt_guard_reason(FOLLOW_UP, META) == "meta_prompt"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Erstelle einen klaren, professionellen Prompt, der das Modell anweist, X zu tun.",
+        "Formuliere bitte einen System-Prompt für den Assistenten.",
+        "Write a system prompt that tells the agent to fix the login page.",
+        "Your task: draft an optimised prompt for the coding model.",
+        "Du bist ein Prompt-Engineer und verbesserst Nutzeranweisungen.",
+        "You are a prompt engineering assistant.",
+    ],
+)
+def test_a_message_that_assigns_prompt_writing_is_the_wrong_level(message: str) -> None:
+    assert asks_for_a_prompt("bitte fix das", message)
+    assert prompt_guard_reason("bitte fix das", message) == "meta_prompt"
+
+
+def test_a_user_who_asked_for_a_prompt_may_get_one() -> None:
+    """The maintainer's own reference dictation began "kannst du mir bitte ein
+    Prompt schreiben". A transcript that says the word decides for itself."""
+    spoken = "kannst du mir bitte ein Prompt schreiben, der das Login-Problem beschreibt"
+    written = "Schreibe einen Prompt, der das Login-Problem so beschreibt, dass ..."
+    assert not asks_for_a_prompt(spoken, written)
+
+
+def test_an_honest_message_never_trips_the_meta_guard() -> None:
+    """The verbs the guard watches are ordinary verbs; only their meeting
+    with "prompt" inside one clause counts."""
+    for message in (GOOD, *_SHAPES):
+        assert not asks_for_a_prompt(RAW, message), message
+    assert not asks_for_a_prompt(
+        FOLLOW_UP, "Gut, danke. Bitte sorge dafür, dass genau das nicht noch einmal vorkommt."
+    )
+
+
+def test_a_copy_of_the_structured_example_is_an_echo() -> None:
+    """What the model was shown, handed back for an unrelated transcript."""
+    _, example_answer = prompt_mode._EXAMPLES[0]
+    assert echoes_example(FOLLOW_UP, example_answer)
+    assert prompt_guard_reason(FOLLOW_UP, example_answer) == "echoed_example"
+
+
+def test_an_echo_is_also_a_partial_copy() -> None:
+    """One section lifted whole is enough; the rest may be original."""
+    _, example_answer = prompt_mode._EXAMPLES[0]
+    lifted = example_answer.split("## Vorgehen")[1].split("## Ergebnis")[0]
+    assert len(lifted.split()) >= 8
+    assert echoes_example(FOLLOW_UP, "Bitte behebe das Problem.\n\n## Vorgehen" + lifted)
+
+
+def test_a_stock_phrase_shared_with_an_example_is_not_an_echo() -> None:
+    """A phrase any user says and any example may contain ("am Ende eine
+    kurze Zusammenfassung, was ...") is a six-word overlap here. Under eight
+    words in a row is not a copy."""
+    spoken = "bitte erst analysieren dann fixen und am ende kurz sagen was die ursache war"
+    written = (
+        "Erst analysieren, dann fixen. "
+        "Am Ende eine kurze Zusammenfassung, was die Ursache war."
+    )
+    assert not echoes_example(spoken, written)
+    assert prompt_guard_reason(spoken, written) == ""
+
+
+def test_the_short_examples_are_never_echo_material() -> None:
+    """A one-line example is a sentence an honest answer to a similar
+    follow-up might also be. Rejecting it would punish the writer for
+    learning the size rule, so only the long answers are measured."""
+    for _, answer in prompt_mode._EXAMPLES[1:]:
+        assert not echoes_example("something else entirely", answer)
+
+
+def test_a_message_that_quotes_the_user_is_not_an_echo() -> None:
+    """Words the transcript itself carries are the user's, not the example's."""
+    transcript, example_answer = prompt_mode._EXAMPLES[0]
+    assert not echoes_example(transcript, transcript)
+    # ...and the example is only an echo against a transcript that is not its own.
+    assert echoes_example("etwas ganz anderes", example_answer)
 
 
 #: The same brief in five shapes. Only the formatting differs — each carries
