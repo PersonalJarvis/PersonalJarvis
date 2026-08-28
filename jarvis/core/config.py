@@ -9,6 +9,7 @@ no OS keyring (e.g. python:3.11-slim) — a local 0600 file (see
 Hot-reload: watchdog monitors the config file and dispatches `ConfigReloaded`
 on change. Subscribers decide whether to reinitialise themselves.
 """
+
 from __future__ import annotations
 
 import json
@@ -144,6 +145,7 @@ def resolve_config_path() -> Path:
         return Path(override.strip())
     return DEFAULT_CONFIG_FILE
 
+
 KEYRING_SERVICE = KEYRING_SERVICE_NAME
 
 # Provider-secrets are intentionally kept out of TOML. Keep the accepted
@@ -274,6 +276,7 @@ _PROVIDER_SECRET_OVERRIDES: ContextVar[Mapping[str, str | None] | None] = Contex
 # ----------------------------------------------------------------------
 # Sub-configs (Pydantic models per layer)
 # ----------------------------------------------------------------------
+
 
 class ProfileConfig(BaseModel):
     name: str = "default"
@@ -455,6 +458,7 @@ class TriggerConfig(BaseModel):
         blank call key means the user explicitly cleared the action in Settings.
         """
         return (tuple(h for h in (self.hotkey_call,) if h.strip()), ())
+
     # When False (default), the local wake path is lightweight: openWakeWord
     # only (~3.5 MB ONNX, CPU-only, bundled in jarvis/assets/wakeword/), no
     # faster-whisper anywhere — no GPU, no ~1 GB model download. When True, the
@@ -827,7 +831,7 @@ class BrainProviderConfig(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     model: str | None = None
-    deep_model: str | None = None      # Optional: stronger reasoning model
+    deep_model: str | None = None  # Optional: stronger reasoning model
     # Canonical model for tool-bearing turns. ``cu_model`` remains a
     # compatibility alias for installations predating the Tool Model rename.
     tool_model: str | None = Field(
@@ -839,7 +843,7 @@ class BrainProviderConfig(BaseModel):
     # realtime model reuses `model` above. "" -> the adapter's own hardcoded
     # default voice (no regression for providers/tiers that never set this).
     voice: str = ""
-    auth_mode: str | None = None       # "oauth" | "api_key"
+    auth_mode: str | None = None  # "oauth" | "api_key"
     base_url: str | None = None
     # Self-hosted cards only (today: local-realtime): the command Jarvis runs
     # to start/revive the server behind ``base_url`` when it is unreachable.
@@ -906,6 +910,7 @@ class BrainPolicyConfig(BaseModel):
 
 class BrainRouterPolicyConfig(BaseModel):
     """Policy switches for the tier router (Phase 5)."""
+
     escalate_on_uncertainty: bool = True
     default_intent_on_low_confidence: str = "spawn_worker"
 
@@ -931,6 +936,7 @@ class BrainPlausibilityConfig(BaseModel):
     Plausibility is NOT a risk tier. Whitelist-downgraded tools (``safe``)
     continue without a plausibility check — otherwise the whitelist is pointless.
     """
+
     model_config = {"extra": "allow"}
 
     confidence_threshold: float = 0.5
@@ -989,44 +995,103 @@ class BrainRoutingConfig(BaseModel):
     Fields are compiled into regex patterns in
     ``jarvis.brain.manager._build_force_spawn_re``.
     """
+
     model_config = {"extra": "allow"}
 
     # Action verbs (DE + EN). Matched with ``\b...\w*\b`` boundaries
     # — conjugations (lies/lest/liest) are therefore caught automatically.
-    spawn_verbs: list[str] = Field(default_factory=lambda: [
-        # Repair/implementation (old _FORCE_SPAWN_RE list)
-        "umsetz", "reparier", "fix", "behebe", "korrigier",
-        "implementier", "entwickel", "refactor", "debug", "repair",
-        # Analysis/investigation (2026-07-18: promoted from the maintainer's
-        # field-tuned jarvis.toml — fresh installs missed these and answered
-        # "analysiere das Repo" inline instead of spawning a worker)
-        "analysier", "analyz", "untersuche", "untersuch",
-        "pruefe", "prüfe", "investigate", "examine", "inspect",
-        # File/system action (persona mandate Phase 3)
-        "lies", "lese", "liest", "schreib", "schreibe", "schreibt",
-        "bau", "baue", "baut", "oeffne", "öffne", "oeffnet", "öffnet",
-        "installier", "deinstallier", "deploy",
-        "zeig", "zeige", "zeigt",
-        "mach", "mache", "macht", "machen",
-        # English
-        "read", "write", "build", "open", "install", "show", "make",
-        # Spawn imperatives (Bug 2026-04-29: user says "Spawn sub-agents." —
-        # heuristic fell back to the LLM without a match, which replied with
-        # smalltalk. List "spawn" and conjugations explicitly.)
-        "spawn", "starte", "start", "starten", "startet",
-        "delegier",
-    ])
+    spawn_verbs: list[str] = Field(
+        default_factory=lambda: [
+            # Repair/implementation (old _FORCE_SPAWN_RE list)
+            "umsetz",
+            "reparier",
+            "fix",
+            "behebe",
+            "korrigier",
+            "implementier",
+            "entwickel",
+            "refactor",
+            "debug",
+            "repair",
+            # Analysis/investigation (2026-07-18: promoted from the maintainer's
+            # field-tuned jarvis.toml — fresh installs missed these and answered
+            # "analysiere das Repo" inline instead of spawning a worker)
+            "analysier",
+            "analyz",
+            "untersuche",
+            "untersuch",
+            "pruefe",
+            "prüfe",
+            "investigate",
+            "examine",
+            "inspect",
+            # File/system action (persona mandate Phase 3)
+            "lies",
+            "lese",
+            "liest",
+            "schreib",
+            "schreibe",
+            "schreibt",
+            "bau",
+            "baue",
+            "baut",
+            "oeffne",
+            "öffne",
+            "oeffnet",
+            "öffnet",
+            "installier",
+            "deinstallier",
+            "deploy",
+            "zeig",
+            "zeige",
+            "zeigt",
+            "mach",
+            "mache",
+            "macht",
+            "machen",
+            # English
+            "read",
+            "write",
+            "build",
+            "open",
+            "install",
+            "show",
+            "make",
+            # Spawn imperatives (Bug 2026-04-29: user says "Spawn sub-agents." —
+            # heuristic fell back to the LLM without a match, which replied with
+            # smalltalk. List "spawn" and conjugations explicitly.)
+            "spawn",
+            "starte",
+            "start",
+            "starten",
+            "startet",
+            "delegier",
+        ]
+    )
 
     # External system markers — when the utterance mentions a repo/PR/issue,
     # we spawn even without a clear action verb (e.g. "How many PRs are open?").
-    external_system_markers: list[str] = Field(default_factory=lambda: [
-        "pr", "prs", "issue", "issues", "repo", "repository",
-        "github", "gitlab", "branch",
-        # 2026-07-18: promoted from the maintainer's field-tuned jarvis.toml
-        # so agent/worker mentions spawn on fresh installs too.
-        "subagent", "subagenten", "sub-agent", "sub-agents",
-        "openclaw", "open-claw",
-    ])
+    external_system_markers: list[str] = Field(
+        default_factory=lambda: [
+            "pr",
+            "prs",
+            "issue",
+            "issues",
+            "repo",
+            "repository",
+            "github",
+            "gitlab",
+            "branch",
+            # 2026-07-18: promoted from the maintainer's field-tuned jarvis.toml
+            # so agent/worker mentions spawn on fresh installs too.
+            "subagent",
+            "subagenten",
+            "sub-agent",
+            "sub-agents",
+            "openclaw",
+            "open-claw",
+        ]
+    )
 
     # Force-Spawn-Phrases (User-Mandate 2026-05-14): explicit-only trigger
     # list. When `force_spawn_mode = "strict"` (default), ONLY these phrases
@@ -1036,32 +1101,74 @@ class BrainRoutingConfig(BaseModel):
     # "Was ist ein Verbrenner-Motor?". The list captures the user's actual
     # signals for "I want a heavy worker, not a one-shot answer":
     # explicit Jarvis-Agent / sub-agent mentions plus deep-research markers.
-    force_spawn_phrases: list[str] = Field(default_factory=lambda: [
-        # Explicit Jarvis-Agent / sub-agent mentions. The "openclaw" variants
-        # are the retired internal codename, kept as a legacy trigger so a
-        # user who still says it out loud keeps working.
-        "openclaw", "open claw", "open-claw",
-        "subagent", "subagenten", "sub-agent", "sub-agenten", "sub agent",
-        "spawne", "spawn", "spawnen", "spawnt", "gespawnt",
-        "delegier", "delegiere", "delegierst", "delegiert", "delegieren",
-        "delegate", "delegates",
-        # Deep-work markers (declined forms included so partial matches
-        # like "umfassenden Bericht" hit reliably — \b boundaries don't
-        # forgive German case endings)
-        "deep dive", "deep-dive", "deepdive",
-        "deep research", "deep-research", "deepresearch",
-        "tiefenrecherche", "tiefen-recherche",
-        "gruendliche", "gruendlicher", "gruendlichen", "gruendliches",
-        "gründliche", "gründlicher", "gründlichen", "gründliches",
-        "gruendlich", "gründlich",
-        "ausfuehrliche", "ausfuehrlicher", "ausfuehrlichen", "ausfuehrliches",
-        "ausführliche", "ausführlicher", "ausführlichen", "ausführliches",
-        "ausfuehrlich", "ausführlich",
-        "umfassende", "umfassender", "umfassenden", "umfassendes",
-        "umfassend",
-        "kompletter deep", "kompletten deep", "komplette analyse",
-        "vollstaendige analyse", "vollständige analyse",
-    ])
+    force_spawn_phrases: list[str] = Field(
+        default_factory=lambda: [
+            # Explicit Jarvis-Agent / sub-agent mentions. The "openclaw" variants
+            # are the retired internal codename, kept as a legacy trigger so a
+            # user who still says it out loud keeps working.
+            "openclaw",
+            "open claw",
+            "open-claw",
+            "subagent",
+            "subagenten",
+            "sub-agent",
+            "sub-agenten",
+            "sub agent",
+            "spawne",
+            "spawn",
+            "spawnen",
+            "spawnt",
+            "gespawnt",
+            "delegier",
+            "delegiere",
+            "delegierst",
+            "delegiert",
+            "delegieren",
+            "delegate",
+            "delegates",
+            # Deep-work markers (declined forms included so partial matches
+            # like "umfassenden Bericht" hit reliably — \b boundaries don't
+            # forgive German case endings)
+            "deep dive",
+            "deep-dive",
+            "deepdive",
+            "deep research",
+            "deep-research",
+            "deepresearch",
+            "tiefenrecherche",
+            "tiefen-recherche",
+            "gruendliche",
+            "gruendlicher",
+            "gruendlichen",
+            "gruendliches",
+            "gründliche",
+            "gründlicher",
+            "gründlichen",
+            "gründliches",
+            "gruendlich",
+            "gründlich",
+            "ausfuehrliche",
+            "ausfuehrlicher",
+            "ausfuehrlichen",
+            "ausfuehrliches",
+            "ausführliche",
+            "ausführlicher",
+            "ausführlichen",
+            "ausführliches",
+            "ausfuehrlich",
+            "ausführlich",
+            "umfassende",
+            "umfassender",
+            "umfassenden",
+            "umfassendes",
+            "umfassend",
+            "kompletter deep",
+            "kompletten deep",
+            "komplette analyse",
+            "vollstaendige analyse",
+            "vollständige analyse",
+        ]
+    )
 
     # Force-Spawn-Mode — see FORCE_SPAWN_MODES above for the three values.
     #
@@ -1134,43 +1241,95 @@ class BrainRoutingConfig(BaseModel):
     # above) — the fields stay for config compatibility and the classifier
     # remains available for telemetry/tests. See ADR-0011.
     heavy_research_enabled: bool = True
-    heavy_research_verbs: list[str] = Field(default_factory=lambda: [
-        "recherchier", "analysier", "untersuch",  # i18n-allow: DE routing verb stems
-        "vergleich", "evaluier", "bewert",  # i18n-allow: DE routing verb stems
-        "research", "analyz", "analys", "investigat", "compar", "evaluat",
-        "assess", "summari",
-    ])
-    heavy_research_markers: list[str] = Field(default_factory=lambda: [
-        "nächsten", "naechsten", "kommenden",  # i18n-allow: DE routing markers
-        "mehrere", "verschiedene", "schritt für schritt",  # i18n-allow: DE routing markers
-        "brauche", "benötige", "benoetige", "checkliste",  # i18n-allow: DE routing markers
-        "next two weeks", "over the next", "step by step", "checklist",
-    ])
+    heavy_research_verbs: list[str] = Field(
+        default_factory=lambda: [
+            "recherchier",
+            "analysier",
+            "untersuch",  # i18n-allow: DE routing verb stems
+            "vergleich",
+            "evaluier",
+            "bewert",  # i18n-allow: DE routing verb stems
+            "research",
+            "analyz",
+            "analys",
+            "investigat",
+            "compar",
+            "evaluat",
+            "assess",
+            "summari",
+        ]
+    )
+    heavy_research_markers: list[str] = Field(
+        default_factory=lambda: [
+            "nächsten",
+            "naechsten",
+            "kommenden",  # i18n-allow: DE routing markers
+            "mehrere",
+            "verschiedene",
+            "schritt für schritt",  # i18n-allow: DE routing markers
+            "brauche",
+            "benötige",
+            "benoetige",
+            "checkliste",  # i18n-allow: DE routing markers
+            "next two weeks",
+            "over the next",
+            "step by step",
+            "checklist",
+        ]
+    )
     heavy_research_min_chars: int = 120
     heavy_research_min_verbs_multiclause: int = 2
 
     # Smalltalk allowlist — when the utterance matches one of these patterns,
     # NEVER spawn, even if the verb or marker heuristic fires. Pure wake/
     # smalltalk inputs go straight through the brain, not via Jarvis-Agent spawn.
-    smalltalk_allowlist: list[str] = Field(default_factory=lambda: [
-        # Greetings / Hangup
-        "hallo", "hi", "hey", "moin", "guten morgen", "guten abend",
-        "auf wiedersehen", "tschuess", "tschüss", "bye",
-        "goodbye", "good morning", "good evening",
-        # Smalltalk
-        "wie geht", "how are you", "how's it going",
-        "was machst du", "was machen wir",  # neutralise "mach" as a verb trigger
-        "danke", "thank you", "thanks",
-        # 2026-07-18: promoted from the maintainer's field-tuned jarvis.toml —
-        # casual openers fresh installs misrouted to the action path.
-        "was geht", "es geht ab", "geht ab",
-        "alles gut", "alles fit", "alles klar", "passt schon",
-        "what's up", "whats up", "sup",
-        # Factual question from memory
-        "wie spaet", "wie spät", "what time",
-        "welcher tag", "what day",
-        "hauptstadt", "capital",
-    ])
+    smalltalk_allowlist: list[str] = Field(
+        default_factory=lambda: [
+            # Greetings / Hangup
+            "hallo",
+            "hi",
+            "hey",
+            "moin",
+            "guten morgen",
+            "guten abend",
+            "auf wiedersehen",
+            "tschuess",
+            "tschüss",
+            "bye",
+            "goodbye",
+            "good morning",
+            "good evening",
+            # Smalltalk
+            "wie geht",
+            "how are you",
+            "how's it going",
+            "was machst du",
+            "was machen wir",  # neutralise "mach" as a verb trigger
+            "danke",
+            "thank you",
+            "thanks",
+            # 2026-07-18: promoted from the maintainer's field-tuned jarvis.toml —
+            # casual openers fresh installs misrouted to the action path.
+            "was geht",
+            "es geht ab",
+            "geht ab",
+            "alles gut",
+            "alles fit",
+            "alles klar",
+            "passt schon",
+            "what's up",
+            "whats up",
+            "sup",
+            # Factual question from memory
+            "wie spaet",
+            "wie spät",
+            "what time",
+            "welcher tag",
+            "what day",
+            "hauptstadt",
+            "capital",
+        ]
+    )
 
 
 class RouterVisionConfig(BaseModel):
@@ -1188,10 +1347,11 @@ class RouterVisionConfig(BaseModel):
     disable "klick auf X". Turn it on only on a desktop where you want Jarvis to
     spontaneously see the screen on ordinary turns.
     """
+
     enabled: bool = False
     refresh_interval_s: float = 2.0
     max_staleness_s: float = 2.0
-    capture_mode: str = "screenshot"      # "screenshot" | "composite"
+    capture_mode: str = "screenshot"  # "screenshot" | "composite"
     max_image_kb: int = 500
     pause_on_idle: bool = True
     voice_pause_phrase_de: str = "privacy"
@@ -1211,10 +1371,11 @@ class BrainTierConfig(BaseModel):
     provider switch (``[brain.router].provider = "gemini"``) without
     also editing the model field.
     """
+
     model_config = ConfigDict(extra="allow")
 
     provider: str
-    model: str | None = None   # CHANGED — war: str
+    model: str | None = None  # CHANGED — war: str
     fallback_provider: str | None = None
     fallback_model: str | None = None
     fallback_provider_2: str | None = None
@@ -1241,69 +1402,141 @@ class EvidenceDomainsConfig(BaseModel):
     """
 
     enabled: bool = True
-    domains: dict[str, list[str]] = Field(default_factory=lambda: {
-        "calendar": [
-            "kalender", "termin", "termine", "steht heute", "steht morgen",
-            "steht diese woche", "calendar", "appointment", "appointments",
-        ],
-        "email": [
-            "mail", "mails", "e-mail", "e-mails", "email", "emails",
-            "posteingang", "postfach", "inbox", "ungelesene",
-        ],
-        "tasks": [
-            "aufgaben", "todo", "todos", "to-do", "task", "tasks",
-        ],
-        "repos": [
-            "pull request", "pull requests", "pull-request", "pr", "prs",
-            "issue", "issues", "repo", "repos", "repository",
-        ],
-        "deployments": [
-            "deployment", "deployments", "deploy-status",
-            "build-status", "build status",
-        ],
-        # Cloud cost / billing. Mapped to the connected gcloud CLI via
-        # capability_provider.connected_domain_tool_map (gcloud declares the
-        # "cloud" domain), so a billing question deterministically FORCES a
-        # real cli_gcloud call (or an honest refusal) instead of relying on the
-        # model's discretion (live 2026-06-17). Keywords are cloud/billing
-        # specific — NO bare "kosten"/"cost" so "was kostet X" never hijacks, and
-        # NO bare "budget" so a travel/household/project budget never forces a
-        # billing call (live 2026-06-30 Bora-Bora session: "bei meinem Budget bei
-        # 25.000 Euro" voided a good travel answer). Cloud-budget phrasing is kept
-        # via the explicit "cloud budget"/"gcp budget" phrases instead.
-        "cloud": [
-            "google cloud", "gcp", "gcloud", "cloud-cli", "cloud cli",
-            "google-kosten", "google kosten", "cloud-kosten", "cloud kosten",
-            "cloud-rechnung", "cloud rechnung", "cloud billing", "billing account",
-            "cloud budget", "cloud-budget", "gcp budget", "gcloud budget",
-            "abrechnung", "abrechnungen", "guthaben", "billing",
-        ],
-        # Local screen / window-activity history. Served by the always-on
-        # internal `awareness-recall` tool (wired into the domain→tool map in
-        # BrainManager._run_evidence_gate, NOT a connected CLI), so a question
-        # like "was hatte ich heute offen / was habe ich gemacht / which
-        # windows were open" deterministically FORCES an awareness-recall call
-        # instead of letting the (esp. fast-tier) model confabulate "der lokale
-        # Verlaufsspeicher ist nicht verfügbar" without ever calling the tool
-        # (live 2026-06-18, proven from the log: no tool execution line, yet the
-        # refusal was spoken). Keywords are PHRASE-specific to opened
-        # windows/apps/today's on-device activity — never a bare "offen"/"open"
-        # token, so "ist die Frage noch offen" can't hijack the domain.
-        "activity": [
-            "offen hatte", "offen gehabt", "heute offen", "was war offen",
-            "was hatte ich auf", "geoeffnet hatte", "geoeffnete fenster",
-            "geoeffneten fenster", "offene fenster", "offene programme",
-            "welche fenster", "welche programme", "welche anwendungen",
-            "welche apps", "geoeffnete anwendungen", "geoeffneten anwendungen",
-            "am rechner gemacht", "am rechner offen", "am pc gemacht",
-            "am computer gemacht", "heute gemacht", "heute am rechner",
-            "woran hab ich gearbeitet", "woran habe ich gearbeitet",
-            "what did i have open", "what was open", "what did i do today",
-            "what have i been working on", "what was i working on",
-            "which windows", "which apps", "windows were open",
-            "apps were open", "my activity today", "earlier today",
-        ],
-    })
+    domains: dict[str, list[str]] = Field(
+        default_factory=lambda: {
+            "calendar": [
+                "kalender",
+                "termin",
+                "termine",
+                "steht heute",
+                "steht morgen",
+                "steht diese woche",
+                "calendar",
+                "appointment",
+                "appointments",
+            ],
+            "email": [
+                "mail",
+                "mails",
+                "e-mail",
+                "e-mails",
+                "email",
+                "emails",
+                "posteingang",
+                "postfach",
+                "inbox",
+                "ungelesene",
+            ],
+            "tasks": [
+                "aufgaben",
+                "todo",
+                "todos",
+                "to-do",
+                "task",
+                "tasks",
+            ],
+            "repos": [
+                "pull request",
+                "pull requests",
+                "pull-request",
+                "pr",
+                "prs",
+                "issue",
+                "issues",
+                "repo",
+                "repos",
+                "repository",
+            ],
+            "deployments": [
+                "deployment",
+                "deployments",
+                "deploy-status",
+                "build-status",
+                "build status",
+            ],
+            # Cloud cost / billing. Mapped to the connected gcloud CLI via
+            # capability_provider.connected_domain_tool_map (gcloud declares the
+            # "cloud" domain), so a billing question deterministically FORCES a
+            # real cli_gcloud call (or an honest refusal) instead of relying on the
+            # model's discretion (live 2026-06-17). Keywords are cloud/billing
+            # specific — NO bare "kosten"/"cost" so "was kostet X" never hijacks, and
+            # NO bare "budget" so a travel/household/project budget never forces a
+            # billing call (live 2026-06-30 Bora-Bora session: "bei meinem Budget bei
+            # 25.000 Euro" voided a good travel answer). Cloud-budget phrasing is kept
+            # via the explicit "cloud budget"/"gcp budget" phrases instead.
+            "cloud": [
+                "google cloud",
+                "gcp",
+                "gcloud",
+                "cloud-cli",
+                "cloud cli",
+                "google-kosten",
+                "google kosten",
+                "cloud-kosten",
+                "cloud kosten",
+                "cloud-rechnung",
+                "cloud rechnung",
+                "cloud billing",
+                "billing account",
+                "cloud budget",
+                "cloud-budget",
+                "gcp budget",
+                "gcloud budget",
+                "abrechnung",
+                "abrechnungen",
+                "guthaben",
+                "billing",
+            ],
+            # Local screen / window-activity history. Served by the always-on
+            # internal `awareness-recall` tool (wired into the domain→tool map in
+            # BrainManager._run_evidence_gate, NOT a connected CLI), so a question
+            # like "was hatte ich heute offen / was habe ich gemacht / which
+            # windows were open" deterministically FORCES an awareness-recall call
+            # instead of letting the (esp. fast-tier) model confabulate "der lokale
+            # Verlaufsspeicher ist nicht verfügbar" without ever calling the tool
+            # (live 2026-06-18, proven from the log: no tool execution line, yet the
+            # refusal was spoken). Keywords are PHRASE-specific to opened
+            # windows/apps/today's on-device activity — never a bare "offen"/"open"
+            # token, so "ist die Frage noch offen" can't hijack the domain.
+            "activity": [
+                "offen hatte",
+                "offen gehabt",
+                "heute offen",
+                "was war offen",
+                "was hatte ich auf",
+                "geoeffnet hatte",
+                "geoeffnete fenster",
+                "geoeffneten fenster",
+                "offene fenster",
+                "offene programme",
+                "welche fenster",
+                "welche programme",
+                "welche anwendungen",
+                "welche apps",
+                "geoeffnete anwendungen",
+                "geoeffneten anwendungen",
+                "am rechner gemacht",
+                "am rechner offen",
+                "am pc gemacht",
+                "am computer gemacht",
+                "heute gemacht",
+                "heute am rechner",
+                "woran hab ich gearbeitet",
+                "woran habe ich gearbeitet",
+                "what did i have open",
+                "what was open",
+                "what did i do today",
+                "what have i been working on",
+                "what was i working on",
+                "which windows",
+                "which apps",
+                "windows were open",
+                "apps were open",
+                "my activity today",
+                "earlier today",
+            ],
+        }
+    )
 
 
 class BrainConfig(BaseModel):
@@ -1411,8 +1644,8 @@ class WikiCuratorConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    provider: str = ""                  # "" = fall back to brain.primary
-    model: str = ""                     # "" = provider default model
+    provider: str = ""  # "" = fall back to brain.primary
+    model: str = ""  # "" = provider default model
     max_input_tokens: int = 64_000
     # Headroom for a complete proposal; the streaming truncation guard
     # rejects any residual length-capped generation. The Stage-2 judge
@@ -1700,6 +1933,7 @@ class JarvisAgentNotificationConfig(BaseModel):
     signature into the existing ``_on_announcement`` bus (pipeline.py:647).
     Voice readback only when voice is currently listening; toast always.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     # Default is the bus bypass — see pipeline._on_announcement.
@@ -1738,6 +1972,7 @@ class JarvisAgentHarnessConfig(BaseModel):
     silent upstream drifts. Loading without the block (``HarnessConfig.
     jarvis_agent is None``) falls back to "bridge inactive".
     """
+
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
@@ -1771,13 +2006,12 @@ class JarvisAgentHarnessConfig(BaseModel):
 
 class HarnessConfig(BaseModel):
     """Config for the harness dispatcher (Phase 4)."""
+
     # populate_by_name=True lets callers use the Python field name alongside
     # validation aliases for the renamed openclaw → jarvis_agent field.
     model_config = ConfigDict(populate_by_name=True)
 
-    enabled: list[str] = Field(
-        default_factory=lambda: ["python-script"]
-    )
+    enabled: list[str] = Field(default_factory=lambda: ["python-script"])
     default_timeout_s: int = 600
     default_risk_tier: RiskTier = "monitor"
     # Output limit per harness turn back to the brain — prevents large
@@ -1797,12 +2031,13 @@ class HarnessConfig(BaseModel):
 
 class MCPServerConfig(BaseModel):
     """Config for Jarvis-as-MCP-server (Phase 4)."""
+
     enabled: bool = True
-    transport: str = "stdio"             # "stdio" | "http"
+    transport: str = "stdio"  # "stdio" | "http"
     http_host: str = "127.0.0.1"
     http_port: int = 47822
     auth_token_env: str = "JARVIS_MCP_TOKEN"  # noqa: S105 — env var NAME, not a secret
-    max_call_depth: int = 3              # loop guard
+    max_call_depth: int = 3  # loop guard
 
 
 class AudioConfig(BaseModel):
@@ -2063,6 +2298,7 @@ class TelemetryConfig(BaseModel):
 
 class JarvisAgentsOutputConfig(BaseModel):
     """Config for Jarvis-Agent output management, GitHub push, and verification."""
+
     github_auto_push: bool = False
     github_repo_url: str = ""
     max_verification_iterations: int = 3
@@ -2076,6 +2312,7 @@ class SecurityConfig(BaseModel):
     To set: write the SHA-256 hex of the password into ``admin_password_hash``,
     e.g. via ``python -c "import hashlib; print(hashlib.sha256(b'<pass>').hexdigest())"``.
     """
+
     admin_password_hash: str = ""
 
 
@@ -2144,13 +2381,13 @@ class TwilioConfig(BaseModel):
     """
 
     enabled: bool = False
-    account_sid: str = ""           # AC... (account identifier, not a secret)
-    phone_number: str = ""          # E.164, e.g. +49...
-    public_base_url: str = ""       # https://jarvis.example.com (no trailing slash)
-    greeting: str = ""              # optional spoken welcome; empty = neutral name-based default
-    language_code: str = "de-DE"    # default TTS/STT language hint
-    fallback_mode: str = "media"    # reserved: "media" (v1) | "conversationrelay"
-    max_call_seconds: int = 600     # safety cap to end runaway calls
+    account_sid: str = ""  # AC... (account identifier, not a secret)
+    phone_number: str = ""  # E.164, e.g. +49...
+    public_base_url: str = ""  # https://jarvis.example.com (no trailing slash)
+    greeting: str = ""  # optional spoken welcome; empty = neutral name-based default
+    language_code: str = "de-DE"  # default TTS/STT language hint
+    fallback_mode: str = "media"  # reserved: "media" (v1) | "conversationrelay"
+    max_call_seconds: int = 600  # safety cap to end runaway calls
 
 
 class DiscordConfig(BaseModel):
@@ -2218,10 +2455,11 @@ class BoardFederationConfig(BaseModel):
 
     ``enabled = false`` disables the entire phase — local-only mode.
     """
+
     enabled: bool = False
-    backend_url: str = ""              # e.g. "https://board.example.com"
+    backend_url: str = ""  # e.g. "https://board.example.com"
     sync_interval_s: int = 60
-    display_name: str = ""             # empty → user_data_dir owner
+    display_name: str = ""  # empty → user_data_dir owner
 
 
 class BoardBioConfig(BaseModel):
@@ -2236,6 +2474,7 @@ class BoardBioConfig(BaseModel):
     ``override_provider`` / ``override_model`` are power-user fields for
     explicitly pinning a model for the bio only. Leave empty in 99% of cases.
     """
+
     model_config = {"extra": "allow"}
 
     temperature: float = Field(default=0.85, ge=0.0, le=2.0)
@@ -2249,6 +2488,7 @@ class BoardBioConfig(BaseModel):
 
 class BoardConfig(BaseModel):
     """Container for all board subsystems."""
+
     federation: BoardFederationConfig = Field(default_factory=BoardFederationConfig)
     bio: BoardBioConfig = Field(default_factory=BoardBioConfig)
 
@@ -2265,10 +2505,11 @@ class VisionContextConfig(BaseModel):
       - ENV ``JARVIS_VISION_CONTEXT=1``
       - ``[vision].context_hint_on_spawn = true`` in jarvis.toml
     """
+
     model_config = {"extra": "allow"}
 
     context_hint_on_spawn: bool = False
-    timeout_s: float = 0.25     # mandate: 250 ms latency cap per spawn
+    timeout_s: float = 0.25  # mandate: 250 ms latency cap per spawn
 
 
 class ScreenContextConfig(BaseModel):
@@ -2283,6 +2524,7 @@ class ScreenContextConfig(BaseModel):
     Every key below is read by ``ScreenContextService`` (AP-31: no config that
     nothing honours).
     """
+
     model_config = {"extra": "allow"}
 
     #: Master switch. When off, an explicit "look at this" is answered with an
@@ -2340,6 +2582,7 @@ class ComputerUseConfig(BaseModel):
     display degrade to an honest "not active" ToolResult instead of running
     (Phase 5 shell module, see ADR-0008).
     """
+
     model_config = {"extra": "allow"}
 
     enabled: bool = True
@@ -2542,6 +2785,7 @@ class PerformanceConfig(BaseModel):
     is in test mode (False) until the test phase completes and the branch is
     merged into a stable branch.
     """
+
     model_config = {"extra": "allow"}
 
     streaming_tts: bool = True
@@ -2593,38 +2837,47 @@ class ReviewRubricConfig(BaseModel):
     `items` is the list of evaluation criteria that the reviewer
     must work through for a given task class.
     """
+
     items: list[str] = Field(default_factory=list, min_length=1)
 
 
 def _default_rubrics() -> dict[str, ReviewRubricConfig]:
     """Default rubrics from plan §6.4."""
     return {
-        "default": ReviewRubricConfig(items=[
-            "task_completion",
-            "tool_output_fidelity",
-            "completeness",
-            "voice_friendliness",
-            "tool_use_efficiency",
-        ]),
-        "code_generation": ReviewRubricConfig(items=[
-            "task_completion",
-            "no_stub_code",
-            "tests_pass_locally",
-            "no_secret_leakage",
-            "voice_friendliness",
-        ]),
-        "skill_authoring": ReviewRubricConfig(items=[
-            "frontmatter_valid",
-            "trigger_keywords_unique",
-            "instructions_actionable",
-            "no_malicious_bash",
-        ]),
-        "research": ReviewRubricConfig(items=[
-            "task_completion",
-            "factual_accuracy",
-            "source_citation",
-            "voice_friendliness",
-        ]),
+        "default": ReviewRubricConfig(
+            items=[
+                "task_completion",
+                "tool_output_fidelity",
+                "completeness",
+                "voice_friendliness",
+                "tool_use_efficiency",
+            ]
+        ),
+        "code_generation": ReviewRubricConfig(
+            items=[
+                "task_completion",
+                "no_stub_code",
+                "tests_pass_locally",
+                "no_secret_leakage",
+                "voice_friendliness",
+            ]
+        ),
+        "skill_authoring": ReviewRubricConfig(
+            items=[
+                "frontmatter_valid",
+                "trigger_keywords_unique",
+                "instructions_actionable",
+                "no_malicious_bash",
+            ]
+        ),
+        "research": ReviewRubricConfig(
+            items=[
+                "task_completion",
+                "factual_accuracy",
+                "source_citation",
+                "voice_friendliness",
+            ]
+        ),
     }
 
 
@@ -2636,6 +2889,7 @@ class ReviewConfig(BaseModel):
     because the pipeline parameters (max_iterations, hard_ceiling) determine
     the cost and latency profile of the main Jarvis path.
     """
+
     enabled: bool = True
     max_iterations: int = Field(default=3, ge=1, le=5)
     hard_ceiling: int = Field(default=5, ge=1, le=5)
@@ -2661,8 +2915,8 @@ class WikiIntegrationConfig(BaseModel):
 
     enabled: bool = True
     vault_root: Path = Path("wiki/obsidian-vault")
-    subscribe_idle: bool = True              # listen for IdleEntered
-    fallback_to_direct_ingest: bool = True   # when scheduler is missing
+    subscribe_idle: bool = True  # listen for IdleEntered
+    fallback_to_direct_ingest: bool = True  # when scheduler is missing
 
     # Languages the search-alias bridge writes into each page
     # (jarvis/memory/wiki/search_aliases.py). Pages are written in English by
@@ -2992,15 +3246,106 @@ class SpeechConfig(BaseModel):
 #: order is the recogniser's own; the UI sorts by localized name at render time
 #: so no language is listed "first" by nationality.
 RECOGNITION_LANGUAGES: tuple[str, ...] = (
-    "af", "am", "ar", "as", "az", "ba", "be", "bg", "bn", "bo", "br", "bs",
-    "ca", "cs", "cy", "da", "de", "el", "en", "es", "et", "eu", "fa", "fi",
-    "fo", "fr", "gl", "gu", "ha", "haw", "he", "hi", "hr", "ht", "hu", "hy",
-    "id", "is", "it", "ja", "jw", "ka", "kk", "km", "kn", "ko", "la", "lb",
-    "ln", "lo", "lt", "lv", "mg", "mi", "mk", "ml", "mn", "mr", "ms", "mt",
-    "my", "ne", "nl", "nn", "no", "oc", "pa", "pl", "ps", "pt", "ro", "ru",
-    "sa", "sd", "si", "sk", "sl", "sn", "so", "sq", "sr", "su", "sv", "sw",
-    "ta", "te", "tg", "th", "tk", "tl", "tr", "tt", "uk", "ur", "uz", "vi",
-    "yi", "yo", "yue", "zh",
+    "af",
+    "am",
+    "ar",
+    "as",
+    "az",
+    "ba",
+    "be",
+    "bg",
+    "bn",
+    "bo",
+    "br",
+    "bs",
+    "ca",
+    "cs",
+    "cy",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "et",
+    "eu",
+    "fa",
+    "fi",
+    "fo",
+    "fr",
+    "gl",
+    "gu",
+    "ha",
+    "haw",
+    "he",
+    "hi",
+    "hr",
+    "ht",
+    "hu",
+    "hy",
+    "id",
+    "is",
+    "it",
+    "ja",
+    "jw",
+    "ka",
+    "kk",
+    "km",
+    "kn",
+    "ko",
+    "la",
+    "lb",
+    "ln",
+    "lo",
+    "lt",
+    "lv",
+    "mg",
+    "mi",
+    "mk",
+    "ml",
+    "mn",
+    "mr",
+    "ms",
+    "mt",
+    "my",
+    "ne",
+    "nl",
+    "nn",
+    "no",
+    "oc",
+    "pa",
+    "pl",
+    "ps",
+    "pt",
+    "ro",
+    "ru",
+    "sa",
+    "sd",
+    "si",
+    "sk",
+    "sl",
+    "sn",
+    "so",
+    "sq",
+    "sr",
+    "su",
+    "sv",
+    "sw",
+    "ta",
+    "te",
+    "tg",
+    "th",
+    "tk",
+    "tl",
+    "tr",
+    "tt",
+    "uk",
+    "ur",
+    "uz",
+    "vi",
+    "yi",
+    "yo",
+    "yue",
+    "zh",
 )
 
 #: The value that asks for per-utterance DETECTION instead of a fixed language.
@@ -3050,9 +3395,7 @@ def _clamped_polish_int(value: object, *, default: int, low: int, high: int) -> 
     return max(low, min(high, number))
 
 
-def _clamped_polish_float(
-    value: object, *, default: float, low: float, high: float
-) -> float:
+def _clamped_polish_float(value: object, *, default: float, low: float, high: float) -> float:
     """The float twin of :func:`_clamped_polish_int` — same AP-16 contract."""
     try:
         number = float(value)  # type: ignore[arg-type]
@@ -3665,9 +4008,7 @@ class MarketplaceConfig(BaseModel):
     # registry's GitHub Pages deployment; forks and air-gapped mirrors point
     # this at their own compiled index. Empty string disables the community
     # section entirely (browse shows only the shipped seed catalog).
-    community_index_url: str = (
-        "https://personaljarvis.github.io/marketplace/index.json"
-    )
+    community_index_url: str = "https://personaljarvis.github.io/marketplace/index.json"
     # Where the in-app Publish flow submits packages. The endpoint verifies
     # the GitHub identity and opens the registry PR as the marketplace bot;
     # forks point this at their own deployment. Empty string hides Publish.
@@ -3676,9 +4017,7 @@ class MarketplaceConfig(BaseModel):
     # because the payload is multipart image bytes, not a JSON manifest — but
     # the same identity, the same registry, the same feed. Empty string hides
     # "Share to community" in the wallpaper picker.
-    publish_wallpaper_endpoint: str = (
-        "https://personaljarvis.ai/api/marketplace/submit-wallpaper"
-    )
+    publish_wallpaper_endpoint: str = "https://personaljarvis.ai/api/marketplace/submit-wallpaper"
     # Client id of the marketplace GitHub App (public by design — device flow
     # needs no secret, which is why a downloadable binary can use it).
     publish_github_client_id: str = "Iv23li1YcX62KJO67whO"
@@ -3714,6 +4053,7 @@ class CodexConfig(BaseModel):
     standard PATH lookup. Read by :class:`jarvis.codex_auth.CodexAuthService` and
     the provider routes; written via ``config_writer.set_codex_binary_path``.
     """
+
     binary_path: str = ""
 
 
@@ -3952,6 +4292,7 @@ class GoogleAuthConfig(BaseModel):
 
 class JarvisConfig(BaseModel):
     """Root config model."""
+
     # populate_by_name=True lets callers use Python field names alongside
     # validation aliases for the renamed sub_agents → jarvis_agents field.
     model_config = ConfigDict(populate_by_name=True)
@@ -4068,6 +4409,27 @@ class JarvisConfig(BaseModel):
 _TOML_CACHE: dict[Path, tuple[tuple[int, int], dict[str, Any]]] = {}
 _TOML_CACHE_LOCK = threading.Lock()
 
+# Validated ``JarvisConfig`` for a (file identity, profile, env) triple.
+# Callers mutate the object they are handed (the reason the endpoint-route
+# cache exists instead of sharing one model), so this store is PRIVATE:
+# ``load_config`` hands out ``model_copy(deep=True)`` and never the cached
+# instance. The TOML cache stopped the parser stall; this stops the pydantic
+# half that froze the desktop on 2026-07-28 and again on 2026-08-28
+# (``active+gil`` in ``JarvisConfig.__init__`` from
+# ``claude_api._ensure_client`` → ``resolve_provider_endpoint``, window
+# "Not responding", ``/api/health`` timing out).
+_MODEL_CACHE: dict[
+    tuple[Path, tuple[int, int] | None, str | None, tuple[tuple[str, str], ...]],
+    JarvisConfig,
+] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+# Serialises the expensive ``JarvisConfig(**data)`` so a boot storm of
+# ``resolve_provider_endpoint`` callers cannot all rebuild the model at once
+# (the GIL stall that froze the window). Separate from ``_TOML_CACHE_LOCK``
+# so cache hits stay concurrent and lock order stays BUILD → CACHE, never
+# the reverse.
+_MODEL_BUILD_LOCK = threading.Lock()
+
 
 def _copy_toml_data(value: Any) -> Any:
     """Structural copy of a parsed TOML payload.
@@ -4103,9 +4465,12 @@ def clear_config_cache() -> None:
     other stale too — and a stale route sends a provider's traffic to an address
     the user has already changed.
     """
-    with _TOML_CACHE_LOCK:
-        _TOML_CACHE.clear()
-        _ENDPOINT_ROUTE_CACHE.clear()
+    with _MODEL_BUILD_LOCK:
+        with _TOML_CACHE_LOCK:
+            _TOML_CACHE.clear()
+            _ENDPOINT_ROUTE_CACHE.clear()
+        with _MODEL_CACHE_LOCK:
+            _MODEL_CACHE.clear()
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -4311,13 +4676,12 @@ def _apply_env_overrides(data: dict[str, Any], prefix: str = "JARVIS__") -> dict
     """
     stt_section = data.get("stt")
     stt_provider_user_selected = bool(
-        isinstance(stt_section, dict)
-        and stt_section.get("provider_user_selected") is True
+        isinstance(stt_section, dict) and stt_section.get("provider_user_selected") is True
     )
     for env_key, env_val in tuple(os.environ.items()):
         if not env_key.startswith(prefix):
             continue
-        path = env_key[len(prefix):].lower().split("__")
+        path = env_key[len(prefix) :].lower().split("__")
         if path == ["stt", "provider"] and stt_provider_user_selected:
             logging.getLogger(__name__).debug(
                 "Ignoring %s because the persisted STT provider was user-selected",
@@ -4515,29 +4879,55 @@ def load_config(
         # names a file explicitly — a test, a doctor script — gets it read, not
         # rewritten. Process-local guard so repeated loads cost nothing.
         _heal_dictation_hotkeys_once(config_file)
-    if not config_file.exists():
-        # No config file → pure defaults (useful for tests)
-        data: dict[str, Any] = {}
-    else:
-        data = _load_toml(config_file)
 
-    if profile is None:
-        profile = os.environ.get("JARVIS_PROFILE") or data.get("profile", {}).get("name")
+    identity: tuple[int, int] | None = None
+    try:
+        info = config_file.stat()
+        identity = (info.st_mtime_ns, info.st_size)
+    except OSError:
+        identity = None
+    profile_key = profile if profile is not None else os.environ.get("JARVIS_PROFILE")
+    env_sig = tuple(
+        sorted((key, value) for key, value in os.environ.items() if key.startswith("JARVIS__"))
+    )
+    cache_key = (config_file, identity, profile_key, env_sig)
+    with _MODEL_CACHE_LOCK:
+        cached = _MODEL_CACHE.get(cache_key)
+        if cached is not None:
+            return cached.model_copy(deep=True)
 
-    if profile and profile != "default":
-        profile_file = PROFILES_DIR / f"{profile}.yaml"
-        if profile_file.exists():
-            data = _deep_merge(data, _load_yaml(profile_file))
+    with _MODEL_BUILD_LOCK:
+        with _MODEL_CACHE_LOCK:
+            cached = _MODEL_CACHE.get(cache_key)
+            if cached is not None:
+                return cached.model_copy(deep=True)
 
-    # Deterministic winner for the worker-tier split-brain BEFORE env
-    # overrides land (env writes into brain.worker and wins regardless).
-    data = _dedupe_worker_tier_tables(data)
-    # Back-compat shim: copy old JARVIS__BRAIN__SUB_JARVIS__* to new
-    # JARVIS__BRAIN__WORKER__* if only the old names are set (process-local).
-    _migrate_worker_env_vars()
-    data = _apply_env_overrides(data)
-    data = _apply_instance_overrides(data)
-    return JarvisConfig(**data)
+        if not config_file.exists():
+            # No config file → pure defaults (useful for tests)
+            data: dict[str, Any] = {}
+        else:
+            data = _load_toml(config_file)
+
+        if profile is None:
+            profile = os.environ.get("JARVIS_PROFILE") or data.get("profile", {}).get("name")
+
+        if profile and profile != "default":
+            profile_file = PROFILES_DIR / f"{profile}.yaml"
+            if profile_file.exists():
+                data = _deep_merge(data, _load_yaml(profile_file))
+
+        # Deterministic winner for the worker-tier split-brain BEFORE env
+        # overrides land (env writes into brain.worker and wins regardless).
+        data = _dedupe_worker_tier_tables(data)
+        # Back-compat shim: copy old JARVIS__BRAIN__SUB_JARVIS__* to new
+        # JARVIS__BRAIN__WORKER__* if only the old names are set (process-local).
+        _migrate_worker_env_vars()
+        data = _apply_env_overrides(data)
+        data = _apply_instance_overrides(data)
+        built = JarvisConfig(**data)
+        with _MODEL_CACHE_LOCK:
+            _MODEL_CACHE[cache_key] = built
+            return built.model_copy(deep=True)
 
 
 # Ports the dev instance shifts by ``InstanceIdentity.port_offset``: every
@@ -4721,9 +5111,7 @@ def _is_platform_keyring_backend(backend: Any) -> bool:
         return False
 
 
-def _install_file_cred_backend(
-    reason: str, *, retain_platform_backend: bool = True
-) -> bool:
+def _install_file_cred_backend(reason: str, *, retain_platform_backend: bool = True) -> bool:
     """Force the local 0600 file credential store as the active keyring backend.
 
     Used both when NO OS keyring exists at all (headless VPS → ``fail.Keyring``)
@@ -4768,7 +5156,9 @@ def _install_file_cred_backend(
             logging.getLogger(__name__).warning(
                 "OS credential store unusable (%s) — API keys are stored in a local "
                 "0600 file under %s. Configure a Secret Service / Keychain for "
-                "OS-encrypted storage.", reason, DATA_DIR / "credentials.json",
+                "OS-encrypted storage.",
+                reason,
+                DATA_DIR / "credentials.json",
             )
         _FILE_BACKEND_ACTIVE = True
         return True
@@ -4815,9 +5205,7 @@ def _ensure_keyring_backend() -> None:
             )
 
             keyring.set_keyring(
-                DarwinBundleKeyringBackend(
-                    current_backend, cli=darwin_security_cli_vault()
-                )
+                DarwinBundleKeyringBackend(current_backend, cli=darwin_security_cli_vault())
             )
     except Exception:  # noqa: BLE001, S110 -- a missing keyring must never break boot
         pass
@@ -4860,17 +5248,13 @@ def _try_restore_platform_keyring_backend() -> bool:
         # pointed at). Re-wrap it on macOS before the probe below runs, so
         # the probe proves the bundle lifecycle rather than the raw
         # per-item backend (BUG-103).
-        if sys.platform == "darwin" and not getattr(
-            candidate, "_jarvis_platform_wrapper", False
-        ):
+        if sys.platform == "darwin" and not getattr(candidate, "_jarvis_platform_wrapper", False):
             from .keychain_bundle import (
                 DarwinBundleKeyringBackend,
                 darwin_security_cli_vault,
             )
 
-            candidate = DarwinBundleKeyringBackend(
-                candidate, cli=darwin_security_cli_vault()
-            )
+            candidate = DarwinBundleKeyringBackend(candidate, cli=darwin_security_cli_vault())
             keyring_mod.set_keyring(candidate)
 
         # A read-only probe was insufficient on Windows: WinVault could read an
@@ -4996,18 +5380,13 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
 
         active_val = keyring.get_password(KEYRING_SERVICE, key)
         active_backend = keyring.get_keyring()
-        if _FILE_BACKEND_ACTIVE and getattr(
-            active_backend, "_jarvis_file_backend", False
-        ):
+        if _FILE_BACKEND_ACTIVE and getattr(active_backend, "_jarvis_file_backend", False):
             # The process-wide keyring now points at the file backend. Keep
             # reading the retained platform backend for slots that never needed
             # a fallback, so one failed write does not hide all OS credentials.
             file_val = active_val or file_val
             platform_backend = _PLATFORM_KEYRING_BACKEND
-            if (
-                platform_backend is not None
-                and _is_platform_keyring_backend(platform_backend)
-            ):
+            if platform_backend is not None and _is_platform_keyring_backend(platform_backend):
                 try:
                     platform_val = platform_backend.get_password(KEYRING_SERVICE, key)
                 except Exception:  # noqa: BLE001 — locked platform stays fallback-only
@@ -5317,9 +5696,7 @@ def plan_secret_save(slot: str, value: str, scope: str | None = None) -> SecretS
             conflicting_slots=tuple(distinct),
         )
     deletes = tuple(mirrors) if scope != "everywhere" else tuple((*mirrors, *distinct))
-    return SecretSavePlan(
-        writes=(primary,), deletes=deletes, family=family, primary_slot=primary
-    )
+    return SecretSavePlan(writes=(primary,), deletes=deletes, family=family, primary_slot=primary)
 
 
 @contextmanager
@@ -5369,16 +5746,15 @@ class _EndpointRoute:
 #: event loop, and a key-aware fallback chain builds several providers per turn.
 #: Reaching ``load_config()`` for it rebuilt the whole ``JarvisConfig`` model
 #: each time: 281 fresh objects per call, handed straight to the garbage
-#: collector. Measured live on 2026-07-28 (two independent sessions, same
-#: verdict): the backend thread sat ``active+gil`` inside ``JarvisConfig(**data)``
-#: reached through exactly this function, and while it did, the Tk-drawn overlay
-#: stopped pumping and Windows replaced the frozen window with a ``Ghost``
-#: (BUG-118). Caching the model itself is not an option — a hundred sites mutate
-#: the object they are handed — but the routing decision is small, immutable and
-#: derived only from the file, so it can be remembered safely.
-_ENDPOINT_ROUTE_CACHE: dict[
-    tuple[tuple[int, int] | None, str, str | None], _EndpointRoute
-] = {}
+#: collector. Measured live on 2026-07-28 and again on 2026-08-28: the backend
+#: thread sat ``active+gil`` inside ``JarvisConfig(**data)`` reached through
+#: exactly this function, and while it did, the Tk-drawn overlay stopped
+#: pumping and Windows marked the window "Not responding". The validated
+#: model is now remembered too (``_MODEL_CACHE``), but only privately —
+#: callers still get a deep copy, because a hundred sites mutate the object
+#: they are handed. The routing decision is small, immutable and derived
+#: only from the file, so it can be remembered without a copy.
+_ENDPOINT_ROUTE_CACHE: dict[tuple[tuple[int, int] | None, str, str | None], _EndpointRoute] = {}
 
 
 def _endpoint_route(
@@ -5389,9 +5765,7 @@ def _endpoint_route(
     """Pure routing decision for one provider — no secrets, no I/O."""
     team = cfg_obj.team_proxy
     if team.enabled and team.url and provider_id not in team.local_providers:
-        return _EndpointRoute(
-            base_url=f"{team.url.rstrip('/')}/p/{provider_id}", via_proxy=True
-        )
+        return _EndpointRoute(base_url=f"{team.url.rstrip('/')}/p/{provider_id}", via_proxy=True)
     prov = cfg_obj.brain.providers.get(provider_id)
     override = prov.base_url if prov is not None and prov.base_url else None
     return _EndpointRoute(base_url=override or vendor_default_base_url, via_proxy=False)
@@ -5437,6 +5811,8 @@ def ollama_hf_enabled(config: JarvisConfig | None = None) -> bool:
     conf = config or load_config()
     provider = conf.brain.providers.get("ollama")
     return bool(provider is not None and provider.hf_enabled)
+
+
 def ollama_autostart(config: JarvisConfig | None = None) -> bool:
     """Whether the local server starts with Jarvis when local models are in use.
 
@@ -5485,9 +5861,7 @@ def resolve_provider_endpoint(
         token = get_secret("team_proxy_token", "TEAM_PROXY_TOKEN")
         return ResolvedEndpoint(base_url=route.base_url, credential=token, via_proxy=True)
     credential = get_provider_secret(provider_id)
-    return ResolvedEndpoint(
-        base_url=route.base_url, credential=credential, via_proxy=False
-    )
+    return ResolvedEndpoint(base_url=route.base_url, credential=credential, via_proxy=False)
 
 
 def set_secret(key: str, value: str) -> bool:
@@ -5637,6 +6011,7 @@ def delete_secret(key: str) -> bool:
 # First-run check
 # ----------------------------------------------------------------------
 
+
 def ensure_project_root_cwd() -> Path:
     """Pin the process working directory to the project root. Returns the CWD.
 
@@ -5722,6 +6097,7 @@ def mark_setup_complete() -> None:
 try:
     from jarvis.brain.ack_brain.config import AckBrainConfig  # noqa: E402
 except ModuleNotFoundError:
+
     class AckBrainConfig(BaseModel):  # type: ignore[no-redef]
         """Fallback when the optional ack_brain package is not installed."""
 
@@ -5735,5 +6111,6 @@ except ModuleNotFoundError:
         circuit_breaker_cooldown_s: int = 60
         suppress_if_brain_faster_than_ms: int = 2000
         ack_continuation_grace_ms: int = 1200
+
 
 JarvisConfig.model_rebuild()

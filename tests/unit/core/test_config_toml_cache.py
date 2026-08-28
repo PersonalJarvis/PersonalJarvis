@@ -161,6 +161,47 @@ def test_writer_invalidates_the_cache(tmp_path):
     assert _load_toml(target)["brain"]["primary"] == "openrouter"
 
 
+def test_second_load_config_does_not_rebuild_the_model(tmp_path, monkeypatch):
+    """Repeat loads must not construct ``JarvisConfig`` again.
+
+    Live 2026-08-28: every ``resolve_provider_endpoint`` rebuilt the model
+    (281 pydantic objects, GIL held), the overlay stopped pumping, and the
+    window sat on "Not responding" with ``/api/health`` timing out.
+    """
+    from jarvis.core.config import load_config
+
+    monkeypatch.delenv("JARVIS__BRAIN__PRIMARY", raising=False)
+    target = tmp_path / "jarvis.toml"
+    _write(target, '[brain]\nprimary = "gemini"\n')
+
+    first = load_config(target)
+    calls: list[int] = []
+    real = config_module.JarvisConfig
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(config_module, "JarvisConfig", counting)
+    second = load_config(target)
+    assert calls == []
+    assert second.brain.primary == "gemini"
+    assert second is not first
+
+
+def test_load_config_caller_mutations_never_reach_the_model_cache(tmp_path, monkeypatch):
+    from jarvis.core.config import load_config
+
+    monkeypatch.delenv("JARVIS__BRAIN__PRIMARY", raising=False)
+    target = tmp_path / "jarvis.toml"
+    _write(target, '[brain]\nprimary = "gemini"\n')
+
+    first = load_config(target)
+    first.brain.primary = "mutated-by-caller"
+    second = load_config(target)
+    assert second.brain.primary == "gemini"
+
+
 def test_load_config_reflects_an_edit(tmp_path, monkeypatch):
     """End to end: the public entry point is not left holding a stale config.
 
