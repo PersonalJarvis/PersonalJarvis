@@ -460,6 +460,39 @@ def _managed_server_payload(spec: ProviderSpec) -> dict[str, Any] | None:
         return None
 
 
+def _derived_alias_free(provider_id: str, models: list[Any]) -> list[Any]:
+    """Drop the runtime's OWN derived models from a user-facing picker.
+
+    A pull-capable server holds two kinds of entry: the downloads a user chose,
+    and the aliases Jarvis derived from them — a Tune profile carrying one
+    model's options, the voice brain's bounded-context copy. The Local models
+    section folds those away (``is_hidden_alias``); this picker did not, so the
+    card offered five tags the section hides. Choosing one left the section
+    reporting a model that is on disk and running as "Not downloaded", because
+    it looks its pick up in the visible inventory alone.
+
+    Gated on the pull capability rather than a provider name (AP-21): a derived
+    alias only exists where the app can create one, which is exactly the set of
+    servers with a native download API.
+    """
+    if provider_id not in _pull_capable_ids():
+        return models
+    try:
+        from jarvis.brain.ollama_inventory import is_hidden_alias
+
+        kept = [m for m in models if not is_hidden_alias(getattr(m, "id", ""))]
+    except Exception as exc:  # noqa: BLE001 — the picker must never 500
+        log.debug("Alias filter for %s failed (%s); listing all.", provider_id, exc)
+        return models
+    if len(kept) != len(models):
+        log.debug(
+            "Local provider %s: hid %d derived alias(es) from the picker.",
+            provider_id,
+            len(models) - len(kept),
+        )
+    return kept
+
+
 def _installed_local_models(provider_id: str, models: list[Any]) -> list[Any]:
     """Drop catalog entries whose files are not on this machine.
 
@@ -1532,6 +1565,30 @@ async def _tier_section_health(
     )
 
 
+async def provider_health(cfg: Any, provider_id: str, *, probe: bool = True) -> SectionHealth:
+    """The live health of ONE named provider, for a caller outside this module.
+
+    The same check the API-Keys tabs run, addressed by provider id instead of
+    by tier: a credential that is present but rejected is ``error`` with the
+    reason ("bad_key", "no_credits", …), a missing one is ``needs_setup``, a
+    working one is ``ok``. The agent chat's composer uses it to say which
+    seats actually answer, so the two surfaces can never disagree about
+    whether a provider works — there is one check, not two opinions.
+
+    An unknown id is ``unknown`` rather than an error: a caller listing rows
+    must not lose its whole answer to one name this module has never heard of.
+    """
+    spec = get_spec(provider_id)
+    if spec is None:
+        return SectionHealth(
+            status=_section_health.UNKNOWN,
+            reason="unknown_provider",
+            detail=f"{provider_id}: not a known provider",
+            subject_id=provider_id,
+        )
+    return await _tier_section_health(cfg, spec, probe=probe)
+
+
 def _worker_usable(provider: str) -> bool:
     """Best-effort "is the selected heavy-task worker connected/keyed?".
 
@@ -2300,7 +2357,7 @@ async def list_brain_models(
     # chosen — the same "offered but not there" defect as a card claiming ready
     # before it is installed. Filtered here rather than in the catalog so the
     # catalog stays the complete list a download route can work from.
-    models = _installed_local_models(provider_id, result.models)
+    models = _derived_alias_free(provider_id, _installed_local_models(provider_id, result.models))
     current = _current_selection(cfg, provider_id, cat)
     # Safety net: for a curated TTS/STT list, never echo a value that isn't in the
     # list (e.g. a stale global value belonging to a different provider) — show the

@@ -536,3 +536,34 @@ def test_test_button_ceiling_stays_above_its_own_budget() -> None:
         spec = get_spec(provider_id)
         assert spec is not None
         assert pr._tier_test_ceiling_s(spec) > pr._tier_test_budget_s(spec)
+
+
+# ── Derived aliases: the card must offer what the section shows ──────────────
+
+
+def test_the_picker_hides_the_runtimes_own_derived_aliases() -> None:
+    """A Tune profile and the voice brain's bounded-context copy are Jarvis's
+    OWN models, not downloads a user chose. The Local models section folds them
+    away; this picker used to offer them, and choosing one left that section
+    reporting a running model as "Not downloaded" — it looks its pick up in the
+    visible inventory alone."""
+    from jarvis.ui.web import provider_routes as pr
+
+    catalogued = [
+        ModelInfo(id="ornith:9b", label="ornith:9b"),
+        ModelInfo(id="deepseek-r1:14b", label="deepseek-r1:14b"),
+        ModelInfo(id="deepseek-r1-14b-jarvis-dcf2fd1c:latest", label="tune profile"),
+        ModelInfo(id="ornith:9b-voice-32k", label="voice alias"),
+        ModelInfo(id="qwen3.5:4b-voice-8k", label="voice alias"),
+    ]
+    kept = [m.id for m in pr._derived_alias_free("ollama", catalogued)]
+    assert kept == ["ornith:9b", "deepseek-r1:14b"]
+
+
+def test_a_card_that_cannot_create_an_alias_is_left_alone() -> None:
+    """The filter is gated on the pull capability, not a provider name (AP-21):
+    a derived alias only exists where the app can create one."""
+    from jarvis.ui.web import provider_routes as pr
+
+    catalogued = [ModelInfo(id="gpt-5-voice-8k", label="a real hosted model")]
+    assert pr._derived_alias_free("openai", catalogued) == catalogued

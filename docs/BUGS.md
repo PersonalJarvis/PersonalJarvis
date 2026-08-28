@@ -14427,3 +14427,43 @@ An install that wants no local voice at all clears the fallback.
 
 **Related.** BUG-174 (the other local-models defect whose symptom was "voice on
 local models is unusably slow after a restart" — same stack, different half).
+
+## BUG-205: the provider card offered Jarvis's own derived models as a brain, and the Local models section then called a running model "Not downloaded" (HIGH, FIXED 2026-08-28)
+
+**Symptom.** The Ollama card's model picker listed five tags the Local models
+section does not show. Choosing one — say `ornith:9b-voice-32k` — saved fine and
+the model answered, but the section's chat card then read **"Not downloaded"**
+about a model that was on disk and serving requests, and its picker offered no
+way back to the tag that was actually configured.
+
+**Cause.** Two surfaces derived the same list independently (the AP-4 shape,
+without the parity test that pattern owes).
+
+* The section builds from `ollama_inventory.cached_snapshot().models`, which
+  drops Jarvis's OWN derived models via `is_hidden_alias`: the per-model Tune
+  profiles (`<base>-jarvis-<8 hex>`) and the voice brain's bounded-context copy
+  (`<base>-voice-<N>k`). Neither is a download a user chose; both are artifacts
+  the app created from one.
+* `GET /api/providers/{id}/models` built from the server's raw tag list. Its one
+  filter, `_installed_local_models`, only knows Sherpa speech bundles and is a
+  no-op for Ollama, so all five aliases reached the picker.
+
+The "Not downloaded" line follows from there: `ollama_roles.list_roles` decides
+`installed` by looking the pick up in the VISIBLE inventory
+(`any(same_model(m.name, current) for m in models)`), and a hidden alias is by
+construction not in it.
+
+**Fix.** `_derived_alias_free()` in `provider_routes.py`, applied to the picker
+next to the existing installed-bundle filter. It reuses `is_hidden_alias` — the
+section's own function — so there is one definition of "a model a user may
+pick", not two. Gated on the pull capability rather than the provider name
+(AP-21): a derived alias can only exist where the app can create one.
+
+**Guard.** `scripts/check_local_models.py` grew a `card-parity` check that fails
+when either surface offers a tag the other hides, plus two unit tests in
+`tests/integration/test_provider_model_routes.py`. The script is read-only and
+runs on any machine, which is also how Apple Silicon and AMD get reported.
+
+**Not changed.** A pick already saved as an alias keeps working: the brain tier
+deliberately accepts a model id that is not in the catalogue, so an existing
+configuration is shown rather than silently reset.
