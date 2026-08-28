@@ -45,23 +45,47 @@ class PreflightReport:
     brain: BrainResolution | None = None
 
 
+#: Accelerator sources this stack can actually RUN on, mapped by
+#: :func:`jarvis.realtime.local_server.install.derive_launch_command` to a
+#: torch device. The shared probe reports more sources than these — it also
+#: reads AMD and Intel cards, which the local-model fit verdicts want and this
+#: speech stack has no backend for. Accepting one of those here would clear the
+#: memory floor and then launch with a device that does not exist on the box,
+#: which is worse than the honest "no supported accelerator" refusal.
+_DRIVEABLE_SOURCES = frozenset({"nvidia-smi", "apple-unified"})
+
+
 def _usable_accelerator_gb() -> tuple[float, str]:
     """Usable accelerator memory in GiB and the source of that figure.
 
     Delegates to the shared probe in :mod:`jarvis.hardware.detection`, which is
     where this logic now lives: the local-model recommender asks the very same
     question ("how much can this machine actually run?"), and two copies would
-    eventually give one box two different verdicts. Behaviour is unchanged —
+    eventually give one box two different verdicts.
+
+    The answer is then narrowed to :data:`_DRIVEABLE_SOURCES`. That keeps THIS
+    module's behaviour exactly as documented in ``docs/os-parity.md`` (P-28) —
     largest single NVIDIA device, Apple Silicon unified memory, otherwise 0,
-    and 0 is below the floor, which is the honest outcome for a GPU-less host.
+    and 0 is below the floor, which is the honest outcome for a GPU-less host
+    and for a card this speech stack cannot target.
     """
     try:
         from jarvis.hardware.detection import usable_accelerator_gb
 
-        return usable_accelerator_gb()
+        gb, source = usable_accelerator_gb()
     except Exception:  # pragma: no cover — probe quirks must not crash preflight
         log.debug("preflight: accelerator probe failed", exc_info=True)
         return 0.0, "none"
+    if source not in _DRIVEABLE_SOURCES:
+        if gb > 0:
+            log.info(
+                "preflight: %.1f GB reported via %s, but this speech stack has no "
+                "backend for that card; treating it as no accelerator.",
+                gb,
+                source,
+            )
+        return 0.0, "none"
+    return gb, source
 
 
 def _disk_free_gb(root: Path) -> float:

@@ -9,13 +9,16 @@ All checks are read-only; nothing is installed or modified.
 from __future__ import annotations
 
 import logging
+import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
@@ -546,16 +549,166 @@ def usable_accelerator_gb() -> tuple[float, str]:
     return answer
 
 
+#: ``total="15.9 GiB"`` out of Ollama's own startup line. The server prints one
+#: ``inference compute`` record per device it will actually use, whatever the
+#: vendor — ``library=CUDA`` / ``ROCm`` / ``Metal`` — so this one pattern reads
+#: a card three separate vendor SDKs would be needed to read directly.
+_OLLAMA_COMPUTE_RE = re.compile(
+    r"inference compute.*?\btotal=\"?([0-9.]+)\s*([KMGT]i?B)\"?", re.IGNORECASE
+)
+#: Keyed by the unit's first letter, so ``GB`` and ``GiB`` both land on the
+#: same factor. Ollama prints binary units either way.
+_UNIT_GIB = {"k": 1 / 1048576, "m": 1 / 1024, "g": 1.0, "t": 1024.0}
+
+
+def _gib(value: str, unit: str) -> float:
+    """A ``("15.9", "GiB")`` pair as GiB; an unknown unit is 0 (= no answer)."""
+    factor = _UNIT_GIB.get(unit.strip().lower()[:1], 0.0)
+    if not factor:
+        return 0.0
+    try:
+        return float(value) * factor
+    except ValueError:
+        return 0.0
+
+
+def _ollama_log_paths() -> list[Path]:
+    """Server logs that may carry the startup detection, newest intent first.
+
+    Jarvis's own log exists only for a server Jarvis spawned; the vendor app
+    keeps its own beside it, and BOTH rotate — the line is written once per
+    start, so a long-running server's current log can be empty. That is why
+    this is one source among several rather than the only one.
+    """
+    paths: list[Path] = []
+    try:
+        from jarvis.brain.ollama_runtime import _log_path  # noqa: PLC0415 — lazy (AP-26)
+
+        paths.append(_log_path())
+    except Exception:  # noqa: BLE001 — the runtime module is optional on a bare install
+        log.debug("hardware: Jarvis's own Ollama log path is unavailable", exc_info=True)
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA", "")
+        if local:
+            paths.append(Path(local) / "Ollama" / "server.log")
+    else:
+        # macOS and Linux both keep it here; the launchd/systemd unit writes
+        # the same file the manual `ollama serve` does.
+        paths.append(Path.home() / ".ollama" / "logs" / "server.log")
+    return paths
+
+
+def _ollama_reported_gb() -> float:
+    """Largest device Ollama itself reported, in GiB; ``0.0`` when unknown.
+
+    Authoritative where it answers: it is the budget the server decided on,
+    not one this process guessed for it.
+    """
+    best = 0.0
+    for path in _ollama_log_paths():
+        try:
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:  # pragma: no cover — unreadable or vanished mid-read
+            continue
+        for match in _OLLAMA_COMPUTE_RE.finditer(text):
+            best = max(best, _gib(match.group(1), match.group(2)))
+    return best
+
+
+def _linux_drm_vram_gb() -> float:
+    """Largest discrete card's VRAM from sysfs, in GiB; ``0.0`` when unknown.
+
+    ``amdgpu`` and ``i915`` both publish the total in bytes, so one directory
+    walk covers AMD and Intel discrete cards with no vendor tool installed.
+    """
+    best = 0
+    for card in sorted(Path("/sys/class/drm").glob("card[0-9]*")):
+        for leaf in ("device/mem_info_vram_total", "device/lmem_total_bytes"):
+            try:
+                raw = (card / leaf).read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            try:
+                best = max(best, int(raw))
+            except ValueError:
+                continue
+    return best / (1024**3) if best else 0.0
+
+
+def _windows_registry_vram_gb() -> float:
+    """Largest adapter's memory from the display-class registry key, in GiB.
+
+    ``qwMemorySize`` is the 64-bit field; the WMI ``AdapterRAM`` most code
+    reaches for is a 32-bit one that reports 4 GB for every larger card.
+    """
+    try:
+        import winreg  # noqa: PLC0415 — Windows-only, lazy by construction
+    except ImportError:  # pragma: no cover — not Windows
+        return 0.0
+    root = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+    best = 0
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, root) as parent:
+            for index in range(64):
+                try:
+                    name = winreg.EnumKey(parent, index)
+                except OSError:
+                    break
+                try:
+                    with winreg.OpenKey(parent, name) as child:
+                        value, _kind = winreg.QueryValueEx(
+                            child, "HardwareInformation.qwMemorySize"
+                        )
+                except OSError:
+                    continue
+                if isinstance(value, int):
+                    best = max(best, value)
+    except OSError:  # pragma: no cover — a locked-down or unusual registry
+        log.debug("hardware: display-class registry unreadable", exc_info=True)
+        return 0.0
+    return best / (1024**3) if best else 0.0
+
+
+def _vendor_neutral_gb() -> tuple[float, str]:
+    """``(gb, source)`` for a card ``nvidia-smi`` cannot see; ``(0.0, "")`` if none.
+
+    Ordered by how much the answer can be trusted: Ollama's own startup record
+    first (it names the budget the server will actually use, for CUDA, ROCm and
+    Metal alike), then the OS's own inventory, which needs no running server
+    and no vendor tool but only reports what the card HAS.
+    """
+    reported = _ollama_reported_gb()
+    if reported > 0:
+        return reported, "ollama-runtime"
+    if os.name == "nt":
+        registry = _windows_registry_vram_gb()
+        if registry > 0:
+            return registry, "windows-registry"
+    elif sys.platform.startswith("linux"):
+        drm = _linux_drm_vram_gb()
+        if drm > 0:
+            return drm, "linux-drm"
+    return 0.0, ""
+
+
 def _probe_accelerator_gb() -> tuple[float, str]:
     """The uncached accelerator probe behind :func:`usable_accelerator_gb`.
 
-    ``(gb, source)`` with source ``"nvidia-smi"`` | ``"apple-unified"`` |
-    ``"none"``. Dedicated NVIDIA VRAM counts as-is; on Apple Silicon the GPU
-    shares the unified memory, so total RAM is the honest figure. Every other
-    host reports ``0.0`` — a GPU-less box, a machine with an AMD or Intel card
-    this probe cannot read, and a locked-down host are all "no accelerator
-    memory I can vouch for", and callers must treat 0 as *unknown accelerator*
-    rather than *no memory* (system RAM still runs the model, just slower).
+    ``(gb, source)`` with source ``"nvidia-smi"`` | ``"ollama-runtime"`` |
+    ``"windows-registry"`` | ``"linux-drm"`` | ``"apple-unified"`` | ``"none"``.
+
+    NVIDIA is asked first because it is the one reading verified live on real
+    hardware. An AMD or Intel card comes next, through sources that do not need
+    a vendor SDK: Ollama's own startup record, else the OS inventory. Apple
+    Silicon shares its memory with the GPU, so total RAM is the figure — unless
+    Ollama already named a smaller Metal budget, which it then wins with.
+
+    ``0.0`` with source ``"none"`` still means "no accelerator memory I can
+    vouch for" — a GPU-less box or a locked-down host — and callers must read
+    it as *unknown accelerator*, never *no memory*: system RAM still runs the
+    model, just slower, which is exactly what the fit verdict then says.
 
     The LARGEST single device, never the fleet sum: inference runs on one GPU,
     so two 8 GB cards are an 8 GB machine.
@@ -572,6 +725,13 @@ def _probe_accelerator_gb() -> tuple[float, str]:
     vram_mb = max((g.vram_mb for g in gpus), default=0)
     if vram_mb > 0:
         return vram_mb / 1024.0, "nvidia-smi"
+    try:
+        vendor_gb, vendor_source = _vendor_neutral_gb()
+    except Exception:  # noqa: BLE001 — a best-effort source must never break the probe
+        log.debug("hardware: vendor-neutral accelerator probe failed", exc_info=True)
+        vendor_gb, vendor_source = 0.0, ""
+    if vendor_gb > 0:
+        return vendor_gb, vendor_source
     if sys.platform == "darwin" and platform.machine() == "arm64":
         try:
             total_mb, _available = _detect_ram()
