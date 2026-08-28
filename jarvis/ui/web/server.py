@@ -1131,13 +1131,22 @@ class WebServer:
                 model_resolved = f"{provider_slug}/{primary_deep_model}"
 
             binary_path = oc_cfg.binary_path if oc_cfg is not None else "openclaw"
-            binary_detected: str | None = shutil.which(binary_path)
-            if not binary_detected:
+
+            def _detect_binary() -> str | None:
+                """Resolve the bridge binary — up to four full PATH scans."""
+                found = shutil.which(binary_path)
+                if found:
+                    return found
                 for ext in (".cmd", ".ps1", ".exe"):
                     cand = shutil.which(binary_path + ext)
                     if cand:
-                        binary_detected = cand
-                        break
+                        return cand
+                return None
+
+            # Off the loop: a PATH scan walks every directory on PATH, and on a
+            # long Windows PATH that is the slowest thing this route does. Left
+            # inline it froze every other section for as long as it took.
+            binary_detected: str | None = await asyncio.to_thread(_detect_binary)
 
             from jarvis.brain.assistant_name import agent_brand
             from jarvis.core.config import (
@@ -1150,16 +1159,27 @@ class WebServer:
 
             # Display brand follows the wake-word-derived assistant name.
             brand = agent_brand(cfg)
+
+            def _key_flags(
+                slot: tuple[str, str] | None, provider: str
+            ) -> tuple[bool, bool]:
+                """Whether a dedicated and/or a shared credential exists."""
+                try:
+                    dedicated = bool(slot and get_secret(slot[0], env_fallback=slot[1]))
+                    shared = bool(get_provider_secret(provider))
+                except Exception:  # noqa: BLE001 — one unreadable store hides no other row
+                    return False, False
+                return dedicated, shared
+
             mapping_rows = []
             for mapping in MAPPINGS:
                 slot = jarvis_agent_secret_slot(mapping.jarvis)
                 secret_key = slot[0] if slot else None
-                try:
-                    dedicated_key_set = bool(slot and get_secret(slot[0], env_fallback=slot[1]))
-                    shared_key_set = bool(get_provider_secret(mapping.jarvis))
-                except Exception:  # noqa: BLE001
-                    dedicated_key_set = False
-                    shared_key_set = False
+                # Off the loop: each of these reads the OS credential store,
+                # which blocks for as long as that store feels like taking.
+                dedicated_key_set, shared_key_set = await asyncio.to_thread(
+                    _key_flags, slot, mapping.jarvis
+                )
                 api_key_set = dedicated_key_set or shared_key_set
                 oauth_connected = False
                 oauth_stale = False

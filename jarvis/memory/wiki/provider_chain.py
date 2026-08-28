@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
 import time
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -125,6 +126,17 @@ def _exception_summary(exc: Exception) -> str:
     diagnosis = _SAFE_DIAGNOSIS_RE.search(str(exc))
     return f"{summary} ({diagnosis.group(0)})" if diagnosis else summary
 
+#: How long a subscription-login probe stands before it is asked again. The
+#: probe shells out to a vendor CLI's status command — seconds of subprocess
+#: per provider, and every wiki batch asks about all of them. A login does not
+#: change second to second, so a short memo removes almost all of that while
+#: still noticing a sign-in within one refresh.
+_LOGIN_PROBE_TTL_S = 30.0
+
+_login_probe_lock = threading.Lock()
+_login_probe_cache: dict[str, tuple[float, bool | None]] = {}
+
+
 def subscription_login_ready(provider: str, *, registry: Any = None) -> bool | None:
     """Subscription-login readiness; ``None`` means no such capability.
 
@@ -133,7 +145,16 @@ def subscription_login_ready(provider: str, *, registry: Any = None) -> bool | N
     to future CLIs without another vendor-name branch (AP-21). A failed probe
     stays unknown rather than false so one status-service fault cannot empty an
     otherwise usable fallback chain.
+
+    The answer is memoised for :data:`_LOGIN_PROBE_TTL_S`: the probe costs a
+    subprocess per provider, and the callers ask for every provider on every
+    batch, which turned a background job into seconds of blocked work.
     """
+    now = time.monotonic()
+    with _login_probe_lock:
+        cached = _login_probe_cache.get(provider)
+        if cached is not None and (now - cached[0]) < _LOGIN_PROBE_TTL_S:
+            return cached[1]
     try:
         if registry is None:
             from jarvis.brain.provider_registry import BrainProviderRegistry
@@ -142,10 +163,14 @@ def subscription_login_ready(provider: str, *, registry: Any = None) -> bool | N
         provider_class = registry.get_class(provider)
         probe = getattr(provider_class, "subscription_connected", None)
         if not callable(probe):
-            return None
-        return bool(probe())
+            result: bool | None = None
+        else:
+            result = bool(probe())
     except Exception:  # noqa: BLE001 - a probe failure must never empty the chain
         return None
+    with _login_probe_lock:
+        _login_probe_cache[provider] = (time.monotonic(), result)
+    return result
 
 
 def credential_ready_wiki_providers(

@@ -84,7 +84,20 @@ void import("./lib/uiStallWatch").then(({ watchUiStalls }) => {
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { staleTime: 5_000, retry: 1 },
+    queries: {
+      staleTime: 5_000,
+      // Sections are unmounted on every switch, so their queries go inactive
+      // the moment you leave one. At the five-minute default the cache was
+      // gone before most people came back, and the section repainted from
+      // nothing — a blank shell for a whole round trip. Half an hour keeps
+      // the last answer on screen while the refetch runs behind it.
+      gcTime: 30 * 60_000,
+      // Returning to the window used to refire every mounted query at once.
+      // The sections already poll or refetch on their own filters, so the
+      // burst bought nothing and arrived exactly when the app felt slowest.
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
   },
 });
 

@@ -149,8 +149,12 @@ ANYIO_KEEP_ALIVE_S = 10 * 365 * 24 * 3600
 
 #: How many anyio workers :func:`warm_anyio_worker_pool` brings up. Sync routes
 #: burst in handfuls (a section mounting asks for its settings, its lists and
-#: its status at once); eight resident threads cover a burst without a start.
-ANYIO_WARM_WORKERS = 8
+#: its status at once), and the slowest of them hold a worker for seconds, so
+#: a burst that arrives while the long ones are still running finds the pool
+#: empty and pays a ``Thread.start()`` on the loop — the very stall the warm-up
+#: exists to avoid. Matched to :data:`MAX_WORKERS` so a section can never be
+#: starved by another section that is mid-read.
+ANYIO_WARM_WORKERS = 32
 
 
 def keep_anyio_workers_alive() -> bool:

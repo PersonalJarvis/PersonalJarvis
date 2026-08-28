@@ -286,7 +286,7 @@ def _conversation_title(
 
 
 @router.get("", response_model=list[ConversationSummary])
-async def list_conversations(
+def list_conversations(
     request: Request,
     days: int = Query(default=0, ge=0, le=3650),
     limit: int = Query(default=200, ge=1, le=1000),
