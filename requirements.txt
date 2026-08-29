@@ -733,10 +733,6 @@ humanfriendly==10.0 ; python_full_version < '3.14' and platform_machine == 'arm6
     --hash=sha256:1697e1a8a8f550fd43c2865cd84542fc175a61dcb779b6fee18cf6b6ccba1477 \
     --hash=sha256:6b0b831ce8f15f7300721aa49829fc4e83921a9a301cc7f606be6686a2288ddc
     # via coloredlogs
-icalendar==7.2.2 \
-    --hash=sha256:6cf904a928881e20c89b682e75bca2eb97e8c5ca629782ed44a519abf4cac1cc \
-    --hash=sha256:90dd280cb4f67d1ef07b5178c2c33db4fc0a05627e50a3758b6b2aa9b117bc07
-    # via -r requirements.in
 idna==3.18 \
     --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2 \
     --hash=sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848
@@ -1751,9 +1747,7 @@ pypdf==6.15.0 \
 python-dateutil==2.9.0.post0 \
     --hash=sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3 \
     --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
-    # via
-    #   croniter
-    #   icalendar
+    # via croniter
 python-dotenv==1.2.2 \
     --hash=sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a \
     --hash=sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3
@@ -2185,13 +2179,6 @@ sounddevice==0.5.5 \
     --hash=sha256:3861901ddd8230d2e0e8ae62ac320cdd4c688d81df89da036dcb812f757bb3e6 \
     --hash=sha256:cfc6b2c49fb7f555591c78cb8ecf48d6a637fd5b6e1db5fec6ed9365d64b3519
     # via -r requirements.in
-sqlite-vec==0.1.9 ; platform_machine != 'ARM64' or sys_platform != 'win32' \
-    --hash=sha256:1515727990b49e79bcaf75fdee2ffc7d461f8b66905013231251f1c8938e7786 \
-    --hash=sha256:1b62a7f0a060d9475575d4e599bbf94a13d85af896bc1ce86ee80d1b5b48e5fb \
-    --hash=sha256:1d52e30513bae4cc9778ddbf6145610434081be4c3afe57cd877893bad9f6b6c \
-    --hash=sha256:4a28dc12fa4b53d7b1dced22da2488fade444e96b5d16fd2d698cd670675cf32 \
-    --hash=sha256:4e921e592f24a5f9a18f590b6ddd530eb637e2d474e3b1972f9bbeb773aa3cb9
-    # via -r requirements.in
 srt==3.5.3 ; platform_machine != 'ARM64' or sys_platform != 'win32' \
     --hash=sha256:4884315043a4f0740fd1f878ed6caa376ac06d70e135f306a6dc44632eed0cc0
     # via vosk
@@ -2262,7 +2249,6 @@ typing-extensions==4.15.0 \
     #   elevenlabs
     #   fastapi
     #   google-genai
-    #   icalendar
     #   mcp
     #   openai
     #   opentelemetry-api
@@ -2283,10 +2269,6 @@ typing-inspection==0.4.2 \
     #   mcp
     #   pydantic
     #   pydantic-settings
-tzdata==2026.3 \
-    --hash=sha256:4a1518b8993086a7982523e071643f3c0e5f213e75b21318e78bcabfff9d1415 \
-    --hash=sha256:dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931
-    # via icalendar
 urllib3==2.7.0 \
     --hash=sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c \
     --hash=sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
