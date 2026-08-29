@@ -337,12 +337,16 @@ and have Jarvis draft it, or import someone else's from the Marketplace.
   <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-skills.webp" alt="The Skills list: every installed skill with when it was last updated, who wrote it, and a switch to turn it off" width="900" />
 </p>
 
-Two things keep this honest. Every skill is off until you turn it on, and one Jarvis writes
-for you lands as a draft you have to read first. And the decision about whether a skill
-matches what you just said, along with every check that can veto it, lives in one module
-that the assistant, the in-app match tester and an offline evaluation all call. The panel
-that shows you why a skill did or did not fire cannot disagree with what actually happened,
-because it is running the same code.
+A matched skill is a takeover, not a suggestion, so what may fire on its own is deliberately
+narrow. A skill that only gives the assistant instructions can match and run. One that
+reaches an integration keeps the model free to refuse. One that starts a process or a worker
+never fires from a guess: you name it, or the model asks for it explicitly. A skill Jarvis
+writes for you lands as a draft, and a draft is never switched on for you.
+
+The decision about whether a skill matches what you just said, and every check that can veto
+it, lives in one module that the assistant, the in-app match tester and an offline evaluation
+all call. So the panel showing you why a skill did or did not fire cannot disagree with what
+actually happened; it is running the same code.
 
 ### Agentic IDE
 
