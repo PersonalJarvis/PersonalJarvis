@@ -17,9 +17,9 @@ here and want it removed, open an issue and it will be taken out.
 ## How a row picks a mark
 
 `CliLogo.tsx` maps a catalog CLI name to a **vendor** — the company the tool
-talks to, not the binary — and the vendor to a file here. `gcloud` and `gam`
+talks to, not the binary — and the vendor to a file here. `gcloud` and `gws`
 are both Google, but a different Google: `gcloud` draws the Cloud hexagon and
-`gam` the Google G, because that is what each tool actually administers. A CLI
+`gws` the Google G, because that is what each tool actually administers. A CLI
 with no vendor row (`jarvisctl`, any custom CLI someone registers) draws the
 category glyph on the same tile, so adding a CLI never produces a broken image.
 
@@ -60,7 +60,7 @@ provider cards use:
 | fly | `flyctl` | gilbarbara/logos `fly-icon.svg` | CC0 | colour | 2026-08-23 |
 | github | `gh` | simple-icons `github.svg` | CC0-1.0 | mono | 2026-08-23 |
 | gitlab | `glab` | gilbarbara/logos `gitlab-icon.svg` | CC0 | colour | 2026-08-23 |
-| google | `gam` (Google Workspace) | gilbarbara/logos `google-icon.svg` | CC0 | colour | 2026-08-23 |
+| google | `gws` (Google Workspace) | gilbarbara/logos `google-icon.svg` | CC0 | colour | 2026-08-23 |
 | google-cloud | `gcloud` | gilbarbara/logos `google-cloud.svg` | CC0 | colour | 2026-08-23 |
 | heroku | `heroku` | gilbarbara/logos `heroku-icon.svg` | CC0 | colour | 2026-08-23 |
 | kubernetes | `kubectl` | gilbarbara/logos `kubernetes.svg` | CC0 | colour | 2026-08-23 |

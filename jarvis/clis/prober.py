@@ -285,6 +285,33 @@ def _apply_parse_strategy(
             return "connected"
         return "not_connected"
 
+    if strategy == "json_token_valid":
+        # For a CLI that reports its OAuth state as a JSON object with an
+        # explicit validity flag (gws). Stored credentials and a *working*
+        # token are two different things: `gws auth status` happily prints a
+        # full credential block with ``"token_valid": false`` when the refresh
+        # call fails. Treating "a credential file exists" as connected is how a
+        # CLI ends up green in the UI and broken on first use — so a dead token
+        # over stored credentials reports ``expired``, which the UI renders as
+        # disconnected and offers Connect for.
+        try:
+            data = json.loads(stdout or "null")
+        except json.JSONDecodeError:
+            # Output we cannot read is not evidence either way, and "unknown"
+            # is the return value that says exactly that — the caller renders
+            # it, so nothing is being swallowed here.
+            return "unknown"
+        if not isinstance(data, dict):
+            return "unknown"
+        if data.get("token_valid") is True:
+            return "connected"
+        has_credentials = any(
+            data.get(key)
+            for key in ("has_refresh_token", "encrypted_credentials_exists",
+                        "plain_credentials_exists", "token_cache_exists")
+        )
+        return "expired" if has_credentials else "not_connected"
+
     if strategy == "text_contains_email":
         pattern = r"[\w.+-]+@[\w-]+\.[\w.-]+"
         if re.search(pattern, stdout):

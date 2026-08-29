@@ -1937,66 +1937,78 @@
       ]
     },
     {
-      "name": "gam",
-      "display_name": "Google Workspace CLI (GAM)",
-      "description": "Google Workspace CLI: Calendar events, Gmail messages, Drive, Users.",
-      "homepage": "https://github.com/GAM-team/GAM",
-      "binary_name": "gam",
+      "name": "gws",
+      "display_name": "Google Workspace CLI",
+      "description": "Google Workspace: Gmail, Drive, Docs, Sheets, Calendar, Tasks, Chat, Slides.",
+      "homepage": "https://github.com/googleworkspace/cli",
+      "binary_name": "gws",
       "check_command": [
-        "gam",
-        "version"
+        "gws",
+        "--version"
       ],
-      "version_parse_regex": "GAM (\\S+)",
+      "version_parse_regex": "gws (\\S+)",
       "install": {
         "winget_id": null,
         "scoop_package": null,
-        "npm_package": null,
+        "npm_package": "@googleworkspace/cli",
         "pip_package": null,
         "cargo_package": null,
         "script_url": null,
-        "manual_url": "https://github.com/GAM-team/GAM/wiki",
-        "recommended": null
+        "manual_url": "https://github.com/googleworkspace/cli#installation",
+        "recommended": "npm"
       },
       "auth": {
         "type": "oauth_cli",
         "login_command": [
-          "gam",
-          "oauth",
-          "create"
+          "gws",
+          "auth",
+          "login"
         ],
         "logout_command": [
-          "gam",
-          "oauth",
-          "delete"
+          "gws",
+          "auth",
+          "logout"
         ],
         "status_command": [
-          "gam",
-          "oauth",
-          "info"
+          "gws",
+          "auth",
+          "status"
         ],
-        "status_parse": "text_contains_email",
+        "status_parse": "json_token_valid",
         "secret_keys": [],
         "env_vars": []
       },
       "risk": {
         "default_tier": "monitor",
         "blacklist_patterns": [
-          "gam * delete *",
-          "gam * remove *",
-          "gam update user * password *"
+          "gws * delete*",
+          "gws * * delete*",
+          "gws * * * delete*",
+          "gws * trash*",
+          "gws * * trash*",
+          "gws gmail * send*",
+          "gws gmail * * send*",
+          "gws chat * create*",
+          "gws chat * * create*",
+          "gws auth export*",
+          "gws auth logout*"
         ],
         "whitelist_patterns": [
-          "gam calendar * print *",
-          "gam calendar * show *",
-          "gam user * print *",
-          "gam user * show *",
-          "gam oauth info*",
-          "gam version*"
+          "gws * list*",
+          "gws * * list*",
+          "gws * * * list*",
+          "gws * get*",
+          "gws * * get*",
+          "gws * * * get*",
+          "gws schema *",
+          "gws auth status*",
+          "gws --version*"
         ]
       },
       "tool_schema_examples": [
-        "gam calendar <primary-email> printevents after today before tomorrow",
-        "gam user <primary-email> print messages query \"is:unread\" maxmessages 10"
+        "gws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"is:unread\", \"maxResults\": 10}'",
+        "gws calendar events list --params '{\"calendarId\": \"primary\", \"maxResults\": 10}'",
+        "gws drive files list --params '{\"pageSize\": 10}'"
       ],
       "icon": "google",
       "category": "workspace",
@@ -2047,6 +2059,35 @@
             "postfach"
           ],
           "description": "Google Workspace Gmail: list and read messages."
+        },
+        {
+          "domains": [
+            "storage"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "such",
+            "suche",
+            "find",
+            "list",
+            "show",
+            "search"
+          ],
+          "objects": [
+            "datei",
+            "dateien",
+            "drive",
+            "dokument",
+            "dokumente",
+            "file",
+            "files",
+            "document",
+            "documents",
+            "spreadsheet",
+            "tabelle"
+          ],
+          "description": "Google Drive, Docs and Sheets: list, search and read files."
         }
       ]
     },
@@ -2065,11 +2106,11 @@
         "winget_id": null,
         "scoop_package": null,
         "npm_package": null,
-        "pip_package": null,
+        "pip_package": "personal-jarvis",
         "cargo_package": null,
         "script_url": null,
         "manual_url": "https://github.com/PersonalJarvis/PersonalJarvis",
-        "recommended": "manual"
+        "recommended": "pip"
       },
       "auth": {
         "type": "none"

@@ -63,23 +63,23 @@ def test_connected_domain_tool_map():
 
 def test_refusal_hint_installed_not_connected():
     fake = FakeCliRegistry(
-        {"gam": make_spec("gam", domains=("calendar",))},
+        {"gws": make_spec("gws", domains=("calendar",))},
         active=[],
-        status={"gam": CliStatus(installed=True, auth_status="not_connected")},
+        status={"gws": CliStatus(installed=True, auth_status="not_connected")},
     )
     hint_de = refusal_hint("calendar", fake, "de")
-    assert "GAM" in hint_de and "installiert" in hint_de
+    assert "GWS" in hint_de and "installiert" in hint_de
     hint_en = refusal_hint("calendar", fake, "en")
-    assert "GAM" in hint_en and "installed" in hint_en
+    assert "GWS" in hint_en and "installed" in hint_en
 
 
 def test_refusal_hint_known_but_not_installed():
     fake = FakeCliRegistry(
-        {"gam": make_spec("gam", domains=("calendar",))},
+        {"gws": make_spec("gws", domains=("calendar",))},
         active=[],
-        status={"gam": CliStatus(installed=False)},
+        status={"gws": CliStatus(installed=False)},
     )
-    assert "GAM" in refusal_hint("calendar", fake, "en")
+    assert "GWS" in refusal_hint("calendar", fake, "en")
 
 
 def test_refusal_hint_empty_for_unknown_domain():

@@ -182,7 +182,7 @@ PLUGIN_CLI_OVERLAP: dict[str, str] = {
     "vercel": "vercel",
     "supabase": "supabase",
     "stripe": "stripe",
-    "gmail": "gam",
+    "gmail": "gws",
 }
 
 

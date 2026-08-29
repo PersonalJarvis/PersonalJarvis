@@ -14625,3 +14625,66 @@ and the `since` clock.
 
 **Related.** BUG-205 (the other half of this audit — two surfaces disagreeing
 about one machine) and BUG-206 (the accelerator probe).
+
+---
+
+## BUG-208: pressing Install on a CLI opened a GitHub page instead of installing it (HIGH, FIXED 2026-08-28)
+
+**Symptom.** In the CLI & Desktop apps section, "Google Workspace CLI (GAM)"
+showed as not installed. Pressing **Install** opened the GAM GitHub wiki in a
+browser tab and installed nothing. The Google Workspace CLI was in fact already
+installed on the machine and working.
+
+**Cause.** Three faults stacked into one broken button.
+
+* The entry described **GAM**, an admin tool for a whole Workspace domain, and
+  probed the binary `gam`. Everything else in the project — the
+  `google-workspace` skill, `workflows_routes._integration_status` — drives
+  `gws` (`@googleworkspace/cli`). The section was therefore probing a CLI the
+  app never uses, so an installed Google Workspace CLI reported "not installed"
+  forever.
+* The entry declared **no install method at all**: `winget_id`,
+  `scoop_package`, `npm_package`, `pip_package`, `cargo_package` and
+  `script_url` were all `null`, leaving only `manual_url`.
+* `cli_routes._install_methods_of` answers that case by inventing a
+  pseudo-method named `manual` whose "command" is the documentation URL. The
+  Install button renders from that list, so it appeared, and pressing it opened
+  a web page. `jarvisctl` was in the same state.
+
+**Fix.**
+
+* The catalog entry is now `gws` — npm package `@googleworkspace/cli`, binary
+  `gws`, `gws auth login` / `logout` / `status`, and risk patterns written for
+  its `gws <service> <resource> <method>` grammar. `jarvisctl` installs from
+  PyPI (`personal-jarvis`). Every rename target that had its own anti-drift
+  guard moved with it: `CLI_VENDORS` in `CliLogo.tsx`, `LOGOS.md`,
+  `PLUGIN_CLI_OVERLAP`, and the starter prompts in all three locales.
+* New parse strategy `json_token_valid`: `gws auth status` prints a full
+  credential block with `"token_valid": false` when the refresh call fails, so
+  "a credential file exists" is not the same as "connected". Stored credentials
+  plus a dead token now report `expired` (rendered as disconnected, with the
+  Connect button), which is exactly the state this machine was in.
+* `scripts/ci/check_cli_install_methods.py` fails the build on any seed entry
+  with no runnable install method, and on a `recommended` naming a method the
+  entry never declared. It would have caught both entries.
+* Install no longer stops at "the binary exists". The spawned terminal runs the
+  install, refreshes PATH in that same shell, then continues into the CLI's
+  login command, stopping at the first failure. Without the PATH step,
+  `gcloud auth login` right after `winget install` fails with "command not
+  found" one second after a successful install.
+* That terminal spawn was Windows-only (P-41): macOS now goes through
+  `osascript` to Terminal.app, Linux through the first of seven emulators
+  present. A machine with no screen falls back to the in-app streaming install
+  job instead of dead-ending.
+* Side fix in the same file: `DisconnectResponse` never declared the `error`
+  field that three call sites pass, so Pydantic dropped every disconnect reason
+  during validation and the UI could only ever show its generic failure toast.
+
+**Guard.** `tests/unit/clis/test_install_path.py` (every seed CLI declares a
+runnable method; `recommended` is one of them; the Google entry is `gws`; a
+dead token reads `expired`; the chain stops at the first failure and carries no
+`&&` on Windows), plus the CI gate above.
+
+**Related.** AP-23 (assume an arbitrary downloader, never the maintainer) — the
+manual fallback was invisible on a box where the CLI happened to be installed
+already.

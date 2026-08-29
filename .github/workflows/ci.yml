@@ -381,6 +381,13 @@ jobs:
         # CLI dynamic layer + Command Registry gate it. Mirrors pre-push.
         run: python scripts/ci/check_danger_metadata.py
 
+      - name: CLI install gate (Install installs, never opens a web page)
+        # Static + stdlib-only: a seed CLI with no package manager makes the
+        # Install button open the vendor's docs instead of installing, which
+        # reads as a broken button. Also catches a `recommended` that names a
+        # method the entry never declared.
+        run: python scripts/ci/check_cli_install_methods.py
+
       - name: Dead config switch gate (every switch is read by some code)
         # Static + stdlib-only: a config field nothing reads makes jarvis.toml
         # and the settings screen promise behaviour that does not exist (AP-31).

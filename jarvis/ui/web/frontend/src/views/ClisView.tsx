@@ -1039,9 +1039,14 @@ function InstallDialog({
                 {
                   onSuccess: (res) => {
                     if (res.ok) {
+                      // A machine with no screen has no terminal window to open;
+                      // the backend then installs in-app and streams the output,
+                      // so the toast must not claim a window appeared somewhere.
                       pushToast(
                         "info",
-                        `${t("clis_view.external_terminal_opened")} (${res.method}) — ${t("clis_view.install_running")}`,
+                        res.method === "in-app"
+                          ? t("clis_view.install_running_in_app")
+                          : `${t("clis_view.external_terminal_opened")} (${res.method}) — ${t("clis_view.install_running")}`,
                       );
                       onClose();
                     } else {

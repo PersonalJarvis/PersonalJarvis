@@ -26,8 +26,8 @@ def test_gcloud_display_name_is_google_cloud_cli() -> None:
 
 
 def test_google_workspace_cli_is_discoverable_by_name() -> None:
-    spec = load_catalog()["gam"]
-    assert spec.display_name == "Google Workspace CLI (GAM)"
+    spec = load_catalog()["gws"]
+    assert spec.display_name == "Google Workspace CLI"
     assert spec.category == "workspace"
 
 

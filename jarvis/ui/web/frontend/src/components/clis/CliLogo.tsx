@@ -62,7 +62,7 @@ const CLI_VENDOR_LOGOS: Record<string, VendorLogo> = {
  *
  * Exact names, not substrings: `render` the vendor and `render` the binary
  * happen to match, but `gh` and `glab` share no letters with their companies,
- * and a substring rule would make `gam` a Google Cloud tool. Custom CLIs a
+ * and a substring rule would make `gws` a Google Cloud tool. Custom CLIs a
  * user registers land on the category glyph, which is the honest answer for a
  * binary this project has never heard of.
  */
@@ -72,10 +72,10 @@ const CLI_VENDORS: Record<string, string> = {
   docker: "docker",
   firebase: "firebase",
   flyctl: "fly",
-  gam: "google",
   gcloud: "google-cloud",
   gh: "github",
   glab: "gitlab",
+  gws: "google",
   heroku: "heroku",
   kubectl: "kubernetes",
   neonctl: "neon",

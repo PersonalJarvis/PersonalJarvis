@@ -26,6 +26,7 @@ StatusParseStrategy = Literal[
     "json_array_nonempty",
     "json_array_nonempty_or_error",
     "json_has_field_username",
+    "json_token_valid",
     "text_contains_email",
     "text_contains_username",
     "text_contains_logged_in",
@@ -54,14 +55,32 @@ class InstallMethods:
 
     def available_methods(self) -> tuple[str, ...]:
         out: list[str] = []
-        if self.winget_id: out.append("winget")
-        if self.scoop_package: out.append("scoop")
-        if self.npm_package: out.append("npm")
-        if self.pip_package: out.append("pip")
-        if self.cargo_package: out.append("cargo")
-        if self.script_url: out.append("script")
-        if self.manual_url and not out: out.append("manual")
+        if self.winget_id:
+            out.append("winget")
+        if self.scoop_package:
+            out.append("scoop")
+        if self.npm_package:
+            out.append("npm")
+        if self.pip_package:
+            out.append("pip")
+        if self.cargo_package:
+            out.append("cargo")
+        if self.script_url:
+            out.append("script")
+        if self.manual_url and not out:
+            out.append("manual")
         return tuple(out)
+
+    def has_automatic_method(self) -> bool:
+        """True when Install can actually run something instead of opening a page.
+
+        ``manual`` is not an install method — it is the absence of one, dressed
+        up as a link to somebody else's documentation. A catalog entry that only
+        offers it turns the Install button into a browser redirect, which reads
+        as a broken button. ``scripts/ci/check_cli_install_methods.py`` gates the
+        seed catalog on this.
+        """
+        return any(m != "manual" for m in self.available_methods())
 
 
 @dataclass(frozen=True, slots=True)

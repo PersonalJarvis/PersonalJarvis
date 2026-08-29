@@ -3,7 +3,7 @@ from jarvis.clis.capability_provider import DOMAIN_VOCAB
 from jarvis.clis.catalog import CliCatalog
 
 CURATED = {
-    "gam", "gh", "glab", "gcloud", "az", "aws", "wrangler", "vercel",
+    "gws", "gh", "glab", "gcloud", "az", "aws", "wrangler", "vercel",
     "netlify", "heroku", "railway", "flyctl", "render", "supabase",
     "firebase", "pscale", "neonctl", "stripe", "twilio", "docker", "kubectl",
 }

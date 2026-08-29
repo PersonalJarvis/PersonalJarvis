@@ -170,14 +170,20 @@ class ConnectResponse(BaseModel):
 
 class DisconnectResponse(BaseModel):
     ok: bool
+    # Three call sites below pass a reason for a failed disconnect and the UI
+    # renders it. Without the field declared, Pydantic drops it during
+    # validation without a word, and every failure reads as the same generic
+    # "disconnect failed" toast.
+    error: str | None = None
 
 
 class SpawnExternalRequest(BaseModel):
-    """Request to /spawn-external — opens a **real** Windows terminal
-    (wt/pwsh) and runs either the install or the login command for the
-    given CLI in it. Unlike the embedded xterm in the frontend, the
-    terminal runs as a detached subprocess in the user session
-    (cwd = USERPROFILE), separate from the Jarvis app.
+    """Request to /spawn-external — opens a **real** terminal window and runs
+    either the install or the login command for the given CLI in it.
+
+    Unlike the embedded xterm in the frontend, the terminal runs as a detached
+    subprocess in the user session (cwd = home), separate from the Jarvis app.
+    Which terminal that is depends on the OS; ``external_terminal`` decides.
     """
 
     kind: Literal["install", "login"]
@@ -186,9 +192,12 @@ class SpawnExternalRequest(BaseModel):
 
 class SpawnExternalResponse(BaseModel):
     ok: bool
-    method: str = "failed"  # "wt" | "pwsh" | "powershell" | "failed"
+    # The terminal that opened it ("wt", "pwsh", "terminal.app",
+    # "gnome-terminal", ...), "in-app" when the box has no screen and the
+    # install streams into the UI instead, or "failed".
+    method: str = "failed"
     command: str | None = None
-    error: str | None = None
+    job_id: str | None = None
     error: str | None = None
 
 
@@ -529,16 +538,27 @@ async def spawn_external(
     request: Request,
     body: SpawnExternalRequest,
 ) -> SpawnExternalResponse:
-    """Spawns an external Windows terminal (wt/pwsh) and runs either the
-    install or the login command in it.
+    """Opens a real terminal window and runs the install or the login command.
+
+    Install does not stop at "the binary exists". For a CLI that logs in
+    interactively, the terminal continues straight into its login command, so
+    one click carries the user from nothing installed to signed in — the part
+    only they can do (approving the browser prompt) is the only part left. The
+    PATH refresh between the two steps is not optional: the shell that ran the
+    install still has the environment it started with, so the binary it just
+    installed is not yet findable in it.
 
     Unlike POST /install (which runs its own asyncio subprocess pipeline
-    + streams output to the UI), this endpoint is pure spawn-and-forget
-    logic: we open a real terminal window (as the user expects when they
-    type ``wt`` themselves) and let the user interact there. Status
-    polling runs separately via /check.
+    + streams output to the UI), this endpoint is spawn-and-forget: the user
+    interacts in the terminal. Status polling runs separately via /check.
+    A machine with no screen has no terminal to open, so there the install
+    falls back to the streaming job and the response says so.
     """
-    from jarvis.clis.external_terminal import spawn_external_terminal
+    from jarvis.clis.external_terminal import (
+        chain_commands,
+        path_refresh_command,
+        spawn_external_terminal,
+    )
 
     reg = _require_registry(request)
     spec = reg.catalog().get(name)
@@ -558,7 +578,10 @@ async def spawn_external(
                 ok=False,
                 error=f"No install method '{body.method}' for {name}",
             )
-        command = " ".join(cmd_argv)
+        steps = [" ".join(cmd_argv)]
+        if spec.auth.type == "oauth_cli" and spec.auth.login_command:
+            steps += [path_refresh_command(), " ".join(spec.auth.login_command)]
+        command = chain_commands(steps)
         title = f"Install: {spec.display_name}"
     else:  # kind == "login"
         if spec.auth.type != "oauth_cli" or not spec.auth.login_command:
@@ -570,24 +593,34 @@ async def spawn_external(
         title = f"Login: {spec.display_name}"
 
     ok, method = spawn_external_terminal(command, cwd=None, title=title)
-    return SpawnExternalResponse(
-        ok=ok,
-        method=method,
-        command=command if ok else None,
-        error=None if ok else "No external terminal available (wt/pwsh/powershell)",
+    if ok:
+        return SpawnExternalResponse(ok=True, method=method, command=command)
+
+    if body.kind == "install" and body.method:
+        job = _start_install_job(reg, spec, name, body.method)
+        if job is not None:
+            return SpawnExternalResponse(
+                ok=True,
+                method="in-app",
+                command=" ".join(job.command),
+                job_id=job.job_id,
+            )
+
+    reason = (
+        "This machine has no screen, so no terminal window can be opened."
+        if method == "no_display"
+        else "No terminal emulator found on this machine."
     )
+    return SpawnExternalResponse(ok=False, method=method, error=reason)
 
 
-@router.post("/{name}/install", response_model=InstallStartResponse)
-async def install_cli(
-    name: str,
-    request: Request,
-    body: InstallRequest,
-) -> InstallStartResponse:
-    reg = _require_registry(request)
-    spec = reg.catalog().get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")
+def _start_install_job(reg: Any, spec: CliSpec, name: str, method: str) -> Any:
+    """Run the install as a background job that streams its output over the bus.
+
+    Used by POST /install directly, and by /spawn-external as its fallback when
+    the machine has no terminal window to open — a headless server still has to
+    be able to install a CLI, and the UI still has to be able to show it.
+    """
     installer = reg.installer()
     bus = reg.bus()
 
@@ -625,12 +658,26 @@ async def install_cli(
         )
         asyncio.create_task(reg.refresh_status(name), name=f"cli-refresh-after-install-{name}")
 
-    job = installer.start(
+    return installer.start(
         spec,
-        body.method,  # type: ignore[arg-type]
+        method,  # type: ignore[arg-type]
         on_line=_on_line,
         on_done=_on_done,
     )
+
+
+@router.post("/{name}/install", response_model=InstallStartResponse)
+async def install_cli(
+    name: str,
+    request: Request,
+    body: InstallRequest,
+) -> InstallStartResponse:
+    reg = _require_registry(request)
+    spec = reg.catalog().get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")
+
+    job = _start_install_job(reg, spec, name, body.method)
     if job is None:
         return InstallStartResponse(
             ok=False,

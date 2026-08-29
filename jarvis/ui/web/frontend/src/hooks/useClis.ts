@@ -271,8 +271,12 @@ export function useInstallCli() {
 
 export interface SpawnExternalResponse {
   ok: boolean;
-  method: string; // "wt" | "pwsh" | "powershell" | "failed"
+  // The terminal that opened it ("wt", "pwsh", "terminal.app",
+  // "gnome-terminal", ...), "in-app" when the machine has no screen and the
+  // install streams into the UI instead, or "failed"/"no_display".
+  method: string;
   command: string | null;
+  job_id: string | null;
   error: string | null;
 }
 
