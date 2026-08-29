@@ -1482,14 +1482,26 @@ async def set_wake_activation(body: WakeActivationBody, request: Request) -> dic
     pipeline when available. Headless/voice-disabled processes keep the setting
     for their next voice start.
     """
+    # Persisting is BEST-EFFORT, exactly like every other settings writer here
+    # (put_ui_language, put_wake_word, put_appearance, ...). This route used to
+    # raise a 500 instead, and that one inconsistency locked first-time users
+    # out of the app: this is the only write onboarding step 04/05 cannot avoid
+    # — all three of its paths (save a word, continue degraded, use the Call
+    # shortcut) call it — the step has no Skip, and the guide covers the whole
+    # window. An unwritable jarvis.toml (not UTF-8, broken TOML, locked file)
+    # therefore ended first run at "HTTP 500" with no way forward (BUG-209).
+    # The failure is REPORTED, never swallowed: `persisted` and `message` carry
+    # it so the UI can say the setting will not survive a restart.
+    persisted = False
+    persist_error = ""
     try:
         from jarvis.core import config_writer
 
         config_writer.set_wake_word_enabled(bool(body.enabled))
-    except Exception as exc:  # noqa: BLE001 — surface a clean 500, never a stack
-        raise HTTPException(
-            status_code=500, detail=f"Could not persist wake activation: {exc}"
-        ) from exc
+        persisted = True
+    except Exception as exc:  # noqa: BLE001 — best-effort, reported not raised
+        persist_error = str(exc)
+        log.warning("wake activation persist failed: %s", exc)
     # Best-effort in-memory update so a later cfg read agrees pre-restart.
     cfg = _config(request)
     if cfg is not None and getattr(cfg, "trigger", None) is not None:
@@ -1509,7 +1521,15 @@ async def set_wake_activation(body: WakeActivationBody, request: Request) -> dic
         "ok": True,
         "enabled": bool(body.enabled),
         "applied_live": applied_live,
+        # A live-applied switch works right now even when the file write failed;
+        # it just will not survive the next start. Both facts are reported.
         "restart_required": not applied_live,
+        "persisted": persisted,
+        "message": (
+            ""
+            if persisted
+            else f"The setting could not be saved to jarvis.toml: {persist_error}"
+        ),
     }
 
 

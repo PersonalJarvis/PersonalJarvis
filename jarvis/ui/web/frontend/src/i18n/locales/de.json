@@ -3023,7 +3023,9 @@
         "permission_required": "Erteile unter Berechtigungen zuerst den Mikrofonzugriff, bevor du diesen Test startest.",
         "error": "Das Mikrofon konnte gerade nicht geprüft werden."
       },
-      "gap_degraded": "„{0}“ ist gespeichert, aber noch kann es niemand hören — das Aktivierungswort bleibt aus, bis das lokale Sprachmodell unter Einstellungen → Aktivierungswort installiert ist. Das Anruf-Kürzel funktioniert solange."
+      "gap_degraded": "„{0}“ ist gespeichert, aber noch kann es niemand hören — das Aktivierungswort bleibt aus, bis das lokale Sprachmodell unter Einstellungen → Aktivierungswort installiert ist. Das Anruf-Kürzel funktioniert solange.",
+      "gap_not_persisted": "Die Aktivierung konnte nicht in die Konfigurationsdatei geschrieben werden und ist nach einem Neustart wieder weg — öffne Einstellungen → Aktivierungswort erneut, sobald die Datei wieder beschreibbar ist.",
+      "error_skip_hint": "Du kannst die Aktivierung überspringen und die Einrichtung abschließen — ein Aktivierungswort lässt sich jederzeit in den Einstellungen festlegen."
     },
     "finish": {
       "summary_label": "Deine Einrichtung",

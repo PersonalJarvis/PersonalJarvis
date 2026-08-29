@@ -3023,7 +3023,9 @@
         "permission_required": "Grant Microphone access in Permissions before running this check.",
         "error": "Could not check the microphone right now."
       },
-      "gap_degraded": "\"{0}\" is saved but nothing can hear it yet — the wake word stays off until the local speech model is installed under Settings → Wake word. The Call shortcut works meanwhile."
+      "gap_degraded": "\"{0}\" is saved but nothing can hear it yet — the wake word stays off until the local speech model is installed under Settings → Wake word. The Call shortcut works meanwhile.",
+      "gap_not_persisted": "The activation could not be written to the configuration file, so it will be gone after a restart — reopen Settings → Wake word once the file is writable again.",
+      "error_skip_hint": "You can skip activation and finish setup — a wake word can be set anytime in Settings."
     },
     "finish": {
       "summary_label": "Your setup",

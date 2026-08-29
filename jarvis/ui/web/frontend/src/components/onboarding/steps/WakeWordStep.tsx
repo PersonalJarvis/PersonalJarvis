@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Mic } from "lucide-react";
 import { Button, Field } from "@/components/agentic/controls";
 import { useWakeWord, useLocalSpeechInstall } from "@/hooks/useWakeWord";
+import type { WakeActivationResult } from "@/hooks/useWakeWord";
 import { useT } from "@/i18n";
 import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import type { StepProps } from "../OnboardingFlow";
@@ -40,7 +41,7 @@ type MicCheckState = "idle" | "checking" | "done";
  * unfolds its input in place. One microphone check (the old step had two
  * buttons wired to the same probe).
  */
-export function WakeWordStep({ onb, goNext, goBack, setSummary, setGap }: StepProps) {
+export function WakeWordStep({ onb, goNext, goBack, skip, setSummary, setGap }: StepProps) {
   const t = useT();
   const { saveWakeWord, setWakeActivation } = useWakeWord();
   const [mode, setMode] = useState<Mode>("wake");
@@ -81,6 +82,29 @@ export function WakeWordStep({ onb, goNext, goBack, setSummary, setGap }: StepPr
     else setSummary(trimmed.length >= 2 ? `Hey ${trimmed}` : null);
   }, [mode, trimmed, setSummary, t]);
 
+  /**
+   * The gap this step reports after activating. A live-applied switch that the
+   * config writer could not persist still works right now but is gone after a
+   * restart — the finish step must say so rather than let the user believe the
+   * choice stuck. `fallback` is the gap the calling path would report anyway.
+   */
+  function activationGap(result: WakeActivationResult, fallback: string | null): string | null {
+    if (result.persisted) return fallback;
+    const notPersisted = t("onboarding.wake_word.gap_not_persisted");
+    return fallback ? `${fallback} ${notPersisted}` : notPersisted;
+  }
+
+  /**
+   * Leave the step without activating anything. Only offered once a call has
+   * actually failed: the guide covers the whole window and this step used to
+   * have no way past a backend error, so a single failing request ended first
+   * run for good (BUG-209). Skipping is recorded, and the finish step lists it.
+   */
+  function skipAfterError() {
+    setGap(null);
+    skip();
+  }
+
   function setWordReset(next: string) {
     // Any edit invalidates a previous degraded verdict — back to the normal CTA.
     setWord(next);
@@ -115,8 +139,7 @@ export function WakeWordStep({ onb, goNext, goBack, setSummary, setGap }: StepPr
         setDegraded(true);
         return;
       }
-      await setWakeActivation(true);
-      setGap(null);
+      setGap(activationGap(await setWakeActivation(true), null));
       goNext();
     } catch (e) {
       setErr((e as Error).message);
@@ -129,10 +152,14 @@ export function WakeWordStep({ onb, goNext, goBack, setSummary, setGap }: StepPr
     setBusy(true);
     setErr(null);
     try {
-      await setWakeActivation(true);
+      const result = await setWakeActivation(true);
       // The phrase is saved but nothing can hear it yet — the finish step
       // must say so before the user expects "Hey X" to work.
-      setGap(t("onboarding.wake_word.gap_degraded").replace("{0}", `Hey ${trimmed}`));
+      const degradedGap = t("onboarding.wake_word.gap_degraded").replace(
+        "{0}",
+        `Hey ${trimmed}`,
+      );
+      setGap(activationGap(result, degradedGap));
       goNext();
     } catch (e) {
       setErr((e as Error).message);
@@ -145,8 +172,7 @@ export function WakeWordStep({ onb, goNext, goBack, setSummary, setGap }: StepPr
     setBusy(true);
     setErr(null);
     try {
-      await setWakeActivation(false);
-      setGap(null);
+      setGap(activationGap(await setWakeActivation(false), null));
       goNext();
     } catch (e) {
       setErr((e as Error).message);
@@ -181,6 +207,23 @@ export function WakeWordStep({ onb, goNext, goBack, setSummary, setGap }: StepPr
     return <StatusLine tone="ok">{t("onboarding.wake_word.mic_check.good")}</StatusLine>;
   })();
 
+  // A failed call must never be the end of first run. The raw message stays
+  // (it is the only clue the user has), but it now comes with the way out this
+  // step was missing: skip activation and finish the guide (BUG-209).
+  const errorBlock = err ? (
+    <div className="space-y-2">
+      <StatusLine tone="error">{err}</StatusLine>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="quiet" onClick={skipAfterError} data-testid="wake-skip-after-error">
+          {t("onboarding.nav.skip")}
+        </Button>
+        <p className="text-[13px] text-muted-foreground">
+          {t("onboarding.wake_word.error_skip_hint")}
+        </p>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="space-y-8">
       <StepSection label={t("onboarding.wake_word.mode_label")}>
@@ -207,7 +250,7 @@ export function WakeWordStep({ onb, goNext, goBack, setSummary, setGap }: StepPr
           <p className="text-sm leading-relaxed text-muted-foreground">
             {t("onboarding.wake_word.shortcut_note")}
           </p>
-          {err && <StatusLine tone="error">{err}</StatusLine>}
+          {errorBlock}
           <StepFooter
             onBack={goBack}
             primary={{
@@ -298,7 +341,7 @@ export function WakeWordStep({ onb, goNext, goBack, setSummary, setGap }: StepPr
             {t("onboarding.wake_word.ack_label")}
           </ConsentLine>
 
-          {err && <StatusLine tone="error">{err}</StatusLine>}
+          {errorBlock}
 
           {degraded ? (
             // The chosen word has no pretrained model and local Whisper is

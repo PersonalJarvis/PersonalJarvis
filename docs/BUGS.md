@@ -14688,3 +14688,69 @@ dead token reads `expired`; the chain stops at the first failure and carries no
 **Related.** AP-23 (assume an arbitrary downloader, never the maintainer) — the
 manual fallback was invisible on a box where the CLI happened to be installed
 already.
+
+---
+
+## BUG-209: one unhandled config write ended first run at "HTTP 500 on 04 of 05" (HIGH, FIXED 2026-08-29)
+
+**Symptom.** A downloader reported, unprompted: *"i found this its great but idk
+im facing http 500 error on 04 of 05 setup"*. Step 04 of 05 is the wake-word
+step: `visibleSteps()` drops the macOS-only permissions step on Windows and
+Linux, leaving welcome / language / api-keys / **wake-word** / finish, and the
+header counter renders `String(idx + 1).padStart(2, "0")` — literally "04 of
+05". The `visibleSteps` filter ships from v1.6.0 on, which also dates the
+report. The step then showed the raw string "HTTP 500" and stopped. The guide
+covers the whole window and only closes on completion, so the app was
+unreachable from there on.
+
+**Root cause.** `POST /api/settings/wake-word/activation` was the only settings
+route that turned a failed `jarvis.toml` write into a 500:
+
+```python
+except Exception as exc:  # noqa: BLE001 — surface a clean 500, never a stack
+    raise HTTPException(status_code=500, detail=f"Could not persist wake activation: {exc}")
+```
+
+Every sibling writer — `put_ui_language`, `put_wake_word`, `put_appearance` —
+catches the same failure, logs it and answers 200 with `persisted: false`.
+Reproduced against a `jarvis.toml` that is not valid UTF-8 (a Notepad edit on
+Windows) and against broken TOML: step 02's language write answered 200
+`persisted: false`, step 04's phrase write answered 200, and the activation call
+answered **500** in both cases — `'utf-8' codec can't decode byte 0xe9` and
+`Unexpected character: '\n' at line 1 col 8`.
+
+Two things turned that into a dead end rather than a warning:
+
+* All three paths through the step call it — saving a word, "continue anyway"
+  after a degraded save, and choosing the Call shortcut. There is no way through
+  the step that avoids the write.
+* `WakeWordStep` never wired up the `skip` prop it is handed, so the step had no
+  Skip control — even though `onboarding.finish.gap_skipped_wake_word` already
+  existed for exactly that case. `useOnboarding.post` throws `HTTP ${status}`,
+  and a Starlette 500 is plain text so `res.json()` fails and the wake routes
+  fall back to the same string: hence the user's verbatim "http 500 error".
+
+**Fix.**
+
+* `set_wake_activation` persists best-effort like every sibling route and
+  reports `persisted` + `message` instead of raising. A live-applied switch
+  still reaches the running pipeline; the response says plainly that it will not
+  survive a restart.
+* `WakeWordStep` reads `persisted` and reports an honest gap on the finish step
+  when the setting could not be written, rather than claiming the choice stuck.
+* Any failed call in the step now renders a Skip control next to the error, so
+  no backend failure can end first run again. The message itself stays — it is
+  the only clue the user has.
+
+**Guard.** `tests/unit/ui/test_wake_word_route.py`
+(`test_activation_reports_a_failed_persist_instead_of_500`,
+`test_activation_reports_persisted_on_success`) and
+`WakeWordStep.test.tsx` (a rejected activation offers the skip; an unpersisted
+activation advances but reports the gap).
+
+**Related.** AP-23 (assume an arbitrary downloader, never the maintainer) — the
+write never fails on a maintainer box, so the one inconsistent error path stayed
+invisible until someone else's config file was unreadable. Note the remaining
+sharp edge this exposed, not fixed here: an unwritable `jarvis.toml` silently
+discards *every* in-app setting, because best-effort persistence is what all
+these routes do. Only the onboarding dead end is closed.

@@ -57,6 +57,13 @@ export interface WakeActivationResult {
   enabled: boolean;
   applied_live: boolean;
   restart_required: boolean;
+  // False when jarvis.toml could not be written (not UTF-8, broken TOML, locked
+  // file). The switch still applies to a running pipeline; it just will not
+  // survive a restart. Reported instead of raising, so a first run can never be
+  // ended by a config the user cannot repair from here (BUG-209).
+  persisted: boolean;
+  // Empty when persisted; otherwise the writer's own reason, in one sentence.
+  message: string;
 }
 
 /**

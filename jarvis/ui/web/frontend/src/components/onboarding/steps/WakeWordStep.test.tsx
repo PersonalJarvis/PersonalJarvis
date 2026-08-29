@@ -6,12 +6,15 @@ const localSpeech = vi.hoisted(() => ({
   startInstall: vi.fn(),
 }));
 const saveWakeWord = vi.fn().mockResolvedValue({ ok: true, degraded: false });
-const setWakeActivation = vi.fn().mockResolvedValue({
+const ACTIVATION_OK = {
   ok: true,
   enabled: true,
   applied_live: true,
   restart_required: false,
-});
+  persisted: true,
+  message: "",
+};
+const setWakeActivation = vi.fn().mockResolvedValue(ACTIVATION_OK);
 vi.mock("@/hooks/useWakeWord", () => ({
   useWakeWord: () => ({ saveWakeWord, setWakeActivation }),
   useLocalSpeechInstall: (onInstalled?: () => void) => {
@@ -29,6 +32,7 @@ afterEach(() => {
   saveWakeWord.mockClear();
   saveWakeWord.mockResolvedValue({ ok: true, degraded: false });
   setWakeActivation.mockClear();
+  setWakeActivation.mockResolvedValue(ACTIVATION_OK);
   localSpeech.startInstall.mockClear();
   localSpeech.onInstalled = undefined;
 });
@@ -38,22 +42,22 @@ const onb = {
   acknowledgeWakeWord: vi.fn().mockResolvedValue(undefined),
 } as never;
 
-function renderStep(goNext = vi.fn(), setSummary = vi.fn()) {
+function renderStep(goNext = vi.fn(), setSummary = vi.fn(), skip = vi.fn(), setGap = vi.fn()) {
   render(
     <WakeWordStep
       onb={onb}
       goNext={goNext}
       goBack={vi.fn()}
-      skip={vi.fn()}
+      skip={skip}
       isFirst={false}
       isLast={false}
       setSummary={setSummary}
-      setGap={vi.fn()}
+      setGap={setGap}
       gaps={{}}
       summaries={{}}
     />,
   );
-  return { goNext, setSummary };
+  return { goNext, setSummary, skip, setGap };
 }
 
 const primary = () => screen.getByTestId("onboarding-primary") as HTMLButtonElement;
@@ -228,4 +232,31 @@ it("mic-check surfaces permission_required and a probe failure honestly", async 
   await waitFor(() =>
     expect(screen.getByText("onboarding.wake_word.mic_check.error")).toBeDefined(),
   );
+});
+
+it("a failed activation offers a way out instead of trapping first run (BUG-209)", async () => {
+  // The guide covers the whole window and this step had no Skip, so one failing
+  // request ended setup for good — the reported "HTTP 500 on 04 of 05".
+  setWakeActivation.mockRejectedValue(new Error("HTTP 500"));
+  const { goNext, skip } = renderStep();
+
+  fireEvent.click(screen.getByTestId("wake-mode-shortcut"));
+  fireEvent.click(primary());
+
+  await screen.findByText("HTTP 500");
+  expect(goNext).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByTestId("wake-skip-after-error"));
+  expect(skip).toHaveBeenCalled();
+});
+
+it("an activation that could not be persisted advances but reports the gap", async () => {
+  setWakeActivation.mockResolvedValue({ ...ACTIVATION_OK, persisted: false, message: "boom" });
+  const { goNext, setGap } = renderStep();
+
+  fireEvent.click(screen.getByTestId("wake-mode-shortcut"));
+  fireEvent.click(primary());
+
+  await waitFor(() => expect(goNext).toHaveBeenCalled());
+  expect(setGap).toHaveBeenLastCalledWith("onboarding.wake_word.gap_not_persisted");
 });

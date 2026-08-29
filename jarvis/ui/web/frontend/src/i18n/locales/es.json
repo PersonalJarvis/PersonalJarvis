@@ -3023,7 +3023,9 @@
         "permission_required": "Concede acceso al Micrófono en Permisos antes de ejecutar esta prueba.",
         "error": "No se pudo comprobar el micrófono en este momento."
       },
-      "gap_degraded": "«{0}» está guardada, pero todavía nadie puede oírla — la palabra de activación permanece desactivada hasta que se instale el modelo de voz local en Ajustes → Palabra de activación. Mientras tanto funciona el atajo de Llamada."
+      "gap_degraded": "«{0}» está guardada, pero todavía nadie puede oírla — la palabra de activación permanece desactivada hasta que se instale el modelo de voz local en Ajustes → Palabra de activación. Mientras tanto funciona el atajo de Llamada.",
+      "gap_not_persisted": "La activación no se pudo escribir en el archivo de configuración, así que desaparecerá tras reiniciar — vuelve a abrir Ajustes → Palabra de activación cuando el archivo vuelva a admitir escritura.",
+      "error_skip_hint": "Puedes omitir la activación y terminar la configuración — una palabra de activación se puede definir en cualquier momento en Ajustes."
     },
     "finish": {
       "summary_label": "Tu configuración",

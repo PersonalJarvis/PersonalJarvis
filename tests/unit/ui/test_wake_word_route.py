@@ -255,3 +255,45 @@ def test_put_with_legacy_sensitivity_is_accepted_but_ignored() -> None:
     )
     assert resp.status_code == 200
     assert "sensitivity" not in resp.json()
+
+
+def test_activation_reports_a_failed_persist_instead_of_500(monkeypatch) -> None:
+    """An unwritable jarvis.toml must not end onboarding (BUG-209).
+
+    This route is the one write the wake-word step (04 of 05 on Windows/Linux)
+    cannot avoid — all three of its paths call it — and the step has no Skip.
+    Raising here turned a broken/locked config file into a dead first run at
+    "HTTP 500". Every sibling settings writer reports `persisted: false` and
+    answers 200; this one now does too, and names the reason.
+    """
+    from jarvis.core import config_writer
+
+    def _boom(_enabled: bool) -> None:
+        raise UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid continuation byte")
+
+    monkeypatch.setattr(config_writer, "set_wake_word_enabled", _boom)
+    pipe = _FakePipeline()
+    response = _client(pipeline=pipe).post(
+        "/api/settings/wake-word/activation", json={"enabled": True}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["persisted"] is False
+    assert "could not be saved" in body["message"]
+    # The switch still reached the running pipeline — it just will not survive
+    # a restart, which is exactly what `persisted` tells the caller.
+    assert pipe.activation is True
+
+
+def test_activation_reports_persisted_on_success(monkeypatch) -> None:
+    from jarvis.core import config_writer
+
+    monkeypatch.setattr(config_writer, "set_wake_word_enabled", lambda _enabled: None)
+    body = _client().post(
+        "/api/settings/wake-word/activation", json={"enabled": True}
+    ).json()
+
+    assert body["persisted"] is True
+    assert body["message"] == ""
