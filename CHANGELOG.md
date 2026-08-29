@@ -14,11 +14,11 @@ versioning per [SemVer](https://semver.org/).
 ## [2.0.0] — 2026-08-29
 
 The release that stops being one voice channel with a settings screen behind it.
-Nine coding agents now answer inside Personal Jarvis as chats rather than as
-terminals you watch, the local-model section sets a whole machine up in one
-click and proves that it worked, the interface drops its brand hue for an
-ink-on-paper theme that reads the same in both modes, and the license moves to
-Apache 2.0 — the change that makes this 2.0 rather than 1.7.
+Nine coding agents now run in the Agentic IDE and can be read as chats instead
+of terminals, the local-model section sets a whole machine up in one click and
+proves that it worked, the interface drops its brand hue for an ink-on-paper
+theme that reads the same in both modes, and the license moves to Apache 2.0,
+the change that makes this 2.0 rather than 1.7.
 
 ### Added
 
@@ -38,15 +38,15 @@ Apache 2.0 — the change that makes this 2.0 rather than 1.7.
   `irm https://cursor.com/install?win32=true`; macOS, Linux and WSL run
   `curl https://cursor.com/install`. Sign-in is `agent login` (or
   `CURSOR_API_KEY`) inside the pane.
-- **The Agentic IDE is a chat.** Opening the section no longer lands you in a
-  grid of terminals: it lands you in a conversation. One session fills the
-  stage, every other session sits in the sidebar under its real CLI logo, and
-  each row is titled by what the work is about rather than by a state label or
-  a command line. A row says whether that agent is still working or finished,
-  the badge holds through a pause and follows the socket, the header carries
-  the same recap card the grid used to draw, and the terminal itself is one
-  click away and one click back. Right-click a session to archive it or close
-  its terminal.
+- **A coding session can be read as a chat instead of a terminal.** The Agentic
+  IDE still opens on its grid of terminals; switching a session to its chat view
+  now draws the same run as a conversation. One session fills the stage, every
+  other session sits in the sidebar under its real CLI logo, and each row is
+  titled by what the work is about rather than by a state label or a command
+  line. A row says whether that agent is still working or finished, the badge
+  holds through a pause and follows the socket, the header carries the same
+  recap card the grid draws, and the terminal is one click away and one click
+  back. Right-click a session to archive it or close its terminal.
 - **Every connected coding CLI is a chat seat.** The chat's provider picker
   lists the Agentic IDE's own CLI registry under "Coding CLIs" — OpenCode,
   Kimi Code, GLM Coding Plan and DeepSeek Harness join Claude Code, Codex,
