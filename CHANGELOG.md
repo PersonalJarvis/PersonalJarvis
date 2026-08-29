@@ -301,14 +301,16 @@ the change that makes this 2.0 rather than 1.7.
   curated catalogue entries and the verify step that could no longer run are
   removed. A model on disk still shows "embedding" as a capability in the
   ledger — only the role is retired. (BUG-207)
-- **The Local models setup helper.** The "Setup helper" tab — a chat that
-  proposed a setup, ran it through its own `lm_*` tools and tested the
-  result — is gone, along with its "Help me set up" and "Something is not
-  working" buttons on the overview, the `local-models` chat surface, the
-  `/api/providers/{id}/local-models/assistant/*` routes and the
-  `jarvis local-models assistant ...` commands. The section keeps everything
-  else: the overview, the catalogue, the server tab, the Tune sheet, and the
-  quiet six-hourly self-check behind the sidebar badge.
+- **The Local models setup helper.** The "Setup helper" tab, a chat that
+  proposed a setup, ran it through its own `lm_*` tools and tested the result,
+  is gone from the app, along with its "Help me set up" and "Something is not
+  working" buttons on the overview, the `local-models` chat surface and the
+  `jarvis local-models assistant ...` commands. Its
+  `/api/providers/{id}/local-models/assistant/*` routes are still registered
+  and answer, but nothing in the app calls them any more; they come out with
+  the panel in a later release. The section keeps everything else: the
+  overview, the catalogue, the server tab, the Tune sheet, and the quiet
+  six-hourly self-check behind the sidebar badge.
 - **The Agentic IDE's prompt bar.** The composer under the grid is gone: a pane
   is typed into or spoken to, never written to from underneath.
 - **The links to the retired storefront.** The buttons that pointed at
