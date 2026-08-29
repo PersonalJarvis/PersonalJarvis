@@ -74,7 +74,9 @@ function finishedTurnWithProposal() {
     ...EMPTY_TIMELINE,
     lastSeq: 3,
     items: [
-      { type: "user" as const, id: "u-1", text: "Help me set up", tsMs: 1 },
+      // `attachments` is required on a user item: the chat column draws
+      // dropped files from it. The assistant never sends any.
+      { type: "user" as const, id: "u-1", text: "Help me set up", tsMs: 1, attachments: [] },
       {
         type: "turn" as const,
         id: "t1",
