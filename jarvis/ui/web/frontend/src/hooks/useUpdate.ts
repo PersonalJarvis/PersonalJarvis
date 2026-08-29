@@ -33,9 +33,56 @@ export interface UpdateStatus {
   } | null;
 }
 
+/**
+ * Live state of an update that is being applied right now, from
+ * GET /api/update/progress. The apply call is one long request, so this is the
+ * only way to learn anything before it returns.
+ *
+ * ``phase`` walks idle -> resolving -> downloading -> verifying -> installing ->
+ * ready, or lands on failed. ``percent`` is a phase model fed by real
+ * measurements (bytes off the socket, git's object counters) and never rewinds,
+ * so it is safe to bind a bar width straight to it.
+ */
+export interface UpdateProgress {
+  active: boolean;
+  phase:
+    | "idle"
+    | "resolving"
+    | "downloading"
+    | "verifying"
+    | "installing"
+    | "ready"
+    | "failed";
+  percent: number;
+  /** Human sub-status, e.g. "64.0 MB / 128.0 MB". Null when there is none. */
+  detail: string | null;
+  version: string | null;
+  kind: string | null;
+  error: string | null;
+  restart_required: boolean;
+}
+
 // Slow poll: a new release is a rare event, so 6h keeps the button fresh
 // without hammering GitHub. A window focus also triggers a check.
 const POLL_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Read the live progress of an in-flight update.
+ *
+ * Returns null on any failure — and during an update that is a MEANINGFUL null,
+ * not just a hiccup: the restart kills this server mid-poll, so an unreachable
+ * progress endpoint is the expected end of a successful update, never something
+ * to surface as an error.
+ */
+export async function fetchUpdateProgress(): Promise<UpdateProgress | null> {
+  try {
+    const res = await fetch("/api/update/progress");
+    if (!res.ok) return null;
+    return (await res.json()) as UpdateProgress;
+  } catch {
+    return null;
+  }
+}
 
 async function fetchStatus(force = false): Promise<UpdateStatus | null> {
   try {

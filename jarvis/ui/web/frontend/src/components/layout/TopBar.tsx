@@ -2,8 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppWindow, Download, RotateCw } from "lucide-react";
 
 import { useEventStore, type SectionId } from "@/store/events";
-import { useUpdate } from "@/hooks/useUpdate";
-import { useT } from "@/i18n";
+import {
+  fetchUpdateProgress,
+  useUpdate,
+  type UpdateProgress,
+} from "@/hooks/useUpdate";
+import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
@@ -313,6 +317,33 @@ const RESTART_RETRY_MS = 1500;
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// Fast enough that a 400 MB download visibly moves, slow enough to be free:
+// the endpoint only copies a dict.
+const PROGRESS_POLL_MS = 400;
+
+// Which update verdict has already been announced. Stored per browser profile
+// because the verdict file itself survives on disk — without this, every launch
+// would re-announce the same finished update.
+const NOTIFIED_UPDATE_KEY = "jarvis.update.notified";
+
+function readNotifiedUpdate(): string | null {
+  try {
+    return window.localStorage.getItem(NOTIFIED_UPDATE_KEY);
+  } catch {
+    // Private mode / blocked site data. Losing the dedupe means one repeated
+    // toast, which is strictly better than losing the message entirely.
+    return null;
+  }
+}
+
+function rememberNotifiedUpdate(key: string): void {
+  try {
+    window.localStorage.setItem(NOTIFIED_UPDATE_KEY, key);
+  } catch {
+    // Same trade as above — the announcement already happened.
+  }
+}
+
 /** Append the server's error detail so a failure is diagnosable, not generic. */
 function withDetail(message: string, detail: string | null): string {
   const trimmed = (detail ?? "").trim();
@@ -337,8 +368,29 @@ function UpdateButton() {
   const [busy, setBusy] = useState(false);
   const [forceArmed, setForceArmed] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
+  const [progress, setProgress] = useState<UpdateProgress | null>(null);
+  const [restarting, setRestarting] = useState(false);
   const resetTimer = useRef<number | null>(null);
   const rollbackNotified = useRef<string | null>(null);
+
+  // Poll the progress side channel for as long as the apply request is in
+  // flight. It stops on its own when the button leaves the busy state, and a
+  // failed fetch is left alone: during the restart the server is *supposed* to
+  // go away, and blanking the bar then would look like the update collapsed.
+  useEffect(() => {
+    if (!busy) return;
+    let live = true;
+    const tick = async () => {
+      const next = await fetchUpdateProgress();
+      if (live && next) setProgress(next);
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), PROGRESS_POLL_MS);
+    return () => {
+      live = false;
+      window.clearInterval(id);
+    };
+  }, [busy]);
 
   const clearResetTimer = useCallback(() => {
     if (resetTimer.current !== null) {
@@ -348,16 +400,30 @@ function UpdateButton() {
   }, []);
   useEffect(() => clearResetTimer, [clearResetTimer]);
 
-  // A rolled-back install is otherwise invisible: the app comes back on the
-  // old version and the button simply re-renders. Say it happened, once.
+  // How the LAST update ended is otherwise invisible: the app just comes back,
+  // on the new version or the old one, and the button re-renders. Both outcomes
+  // get exactly one message.
+  //
+  // The dedupe key is remembered in localStorage, not only in this ref: the
+  // verdict file survives on disk, so a ref alone would re-announce the same
+  // update on every launch until the next one overwrote it.
   const lastResult = status?.last_result;
   useEffect(() => {
-    if (!lastResult || lastResult.ok) return;
-    const key = String(lastResult.completed_at ?? "unknown");
+    if (!lastResult) return;
+    const key = `${lastResult.ok ? "ok" : "fail"}:${lastResult.completed_at ?? "unknown"}`;
     if (rollbackNotified.current === key) return;
+    if (readNotifiedUpdate() === key) return;
     rollbackNotified.current = key;
-    pushToast("warning", t("topbar.update_rolled_back"));
-  }, [lastResult, pushToast, t]);
+    rememberNotifiedUpdate(key);
+    if (lastResult.ok) {
+      pushToast(
+        "success",
+        fill(t("topbar.update_installed"), { version: status?.current ?? "" }),
+      );
+    } else {
+      pushToast("warning", t("topbar.update_rolled_back"));
+    }
+  }, [lastResult, pushToast, status?.current, t]);
 
   if (!status?.managed) return null;
   const hasOffer = status.update_available;
@@ -368,6 +434,8 @@ function UpdateButton() {
   async function run(force: boolean) {
     clearResetTimer();
     setBusy(true);
+    setRestarting(false);
+    setProgress(null);
     setShowNotes(false);
 
     // 1. Stage the new code. The server re-verifies the managed-install guard,
@@ -384,6 +452,7 @@ function UpdateButton() {
         // 403 unmanaged / 409 nothing newer / 502 git or GitHub failure — the
         // backend's detail says WHICH, and the user must get to see it.
         setBusy(false);
+        setProgress(null);
         setForceArmed(false);
         pushToast(
           "error",
@@ -402,6 +471,7 @@ function UpdateButton() {
       }
     } catch {
       setBusy(false);
+      setProgress(null);
       setForceArmed(false);
       pushToast(
         "error",
@@ -430,6 +500,7 @@ function UpdateButton() {
             /* malformed body — still arm the override */
           }
           setBusy(false);
+          setProgress(null);
           setForceArmed(true);
           clearResetTimer();
           resetTimer.current = window.setTimeout(() => {
@@ -445,7 +516,10 @@ function UpdateButton() {
         if (restartRes.ok) {
           // Success — the code is staged and the window goes away shortly; keep
           // the busy state so the button never flips back before the app dies.
-          pushToast("info", t("topbar.updating"));
+          // This last phase is the one the server cannot report: it is the
+          // thing that is dying, so the UI states it itself.
+          setRestarting(true);
+          pushToast("info", t("topbar.update_restarting"));
           return;
         }
         const body = (await restartRes.json().catch(() => ({}))) as {
@@ -462,6 +536,8 @@ function UpdateButton() {
     // The download IS staged — a manual restart (or the next successful click)
     // finishes it. Saying "failed" here would be dishonest and untraceable.
     setBusy(false);
+    setRestarting(false);
+    setProgress(null);
     setForceArmed(false);
     pushToast(
       "warning",
@@ -474,13 +550,19 @@ function UpdateButton() {
     void run(forceArmed);
   }
 
-  const label = busy
-    ? t("topbar.updating")
-    : forceArmed
-      ? t("topbar.restart_force")
-      : hasOffer
-        ? t("topbar.update_available")
-        : t("topbar.update_finish_restart");
+  // The bar is driven by the server while it works, then pinned at 100 % for
+  // the restart — the one phase nothing can measure, because the thing that
+  // would report it is the thing shutting down.
+  const percent = restarting ? 100 : (progress?.percent ?? 0);
+  const label = restarting
+    ? t("topbar.update_restarting")
+    : busy
+      ? fill(t("topbar.updating_percent"), { percent })
+      : forceArmed
+        ? t("topbar.restart_force")
+        : hasOffer
+          ? t("topbar.update_available")
+          : t("topbar.update_finish_restart");
 
   return (
     <div
@@ -492,21 +574,39 @@ function UpdateButton() {
         type="button"
         onClick={onClick}
         disabled={busy}
-        title={t("topbar.update_hint")}
+        title={busy ? (progress?.detail ?? label) : t("topbar.update_hint")}
+        // The button doubles as the progress bar while it runs, so it carries
+        // the ARIA role of one — a screen reader announces the same percentage
+        // the fill shows. Outside an update those attributes must be absent,
+        // not zeroed, or it reads as a bar stuck at 0 %.
+        role={busy ? "progressbar" : undefined}
+        aria-valuemin={busy ? 0 : undefined}
+        aria-valuemax={busy ? 100 : undefined}
+        aria-valuenow={busy ? percent : undefined}
         className={cn(
-          "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70",
+          "relative inline-flex items-center gap-1.5 overflow-hidden rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70",
           forceArmed
             ? "border-foreground/60 bg-foreground/10 text-foreground hover:bg-foreground/20"
             : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20",
         )}
       >
+        {busy && (
+          <span
+            aria-hidden
+            data-testid="update-progress-fill"
+            // A token tint on the button's own token background: it reads as a
+            // fill in light and dark alike, with no hardcoded colour.
+            className="absolute inset-y-0 left-0 bg-primary/25 transition-[width] duration-300 ease-out"
+            style={{ width: `${percent}%` }}
+          />
+        )}
         <Download
           aria-hidden
-          className={cn("h-3.5 w-3.5", busy && "animate-pulse")}
+          className={cn("relative h-3.5 w-3.5", busy && "animate-pulse")}
         />
-        {label}
+        <span className="relative tabular-nums">{label}</span>
         {!busy && !forceArmed && shownVersion && (
-          <span className="rounded bg-primary/20 px-1 text-[10px] tabular-nums">
+          <span className="relative rounded bg-primary/20 px-1 text-[10px] tabular-nums">
             v{shownVersion}
           </span>
         )}
