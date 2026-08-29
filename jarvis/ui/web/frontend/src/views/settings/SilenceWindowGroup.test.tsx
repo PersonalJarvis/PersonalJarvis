@@ -45,7 +45,11 @@ describe("SilenceWindowGroup", () => {
     mockGet(1500);
     render(<SilenceWindowGroup />);
     const slider = (await screen.findByRole("slider")) as HTMLInputElement;
-    expect(slider.value).toBe("1500");
+    // Wait on the VALUE, not just the element. The group renders its slider at
+    // once and adopts the fetched value when the request resolves, so asserting
+    // straight after findByRole is a race the element always wins: it read 0 on
+    // a loaded CI runner while passing every time on a fast machine.
+    await waitFor(() => expect(slider.value).toBe("1500"));
     // getByText throws if absent, so reaching the truthy assert means it rendered.
     expect(screen.getByText("1.5 s")).toBeTruthy();
   });
