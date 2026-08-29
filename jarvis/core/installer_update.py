@@ -178,6 +178,9 @@ def select_asset(assets: Iterable[Any], name: str) -> InstallerAsset | None:
         try:
             size = int(entry.get("size") or 0)
         except (TypeError, ValueError):
+            # Size is display-only. A release asset whose size GitHub reports
+            # oddly still downloads, so an unreadable one reads as unknown
+            # rather than failing the update.
             size = 0
         return InstallerAsset(name=name, url=url, size=size)
     return None
@@ -223,6 +226,9 @@ def parse_sha256sums(text: str) -> dict[str, str]:
         try:
             int(digest, 16)
         except ValueError:
+            # Not a hex digest, so not a checksum line. SHA256SUMS files carry
+            # headers and blank lines too; skipping a non-entry is parsing,
+            # not swallowing a failure.
             continue
         if name.startswith("*"):
             name = name[1:]
@@ -462,9 +468,9 @@ class SubprocessCommandRunner:
                 check=False,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
-        except FileNotFoundError as exc:
+        except FileNotFoundError as exc:  # returned to the caller, not swallowed
             return -1, "", f"{command[0]} is not available: {exc}"
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired:  # returned to the caller, not swallowed
             return -1, "", f"{command[0]} timed out after {timeout_s:.0f}s"
         return completed.returncode, completed.stdout or "", completed.stderr or ""
 

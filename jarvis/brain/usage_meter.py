@@ -40,6 +40,9 @@ def _totals(usage: dict[str, Any]) -> tuple[int, int, int]:
                 try:
                     return max(0, int(value))
                 except (TypeError, ValueError):
+                    # A provider that reports a non-numeric token count has told us
+                    # nothing; 0 is the honest reading and metering must never
+                    # break the call it is measuring.
                     return 0
         return 0
 
