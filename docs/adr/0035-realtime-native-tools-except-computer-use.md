@@ -23,7 +23,7 @@ Measured 2026-08-17..19 (flight recorder, 74 realtime turns, vertex-live):
 - Mis-routed conversation: "sprich mal mit mir" 3.2 s, "was würdest du
   empfehlen" 15.6 s, "Wer waren die 10 berühmtesten Wissenschaftler?" 5.6 s,
   "gucken, was morgen für ein Tag ist" 5.5 s (the same question without
-  "gucken" answered natively in 0.9 s).  <!-- i18n-allow: quoted live utterances -->
+  "gucken" answered natively in 0.9 s).  <!-- i18n-allow: quoted synthetic utterances -->
 
 What the live model can do today: **nothing**. In the default `delegate` tool
 mode it has exactly one function, `jarvis_action`, and `end_call`. The former
@@ -93,7 +93,7 @@ garbled or conversational turns the live model picked *something* — "Was
 genau, wie ist mein X-Shield?" called a freshly installed plugin's balance
 tool, "Was oh mein Gott, wieso lag es so rum?" called `app-restart` (an
 `ask`-tier tool whose two-turn confirmation the next utterance could have
-answered).  <!-- i18n-allow: quoted live utterances --> The bridge therefore
+answered).  <!-- i18n-allow: quoted synthetic utterances --> The bridge therefore
 refuses, on the user's own words (`RealtimeToolBridge._guard` →
 `_turn_shape_refusal`, same vocabulary as the planner):
 

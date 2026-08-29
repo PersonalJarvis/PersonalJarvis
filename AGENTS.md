@@ -116,8 +116,8 @@ losing it (AP-32). Detail and history for any of them: `docs/BUGS.md`.
 
 ## 4. How work ships
 
-Commit each finished step (Conventional Commits), then `git push` — that is
-standing authorization, no need to ask. `git pull --rebase --ff-only` first if
+Commit each finished step (Conventional Commits). Pushing is NOT automatic —
+push only when explicitly asked. `git pull --rebase --ff-only` first if
 origin moved. Never `--force`, never `--no-verify`, never push from a linked or
 mission worktree — the parent lands that work. **A push is `git push`:** nothing
 is built, cloned, audited, or reviewed on the way. Review happens when code is
