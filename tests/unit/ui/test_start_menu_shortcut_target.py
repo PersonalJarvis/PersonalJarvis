@@ -408,6 +408,19 @@ class TestImportPathHasNoShortcutSideEffect:
         )
 
 
+def _stt_config(tmp_path: Path, *, provider: str, fallback: str) -> Path:
+    """Write a minimal ``jarvis.toml`` naming both STT roles."""
+    toml = tmp_path / "jarvis.toml"
+    body = [
+        "[stt]",
+        f'provider = "{provider}"',
+        f'fallback = "{fallback}"',
+    ]
+    toml.write_text("
+".join(body), encoding="utf-8")
+    return toml
+
+
 class TestSpeechCapabilityProbe:
     """The other half of the rule: a speech-LESS interpreter may not claim it either.
 
@@ -427,7 +440,9 @@ class TestSpeechCapabilityProbe:
         Requiring the engine unconditionally would leave the common install with
         no Start-Menu entry at all — a far worse bug than the one being fixed.
         """
-        monkeypatch.setattr(icon_utils, "_configured_stt_provider", lambda: "groq-api")
+        monkeypatch.setattr(
+            icon_utils, "_config_wants_on_device_speech", lambda: False
+        )
 
         assert icon_utils._interpreter_can_run_the_configured_speech() is True
 
@@ -436,9 +451,7 @@ class TestSpeechCapabilityProbe:
     ) -> None:
         import importlib.util
 
-        monkeypatch.setattr(
-            icon_utils, "_configured_stt_provider", lambda: "faster-whisper"
-        )
+        monkeypatch.setattr(icon_utils, "_config_wants_on_device_speech", lambda: True)
         monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
 
         assert icon_utils._interpreter_can_run_the_configured_speech() is False
@@ -447,9 +460,36 @@ class TestSpeechCapabilityProbe:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """"Cannot tell" must behave exactly as it did before this guard existed."""
-        monkeypatch.setattr(icon_utils, "_configured_stt_provider", lambda: "")
+        monkeypatch.setattr(
+            icon_utils, "_config_wants_on_device_speech", lambda: False
+        )
 
         assert icon_utils._interpreter_can_run_the_configured_speech() is True
+
+    def test_the_local_engine_as_FALLBACK_counts_too(self, tmp_path: Path) -> None:
+        """The floor is what the cloud-first user leans on when the cloud 402s.
+
+        The live loss happened in exactly this shape: provider was a cloud
+        recognizer, the local engine was the configured fallback, and the
+        interpreter that owned the shortcut did not have it — so the 402 hit a
+        chain with nothing underneath it.
+        """
+        import jarvis.core.config as core_cfg
+
+        toml = _stt_config(tmp_path, provider="groq-api", fallback="faster-whisper")
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(core_cfg, "DEFAULT_CONFIG_FILE", toml)
+            assert icon_utils._config_wants_on_device_speech() is True
+
+    def test_a_purely_cloud_config_wants_no_on_device_engine(
+        self, tmp_path: Path
+    ) -> None:
+        import jarvis.core.config as core_cfg
+
+        toml = _stt_config(tmp_path, provider="groq-api", fallback="openai-api")
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(core_cfg, "DEFAULT_CONFIG_FILE", toml)
+            assert icon_utils._config_wants_on_device_speech() is False
 
     def test_the_gate_needs_both_capabilities(
         self, monkeypatch: pytest.MonkeyPatch
@@ -473,7 +513,7 @@ class TestSpeechCapabilityProbe:
 
         monkeypatch.setattr(core_cfg, "DEFAULT_CONFIG_FILE", tmp_path / "absent.toml")
 
-        assert icon_utils._configured_stt_provider() == ""
+        assert icon_utils._config_wants_on_device_speech() is False
 
 
 @windows_only

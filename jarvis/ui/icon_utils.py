@@ -226,14 +226,22 @@ def _interpreter_can_open_a_window() -> bool:
 _ON_DEVICE_STT_PROVIDER = "faster-whisper"
 
 
-def _configured_stt_provider() -> str:
-    """The recognizer named in ``jarvis.toml``, or ``""`` when it cannot be read.
+def _config_wants_on_device_speech() -> bool:
+    """Does ``jarvis.toml`` name the on-device recognizer as EITHER role?
+
+    Both ``[stt].provider`` and ``[stt].fallback`` count, and the fallback is
+    not the lesser half: a cloud-first setup that names the local engine as its
+    floor is relying on it for exactly the case that broke — the cloud account
+    answering 402 mid-dictation. An interpreter without the engine silently
+    removes that floor, which is how 24.3 s of speech were lost with no local
+    recognizer left to catch them.
 
     A direct, BOM-safe TOML read (the idiom
     ``jarvis.ui.jarvisbar.interaction._load_jarvisbar_section`` already uses):
     one file stat and a parse, no pydantic, no provider catalogue, nothing
-    initialised (AP-26). An unreadable or absent file answers ``""``, which the
-    caller treats as "cannot tell" and therefore never as a reason to refuse.
+    initialised (AP-26). An unreadable or absent file answers ``False``, which
+    the caller treats as "cannot tell" and therefore never as a reason to
+    refuse — a base install with no config yet must still get its shortcut.
     """
     import tomllib
 
@@ -245,15 +253,18 @@ def _configured_stt_provider() -> str:
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, ImportError) as exc:
         # Silence is correct and load-bearing here (AP-30): every one of these
         # means "this build cannot tell what the user chose", and the caller
-        # reads "" as "no reason to refuse". Logging a warning per boot for a
+        # reads that as "no reason to refuse". Logging a warning per boot for a
         # base install that has no config file yet would be pure noise.
-        logger.debug("Could not read the configured STT provider: {}", exc)
-        return ""
+        logger.debug("Could not read the configured STT roles: {}", exc)
+        return False
     section = data.get("stt")
     if not isinstance(section, dict):
-        return ""
-    provider = section.get("provider")
-    return provider.strip() if isinstance(provider, str) else ""
+        return False
+    return any(
+        isinstance(value := section.get(role), str)
+        and value.strip() == _ON_DEVICE_STT_PROVIDER
+        for role in ("provider", "fallback")
+    )
 
 
 def _interpreter_can_run_the_configured_speech() -> bool:
@@ -276,7 +287,7 @@ def _interpreter_can_run_the_configured_speech() -> bool:
 
     ``find_spec`` only resolves; nothing is imported (AP-26).
     """
-    if _configured_stt_provider() != _ON_DEVICE_STT_PROVIDER:
+    if not _config_wants_on_device_speech():
         return True
     import importlib.util
 
