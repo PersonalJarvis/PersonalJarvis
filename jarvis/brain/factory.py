@@ -1395,6 +1395,25 @@ def _phase2_full_brain(
             "— wiki vault takes over fact extraction via WikiCurator/VoiceFactBridge"
         )
 
+    # Soft-disabling the legacy curator left USER.md with no automatic writer
+    # at all: the wiki took over fact extraction for the VAULT, but the
+    # structured profile the Knowledge matrix renders is a different file, and
+    # its only remaining path was the brain choosing to call ``update_profile``
+    # mid-turn. Measured on a real box, that produced zero facts in 26 days.
+    # The deterministic capture below is the floor under it — regex only, no
+    # model, no provider, so it keeps the profile current even when the wiki
+    # curator's provider is unavailable. The tool path stays and still catches
+    # everything phrased less literally.
+    if user_profile is not None and bus is not None:
+        try:
+            from jarvis.memory.profile_capture import ProfileCaptureBridge
+
+            profile_capture = ProfileCaptureBridge(bus=bus, profile=user_profile)
+            profile_capture.start()
+            manager._profile_capture = profile_capture
+        except Exception as exc:  # noqa: BLE001 — capture is never load-bearing
+            log.warning("ProfileCaptureBridge could not be started: %s", exc)
+
     # B5 Agent C: WikiContextInjector — router-tier only.
     # Attempt to import Agent B's VaultSearch.  If the module is not yet
     # merged (ImportError), pass search=None so the injector is a silent no-op.
@@ -1608,6 +1627,19 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
             log.info("Curator active (legacy path, legacy_curator.enabled=true)")
         except Exception as exc:  # noqa: BLE001
             log.warning("Curator could not be initialized: %s", exc)
+
+    # Same floor under USER.md as in build_default_brain — a profile that is
+    # only maintained on one of the two brain-build paths reads as broken on
+    # the other.
+    if user_profile is not None and bus is not None:
+        try:
+            from jarvis.memory.profile_capture import ProfileCaptureBridge
+
+            profile_capture = ProfileCaptureBridge(bus=bus, profile=user_profile)
+            profile_capture.start()
+            manager._profile_capture = profile_capture
+        except Exception as exc:  # noqa: BLE001 — capture is never load-bearing
+            log.warning("ProfileCaptureBridge could not be started: %s", exc)
 
     return manager
 

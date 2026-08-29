@@ -473,3 +473,8 @@ jarvis/tasks/templates/*
 #     fixtures that pin them ---
 jarvis/dictation/prompt_mode.py
 tests/unit/dictation/test_prompt_mode.py
+
+# --- Profile capture (2026-08-29): the DE/EN self-statements the deterministic
+#     USER.md capture recognises ARE the content under test, and the negative
+#     corpus only proves precision if it holds real German near-misses ---
+tests/unit/memory/test_profile_capture.py
