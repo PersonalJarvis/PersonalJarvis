@@ -28,6 +28,41 @@ def check_canonical(node: lt.LayoutNode | None) -> None:
         check_canonical(child)
 
 
+def boxes(
+    node: lt.LayoutNode | None,
+    box: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0),
+) -> dict[str, tuple[float, float, float, float]]:
+    """Every pane's rectangle as fractions of the workspace — the PICTURE.
+
+    The frontend's ``treeLayout`` arithmetic, repeated here so a test can ask
+    "does this tree draw what that tree drew?" without caring how the tree is
+    shaped. That is exactly the question ``rows_outermost`` has to answer yes
+    to: it moves boundaries between CONTAINERS, never on screen.
+    """
+    x, y, width, height = box
+    if node is None:
+        return {}
+    if isinstance(node, Leaf):
+        return {node.pane: (round(x, 9), round(y, 9), round(width, 9), round(height, 9))}
+    weights = [lt._clean_weight(node.weights[i]) for i in range(len(node.children))]
+    total = sum(weights) or 1.0
+    along = width if node.direction == "row" else height
+    cursor = x if node.direction == "row" else y
+    drawn: dict[str, tuple[float, float, float, float]] = {}
+    for child, weight in zip(node.children, weights, strict=True):
+        share = (weight / total) * along
+        drawn.update(
+            boxes(
+                child,
+                (cursor, y, share, height)
+                if node.direction == "row"
+                else (x, cursor, width, share),
+            )
+        )
+        cursor += share
+    return drawn
+
+
 # ------------------------------------------------------------ opening shapes
 
 
@@ -37,8 +72,17 @@ def test_wizard_tree_of_one_is_a_bare_leaf() -> None:
 
 def test_wizard_tree_stacks_two_deep_before_opening_a_column() -> None:
     tree = lt.wizard_tree(["t1", "t2", "t3", "t4"], 2)
-    assert isinstance(tree, Split) and tree.direction == "row"
-    assert [lt.leaves(child) for child in tree.children] == [["t1", "t2"], ["t3", "t4"]]
+    # Two columns of two, stood on their rows so each band owns its own
+    # vertical seam — and seated in reading order, so the panes come out in
+    # the sequence they were handed over in.
+    assert boxes(tree) == {
+        "t1": (0.0, 0.0, 0.5, 0.5),
+        "t2": (0.5, 0.0, 0.5, 0.5),
+        "t3": (0.0, 0.5, 0.5, 0.5),
+        "t4": (0.5, 0.5, 0.5, 0.5),
+    }
+    assert isinstance(tree, Split) and tree.direction == "column"
+    assert lt.leaves(tree) == ["t1", "t2", "t3", "t4"]
     check_canonical(tree)
 
 
@@ -157,6 +201,190 @@ def test_appending_takes_an_even_share_of_a_dragged_row() -> None:
     # The mean of the neighbours, not 1.0 — "an even share" must mean the same
     # thing whatever scale the user's drags left the weights at.
     assert tree.weights == [3.0, 1.0, 2.0]
+
+
+# --------------------------------------------------------- a grid on rows
+
+
+def test_a_grid_reached_either_way_comes_out_the_same() -> None:
+    """The 2026-08-25 report: split order decided how the seams behaved.
+
+    Right-then-down-twice used to leave ``row[column, column]``, whose middle
+    line runs the full height — drag it under the bottom pair and the top
+    pair moves with it. Down-then-right-twice left the transpose, where each
+    band resizes on its own. Same picture, two behaviours. Now both orders
+    land on the second, so a workspace behaves the way it looks.
+    """
+    right_first = lt.split_pane(Leaf(pane="t1"), "t1", "t2", "right")
+    right_first = lt.split_pane(right_first, "t1", "t3", "down")
+    right_first = lt.split_pane(right_first, "t2", "t4", "down")
+
+    down_first = lt.split_pane(Leaf(pane="t1"), "t1", "t3", "down")
+    down_first = lt.split_pane(down_first, "t1", "t2", "right")
+    down_first = lt.split_pane(down_first, "t3", "t4", "right")
+
+    assert boxes(right_first) == boxes(down_first)
+    assert lt.same_shape(right_first, down_first)
+    assert isinstance(right_first, Split) and right_first.direction == "column"
+    check_canonical(right_first)
+
+
+def test_standing_a_grid_on_its_rows_moves_nothing() -> None:
+    """The whole promise: containers change hands, the picture does not."""
+    columns = Split(
+        direction="row",
+        children=[
+            Split(
+                direction="column",
+                children=[Leaf(pane="t1"), Leaf(pane="t2")],
+                weights=[3.0, 1.0],
+            ),
+            Split(
+                direction="column",
+                children=[Leaf(pane="t3"), Leaf(pane="t4")],
+                weights=[6.0, 2.0],  # the same 3:1, said differently
+            ),
+        ],
+        weights=[2.0, 1.0],
+    )
+    rows = lt.rows_outermost(columns)
+    assert boxes(rows) == boxes(columns)
+    assert isinstance(rows, Split) and rows.direction == "column"
+    assert [lt.leaves(band) for band in rows.children] == [["t1", "t3"], ["t2", "t4"]]
+    check_canonical(rows)
+
+
+def test_columns_cut_at_different_heights_are_left_alone() -> None:
+    """No row structure can draw two bands that do not line up, so: hands off.
+
+    This is also what keeps the rule off a hand-sized workspace — a column
+    dragged out of line with its neighbour simply stops qualifying.
+    """
+    ragged = Split(
+        direction="row",
+        children=[
+            Split(
+                direction="column",
+                children=[Leaf(pane="t1"), Leaf(pane="t2")],
+                weights=[3.0, 1.0],
+            ),
+            Split(
+                direction="column",
+                children=[Leaf(pane="t3"), Leaf(pane="t4")],
+                weights=[1.0, 3.0],
+            ),
+        ],
+        weights=[1.0, 1.0],
+    )
+    stood = lt.rows_outermost(ragged)
+    assert isinstance(stood, Split) and stood.direction == "row"
+    assert boxes(stood) == boxes(ragged)
+
+
+def test_an_incomplete_grid_is_left_alone() -> None:
+    """Two stacks and a full-height pane are not a rectangle — nothing to do."""
+    tree = Split(
+        direction="row",
+        children=[
+            Split(
+                direction="column",
+                children=[Leaf(pane="t1"), Leaf(pane="t2")],
+                weights=[1.0, 1.0],
+            ),
+            Leaf(pane="t3"),
+        ],
+        weights=[1.0, 1.0],
+    )
+    stood = lt.rows_outermost(tree)
+    assert isinstance(stood, Split) and stood.direction == "row"
+    assert boxes(stood) == boxes(tree)
+
+
+def test_standing_a_grid_on_its_rows_settles_at_once() -> None:
+    """Idempotent, so repeated edits cannot flip a workspace back and forth."""
+    once = lt.rows_outermost(lt.wizard_tree(["t1", "t2", "t3", "t4", "t5", "t6"], 3))
+    assert lt.rows_outermost(once) == once
+
+
+def test_a_hand_sized_grid_keeps_its_pin_on_the_bands() -> None:
+    """The row's hand-set widths become each band's — the sizes were the WIDTHS."""
+    columns = Split(
+        direction="row",
+        children=[
+            Split(
+                direction="column",
+                children=[Leaf(pane="t1"), Leaf(pane="t2")],
+                weights=[1.0, 1.0],
+            ),
+            Split(
+                direction="column",
+                children=[Leaf(pane="t3"), Leaf(pane="t4")],
+                weights=[1.0, 1.0],
+            ),
+        ],
+        weights=[3.0, 1.0],
+        pinned=True,
+    )
+    rows = lt.rows_outermost(columns)
+    assert isinstance(rows, Split)
+    assert all(isinstance(band, Split) and band.pinned for band in rows.children)
+    # And the pin does its job: an evening pass leaves those widths alone.
+    assert boxes(lt.evened(rows)) == boxes(rows)
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 4, 5, 6, 7, 8, 9, 12])
+def test_the_wizard_preview_seats_panes_where_the_backend_does(count: int) -> None:
+    """The preview labels its tiles with the agents' names — so WHICH, not just where.
+
+    `wizardPanes` (frontend ``layout.ts``) is the preview's half of this
+    function, and the two now have a fill order to agree on as well as a
+    shape: a full rectangle is read across its bands, a ragged count down its
+    columns. This is the parity test that keeps them from drifting — the
+    frontend's own copy is pinned in ``layout.test.ts``.
+    """
+    depth = 2  # WIZARD_COLUMN_HEIGHT
+    keys = [f"t{index + 1}" for index in range(count)]
+    hints = lt.grid_hints(lt.wizard_tree(keys, depth))
+
+    across = -(-count // depth)
+    rectangular = across > 0 and count == across * depth
+    preview = [
+        (index % across, index // across) if rectangular else (index // depth, index % depth)
+        for index in range(count)
+    ]
+    assert [hints[key] for key in keys] == preview
+
+
+def test_a_grid_stands_on_its_rows_after_a_close_too() -> None:
+    """A close can leave a rectangle behind; it gets the same treatment.
+
+    Two stacks beside a full-height pane is not a grid, so nothing is stood on
+    anything while t5 is there. Closing t5 makes it one, and the survivors get
+    their per-band seams without the user having to split again.
+    """
+    tree = Split(
+        direction="row",
+        children=[
+            Split(
+                direction="column",
+                children=[Leaf(pane="t1"), Leaf(pane="t3")],
+                weights=[1.0, 1.0],
+            ),
+            Split(
+                direction="column",
+                children=[Leaf(pane="t2"), Leaf(pane="t4")],
+                weights=[1.0, 1.0],
+            ),
+            Leaf(pane="t5"),
+        ],
+        weights=[1.0, 1.0, 1.0],
+    )
+    assert lt.rows_outermost(tree) == tree
+
+    closed = lt.remove_pane(tree, "t5")
+    assert isinstance(closed, Split) and closed.direction == "column"
+    assert [lt.leaves(band) for band in closed.children] == [["t1", "t2"], ["t3", "t4"]]
+    check_canonical(closed)
 
 
 # ------------------------------------------------------------- evening out
@@ -406,15 +634,14 @@ def test_dropping_left_of_a_pane_takes_that_panes_left_half() -> None:
     tree = lt.wizard_tree(["t1", "t2", "t3", "t4"], 2)
     moved = lt.move_pane(tree, "t1", "t4", "left")
 
-    assert isinstance(moved, Split) and moved.direction == "row"
-    first, second = moved.children
-    # The vacated half folds away: t2 stands alone, full height.
-    assert first == Leaf(pane="t2")
-    assert isinstance(second, Split) and second.direction == "column"
-    assert second.children[0] == Leaf(pane="t3")
-    cell = second.children[1]
-    assert isinstance(cell, Split) and cell.direction == "row"
-    assert lt.leaves(cell) == ["t1", "t4"]
+    # t1 lands in t4's left half — an eighth of the workspace each — and the
+    # top band closes over the hole t1 left, t2 taking the full width.
+    assert boxes(moved) == {
+        "t2": (0.0, 0.0, 1.0, 0.5),
+        "t3": (0.0, 0.5, 0.5, 0.5),
+        "t1": (0.5, 0.5, 0.25, 0.5),
+        "t4": (0.75, 0.5, 0.25, 0.5),
+    }
     check_canonical(moved)
 
 
@@ -519,5 +746,6 @@ def test_grid_hints_are_exact_for_flat_shapes() -> None:
 def test_grid_hints_stay_coarse_but_ordered_for_nested_shapes() -> None:
     stack = lt.wizard_tree(["t1", "t2"], 2)
     tree = lt.split_pane(stack, "t1", "t3", "right")
-    # One top-level stack → one column; slots follow reading order.
-    assert lt.grid_hints(tree) == {"t1": (0, 0), "t3": (0, 1), "t2": (0, 2)}
+    # A stack of bands: the band is the slot, reading across it the column.
+    # t1 and t3 share the top band, t2 has the bottom one to itself.
+    assert lt.grid_hints(tree) == {"t1": (0, 0), "t3": (1, 0), "t2": (0, 1)}

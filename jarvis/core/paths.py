@@ -59,6 +59,23 @@ def user_clis_dir() -> Path:
     return user_data_dir() / "clis"
 
 
+def chat_workspace_dir() -> Path:
+    """Where a typed Jarvis chat works when nobody picked a folder for it.
+
+    The Jarvis chat hands the turn file and shell tools scoped to a working
+    directory (``jarvis.agent_chat.folder_tools``), and a CLI-backed seat needs
+    a directory to start in at all. The fallback used to be :func:`Path.home` —
+    the entire user profile, with the read-only tools (``Read``/``Ls``/``Glob``/
+    ``Grep``) running inside it unprompted because their risk tier is ``safe``.
+    A directory of its own keeps that default reach small; pointing a chat at a
+    real project folder stays a per-session choice.
+
+    Does NOT create the directory — the caller does, so a read-only install can
+    fall back instead of failing (see ``jarvis.ui.web.server``).
+    """
+    return user_data_dir() / "chat-workspace"
+
+
 def workspace_clis_dir() -> Path:
     """Where the user's own terminal CLIs and their logos are kept.
 
@@ -234,6 +251,7 @@ __all__ = [
     "user_memory_dir",
     "user_logs_dir",
     "user_clis_dir",
+    "chat_workspace_dir",
     "workspace_clis_dir",
     "workspace_clis_path",
     "cli_usage_db_path",

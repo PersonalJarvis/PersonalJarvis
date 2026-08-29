@@ -23,6 +23,7 @@ required" rather than crashing — the anti-silent-drop contract (AD-OE6).
 Thread-safety: assignment of a single object reference is atomic in CPython, and
 these are write-once-at-bootstrap / read-many. No lock needed.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -105,6 +106,24 @@ def set_mcp_registry(registry: Any) -> None:
 def get_mcp_registry() -> Any | None:
     """The live MCPRegistry, or ``None`` if MCP support is not wired."""
     return _MCP_REGISTRY[0] if _MCP_REGISTRY else None
+
+
+# Where this process' own HTTP API actually listens, stamped at bind time. A
+# dev instance offsets the port at runtime while SHARING jarvis.toml, so the
+# config value is the live app's port even inside the dev app — anything that
+# hands its own address to a child (the agent chat's MCP config) must read it
+# from here, never from config.
+_API_BASE_URL: list[str] = []
+
+
+def set_api_base_url(url: str) -> None:
+    """Record the effective loopback base URL of this process' web server."""
+    _set(_API_BASE_URL, url)
+
+
+def get_api_base_url() -> str | None:
+    """This process' own base URL, or ``None`` before the server bound."""
+    return _API_BASE_URL[0] if _API_BASE_URL else None
 
 
 # The live FastAPI app (set by WebServer._build_app). The ``app-command`` tool

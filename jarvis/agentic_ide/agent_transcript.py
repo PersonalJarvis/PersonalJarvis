@@ -665,6 +665,8 @@ class _EventLog:
         self.live = live
         self.model = ""
         self.effort = ""
+        #: The CLI's own permission stance, as its record last stated it.
+        self.permission_mode = ""
         self.turn_id: str | None = None
         self.turns = 0
         self.turn_started_ms = 0
@@ -864,7 +866,24 @@ class _EventLog:
             # Asked and not yet answered, on a pane that is working: open the
             # turn so the timeline says so instead of ending on the question.
             self._ensure_turn(self.events[-1]["ts_ms"])
-        return _last_turns(self.events, MAX_TURNS)
+        self.events = _last_turns(self.events, MAX_TURNS)
+        return self.events
+
+
+@dataclass(frozen=True, slots=True)
+class TimelineRead:
+    """One session's recent conversation as events, plus what the pane runs on.
+
+    The three strings are the CLI's own statements about itself — the model
+    and effort its last reply carried, the permission stance its record last
+    declared — and they are what the chat's composer shows in its pills for a
+    pane, where a session it runs itself shows the picks it was created with.
+    """
+
+    events: list[dict[str, Any]]
+    model: str = ""
+    effort: str = ""
+    permission_mode: str = ""
 
 
 #: The token counts worth carrying — the chat shows output only, but the rest
@@ -927,6 +946,20 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
         if row.get("isSidechain"):
             continue
         kind = str(row.get("type") or "")
+        if kind == "permission-mode":
+            # The CLI's stance is a fact of the pane, stated by the pane; the
+            # chat's composer shows it where it shows the picked mode of a
+            # session it runs itself.
+            mode = row.get("permissionMode")
+            if isinstance(mode, str) and mode:
+                log.permission_mode = mode
+            continue
+        if kind == "mode":
+            # `plan` is a stance too, written under its own record kind.
+            mode = row.get("mode")
+            if mode == "plan":
+                log.permission_mode = "plan"
+            continue
         if kind not in ("user", "assistant"):
             continue
         message = row.get("message")
@@ -993,7 +1026,8 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
                     ts,
                 )
         log.usage(mid, message.get("usage"), ts)
-    return log.finish()
+    log.finish()
+    return log
 
 
 def _codex_events(session_id: str, home: Path | None, live: bool) -> list[dict[str, Any]] | None:
@@ -1092,24 +1126,23 @@ def _codex_events(session_id: str, home: Path | None, live: bool) -> list[dict[s
                         if isinstance(block, dict) and block.get("text")
                     )
             log.thinking("\n\n".join(p for p in parts if p), item_id, ts)
-    return log.finish()
+    log.finish()
+    return log
 
 
-_EVENT_READERS: dict[
-    str, Callable[[str, Path | None, bool], list[dict[str, Any]] | _EventLog | None]
-] = {
+_EVENT_READERS: dict[str, Callable[[str, Path | None, bool], _EventLog | None]] = {
     "claude": _claude_events,
     "codex": _codex_events,
 }
 
 
-def read_events(
+def read_timeline(
     agent: str,
     session_id: str,
     *,
     home: Path | None = None,
     live: bool = False,
-) -> list[dict[str, Any]] | None:
+) -> TimelineRead | None:
     """The recent conversation of one session as agent-chat events, oldest first.
 
     The same ``None`` contract as :func:`read`: no readable record, no file yet,
@@ -1121,14 +1154,32 @@ def read_events(
     if reader is None or not str(session_id or "").strip():
         return None
     try:
-        read_result = reader(session_id.strip(), home, live)
+        log = reader(session_id.strip(), home, live)
     except OSError as exc:
         logger.warning(
             "Agent transcript: {} session {} unreadable as events: {}", agent, session_id, exc
         )
         return None
-    # The newer readers answer with the log itself, whose events are the list.
-    return read_result.events if isinstance(read_result, _EventLog) else read_result
+    if log is None:
+        return None
+    return TimelineRead(
+        events=log.events,
+        model=log.model,
+        effort=log.effort,
+        permission_mode=log.permission_mode,
+    )
+
+
+def read_events(
+    agent: str,
+    session_id: str,
+    *,
+    home: Path | None = None,
+    live: bool = False,
+) -> list[dict[str, Any]] | None:
+    """The events alone — :func:`read_timeline` without the pane's picks."""
+    read_result = read_timeline(agent, session_id, home=home, live=live)
+    return None if read_result is None else read_result.events
 
 
 # --------------------------------------------------------------------------- #
@@ -1919,8 +1970,10 @@ __all__ = [
     "MAX_TEXT",
     "MAX_TURNS",
     "Step",
+    "TimelineRead",
     "Turn",
     "can_read",
     "read",
     "read_events",
+    "read_timeline",
 ]

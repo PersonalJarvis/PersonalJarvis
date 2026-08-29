@@ -656,7 +656,14 @@ async def post_message(session_id: str, body: MessageBody, request: Request) -> 
     return {"turn_id": turn_id, "session_id": session_id}
 
 
-@router.post("/sessions/{session_id}/cancel")
+@router.post(
+    "/sessions/{session_id}/cancel",
+    summary="Stop the turn this chat session is running",
+    # Cancelling throws away work in flight: the runner is interrupted mid-turn
+    # and whatever it had not yet written is lost. The CLI safety gate and the
+    # Command Registry must treat it as destructive and ask before firing.
+    openapi_extra={"x-jarvis-dangerous": True},
+)
 async def cancel_turn(session_id: str, request: Request) -> dict[str, Any]:
     svc = _service(request)
     if svc.store.get_session(session_id) is None:

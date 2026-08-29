@@ -139,7 +139,9 @@ async def test_terminals_stay_in_reading_order(tmp_path) -> None:
     await registry.add_terminal(anchor=first, direction="down")
 
     placed = grid(registry)
-    assert [(c, s) for _, c, s in placed] == [(0, 0), (0, 1), (1, 0), (1, 1)]
+    # Across the top band, then across the bottom one — a 2×2 is read the way
+    # a page is, not down one column and back up the next.
+    assert [(c, s) for _, c, s in placed] == [(0, 0), (1, 0), (0, 1), (1, 1)]
     assert [t.index for t in registry.session.terminals] == [0, 1, 2, 3]
 
 
