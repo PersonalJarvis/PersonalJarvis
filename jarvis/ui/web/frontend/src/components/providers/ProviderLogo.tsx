@@ -67,7 +67,7 @@ function assetUrl(file: string): string | undefined {
 export function providerFamily(providerId: string): string | null {
   const id = providerId.toLowerCase();
   if (id.includes("vertex")) return "google-cloud";
-  if (id.includes("antigravity")) return "antigravity";
+  if (id.includes("antigravity") || id === "agy-cli") return "antigravity";
   if (id.includes("gemini")) return "gemini";
   if (id.includes("codex") || id.startsWith("openai")) return "openai";
   if (id.includes("claude")) return "claude";
