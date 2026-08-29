@@ -9,97 +9,226 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [2.0.0] — 2026-08-29
+
+The release that stops being one voice channel with a settings screen behind it.
+Nine coding agents now answer inside Personal Jarvis as chats rather than as
+terminals you watch, the local-model section sets a whole machine up in one
+click and proves that it worked, the interface drops its brand hue for an
+ink-on-paper theme that reads the same in both modes, and the license moves to
+Apache 2.0 — the change that makes this 2.0 rather than 1.7.
+
 ### Added
 
+- **Nine coding agents in the Agentic IDE, not two.** Claude Code, Codex,
+  Cursor CLI, OpenCode, Kimi Code, GLM Coding Plan, Grok Build, Antigravity and
+  DeepSeek Harness are all registered entries, alongside a plain terminal that
+  runs this machine's own shell and any CLI you register yourself. Each one
+  brings its own detection, its own install command, its own trust seeding and
+  its own conversation resume, so picking one in "Open beside" is the whole
+  setup. Entries that keep a separate login per seat (Claude Code, Codex,
+  Grok Build) say so; entries whose credential layout has not been verified
+  against a live install honestly offer a single login rather than pretending
+  to switch.
 - **Cursor CLI in the Agentic IDE.** Cursor's official terminal agent
   (`agent` / `cursor-agent`) is a pick in Open beside, the chat's Coding
   CLIs list, and the install button. Windows runs
   `irm https://cursor.com/install?win32=true`; macOS, Linux and WSL run
   `curl https://cursor.com/install`. Sign-in is `agent login` (or
   `CURSOR_API_KEY`) inside the pane.
-- **Agentic IDE chat: every connected coding CLI is a seat.** The chat's
-  provider picker lists the Agentic IDE's own CLI registry under "Coding
-  CLIs" — OpenCode, Kimi Code, GLM Coding Plan and DeepSeek Harness join
-  Claude Code, Codex, Grok Build and Antigravity — instead of the sub-agent
-  missions' provider map, and each one answers as a chat: the reply, the
-  reasoning where the CLI shares it, and every tool call with its result as
-  rows in the conversation, never as a terminal. OpenCode's model list comes
-  live from `opencode models`; a CLI that keeps its own login reads as
-  available once it is installed; a CLI the registry drops leaves the picker.
+- **The Agentic IDE is a chat.** Opening the section no longer lands you in a
+  grid of terminals: it lands you in a conversation. One session fills the
+  stage, every other session sits in the sidebar under its real CLI logo, and
+  each row is titled by what the work is about rather than by a state label or
+  a command line. A row says whether that agent is still working or finished,
+  the badge holds through a pause and follows the socket, the header carries
+  the same recap card the grid used to draw, and the terminal itself is one
+  click away and one click back. Right-click a session to archive it or close
+  its terminal.
+- **Every connected coding CLI is a chat seat.** The chat's provider picker
+  lists the Agentic IDE's own CLI registry under "Coding CLIs" — OpenCode,
+  Kimi Code, GLM Coding Plan and DeepSeek Harness join Claude Code, Codex,
+  Cursor CLI, Grok Build and Antigravity — instead of the sub-agent missions'
+  provider map, and each one answers as a chat: the reply, the reasoning where
+  the CLI shares it, and every tool call with its result as rows in the
+  conversation, never as a terminal. OpenCode's model list comes live from
+  `opencode models`; a CLI that keeps its own login reads as available once it
+  is installed; a CLI the registry drops leaves the picker.
+- **A typed conversation that behaves like a real chat.** A sent message is on
+  screen at once, the composer grows with the text, the stage follows an answer
+  that outgrows the window, the model's thinking reads as a scratchpad where it
+  happened instead of a hidden block, a code change reads as a diff, and a
+  finished run of steps folds itself away. Both chats take files again —
+  dropped, pasted or picked — and say what is in them.
+- **The composer knows what you can name.** Typing "/", "@" or "$" lists the
+  skills, commands, plugins, agents and files that particular seat actually
+  has, read per runner rather than typed from memory.
 - **Local models: one click sets everything up.** "Set up everything" on the
   overview starts the local server when it is stopped (and names the install
-  on the button when it is not installed), then fills every role — chat,
-  voice, tools & screen, deep & coding, embeddings — with the best download
-  already on the server, fetches only what is missing, writes the suggested
-  settings and reads back what it did, role by role. A slot served elsewhere
-  is left alone and named; a refused slot does not stop the others. When
-  another brain answers, the one decision left — making the local server
-  the active brain — is offered right under the summary.
-- **Local models: the installed models are on the overview.** Every download
-  as one line — name, size, the capabilities a role cares about, which roles
-  use it, which role it is the pick for, whether it sits in memory — with
-  "Manage" opening the full ledger. Nothing hides behind the Advanced switch
-  any more.
+  on the button when it is not installed), then fills every role — chat, voice,
+  tools & screen, deep & coding — with the best download already on the server,
+  fetches only what is missing, writes the suggested settings and reads back
+  what it did, role by role. A slot served elsewhere is left alone and named; a
+  refused slot does not stop the others. When another brain answers, the one
+  decision left — making the local server the active brain — is offered right
+  under the summary.
+- **Local models: the installed models are on the overview.** Every download as
+  one line — name, size, the capabilities a role cares about, which roles use
+  it, which role it is the pick for, whether it sits in memory — with "Manage"
+  opening the full ledger. Each card also says, in a sentence, whether its model
+  can do the job it is being considered for. Nothing hides behind the Advanced
+  switch any more.
 - **Local models: the set-up is proven, then saved for next time.** "Set up
-  everything" ends with three real round trips — the server answers, the
-  chat pick answers, the embedding pick embeds — shown one line each with
-  how long they took (`POST …/local-models/verify`, also the sidebar badge's
-  new source), and then switches "Start with Jarvis" on. The Server tab
-  carries both: the switch, with the backend's own sentence on what the next
-  start would do, and "Run a check". From a terminal:
+  everything" ends with real round trips — the server answers, the chat pick
+  answers, the voice round trip completes — shown one line each with how long
+  they took (`POST …/local-models/verify`, also the sidebar badge's new
+  source), and then switches "Start with Jarvis" on. The Server tab carries
+  both: the switch, with the backend's own sentence on what the next start
+  would do, and "Run a check". From a terminal:
   `jarvis local-models server verify` and `… server autostart on|off`.
-- **Local models: the server starts with Jarvis.** A few seconds after the
-  web server is ready, an installed-but-stopped local server is started and
-  the chat pick is loaded into memory, so the first answer does not pay the
-  load time — only while local models are actually in use (the active brain,
-  or a configured role), and only while `[brain.providers.ollama].autostart`
-  (on by default) says so. Switching the brain to the local server readies
-  it the same way at once, from every switch path (REST, voice, CLI, brain
-  tool). Nothing is ever installed without the click that names the install.
+- **Local models: the server starts with Jarvis.** A few seconds after the web
+  server is ready, an installed-but-stopped local server is started and the
+  chat pick is loaded into memory, so the first answer does not pay the load
+  time — only while local models are actually in use (the active brain, or a
+  configured role), and only while `[brain.providers.ollama].autostart` (on by
+  default) says so. Switching the brain to the local server readies it the same
+  way at once, from every switch path (REST, voice, CLI, brain tool). Nothing
+  is ever installed without the click that names the install.
+- **Artifacts draw what a run made.** An output page renders instead of listing
+  filenames: an HTML run executes in its own sandbox, `html` and `svg` fences
+  render in place, and a script becomes a card with its source folded
+  underneath. A fence with no language tag is treated as a block, not as inline
+  code.
+- **The Profile section is one screen.** Rebuilt to fit a single viewport, with
+  `USER.md` rendered in place of the old sigil rail — and a writer that
+  actually keeps that file current instead of leaving it to go stale.
+- **Prompt Mode turns a spoken sentence into a written request.** Dictation can
+  read the whole transcript through first, name the language, draft, and read
+  itself back before it writes — producing the professional request a coding
+  agent needs rather than a raw transcript, while keeping your familiar form of
+  address. The bar shows what it produced, it knows when *not* to write, and
+  the sparkle pauses the mode for the moment instead of switching the setting
+  off.
+- **The voice bar draws the assistant's own voice.** The waveform is measured
+  on the native path and blooms from dots into capsules, scrolling rather than
+  mirroring, so what you see is the reply that is actually being spoken.
+- **Hotkey backends answer whether a chord is physically down.** A held
+  dictation now follows the real key rather than an assumption about it.
+- **The folder picker opens a typed path.** It also makes a new folder and
+  shows hidden ones, so starting a workspace somewhere unusual is not a detour
+  through the file manager.
+- **The sidebar folds.** The Chat row folds its recent chats out beneath it,
+  the Agentic IDE's workspaces get a panel of their own, chat mode shows only
+  the chats with every section one button away, and the column starts at a
+  width the panes were designed for.
+- **An in-app update for a native installer build.** The one "Update Now"
+  button now covers both supported installs: a git checkout from the one-line
+  installer updates the way it always did, and a build that came from
+  `Setup.exe`, a `.dmg` or an `.AppImage` downloads the next installer asset
+  from the GitHub Release, proves it against that release's
+  `installers-SHA256SUMS.txt`, and hands it to the platform's own upgrade
+  mechanism. Progress is reported live while it runs instead of a spinner that
+  says nothing. Anything else — a maintainer checkout, a fork, a plain
+  `pip install` — is still reported as unmanaged and the button never appears.
 
 ### Changed
 
 - **License: Apache 2.0.** `LICENSE` is the Apache License 2.0 and `NOTICE`
   sits beside it — the same freedoms MIT gave, plus an explicit patent grant
   from every contributor and a written trademark carve-out. It takes effect
-  with the next release, **2.0.0**; a license change is a breaking change, so
-  there is no further 1.x. Every release up to and including 1.6.0 stays MIT
-  permanently — that cannot be revoked, and a copy taken under MIT keeps
-  those rights. `docs/licensing.md` says why, what it changes for users,
-  forks, and contributors, and what nobody has to go back and correct.
-- **README: the hero screenshot is the current home view.** The old
-  wallpaper-and-mascot capture is replaced with a live voice conversation
-  in the desktop app.
+  with this release, **2.0.0**; a license change is a breaking change, so there
+  is no further 1.x. Every release up to and including 1.6.0 stays MIT
+  permanently — that cannot be revoked, and a copy taken under MIT keeps those
+  rights, including the right to fork it. `docs/licensing.md` says why, what it
+  changes for users, forks, and contributors, and what nobody has to go back
+  and correct.
+- **Ink and paper: the brand hue is retired from the interface.** Primary is
+  now ink on paper in light mode and paper on ink in dark mode, the dark
+  surfaces got a real ramp so the navigation column stops being the same black
+  as everything else, full white is reserved for actions, and state stopped
+  being a colour — warning and success map onto the ink token instead of a
+  hue. The voice orb's material, the run-graph categories, code diffs, every
+  mascot and every mark were re-rendered in black and white. The design
+  skeleton follows suit: no shadows, display type at weight 400, one radius
+  scale. Provider logos, the ANSI slots in a terminal and the destructive
+  colour keep their own colour on purpose.
 - **Local models: recommendations are installed-first.** A role's pick is the
   best qualifying download already on the server — the largest one that fits
-  this machine's graphics memory, preferring the role's capability (tools for
-  a chat, thinking for deep work; voice stays in the fast class under 6 GB) —
-  and the curated catalogue only stands in when nothing installed qualifies.
-  Each row says why in one sentence. Eleven models on disk no longer end in
+  this machine's graphics memory, preferring the role's capability (tools for a
+  chat, thinking for deep work; voice stays in the fast class under 6 GB) — and
+  the curated catalogue only stands in when nothing installed qualifies. Each
+  row says why in one sentence. Eleven models on disk no longer end in
   "download qwen3.8:27b".
+- **The front page's chat runs on API keys, not vendor CLIs.** The typed chat
+  on the home surface answers through Jarvis' own harness on the providers you
+  have keys for; coding-CLI seats live in the Agentic IDE, where a folder and a
+  terminal exist for them to work in.
+- **Publishing points at what is still alive.** The hosted storefront that
+  served personaljarvis.ai was shut down, so both publish endpoints default to
+  empty, which hides the Publish button rather than firing at a host that
+  answers nothing. The external buttons now open the community registry on
+  GitHub and this repo's docs. Browsing the marketplace is untouched — the
+  registry's index never depended on that site.
+- **The Google Workspace CLI entry is `gws`.** It described GAM, an
+  administrator tool for a whole Workspace domain, and probed a binary nothing
+  here drives, so an installed Google Workspace CLI reported "not installed"
+  forever. `jarvisctl` was in the same state and now installs from PyPI.
+- **The Agentic IDE's Install button installs.** An entry with no install
+  method used to invent a pseudo-method whose "command" was a documentation
+  URL, so Install opened a GitHub page and installed nothing.
+- **README: every screenshot is a fresh capture of the 2.0 interface.** The
+  home view, Local models, the automations catalogue and the wallpaper gallery
+  were re-shot on the ink-and-paper theme, and the Skills list is pictured for
+  the first time. The recorded demos are unchanged.
 
 ### Fixed
 
+- **The app stopped freezing in every section after a cold boot.** The event
+  loop stalled fifteen seconds at a time behind a lazy SDK import inside a
+  provider call and behind a worker thread being started on the loop, while
+  twenty-two CLI probes, a provider health sweep and sixteen resumed coding-CLI
+  panes fought a cold disk. Brain client construction and registry
+  instantiation now run on a worker thread, the thread pool stays resident and
+  is warmed once voice reports ready, the CLI prober works in bounded lanes
+  instead of sweeping the whole catalogue at once, and a cold-starting pane
+  holds its slot until it has painted.
+- **Sections that read a file or a database no longer block every other
+  request.** An audit found 234 route handlers declared `async def` without a
+  single `await`, so their reads ran on the one thread serving the whole app.
+  The measured offenders — the chat list the sidebar polls every five seconds,
+  the agent-status route with its four PATH scans and credential-store reads,
+  the wiki's subscription-login probe — were moved off the loop, and sections
+  repaint from cache while a fresh read is in flight.
 - **Spend: the coding-CLI bill no longer shrinks, and it counts every
-  subagent.** Three things made the Spend section show less than was spent
-  — $8 000 for a month that had read $12 300 the day before. The index of
-  the coding CLIs' transcripts deleted a session's turns when the CLI
-  deleted its log (Claude Code does after `cleanupPeriodDays`), so the
-  lifetime total sank a little every night; a change to a reader's rule
-  dropped the whole index and rebuilt it from zero, and for the hours that
-  took the page presented the half-read index as the bill — two views a
-  minute apart disagreed by thousands; and the transcripts of every
-  subagent (`<session>/subagents/**`, the Agent tool and workflows) were
-  never read at all — one fifth of every Claude Code call on the reference
-  machine. The index is now a ledger: a vanished transcript keeps its rows,
-  a rule change re-reads the transcripts still on disk and corrects rows in
-  place while the table stays complete, subagent transcripts are indexed
-  under the conversation that spawned them, and while the index is still
-  catching up the section says so — "{n} of {m} transcripts read, {x} MB to
-  go" — and reads again every few seconds instead of once a minute.
-  (BUG-198)
+  subagent.** Three things made the Spend section show less than was spent —
+  $8 000 for a month that had read $12 300 the day before. The index of the
+  coding CLIs' transcripts deleted a session's turns when the CLI deleted its
+  log (Claude Code does after `cleanupPeriodDays`), so the lifetime total sank
+  a little every night; a change to a reader's rule dropped the whole index and
+  rebuilt it from zero, and for the hours that took the page presented the
+  half-read index as the bill — two views a minute apart disagreed by
+  thousands; and the transcripts of every subagent (`<session>/subagents/**`,
+  the Agent tool and workflows) were never read at all — one fifth of every
+  Claude Code call on the reference machine. The index is now a ledger: a
+  vanished transcript keeps its rows, a rule change re-reads the transcripts
+  still on disk and corrects rows in place while the table stays complete,
+  subagent transcripts are indexed under the conversation that spawned them,
+  and while the index is still catching up the section says so — "{n} of {m}
+  transcripts read, {x} MB to go" — and reads again every few seconds instead
+  of once a minute. (BUG-198)
+- **Spend says "loading" instead of showing zeros, and stops freezing the
+  app.** The section's own reads left the event loop, its numbers are already
+  in hand by the time you open it, and an empty state is now the skeleton it
+  always should have been rather than a confident row of noughts.
+- **"I can't reach my provider" no longer means "the tool list was too
+  big".** A typed "Hallo" on a local 32k model failed because 221 registered
+  tools sent nearly 68 000 tokens of JSON schema with one word. The tool
+  surface is now sized against the model's own context window, and a refusal
+  that names a size is reported as a size problem instead of a network one.
 - **Dictation: a second dictation into the same field starts with a space.**
-  Inside Jarvis's own window a finished dictation is written at the caret
+  Inside Jarvis's own window a finished dictation was written at the caret
   exactly as transcribed, so two dictations a few seconds apart read
   "…Agentic IDEDas war…". The seam now gets the space a person would have
   typed — after a word, not after a space, an opening bracket or in an empty
@@ -111,13 +240,65 @@ versioning per [SemVer](https://semver.org/).
   the provider's filtered copy had lost. Each copy is now judged on its own,
   and a recited run is dropped wherever it stands; three distinct terms in one
   breath stay.
+- **Dictation no longer ends in a recited word list.** Whisper answered a
+  silent stretch by reading the STT dictionary's own words back
+  ("…, Claude, Agentic IDE, Claude, Agentic"); such a run is now dropped from
+  the end of a transcript before the dictionary applies. The dictionary's
+  near-miss repair also became strict: a word is rewritten only when it
+  *sounds* like the registered one ("Klaude" → "Claude"), never because a
+  common word is one letter away ("grob" stays "grob"). (BUG-185)
+- **Every stop gesture ends a running dictation.** A hold recording follows the
+  physical key rather than an assumed key-up, so a hold that never ended is no
+  longer possible. (BUG-191)
+- **The Jarvis bar stopped freezing while voice kept working.** The bar's UI
+  thread could park with every timer armed and never wake, so the voice channel
+  answered but the bar stayed collapsed. It is now woken explicitly.
+  (BUG-202)
+- **Local speech-to-text stopped vanishing into a cloud provider.** A local
+  recogniser stays local; the transcription is no longer pinned to the CPU on
+  every machine, and the local voice server no longer cancels the model load it
+  is waiting for.
 - **Local models: a changed role showed its old pick for up to 15 s.** The
   overview's in-memory memo was not dropped on a write, and the section never
   asked for a live rebuild after its own change. Every write now forgets the
   memo, and the section re-reads the overview live right after.
+- **Local models: an offline sweep no longer poisons the cache.** A sweep that
+  found nothing used to overwrite the good snapshot; every job keeps its picker
+  instead, a provider switch is what starts *and* stops the local server, a
+  starting server says "Starting" rather than reading as stopped, the switch
+  applies what it persists, and an AMD or Intel card is no longer invisible to
+  the fit verdicts.
+- **The model picker stops offering Jarvis's own derived models.** Tags this
+  app created for its own roles were being offered back as if they were
+  downloads.
+- **A frozen desktop window is recovered rather than raised.** Bringing a dead
+  window forward does nothing; the app now detects that and starts a live one.
+- **Gemini: one MCP extension key no longer kills the turn.** The tool schema
+  is allow-listed before it goes out.
+- **Music: a blind media key is an attempt, not a result.** The voice no longer
+  announces music that never started.
+- **Artifacts about your own mail or calendar are built from facts Jarvis
+  reads,** never from what a worker imagined they might be.
+- **The Wiki's voice-fact bridge actually leaves the bus when it stops.**
+- **A failed config write no longer ends first run at step 04.**
+- **nanoid 3.3.18 closes the two open npm advisories.**
 
 ### Removed
 
+- **UltraWiki, the semantic memory mode.** The store, its pipeline and
+  connectors, the three route modules, the CLI group, the router tool, the
+  whole Wiki-section Ultra body and its settings surface go, along with every
+  test and fixture — about 90 800 lines. The Wiki section keeps the
+  Obsidian-compatible vault it always had, and the either-or mode switch is
+  gone, so the vault answers unconditionally again. Three format services
+  (`extract.py`, `document_text.py`, `media.py`) had no UltraWiki dependency
+  and moved to `jarvis/documents/` unchanged, because the Agentic IDE's file
+  preview needs them. Restoring the feature is a revert of one commit.
+- **The Ollama "embedding" role.** It wrote to UltraWiki's setting and nowhere
+  else, so with UltraWiki gone there was no slot to fill: the role, its two
+  curated catalogue entries and the verify step that could no longer run are
+  removed. A model on disk still shows "embedding" as a capability in the
+  ledger — only the role is retired. (BUG-207)
 - **The Local models setup helper.** The "Setup helper" tab — a chat that
   proposed a setup, ran it through its own `lm_*` tools and tested the
   result — is gone, along with its "Help me set up" and "Something is not
@@ -126,16 +307,12 @@ versioning per [SemVer](https://semver.org/).
   `jarvis local-models assistant ...` commands. The section keeps everything
   else: the overview, the catalogue, the server tab, the Tune sheet, and the
   quiet six-hourly self-check behind the sidebar badge.
+- **The Agentic IDE's prompt bar.** The composer under the grid is gone: a pane
+  is typed into or spoken to, never written to from underneath.
+- **The links to the retired storefront.** The buttons that pointed at
+  personaljarvis.ai were removed rather than left to open a dead host.
 
-### Fixed
-
-- **Dictation no longer ends in a recited word list.** Whisper answered a
-  silent stretch by reading the STT dictionary's own words back
-  ("…, Claude, Agentic IDE, Claude, Agentic"); such a run is now dropped from
-  the end of a transcript before the dictionary applies. The dictionary's
-  near-miss repair also became strict: a word is rewritten only when it
-  SOUNDS like the registered one ("Klaude" → "Claude"), never because a
-  common word is one letter away ("grob" stays "grob"). (BUG-185)
+---
 
 ---
 

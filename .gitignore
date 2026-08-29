@@ -459,3 +459,8 @@ scripts/ci/privacy_gate/references/secret-allowlist.tsv
 
 # Temporary marketing-video workspace (Remotion project + rendered frames)
 .tmp-music-video/
+
+# Hypothesis's example database. Every file in it stamps the absolute path of
+# the machine that ran the tests into its header, so it is a personal-data leak
+# as much as it is a cache. Regenerated on demand; never committed.
+.hypothesis/
