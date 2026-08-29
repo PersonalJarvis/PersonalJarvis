@@ -20,6 +20,14 @@ with an empty summary instead of crashing.
 """
 from __future__ import annotations
 
+from jarvis.costs.ledger import usage_context
+
+
+def _tagged_complete(brain, request):  # type: ignore[no-untyped-def]
+    """The digest's model calls are ledgered as awareness work."""
+    with usage_context("awareness"):
+        return brain.complete(request)
+
 import asyncio
 import logging
 import time
@@ -115,7 +123,7 @@ class Verdichter:
         start_ns = time.time_ns()
         try:
             agg = await asyncio.wait_for(
-                aggregate(self._brain.complete(request)),
+                aggregate(_tagged_complete(self._brain, request)),
                 timeout=self._config.timeout_s,
             )
         except TimeoutError:

@@ -523,7 +523,11 @@ async def _run_gated_tool(
 
 async def _stream(brain: Any, req: BrainRequest, cancel: asyncio.Event):
     """Iterate the brain stream, ending early when ``cancel`` is set."""
-    agen = brain.complete(req)
+    from jarvis.costs.ledger import usage_context
+
+    # The chat store records this turn's usage itself (``turn_finished``).
+    with usage_context("agent-chat"):
+        agen = brain.complete(req)
     try:
         while True:
             if cancel.is_set():

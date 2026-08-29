@@ -11,12 +11,13 @@ import type { CostRole, CostSurface, PriceSource } from "@/hooks/useCosts";
 /** One hue per role — the chart stack, the legend and the tables share it. */
 export const ROLE_COLORS: Record<CostRole, string> = {
   realtime: "hsl(199 90% 62%)", // sky — the voice you talk to
-  tool: "hsl(50 100% 52%)", // signal yellow — the app's primary
+  tool: "hsl(var(--primary))", // signal yellow — the app's primary
   pipeline: "hsl(268 72% 68%)", // violet — the classic brain path
   agent: "hsl(152 58% 52%)", // green — coding agents
   worker: "hsl(18 88% 62%)", // orange — autonomous missions
   stt: "hsl(340 75% 65%)", // rose — the ear
   tts: "hsl(30 90% 60%)", // amber — the voice
+  background: "hsl(210 12% 60%)", // slate — work nobody watched
 };
 
 export const ROLE_ORDER: CostRole[] = [
@@ -27,6 +28,7 @@ export const ROLE_ORDER: CostRole[] = [
   "worker",
   "stt",
   "tts",
+  "background",
 ];
 
 /** Fallback for a bucket key that is not a role (provider, model, day). */
@@ -232,6 +234,7 @@ export const ALL_SURFACES: CostSurface[] = [
   "mission",
   "agentic-ide",
   "jarvis-voice",
+  "background",
 ];
 
 /**
@@ -259,8 +262,8 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
   // named after it (maintainer decision 2026-08-24).
   {
     id: "jarvis",
-    surfaces: ["voice", "agent-chat", "mission"],
-    roles: ["realtime", "tool", "pipeline", "agent", "worker"],
+    surfaces: ["voice", "agent-chat", "mission", "background"],
+    roles: ["realtime", "tool", "pipeline", "agent", "worker", "background"],
   },
   // The assistant's voice — the speech layer built around the brain: the
   // ears (speech to text) and the mouth (text to speech). Bills by audio

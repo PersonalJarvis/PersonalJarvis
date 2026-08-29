@@ -163,6 +163,7 @@ class CostSummary(BaseModel):
     series: list[Bucket]
     top_refs: list[RefBucket]
     models: list[ModelRow]
+    refs_total: int = 0
     facets: Facets
     currency: Currency
     sources_present: list[str]
@@ -527,6 +528,7 @@ def get_summary(
     role: Annotated[list[str] | None, Query()] = None,
     surface: Annotated[list[str] | None, Query()] = None,
     ref: Annotated[list[str] | None, Query()] = None,
+    billing: Annotated[str, Query(pattern="^(all|billed|subscription)$")] = "all",
     search: str = "",
     top: Annotated[int, Query(ge=1, le=100)] = 12,
 ) -> CostSummary:
@@ -546,6 +548,7 @@ def get_summary(
         surfaces=_split(surface),
         refs=_split(ref),
         search=search,
+        billing=billing,
     )
     report = build_report(selected, since_ms=start, until_ms=end, top_n=top)
     payload = report.to_dict()
@@ -574,6 +577,7 @@ def get_daily(
     role: Annotated[list[str] | None, Query()] = None,
     surface: Annotated[list[str] | None, Query()] = None,
     ref: Annotated[list[str] | None, Query()] = None,
+    billing: Annotated[str, Query(pattern="^(all|billed|subscription)$")] = "all",
     search: str = "",
 ) -> DailyLedger:
     """The daily ledger: one entry per day, newest first.
@@ -596,6 +600,7 @@ def get_daily(
         surfaces=_split(surface),
         refs=_split(ref),
         search=search,
+        billing=billing,
     )
     rows: list[DayRow] = []
     for key, day_entries in group_by_day(entries):
@@ -639,6 +644,7 @@ def get_entries(
     role: Annotated[list[str] | None, Query()] = None,
     surface: Annotated[list[str] | None, Query()] = None,
     ref: Annotated[list[str] | None, Query()] = None,
+    billing: Annotated[str, Query(pattern="^(all|billed|subscription)$")] = "all",
     search: str = "",
     sort: Annotated[str, Query(pattern="^(recent|cost|tokens)$")] = "recent",
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
@@ -655,6 +661,7 @@ def get_entries(
         surfaces=_split(surface),
         refs=_split(ref),
         search=search,
+        billing=billing,
     )
     if sort == "cost":
         entries = sorted(entries, key=lambda e: -e.cost_usd)

@@ -51,7 +51,12 @@ class BrainProviderRegistry:
                 f"Failed: {list(self._failed.keys())}"
             )
         cls = self._classes[name]
-        return cls(**kwargs)
+        from jarvis.brain.usage_meter import meter_brain
+
+        # Every instance leaves here metered: whatever asks it for tokens —
+        # a voice turn, the wiki curator, a dictation polish — is written to
+        # the usage ledger without the caller having to know (BUG-178).
+        return meter_brain(cls(**kwargs), name)
 
     def get_class(self, name: str) -> type:
         self._load()

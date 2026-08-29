@@ -21,7 +21,9 @@ export type CostRole =
   // The speech layer bills by audio second and by character, not by token —
   // its own two roles rather than a shape forced onto the token vocabulary.
   | "stt"
-  | "tts";
+  | "tts"
+  // A model call made by a background job (wiki, awareness, dictation …).
+  | "background";
 
 /** Which part of the app it was spent in. */
 export type CostSurface =
@@ -29,7 +31,8 @@ export type CostSurface =
   | "agent-chat"
   | "mission"
   | "agentic-ide"
-  | "jarvis-voice";
+  | "jarvis-voice"
+  | "background";
 
 /**
  * How confident the price is.
@@ -122,6 +125,8 @@ export interface CostSummary {
   series: CostBucket[];
   top_refs: CostRefBucket[];
   models: CostModelRow[];
+  /** Every conversation/mission/session in the window; `top_refs` is a slice. */
+  refs_total: number;
   facets: CostFacets;
   currency: CostCurrency;
   sources_present: string[];
@@ -214,6 +219,7 @@ export interface CostPricing {
 // Query state shared by the summary and the line items
 // ---------------------------------------------------------------------------
 
+export type CostBilling = "all" | "billed" | "subscription";
 
 export interface CostFilters {
   /** Rolling window in days; `0` means everything ever recorded. */
@@ -225,6 +231,8 @@ export interface CostFilters {
   /** Session / mission ids — set by clicking a row in "Where it went". */
   refs: string[];
   search: string;
+  /** "all" · "billed" (an API key paid) · "subscription" (seat quotes only). */
+  billing: CostBilling;
   /**
    * An explicit window, in epoch ms. When set it wins over `days` — the
    * daily report drills into ONE day and everything it shows (the hourly
@@ -242,6 +250,7 @@ export const EMPTY_FILTERS: CostFilters = {
   roles: [],
   surfaces: [],
   refs: [],
+  billing: "all",
   search: "",
 };
 
@@ -270,6 +279,7 @@ function toParams(f: CostFilters): URLSearchParams {
   for (const r of f.roles) params.append("role", r);
   for (const s of f.surfaces) params.append("surface", s);
   for (const r of f.refs) params.append("ref", r);
+  if (f.billing !== "all") params.set("billing", f.billing);
   if (f.search.trim()) params.set("search", f.search.trim());
   return params;
 }
