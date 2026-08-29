@@ -78,7 +78,7 @@ _WORKER_MODEL_ENV = "JARVIS__BRAIN__WORKER__MODEL"
 # Back-compat aliases for the old ENV var names — kept so any code that
 # references these constants by name still resolves without an ImportError.
 _SUB_JARVIS_PROVIDER_ENV = _WORKER_PROVIDER_ENV  # back-compat alias (pre-rename)
-_SUB_JARVIS_MODEL_ENV = _WORKER_MODEL_ENV        # back-compat alias (pre-rename)
+_SUB_JARVIS_MODEL_ENV = _WORKER_MODEL_ENV  # back-compat alias (pre-rename)
 
 # Canonical User-scope ENV var that overrides ``[brain.computer_use] provider``
 # at boot — the dedicated GLOBAL Computer-Use planner provider, decoupled
@@ -102,9 +102,7 @@ _STT_MODEL_ENV = "JARVIS__STT__MODEL"
 _STT_LANGUAGE_ENV = "JARVIS__STT__LANGUAGE"
 
 
-def set_agentic_ide_prompt_writer(
-    value: str, *, path: Path = DEFAULT_CONFIG_FILE
-) -> None:
+def set_agentic_ide_prompt_writer(value: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set ``[agentic_ide] prompt_writer`` — who writes Agentic IDE task briefs.
 
     One layer only, deliberately. The brain-provider setters above also mirror
@@ -499,9 +497,7 @@ def set_tts_volume(volume: float, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
         log.warning("Could not sync tts.volume to config-soll.json: %s", exc)  # i18n-allow
 
 
-def set_audio_device(
-    kind: str, value: str, *, path: Path = DEFAULT_CONFIG_FILE
-) -> None:
+def set_audio_device(kind: str, value: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set ``[audio] input_device`` / ``[audio] output_device``.
 
     ``kind`` is ``"input"`` or ``"output"``; ``value`` is a device display
@@ -655,7 +651,6 @@ def set_tts_cartesia_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> N
 def set_codex_binary_path(binary_path: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set ``[codex] binary_path`` to work around Windows PATH issues."""
     _patch_table(path, "codex", "binary_path", binary_path)
-
 
 
 # Voice-keybind action vocabulary. Shared with the keybinds API
@@ -969,9 +964,7 @@ def set_screen_context_settings(
     """Persist a validated Screen Context patch in one atomic replacement."""
     unknown = set(values).difference(SCREEN_CONTEXT_SETTING_KEYS)
     if unknown:
-        raise ValueError(
-            f"unknown screen_context setting(s): {sorted(unknown)!r}"
-        )
+        raise ValueError(f"unknown screen_context setting(s): {sorted(unknown)!r}")
     if not values:
         return
     path = _ensure_writable_config_path(path)
@@ -1253,9 +1246,7 @@ def set_realtime_voice_selection(
         _atomic_write(path, out)
 
 
-def migrate_removed_codex_realtime_provider(
-    *, path: Path = DEFAULT_CONFIG_FILE
-) -> bool:
+def migrate_removed_codex_realtime_provider(*, path: Path = DEFAULT_CONFIG_FILE) -> bool:
     """Route a removed Codex Realtime selection onto the stable composition.
 
     The ``codex-subscription-realtime`` adapter was removed 2026-08-10 (the
@@ -1287,11 +1278,7 @@ def migrate_removed_codex_realtime_provider(
         if realtime is None:
             return False
         slots = ("provider", "fallback_provider", "fallback_provider_2")
-        pinned = [
-            slot
-            for slot in slots
-            if str(realtime.get(slot) or "").strip() == removed
-        ]
+        pinned = [slot for slot in slots if str(realtime.get(slot) or "").strip() == removed]
         if not pinned:
             return False
 
@@ -1351,9 +1338,7 @@ def set_silence_window_ms(ms: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "speech", "vad_silence_ms", clamped)
 
 
-def set_session_idle_timeout_s(
-    seconds: float, *, path: Path = DEFAULT_CONFIG_FILE
-) -> None:
+def set_session_idle_timeout_s(seconds: float, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[trigger] session_idle_timeout_s`` — the conversation-mode idle
     auto-hangup window.
 
@@ -1401,9 +1386,7 @@ def set_bar_size_scale(scale: float, *, path: Path = DEFAULT_CONFIG_FILE) -> Non
     _patch_table(path, "ui", "bar_size_scale", max(0.5, min(2.0, f)))
 
 
-def set_bar_follow_cursor_monitor(
-    enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE
-) -> None:
+def set_bar_follow_cursor_monitor(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[ui] bar_follow_cursor_monitor`` (the 'follow the mouse to the
     active monitor' toggle).
 
@@ -2325,9 +2308,7 @@ def clear_ollama_model_options(
     path = _ensure_writable_config_path(path)
     with _WRITE_LOCK:
         doc, had_bom = _read_doc(path)
-        models = (
-            (doc.get("brain") or {}).get("providers", {}).get(provider, {}).get("models")
-        )
+        models = (doc.get("brain") or {}).get("providers", {}).get(provider, {}).get("models")
         if models is None or tag not in models:
             return False
         del models[tag]
@@ -2424,9 +2405,7 @@ def set_local_realtime_launch_command(
         _atomic_write(path, out)
 
 
-def _command_references_root(
-    command: str, root: str, *, windows: bool | None = None
-) -> bool:
+def _command_references_root(command: str, root: str, *, windows: bool | None = None) -> bool:
     """Whether a launch command points into the given directory.
 
     Separator-normalized on every platform; case-INSENSITIVE only on
@@ -2816,7 +2795,7 @@ def _strip_persona_name(path: Path) -> None:
         raw = path.read_text(encoding="utf-8")
         had_bom = raw.startswith(_BOM)
         if had_bom:
-            raw = raw[len(_BOM):]
+            raw = raw[len(_BOM) :]
         doc: TOMLDocument = tomlkit.parse(raw)
         persona = doc.get("persona")
         if persona is None or "name" not in persona:
@@ -3063,7 +3042,9 @@ def _sync_computer_use_provider_drift_soll(name: str) -> None:  # i18n-allow
         _update_config_soll_computer_use_provider(name)  # i18n-allow
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
         log.warning(
-            "Could not sync computer_use provider to config-soll.json: %s", exc  # i18n-allow
+            "Could not sync computer_use provider to "  # i18n-allow: literal filename
+            "config-soll.json: %s",  # i18n-allow: literal filename
+            exc,
         )
 
     try:

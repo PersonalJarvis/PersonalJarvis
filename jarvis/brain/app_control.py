@@ -32,6 +32,7 @@ Layering note: this is a brain-layer service. It imports the pure-data provider
 catalog (``provider_spec``) and the low-layer config writer / mcp state. The UI
 layer (``provider_routes``) imports *down* into this module — never the reverse.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -60,10 +61,12 @@ def get_spec(provider_id: str) -> Any:
     """Provider spec by id, or ``None`` (thin wrapper over the lazy catalog)."""
     return _catalog().get_spec(provider_id)
 
+
 # The tiers a provider switch can target. ``brain`` and ``tts`` apply live;
 # Jarvis-Agent workers re-resolve their provider before each mission. STT is
 # wired once at bootstrap and still needs a restart.
 SWITCHABLE_TIERS: frozenset[str] = frozenset({"brain", "tts", "stt", "subagent"})
+
 
 # Local providers allowed to stay active in the airgapped privacy profile.
 # SPEC-DERIVED since 2026-07-25 (local-first mandate): every provider card
@@ -141,10 +144,9 @@ def _keyless_credential_present(provider_id: str) -> bool:
     try:
         return bool(getattr(cfg_mod, probe_name)())
     except Exception as exc:  # noqa: BLE001 — a probe must never break a card
-        log.debug(
-            "Keyless credential probe %s for %s failed: %s", probe_name, provider_id, exc
-        )
+        log.debug("Keyless credential probe %s for %s failed: %s", probe_name, provider_id, exc)
         return False
+
 
 # Local providers that need no credential at all — the same spec-derived set
 # as LOCAL_PROVIDERS (auth_mode "none" IS the definition of "no credential").
@@ -215,7 +217,8 @@ def masked_secret_preview(provider_id: str) -> dict[str, Any]:
     # Privacy: log only that a preview was produced, never the value or the mask.
     log.info(
         "masked_secret_preview: provider=%r configured (preview=%s)",
-        provider_id, masked["preview"] is not None,
+        provider_id,
+        masked["preview"] is not None,
     )
     return {
         "provider": provider_id,
@@ -490,10 +493,7 @@ async def apply_provider_switch(
         return {
             "ok": False,
             "error_kind": "unknown_tier",
-            "error": (
-                f"Unknown tier {tier!r}. Use one of: "
-                f"{', '.join(sorted(SWITCHABLE_TIERS))}."
-            ),
+            "error": (f"Unknown tier {tier!r}. Use one of: {', '.join(sorted(SWITCHABLE_TIERS))}."),
         }
 
     # Airgapped privacy profile admits only local providers. Enforced HERE so
@@ -576,7 +576,11 @@ async def apply_provider_switch(
 
 
 async def _switch_brain(
-    provider: str, *, cfg: Any, persist: bool, old: str | None,
+    provider: str,
+    *,
+    cfg: Any,
+    persist: bool,
+    old: str | None,
     manager: Any | None = None,
 ) -> dict[str, Any]:
     if manager is None:
@@ -742,17 +746,13 @@ async def _switch_subagent(
 
             codex_cfg = getattr(cfg, "codex", None)
             binary_path = getattr(codex_cfg, "binary_path", "") or None
-            codex_status = await asyncio.to_thread(
-                CodexAuthService(binary_path).status
-            )
+            codex_status = await asyncio.to_thread(CodexAuthService(binary_path).status)
             codex_connected = codex_status.connected
         except Exception:  # noqa: BLE001 — codex CLI absent is just "not connected"
             codex_status = None
             codex_connected = False
         has_key = bool(
-            cfg_mod.get_secret(
-                "codex_openai_api_key", env_fallback="CODEX_OPENAI_API_KEY"
-            )
+            cfg_mod.get_secret("codex_openai_api_key", env_fallback="CODEX_OPENAI_API_KEY")
         )
         if codex_status is None or not codex_status.installed:
             return {
@@ -787,9 +787,7 @@ async def _switch_subagent(
                 antigravity_provider_ready,
             )
 
-            antigravity_status = await asyncio.to_thread(
-                GoogleCliAuthService().status
-            )
+            antigravity_status = await asyncio.to_thread(GoogleCliAuthService().status)
         except Exception as exc:  # noqa: BLE001 — absent CLI is a normal capability miss
             log.debug("Antigravity CLI readiness probe failed: %s", exc)
         has_key = bool(cfg_mod.get_jarvis_agent_secret("gemini"))
@@ -831,9 +829,7 @@ async def _switch_subagent(
                 grok_build_provider_ready,
             )
 
-            grok_build_status = await asyncio.to_thread(
-                GrokBuildAuthService().status
-            )
+            grok_build_status = await asyncio.to_thread(GrokBuildAuthService().status)
         except Exception as exc:  # noqa: BLE001 — absent CLI is a normal capability miss
             log.debug("Grok Build CLI readiness probe failed: %s", exc)
         if grok_build_status is None or not grok_build_status.installed:
@@ -868,21 +864,20 @@ async def _switch_subagent(
         # Codex and Antigravity route through their own workers, so omitting them
         # produced the false "codex is not a valid provider, only claude/gemini/
         # openai/openrouter" reply (forensic 2026-06-27).
-        known = ", ".join(sorted(
-            set(JARVIS_TO_WORKER_SLUG)
-            | {
-                CODEX_SUBAGENT_CANONICAL,
-                ANTIGRAVITY_SUBAGENT_CANONICAL,
-                GROK_BUILD_SUBAGENT_CANONICAL,
-            }
-        ))
+        known = ", ".join(
+            sorted(
+                set(JARVIS_TO_WORKER_SLUG)
+                | {
+                    CODEX_SUBAGENT_CANONICAL,
+                    ANTIGRAVITY_SUBAGENT_CANONICAL,
+                    GROK_BUILD_SUBAGENT_CANONICAL,
+                }
+            )
+        )
         return {
             "ok": False,
             "error_kind": "unknown_provider",
-            "error": (
-                f"{provider!r} is not a {brand}-capable provider. "
-                f"Available: {known}."
-            ),
+            "error": (f"{provider!r} is not a {brand}-capable provider. Available: {known}."),
         }
     has_credential = bool(cfg_mod.get_jarvis_agent_secret(canon))
     if canon == "claude-api" and not has_credential:
@@ -896,9 +891,7 @@ async def _switch_subagent(
             try:
                 from jarvis.claude_auth import usable_native_claude_subscription
 
-                native_status = await asyncio.to_thread(
-                    usable_native_claude_subscription
-                )
+                native_status = await asyncio.to_thread(usable_native_claude_subscription)
                 has_credential = native_status is not None
             except Exception:  # noqa: BLE001 — optional native CLI auth path
                 has_credential = False
@@ -941,9 +934,7 @@ def _complete_agent_switch(
     app. An explicit non-persistent switch remains an in-memory preview only.
     """
     persisted = (
-        _persist(lambda: _import_writer().set_worker_provider(provider))
-        if persist
-        else False
+        _persist(lambda: _import_writer().set_worker_provider(provider)) if persist else False
     )
     if persist and not persisted:
         return {
