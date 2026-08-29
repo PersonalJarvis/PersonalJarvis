@@ -51,6 +51,7 @@ from jarvis.audio.vad_reasons import FORCED_CUT_REASONS
 from jarvis.brain.output_filter import FALLBACK_PHRASES, ScrubResult, scrub_for_voice
 from jarvis.brain.scrub_verdict import is_harmless_scrub_residue
 from jarvis.brain.turn_planner import plan_turn
+from jarvis.core.cancellation import cancel_and_reap, raise_if_cancelling
 from jarvis.core.events import (
     CU_PROGRESS_EVENTS,
     DICTATION_REFUSAL_REASONS,
@@ -881,6 +882,24 @@ _DICTATION_WAKE_RELEASE_TIMEOUT_S = 3.0
 # this window, while a press past it can only be a fresh press or a key-up that
 # was never delivered. See ``SpeechPipeline._on_dictate_press``.
 _DICTATE_HOLD_REPEAT_GRACE_S = 2.0
+
+# Teardown of a voice session's child tasks (the microphone pump, the provider
+# wait, the hangup waiter): how long each one is re-cancelled before the
+# teardown abandons it and moves on (BUG-185). On Python 3.11 a cancel can be
+# swallowed by ``asyncio.wait_for`` (CPython gh-86296); a bare ``await task``
+# after ONE cancel then waits forever, which is exactly how the pipeline stood
+# stuck in its teardown for an entire afternoon with the microphone deaf. The
+# budget is short on purpose — the dictation handover gives a session
+# ``_DICTATION_HANDOVER_TIMEOUT_S`` to release the device — and the heartbeat
+# doubles as the timer that keeps a cancel from being lost on the Windows
+# proactor loop (BUG-081).
+_SESSION_TASK_REAP_BUDGET_S = 3.0
+_SESSION_TASK_REAP_HEARTBEAT_S = 0.5
+
+# A hangup request older than this with the session still active is not "one
+# already pending" — it is a teardown that has not completed, and the next
+# explicit stop gesture must say so instead of being ignored at debug level.
+_HANGUP_LATCH_STALE_S = 10.0
 
 # The voice hold key (push-to-talk) has the same physics and the same lost
 # key-up failure mode as the dictation hold; sharing the window keeps the two
@@ -7101,10 +7120,27 @@ class SpeechPipeline:
             and not handoff_ready
             and not candidate_active
         ):
-            log.debug("request_hangup ignored: external hangup already pending")
-            return
+            # A second stop gesture while the first is still being honoured
+            # is idempotent — unless the first one is OLD. A hangup that has
+            # been "pending" for many seconds with the session still active
+            # is a teardown that never finished (BUG-185: a swallowed cancel
+            # left the pipeline stuck in its own finally for an afternoon).
+            # That must not vanish at debug level: say it, and let the
+            # request through so the chokepoint runs again.
+            requested_at = float(getattr(self, "_hangup_requested_at", 0.0) or 0.0)
+            age = time.monotonic() - requested_at if requested_at else 0.0
+            if age < _HANGUP_LATCH_STALE_S:
+                log.debug("request_hangup ignored: external hangup already pending")
+                return
+            log.warning(
+                "request_hangup: a hangup has been pending for %.1fs and the "
+                "voice session is still active — the teardown did not finish; "
+                "delivering the stop again (BUG-185).",
+                age,
+            )
         if pending is not None:
             pending.set()
+        self._hangup_requested_at = time.monotonic()
         log.info("📵 request_hangup — closing the voice session")
 
         def _dispatch() -> None:
@@ -9511,6 +9547,10 @@ class SpeechPipeline:
                     nonlocal post_output_echo_guard_until, preroll_bytes
                     nonlocal tail_pending_bytes, thinking_barge_quiet_since
                     async for chunk in self._session_input_stream(input_chunks):
+                        # ``handle_audio_frame`` bounds its provider send with a
+                        # timeout; on 3.11 that can eat the teardown's cancel
+                        # (BUG-185). One frame later it is honoured here.
+                        raise_if_cancelling()
                         if not provider_ready.is_set():
                             if (
                                 preroll_bytes + len(chunk.pcm)
@@ -9839,16 +9879,27 @@ class SpeechPipeline:
             for task in wait_tasks:
                 if not task.done():
                     task.cancel()
+            # Re-delivered and BOUNDED, never a bare ``await task`` (BUG-185).
+            # The mic pump awaits ``wait_for`` per frame, and on Python 3.11
+            # that swallows a cancel landing in the same loop step the frame
+            # completes (CPython gh-86296) — live 2026-08-25 20:23: two
+            # cancels eaten, this finally then awaited the pump for as long
+            # as the app ran, ``_state`` never returned to IDLE, and every
+            # dictation press refused ``handover_failed`` until a restart.
+            # A pump that outlives the budget is abandoned here; the capture
+            # context below closes its source, which ends the generator.
             for task in wait_tasks:
-                try:
-                    await task
-                except (asyncio.CancelledError, Exception):  # noqa: S110 - teardown
-                    pass
+                await cancel_and_reap(
+                    task,
+                    budget_s=_SESSION_TASK_REAP_BUDGET_S,
+                    heartbeat_s=_SESSION_TASK_REAP_HEARTBEAT_S,
+                )
             if microphone_task is not None:
-                try:
-                    await microphone_task
-                except (asyncio.CancelledError, Exception):  # noqa: S110 - teardown
-                    pass
+                await cancel_and_reap(
+                    microphone_task,
+                    budget_s=_SESSION_TASK_REAP_BUDGET_S,
+                    heartbeat_s=_SESSION_TASK_REAP_HEARTBEAT_S,
+                )
             if session is not None:
                 # Defense in depth around the two bounded closes inside end()
                 # (provider socket 5 s + turn-completed 3 s): should end() ever
@@ -10418,13 +10469,25 @@ class SpeechPipeline:
                 # now would leave a dictation nobody is holding a key for,
                 # running to the duration cap — so say what happened instead.
                 # The hangup itself already went through, which is exactly why
-                # pressing again works.
-                self._refuse_dictation(
-                    "handover_failed",
-                    "The voice conversation was still shutting down when the "
-                    "dictation key was released, so nothing was recorded. The "
-                    "microphone is free now — press the key again.",
-                )
+                # pressing again works — USUALLY. The sentence checks rather
+                # than assumes: a session whose teardown is wedged still holds
+                # the device at this moment (BUG-185), and "the microphone is
+                # free now" was exactly the lie the user read ten times in a
+                # row while nothing they pressed could work.
+                if self._voice_session_holds_microphone():
+                    detail = (
+                        "The voice conversation is still shutting down, so "
+                        "nothing was recorded. Hold the key a little longer, "
+                        "or press it again once the voice bar has closed."
+                    )
+                else:
+                    detail = (
+                        "The voice conversation was still shutting down when "
+                        "the dictation key was released, so nothing was "
+                        "recorded. The microphone is free now — press the key "
+                        "again."
+                    )
+                self._refuse_dictation("handover_failed", detail)
                 return
             error = task.exception()
             if error is not None:

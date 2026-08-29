@@ -863,6 +863,22 @@ class MicrophoneCapture:
             except RuntimeError:  # The event loop closed between the guard and handoff.
                 self._drops += 1
 
+    def _wake_parked_reader(self) -> None:
+        """Wake a consumer blocked in ``stream()`` after the capture closed.
+
+        ``__aexit__`` stops the native stream, so no further frame will ever
+        arrive — and a consumer parked on ``queue.get()`` would wait for one
+        forever (BUG-185: the session's abandoned microphone pump). An empty
+        marker frame wakes it; ``stream()`` sees ``_closed`` and returns. A
+        full queue needs no marker: the reader wakes on the next queued frame.
+        """
+        try:
+            self._queue.put_nowait(
+                AudioChunk(pcm=b"", sample_rate=self._sample_rate, timestamp_ns=0)
+            )
+        except asyncio.QueueFull:
+            return
+
     def _safe_put(self, chunk: AudioChunk) -> None:
         """Runs in the event loop — safe put with drop-OLDEST on full."""
         # Heartbeat update for the stall watchdog. Even if the queue is full,
@@ -1228,6 +1244,7 @@ class MicrophoneCapture:
     async def __aexit__(self, *exc_info) -> None:
         topology.unregister_capture(self)
         self._closed = True
+        self._wake_parked_reader()
         watchdog = self._watchdog_task
         self._watchdog_task = None
         if watchdog is not None and not watchdog.done():
@@ -1266,14 +1283,22 @@ class MicrophoneCapture:
                 chunk = await self._queue.get()
             else:
                 try:
-                    chunk = await asyncio.wait_for(
-                        self._queue.get(), timeout=self._ACCESS_RECHECK_S
-                    )
+                    # ``asyncio.timeout``, not ``wait_for``: the latter can
+                    # swallow a consumer's cancellation on Python 3.11 when a
+                    # frame arrives in the same step (CPython gh-86296,
+                    # BUG-185), and this loop runs per frame.
+                    async with asyncio.timeout(self._ACCESS_RECHECK_S):
+                        chunk = await self._queue.get()
                 except TimeoutError:
                     # No audio frame is still a live interval: recheck TCC so a
                     # revoke closes a stalled/silent stream without waiting for
                     # PortAudio to produce another callback.
                     continue
+            if self._closed:
+                # Woken by ``__aexit__``: the device is gone and so is the
+                # reason for this consumer to exist. A reader parked here on an
+                # empty queue used to sit forever after close (BUG-185).
+                return
             self._require_microphone_access()
             yield chunk
 
