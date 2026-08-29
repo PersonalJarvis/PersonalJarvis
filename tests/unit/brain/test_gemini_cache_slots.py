@@ -91,3 +91,42 @@ async def test_invalidate_cache_drops_all_slots() -> None:
     # The next call must CREATE again, never serve a dead id from a slot.
     await provider._ensure_cache(_BIG, _tools("full-set"))
     assert caches.creates == 3
+
+
+class _RefusingCaches:
+    """A server that cannot create caches for this key (free tier: limit=0)."""
+
+    def __init__(self) -> None:
+        self.creates = 0
+
+    async def create(self, *, model: str, config: Any) -> Any:
+        self.creates += 1
+        raise RuntimeError(
+            "429 RESOURCE_EXHAUSTED. TotalCachedContentStorageTokensPerModelFreeTier "
+            "limit exceeded: limit=0, requested=31250"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_create_is_not_retried_on_every_call(monkeypatch) -> None:
+    """Live 2026-08-22 18:40: four identical 429s inside ONE delegated voice turn.
+
+    Each attempt cost ~0.7 s before the direct path even started. A failure is
+    remembered for ``_CACHE_CREATE_RETRY_AFTER_S`` and only then retried.
+    """
+    from jarvis.plugins.brain import gemini as gemini_module
+
+    provider = GeminiBrain(model="gemini-3.5-flash")
+    caches = _RefusingCaches()
+    provider._client = SimpleNamespace(aio=SimpleNamespace(caches=caches))
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(gemini_module.time, "monotonic", lambda: clock["now"])
+
+    assert await provider._ensure_cache(_BIG, _tools("full-set")) is None
+    assert await provider._ensure_cache(_BIG, _tools("full-set")) is None
+    assert await provider._ensure_cache(_BIG, None) is None
+    assert caches.creates == 1, "the refusal must not be re-paid on every call"
+
+    clock["now"] += gemini_module._CACHE_CREATE_RETRY_AFTER_S + 1.0
+    assert await provider._ensure_cache(_BIG, _tools("full-set")) is None
+    assert caches.creates == 2, "after the backoff the cache is tried again"
