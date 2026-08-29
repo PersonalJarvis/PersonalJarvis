@@ -164,7 +164,12 @@ class VoiceFactBridge:
         # (WikiIntegrationConfig.fallback_to_direct_ingest posture).
         self._extractor = extractor
         self._pending = _PendingTurn()
-        self._unsubs: list[Any] = []
+        # (event type, handler) pairs, because EventBus.subscribe returns None:
+        # detaching needs both halves handed back to unsubscribe(). This used to
+        # hold the return value of subscribe() and therefore a list of None,
+        # whose call raised into a bare except — stop() cleared the list and
+        # left every handler attached to the bus.
+        self._subscriptions: list[tuple[type[Any], Any]] = []
         self._inflight: set[asyncio.Task[Any]] = set()
         self._session_inflight: dict[str, set[asyncio.Task[Any]]] = {}
         # In-call extraction jobs held back until the session ends (AP-9).
@@ -192,21 +197,19 @@ class VoiceFactBridge:
         """Subscribe to the turn events of both voice engines."""
         if self._started:
             return
-        self._unsubs.append(
-            self._bus.subscribe(TranscriptFinal, self._on_transcript_final)
+        # Annotated: the five handlers have five different event parameters, and
+        # an unannotated literal makes the checker join them into a union that
+        # no longer matches subscribe()'s Callable[[Event], ...].
+        wiring: tuple[tuple[type[Any], Any], ...] = (
+            (TranscriptFinal, self._on_transcript_final),
+            (MessageSent, self._on_user_message),
+            (ResponseGenerated, self._on_response_generated),
+            (VoiceTurnCompleted, self._on_voice_turn_completed),
+            (VoiceSessionEnded, self._on_voice_session_ended),
         )
-        self._unsubs.append(
-            self._bus.subscribe(MessageSent, self._on_user_message)
-        )
-        self._unsubs.append(
-            self._bus.subscribe(ResponseGenerated, self._on_response_generated)
-        )
-        self._unsubs.append(
-            self._bus.subscribe(VoiceTurnCompleted, self._on_voice_turn_completed)
-        )
-        self._unsubs.append(
-            self._bus.subscribe(VoiceSessionEnded, self._on_voice_session_ended)
-        )
+        for event_type, handler in wiring:
+            self._bus.subscribe(event_type, handler)
+            self._subscriptions.append((event_type, handler))
         self._started = True
         log.info(
             "VoiceFactBridge started "
@@ -241,12 +244,14 @@ class VoiceFactBridge:
 
     def _cancel_and_unsubscribe(self) -> tuple[asyncio.Task[Any], ...]:
         """Stop accepting work and return tasks whose cancellation must drain."""
-        for unsub in self._unsubs:
+        for event_type, handler in self._subscriptions:
             try:
-                unsub()
-            except Exception:  # noqa: BLE001, S110
-                pass
-        self._unsubs.clear()
+                self._bus.unsubscribe(event_type, handler)
+            except Exception:  # noqa: BLE001 — teardown reports, never raises
+                log.debug(
+                    "VoiceFactBridge: could not detach %s", event_type.__name__, exc_info=True
+                )
+        self._subscriptions.clear()
         tasks = tuple(self._inflight)
         for task in tasks:
             task.cancel()
