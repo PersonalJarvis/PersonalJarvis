@@ -8,7 +8,7 @@
 
 <p align="center">
   It drives coding agents, runs shell commands, operates your computer, connects anything that speaks MCP, dictates into any app, and remembers everything.<br>
-  Open source, and it can run fully on your own hardware &mdash; no cloud account anywhere in the chain.
+  Open source, and it can run fully on your own hardware, with no cloud account anywhere in the chain.
 </p>
 
 <p align="center">
@@ -39,9 +39,9 @@ Python 3.11+ and Git, nothing else. The installer asks nothing in the terminal, 
 walks you through language, wake word, and keys once. [Full install notes below](#install).
 
 <p align="center">
-  <a href="https://pypi.org/project/personal-jarvis/"><img alt="PyPI: personal-jarvis" src="https://img.shields.io/pypi/v/personal-jarvis?style=for-the-badge&labelColor=242424&color=e7c46e" /></a>
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/License-Apache_2.0-e7c46e?style=for-the-badge&labelColor=242424" /></a>
-  <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
+  <a href="https://pypi.org/project/personal-jarvis/"><img alt="PyPI: personal-jarvis" src="https://img.shields.io/pypi/v/personal-jarvis?style=for-the-badge&labelColor=0A0A0A&color=F7F7F4" /></a>
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/License-Apache_2.0-F7F7F4?style=for-the-badge&labelColor=0A0A0A" /></a>
+  <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=0A0A0A" /></a>
 </p>
 
 ---
@@ -50,22 +50,26 @@ A typical voice assistant talks back. Personal Jarvis does the thing. At the cen
 every voice conversation sits a tool model: it decides how much a request actually needs,
 runs shell commands, takes the mouse and keyboard, and reaches any service that speaks
 MCP. The short stuff it handles itself. Anything heavier goes to a coding-agent worker
-(Claude Code, Codex CLI, Gemini CLI, or an in-process worker on whatever API key you
-already have), which runs in isolation, gets checked by a critic, and reports back in the
-language you spoke.
+running on whichever CLI or key you already have: Claude Code, Codex, the Gemini CLI,
+Grok Build, or an in-process worker on a plain API key. That worker runs in isolation,
+gets checked by a critic, and reports back in the language you spoke.
+
+You do not have to talk to it, either. The home screen has a typed chat that goes through
+the same brain on the same keys, and the Agentic IDE has a second one where the seat is a
+coding CLI instead of an API provider. Both take files you drop, paste, or pick.
 
 Every tier has a keyless local option, so the whole assistant can run on your own hardware
-with no cloud account anywhere in the chain — details under **Runs on your own hardware**
-below. If you would rather use a hosted model, you pick the provider per tier: Gemini,
+with no cloud account anywhere in the chain. **Runs on your own hardware**, below, has the
+detail. If you would rather use a hosted model, you pick the provider per tier: Gemini,
 Claude, OpenAI, or OpenRouter, one setting for each. It can rewrite its own configuration,
 and it runs on a headless server just as well as on a desktop with a microphone.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-voice.webp" alt="The desktop app's home view: every section in the sidebar, a live voice conversation in the main pane, and the realtime voice bar waiting for a wake word" width="900" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-voice.webp" alt="The desktop app's home view: every section listed in the sidebar, the greeting in the main pane, and the realtime voice bar waiting for a wake word" width="900" />
 </p>
 
 <p align="center">
-  <sub>The desktop app in a live voice conversation. Every section is one click away in the sidebar, and the bar at the bottom is the live voice channel &mdash; the assistant takes whatever name you pick as your wake word, and this install answers to George.</sub>
+  <sub>The home view, waiting. Every section is one click away in the sidebar, and the bar across the bottom is the live voice channel. The assistant answers to whatever wake word you pick; this install answers to George.</sub>
 </p>
 
 ## What you can say
@@ -118,13 +122,20 @@ can keep your voice, your screen and your files on the machine they started on.
 Mixing is normal and expected: a local recognizer with a hosted brain, or a local brain
 with a hosted voice. Nothing forces the whole chain one way.
 
-You do not have to know which model fits which job. The app has a **Local models** section:
-it sees the server and the graphics memory it has to work with, lists the jobs a local model
-can take over, and picks a download for each one, so filling a slot is a button rather than
-a research project.
+You do not have to know which model fits which job. The **Local models** section reads the
+server and the graphics memory it has to work with, then fills the four jobs a local model
+can take over: chat, voice, tools and screen, and the deep coding work. One button does all
+four. It starts the server if it is stopped, prefers whatever you already have on disk over
+a fresh download, fetches only what is genuinely missing, and writes the settings.
+
+Then it checks its own work. Three real round trips run at the end, one line each with how
+long it took, so you find out the setup works before you rely on it instead of after. It
+finishes by offering to start the server with Jarvis, which keeps the first answer of the
+day from paying the model load time. Nothing downloads without a click that names the
+download first.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-local-models.webp" alt="The Local models section: the running server, available graphics memory, and one recommended download per job" width="900" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-local-models.webp" alt="The Local models section: the graphics-memory budget across all four jobs, and a card per job naming the model that fills it" width="900" />
 </p>
 
 Two capabilities stay outside this promise, and it would be dishonest to imply otherwise.
@@ -221,7 +232,7 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 > operating system's credential manager, never in the repo. Re-running the same one-liner
 > updates in place.
 
-Removing it again is one command too — see [**Uninstall**](#uninstall).
+Removing it again is one command too, under [**Uninstall**](#uninstall).
 
 <details>
 <summary><b>Optional extras, install flags, pipx & manual clone</b></summary>
@@ -233,7 +244,7 @@ Everything below is optional. Each item unlocks one specific thing:
 | Optional | Unlocks |
 |---|---|
 | A provider API key or subscription login (Gemini, Claude, OpenAI, or OpenRouter) | Actually talking to a brain. The in-app setup stores it in your credential manager. |
-| Node.js 18+ | The coding-agent worker CLIs, such as Claude Code and Codex, that heavy missions delegate to. Add it any time. |
+| Node.js 18+ | The coding-agent CLIs that install through npm: Claude Code, Codex, OpenCode, Kimi Code, DeepSeek Harness. Cursor CLI, Grok Build and Antigravity ship their own installers and do not need it. Add it any time. |
 | libportaudio *(Linux only)* | Local microphone and speakers (`apt install libportaudio2`). |
 | A GPU | Faster fully-offline speech. Everything also runs on CPU. |
 
@@ -301,22 +312,56 @@ deliverables land in **Artifacts** as downloadable files.
 ### Automations
 
 Work that repeats without being asked for: a morning brief, a weekly review, a digest of
-the unread mail, a watch on the topics you follow. Ten ready-made ones sit in a catalogue —
-add one and adjust its schedule — or describe your own in plain language and it becomes a
-job with a schedule, a run history, and an honest error when a run fails instead of silent
+the unread mail, a watch on the topics you follow. Ten ready-made ones sit in a catalogue,
+where you add one and adjust its schedule. Or describe your own in plain language and it
+becomes a job with a schedule, a run history, and an honest error when a run fails instead of silent
 nothing. One-off moments ("do this on Friday at nine") live in the same place.
 
 <p align="center">
   <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-automations.webp" alt="The automations catalogue: ready-made recurring jobs grouped by news, productivity, finance, research and developer" width="900" />
 </p>
 
+### Skills
+
+A skill is a written-down procedure Jarvis can follow. It is one Markdown file, `SKILL.md`,
+with a short YAML header and a body of steps, sitting in a folder on your disk. There is no
+`pip install` and no restart: save the file and it is loaded. Changing what a skill does
+means editing the steps, which is the point of keeping them in Markdown rather than in code.
+
+A skill fires from a spoken phrase, a hotkey, or a cron schedule. Thirty-one ship with the
+app, mostly one per connected service, so "put that in Notion" or "start a deep work block"
+already has a procedure behind it. You can write your own, describe one in plain language
+and have Jarvis draft it, or import someone else's from the Marketplace.
+
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-skills.webp" alt="The Skills list: every installed skill with when it was last updated, who wrote it, and a switch to turn it off" width="900" />
+</p>
+
+Two things keep this honest. Every skill is off until you turn it on, and one Jarvis writes
+for you lands as a draft you have to read first. And the decision about whether a skill
+matches what you just said, along with every check that can veto it, lives in one module
+that the assistant, the in-app match tester and an offline evaluation all call. The panel
+that shows you why a skill did or did not fire cannot disagree with what actually happened,
+because it is running the same code.
+
 ### Agentic IDE
 
-Pick a folder, choose how many terminals to open and which coding agent runs in each one,
-Claude Code or Codex, and you get a grid of real terminals inside the app. Every terminal
-carries a spoken call sign (Mika, Nova, Aria), so the whole workspace is addressable by
-voice: *"what is Mika doing?"*, *"tell Nova to run the tests"*. A focus mode narrows Jarvis
-to that workspace for as long as you want, then switches back cleanly.
+Pick a folder, choose how many terminals to open and which agent runs in each one, and you
+get a grid of real terminals inside the app. Nine coding agents are registered: Claude Code,
+Codex, Cursor CLI, OpenCode, Kimi Code, GLM Coding Plan, Grok Build, Antigravity and
+DeepSeek Harness. A pane can also just be your own shell, for the times the job is a git
+rebase rather than a question for an agent. Each entry brings its own detection, install
+command and sign-in, so picking one is the whole setup, and the registry is a list rather
+than a code path, so a new CLI is an entry in it.
+
+Every terminal carries a spoken call sign (Mika, Nova, Aria), so the whole workspace is
+addressable by voice: *"what is Mika doing?"*, *"tell Nova to run the tests"*. A focus mode
+narrows Jarvis to that workspace for as long as you want, then switches back cleanly.
+
+A terminal is not the only way to read one of these sessions. Switch a pane to its chat and
+the same run reads as a conversation: the reply, the reasoning where the CLI shares it, and
+every tool call with the result it returned, as rows you can scroll. The terminal is one
+click away and one click back, and the pane keeps running either way.
 
 <p align="center">
   <a href="https://youtu.be/wFBdmdOn6EU">
@@ -372,7 +417,8 @@ Jarvis can change its own settings by voice, through a guarded pipeline that val
 backs up, applies, verifies, and rolls back on failure, with a full audit trail. Some
 things are deliberately out of its reach: secrets and keys, the safety tiers, the review
 gates, and the active brain provider, which only you can change from the app or the CLI.
-Generated skills always land as drafts for your review. Nothing self-activates.
+The same restraint applies to the skills it writes for you, which land as drafts. Nothing
+self-activates.
 
 ### Dictation
 
@@ -407,6 +453,28 @@ empty because a provider was briefly down.
 An optional speech-to-speech mode (OpenAI Realtime, Gemini Live) for sub-second
 conversational latency, with automatic fallback to the classic wake, STT, brain, TTS
 pipeline when it is unavailable.
+
+### Artifacts
+
+Everything a run produced, in one place, shown rather than listed. A report opens as the
+document it is, a generated page renders inside a sandbox, a picture appears at full size.
+Files are downloadable from there. This replaced the old Outputs section; there is no second
+list of runs anywhere.
+
+### Spend
+
+What you have actually paid, per provider, per model and per job. The app meters its own
+calls through one ledger and prices them, and it reads the usage your coding CLIs record on
+disk, so a subscription seat and a per-token key show up in the same view. You can separate
+the two, because a Claude Code seat you already pay for and an API call billed by the token
+are different questions.
+
+### Marketplace
+
+Plugins, skills and wallpapers the community published, browsable and installable from
+inside the app behind one GitHub sign-in. Nothing here routes through a website you have to
+visit. The index is a public registry on GitHub, which is why browsing kept working after
+the hosted storefront was taken down.
 
 ### Wallpaper gallery
 
@@ -530,10 +598,19 @@ PersonalJarvis/
 │   ├── brain/               #   L4  Providers, the router, the Ack-Brain, persona
 │   ├── missions/            #   L6  Worker and critic loop, worktree isolation
 │   ├── agentic_ide/         #   L6  Terminal grid, call signs, prompt delivery
+│   ├── workspace/           #   L6  Which coding agents exist, how they install
+│   ├── clis/                #   L6  Detecting and driving external agent CLIs
+│   ├── agent_chat/          #   L6  The typed chat and its coding-CLI seats
+│   ├── skills/              #   L6  The Markdown skill system: load, match, run
+│   ├── local_models/        #   L4  The local server, its roles, one-click setup
+│   ├── costs/               #       The spend ledger and what every call cost
 │   ├── speech/              #   L2  Wake → VAD → STT → TTS
 │   ├── dictation/           #   L2  Cleanup, clipboard insert, polish, history
 │   ├── realtime/            #   L2  Speech-to-speech providers
 │   ├── memory/              #   L6  Knowledge Wiki, awareness, long-term recall
+│   ├── documents/           #       Reading PDFs, office files and media
+│   ├── artifacts/           #   L7  What a run produced, rendered not listed
+│   ├── marketplace/         #   L7  Community plugins, skills and wallpapers
 │   ├── cu/                  #   L5  Computer use: see the screen, drive it
 │   ├── safety/              #   L3  The four risk tiers and the approval path
 │   ├── channels/            #   L7  Telegram, Discord, and the shared brain behind them
@@ -575,8 +652,8 @@ Development happens in the open. The roadmap and the bug hunts land on Discord b
 land anywhere else, and questions are welcome there.
 
 <p align="center">
-  <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-FFD60A?style=for-the-badge&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
-  <a href="https://x.com/Ruben_Luetke"><img alt="X" src="https://img.shields.io/badge/X-follow-FFD60A?style=for-the-badge&logo=x&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
+  <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=0A0A0A" /></a>
+  <a href="https://x.com/Ruben_Luetke"><img alt="X" src="https://img.shields.io/badge/X-follow-F7F7F4?style=for-the-badge&logo=x&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
 </p>
 
 <p align="center">
@@ -627,8 +704,8 @@ Thanks to everyone who has shipped something here:
 
 The wall is generated from the commit history by
 [`scripts/ci/update_contributors.py`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/scripts/ci/update_contributors.py)
-and refreshes itself weekly. Land a pull request and your face is on it — no
-form to fill in, no permission to ask for. **AI-assisted pull requests are
+and refreshes itself weekly. Land a pull request and your face is on it, with no
+form to fill in and nobody to ask. **AI-assisted pull requests are
 welcome**; what gets reviewed is the diff, not how you wrote it.
 
 New to the repo? The [issue chooser](https://github.com/PersonalJarvis/PersonalJarvis/issues/new/choose)
@@ -643,7 +720,7 @@ explicit patent grant from every contributor; see
 [`LICENSE`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE) and [`NOTICE`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/NOTICE).
 
 Personal Jarvis was MIT-licensed through version 1.6.0, and **every one of those
-releases stays MIT, permanently** — the switch applies from 2.0 on.
+releases stays MIT, permanently**. The switch applies from 2.0 on.
 [`docs/licensing.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/licensing.md) says why, and what it changes for
 users, forks, and contributors.
 

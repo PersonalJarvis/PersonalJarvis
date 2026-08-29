@@ -1,7 +1,9 @@
 # Brand Guidelines
 
-The visual language of Personal Jarvis: matte black, a single signal-yellow, and a
-distressed wordmark. The goal is *confident and engineered*, never noisy or playful.
+The visual language of Personal Jarvis: ink on paper, paper on ink, and a distressed
+wordmark. The interface carries no brand hue; the wordmark below is the one place a
+colour treatment survives. The goal is *confident and engineered*, never noisy or
+playful.
 
 <p align="center">
   <img src="../assets/brand/banner.png" alt="Personal Jarvis wordmark" width="720" />
@@ -9,34 +11,42 @@ distressed wordmark. The goal is *confident and engineered*, never noisy or play
 
 ## Color
 
-One accent, one surface family. The yellow does the talking; everything else is near-black.
+Two values and the distance between them. The primary is whichever end of the value scale
+the ground is not: ink on paper in light mode, paper on ink in dark mode. State is not a
+colour either, so warning and success read on the same ink token.
 
 | Role | Hex | Chip |
 |---|---|---|
-| Signal Yellow (primary) | `#FFD60A` | ![](https://img.shields.io/badge/_-FFD60A?style=flat-square&labelColor=FFD60A) |
-| Gold highlight | `#FFE552` | ![](https://img.shields.io/badge/_-FFE552?style=flat-square&labelColor=FFE552) |
-| Deep gold (gradient end) | `#B8960A` | ![](https://img.shields.io/badge/_-B8960A?style=flat-square&labelColor=B8960A) |
-| Matte Black (background) | `#0A0A0A` | ![](https://img.shields.io/badge/_-0A0A0A?style=flat-square&labelColor=0A0A0A) |
-| Card | `#0F0F0F` | ![](https://img.shields.io/badge/_-0F0F0F?style=flat-square&labelColor=0F0F0F) |
-| Border | `#242424` | ![](https://img.shields.io/badge/_-242424?style=flat-square&labelColor=242424) |
-| Foreground (text) | `#F4F4F5` | ![](https://img.shields.io/badge/_-F4F4F5?style=flat-square&labelColor=F4F4F5) |
-| Muted text | `#8F8F8F` | ![](https://img.shields.io/badge/_-8F8F8F?style=flat-square&labelColor=8F8F8F) |
+| Ink (light primary, light text) | `#26251E` | ![](https://img.shields.io/badge/_-26251E?style=flat-square&labelColor=26251E) |
+| Canvas / paper (light ground, dark text) | `#F7F7F4` | ![](https://img.shields.io/badge/_-F7F7F4?style=flat-square&labelColor=F7F7F4) |
+| Ground (dark canvas) | `#0A0A09` | ![](https://img.shields.io/badge/_-0A0A09?style=flat-square&labelColor=0A0A09) |
+| White (dark primary, actions only) | `#FFFFFF` | ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
+| Card, light | `#FFFFFF` | ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
+| Card, dark | `#191815` | ![](https://img.shields.io/badge/_-191815?style=flat-square&labelColor=191815) |
+| Hairline, light | `#E6E5E0` | ![](https://img.shields.io/badge/_-E6E5E0?style=flat-square&labelColor=E6E5E0) |
+| Hairline, dark | `#322F2B` | ![](https://img.shields.io/badge/_-322F2B?style=flat-square&labelColor=322F2B) |
+| Muted text, light | `#747167` | ![](https://img.shields.io/badge/_-747167?style=flat-square&labelColor=747167) |
+| Muted text, dark | `#9A978C` | ![](https://img.shields.io/badge/_-9A978C?style=flat-square&labelColor=9A978C) |
+| Destructive, light | `#C0392B` | ![](https://img.shields.io/badge/_-C0392B?style=flat-square&labelColor=C0392B) |
 
-**Signal-yellow gradient** (used on the wordmark and primary accents):
-`linear-gradient(177deg, #FFE552 0%, #FFD60A 52%, #B8960A 100%)`.
+Three things keep their own colour on purpose, because taking it away would remove
+information rather than noise: third-party provider logos, the sixteen ANSI slots a
+terminal paints with, and the destructive action. Everything else is ink and paper.
 
 These are the exact tokens from the desktop app
-(`jarvis/ui/web/frontend/src/index.css`) — the README, the product, and any brand asset
+(`jarvis/ui/web/frontend/src/index.css`). The README, the product, and any brand asset
 must stay on the same values so nothing drifts.
 
 ### Rules
 
-- **Yellow is for emphasis, not fill.** Use it for the wordmark, key accents, links, and a
-  single call-to-action — not for large flat panels.
-- **Default to dark.** Black is the canvas. Avoid light backgrounds; if one is unavoidable,
-  use `#0A0A0A` text on it and skip the glow.
-- **One accent only.** No second brand color. The cyan/magenta in the wordmark are a
-  *glitch artifact*, not part of the palette — never use them as UI colors.
+- **Full white is for actions.** On the dark ground, white is the primary. Spend it on
+  something the reader can press, not on an indicator that is merely reporting a fact.
+- **Both modes, always.** A colour comes from a theme token or from the per-appearance
+  tables in `terminalThemes.ts`. Never hardcode one mode's value.
+- **No second accent.** There is no brand hue to reintroduce. The cyan and magenta in the
+  wordmark are a *glitch artifact*, not part of the palette; never use them as UI colours.
+- **Rasters convert on max(r, g, b), the orb on luma.** That is what keeps a mark legible
+  after it loses its colour.
 
 ## Typography
 
