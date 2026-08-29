@@ -310,7 +310,7 @@ export function EngineModeSwitch({
         <span
           data-testid="voice-engine-selection-thumb"
           aria-hidden="true"
-          className="absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-control bg-primary transition-transform duration-200 ease-out motion-reduce:transition-none"
+          className="absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-control bg-foreground/70 transition-transform duration-200 ease-out motion-reduce:transition-none"
           style={{ transform: `translateX(${selectedIndex * 100}%)` }}
         />
         {segments.map((seg) => {
@@ -352,7 +352,7 @@ export function EngineModeSwitch({
                   aria-hidden="true"
                   className={cn(
                     "h-1.5 w-1.5 rounded-full",
-                    isSelected ? "bg-primary-foreground/80" : "bg-primary",
+                    isSelected ? "bg-primary-foreground/80" : "bg-foreground/70",
                   )}
                 />
               )}
@@ -412,12 +412,12 @@ export function LocalModeSwitch({
           aria-hidden="true"
           className={cn(
             "relative inline-block h-[18px] w-[30px] shrink-0 rounded-full transition-colors",
-            enabled ? "bg-primary" : "bg-border group-hover:bg-muted-foreground/40",
+            enabled ? "bg-foreground/70" : "bg-border group-hover:bg-muted-foreground/40",
           )}
         >
           <span
             className={cn(
-              "absolute left-0.5 top-0.5 h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform motion-reduce:transition-none",
+              "absolute left-0.5 top-0.5 h-3.5 w-3.5 rounded-full bg-background transition-transform motion-reduce:transition-none",
               enabled && "translate-x-3",
             )}
           />
@@ -589,16 +589,16 @@ export function VoiceEngineContext({
             className={cn(
               "h-[7px] w-[7px] shrink-0 rounded-full",
               transitioning || connecting
-                ? "animate-pulse bg-amber-500 motion-reduce:animate-none"
+                ? "animate-pulse bg-foreground motion-reduce:animate-none"
                 : runtimeMatchesSelection
-                  ? "bg-emerald-500 shadow-[0_0_0_3px_rgb(16_185_129/0.18)]"
-                  : "bg-amber-500",
+                  ? "bg-muted-foreground shadow-[0_0_0_3px_rgb(16_185_129/0.18)]"
+                  : "bg-foreground",
             )}
           />
           <span
             className={cn(
               "font-medium",
-              attention ? "text-amber-600 dark:text-amber-400" : "text-foreground",
+              attention ? "text-foreground" : "text-foreground",
             )}
           >
             {runtimeText}
@@ -634,7 +634,7 @@ export function VoiceEngineContext({
             </span>
             <span className="hidden sm:inline">{t("apikeys_view.voice_engine_label")}</span>
           </summary>
-          <div className="absolute right-0 top-full z-20 mt-2 w-80 rounded-surface border border-border bg-card p-3 text-xs leading-relaxed text-muted-foreground shadow-lg">
+          <div className="absolute right-0 top-full z-20 mt-2 w-80 rounded-surface border border-border bg-card p-3 text-xs leading-relaxed text-muted-foreground">
             <p className="font-medium text-foreground">
               {t("apikeys_view.voice_engine_desc")}
             </p>
@@ -649,7 +649,7 @@ export function VoiceEngineContext({
       {offerDetail && (
         <p
           data-testid="voice-engine-transport-offer-detail"
-          className="pb-1 text-xs leading-snug text-amber-600 dark:text-amber-400"
+          className="pb-1 text-xs leading-snug text-foreground"
           aria-live="polite"
         >
           {offerDetail}
@@ -659,7 +659,7 @@ export function VoiceEngineContext({
       {liveMode === "realtime" && lastStartError && (
         <p
           data-testid="voice-engine-last-start-error"
-          className="pb-1 text-xs leading-snug text-amber-600 dark:text-amber-400"
+          className="pb-1 text-xs leading-snug text-foreground"
           aria-live="polite"
         >
           {t("voice_state.connect_failed")
@@ -1280,7 +1280,7 @@ export function ProviderCard({
       }}
     >
       <div
-        className="card-outline max-w-lg space-y-4 bg-background p-5 shadow-xl"
+        className="card-outline max-w-lg space-y-4 bg-background p-5"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="text-sm font-semibold">{descriptor.label}</div>
@@ -1351,7 +1351,7 @@ export function ProviderCard({
         cardError
           ? "bg-destructive/[0.04] before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r before:bg-destructive"
           : descriptor.active
-            ? "bg-primary/[0.035] before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r before:bg-primary"
+            ? "bg-primary/[0.035] before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r before:bg-foreground/70"
             : "",
       )}
     >
@@ -1516,7 +1516,7 @@ export function ProviderCard({
           />
 
           {!isBrainSwitchable && (
-            <p className="rounded-control border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+            <p className="rounded-control border border-foreground/25 bg-foreground/10 px-3 py-2 text-xs leading-relaxed text-foreground">
               {t("apikeys_view.agents_only_note").replace(
                 "{0}",
                 agentBrand(assistantName),
@@ -1623,12 +1623,12 @@ export function ProviderCard({
 // (integration is fine); red = couldn't reach / integration bug. A dot and a
 // word — the same vocabulary as the row's state, never a filled capsule.
 const TEST_STATUS_TONE: Record<ProviderTestStatus, { dot: string; text: string }> = {
-  ok: { dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400" },
+  ok: { dot: "bg-muted-foreground", text: "text-muted-foreground" },
   not_configured: { dot: "bg-muted-foreground/50", text: "text-muted-foreground" },
-  bad_key: { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400" },
-  no_credits: { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400" },
-  rate_limited: { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400" },
-  model_unavailable: { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400" },
+  bad_key: { dot: "bg-foreground", text: "text-foreground" },
+  no_credits: { dot: "bg-foreground", text: "text-foreground" },
+  rate_limited: { dot: "bg-foreground", text: "text-foreground" },
+  model_unavailable: { dot: "bg-foreground", text: "text-foreground" },
   unreachable: { dot: "bg-destructive", text: "text-destructive" },
   error: { dot: "bg-destructive", text: "text-destructive" },
 };
@@ -1824,7 +1824,7 @@ export function ActiveControl({
         <span
           aria-hidden="true"
           className={cn(
-            "h-[7px] w-[7px] rounded-full bg-primary",
+            "h-[7px] w-[7px] rounded-full bg-foreground/70",
             activating && "animate-pulse motion-reduce:animate-none",
           )}
         />
@@ -2023,9 +2023,9 @@ function LocalRuntimePanel({
     <div className="space-y-2 border-t border-border/60 pt-3">
       <div className="flex items-start gap-2 text-xs">
         {status.ready ? (
-          <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+          <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         ) : (
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />
         )}
         <span className="text-muted-foreground">
           {progress?.message ?? status.detail}
@@ -2040,7 +2040,7 @@ function LocalRuntimePanel({
             className={cn(
               "mt-0.5 h-3.5 w-3.5 shrink-0",
               accelerator.effective === "cpu" && accelerator.installable
-                ? "text-amber-500"
+                ? "text-foreground"
                 : "text-muted-foreground",
             )}
           />
@@ -2480,9 +2480,9 @@ function ManagedServerPanel({
     <div className="space-y-2 border-t border-border/60 pt-3">
       <div className="flex items-start gap-2 text-xs">
         {status.ready ? (
-          <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+          <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         ) : (
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />
         )}
         <span className="text-muted-foreground">
           {running ? (progress?.detail ?? status.sentence) : status.sentence}
@@ -2500,15 +2500,15 @@ function ManagedServerPanel({
             className={cn(
               "h-1.5 w-1.5 shrink-0 rounded-full",
               runtimeBadge.tone === "ok"
-                ? "bg-emerald-400"
+                ? "bg-muted-foreground"
                 : runtimeBadge.tone === "warn"
-                  ? "animate-pulse bg-amber-400 motion-reduce:animate-none"
+                  ? "animate-pulse bg-foreground motion-reduce:animate-none"
                   : "bg-muted-foreground/40",
             )}
           />
           <span
             className={cn(
-              runtimeBadge.tone === "warn" ? "text-amber-400" : "text-muted-foreground",
+              runtimeBadge.tone === "warn" ? "text-foreground" : "text-muted-foreground",
             )}
           >
             {t(runtimeBadge.key)}
@@ -2738,8 +2738,8 @@ function ManagedServerPanel({
                             className={cn(
                               "rounded-full border px-1.5 py-px text-xs",
                               choice.selectable
-                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500"
-                                : "border-amber-500/30 bg-amber-500/10 text-amber-500",
+                                ? "border-muted-foreground/30 bg-muted-foreground/10 text-muted-foreground"
+                                : "border-foreground/30 bg-foreground/10 text-foreground",
                             )}
                           >
                             {t(
@@ -2812,7 +2812,7 @@ function ManagedServerPanel({
         <div className="space-y-1">
           <div className="h-1.5 w-full overflow-hidden rounded bg-muted">
             <div
-              className="h-full rounded bg-primary transition-all"
+              className="h-full rounded bg-foreground/70 transition-all"
               style={{ width: `${Math.max(2, progress?.percent ?? 0)}%` }}
             />
           </div>
@@ -2843,7 +2843,7 @@ function ManagedServerPanel({
 
       {!status.ready && !running && preflight && !preflight.ok && !preflight.brain_fixable && (
         <div className="space-y-2 text-xs">
-          <p className="text-amber-500">{preflight.blocker}</p>
+          <p className="text-foreground">{preflight.blocker}</p>
           <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
             {preflight.actions.map((action) => (
               <li key={action}>{action}</li>
@@ -2871,7 +2871,7 @@ function ManagedServerPanel({
                   honestly BEFORE the click — Ollama plus the brain model are
                   extra downloads the tier size above does not include. */}
               {!preflight.ok && preflight.brain_fixable && (
-                <p className="text-amber-500">
+                <p className="text-foreground">
                   {t("apikeys_view.managed_brain_setup_note")}
                 </p>
               )}
@@ -3017,7 +3017,7 @@ export function OllamaRuntimePanel({
       >
         <span
           aria-hidden="true"
-          className="mt-1 h-2 w-2 shrink-0 rounded-full bg-emerald-500"
+          className="mt-1 h-2 w-2 shrink-0 rounded-full bg-muted-foreground"
         />
         <span className="text-muted-foreground">
           {status.detail ||
@@ -3033,7 +3033,7 @@ export function OllamaRuntimePanel({
       data-testid="ollama-runtime-panel"
     >
       <div className="flex items-start gap-2 text-xs">
-        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />
         <span className="text-muted-foreground">
           {installing ? (progress?.detail ?? status.detail) : status.detail}
         </span>
@@ -3042,7 +3042,7 @@ export function OllamaRuntimePanel({
       {installing && (
         <div className="h-1.5 w-full overflow-hidden rounded bg-muted">
           <div
-            className="h-full rounded bg-primary transition-all"
+            className="h-full rounded bg-foreground/70 transition-all"
             style={{ width: `${Math.max(2, progress?.percent ?? 0)}%` }}
           />
         </div>
@@ -3226,7 +3226,7 @@ export function LibraryBrowser({
           {/* An unreachable catalog is a note, never a blocker — the field
               above still downloads by exact name. */}
           {libraryError && (
-            <p className="text-xs text-amber-500">{libraryError}</p>
+            <p className="text-xs text-foreground">{libraryError}</p>
           )}
           {results && results.length === 0 && !libraryError && (
             <p className="text-xs text-muted-foreground">
@@ -3249,7 +3249,7 @@ export function LibraryBrowser({
                   <p className="truncate text-xs font-medium">
                     {model.name}
                     {model.installed && (
-                      <span className="ml-1.5 text-xs font-normal text-emerald-500">
+                      <span className="ml-1.5 text-xs font-normal text-muted-foreground">
                         {t("apikeys_model_pull.installed")}
                       </span>
                     )}
@@ -3297,7 +3297,7 @@ export function LibraryBrowser({
                     </p>
                   )}
                   {tagsError && (
-                    <p className="text-xs text-amber-500">{tagsError}</p>
+                    <p className="text-xs text-foreground">{tagsError}</p>
                   )}
                   {(tags[model.name] ?? []).map((tag) => (
                     <div
@@ -3321,7 +3321,7 @@ export function LibraryBrowser({
                           </span>
                         </p>
                         {tag.fit === "tight" && tag.fit_note && (
-                          <p className="text-xs leading-snug text-amber-500">
+                          <p className="text-xs leading-snug text-foreground">
                             {tag.fit_note}
                           </p>
                         )}
@@ -3348,7 +3348,7 @@ export function LibraryBrowser({
                           {installedActionLabel ?? t("apikeys_model_pull.installed")}
                         </Button>
                       ) : tag.installed ? (
-                        <span className="flex shrink-0 items-center gap-1 text-xs text-emerald-500">
+                        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                           <Check className="h-3 w-3" />
                           {t("apikeys_model_pull.installed")}
                         </span>
@@ -3526,7 +3526,7 @@ export function LocalModelDownloadPanel({
       </div>
 
       {catalog && !catalog.server_reachable && (
-        <p className="text-xs text-amber-500">{catalog.message}</p>
+        <p className="text-xs text-foreground">{catalog.message}</p>
       )}
 
       {groups.map((group) => (
@@ -3573,7 +3573,7 @@ export function LocalModelDownloadPanel({
                 <p
                   className={cn(
                     "text-xs leading-snug",
-                    row.fit === "tight" ? "text-amber-500" : "text-muted-foreground/80",
+                    row.fit === "tight" ? "text-foreground" : "text-muted-foreground/80",
                   )}
                 >
                   {row.fit_note}
@@ -3581,7 +3581,7 @@ export function LocalModelDownloadPanel({
               )}
             </div>
             {row.installed ? (
-              <span className="flex shrink-0 items-center gap-1 text-xs text-emerald-500">
+              <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                 <Check className="h-3.5 w-3.5" />
                 {t("apikeys_model_pull.installed")}
               </span>
@@ -3624,7 +3624,7 @@ export function LocalModelDownloadPanel({
           {running && (
             <div className="h-1 w-full overflow-hidden rounded bg-border">
               <div
-                className="h-full bg-primary transition-all"
+                className="h-full bg-foreground/70 transition-all"
                 style={{ width: `${percent}%` }}
               />
             </div>
@@ -3697,12 +3697,13 @@ export function AuthWidget({
       {descriptor.supports_base_url && !descriptor.managed_server && (
         <BaseUrlField descriptor={descriptor} onChanged={onChanged} />
       )}
-      {/* The runtime itself comes before the model list: pull buttons are
-          dead while Ollama is absent or stopped, and this panel is the fix. */}
+      {/* The card keeps only the runtime line (install / start / running):
+          models, roles, the catalogue and Hugging Face live in the Local
+          models section, reached through the Open button in the card header.
+          LibraryBrowser and LocalModelDownloadPanel stay exported for it. */}
       {descriptor.supports_model_pull && (
-        <OllamaRuntimePanel providerId={descriptor.id} onChanged={onChanged} />
+        <OllamaRuntimePanel providerId={descriptor.id} onChanged={onChanged} alwaysVisible />
       )}
-      <LocalModelDownloadPanel descriptor={descriptor} onChanged={onChanged} />
       {/* Ordered after the server URL on purpose: a download can only be
           offered once the card points at the right server. */}
       {descriptor.auth_mode === "none" && (
@@ -3913,9 +3914,9 @@ function CodexAuthWidget({
       <div className="space-y-3">
         <div
           data-testid="codex-connected"
-          className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/[0.06] px-3 py-2 text-xs"
+          className="flex flex-wrap items-center gap-2 rounded-md border border-muted-foreground/30 bg-muted-foreground/[0.06] px-3 py-2 text-xs"
         >
-          <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+          <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 break-words text-foreground">
             {subscriptionOnly
               ? t("apikeys_codex.connected_chatgpt")
@@ -4108,9 +4109,9 @@ function AntigravityAuthWidget({
       <div className="space-y-3">
         <div
           data-testid="antigravity-connected"
-          className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/[0.06] px-3 py-2 text-xs"
+          className="flex flex-wrap items-center gap-2 rounded-md border border-muted-foreground/30 bg-muted-foreground/[0.06] px-3 py-2 text-xs"
         >
-          <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+          <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 break-words text-foreground">
             {status.user_email
               ? t("apikeys_antigravity.connected_as").replace("{0}", status.user_email)
@@ -4193,7 +4194,7 @@ const STATE_CHIP_TONE = {
     wrap: "rounded-[4px] border border-primary/40 px-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-primary",
     dot: null,
   },
-  ready: { wrap: "text-muted-foreground", dot: "bg-emerald-500" },
+  ready: { wrap: "text-muted-foreground", dot: "bg-muted-foreground" },
   missing: { wrap: "text-destructive", dot: "bg-destructive" },
   neutral: { wrap: "text-muted-foreground", dot: "bg-muted-foreground/50" },
 } as const;
@@ -4248,7 +4249,7 @@ export function Tag({
         "inline-flex shrink-0 items-center rounded-[4px] border px-1.5 text-[10.5px] font-semibold uppercase leading-[18px] tracking-[0.06em]",
         tone === "accent" && "border-primary/40 text-primary",
         tone === "neutral" && "border-border text-muted-foreground",
-        tone === "warn" && "border-amber-500/40 text-amber-600 dark:text-amber-400",
+        tone === "warn" && "border-foreground/40 text-foreground",
       )}
     >
       {children}

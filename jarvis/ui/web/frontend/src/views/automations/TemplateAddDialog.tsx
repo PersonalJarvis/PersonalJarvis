@@ -7,6 +7,7 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 import { fill, useT, useUiLanguage } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { ApiError, useAddTemplate } from "@/hooks/useAutomations";
@@ -88,7 +89,7 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
       <div
         role="dialog"
         aria-label={fill(t("automations_view.add_dialog_title"), { title: template.name })}
-        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl"
+        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
@@ -111,7 +112,7 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
         <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis">
           <div className="space-y-4 px-5 py-4">
             {!template.ready && template.missing.length > 0 && (
-              <p className="flex items-start gap-1.5 rounded-lg border border-amber-500/40 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300/90">
+              <p className="flex items-start gap-1.5 rounded-lg border border-foreground/40 px-3 py-2 text-[11px] leading-relaxed text-foreground/90">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 {fill(t("automations_view.needs_warning"), { tools: humanizeMissing(template.missing) })}
               </p>
@@ -170,18 +171,16 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
               {kind !== "hourly" && (
                 <div className="flex flex-wrap items-center gap-2">
                   {kind === "weekly" && (
-                    <select
+                    <BrandedSelect
                       className={cn(inputCls, "w-auto")}
-                      value={weekday}
-                      onChange={(e) => setWeekday(Number(e.target.value))}
-                      aria-label={t("automations_view.weekday_label")}
-                    >
-                      {weekdays.map((name, idx) => (
-                        <option key={idx} value={idx}>
-                          {name}
-                        </option>
-                      ))}
-                    </select>
+                      value={String(weekday)}
+                      onValueChange={(value) => setWeekday(Number(value))}
+                      ariaLabel={t("automations_view.weekday_label")}
+                      options={weekdays.map((name, idx) => ({
+                        value: String(idx),
+                        label: name,
+                      }))}
+                    />
                   )}
                   <span className="text-xs text-muted-foreground">{t("tasks_view.create.at")}</span>
                   <input

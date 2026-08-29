@@ -2516,7 +2516,7 @@ export function AgenticGrid({
                        */
                       chatStage
                         ? "hidden"
-                        : "shadow-lg"
+                        : ""
                         : "hidden"
                       : maximized !== null && !isMaximized && "hidden",
                   )}
@@ -2611,7 +2611,7 @@ export function AgenticGrid({
                               ZONE_BOX[arrange.hover.zone],
                             )}
                           />
-                      <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground shadow-lg">
+                      <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-foreground/70 px-2 py-1 text-[11px] font-semibold text-primary-foreground">
                         {t(`agentic_grid.arrange.${arrange.hover.zone}`).replace(
                           "{0}",
                           term.name,
@@ -2650,9 +2650,9 @@ export function AgenticGrid({
                 >
                   <span
                     className={cn(
-                      "absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border shadow-md transition-colors",
+                      "absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border transition-colors",
                       selectedTerminals.has(term.name)
-                        ? "border-primary bg-primary text-primary-foreground"
+                        ? "border-primary bg-foreground/70 text-primary-foreground"
                         : "border-border bg-card/90 text-transparent",
                     )}
                     aria-hidden="true"
@@ -2851,7 +2851,7 @@ export function AgenticGrid({
               <MoveHorizontal
                 aria-hidden
                 className={cn(
-                  "pointer-events-none absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/35 bg-background/90 p-0.5 text-primary shadow-sm backdrop-blur transition-opacity",
+                  "pointer-events-none absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/35 bg-background/90 p-0.5 text-primary backdrop-blur transition-opacity",
                   explorerPane.isResizing
                     ? "opacity-100"
                     : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
@@ -2907,7 +2907,7 @@ export function AgenticGrid({
       {arrange.held !== null && arrange.point !== null && (
         <div
           data-testid="agentic-arrange-ghost"
-          className="pointer-events-none fixed z-50 flex items-center gap-1.5 rounded-lg border border-primary/60 bg-card px-2.5 py-1.5 text-xs font-semibold shadow-xl"
+          className="pointer-events-none fixed z-50 flex items-center gap-1.5 rounded-lg border border-primary/60 bg-card px-2.5 py-1.5 text-xs font-semibold"
           style={{ left: arrange.point.x + 14, top: arrange.point.y + 14 }}
         >
           <GripVertical className="h-3.5 w-3.5 text-primary" />
@@ -2971,7 +2971,7 @@ function ViewMenu({
           <div className="fixed inset-0 z-40" onMouseDown={() => setOpen(false)} />
           <div
             data-testid="agentic-view-menu-panel"
-            className="absolute right-0 top-full z-50 mt-1 w-60 rounded-xl border border-border bg-card p-3 shadow-xl"
+            className="absolute right-0 top-full z-50 mt-1 w-60 rounded-xl border border-border bg-card p-3"
           >
             <div className="flex items-center justify-between gap-3">
               <span className="text-xs text-muted-foreground">
@@ -3066,7 +3066,7 @@ function ToolbarOverflow({ children }: { children: React.ReactNode }) {
         className={cn(
           "contents",
           open
-            ? "max-[900px]:absolute max-[900px]:right-0 max-[900px]:top-full max-[900px]:z-50 max-[900px]:mt-1 max-[900px]:flex max-[900px]:w-[min(22rem,calc(100vw-1rem))] max-[900px]:flex-wrap max-[900px]:items-center max-[900px]:justify-end max-[900px]:gap-1 max-[900px]:rounded-xl max-[900px]:border max-[900px]:border-border max-[900px]:bg-card max-[900px]:p-2 max-[900px]:shadow-xl"
+            ? "max-[900px]:absolute max-[900px]:right-0 max-[900px]:top-full max-[900px]:z-50 max-[900px]:mt-1 max-[900px]:flex max-[900px]:w-[min(22rem,calc(100vw-1rem))] max-[900px]:flex-wrap max-[900px]:items-center max-[900px]:justify-end max-[900px]:gap-1 max-[900px]:rounded-xl max-[900px]:border max-[900px]:border-border max-[900px]:bg-card max-[900px]:p-2 max-[900px]:"
             : "max-[900px]:hidden",
         )}
       >
@@ -3197,7 +3197,7 @@ function ConfirmSelectionClose({
       <Dialog.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm" />
       <Dialog.Content
         data-testid="confirm-close-selection"
-        className="fixed left-1/2 top-1/2 z-50 w-[min(26rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 shadow-xl"
+        className="fixed left-1/2 top-1/2 z-50 w-[min(26rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5"
         onEscapeKeyDown={(event) => {
           if (busy) event.preventDefault();
         }}
@@ -3277,7 +3277,7 @@ function ConfirmWorkspaceClose({
       <Dialog.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm" />
       <Dialog.Content
         data-testid="confirm-close-workspace"
-        className="fixed left-1/2 top-1/2 z-50 w-[min(24rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 shadow-xl"
+        className="fixed left-1/2 top-1/2 z-50 w-[min(24rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5"
         onEscapeKeyDown={(event) => {
           if (busy) event.preventDefault();
         }}
@@ -3342,7 +3342,7 @@ function ConfirmClose({
         if (e.key === "Escape") onCancel();
       }}
     >
-      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-xl">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5">
         <h3 className="font-display text-base font-semibold">Close {name}?</h3>
         <p className="mt-2 text-sm text-muted-foreground">
           The coding agent running in this terminal is stopped and its session is gone. Anything it

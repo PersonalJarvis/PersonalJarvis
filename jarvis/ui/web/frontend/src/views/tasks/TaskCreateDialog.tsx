@@ -91,7 +91,7 @@ function Segmented<T extends string>({
               "inline-flex items-center gap-1.5 rounded-md font-medium transition-colors",
               size === "sm" ? "px-2 py-1 text-[11px]" : "px-3 py-1.5 text-xs",
               active
-                ? "bg-primary/15 text-primary shadow-sm"
+                ? "bg-primary/15 text-primary"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -248,7 +248,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
       onClick={onClose}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl"
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

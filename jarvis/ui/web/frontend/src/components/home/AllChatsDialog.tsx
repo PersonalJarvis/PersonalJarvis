@@ -75,7 +75,7 @@ export function AllChatsDialog({
           className={cn(
             "fixed left-1/2 top-1/2 z-[90] flex max-h-[min(84dvh,44rem)] w-[min(680px,calc(100vw-2rem))]",
             "-translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border",
-            "bg-card shadow-[0_28px_90px_-24px_rgba(0,0,0,0.6)] outline-none",
+            "bg-card outline-none",
             "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none",
           )}
         >
@@ -235,7 +235,7 @@ function ArchiveRow({
         className={cn(
           "flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors",
           "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-          active ? "bg-background/80 shadow-sm" : "hover:bg-background/50",
+          active ? "bg-background/80" : "hover:bg-background/50",
         )}
       >
         <Icon

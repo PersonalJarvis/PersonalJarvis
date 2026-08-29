@@ -42,8 +42,8 @@ import { useT } from "@/i18n";
 function outcomeTone(outcome: string): string {
   const o = outcome.toLowerCase();
   if (o.includes("error") || o.includes("fail")) return "bg-destructive";
-  if (o.includes("ok") || o.includes("success") || o.includes("done")) return "bg-emerald-600 dark:bg-emerald-400";
-  if (o.includes("running") || o.includes("open") || o.includes("live")) return "bg-primary animate-pulse";
+  if (o.includes("ok") || o.includes("success") || o.includes("done")) return "bg-muted-foreground";
+  if (o.includes("running") || o.includes("open") || o.includes("live")) return "bg-foreground/70 animate-pulse";
   return "bg-muted-foreground";
 }
 
@@ -100,8 +100,8 @@ export function RunsCard({ className }: { className?: string }) {
 // ----------------------------------------------------------------------
 
 const OUTPUT_TONE: Record<string, string> = {
-  running: "bg-primary animate-pulse",
-  success: "bg-emerald-600 dark:bg-emerald-400",
+  running: "bg-foreground/70 animate-pulse",
+  success: "bg-muted-foreground",
   error: "bg-destructive",
   cancelled: "bg-muted-foreground",
   unknown: "bg-muted-foreground",
@@ -359,7 +359,7 @@ function CrewColumn({
                   className={cn(
                     "h-1.5 w-1.5 shrink-0",
                     r.state === "working" || r.state === "starting"
-                      ? "animate-pulse bg-primary shadow-[0_0_6px_1px_hsl(var(--primary)/0.6)]"
+                      ? "animate-pulse bg-foreground/70"
                       : r.state === "failed"
                         ? "bg-destructive"
                         : r.state === "waiting" || r.state === "asking"
@@ -404,7 +404,7 @@ function CrewColumn({
 // ----------------------------------------------------------------------
 
 const LINE_TONE: Record<string, string> = {
-  cmd: "text-emerald-700 dark:text-emerald-400",
+  cmd: "text-muted-foreground",
   cli: "text-primary",
   out: "text-foreground/90",
   err: "text-destructive",

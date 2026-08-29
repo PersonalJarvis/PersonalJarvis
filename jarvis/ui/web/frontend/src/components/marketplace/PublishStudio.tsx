@@ -360,7 +360,7 @@ export function PublishStudio({
         onClick={onClose}
         className="absolute inset-0 cursor-default"
       />
-      <div className="relative m-auto flex h-[min(92vh,56rem)] w-[min(96vw,72rem)] overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-2xl">
+      <div className="relative m-auto flex h-[min(92vh,56rem)] w-[min(96vw,72rem)] overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground">
         {/* Rail */}
         <aside className="relative isolate hidden w-60 shrink-0 flex-col border-r border-border bg-secondary/30 p-5 md:flex">
           <div
@@ -494,7 +494,7 @@ function Station({
     <li
       className={cn(
         "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm transition-colors",
-        active ? "bg-background/70 text-foreground shadow-sm" : "text-muted-foreground",
+        active ? "bg-background/70 text-foreground" : "text-muted-foreground",
       )}
       data-active={active ? "yes" : "no"}
     >
@@ -502,7 +502,7 @@ function Station({
         className={cn(
           "grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[11px] font-bold",
           done
-            ? "border-primary bg-primary text-primary-foreground"
+            ? "border-primary bg-foreground/70 text-primary-foreground"
             : active
               ? "border-primary text-primary"
               : "border-border text-muted-foreground",
@@ -606,7 +606,7 @@ function SourcePicker({
             aria-hidden
             className="pointer-events-none absolute -z-10 -right-10 -top-10 h-40 w-40 rounded-full bg-primary/15 blur-3xl transition-transform duration-500 group-hover:scale-125"
           />
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground shadow-lg">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-foreground/70 text-primary-foreground">
             {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <FolderUp className="h-5 w-5" />}
           </span>
           <p className="mt-4 font-display text-base font-semibold tracking-tight text-foreground">
@@ -1147,7 +1147,7 @@ function WallpaperLane({
             : "border-border bg-gradient-to-br from-primary/10 via-card to-card hover:border-primary/50",
         )}
       >
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-lg">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-foreground/70 text-primary-foreground">
           {add.isPending ? (
             <Loader2 className="h-5 w-5 animate-spin" />
           ) : (
@@ -1596,7 +1596,7 @@ function CardPreview({ draft, t }: { draft: Draft; t: Translate }) {
       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {t("marketplace.studio_preview_label")}
       </p>
-      <div className="overflow-hidden rounded-2xl border border-border bg-card/70 shadow-sm">
+      <div className="overflow-hidden rounded-2xl border border-border bg-card/70">
         <div className="flex items-center gap-3 px-3.5 py-3">
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-primary/70 to-primary/30 text-sm font-semibold text-primary-foreground">
             {draft.kind === "skill" ? <Sparkles className="h-4 w-4" /> : preview.initial}
@@ -1796,7 +1796,7 @@ function PublishedCard({
           <p className="flex items-center gap-2 text-xs text-muted-foreground">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/70" />
             </span>
             {t("marketplace.studio_done_watching")}
           </p>

@@ -199,14 +199,14 @@ function format(text: string, ...values: Array<string | number>): string {
  */
 const BUBBLE_BTN =
   "pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full " +
-  "border border-border/50 bg-background/85 text-muted-foreground shadow-lg " +
+  "border border-border/50 bg-background/85 text-muted-foreground " +
   "backdrop-blur transition-colors hover:bg-secondary hover:text-foreground " +
   "focus-visible:outline-none focus-visible:ring-2 " +
   "focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40";
 
 /** The small floating surfaces (status, transcript, receipts) share this look. */
 const BUBBLE_SURFACE =
-  "pointer-events-auto border border-border/50 bg-background/85 shadow-lg backdrop-blur";
+  "pointer-events-auto border border-border/50 bg-background/85 backdrop-blur";
 
 export function VoiceBubble({
   open,
@@ -666,6 +666,9 @@ export function VoiceBubble({
             "hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-primary/50 motion-reduce:transform-none",
             // With no card behind it, the sphere needs its own separation from
             // whatever the pane below is drawing — a cast shadow, not a frame.
+            // Exempt from the no-shadows pass: the Design.md's rule assumes a
+            // hairline can do the job, and here a frame is exactly what this
+            // element must not have.
             "drop-shadow-[0_10px_28px_rgba(0,0,0,0.5)]",
             active
               ? "[filter:saturate(1)_brightness(1)]"

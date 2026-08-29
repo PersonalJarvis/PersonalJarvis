@@ -75,9 +75,9 @@ const IDE_SECTIONS: readonly string[] = [
 
 const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
   idle: { dot: "bg-muted-foreground/50", pulse: false },
-  listening: { dot: "bg-emerald-400", pulse: true },
-  thinking: { dot: "bg-primary", pulse: true },
-  speaking: { dot: "bg-primary", pulse: true },
+  listening: { dot: "bg-muted-foreground", pulse: true },
+  thinking: { dot: "bg-foreground/70", pulse: true },
+  speaking: { dot: "bg-foreground/70", pulse: true },
   // The user muted or suspended the pipeline: neither working nor broken.
   paused: { dot: "bg-foreground", pulse: false },
   error: { dot: "bg-destructive", pulse: false },
@@ -400,7 +400,7 @@ export function Sidebar({
               <span
                 data-testid="sidebar-instance-tag"
                 title={t("sidebar.instance_dev_hint")}
-                className="absolute -bottom-1 -right-1 rounded-[3px] bg-primary px-[3px] py-px font-mono text-[7px] font-bold leading-none tracking-wider text-primary-foreground"
+                className="absolute -bottom-1 -right-1 rounded-[3px] bg-foreground/70 px-[3px] py-px font-mono text-[7px] font-bold leading-none tracking-wider text-primary-foreground"
               >
                 {devTag}
               </span>
@@ -433,7 +433,7 @@ export function Sidebar({
                   <span
                     data-testid="sidebar-instance-tag"
                     title={t("sidebar.instance_dev_hint")}
-                    className="shrink-0 rounded-[4px] bg-primary px-1 py-px font-mono text-[9px] font-bold leading-none tracking-wider text-primary-foreground"
+                    className="shrink-0 rounded-[4px] bg-foreground/70 px-1 py-px font-mono text-[9px] font-bold leading-none tracking-wider text-primary-foreground"
                   >
                     {devTag}
                   </span>
@@ -497,7 +497,7 @@ export function Sidebar({
               data-testid="sidebar-new-chat"
               className="mt-2 flex w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
-              <span className="flex h-4 w-4 items-center justify-center rounded bg-primary text-primary-foreground">
+              <span className="flex h-4 w-4 items-center justify-center rounded bg-foreground/70 text-primary-foreground">
                 <Plus aria-hidden className="h-3 w-3" />
               </span>
               {onVoiceSurface ? t("sidebar.new_voice_chat") : t("sidebar.new_chat")}
@@ -654,7 +654,7 @@ export function Sidebar({
               : footerTooltip
           }
         >
-          <div className="h-2 w-2 shrink-0 rounded-full bg-primary shadow-[0_0_8px_rgb(var(--accent-rgb)/0.7)]" />
+          <div className="h-2 w-2 shrink-0 rounded-full bg-foreground/70" />
           {!railed && (
           <div className="flex-1 min-w-0">
             <div

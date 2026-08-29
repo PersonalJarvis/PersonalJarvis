@@ -194,8 +194,8 @@ export function HudLamp({
         "inline-block h-1.5 w-1.5 shrink-0",
         on
           ? tone === "destructive"
-            ? "bg-destructive shadow-[0_0_6px_1px_hsl(var(--destructive)/0.6)]"
-            : "bg-primary shadow-[0_0_6px_1px_hsl(var(--primary)/0.6)]"
+            ? "bg-destructive"
+            : "bg-foreground/70"
           : "bg-muted-foreground/40",
         className,
       )}

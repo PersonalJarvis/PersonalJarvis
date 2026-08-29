@@ -173,7 +173,7 @@ export function RenderedFence({ language, code }: { language: FenceLanguage; cod
       className={cn(
         "rounded-sm px-2 py-0.5 text-[10px] font-medium transition-colors",
         mode === value
-          ? "bg-background text-foreground shadow-sm"
+          ? "bg-background text-foreground"
           : "text-muted-foreground hover:text-foreground",
       )}
     >
@@ -203,7 +203,7 @@ export function RenderedFence({ language, code }: { language: FenceLanguage; cod
             aria-label={copied ? t("docs_content.code_copied") : t("docs_content.copy_code")}
           >
             {copied ? (
-              <Check className="h-3 w-3 text-emerald-400" aria-hidden="true" />
+              <Check className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
             ) : (
               <Copy className="h-3 w-3" aria-hidden="true" />
             )}

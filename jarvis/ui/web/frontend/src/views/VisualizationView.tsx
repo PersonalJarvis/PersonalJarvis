@@ -97,9 +97,9 @@ import {
 
 /** What a row's status dot means — the run vocabulary, one language. */
 const RUN_DOT: Record<OutputStatus, string> = {
-  success: "bg-emerald-400",
+  success: "bg-muted-foreground",
   error: "bg-destructive",
-  running: "bg-primary animate-pulse",
+  running: "bg-foreground/70 animate-pulse",
   cancelled: "bg-foreground",
   unknown: "bg-muted-foreground/50",
 };
@@ -500,7 +500,7 @@ function RailFilterControl({
           className={cn(
             "inline-flex flex-1 items-center justify-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium transition-colors",
             filter === id
-              ? "bg-background text-foreground shadow-sm"
+              ? "bg-background text-foreground"
               : "text-muted-foreground hover:text-foreground",
           )}
         >
@@ -837,7 +837,7 @@ function ArtifactToolbar({
               className={cn(
                 "inline-flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors",
                 mode === id
-                  ? "bg-background text-foreground shadow-sm"
+                  ? "bg-background text-foreground"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >

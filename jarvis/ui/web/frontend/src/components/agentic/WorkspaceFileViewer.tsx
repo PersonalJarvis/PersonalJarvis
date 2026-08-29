@@ -248,13 +248,13 @@ function ViewerContent({
     return <iframe title={name} src={fileUrl} className="h-full min-h-[28rem] w-full border-0 bg-white" />;
   }
   if (kind === "image") {
-    return <div className="flex min-h-full items-center justify-center p-6"><img src={fileUrl} alt={name} onError={onNativeError} className="max-h-full max-w-full object-contain shadow-2xl" /></div>;
+    return <div className="flex min-h-full items-center justify-center p-6"><img src={fileUrl} alt={name} onError={onNativeError} className="max-h-full max-w-full object-contain" /></div>;
   }
   if (kind === "audio") {
     return <div className="flex min-h-full items-center justify-center p-8"><audio src={fileUrl} controls onError={onNativeError} className="w-full max-w-xl" /></div>;
   }
   if (kind === "video") {
-    return <div className="flex min-h-full items-center justify-center p-6"><video src={fileUrl} controls onError={onNativeError} className="max-h-full max-w-full bg-black shadow-2xl" /></div>;
+    return <div className="flex min-h-full items-center justify-center p-6"><video src={fileUrl} controls onError={onNativeError} className="max-h-full max-w-full bg-black" /></div>;
   }
   if (kind === "html") {
     return <iframe title={name} src={fileUrl} sandbox="" className="h-full min-h-[28rem] w-full border-0 bg-white" />;
