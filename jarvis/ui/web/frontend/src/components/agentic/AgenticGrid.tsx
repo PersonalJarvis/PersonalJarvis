@@ -3066,7 +3066,7 @@ function ToolbarOverflow({ children }: { children: React.ReactNode }) {
         className={cn(
           "contents",
           open
-            ? "max-[900px]:absolute max-[900px]:right-0 max-[900px]:top-full max-[900px]:z-50 max-[900px]:mt-1 max-[900px]:flex max-[900px]:w-[min(22rem,calc(100vw-1rem))] max-[900px]:flex-wrap max-[900px]:items-center max-[900px]:justify-end max-[900px]:gap-1 max-[900px]:rounded-xl max-[900px]:border max-[900px]:border-border max-[900px]:bg-card max-[900px]:p-2 max-[900px]:"
+            ? "max-[900px]:absolute max-[900px]:right-0 max-[900px]:top-full max-[900px]:z-50 max-[900px]:mt-1 max-[900px]:flex max-[900px]:w-[min(22rem,calc(100vw-1rem))] max-[900px]:flex-wrap max-[900px]:items-center max-[900px]:justify-end max-[900px]:gap-1 max-[900px]:rounded-xl max-[900px]:border max-[900px]:border-border max-[900px]:bg-card max-[900px]:p-2"
             : "max-[900px]:hidden",
         )}
       >
