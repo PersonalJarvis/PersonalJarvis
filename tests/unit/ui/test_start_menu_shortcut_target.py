@@ -416,8 +416,7 @@ def _stt_config(tmp_path: Path, *, provider: str, fallback: str) -> Path:
         f'provider = "{provider}"',
         f'fallback = "{fallback}"',
     ]
-    toml.write_text("
-".join(body), encoding="utf-8")
+    toml.write_text("\n".join(body), encoding="utf-8")
     return toml
 
 
