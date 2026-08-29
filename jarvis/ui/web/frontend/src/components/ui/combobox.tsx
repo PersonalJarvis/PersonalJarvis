@@ -107,7 +107,15 @@ function defaultMatches(option: ComboboxOption, query: string): boolean {
 
 interface PanelPosition {
   left: number;
-  top: number;
+  /** Set when the panel opens downwards: its top edge sits under the trigger. */
+  top?: number;
+  /**
+   * Set when the panel opens upwards: its BOTTOM edge sits over the trigger
+   * (a viewport `bottom`, so the panel grows up from the trigger whatever its
+   * real height). Positioning the top edge from an assumed height left a short
+   * list floating high above the trigger on first open.
+   */
+  bottom?: number;
   width: number;
   maxHeight: number;
 }
@@ -231,8 +239,11 @@ export function Combobox({
       Math.max(VIEWPORT_MARGIN, rect.left),
       Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN),
     );
-    const top = flipUp ? rect.top - maxHeight - 6 : rect.bottom + 6;
-    setPosition({ left, top, width, maxHeight });
+    setPosition(
+      flipUp
+        ? { left, bottom: window.innerHeight - rect.top + 6, width, maxHeight }
+        : { left, top: rect.bottom + 6, width, maxHeight },
+    );
   }, []);
 
   useLayoutEffect(() => {
@@ -420,6 +431,7 @@ export function Combobox({
             style={{
               left: position.left,
               top: position.top,
+              bottom: position.bottom,
               width: position.width,
               maxHeight: position.maxHeight,
             }}

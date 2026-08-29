@@ -113,3 +113,33 @@ describe("Combobox non-search listbox accessibility", () => {
     expect(onChange).toHaveBeenCalledWith("english");
   });
 });
+
+describe("Combobox panel placement", () => {
+  it("opens downwards under the trigger when there is room", async () => {
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(900);
+    vi.spyOn(HTMLButtonElement.prototype, "getBoundingClientRect").mockReturnValue({
+      top: 100, bottom: 128, left: 40, right: 240, width: 200, height: 28, x: 40, y: 100, toJSON: () => ({}),
+    } as DOMRect);
+    render(<Combobox value="alpha" groups={GROUPS} onChange={() => {}} ariaLabel="Down" testId="down" />);
+    fireEvent.click(screen.getByTestId("down"));
+    const panel = await screen.findByTestId("down-panel");
+    expect(panel.style.top).toBe("134px");
+    expect(panel.style.bottom).toBe("");
+  });
+
+  it("hangs its bottom edge over a trigger near the viewport floor instead of assuming a height", async () => {
+    // A composer pill 60px above the floor: below is cramped, above is roomy.
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(900);
+    vi.spyOn(HTMLButtonElement.prototype, "getBoundingClientRect").mockReturnValue({
+      top: 812, bottom: 840, left: 40, right: 240, width: 200, height: 28, x: 40, y: 812, toJSON: () => ({}),
+    } as DOMRect);
+    render(<Combobox value="alpha" groups={GROUPS} onChange={() => {}} ariaLabel="Up" testId="up" />);
+    fireEvent.click(screen.getByTestId("up"));
+    const panel = await screen.findByTestId("up-panel");
+    // bottom = innerHeight - trigger.top + gap: the list grows upwards from
+    // the pill, however short it is — no top computed from MAX_PANEL_HEIGHT.
+    expect(panel.style.bottom).toBe("94px");
+    expect(panel.style.top).toBe("");
+    expect(parseInt(panel.style.maxHeight, 10)).toBeGreaterThanOrEqual(160);
+  });
+});
