@@ -167,7 +167,7 @@ function LibraryDownloadBanner() {
               className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary"
             >
               <div
-                className="h-full rounded-full bg-primary transition-[width] duration-300"
+                className="h-full rounded-full bg-foreground/70 transition-[width] duration-300"
                 style={{ width: `${percent}%` }}
               />
             </div>
@@ -335,7 +335,7 @@ function WallpaperTile({
         )}
       />
       {active && (
-        <span className="pointer-events-none absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow">
+        <span className="pointer-events-none absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-foreground/70 text-primary-foreground shadow">
           <Check className="h-3.5 w-3.5" />
         </span>
       )}

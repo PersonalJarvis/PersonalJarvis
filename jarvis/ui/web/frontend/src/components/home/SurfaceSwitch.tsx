@@ -76,7 +76,7 @@ function SurfaceTab({
         "flex items-center justify-center gap-1.5 rounded-[10px] px-2 py-1.5 text-xs font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         active
-          ? "bg-card text-foreground shadow-sm"
+          ? "bg-card text-foreground"
           : "text-muted-foreground hover:text-foreground",
       )}
     >

@@ -60,8 +60,8 @@ export function useStateLabels(): Record<TaskState, string> {
 
 const DOT_CLASS: Record<TaskState, string> = {
   pending: "bg-muted-foreground/50",
-  scheduled: "bg-primary",
-  running: "bg-primary animate-pulse",
+  scheduled: "bg-foreground/70",
+  running: "bg-foreground/70 animate-pulse",
   paused: "bg-muted-foreground/50",
   completed: "bg-muted-foreground",
   failed: "bg-destructive",

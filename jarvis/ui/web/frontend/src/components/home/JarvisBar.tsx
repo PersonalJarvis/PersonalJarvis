@@ -141,7 +141,7 @@ export function JarvisBar({ phase, hint }: { phase: WaveformPhase; hint: string 
               voiceState === "error"
                 ? "bg-destructive"
                 : callActive
-                  ? "bg-primary animate-jarvis-pulse"
+                  ? "bg-foreground/70 animate-jarvis-pulse"
                   : "bg-muted-foreground/40",
             )}
           />
@@ -179,7 +179,7 @@ export function JarvisBar({ phase, hint }: { phase: WaveformPhase; hint: string 
             {promptMode.enabled && (
               <span
                 aria-hidden
-                className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary animate-jarvis-pulse"
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/70 animate-jarvis-pulse"
               />
             )}
           </button>

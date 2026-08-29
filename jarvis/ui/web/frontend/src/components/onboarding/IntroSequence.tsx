@@ -62,7 +62,7 @@ export function IntroSequence({ className }: { className?: string }) {
             key={k}
             className={cn(
               "h-1 w-5 rounded-full transition-colors",
-              i <= scene ? "bg-primary" : "bg-muted",
+              i <= scene ? "bg-foreground/70" : "bg-muted",
             )}
           />
         ))}

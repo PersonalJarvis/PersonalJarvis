@@ -145,7 +145,7 @@ export function FrontierSwitchModal() {
             onClick={handleOk}
             disabled={acking}
             className={cn(
-              "rounded-md border border-primary bg-primary px-4 py-2",
+              "rounded-md border border-primary bg-foreground/70 px-4 py-2",
               "text-sm font-semibold text-primary-foreground",
               "transition-opacity hover:opacity-90",
               "disabled:cursor-not-allowed disabled:opacity-50",

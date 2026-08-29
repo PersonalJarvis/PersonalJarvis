@@ -186,7 +186,7 @@ function ConfidenceBar({ value }: { value: number }) {
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-background/60">
         <div
-          className="h-full rounded-full bg-primary transition-[width] duration-500"
+          className="h-full rounded-full bg-foreground/70 transition-[width] duration-500"
           style={{ width: `${pct}%` }}
         />
       </div>

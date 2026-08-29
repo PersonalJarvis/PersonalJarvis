@@ -344,7 +344,7 @@ function PlatformCard({
             type="button"
             onClick={() => void add()}
             disabled={!label.trim() || busy === `add:${platform}`}
-            className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            className="shrink-0 rounded-lg bg-foreground/70 px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
             {t("agent_accounts.add_confirm")}
           </button>
@@ -488,7 +488,7 @@ function AccountRow({
           className={cn(
             "grid h-4 w-4 shrink-0 place-items-center rounded-full border",
             active
-              ? "border-primary bg-primary text-primary-foreground"
+              ? "border-primary bg-foreground/70 text-primary-foreground"
               : "border-muted-foreground/50 hover:border-primary",
           )}
         >
@@ -523,7 +523,7 @@ function AccountRow({
             type="button"
             onClick={() => void signIn()}
             disabled={pending}
-            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-foreground/70 px-2 py-1 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
           >
             <LogIn className="h-3 w-3" />
             {t("agent_accounts.sign_in")}
@@ -750,7 +750,7 @@ function LoginFlowBox({
             type="button"
             onClick={() => void submit()}
             disabled={!code.trim() || sending}
-            className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            className="shrink-0 rounded-lg bg-foreground/70 px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
             {t("agent_accounts.flow.submit")}
           </button>
@@ -762,7 +762,7 @@ function LoginFlowBox({
           <button
             type="button"
             onClick={onRetry}
-            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
+            className="rounded-lg bg-foreground/70 px-3 py-1.5 text-xs font-medium text-primary-foreground"
           >
             {t("agent_accounts.flow.retry")}
           </button>

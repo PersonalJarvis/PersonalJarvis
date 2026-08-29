@@ -68,7 +68,7 @@ function Key({
   // Visual precedence: a live press always wins (you must SEE the key you hit),
   // then the in-combo selection, then the "used by another action" marker.
   const cls = pressed
-    ? "border-primary bg-primary text-primary-foreground"
+    ? "border-primary bg-foreground/70 text-primary-foreground"
     : selected
       ? "border-primary bg-primary/20 text-primary"
       : boundLabel
@@ -209,7 +209,7 @@ export function KeyboardMap({
       {/* Legend */}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-primary" />
+          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-foreground/70" />
           {t("settings_view.keybinds.keyboard.legend_pressed")}
         </span>
         <span className="flex items-center gap-1">

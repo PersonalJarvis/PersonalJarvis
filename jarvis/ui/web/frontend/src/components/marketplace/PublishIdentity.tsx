@@ -290,7 +290,7 @@ function DeviceCodeTicket({
         <span className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/70" />
           </span>
           {t("marketplace.identity_waiting")}
         </span>

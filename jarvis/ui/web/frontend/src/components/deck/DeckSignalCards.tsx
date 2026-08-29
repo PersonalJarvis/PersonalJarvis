@@ -123,7 +123,7 @@ export function CaptureCard({ className }: { className?: string }) {
               {/* The draining rail: the picture's remaining time, visible. */}
               <div className="h-px w-full bg-border/60">
                 <div
-                  className="h-px bg-primary transition-[width] duration-200 ease-linear"
+                  className="h-px bg-foreground/70 transition-[width] duration-200 ease-linear"
                   style={{ width: `${(remaining / CAPTURE_AFTERGLOW_MS) * 100}%` }}
                   aria-hidden
                 />

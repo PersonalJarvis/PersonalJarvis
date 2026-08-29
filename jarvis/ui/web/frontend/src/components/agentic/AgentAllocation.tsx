@@ -270,7 +270,7 @@ export function AgentAllocation({
           aria-valuenow={assigned}
         >
           <div
-            className="h-full origin-left rounded-full bg-primary transition-transform duration-200"
+            className="h-full origin-left rounded-full bg-foreground/70 transition-transform duration-200"
             style={{
               transform: `scaleX(${total === 0 ? 0 : assigned / total})`,
             }}
@@ -354,7 +354,7 @@ export function AgentAllocation({
                     )}
                   />
                   {count > 0 && (
-                    <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-background bg-primary text-primary-foreground">
+                    <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-background bg-foreground/70 text-primary-foreground">
                       <Check className="h-2.5 w-2.5 stroke-[3]" />
                     </span>
                   )}

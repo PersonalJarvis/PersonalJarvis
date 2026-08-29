@@ -23,7 +23,7 @@ const ICON_FOR_KIND = {
 
 const STYLE_FOR_KIND: Record<Toast["kind"], string> = {
   info: "border-border bg-card/95 text-foreground",
-  success: "border-primary/40 bg-card/95 text-foreground shadow-[0_0_24px_rgb(var(--accent-rgb)/0.15)]",
+  success: "border-primary/40 bg-card/95 text-foreground",
   warning: "border-foreground/40 bg-card/95 text-foreground",
   error: "border-destructive/50 bg-card/95 text-foreground",
 };

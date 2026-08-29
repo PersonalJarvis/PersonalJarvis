@@ -124,7 +124,7 @@ function FriendMessageBubble({ message }: { message: FriendMessage }) {
         className={cn(
           "max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
           isOutbound
-            ? "bg-primary text-primary-foreground"
+            ? "bg-foreground/70 text-primary-foreground"
             : "border border-border bg-card/80 text-foreground backdrop-blur"
         )}
       >

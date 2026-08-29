@@ -542,7 +542,7 @@ function FileRow({
           <div className="mt-1 flex items-center gap-2">
             <div className="h-1 w-40 overflow-hidden rounded-full bg-muted-foreground/20">
               <div
-                className="h-full bg-primary transition-[width]"
+                className="h-full bg-foreground/70 transition-[width]"
                 style={{ width: `${percent ?? 5}%` }}
               />
             </div>

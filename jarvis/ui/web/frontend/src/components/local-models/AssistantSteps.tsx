@@ -180,7 +180,7 @@ function ToolStep({
             <button
               type="button"
               onClick={() => onDecide(block.approval!.approvalId, "allow")}
-              className="rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="rounded-md bg-foreground/70 px-2.5 py-1 text-[12px] font-medium text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               {t("local_models.assistant.steps.allow")}
             </button>

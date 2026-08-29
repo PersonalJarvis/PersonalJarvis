@@ -154,5 +154,5 @@ const LEVEL: Record<number, string> = {
   1: "bg-primary/25",
   2: "bg-primary/45",
   3: "bg-primary/70",
-  4: "bg-primary",
+  4: "bg-foreground/70",
 };

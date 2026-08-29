@@ -36,9 +36,15 @@ import {
  * no microphone behind them any motion here would be invented.
  */
 
+/*
+ * This thumbnail paints its own ground rather than the app's, because it is a
+ * portrait of the desktop overlay — which has no page behind it. So the values
+ * are literals, not tokens, and they follow the same rule as the rest of the
+ * monochrome pass: the frame recedes and only the content lifts.
+ */
 const PREVIEW_BG = "#0e0d0c";
-const PREVIEW_RIM = "#d7b669";
-const PREVIEW_BAR = "#e7c46e";
+const PREVIEW_RIM = "#4a4842";
+const PREVIEW_BAR = "#c9c6bd";
 
 /** Maps an overlay style to its preview graphic. */
 export function StylePreview({ style }: { style: OverlayStyle }) {

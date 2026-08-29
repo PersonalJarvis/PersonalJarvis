@@ -285,7 +285,7 @@ function PullLine({ pull, t }: { pull: PullState | null; t: Translate }) {
         </p>
         <div className="h-1 w-full overflow-hidden rounded-full bg-sheen/[0.08]">
           <div
-            className="h-full bg-primary transition-[width]"
+            className="h-full bg-foreground/70 transition-[width]"
             style={{ width: `${percent}%` }}
           />
         </div>

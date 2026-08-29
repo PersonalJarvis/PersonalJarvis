@@ -713,7 +713,7 @@ function SelectBox({
       className={cn(
         "flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border transition-colors",
         checked
-          ? "border-primary bg-primary text-primary-foreground"
+          ? "border-primary bg-foreground/70 text-primary-foreground"
           : "border-muted-foreground/50 hover:border-muted-foreground",
         disabled && "cursor-not-allowed opacity-40",
         className,

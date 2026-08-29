@@ -129,7 +129,7 @@ export function SoftButton({
         "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors",
         "disabled:cursor-not-allowed disabled:opacity-50",
         primary
-          ? "bg-primary text-primary-foreground hover:bg-primary/90"
+          ? "bg-foreground/70 text-primary-foreground hover:bg-primary/90"
           : "bg-sheen/[0.06] text-foreground hover:bg-sheen/[0.12]",
         className,
       )}
@@ -555,7 +555,7 @@ export function StatusDot({
     off: "bg-muted-foreground/40",
     warn: "bg-foreground",
     error: "bg-destructive",
-    busy: "bg-primary",
+    busy: "bg-foreground/70",
   }[tone];
   return (
     <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">

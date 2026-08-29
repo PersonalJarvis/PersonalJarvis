@@ -67,7 +67,7 @@ export function MemoryStrip({ resident, roleLabel }: MemoryStripProps) {
         {resident.items.map((item, i) => (
           <span key={item.tag} className="contents">
             <span
-              className={cn("h-full bg-primary", i % 2 === 1 && "opacity-75")}
+              className={cn("h-full bg-foreground/70", i % 2 === 1 && "opacity-75")}
               style={{ width: width(item.weights_gb) }}
               title={`${item.display_label || item.tag} · ${gb(item.weights_gb)}`}
             />
@@ -89,7 +89,7 @@ export function MemoryStrip({ resident, roleLabel }: MemoryStripProps) {
       <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
         {resident.items.map((item) => (
           <li key={item.tag} className="flex items-center gap-1.5" data-testid={`memory-strip-${item.tag}`}>
-            <i className="inline-block h-2 w-2 rounded-[2px] bg-primary" aria-hidden />
+            <i className="inline-block h-2 w-2 rounded-[2px] bg-foreground/70" aria-hidden />
             <span className="text-foreground/90">{item.display_label || item.tag}</span>
             <span>
               {item.roles.map(roleLabel).join(" · ")} · {gb(item.weights_gb)}

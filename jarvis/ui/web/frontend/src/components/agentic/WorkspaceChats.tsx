@@ -279,7 +279,7 @@ function WorkspaceBand({
           aria-hidden
           className={cn(
             "h-1.5 w-1.5 shrink-0 rounded-full",
-            workspace.active ? "bg-primary" : "bg-muted-foreground/30",
+            workspace.active ? "bg-foreground/70" : "bg-muted-foreground/30",
           )}
         />
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">

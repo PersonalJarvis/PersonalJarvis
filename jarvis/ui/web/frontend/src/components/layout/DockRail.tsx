@@ -404,7 +404,7 @@ function DockIcon({
         ) : live ? (
           <span
             aria-hidden
-            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background"
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-foreground/70 ring-2 ring-background"
           />
         ) : null}
       </button>

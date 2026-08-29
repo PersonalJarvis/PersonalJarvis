@@ -186,7 +186,7 @@ function TranscriptLine({
         {text}
         {live && (
           <span
-            className="ml-0.5 inline-block h-[1em] w-0.5 translate-y-0.5 animate-pulse bg-primary motion-reduce:animate-none"
+            className="ml-0.5 inline-block h-[1em] w-0.5 translate-y-0.5 animate-pulse bg-foreground motion-reduce:animate-none"
             aria-hidden
           />
         )}

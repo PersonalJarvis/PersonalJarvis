@@ -1319,7 +1319,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
                   "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                   needsReconnect
                     ? "border border-foreground/50 bg-foreground/10 text-foreground hover:bg-foreground/20"
-                    : "bg-primary text-primary-foreground hover:bg-primary/90",
+                    : "bg-foreground/70 text-primary-foreground hover:bg-primary/90",
                 )}
               >
                 {busy ? (
@@ -2065,7 +2065,7 @@ function DeviceCodeDialog({
                     e.preventDefault();
                     void openExternalUrl(verificationUriComplete ?? verificationUri);
                   }}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-foreground/70 px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
                 >
                   Open {pluginName}
                   <ExternalLink className="h-3 w-3" />
@@ -2365,7 +2365,7 @@ export function PkceConnectDialog({
             type="button"
             onClick={handleContinue}
             disabled={busy || (clientRequired && !clientId.trim())}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-md bg-foreground/70 px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
           >
             {busy && <Loader2 className="h-3 w-3 animate-spin" />}
             Continue
@@ -2604,7 +2604,7 @@ export function PatConnectDialog({
                 e.preventDefault();
                 void openExternalUrl(auth.token_creation_url);
               }}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-foreground/70 px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
             >
               Open {plugin.name} tokens
               <ExternalLink className="h-3 w-3" />
@@ -2708,7 +2708,7 @@ export function PatConnectDialog({
             type="button"
             onClick={submit}
             disabled={!canSubmit}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-md bg-foreground/70 px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isPending ? (
               <>

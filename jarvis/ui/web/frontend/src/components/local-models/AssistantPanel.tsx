@@ -581,7 +581,7 @@ export function AssistantPanel({
               aria-label={t("local_models.assistant.send")}
               disabled={!activeSessionId || !draft.trim() || busy || running}
               className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground",
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-foreground/70 text-primary-foreground",
                 "transition-opacity hover:opacity-90 disabled:opacity-30",
                 "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
               )}
@@ -632,7 +632,7 @@ function ChipButton({
         "transition-colors disabled:cursor-not-allowed disabled:opacity-45",
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         primary
-          ? "bg-primary text-primary-foreground hover:opacity-90"
+          ? "bg-foreground/70 text-primary-foreground hover:opacity-90"
           : "border border-border text-muted-foreground hover:text-foreground",
       )}
     >

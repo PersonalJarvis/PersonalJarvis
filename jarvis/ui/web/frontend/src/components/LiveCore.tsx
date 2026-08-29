@@ -21,7 +21,7 @@ export function LiveCore({ className }: { className?: string }) {
     >
       <span className="thinking-ring absolute inline-flex h-full w-full rounded-full bg-primary/50" />
       <span className="thinking-ring absolute inline-flex h-full w-full rounded-full bg-primary/50 [animation-delay:0.9s]" />
-      <span className="thinking-core relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
+      <span className="thinking-core relative inline-flex h-2.5 w-2.5 rounded-full bg-foreground/70" />
     </span>
   );
 }

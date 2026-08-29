@@ -255,7 +255,7 @@ export function JarvisDock() {
           {isBar ? (
             <span className="flex h-6 items-end gap-0.5" aria-hidden>
               <span className="h-3 w-1 rounded-sm bg-primary/80" />
-              <span className="h-5 w-1 rounded-sm bg-primary" />
+              <span className="h-5 w-1 rounded-sm bg-foreground" />
               <span className="h-2 w-1 rounded-sm bg-primary/60" />
               <span className="h-4 w-1 rounded-sm bg-primary/80" />
             </span>

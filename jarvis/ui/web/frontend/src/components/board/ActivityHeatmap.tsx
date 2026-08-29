@@ -8,7 +8,7 @@ const LEVEL: Record<number, string> = {
   1: "bg-primary/30",
   2: "bg-primary/50",
   3: "bg-primary/75",
-  4: "bg-primary shadow-[0_0_8px_-1px] shadow-primary/50",
+  4: "bg-foreground/70 /50",
 };
 
 const DEFAULT_WEEKS = 26;

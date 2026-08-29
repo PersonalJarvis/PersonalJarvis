@@ -11,7 +11,7 @@ const Switch = React.forwardRef<
       // OFF state uses muted-foreground (not --input, which is nearly identical
       // to the matte-black background and made off switches invisible). ON state
       // (signal-yellow --primary) is unchanged.
-      "peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/30",
+      "peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-foreground/70 data-[state=unchecked]:bg-muted-foreground/30",
       className,
     )}
     {...props}

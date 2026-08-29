@@ -665,7 +665,7 @@ export function ResumeCard({
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 bg-primary" />
+              <span className="h-1.5 w-1.5 bg-foreground/70" />
               {t("workspace_launcher.resume.legend_continues")}
             </span>
             <span className="inline-flex items-center gap-1.5">

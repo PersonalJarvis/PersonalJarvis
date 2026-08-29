@@ -701,8 +701,8 @@ export function KeybindRow({
     >
       {capturing && (
         <span className="relative mr-1 flex h-2 w-2 shrink-0">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-foreground/70 opacity-75" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/70" />
         </span>
       )}
       {combo ? (

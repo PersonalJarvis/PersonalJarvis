@@ -582,6 +582,24 @@ label,
        outlived the colour — nothing yellow is left in either — but they stay
        spelled this way until the call sites are renamed in their own pass,
        because a rename and a recolour in one commit hides both. */
+    /* --- The mascot's two marking roles ----------------------------------
+       The ghost was drawn with one hardcoded white for everything, which is
+       only correct for half of it. Its markings fall into two groups that
+       need OPPOSITE behaviour:
+
+         on-body   eyes, mouth, scanlines — these sit on the figure's own
+                   near-black body, so they must stay light in BOTH themes.
+         trim      arms, glitch pixels, outline, halo — these sit OUTSIDE the
+                   silhouette, on the page, so they must contrast with the
+                   PAGE and therefore flip with it. Hardcoded white made them
+                   invisible on paper, which is the "partly wrong" the
+                   maintainer saw.
+
+       Trim is also deliberately quiet on the dark ground: it is decoration
+       around the figure, not the figure, and pure white on near-black made
+       the glitch pixels louder than the eyes. */
+    --gigi-on-body: 60 16% 96%; /* the canvas — legible on the body */
+    --gigi-trim: 53 12% 13%; /* ink — reads on paper */
     --jarvis-yellow: 38 37 30;
     --jarvis-yellow-dim: 128 125 114;
     --jarvis-grid: 50 11% 89%;
@@ -694,6 +712,10 @@ label,
     --viz-result: 0 0% 100%;
     --viz-deliverable: 47 6% 58%;
 
+    /* See the mascot note in :root. On this ground the trim steps DOWN to
+       muted rather than up to white: it frames the figure, it is not it. */
+    --gigi-on-body: 0 0% 100%;
+    --gigi-trim: 47 6% 58%;
     --jarvis-yellow: 247 247 244;
     --jarvis-yellow-dim: 154 151 140;
     --jarvis-grid: 60 4% 8%;

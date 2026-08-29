@@ -377,7 +377,7 @@ export function BrowserRealtimeControl() {
           "text-xs font-medium transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
           connected
-            ? "bg-primary text-primary-foreground hover:bg-primary/90"
+            ? "bg-foreground/70 text-primary-foreground hover:bg-primary/90"
             : "border border-border bg-card text-foreground hover:border-primary/50",
           (unavailable || connecting) && "cursor-not-allowed opacity-60",
         )}

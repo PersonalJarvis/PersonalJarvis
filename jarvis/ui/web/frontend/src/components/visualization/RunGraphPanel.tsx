@@ -86,7 +86,7 @@ const clampZoom = (value: number): number =>
 const NODE_DOT: Record<string, string> = {
   done: "bg-muted-foreground",
   failed: "bg-destructive",
-  running: "bg-primary animate-pulse",
+  running: "bg-foreground/70 animate-pulse",
   skipped: "bg-muted-foreground/40",
 };
 

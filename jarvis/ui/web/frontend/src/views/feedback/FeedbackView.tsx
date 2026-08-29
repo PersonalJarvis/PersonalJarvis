@@ -617,7 +617,7 @@ export function FeedbackView() {
                 <button
                   type="submit"
                   disabled={!canSubmit}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-foreground/70 px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <ExternalLink className="h-4 w-4" aria-hidden="true" />
                   {type === "bug"

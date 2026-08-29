@@ -182,7 +182,7 @@ export function TeamProxyGroup() {
                         className={cn(
                           "flex h-3.5 w-3.5 items-center justify-center rounded border",
                           on
-                            ? "border-primary bg-primary text-primary-foreground"
+                            ? "border-primary bg-foreground/70 text-primary-foreground"
                             : "border-muted-foreground/50",
                         )}
                       >

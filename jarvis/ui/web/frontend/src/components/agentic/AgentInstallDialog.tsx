@@ -214,7 +214,7 @@ export function AgentInstallDialog({
             data-testid={`agent-install-dismiss-${agent}`}
             className={
               installed
-                ? "shrink-0 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                ? "shrink-0 rounded-md bg-foreground/70 px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                 : "shrink-0 rounded-md border border-border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-primary/10"
             }
           >

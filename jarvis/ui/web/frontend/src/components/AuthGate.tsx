@@ -207,7 +207,7 @@ export function AuthGate({ children }: AuthGateProps) {
           </p>
         )}
         <button
-          className="mt-4 w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
+          className="mt-4 w-full rounded-md bg-foreground/70 px-3 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
           disabled={!controlKey.trim() || submitting}
           type="submit"
         >

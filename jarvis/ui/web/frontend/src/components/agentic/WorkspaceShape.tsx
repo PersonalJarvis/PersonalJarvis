@@ -421,7 +421,7 @@ export function CountTrack({
               aria-hidden="true"
               className={cn(
                 "h-1.5 w-px transition-colors",
-                count === n ? "bg-primary" : "bg-border",
+                count === n ? "bg-foreground/70" : "bg-border",
               )}
             />
             {n}
@@ -597,7 +597,7 @@ function StagePane({
         <span
           className={cn(
             "m-1 h-1 w-1 shrink-0 rounded-full",
-            focused ? "bg-primary" : "bg-muted-foreground/50",
+            focused ? "bg-foreground/70" : "bg-muted-foreground/50",
           )}
         />
       )}

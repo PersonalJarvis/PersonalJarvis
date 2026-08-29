@@ -725,7 +725,7 @@ function AgentRow({
         // Said once, at the edge: a 3 px gold rule and a faint wash mark the
         // worker that runs, instead of a gold frame plus glow plus chip.
         active &&
-          "bg-primary/[0.035] before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r before:bg-primary",
+          "bg-primary/[0.035] before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r before:bg-foreground/70",
       )}
     >
       <div
@@ -1750,7 +1750,7 @@ function SubagentActiveControl({
         <span
           aria-hidden="true"
           className={cn(
-            "h-[7px] w-[7px] rounded-full bg-primary",
+            "h-[7px] w-[7px] rounded-full bg-foreground/70",
             activating && "animate-pulse motion-reduce:animate-none",
           )}
         />

@@ -442,7 +442,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         >
           <span className="relative flex h-2 w-2" aria-hidden>
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/70" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/70" />
           </span>
           <span className="font-medium">{t("chats_view.dictation_listening")}</span>
         </div>
@@ -692,7 +692,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             className={cn(
               "inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
               canSend
-                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                ? "bg-foreground/70 text-primary-foreground hover:bg-primary/90"
                 : "bg-secondary text-muted-foreground/60",
             )}
           >

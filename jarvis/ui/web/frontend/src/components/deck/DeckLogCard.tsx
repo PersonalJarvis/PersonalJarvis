@@ -157,7 +157,7 @@ export function LogCard({ className }: { className?: string }) {
           <span
             className={cn(
               "inline-block h-[1.1em] w-[0.55em] shrink-0 self-center",
-              live ? "bg-primary" : "bg-foreground/60 motion-safe:animate-pulse",
+              live ? "bg-foreground/70" : "bg-foreground/60 motion-safe:animate-pulse",
             )}
             aria-hidden
           />

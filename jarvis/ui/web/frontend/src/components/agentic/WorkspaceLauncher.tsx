@@ -560,7 +560,7 @@ function StepNavigation({
                 <span
                   className={cn(
                     "absolute bottom-[-1px] left-0 right-0 h-0.5 lg:bottom-0 lg:left-auto lg:right-[-25px] lg:top-0 lg:h-auto lg:w-0.5",
-                    selected ? "bg-primary" : "bg-transparent",
+                    selected ? "bg-foreground/70" : "bg-transparent",
                   )}
                 />
                 <span className="block font-mono text-[10px] tabular-nums text-muted-foreground/70">

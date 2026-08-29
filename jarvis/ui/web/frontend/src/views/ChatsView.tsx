@@ -404,7 +404,7 @@ function AssistantLabel() {
   const assistantName = useEventStore((s) => s.assistantName);
   return (
     <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
-      <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
+      <span className="h-1 w-1 rounded-full bg-foreground/70" aria-hidden />
       {assistantName}
     </div>
   );
@@ -451,7 +451,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         className={cn(
           "max-w-[80%] px-4 py-3 text-sm leading-relaxed",
           isUser
-            ? "rounded-2xl rounded-br-sm bg-primary text-primary-foreground"
+            ? "rounded-2xl rounded-br-sm bg-foreground/70 text-primary-foreground"
             : "jarvis-message-surface rounded-2xl rounded-bl-sm border border-border text-foreground",
         )}
       >

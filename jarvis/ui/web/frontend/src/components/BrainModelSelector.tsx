@@ -564,7 +564,7 @@ export function BrainModelSelector({
                         )}
                         {m.label}
                         {recommendedModel && m.id === recommendedModel && (
-                          <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-primary-foreground">
+                          <span className="shrink-0 rounded-full bg-foreground/70 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-primary-foreground">
                             {t("apikeys_model.recommended_tag")}
                           </span>
                         )}

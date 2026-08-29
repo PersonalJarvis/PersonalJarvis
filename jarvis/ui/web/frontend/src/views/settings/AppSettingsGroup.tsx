@@ -84,7 +84,7 @@ function AppearanceRow() {
                     className={
                       "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors " +
                       (active
-                        ? "bg-primary text-primary-foreground"
+                        ? "bg-foreground/70 text-primary-foreground"
                         : "text-muted-foreground hover:bg-secondary hover:text-foreground")
                     }
                   >
@@ -213,7 +213,7 @@ function AutostartRow() {
                 type="button"
                 disabled={saving}
                 onClick={onEnableInstantStart}
-                className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-foreground/70 px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 <Zap className="h-3.5 w-3.5" />
                 {t("settings_view.autostart.enable_instant_start")}

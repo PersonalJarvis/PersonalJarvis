@@ -139,7 +139,7 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
             ? "inset-y-0 left-1/2 w-px -translate-x-1/2"
             : "inset-x-0 top-1/2 h-px -translate-y-1/2",
           active
-            ? "bg-primary"
+            ? "bg-foreground/70"
             : "bg-border group-hover:bg-primary/60 group-focus-visible:bg-primary/60",
         )}
       />
@@ -151,7 +151,7 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
           "pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors",
           vertical ? "h-8 w-[3px]" : "h-[3px] w-8",
           active
-            ? "bg-primary"
+            ? "bg-foreground/70"
             : "bg-border group-hover:bg-primary/70 group-focus-visible:bg-primary/70",
         )}
       />

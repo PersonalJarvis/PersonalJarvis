@@ -622,7 +622,7 @@ function RecapEditor({
             onClick={submit}
             disabled={saving}
             data-testid={`pane-recap-save-${name}`}
-            className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition-[filter] hover:brightness-95 disabled:opacity-50"
+            className="flex items-center gap-1 rounded-md bg-foreground/70 px-2.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition-[filter] hover:brightness-95 disabled:opacity-50"
           >
             {saving && <Loader2 className="h-3 w-3 animate-spin" />}
             Save

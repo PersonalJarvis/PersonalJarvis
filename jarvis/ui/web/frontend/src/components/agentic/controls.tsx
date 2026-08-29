@@ -64,7 +64,7 @@ const BASE =
   "disabled:cursor-not-allowed disabled:opacity-40";
 
 const VARIANTS: Record<NonNullable<ButtonProps["variant"]>, string> = {
-  primary: "bg-primary text-primary-foreground hover:bg-primary/90",
+  primary: "bg-foreground/70 text-primary-foreground hover:bg-primary/90",
   quiet:
     "border border-border bg-card/60 text-foreground hover:border-border hover:bg-secondary",
   subtle: "text-muted-foreground hover:bg-secondary hover:text-foreground",

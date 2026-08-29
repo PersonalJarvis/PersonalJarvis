@@ -28,7 +28,7 @@ export function RunList({
               )}
             >
               {selected && (
-                <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" />
+                <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-foreground" />
               )}
               <div className="flex items-center gap-2">
                 <OutcomeDot outcome={r.outcome} />

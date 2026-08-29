@@ -219,7 +219,7 @@ const Turn = memo(function Turn({
     >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
         <span
-          className={cn("h-1 w-1 rounded-full bg-primary", live && "motion-safe:animate-pulse")}
+          className={cn("h-1 w-1 rounded-full bg-foreground/70", live && "motion-safe:animate-pulse")}
           aria-hidden
         />
         <span>{assistantName}</span>
@@ -1122,7 +1122,7 @@ function ToolRow({
             <button
               type="button"
               onClick={() => onDecide(block.approval!.approvalId, "allow")}
-              className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              className="inline-flex h-7 items-center gap-1 rounded-md bg-foreground/70 px-2.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
               data-testid="approval-allow"
             >
               <Check className="h-3.5 w-3.5" aria-hidden />

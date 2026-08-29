@@ -164,7 +164,7 @@ export function MakeItYoursView() {
             <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
               <div
                 data-testid="terminal-fill"
-                className="h-full rounded-full bg-primary transition-all"
+                className="h-full rounded-full bg-foreground/70 transition-all"
                 style={{ width: `${Math.min(100, (layout / maxLayout) * 100)}%` }}
               />
             </div>
@@ -395,7 +395,7 @@ function DotGrid({ n, active }: { n: number; active: boolean }) {
       {Array.from({ length: n }).map((_, i) => (
         <span
           key={i}
-          className={cn("h-2 w-2 rounded-[3px]", active ? "bg-primary" : "bg-muted-foreground/40")}
+          className={cn("h-2 w-2 rounded-[3px]", active ? "bg-foreground/70" : "bg-muted-foreground/40")}
         />
       ))}
     </div>
@@ -437,7 +437,7 @@ function AgentsStep({
           <div
             className={cn(
               "h-full rounded-full transition-all",
-              assigned === layout ? "bg-primary" : "bg-primary/60",
+              assigned === layout ? "bg-foreground/70" : "bg-primary/60",
             )}
             style={{ width: `${Math.min(100, (assigned / layout) * 100)}%` }}
           />

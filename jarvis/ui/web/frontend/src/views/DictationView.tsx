@@ -200,7 +200,7 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
                     <span
                       className={`h-2 w-2 shrink-0 rounded-full ${
                         status?.active
-                          ? "animate-pulse bg-primary"
+                          ? "animate-pulse bg-foreground/70"
                           : status?.available
                             ? "bg-muted-foreground"
                             : "bg-muted-foreground/50"

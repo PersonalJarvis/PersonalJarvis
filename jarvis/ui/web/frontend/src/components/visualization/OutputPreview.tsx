@@ -84,7 +84,7 @@ export function markdownTitle(text: string | null | undefined): string | null {
 const STATUS_DOT: Record<OutputStatus, string> = {
   success: "bg-muted-foreground",
   error: "bg-destructive",
-  running: "bg-primary animate-pulse",
+  running: "bg-foreground/70 animate-pulse",
   cancelled: "bg-foreground",
   unknown: "bg-muted-foreground/50",
 };

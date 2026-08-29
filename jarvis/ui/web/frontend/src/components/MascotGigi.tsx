@@ -118,8 +118,8 @@ export function MascotGigi({
               <stop offset="100%" stopColor="#050505" />
             </radialGradient>
             <linearGradient id="gigiYAccent" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#FFFFFF" />
-              <stop offset="100%" stopColor="#C9C9C9" />
+              <stop offset="0%" stopColor="hsl(var(--gigi-on-body))" />
+              <stop offset="100%" stopColor="hsl(var(--gigi-on-body))" stopOpacity="0.78" />
             </linearGradient>
           </defs>
 
@@ -127,7 +127,7 @@ export function MascotGigi({
           <path
             className="gigi-halo"
             d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
-            fill="#FFFFFF"
+            fill="hsl(var(--gigi-trim))"
             opacity="0.28"
             filter="url(#gigiSoftGlow)"
           />
@@ -137,19 +137,19 @@ export function MascotGigi({
             className="gigi-body"
             d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
             fill="url(#gigiBody)"
-            stroke="#FFFFFF"
+            stroke="hsl(var(--gigi-trim))"
             strokeWidth="1.8"
             strokeOpacity="0.85"
           />
 
           {/* Scanlines */}
           <g className="gigi-scanlines">
-            <rect x="58" y="132" width="140" height="2.4" fill="#FFFFFF" opacity="0.55" />
-            <rect x="58" y="160" width="140" height="1.4" fill="#FFFFFF" opacity="0.3" />
+            <rect x="58" y="132" width="140" height="2.4" fill="hsl(var(--gigi-on-body))" opacity="0.55" />
+            <rect x="58" y="160" width="140" height="1.4" fill="hsl(var(--gigi-on-body))" opacity="0.3" />
           </g>
 
           {/* Glitch pixels right */}
-          <g className="gigi-glitch-right" fill="#FFFFFF" filter="url(#gigiYGlow)">
+          <g className="gigi-glitch-right" fill="hsl(var(--gigi-trim))" filter="url(#gigiYGlow)">
             <rect x="200" y="104" width="6" height="6" />
             <rect x="208" y="128" width="4" height="4" />
             <rect x="202" y="146" width="9" height="3" />
@@ -157,7 +157,7 @@ export function MascotGigi({
             <rect x="206" y="176" width="5" height="3" />
           </g>
           {/* Glitch pixels left */}
-          <g className="gigi-glitch-left" fill="#C9C9C9" filter="url(#gigiYGlow)">
+          <g className="gigi-glitch-left" fill="hsl(var(--gigi-trim))" opacity="0.7" filter="url(#gigiYGlow)">
             <rect x="44" y="96" width="6" height="4" />
             <rect x="48" y="124" width="4" height="6" />
             <rect x="40" y="148" width="8" height="3" />
@@ -165,12 +165,12 @@ export function MascotGigi({
           </g>
 
           {/* Chromatic displacement slices */}
-          <rect x="64" y="118" width="18" height="10" fill="#FFFFFF" opacity="0.32" />
-          <rect x="170" y="118" width="18" height="10" fill="#FFFFFF" opacity="0.32" />
+          <rect x="64" y="118" width="18" height="10" fill="hsl(var(--gigi-on-body))" opacity="0.32" />
+          <rect x="170" y="118" width="18" height="10" fill="hsl(var(--gigi-on-body))" opacity="0.32" />
 
           {/* Eye glows */}
-          <ellipse cx="102" cy="108" rx="13" ry="17" fill="#FFFFFF" opacity="0.35" filter="url(#gigiSoftGlow)" />
-          <ellipse cx="154" cy="108" rx="13" ry="17" fill="#FFFFFF" opacity="0.35" filter="url(#gigiSoftGlow)" />
+          <ellipse cx="102" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter="url(#gigiSoftGlow)" />
+          <ellipse cx="154" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter="url(#gigiSoftGlow)" />
 
           {/* Eye sockets — auto-blinkend */}
           <g className="gigi-eyes">
@@ -186,8 +186,8 @@ export function MascotGigi({
 
           {/* Eye sparkle */}
           <g className="gigi-sparkle">
-            <circle cx="106" cy="105" r="2" fill="#FFFFFF" />
-            <circle cx="158" cy="105" r="2" fill="#FFFFFF" />
+            <circle cx="106" cy="105" r="2" fill="hsl(var(--gigi-on-body))" />
+            <circle cx="158" cy="105" r="2" fill="hsl(var(--gigi-on-body))" />
           </g>
 
           {/* Mouth — subtile Atmung */}
@@ -200,7 +200,7 @@ export function MascotGigi({
           <path
             className="gigi-arm gigi-arm-left"
             d="M 58 140 Q 40 148 42 162"
-            stroke="#FFFFFF"
+            stroke="hsl(var(--gigi-trim))"
             strokeWidth="5.5"
             fill="none"
             strokeLinecap="round"
@@ -209,7 +209,7 @@ export function MascotGigi({
           <path
             className="gigi-arm gigi-arm-right"
             d="M 198 140 Q 216 148 214 162"
-            stroke="#FFFFFF"
+            stroke="hsl(var(--gigi-trim))"
             strokeWidth="5.5"
             fill="none"
             strokeLinecap="round"

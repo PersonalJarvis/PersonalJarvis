@@ -330,7 +330,7 @@ export function ModelCard({
             <div
               className={cn(
                 "h-full transition-[width] duration-500 ease-out",
-                overBudget ? "bg-foreground" : "bg-primary",
+                overBudget ? "bg-foreground" : "bg-foreground/70",
               )}
               style={{
                 width: `${Math.min(100, Math.round((weightsGb / Math.max(acceleratorGb, totalGb, 0.01)) * 100))}%`,

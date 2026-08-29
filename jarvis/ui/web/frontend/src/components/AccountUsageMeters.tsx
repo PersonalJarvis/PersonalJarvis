@@ -33,14 +33,14 @@ import { cn } from "@/lib/utils";
 /**
  * Bar colour per severity.
  *
- * `bg-primary` and `bg-destructive` are theme tokens, so they follow light and
+ * `bg-foreground/70` and `bg-destructive` are theme tokens, so they follow light and
  * dark mode on their own. The middle step is a fixed orange on purpose: the
  * brand accent IS amber, so a token-based "warning" would be nearly the same
  * hue as "normal" and the one transition that has to be noticed would be the
  * one you cannot see.
  */
 const BAR_CLASS: Record<string, string> = {
-  normal: "bg-primary",
+  normal: "bg-foreground/70",
   warning: "bg-foreground",
   critical: "bg-destructive",
 };
