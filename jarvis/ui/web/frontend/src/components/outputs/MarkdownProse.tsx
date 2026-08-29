@@ -7,14 +7,16 @@
  * Shiki `CodeBlock`, except an `html` or `svg` fence, which is DRAWN
  * (`RenderedFence`: a chart the worker wrote as inline SVG is a chart, a
  * snippet of HTML runs in a sandbox, the markup one click away behind its
- * Source switch); a link to a sibling file in the same run selects that
+ * Source switch), and a plain-text fence holding an ASCII grid table, which
+ * becomes a real table (`AsciiTableFence`); a link to a sibling file in the
+ * same run selects that
  * file instead of navigating; an external link opens in the user's real
  * browser through the open-external bridge (the desktop WebView drops a bare
  * `target="_blank"`); an image next to the document is served from the run
  * archive. The typography is the caller's — the reader passes its own
  * classes, the output page the artifact standard's.
  */
-import { useMemo } from "react";
+import { Children, isValidElement, useMemo, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -23,6 +25,8 @@ import { openExternalUrl } from "@/lib/openExternal";
 import { artifactInlineUrl, type ArtifactSummary } from "@/hooks/useOutputs";
 import { CodeBlock } from "@/components/docs/CodeBlock";
 import { RenderedFence } from "@/components/outputs/RenderedFence";
+import { AsciiTableFence } from "@/components/outputs/AsciiTableFence";
+import { fenceLooseAsciiTables, parseAsciiTable } from "@/lib/asciiTable";
 
 /**
  * Split a leading YAML front matter block (`---` … `---`) off a document.
@@ -55,6 +59,33 @@ export function resolveSiblingPath(fromPath: string, href: string): string | nul
     }
   }
   return base.join("/");
+}
+
+/** Languages whose fences may hold an ASCII grid table rather than code. */
+const PLAIN_FENCE_LANGUAGES = new Set(["", "text", "txt", "plain", "plaintext", "ascii"]);
+
+/**
+ * Read the fence back out of a Markdown `<pre>`.
+ *
+ * The fence has to be handled HERE and not in the `code` component, because
+ * react-markdown 9 dropped the `inline` prop: the same `code` component serves
+ * inline `` `code` `` and block fences and cannot tell them apart. The parent
+ * element can — a fence is the only `code` inside a `pre`. What arrives as
+ * `children` is our own `code` component still unrendered, so its props are the
+ * ORIGINAL ones: the `language-…` class and the raw fence text.
+ *
+ * A fence with no language tag lands here with `language: ""`. That case is
+ * exactly what used to escape as a bare `<code>` with no `<pre>` around it,
+ * which collapses every line break and renders a table as one run-on line.
+ */
+export function readFence(children: ReactNode): { language: string; code: string } | null {
+  const element = Children.toArray(children).find((child) => isValidElement(child));
+  if (!isValidElement<{ className?: string; children?: ReactNode }>(element)) return null;
+  const match = /language-([\w+#.-]+)/.exec(element.props.className ?? "");
+  return {
+    language: match ? match[1].toLowerCase() : "",
+    code: String(element.props.children ?? "").replace(/\n$/, ""),
+  };
 }
 
 /**
@@ -91,31 +122,43 @@ export function MarkdownProse({
   testId?: string;
 }) {
   const known = useMemo(() => new Set(files.map((f) => f.path)), [files]);
-  const { meta, body } = useMemo(() => splitFrontMatter(text), [text]);
+  // An ASCII grid table the author never fenced is folded into a paragraph by
+  // Markdown, losing every line break; fencing it first hands it to the `pre`
+  // handler, which draws it as a table. GFM tables are left untouched.
+  const { meta, body } = useMemo(() => {
+    const split = splitFrontMatter(text);
+    return { meta: split.meta, body: fenceLooseAsciiTables(split.body) };
+  }, [text]);
   const components = useMemo<Components>(
     () => ({
-      // Fenced blocks render their own complete container; unwrapping the
-      // Markdown ``pre`` avoids invalid ``pre > div`` nesting around CodeBlock.
+      // EVERY fence is replaced here, whether or not it carries a language
+      // tag: each replacement brings its own complete container, so the
+      // Markdown ``pre`` is dropped rather than left to wrap a ``div``.
       pre({ children }) {
-        return <>{children}</>;
-      },
-      code({ className: codeClass, children, ...rest }) {
-        const match = /language-(\w+)/.exec(codeClass || "");
-        if (!match) {
-          return (
-            <code className={codeClass} {...rest}>
-              {children}
-            </code>
-          );
-        }
-        const language = match[1].toLowerCase();
-        const code = String(children).replace(/\n$/, "");
+        const fence = readFence(children);
+        if (fence === null) return <pre>{children}</pre>;
+        const { language, code } = fence;
         if (language === "html" || language === "svg") {
           return <RenderedFence language={language} code={code} />;
         }
+        if (PLAIN_FENCE_LANGUAGES.has(language)) {
+          const grid = parseAsciiTable(code);
+          if (grid !== null) return <AsciiTableFence grid={grid} code={code} />;
+        }
         return <CodeBlock language={language} code={code} />;
       },
-      a({ href, children, ...rest }) {
+      // Inline code only — a fence never reaches this, `pre` consumed it.
+      // ``node`` is dropped from the spread on every element below: it is
+      // react-markdown's syntax tree, and React would write it into the DOM
+      // as ``node="[object Object]"``.
+      code({ node: _node, className: codeClass, children, ...rest }) {
+        return (
+          <code className={codeClass} {...rest}>
+            {children}
+          </code>
+        );
+      },
+      a({ node: _node, href, children, ...rest }) {
         const sibling = href ? resolveSiblingPath(path, href) : null;
         if (sibling && known.has(sibling) && onSelectSibling) {
           return (
@@ -152,7 +195,7 @@ export function MarkdownProse({
           </a>
         );
       },
-      img({ src, alt, ...rest }) {
+      img({ node: _node, src, alt, ...rest }) {
         const sibling = typeof src === "string" ? resolveSiblingPath(path, src) : null;
         const resolved =
           sibling && known.has(sibling) ? artifactInlineUrl(slug, sibling) : src;
