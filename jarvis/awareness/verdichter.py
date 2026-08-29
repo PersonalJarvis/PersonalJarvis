@@ -20,14 +20,6 @@ with an empty summary instead of crashing.
 """
 from __future__ import annotations
 
-from jarvis.costs.ledger import usage_context
-
-
-def _tagged_complete(brain, request):  # type: ignore[no-untyped-def]
-    """The digest's model calls are ledgered as awareness work."""
-    with usage_context("awareness"):
-        return brain.complete(request)
-
 import asyncio
 import logging
 import time
@@ -37,11 +29,18 @@ from jarvis.awareness.config import AwarenessVerdichterConfig
 from jarvis.awareness.prompts import VERDICHTER_SYSTEM_PROMPT, build_verdichter_prompt
 from jarvis.brain.streaming import aggregate
 from jarvis.core.protocols import BrainMessage, BrainRequest
+from jarvis.costs.ledger import usage_context
 
 if TYPE_CHECKING:
     from jarvis.core.protocols import Brain
 
 logger = logging.getLogger(__name__)
+
+
+def _tagged_complete(brain, request):  # type: ignore[no-untyped-def]
+    """The digest's model calls are ledgered as awareness work."""
+    with usage_context("awareness"):
+        return brain.complete(request)
 
 # Plan §6 Hard Negative: max 30 frames+events per call.
 # On overflow: keep the NEWEST ones (chronological tail).
