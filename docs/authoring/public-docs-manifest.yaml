@@ -69,7 +69,7 @@ pages:
     authoritative_sources:
       - jarvis/ui/web/frontend/src/components/onboarding/OnboardingFlow.tsx
       - jarvis/ui/web/frontend/src/components/onboarding/steps/ApiKeysStep.tsx
-      - jarvis/ui/web/frontend/src/components/onboarding/steps/MicTestStep.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/steps/WakeWordStep.tsx
       - jarvis/ui/web/frontend/src/components/onboarding/steps/PermissionsStep.tsx
       - jarvis/ui/web/onboarding_routes.py
     related:
@@ -193,7 +193,7 @@ pages:
     diataxis: howto
     summary: Create, review, approve, and complete tasks, including scheduled and recurring work.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/TasksView.tsx
+      - jarvis/ui/web/frontend/src/views/AutomationsView.tsx
       - jarvis/ui/web/tasks_routes.py
       - jarvis/tasks/store.py
       - jarvis/tasks/scheduler.py
@@ -236,7 +236,7 @@ pages:
     diataxis: howto
     summary: Find generated files, preview them safely, open them in another app, and recover unfinished work when available.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/OutputsView.tsx
+      - jarvis/ui/web/frontend/src/views/VisualizationView.tsx
       - jarvis/ui/web/outputs_routes.py
       - jarvis/ui/web/downloads_routes.py
       - jarvis/ui/web/frontend/src/lib/fileActions.ts

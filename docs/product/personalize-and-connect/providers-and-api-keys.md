@@ -106,7 +106,7 @@ access token or other authentication credentials that assert a principal", and
 the realtime socket closes with the same message. The identical key works fine
 on the AI Studio cards, which is what makes the mistake easy to make.
 
-Two more things that bite on a real project:
+Three more things that bite on a real project:
 
 - **The region.** `global` is where the current Gemini generation lives; named
   regions lag behind, sometimes by a whole generation. An organisation policy
@@ -122,18 +122,15 @@ Two more things that bite on a real project:
   still gets a 404 for. Regions also differ a lot from one another. If a model
   404s, pick another one in the picker.
 
-Two reasons to prefer Vertex over the AI Studio cards: the billing lands in
-your Cloud project, and the text-to-speech preview model that AI Studio caps at
-100 requests per day — regardless of how you are billed — has no such cap
-there. That cap is what used to make the voice go quiet mid-day.
+Two reasons to prefer Vertex over the AI Studio cards: billing lands in your
+Cloud project, and the text-to-speech preview model has no daily cap there. AI
+Studio caps it at 100 requests a day however you are billed, which is what used
+to make the voice go quiet mid-day.
 
-Because a Vertex key and an AI Studio key can look identical, the endpoint is
-decided by the card you save the key under, not by the key's shape. A key in a
-Vertex card always goes to Vertex; a key in a Gemini card is detected and
-routed as described above.
-3. Paste the value into the password field and select **Save**. The field then
-   becomes masked. The page receives only whether the credential exists; it
-   does not read the saved value back.
+A Vertex key and an AI Studio key can look identical, so the endpoint follows
+the card you save it under, never the key's shape.
+3. Paste the value into the password field and select **Save**. It is then
+   masked, and the page is told only that a credential exists, never its value.
 4. Select **Set active** or **Use this provider**. Saving the first usable key
    in an empty area may activate it automatically.
 5. Choose the model or voice shown on the active card. The picker is the
@@ -141,10 +138,8 @@ routed as described above.
 6. Select **Test**. **Works** means the minimal request succeeded; it does not
    prove every tool, language, model, or long-running workflow.
 
-A card may say it is covered by a shared family key. That is a working setup;
-a dedicated key is optional. Dedicated Realtime or worker slots take priority
-when present, while compatible shared keys keep single-key installations
-working.
+A card may say it is covered by a shared family key. That is a working setup,
+and a dedicated key is optional.
 
 ### One key per provider
 
@@ -163,8 +158,8 @@ Only a genuinely different second key raises a question:
   **Keep their own keys** leaves those areas alone; **Everywhere** makes every
   area follow the new key.
 
-Nothing is written until you answer. Areas that keep their own key show it as
-**Key saved**; areas served by the shared key show the covered note.
+Nothing is written until you answer. An area with its own key reads **Key
+saved**; one on the shared key shows the covered note.
 
 ### Starter plans (first run)
 
@@ -181,21 +176,19 @@ provider family:
 
 Choosing a plan narrows the key list to the families it needs. The moment
 every key is saved, the guide points each part at that key and pins the voice
-mode — nothing else to click. Parts that could not be applied are listed and
-can be fixed later here.
+mode. Parts that could not be applied are listed and can be fixed later here.
 
 ### Every saved key is checked
 
-Saving a key runs the card's live test right away (the same probe as the
-**Test** button) and reports the answer as a short note — a wrong or empty key
-is caught when it is pasted, not on the first spoken turn.
+Saving a key runs the card's live test right away, the same probe as the
+**Test** button, so a wrong or empty key is caught when it is pasted rather
+than on the first spoken turn.
 
 ### The "all lights green" note
 
-Once every part the active mode needs answers — Pipeline: brain, tool model,
-voice out, voice in; Realtime: live voice, tool model, agents — a one-time
-note appears (inside the guide, or above the top bar later). It shows exactly
-once per install; **Let's go** dismisses it for good.
+Once every part the active mode needs answers (Pipeline: brain, tool model,
+voice out, voice in; Realtime: live voice, tool model, agents) a one-time note
+appears. It shows once per install; **Let's go** dismisses it for good.
 
 Brain and Computer Use changes apply to the next request. Voice input applies
 to the next transcription. Voice output switches the running Pipeline when it
@@ -286,12 +279,9 @@ to your network, not necessarily to this device.
 
 ## How It Fits Together
 
-1. A feature identifies the capability it needs.
-2. The active card supplies a provider, model or voice, and access method.
-3. Capability checks and supported fallback paths choose an eligible runtime.
-4. Safety and permission checks still govern actions after a provider answers.
-5. Chat, speech, dictation, an action, an Agent result, or Wiki data returns to
-   its own feature surface.
+The active card supplies the provider, the model or voice, and the access
+method; the resolution above picks an eligible runtime from that. Safety and
+permission checks still govern what happens after a provider answers.
 
 Changing the Brain does not silently change Computer Use, speech, Realtime,
 or Agents. Configure and verify each capability you plan to rely on.
@@ -303,8 +293,7 @@ confirm **Works**. Then send a short, non-sensitive chat message and confirm an
 answer appears.
 
 Test Voice input, Voice output, Realtime, Computer Use, and Agent
-subscriptions separately. They use different providers and capabilities even
-when they share one key.
+subscriptions separately: they use different capabilities even on one key.
 
 ## Troubleshooting
 
