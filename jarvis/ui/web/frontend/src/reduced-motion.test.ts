@@ -20,12 +20,30 @@ import { describe, expect, it } from "vitest";
 
 const CSS = readFileSync(join(process.cwd(), "src", "index.css"), "utf8");
 
-/** The last reduced-motion block in the file — the app-wide one. */
+/**
+ * The last reduced-motion block in the file, and only that block.
+ *
+ * Slicing to the end of the file instead would drag in whatever happens to be
+ * written below it. That is not hypothetical: the "solid ground" rules were
+ * appended after this block, and every unrelated declaration in them then
+ * counted as a floor rule that had forgotten its `!important`. Match the
+ * braces so the helper answers the question the tests actually ask.
+ */
 function floorBlock(): string {
   const marker = "prefers-reduced-motion: reduce";
   const start = CSS.lastIndexOf(marker);
   expect(start).toBeGreaterThan(-1);
-  return CSS.slice(start);
+  const open = CSS.indexOf("{", start);
+  expect(open).toBeGreaterThan(-1);
+  let depth = 0;
+  for (let i = open; i < CSS.length; i += 1) {
+    if (CSS[i] === "{") depth += 1;
+    else if (CSS[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return CSS.slice(start, i + 1);
+    }
+  }
+  throw new Error("the reduced-motion block is not closed");
 }
 
 describe("the reduced-motion floor", () => {

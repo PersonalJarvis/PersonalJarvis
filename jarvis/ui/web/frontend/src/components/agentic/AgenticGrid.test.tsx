@@ -30,10 +30,18 @@ const { paneRenders, paneActiveHistory } = vi.hoisted(() => ({
 }));
 
 const pushToast = vi.fn();
-vi.mock("@/store/events", () => ({
-  useEventStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ pushToast }),
-}));
+// `getState` is not optional: i18n's `translate()` reads the assistant name
+// straight off the store rather than through a hook, so a mock without it
+// throws on the first translated string this tree renders.
+vi.mock("@/store/events", () => {
+  // Built on each call, never at factory time: this factory is hoisted above
+  // the `const pushToast` above it, so reading it eagerly is a TDZ error.
+  const state = () => ({ pushToast, assistantName: "Jarvis" });
+  const useEventStore = (selector: (s: Record<string, unknown>) => unknown) =>
+    selector(state());
+  useEventStore.getState = state;
+  return { useEventStore };
+});
 
 vi.mock("@/lib/agenticIdeApi", () => ({
   addTerminal: vi.fn(),

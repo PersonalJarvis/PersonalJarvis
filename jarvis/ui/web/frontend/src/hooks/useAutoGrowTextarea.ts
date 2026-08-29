@@ -24,7 +24,16 @@ export function useAutoGrowTextarea(value: string): RefObject<HTMLTextAreaElemen
     // keep `scrollHeight` from reporting the shorter content.
     el.style.height = "auto";
     const content = el.scrollHeight;
-    if (content > 0) el.style.height = `${content}px`;
+    if (content <= 0) return;
+    // Read the cap off the element's own styling rather than hardcoding one,
+    // so a composer can name its own max-height. Unset reads as "none", which
+    // parses to NaN and leaves the box uncapped.
+    const cap = Number.parseFloat(window.getComputedStyle(el).maxHeight);
+    const capped = Number.isFinite(cap) && cap > 0;
+    el.style.height = `${capped ? Math.min(content, cap) : content}px`;
+    // Below the cap the box is exactly as tall as its text, so a scrollbar
+    // would be a scrollbar over nothing. At the cap it has to scroll again.
+    el.style.overflowY = capped && content > cap ? "auto" : "hidden";
   }, [value]);
   return ref;
 }

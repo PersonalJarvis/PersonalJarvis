@@ -134,7 +134,14 @@
     "group_label": "Anpassen",
     "attention_dot": "Ein Plugin muss neu verbunden werden",
     "tab_skills": "Skills",
-    "tab_tools": "Tools"
+    "tab_tools": "Tools",
+    "file_one": "1 Datei",
+    "files": "{n} Dateien",
+    "files_menu": "Dateien",
+    "no_files": "Keine Dateien",
+    "view_mode": "Ansicht",
+    "view_preview": "Vorschau",
+    "view_source": "Quelltext"
   },
   "taskbar_view": {
     "subtitle": "Bildschirm-Overlay-Aussehen und Diktier-Verhalten.",

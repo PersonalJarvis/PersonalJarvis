@@ -134,7 +134,14 @@
     "group_label": "Personalizar",
     "attention_dot": "Un plugin necesita reconectarse",
     "tab_skills": "Habilidades",
-    "tab_tools": "Herramientas"
+    "tab_tools": "Herramientas",
+    "file_one": "1 archivo",
+    "files": "{n} archivos",
+    "files_menu": "Archivos",
+    "no_files": "Sin archivos",
+    "view_mode": "Vista",
+    "view_preview": "Vista previa",
+    "view_source": "Código"
   },
   "taskbar_view": {
     "subtitle": "Apariencia del overlay en pantalla y comportamiento al dictar.",

@@ -207,10 +207,13 @@ describe("CliTestHubView — run flow (success)", () => {
     expect(screen.getByTestId("result-tool").textContent).toBe("cli_gcloud");
     // Risk badge reflects the tier.
     expect(screen.getByTestId("risk-badge").getAttribute("data-risk")).toBe("safe");
-    // Exit code 0 → green (data-exit "0").
+    // Exit code 0 reads as a success. Since the Ink & Paper pass, success is
+    // not a hue: the badge carries the code in `data-exit` and stays on the
+    // muted token, and only a failure spends the destructive colour.
     const exit = screen.getByTestId("result-exit-code");
     expect(exit.getAttribute("data-exit")).toBe("0");
-    expect(exit.className).toContain("emerald");
+    expect(exit.className).toContain("muted-foreground");
+    expect(exit.className).not.toContain("destructive");
     // Duration.
     expect(screen.getByTestId("result-duration").textContent).toContain("1234");
     // stdout present, stderr absent.

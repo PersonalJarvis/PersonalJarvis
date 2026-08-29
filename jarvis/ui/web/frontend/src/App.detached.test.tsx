@@ -28,6 +28,9 @@ vi.mock("@/lib/dictationTarget", () => ({
 vi.mock("@/components/layout/Sidebar", () => ({
   SIDEBAR_DEFAULT_WIDTH: 280,
   SIDEBAR_RAIL_WIDTH: 56,
+  // App.tsx remembers the sidebar width under this key, so the mock has to
+  // carry it too or the shell throws before it renders anything.
+  SIDEBAR_WIDTH_STORAGE_KEY: "jarvis.sidebar.width.v3",
   Sidebar: () => <aside data-testid="sidebar" />,
 }));
 vi.mock("@/components/layout/PaneResizer", () => ({

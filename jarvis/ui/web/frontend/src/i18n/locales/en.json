@@ -134,7 +134,14 @@
     "group_label": "Customize",
     "attention_dot": "A plugin needs reconnecting",
     "tab_skills": "Skills",
-    "tab_tools": "Tools"
+    "tab_tools": "Tools",
+    "file_one": "1 file",
+    "files": "{n} files",
+    "files_menu": "Files",
+    "no_files": "No files",
+    "view_mode": "View",
+    "view_preview": "Preview",
+    "view_source": "Source"
   },
   "taskbar_view": {
     "subtitle": "On-screen overlay appearance and dictation behaviour.",
