@@ -14296,6 +14296,29 @@ window, sleep counter reset on recovery, nothing after `stop()`, `show()` wakes
 at once, the helper and the waker thread are no-ops off Windows, a dead thread
 id reports `False` on Windows).
 
+**Verified in production** (2026-08-29, after ~16 h of ordinary use and one
+restart). The waker fired 18 times and every sleep ended on the next poll —
+`JarvisBar Tk loop asleep …` is always followed within a second by
+`… ticking again after 1 wake-up(s)`. So the sleep is real and recurring
+(2 to 8 times an hour on a loaded box), and the bar no longer needs a restart
+to come back. The process running since 09:43 has had none in 5.6 h: this is a
+sporadic lost wake-up, not a steady leak.
+
+Two numbers in that log read worse than they are, and both are the log's own
+wording rather than a gap in coverage:
+
+- `asleep for 2666.8s` (and one of 472 s) spans a machine standby. Nothing in
+  the process runs while Windows is suspended, the waker included, so the
+  duration is wall-clock since the last frame; the kick lands within 0.5 s of
+  the process running again. The window carried ONE wake-detector heartbeat
+  against 220 in a comparable awake window, which is how to tell the two
+  apart when reading a long sleep.
+- `asleep for 31.4s` during the boot storm is the one case the waker cannot
+  shorten: it is an ordinary Python thread, so a long CPU-bound stretch that
+  holds the GIL starves it exactly as it starves the Tk loop. That is a
+  whole-process stall (see the loop-watchdog's `Event loop STALLED` lines),
+  not this bug.
+
 **Related.** BUG-032 (the in-Tk revival watchdog — still right for a loop that
 died while the thread runs; this is the case where the thread itself waits).
 The `disable_windows_app_ghosting` note in `process_utils` describes the other
