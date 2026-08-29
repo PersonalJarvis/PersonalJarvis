@@ -81,10 +81,12 @@ the change that makes this 2.0 rather than 1.7.
   can do the job it is being considered for. Nothing hides behind the Advanced
   switch any more.
 - **Local models: the set-up is proven, then saved for next time.** "Set up
-  everything" ends with real round trips — the server answers, the chat pick
-  answers, the voice round trip completes — shown one line each with how long
-  they took (`POST …/local-models/verify`, also the sidebar badge's new
-  source), and then switches "Start with Jarvis" on. The Server tab carries
+  everything" ends with four real round trips — the server answers, the chat
+  pick produces an answer, the voice pick calls a tool, the tools & screen pick
+  reads an image — shown one line each with how long they took
+  (`POST …/local-models/verify`, also the sidebar badge's new source). A role
+  that is not configured reports as not run rather than as a pass. It then
+  switches "Start with Jarvis" on. The Server tab carries
   both: the switch, with the backend's own sentence on what the next start
   would do, and "Run a check". From a terminal:
   `jarvis local-models server verify` and `… server autostart on|off`.

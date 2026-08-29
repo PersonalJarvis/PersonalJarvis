@@ -128,11 +128,13 @@ can take over: chat, voice, tools and screen, and the deep coding work. One butt
 four. It starts the server if it is stopped, prefers whatever you already have on disk over
 a fresh download, fetches only what is genuinely missing, and writes the settings.
 
-Then it checks its own work. Three real round trips run at the end, one line each with how
-long it took, so you find out the setup works before you rely on it instead of after. It
-finishes by offering to start the server with Jarvis, which keeps the first answer of the
-day from paying the model load time. Nothing downloads without a click that names the
-download first.
+Then it checks its own work. Four real round trips run at the end: the server answers, the
+chat pick produces an answer, the voice pick calls a tool, and the tools and screen pick
+reads an image. Each reports on its own line with how long it took, and a job you never
+configured says so rather than quietly counting as a pass. So you find out the setup works
+before you rely on it instead of after. It finishes by offering to start the server with
+Jarvis, which keeps the first answer of the day from paying the model load time. Nothing
+downloads without a click that names the download first.
 
 <p align="center">
   <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-local-models.webp" alt="The Local models section: the graphics-memory budget across all four jobs, and a card per job naming the model that fills it" width="900" />
