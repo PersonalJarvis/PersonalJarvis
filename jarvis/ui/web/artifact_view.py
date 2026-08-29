@@ -15,6 +15,8 @@ from __future__ import annotations
 import html
 import logging
 
+from jarvis.artifacts.design_guide import THEME_CSS
+
 log = logging.getLogger(__name__)
 
 _MARKDOWN_EXT = (".md", ".markdown")
@@ -46,55 +48,61 @@ ARTIFACT_PAGE_CSP = (
     "base-uri 'none';"
 )
 
-# Brand theme (matte black + signal yellow), kept in lockstep with the desktop
-# app's dark tokens (frontend/src/index.css) and video/src/intro/theme.ts. The
-# app is dark-first and this page opens from inside it, so it commits to the
-# brand look instead of following the OS light/dark preference.
+# The artifact design standard (jarvis/artifacts/design_guide.py): the app's
+# own tokens in both palettes, so a Markdown output opened in the browser
+# looks like the page it sits next to in the Artifacts section — and follows
+# the app's theme through the same `?theme=light|dark` query the artifact
+# stage appends, stamped on <html> by the SERVER (the page stays script-free
+# under VIEW_CSP; the guide's bootstrap script is for worker-written pages).
+# The tokens are the guide's verbatim; only the document rules below are this
+# page's own.
 _PAGE_CSS = (
-    "*{box-sizing:border-box}"
-    "body{max-width:52rem;margin:0 auto;padding:2.5rem 1.5rem 4rem;"
-    "font:15px/1.65 -apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;"
-    "color:#FAFAFA;background:#0A0A0A}"
-    "h1,h2,h3,h4{line-height:1.3;margin:1.6em 0 .6em;font-weight:600}"
-    "h1:first-child,h2:first-child{margin-top:0}"
-    "h1{font-size:1.5rem;padding-bottom:.4em;border-bottom:1px solid rgba(255,255,255,0.10)}"
-    "h2{font-size:1.2rem}h3{font-size:1.05rem}"
-    "a{color:#FFD60A}a:hover{color:#E6BE00}"
-    "p,ul,ol{margin:.7em 0}li{margin:.25em 0}"
-    "pre{background:#141414;border:1px solid rgba(255,255,255,0.10);"
-    "padding:1rem;overflow:auto;border-radius:10px}"
-    "code{background:#181818;border:1px solid rgba(255,255,255,0.10);"
-    "padding:.1em .35em;border-radius:5px;font-size:.92em}"
-    "pre code{background:none;border:none;padding:0}"
-    "table{border-collapse:collapse;margin:1em 0;display:block;overflow-x:auto}"
-    "th,td{border:1px solid rgba(255,255,255,0.14);padding:.45rem .7rem}"
-    "th{background:#141414;text-align:left}"
-    "blockquote{border-left:3px solid #FFD60A;margin:1em 0;"
-    "padding:.1em 0 .1em 1rem;color:#9A9A9A}"
-    "img{max-width:100%;border-radius:8px}"
-    "hr{border:none;border-top:1px solid rgba(255,255,255,0.10);margin:2em 0}"
-    ".artifact-name{font-size:11px;letter-spacing:.14em;text-transform:uppercase;"
-    "color:#9A9A9A;margin:0 0 1.6rem;display:flex;align-items:center;gap:.6em}"
-    ".artifact-name::before{content:'';width:9px;height:9px;border-radius:50%;"
-    "background:#FFD60A;box-shadow:0 0 10px rgba(255,214,10,0.35)}"
+    THEME_CSS + "\n"
+    "body{padding:40px 24px 64px}"
+    "main{max-width:72ch;margin:0 auto}"
+    "h1,h2,h3,h4{margin:1.6em 0 .5em}"
+    "main>h1:first-of-type{margin-top:0}"
+    "h4{font-size:14px;font-weight:600}"
+    "p,ul,ol{margin:.7em 0;max-width:none}li{margin:.25em 0}"
+    "pre{background:var(--bg-2);border:1px solid var(--line);padding:14px 16px;"
+    "overflow:auto;border-radius:var(--radius-sm);font-size:13px;line-height:1.5}"
+    "code{background:var(--bg-3);border:1px solid var(--line);padding:.1em .35em;"
+    "border-radius:4px}"
+    "pre code{background:none;border:none;padding:0;font-size:inherit}"
+    "table{border-collapse:collapse;margin:1em 0;display:block;overflow-x:auto;"
+    "font-size:14px}"
+    "th,td{border:1px solid var(--line);padding:.45rem .7rem;text-align:left}"
+    "th{background:var(--bg-2);font-weight:600}"
+    "blockquote{border-left:2px solid var(--accent);margin:1em 0;"
+    "padding:.1em 0 .1em 1rem;color:var(--ink-2)}"
+    "img{max-width:100%;border-radius:var(--radius-sm)}"
+    "hr{border:none;border-top:1px solid var(--line);margin:2em 0}"
+    ".artifact-name{margin:0 0 24px;padding-bottom:12px;border-bottom:1px solid var(--line)}"
 )
 
 
-def _shell(title: str, body_html: str) -> str:
+_THEMES = frozenset({"light", "dark"})
+
+
+def _shell(title: str, body_html: str, theme: str | None) -> str:
+    stamp = f" data-theme='{theme}'" if theme in _THEMES else ""
     return (
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        f"<!doctype html><html lang='en'{stamp}><head><meta charset='utf-8'>"
         f'<meta http-equiv="Content-Security-Policy" content="{VIEW_CSP}">'
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{html.escape(title)}</title><style>{_PAGE_CSS}</style></head>"
-        f"<body><p class='artifact-name'>{html.escape(title)}</p>{body_html}</body></html>"
+        f"<body><main><p class='artifact-name eyebrow'>{html.escape(title)}</p>"
+        f"{body_html}</main></body></html>"
     )
 
 
-def render_artifact_html(filename: str, text: str) -> str:
+def render_artifact_html(filename: str, text: str, *, theme: str | None = None) -> str:
     """Return a complete HTML document rendering *text*.
 
     Markdown filenames are rendered to HTML via the `markdown` library; everything
-    else (and the no-markdown-lib fallback) is shown escaped in <pre>. Never raises.
+    else (and the no-markdown-lib fallback) is shown escaped in <pre>. *theme*
+    (``light`` / ``dark``, anything else ignored) pins the palette the way the
+    app's Artifacts stage pins it; without it the page follows the OS. Never raises.
     """
     if filename.lower().endswith(_MARKDOWN_EXT):
         try:
@@ -104,10 +112,10 @@ def render_artifact_html(filename: str, text: str) -> str:
                 text,
                 extensions=["extra", "sane_lists", "tables", "fenced_code"],
             )
-            return _shell(filename, body)
+            return _shell(filename, body, theme)
         except Exception as exc:  # noqa: BLE001 — a view must never 500
             log.info("markdown render unavailable (%s) — serving raw <pre>", exc)
-    return _shell(filename, f"<pre>{html.escape(text)}</pre>")
+    return _shell(filename, f"<pre>{html.escape(text)}</pre>", theme)
 
 
 __all__ = ["ARTIFACT_PAGE_CSP", "VIEW_CSP", "render_artifact_html"]
