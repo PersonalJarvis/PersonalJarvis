@@ -44,7 +44,16 @@ _BASELINE = Path(__file__).resolve().parent / "dead-config-switches-baseline.jso
 #: Every entry names WHY. An entry here is a promise that the switch really
 #: works — not a way to silence the gate. Distinct from the baseline file,
 #: which is the opposite: switches known to be dead and not yet cleaned up.
-_ALLOWLIST: dict[str, str] = {}
+_ALLOWLIST: dict[str, str] = {
+    # Not a user-settable switch at all: SecretSlotScope is an internal frozen
+    # dataclass describing where one keyring slot sits inside its provider
+    # family. `primary_slot` IS read — by secret_family_save_plan() — but only
+    # inside jarvis/core/config.py, the one module this gate deliberately drops
+    # from its corpus (see `path in (_CONFIG, _SELF)` below). An honest read
+    # there can therefore never register, so the finding is a blind spot rather
+    # than a dead switch.
+    "primary_slot": "read by secret_family_save_plan() inside config.py, which this gate excludes",
+}
 
 #: Directories whose Python counts as a "reader" of a config field.
 _CODE_ROOTS = ("jarvis", "scripts")
