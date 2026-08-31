@@ -20,6 +20,18 @@
 # the environment variable instead. Without the secrets the build still
 # produces a working, unsigned installer and says so.
 #
+# Windows signing goes through SignPath Foundation (free code signing for open
+# source, https://signpath.org): the unsigned setup is uploaded as a workflow
+# artifact, SignPath fetches it by artifact id, signs it on its side with a
+# certificate issued to SignPath Foundation, and the signed file comes back.
+# No key material ever touches this runner. packaging/windows/README.md has
+# the SignPath-side configuration.
+#
+# The same job also packs the frozen bundle into an MSIX for the Microsoft
+# Store. It is deliberately unsigned: the Store re-signs it with Microsoft's
+# certificate after certification, and that signature - not ours - is what
+# spares a Store install the SmartScreen prompt.
+#
 # Action SHAs are pinned to 40-char commits (CVE-2025-30066 hardening), matching
 # the rest of this repo's workflows.
 
@@ -50,15 +62,15 @@ jobs:
     name: Windows installer (x64)
     runs-on: windows-latest
     timeout-minutes: 90
+    permissions:
+      contents: read
+      # The SignPath connector reads the unsigned artifact of this very run.
+      actions: read
     env:
       # Exported here (not per step) so the `if:` guards below can read them.
       # An empty value means "this fork has no signing secrets" - not an error.
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-      AZURE_CODE_SIGNING_ACCOUNT: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
-      AZURE_CERTIFICATE_PROFILE: ${{ secrets.AZURE_CERTIFICATE_PROFILE }}
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -105,28 +117,84 @@ jobs:
       # Signs the SETUP executable. Windows attaches Mark-of-the-Web to the
       # downloaded installer, so this signature is the one SmartScreen weighs;
       # files the installer then writes inherit no MOTW.
-      - name: Sign the installer (Azure Trusted Signing)
-        if: env.AZURE_CLIENT_ID != ''
-        # pin: azure/trusted-signing-action@v2.0.0 - pinned by commit SHA.
-        uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82
+      #
+      # SignPath reads the file from a workflow artifact, not from the runner,
+      # so the unsigned setup is uploaded first and referenced by artifact id.
+      - name: Upload the unsigned installer for SignPath
+        id: unsigned
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE }}
-          files-folder: ${{ github.workspace }}/dist/installers
-          files-folder-filter: exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
+          name: installer-windows-x64-unsigned
+          path: dist/installers/PersonalJarvis-Setup-x64.exe
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Sign the installer (SignPath Foundation)
+        if: env.SIGNPATH_API_TOKEN != ''
+        # pin: signpath/github-action-submit-signing-request@v2 - pinned by commit SHA.
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          # Slugs are not secrets; override them as repository variables when
+          # the SignPath project is named differently.
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'PersonalJarvis' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          # A release signing request is approved by hand on SignPath's side;
+          # give the approver half an hour before the job gives up.
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: dist/signed
+
+      - name: Verify the signature and put the signed file in place
+        if: env.SIGNPATH_API_TOKEN != ''
+        shell: pwsh
+        run: |
+          $signed = Get-ChildItem -Path dist/signed -Recurse -Filter PersonalJarvis-Setup-x64.exe |
+            Select-Object -First 1
+          if (-not $signed) {
+            Write-Error "SignPath returned no PersonalJarvis-Setup-x64.exe under dist/signed"
+            exit 1
+          }
+          $sig = Get-AuthenticodeSignature -FilePath $signed.FullName
+          if ($sig.Status -ne 'Valid') {
+            Write-Error "Authenticode status of the signed installer is $($sig.Status), not Valid"
+            exit 1
+          }
+          Write-Host "Signed by: $($sig.SignerCertificate.Subject)"
+          Copy-Item -Path $signed.FullName -Destination dist/installers/PersonalJarvis-Setup-x64.exe -Force
 
       - name: Report the signing state honestly
-        if: env.AZURE_CLIENT_ID == ''
+        if: env.SIGNPATH_API_TOKEN == ''
         shell: bash
         run: |
-          echo "::notice::AZURE_* signing secrets are not configured - the installer is UNSIGNED."
+          echo "::notice::SIGNPATH_* secrets are not configured - the installer is UNSIGNED."
+
+      # Microsoft Store package. Built from the same frozen bundle the setup
+      # wraps, so a Store install and a downloaded install are the same
+      # program. Unsigned on purpose (see the header); an unsigned MSIX cannot
+      # be sideloaded, so it is a workflow artifact for the Partner Center
+      # upload and never a release asset.
+      - name: Build the Microsoft Store package (MSIX)
+        shell: pwsh
+        env:
+          # Partner Center hands out all three after the app name is reserved
+          # (Product identity page). Until then the script packs with
+          # placeholders makeappx accepts, so the path is exercised on every run.
+          MSSTORE_IDENTITY_NAME: ${{ vars.MSSTORE_IDENTITY_NAME }}
+          MSSTORE_PUBLISHER: ${{ vars.MSSTORE_PUBLISHER }}
+          MSSTORE_PUBLISHER_DISPLAY_NAME: ${{ vars.MSSTORE_PUBLISHER_DISPLAY_NAME }}
+        run: pwsh packaging/windows/build-msix.ps1 -SkipPyInstaller
+
+      - name: Upload the Store package
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: msix-windows-x64
+          path: dist/installers/PersonalJarvis-x64.msix
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload the installer
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
