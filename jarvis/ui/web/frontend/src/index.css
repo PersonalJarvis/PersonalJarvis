@@ -623,8 +623,8 @@ label,
        four lightness points that read on cream are invisible on near-black.
 
          2 %   stage        full-bleed canvas behind the knowledge graphs
-         3 %   background   the work surface — #080808
-         7 %   sidebar      the nav column — #121212
+         2 %   background   the work surface — #050505, the black void
+        10 %   sidebar      the nav column — #1A1A1A, a grey strip
         14 %   card         a card / assistant bubble — #242424
         16 %   border       quiet rim, almost the fill
         18 %   secondary    hover, menus, composer chrome — #2E2E2E
@@ -633,8 +633,10 @@ label,
         97 %   foreground   #F7F7F7 crisp, not cream
        100 %   primary      true white, actions only
 
+       Left rail vs right canvas is the messenger split: a grey column
+       against a near-black page, not two blacks a few points apart.
        The ZONE whispers and the ELEMENTS on it speak. */
-    --background: 0 0% 3%; /* #080808 */
+    --background: 0 0% 2%; /* #050505 */
     --foreground: 0 0% 97%; /* #F7F7F7 — crisp, not cream */
     --card: 0 0% 14%; /* #242424 */
     --card-foreground: 0 0% 97%;
@@ -661,14 +663,14 @@ label,
     --border: 0 0% 16%; /* #292929 — a rim, not a brown line */
     --input: 0 0% 18%;
     --ring: 0 0% 100%;
-    --sidebar: 0 0% 7%; /* #121212 */
+    --sidebar: 0 0% 10%; /* #1A1A1A — grey strip against the black page */
     --user-bubble: 0 0% 34%; /* #575757 */
     --user-bubble-foreground: 0 0% 97%;
 
     --accent-rgb: 247 247 247;
     --scrim-rgb: 0 0 0;
     --sheen-rgb: 255 255 255;
-    --shell-rgb: 8 8 8;
+    --shell-rgb: 5 5 5;
 
     --surface-card-alpha: 0.6;
     --surface-panel-alpha: 0.58;

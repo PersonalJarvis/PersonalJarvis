@@ -20,12 +20,12 @@ paper's warmth — that was the muddy look.
 |---|---|---|
 | Ink (light primary, light text) | `#26251E` | ![](https://img.shields.io/badge/_-26251E?style=flat-square&labelColor=26251E) |
 | Canvas / paper (light ground, dark text) | `#F7F7F4` | ![](https://img.shields.io/badge/_-F7F7F4?style=flat-square&labelColor=F7F7F4) |
-| Ground (dark canvas) | `#080808` | ![](https://img.shields.io/badge/_-080808?style=flat-square&labelColor=080808) |
+| Ground (dark canvas) | `#050505` | ![](https://img.shields.io/badge/_-050505?style=flat-square&labelColor=050505) |
 | White (dark primary, actions only) | `#FFFFFF` | ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
 | Foreground, dark | `#F7F7F7` | ![](https://img.shields.io/badge/_-F7F7F7?style=flat-square&labelColor=F7F7F7) |
 | Card, light | `#FFFFFF` | ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
 | Card, dark | `#242424` | ![](https://img.shields.io/badge/_-242424?style=flat-square&labelColor=242424) |
-| Sidebar, dark | `#121212` | ![](https://img.shields.io/badge/_-121212?style=flat-square&labelColor=121212) |
+| Sidebar, dark | `#1A1A1A` | ![](https://img.shields.io/badge/_-1A1A1A?style=flat-square&labelColor=1A1A1A) |
 | Hover / composer, dark | `#2E2E2E` | ![](https://img.shields.io/badge/_-2E2E2E?style=flat-square&labelColor=2E2E2E) |
 | User bubble, dark | `#575757` | ![](https://img.shields.io/badge/_-575757?style=flat-square&labelColor=575757) |
 | Hairline, light | `#E6E5E0` | ![](https://img.shields.io/badge/_-E6E5E0?style=flat-square&labelColor=E6E5E0) |
