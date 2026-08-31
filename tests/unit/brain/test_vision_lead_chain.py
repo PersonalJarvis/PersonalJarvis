@@ -64,6 +64,37 @@ def test_image_turn_leads_with_the_router_vision_model() -> None:
     assert led[0] == ("grok", "grok-4.20-0309-non-reasoning")
 
 
+def test_chat_primary_does_not_outrank_the_router() -> None:
+    """Live 2026-08-31 19:38: primary=openrouter, router=grok.
+
+    Ranking by ``_active_name`` put OpenRouter first (402, no credits),
+    then Vertex sat 20.5 s. The router vision model must still lead.
+    """
+    m = _mgr(active="openrouter")
+    chain = [
+        ("openrouter", "google/gemini-3.5-flash"),
+        ("vertex", "gemini-3.7-flash"),
+        ("grok", "grok-4.6"),
+    ]
+    led = m._lead_vision_chain(chain)
+    assert led[0] == ("grok", "grok-4.20-0309-non-reasoning")
+    assert led[1][0] != "grok"
+
+
+def test_dead_providers_are_dropped_from_the_look_chain() -> None:
+    m = _mgr(active="openrouter")
+    m._dead_providers.add("openrouter")
+    led = m._lead_vision_chain(
+        [
+            ("openrouter", "google/gemini-3.5-flash"),
+            ("vertex", "gemini-3.7-flash"),
+            ("grok", "grok-4.6"),
+        ]
+    )
+    assert led[0] == ("grok", "grok-4.20-0309-non-reasoning")
+    assert all(item[0] != "openrouter" for item in led)
+
+
 def test_blind_providers_stay_in_the_tail() -> None:
     m = _mgr(active="codex")
     led = m._lead_vision_chain([("codex", "gpt-5.5"), ("grok", "grok-4.6")])

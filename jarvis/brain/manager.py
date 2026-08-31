@@ -3405,36 +3405,49 @@ class BrainManager:
     def _lead_vision_chain(
         self, chain: list[tuple[str, str | None]]
     ) -> list[tuple[str, str | None]]:
-        """On an image turn, put a live vision FAST model first.
+        """On an image turn, put the router vision FAST model first.
 
         Live 2026-08-31 17:06: a realtime screenshot delegated through
         ``prefer_tool_model`` led with Vertex ``gemini-3.7-flash`` (the Tool
-        Model). Five providers then failed — Gemini schema, OpenRouter 402,
-        Claude 401, Gemini schema again, OpenAI 429 retries — and grok-4.6
-        answered after 20 s. The router already has a fast vision model
-        (grok-4.20 non-reasoning). A look turn must not walk the Tool-Model
-        chain first.
+        Model). Five providers then failed and grok-4.6 answered after 20 s.
+
+        Live 2026-08-31 19:38: the first cut ranked by ``_active_name``
+        (chat primary ``openrouter``). OpenRouter 402'd in 0.3 s, then
+        Vertex ``gemini-3-flash-preview`` sat 20.5 s. Grok never ran. The
+        router already names the look model (``[brain.router]``). Rank by
+        that config, not the chat primary — AP-21: never hardcode a
+        provider name, never treat a broke primary as a vision ranking
+        signal.
         """
         if not chain:
             return chain
-        active = self._active_name
+        router = getattr(getattr(self._config, "brain", None), "router", None)
+        router_provider = (
+            getattr(router, "provider", None) if router is not None else None
+        )
         vision: list[tuple[str, str | None]] = []
         rest: list[tuple[str, str | None]] = []
         seen: set[str] = set()
-        for provider, model in chain:
-            if provider in seen:
-                continue
+
+        def _consider(provider: str, model: str | None) -> None:
+            if provider in seen or provider in self._dead_providers:
+                return
             seen.add(provider)
             pick_model = self._vision_look_model(provider) or model
             if self._provider_advertises_vision(provider, pick_model):
                 vision.append((provider, pick_model))
             else:
                 rest.append((provider, model))
+
+        # Router first (from config), then the rest of the chain. The chat
+        # primary is not a ranking signal — it may be a billed-out slot.
+        if isinstance(router_provider, str) and router_provider:
+            _consider(router_provider, None)
+        for provider, model in chain:
+            _consider(provider, model)
         if not vision:
             return chain
-        preferred = [item for item in vision if item[0] == active]
-        others = [item for item in vision if item[0] != active]
-        led = preferred + others + rest
+        led = vision + rest
         log.info(
             "screen-turn vision lead: %s(%s) — %d vision-capable, %d others",
             led[0][0],
