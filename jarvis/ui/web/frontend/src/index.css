@@ -3321,6 +3321,49 @@ label,
   :root:not(.jarvis-wallpaper) .jarvis-visualization-stage {
     background: hsl(var(--background));
   }
+
+  /*
+   * Dark + no wallpaper: do not paint the room grey.
+   *
+   * The block above sets every surface alpha to 1 so a card on a flat colour
+   * is a real card, not 60% glass on the same colour. In light that is paper
+   * on paper and it works. In dark it turned Spend, Settings, Board and
+   * Local models into opaque grey furniture on a black page. Live 2026-08-31
+   * against Grok-Bot: Bot is a black void; grey is only the size of a
+   * bubble; colour sits on avatars and live-dots. Dark therefore keeps a
+   * whisper of lift, a hairline you should barely see, and lets the Board
+   * sheen stay a sheen instead of a slab.
+   */
+  :root.dark:not(.jarvis-wallpaper) {
+    --surface-card-alpha: 0.2;
+    --surface-panel-alpha: 0.14;
+    --surface-control-alpha: 0.4;
+    --surface-stage-alpha: 0.14;
+    --surface-wiki-pane-alpha: 0.12;
+    --surface-wiki-stage-alpha: 0.1;
+  }
+
+  :root.dark:not(.jarvis-wallpaper) .jarvis-section-stage {
+    --border: 0 0% 9%;
+  }
+
+  :root.dark:not(.jarvis-wallpaper) .jarvis-message-surface {
+    background: hsl(0 0% 12%);
+  }
+
+  :root.dark:not(.jarvis-wallpaper) .jarvis-panel-surface {
+    background: rgb(var(--sheen-rgb) / 0.035);
+  }
+
+  :root.dark:not(.jarvis-wallpaper) .jarvis-input-surface {
+    background: rgb(var(--sheen-rgb) / 0.06);
+  }
+
+  :root.dark:not(.jarvis-wallpaper)
+    .jarvis-section-stage
+    :where([class~="from-sheen/[0.055]"][class~="to-sheen/[0.015]"]) {
+    background-color: transparent;
+  }
 }
 
 /*

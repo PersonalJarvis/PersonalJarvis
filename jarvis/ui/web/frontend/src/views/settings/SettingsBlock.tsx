@@ -23,9 +23,9 @@ export function SettingsBlock({
   children?: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-border bg-card/60 p-5 backdrop-blur">
+    <section className="jarvis-quiet-panel p-5">
       <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-primary">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sheen/[0.08] text-foreground">
           <Icon className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
