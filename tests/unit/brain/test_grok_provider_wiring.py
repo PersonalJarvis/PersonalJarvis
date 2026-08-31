@@ -140,6 +140,7 @@ def test_grok_uses_xai_openai_compatible_endpoint(
     GrokBrain()._ensure_client()
     assert _FakeOpenAI.last_kwargs["api_key"] == "xai-test"
     assert _FakeOpenAI.last_kwargs["base_url"] == BASE_URL
+    assert _FakeOpenAI.last_kwargs["max_retries"] == 0
 
 
 @pytest.mark.asyncio

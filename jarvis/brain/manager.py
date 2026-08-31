@@ -3402,6 +3402,73 @@ class BrainManager:
             log.warning("No credential-ready, tool-capable Tool Model is available.")
         return ready
 
+    def _lead_vision_chain(
+        self, chain: list[tuple[str, str | None]]
+    ) -> list[tuple[str, str | None]]:
+        """On an image turn, put a live vision FAST model first.
+
+        Live 2026-08-31 17:06: a realtime screenshot delegated through
+        ``prefer_tool_model`` led with Vertex ``gemini-3.7-flash`` (the Tool
+        Model). Five providers then failed — Gemini schema, OpenRouter 402,
+        Claude 401, Gemini schema again, OpenAI 429 retries — and grok-4.6
+        answered after 20 s. The router already has a fast vision model
+        (grok-4.20 non-reasoning). A look turn must not walk the Tool-Model
+        chain first.
+        """
+        if not chain:
+            return chain
+        active = self._active_name
+        vision: list[tuple[str, str | None]] = []
+        rest: list[tuple[str, str | None]] = []
+        seen: set[str] = set()
+        for provider, model in chain:
+            if provider in seen:
+                continue
+            seen.add(provider)
+            pick_model = self._vision_look_model(provider) or model
+            if self._provider_advertises_vision(provider, pick_model):
+                vision.append((provider, pick_model))
+            else:
+                rest.append((provider, model))
+        if not vision:
+            return chain
+        preferred = [item for item in vision if item[0] == active]
+        others = [item for item in vision if item[0] != active]
+        led = preferred + others + rest
+        log.info(
+            "screen-turn vision lead: %s(%s) — %d vision-capable, %d others",
+            led[0][0],
+            led[0][1],
+            len(vision),
+            len(rest),
+        )
+        return led
+
+    def _vision_look_model(self, provider: str) -> str | None:
+        """The fast look-at-screen model for ``provider``, never the CU/tool slot.
+
+        Computer-Use and the Tool Model pick heavy siblings (grok-4.6). A
+        screenshot narration wants the router-tier fast id when this is the
+        routing provider.
+        """
+        router = getattr(getattr(self._config, "brain", None), "router", None)
+        if (
+            router is not None
+            and getattr(router, "provider", None) == provider
+            and getattr(router, "model", None)
+        ):
+            return str(router.model)
+        return self._fast_model(provider)
+
+    def _provider_advertises_vision(
+        self, provider: str, model: str | None
+    ) -> bool:
+        try:
+            brain = self._get_brain(provider, model)
+        except Exception:  # noqa: BLE001 — unready provider stays in the tail
+            return False
+        return getattr(brain, "supports_vision", False) is True
+
     def _get_brain(
         self, name: str, model: str | None = None, *, scope: str | None = None
     ) -> Brain:
@@ -6437,8 +6504,15 @@ class BrainManager:
         """
         keep = self._evidence_required_tool or ""
         return {
-            n: t for n, t in self._tools.items()
-            if n not in _SCREEN_TURN_HIDDEN_TOOL_NAMES or n == keep
+            n: t
+            for n, t in self._tools.items()
+            if (n not in _SCREEN_TURN_HIDDEN_TOOL_NAMES or n == keep)
+            # MCP tools are namespaced ``server/tool``. Their JSON-Schema
+            # unions brick Gemini (live 2026-08-31: Linear
+            # ``issue_fields.value.type = [string, number, boolean]``) and
+            # they bloat a look-at-screen prompt for every other provider.
+            # A mandated tool still survives.
+            and ("/" not in n or n == keep)
         }
 
     def _gate_screen_tool(
@@ -11566,6 +11640,9 @@ class BrainManager:
         )
 
         vision_capable_seen = False
+        if images:
+            chain = self._lead_vision_chain(chain)
+        screen_turn_t0 = time.perf_counter() if images else None
 
         for idx, (prov_name, model) in enumerate(chain):
             # Skip providers already marked dead in THIS turn.
@@ -12042,6 +12119,14 @@ class BrainManager:
                     log.info(
                         "Fallback-Hit: %s(%s) — %d provider übersprungen",
                         prov_name, model, idx,
+                    )
+                if screen_turn_t0 is not None:
+                    log.info(
+                        "screen-turn answered by %s(%s) in %d ms (skipped=%d)",
+                        prov_name,
+                        model,
+                        int((time.perf_counter() - screen_turn_t0) * 1000),
+                        idx,
                     )
                     # Under an override the pick answering after its router
                     # lead is the plan, not a fallback: the sidebar and its

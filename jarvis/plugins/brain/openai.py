@@ -1,4 +1,5 @@
 """OpenAI GPT Brain (direct API)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -29,7 +30,16 @@ class OpenAIBrain:
             if not ep.credential:
                 raise RuntimeError("No OpenAI API key found (openai_api_key / OPENAI_API_KEY).")
             from openai import AsyncOpenAI
-            kwargs: dict[str, Any] = {"api_key": ep.credential, "timeout": CLIENT_TIMEOUT}
+
+            kwargs: dict[str, Any] = {
+                "api_key": ep.credential,
+                "timeout": CLIENT_TIMEOUT,
+                # Live 2026-08-31 17:06: a screenshot turn spent 3.7 s on
+                # three SDK retries of ``insufficient_quota`` 429 before the
+                # chain reached Grok. Quota exhaustion is terminal; retrying
+                # it is pure wait.
+                "max_retries": 0,
+            }
             if ep.base_url:
                 kwargs["base_url"] = ep.base_url
             self._client = AsyncOpenAI(**kwargs)

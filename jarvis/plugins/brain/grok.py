@@ -49,6 +49,7 @@ class GrokBrain:
                 api_key=ep.credential,
                 base_url=ep.base_url,
                 timeout=CLIENT_TIMEOUT,
+                max_retries=0,
             )
         return self._client
 

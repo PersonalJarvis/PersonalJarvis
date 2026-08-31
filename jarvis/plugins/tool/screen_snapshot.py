@@ -43,13 +43,10 @@ from jarvis.vision.screenshot import (
 _MAX_BYTES = 500_000
 _DEFAULT_JPEG_QUALITY = 85
 _MIN_JPEG_QUALITY = 50
-# Vision LLMs (Claude/Gemini/GPT) internally downscale to ~1568 px on the
-# longest side for token accounting. 4K captures (3840x2160) are pure
-# waste — they cost ~3x the bytes and tokens with no visible vision benefit.
-# 2048 px on the longest side is the sweet spot: noticeably larger than the
-# internal LLM resampling target (no detail loss), but tight enough to
-# reliably hit the _MAX_BYTES budget on 4K multi-monitor captures.
-_MAX_DIMENSION = 2048
+# Vision LLMs internally downscale to ~1568 px. Sending 2048 px costs
+# tokens and grok/Gemini time with no extra UI-text reading
+# (live 2026-08-31 17:06: 2048x1152 + grok-4.6 = 13 s of streaming).
+_MAX_DIMENSION = 1280
 
 
 def _resize_for_budget(image: Any, max_dim: int) -> Any:

@@ -21,6 +21,7 @@ feature whose promise is that the picture does not stick around. That is also
 why this module uses the stateless ``capture_region``-style grab through the
 port rather than reusing ``ScreenshotSource``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -66,7 +67,10 @@ log = logging.getLogger(__name__)
 #: Vision models downscale to roughly this on the long edge for token
 #: accounting, so anything larger costs bytes and latency for no added detail.
 #: Same value the existing screenshot tool settled on.
-_MAX_DIMENSION = 2048
+# Live 2026-08-31 17:06: a 2048x1152 JPEG plus grok-4.6 streamed 13 s.
+# Vision models internally resample to ~1568 px; sending more costs tokens
+# and time with no extra reading of on-screen text.
+_MAX_DIMENSION = 1280
 _JPEG_QUALITY = 85
 _MAX_IMAGE_BYTES = 500_000
 _MIN_JPEG_QUALITY = 50
@@ -252,9 +256,7 @@ class ScreenContextService:
         if self._bus is None:
             self._bus = bus
         elif self._bus is not bus:
-            log.warning(
-                "screen_context: ignored an attempt to bind a second EventBus"
-            )
+            log.warning("screen_context: ignored an attempt to bind a second EventBus")
             return
         if hasattr(bus, "subscribe"):
             from jarvis.audio.effects import attach_audio_effects  # noqa: PLC0415
@@ -305,10 +307,7 @@ class ScreenContextService:
                 status="refused",
                 verdict=verdict,
                 reason_kind="policy",
-                message=(
-                    "Screen context is switched off. You can turn it back on in "
-                    "Settings."
-                ),
+                message=("Screen context is switched off. You can turn it back on in Settings."),
             )
 
         if verdict.intent is VisualIntent.AMBIGUOUS:
@@ -364,22 +363,14 @@ class ScreenContextService:
         # The cursor is sampled ONCE, here, and threaded through. See
         # targeting.resolve_target for why re-reading it later is a race.
         cursor_point = await asyncio.to_thread(self.cursor.position)
-        bar_point = (
-            await asyncio.to_thread(self.bar.position)
-            if cursor_point is None
-            else None
-        )
+        bar_point = await asyncio.to_thread(self.bar.position) if cursor_point is None else None
         # Facts and native handle must describe the SAME foreground window.
         # Reading them separately lets a focus switch route a denylist verdict
         # for window A into a native capture of window B (especially on macOS).
         window_handle = None
         window_probe = self.window_probe
         snapshot_getter = getattr(window_probe, "foreground_snapshot", None)
-        snapshot = (
-            await asyncio.to_thread(snapshot_getter)
-            if callable(snapshot_getter)
-            else None
-        )
+        snapshot = await asyncio.to_thread(snapshot_getter) if callable(snapshot_getter) else None
         if snapshot is not None:
             window_facts = snapshot.facts
             window_handle = snapshot.handle
@@ -413,13 +404,9 @@ class ScreenContextService:
                         "denylist."
                     ),
                 )
-            blocked_by = redaction.blocked_by_denylist(
-                window_facts, self._settings.denylist
-            )
+            blocked_by = redaction.blocked_by_denylist(window_facts, self._settings.denylist)
             if blocked_by:
-                log.info(
-                    "screen_context: capture blocked by denylist entry %r", blocked_by
-                )
+                log.info("screen_context: capture blocked by denylist entry %r", blocked_by)
                 return CaptureOutcome(
                     status="refused",
                     verdict=verdict,
@@ -463,9 +450,7 @@ class ScreenContextService:
         # that monitor before any pixels exist. Unknown window geometry counts
         # as intersecting (fail closed), and an unavailable enumeration blocks
         # monitor scope rather than silently weakening the privacy rule.
-        monitor_privacy_error = await asyncio.to_thread(
-            self._monitor_privacy_error, target
-        )
+        monitor_privacy_error = await asyncio.to_thread(self._monitor_privacy_error, target)
         if monitor_privacy_error:
             return CaptureOutcome(
                 status="refused",
@@ -514,9 +499,7 @@ class ScreenContextService:
                         "when the intended window is in front."
                     ),
                 )
-            monitor_privacy_error = await asyncio.to_thread(
-                self._monitor_privacy_error, target
-            )
+            monitor_privacy_error = await asyncio.to_thread(self._monitor_privacy_error, target)
             if monitor_privacy_error:
                 return CaptureOutcome(
                     status="refused",
@@ -546,8 +529,7 @@ class ScreenContextService:
                     verdict=verdict,
                     reason_kind="failure",
                     message=(
-                        "The screen could not be captured because the capture "
-                        "backend failed."
+                        "The screen could not be captured because the capture backend failed."
                     ),
                 )
 
@@ -574,9 +556,7 @@ class ScreenContextService:
                         "window is stable."
                     ),
                 )
-            monitor_privacy_error = await asyncio.to_thread(
-                self._monitor_privacy_error, target
-            )
+            monitor_privacy_error = await asyncio.to_thread(self._monitor_privacy_error, target)
             if monitor_privacy_error:
                 return CaptureOutcome(
                     status="refused",
@@ -655,12 +635,8 @@ class ScreenContextService:
                     "application could not be identified for your privacy "
                     "denylist. Ask for the active window instead."
                 )
-            blocked_by = redaction.blocked_by_denylist(
-                candidate, self._settings.denylist
-            )
-            if blocked_by and _rects_intersect_or_unknown(
-                candidate.frame_rect, target.bbox
-            ):
+            blocked_by = redaction.blocked_by_denylist(candidate, self._settings.denylist)
+            if blocked_by and _rects_intersect_or_unknown(candidate.frame_rect, target.bbox):
                 return (
                     "I did not capture the monitor because a visible window "
                     f"matches your privacy rule '{blocked_by}'."
@@ -690,9 +666,7 @@ class ScreenContextService:
         text, text_source, nodes, text_degradations = "", "none", (), ()
         access_error = await asyncio.to_thread(accessibility_permission_error)
         if access_error:
-            degradations.append(
-                Degradation(code=DegradationCode.NO_UI_TEXT, message=access_error)
-            )
+            degradations.append(Degradation(code=DegradationCode.NO_UI_TEXT, message=access_error))
         else:
             try:
                 text, text_source, nodes, text_degradations = await asyncio.wait_for(
@@ -702,9 +676,7 @@ class ScreenContextService:
                         max_chars=self._settings.max_text_chars,
                         keep_unbounded_nodes=target.kind is TargetKind.WINDOW,
                         window_title_filter=(
-                            target.window.title
-                            if target.kind is TargetKind.WINDOW
-                            else None
+                            target.window.title if target.kind is TargetKind.WINDOW else None
                         ),
                         expected_pid=target.window.pid,
                         expected_window_title=target.window.title,
@@ -723,8 +695,7 @@ class ScreenContextService:
                     )
                 )
                 log.warning(
-                    "screen_context: accessibility read exceeded %.1fs; "
-                    "continuing image-only",
+                    "screen_context: accessibility read exceeded %.1fs; continuing image-only",
                     _UI_TEXT_TIMEOUT_S,
                 )
             degradations.extend(text_degradations)
@@ -794,9 +765,7 @@ class ScreenContextService:
                         else ocr_scrubbed
                     )
                     text_hits = text_hits + ocr_hits
-                    text_source = (
-                        "ocr" if text_source == "none" else "accessibility+ocr"
-                    )
+                    text_source = "ocr" if text_source == "none" else "accessibility+ocr"
 
         image_bytes, encoded_size = _encode(image)
 
@@ -836,9 +805,7 @@ class ScreenContextService:
         if expected.pid and current.facts.pid:
             comparisons.append(int(expected.pid) == int(current.facts.pid))
         expected_title = " ".join(str(expected.title or "").casefold().split())
-        current_title = " ".join(
-            str(current.facts.title or "").casefold().split()
-        )
+        current_title = " ".join(str(current.facts.title or "").casefold().split())
         if expected_title and current_title:
             comparisons.append(expected_title == current_title)
         return all(comparisons) if comparisons else not expected.is_known
@@ -852,9 +819,7 @@ class ScreenContextService:
                 raise RuntimeError("Screen Context service is closed")
             self.sweep()
             handle_id = secrets.token_urlsafe(12)
-            expires_at_ns = self._clock() + int(
-                self._settings.ttl_s * 1_000_000_000
-            )
+            expires_at_ns = self._clock() + int(self._settings.ttl_s * 1_000_000_000)
             self._handles[handle_id] = _Handle(
                 context=context,
                 expires_at_ns=expires_at_ns,
@@ -893,11 +858,7 @@ class ScreenContextService:
         """Drop expired handles. Returns how many were dropped."""
         with self._handle_lock:
             now = self._clock()
-            expired = [
-                key
-                for key, handle in self._handles.items()
-                if handle.expires_at_ns <= now
-            ]
+            expired = [key for key, handle in self._handles.items() if handle.expires_at_ns <= now]
             for key in expired:
                 self._handles.pop(key, None)
                 self._cancel_expiry(key)
@@ -1043,9 +1004,7 @@ class ScreenContextService:
             if not truthful_ack:
                 return True
             assert waiter is not None
-            return await asyncio.wait_for(
-                asyncio.shield(waiter), timeout=_ANNOUNCE_TIMEOUT_S
-            )
+            return await asyncio.wait_for(asyncio.shield(waiter), timeout=_ANNOUNCE_TIMEOUT_S)
         except TimeoutError:
             log.warning(
                 "screen_context: capture indicator did not acknowledge within "
@@ -1068,18 +1027,14 @@ class ScreenContextService:
                 ScreenCaptureIndicatorDismissed,
             )
 
-            await self._bus.publish(
-                ScreenCaptureIndicatorDismissed(trace_id=trace_id)
-            )
+            await self._bus.publish(ScreenCaptureIndicatorDismissed(trace_id=trace_id))
         except Exception:  # noqa: BLE001 - hiding is best effort but observable
             log.warning(
                 "screen_context: capture indicator dismissal failed",
                 exc_info=True,
             )
 
-    async def _publish_completed(
-        self, context: ScreenContext, *, trace_id: UUID
-    ) -> None:
+    async def _publish_completed(self, context: ScreenContext, *, trace_id: UUID) -> None:
         if self._bus is None:
             return
         try:
@@ -1104,9 +1059,7 @@ class ScreenContextService:
                 exc_info=True,
             )
 
-    async def _publish_grabbed(
-        self, size: tuple[int, int], *, trace_id: UUID
-    ) -> None:
+    async def _publish_grabbed(self, size: tuple[int, int], *, trace_id: UUID) -> None:
         if self._bus is None:
             return
         try:
@@ -1204,9 +1157,7 @@ def settings_from_config(cfg: Any) -> ScreenContextSettings:
         enabled=bool(getattr(block, "enabled", True)),
         denylist=tuple(getattr(block, "denylist", ()) or ()),
         extra_patterns=tuple(getattr(block, "sensitive_patterns", ()) or ()),
-        include_default_patterns=bool(
-            getattr(block, "include_default_patterns", True)
-        ),
+        include_default_patterns=bool(getattr(block, "include_default_patterns", True)),
         max_text_chars=int(getattr(block, "max_text_chars", 4000)),
         ttl_s=float(getattr(block, "ttl_s", 120.0)),
         deck_preview_s=float(getattr(block, "deck_preview_s", 120.0)),

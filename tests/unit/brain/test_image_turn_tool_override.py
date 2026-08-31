@@ -31,17 +31,18 @@ def _mgr(tools: dict, *, required: str = "", is_write: bool = False) -> BrainMan
 
 def _surface() -> dict:
     return {
-        "screenshot": object(),       # read — must stay
-        "search_web": object(),       # read — must stay
-        "computer_use": object(),     # the action vehicle a screen turn may need
-        "run_shell": object(),        # write mandate target (2026-08-08)
-        "spawn_worker": object(),     # unattended background agent — hidden
-        "multi_spawn": object(),      # ditto
-        "contact-upsert": object(),   # silent record write — hidden
-        "wiki-ingest": object(),      # ditto
+        "screenshot": object(),  # read — must stay
+        "search_web": object(),  # read — must stay
+        "computer_use": object(),  # the action vehicle a screen turn may need
+        "run_shell": object(),  # write mandate target (2026-08-08)
+        "spawn_worker": object(),  # unattended background agent — hidden
+        "multi_spawn": object(),  # ditto
+        "contact-upsert": object(),  # silent record write — hidden
+        "wiki-ingest": object(),  # ditto
         "google_calendar": object(),  # ditto
-        "call-contact": object(),     # ditto
-        "update_profile": object(),   # ditto
+        "call-contact": object(),  # ditto
+        "update_profile": object(),  # ditto
+        "linear/save_issue": object(),  # MCP — union types brick Gemini
     }
 
 
@@ -57,8 +58,14 @@ def test_screen_turn_hides_the_unattended_vehicles() -> None:
     # record behind the user's back.
     out = _mgr(_surface())._image_turn_tool_override()
     for hidden in (
-        "spawn_worker", "multi_spawn", "contact-upsert", "wiki-ingest",
-        "google_calendar", "call-contact", "update_profile",
+        "spawn_worker",
+        "multi_spawn",
+        "contact-upsert",
+        "wiki-ingest",
+        "google_calendar",
+        "call-contact",
+        "update_profile",
+        "linear/save_issue",
     ):
         assert hidden not in out, hidden
 

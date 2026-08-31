@@ -10,6 +10,7 @@ uses Google's official OpenAI-compatible HTTPS endpoint. The fallback keeps
 core text, vision, streaming, and function-calling available on platforms
 where the Google SDK dependency graph has no installable wheel.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -118,9 +119,8 @@ def _is_stale_context_cache_error(exc: Exception) -> bool:
     if "cached_content" in msg and "not found" in msg:
         return True
     if (
-        ("403" in msg or "permission_denied" in msg or "permission denied" in msg)
-        and "cache" in msg
-    ):
+        "403" in msg or "permission_denied" in msg or "permission denied" in msg
+    ) and "cache" in msg:
         return True
     return False
 
@@ -146,10 +146,7 @@ def _thinking_config_for(
     from google.genai import types as _genai_types
 
     def _budget_cfg(value: int) -> Any | None:
-        if (
-            value in rejected_budgets
-            or (model, value) in _REJECTED_THINKING_BUDGETS
-        ):
+        if value in rejected_budgets or (model, value) in _REJECTED_THINKING_BUDGETS:
             return None
         try:
             return _genai_types.ThinkingConfig(thinking_budget=value)
@@ -266,22 +263,23 @@ def _to_gemini_contents(
                     for part in payload
                     if isinstance(part, dict) and part.get("type") == "tool_result"
                 ]
-                result_text = (
-                    "\n".join(t for t in inner if t)
-                    or json.dumps(payload, default=str)
-                )
+                result_text = "\n".join(t for t in inner if t) or json.dumps(payload, default=str)
             else:
                 result_text = str(payload)
             tool_name = m.name or ""
-            contents.append({
-                "role": "user",
-                "parts": [{
-                    "functionResponse": {
-                        "name": name_map.get(tool_name, tool_name),
-                        "response": {"result": result_text},
-                    }
-                }],
-            })
+            contents.append(
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "functionResponse": {
+                                "name": name_map.get(tool_name, tool_name),
+                                "response": {"result": result_text},
+                            }
+                        }
+                    ],
+                }
+            )
             continue
 
         # `getattr` for backwards-compat (Protocol pre-Wave-1-B1 had no images).
@@ -310,24 +308,28 @@ def _to_gemini_contents(
                     # covers all Gemini-originated calls.
                     call_name = str(part.get("name", ""))
                     call_args = part.get("input")
-                    parts.append({
-                        "functionCall": {
-                            "name": name_map.get(call_name, call_name),
-                            "args": call_args if isinstance(call_args, dict) else {},
-                        },
-                        "thought_signature": part["thought_signature"],
-                    })
+                    parts.append(
+                        {
+                            "functionCall": {
+                                "name": name_map.get(call_name, call_name),
+                                "args": call_args if isinstance(call_args, dict) else {},
+                            },
+                            "thought_signature": part["thought_signature"],
+                        }
+                    )
                 else:
                     # Unknown block type: keep the previous lossless behavior.
                     parts.append({"text": json.dumps(part, default=str)})
         if m.role == "user" and images:
             for img in images:
-                parts.append({
-                    "inline_data": {
-                        "mime_type": img.mime,
-                        "data": img.data_b64,
+                parts.append(
+                    {
+                        "inline_data": {
+                            "mime_type": img.mime,
+                            "data": img.data_b64,
+                        }
                     }
-                })
+                )
         if not parts:
             # Defensive: a Gemini content must not be empty.
             parts.append({"text": ""})
@@ -340,44 +342,46 @@ def _to_gemini_contents(
 # `strict=True` + `input_examples=[...]` at the schema root. Without this
 # cleanup, Gemini rejects the request with GenerateContentConfig validation errors
 # (Bug #API-1, 2026-04-29).
-_GEMINI_FORBIDDEN_SCHEMA_KEYS: frozenset[str] = frozenset({
-    "strict",            # OpenAI strict-mode flag
-    "input_examples",    # Phase 7.3 SelfMod input_examples
-    "additionalProperties",  # OpenAI 2024-08 strict-mode marker
-    "additional_properties",  # google-genai may receive pydantic's snake_case form
-    "$schema",           # JSON-Schema meta
-    "$id",
-    # JSON-schema keywords the google-genai Schema model (extra="forbid")
-    # rejects. The Schema model accepts only its documented subset — verified
-    # 2026-06-01 against google-genai 1.67 (types.Schema.model_fields). The
-    # ``exclusive*`` bounds below are first CONVERTED to ``minimum``/``maximum``
-    # in ``_sanitize_for_gemini`` (constraint-preserving) and only then dropped
-    # here; the rest are simply not part of Gemini's schema dialect.
-    "exclusiveMinimum",  # Pydantic Field(gt=N) — converted to ``minimum``
-    "exclusiveMaximum",  # Pydantic Field(lt=N) — converted to ``maximum``
-    "exclusive_minimum",  # snake_case variant
-    "exclusive_maximum",  # snake_case variant
-    "$defs",             # Pydantic emits these for nested models / refs
-    "definitions",       # draft-07 definitions block
-    "examples",          # plural — Gemini only accepts singular ``example``
-    "const",             # not in Gemini's subset
-    # JSON-schema object-key constraints Gemini's Schema model (extra="forbid")
-    # rejects. A connected MCP/plugin tool can ship these on a free-form object
-    # parameter; left in, ONE such tool schema fails the WHOLE GenerateContent
-    # request with a Pydantic "extra_forbidden" validation error, so the primary
-    # brain (Gemini) dies and the turn falls through the whole provider chain
-    # (live forensic 2026-07-23: functionDeclarations[105].parameters.properties.
-    # anchor.propertyNames → 5 validation errors → gemini down → claude 401 →
-    # openrouter 400 → openai 429 → anti-silence fallback). Dropping the
-    # constraint keeps the tool callable; only the key-name restriction is lost.
-    "propertyNames",     # restricts allowed property names — not in Gemini's subset
-    "patternProperties", # per-pattern property schemas — not in Gemini's subset
-    "unevaluatedProperties",
-    "minProperties",     # object size bounds — not in Gemini's subset
-    "maxProperties",
-    "dependentRequired",
-    "dependentSchemas",
-})
+_GEMINI_FORBIDDEN_SCHEMA_KEYS: frozenset[str] = frozenset(
+    {
+        "strict",  # OpenAI strict-mode flag
+        "input_examples",  # Phase 7.3 SelfMod input_examples
+        "additionalProperties",  # OpenAI 2024-08 strict-mode marker
+        "additional_properties",  # google-genai may receive pydantic's snake_case form
+        "$schema",  # JSON-Schema meta
+        "$id",
+        # JSON-schema keywords the google-genai Schema model (extra="forbid")
+        # rejects. The Schema model accepts only its documented subset — verified
+        # 2026-06-01 against google-genai 1.67 (types.Schema.model_fields). The
+        # ``exclusive*`` bounds below are first CONVERTED to ``minimum``/``maximum``
+        # in ``_sanitize_for_gemini`` (constraint-preserving) and only then dropped
+        # here; the rest are simply not part of Gemini's schema dialect.
+        "exclusiveMinimum",  # Pydantic Field(gt=N) — converted to ``minimum``
+        "exclusiveMaximum",  # Pydantic Field(lt=N) — converted to ``maximum``
+        "exclusive_minimum",  # snake_case variant
+        "exclusive_maximum",  # snake_case variant
+        "$defs",  # Pydantic emits these for nested models / refs
+        "definitions",  # draft-07 definitions block
+        "examples",  # plural — Gemini only accepts singular ``example``
+        "const",  # not in Gemini's subset
+        # JSON-schema object-key constraints Gemini's Schema model (extra="forbid")
+        # rejects. A connected MCP/plugin tool can ship these on a free-form object
+        # parameter; left in, ONE such tool schema fails the WHOLE GenerateContent
+        # request with a Pydantic "extra_forbidden" validation error, so the primary
+        # brain (Gemini) dies and the turn falls through the whole provider chain
+        # (live forensic 2026-07-23: functionDeclarations[105].parameters.properties.
+        # anchor.propertyNames → 5 validation errors → gemini down → claude 401 →
+        # openrouter 400 → openai 429 → anti-silence fallback). Dropping the
+        # constraint keeps the tool callable; only the key-name restriction is lost.
+        "propertyNames",  # restricts allowed property names — not in Gemini's subset
+        "patternProperties",  # per-pattern property schemas — not in Gemini's subset
+        "unevaluatedProperties",
+        "minProperties",  # object size bounds — not in Gemini's subset
+        "maxProperties",
+        "dependentRequired",
+        "dependentSchemas",
+    }
+)
 
 
 def _convert_exclusive_bounds(schema: dict[str, Any]) -> dict[str, Any]:
@@ -414,15 +418,44 @@ def _convert_exclusive_bounds(schema: dict[str, Any]) -> dict[str, Any]:
 # The documented Gemini schema subset, used when the installed google-genai
 # cannot be introspected. Field names AND their JSON aliases, because a tool
 # schema arrives in either spelling.
-_GEMINI_SCHEMA_KEYS_FALLBACK: frozenset[str] = frozenset({
-    "additionalProperties", "additional_properties", "anyOf", "any_of",
-    "default", "defs", "description", "enum", "example", "format", "items",
-    "maxItems", "max_items", "maxLength", "max_length", "maxProperties",
-    "max_properties", "maximum", "minItems", "min_items", "minLength",
-    "min_length", "minProperties", "min_properties", "minimum", "nullable",
-    "pattern", "properties", "propertyOrdering", "property_ordering", "ref",
-    "required", "title", "type",
-})
+_GEMINI_SCHEMA_KEYS_FALLBACK: frozenset[str] = frozenset(
+    {
+        "additionalProperties",
+        "additional_properties",
+        "anyOf",
+        "any_of",
+        "default",
+        "defs",
+        "description",
+        "enum",
+        "example",
+        "format",
+        "items",
+        "maxItems",
+        "max_items",
+        "maxLength",
+        "max_length",
+        "maxProperties",
+        "max_properties",
+        "maximum",
+        "minItems",
+        "min_items",
+        "minLength",
+        "min_length",
+        "minProperties",
+        "min_properties",
+        "minimum",
+        "nullable",
+        "pattern",
+        "properties",
+        "propertyOrdering",
+        "property_ordering",
+        "ref",
+        "required",
+        "title",
+        "type",
+    }
+)
 
 
 @lru_cache(maxsize=1)
@@ -502,9 +535,43 @@ def _sanitize_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
             out[k] = [_sanitize_for_gemini(sub) if isinstance(sub, dict) else sub for sub in v]
         elif k in _GEMINI_SCHEMA_VALUED and isinstance(v, dict):
             out[k] = _sanitize_for_gemini(v)
+        elif k == "type":
+            # JSON Schema allows ``type: ["string", "number"]``. Gemini's
+            # Schema.type is a single enum. A Linear MCP tool shipped a union
+            # on ``issue_fields.items.properties.value.type``; left as a list
+            # it 400s the WHOLE GenerateContentConfig, so Vertex/Gemini die
+            # and a screenshot turn walks five other providers (live
+            # 2026-08-31 17:06, 20 s to grok-4.6). Flatten to one type.
+            out[k] = _gemini_single_type(v)
         else:
             out[k] = v
     return out
+
+
+_GEMINI_TYPE_NAMES: tuple[str, ...] = (
+    "string",
+    "number",
+    "integer",
+    "boolean",
+    "array",
+    "object",
+    "null",
+)
+
+
+def _gemini_single_type(value: Any) -> Any:
+    """Collapse a JSON-Schema union ``type`` list to one Gemini enum value."""
+    if not isinstance(value, list):
+        return value
+    names = [str(item).strip().lower() for item in value if item is not None]
+    if not names:
+        return "string"
+    if "null" in names:
+        names = [n for n in names if n != "null"] or ["string"]
+    for preferred in _GEMINI_TYPE_NAMES:
+        if preferred in names:
+            return preferred
+    return names[0]
 
 
 # Gemini function-name rule (live forensic 2026-06-01, data/jarvis_desktop.log
@@ -583,11 +650,13 @@ def _build_gemini_tool_declarations(
         raw_schema = t.get("input_schema") or t.get("parameters") or t.get("schema") or {}
         schema = _sanitize_for_gemini(raw_schema) if raw_schema else {}
         original = t.get("name", "")
-        declarations.append({
-            "name": name_map.get(original, original),
-            "description": t.get("description", ""),
-            "parameters": schema if schema else {"type": "object", "properties": {}},
-        })
+        declarations.append(
+            {
+                "name": name_map.get(original, original),
+                "description": t.get("description", ""),
+                "parameters": schema if schema else {"type": "object", "properties": {}},
+            }
+        )
     return [{"functionDeclarations": declarations}], name_map
 
 
@@ -642,9 +711,7 @@ def _create_native_client(endpoint: Any, *, pinned_route: str | None = None) -> 
 
         http_options = genai_types.HttpOptions(base_url=endpoint.base_url)
         route = "aistudio"
-    return build_genai_client(
-        endpoint.credential, http_options=http_options, route=route
-    )
+    return build_genai_client(endpoint.credential, http_options=http_options, route=route)
 
 
 def _reject_compat_fallback_for_vertex(
@@ -718,16 +785,9 @@ def _openai_compat_request(req: BrainRequest) -> BrainRequest:
     sanitized_tools: list[dict[str, Any]] = []
     for tool in req.tools:
         copied = dict(tool)
-        raw_schema = (
-            tool.get("input_schema")
-            or tool.get("parameters")
-            or tool.get("schema")
-            or {}
-        )
+        raw_schema = tool.get("input_schema") or tool.get("parameters") or tool.get("schema") or {}
         copied["input_schema"] = (
-            _sanitize_for_gemini(raw_schema)
-            if raw_schema
-            else {"type": "object", "properties": {}}
+            _sanitize_for_gemini(raw_schema) if raw_schema else {"type": "object", "properties": {}}
         )
         sanitized_tools.append(copied)
     return BrainRequest(
@@ -830,12 +890,9 @@ class GeminiBrain:
                 # documented HTTPS compatibility API. Log only the exception
                 # class: dependency messages can contain local paths, and the
                 # credential must never enter logs.
-                _reject_compat_fallback_for_vertex(
-                    ep, exc, pinned_route=self.pinned_route
-                )
+                _reject_compat_fallback_for_vertex(ep, exc, pinned_route=self.pinned_route)
                 log.info(
-                    "Gemini native SDK unavailable (%s); using the "
-                    "OpenAI-compatible transport",
+                    "Gemini native SDK unavailable (%s); using the OpenAI-compatible transport",
                     type(exc).__name__,
                 )
                 self._client = _create_openai_compat_client(ep)
@@ -843,7 +900,9 @@ class GeminiBrain:
         return self._client
 
     async def _ensure_cache(
-        self, system_text: str, tools_payload: list[dict[str, Any]] | None,
+        self,
+        system_text: str,
+        tools_payload: list[dict[str, Any]] | None,
     ) -> str | None:
         """Latency-Sprint-2: lazy init of the context cache.
 
@@ -877,7 +936,8 @@ class GeminiBrain:
         if approx_tokens < _MIN_CACHE_TOKENS:
             log.debug(
                 "Gemini cache skipped (prefix ~%d tokens < %d minimum size)",
-                approx_tokens, _MIN_CACHE_TOKENS,
+                approx_tokens,
+                _MIN_CACHE_TOKENS,
             )
             return None
         remaining = self._cache_create_blocked_until - time.monotonic()
@@ -891,6 +951,7 @@ class GeminiBrain:
 
         try:
             from google.genai import types as _genai_types
+
             cache = await self._client.aio.caches.create(
                 model=self._model,
                 config=_genai_types.CreateCachedContentConfig(
@@ -905,16 +966,16 @@ class GeminiBrain:
                 self._cache_slots[sig] = self._cached_content_name
                 while len(self._cache_slots) > _MAX_CACHE_SLOTS:
                     self._cache_slots.pop(next(iter(self._cache_slots)))
-            log.info("Gemini context cache created: %s (tokens ~%d)",
-                     self._cached_content_name, approx_tokens)
+            log.info(
+                "Gemini context cache created: %s (tokens ~%d)",
+                self._cached_content_name,
+                approx_tokens,
+            )
             return self._cached_content_name
         except Exception as exc:  # noqa: BLE001
-            self._cache_create_blocked_until = (
-                time.monotonic() + _CACHE_CREATE_RETRY_AFTER_S
-            )
+            self._cache_create_blocked_until = time.monotonic() + _CACHE_CREATE_RETRY_AFTER_S
             log.warning(
-                "Gemini cache create failed, falling back to direct for the next "
-                "%.0fs: %s",
+                "Gemini cache create failed, falling back to direct for the next %.0fs: %s",
                 _CACHE_CREATE_RETRY_AFTER_S,
                 exc,
             )
@@ -958,8 +1019,9 @@ class GeminiBrain:
                 yield delta
             return
 
-        system_parts: list[str] = [m.content for m in req.messages
-                                   if m.role == "system" and isinstance(m.content, str)]
+        system_parts: list[str] = [
+            m.content for m in req.messages if m.role == "system" and isinstance(m.content, str)
+        ]
         if req.system:
             system_parts.append(req.system)
 
@@ -1009,8 +1071,9 @@ class GeminiBrain:
         # the call (it just keeps the slower legacy behavior).
         try:
             from google.genai import types as _genai_types
-            config_dict["automatic_function_calling"] = (
-                _genai_types.AutomaticFunctionCallingConfig(disable=True)
+
+            config_dict["automatic_function_calling"] = _genai_types.AutomaticFunctionCallingConfig(
+                disable=True
             )
         except Exception:  # noqa: BLE001 — never break the brain call over an SDK shape change
             log.debug("could not disable Gemini automatic_function_calling", exc_info=True)
@@ -1203,18 +1266,10 @@ class GeminiBrain:
                         # deltas. Emitting every snapshot makes the shared
                         # aggregator sum the same prompt repeatedly. Retain the
                         # latest snapshot and emit it once after the stream.
-                        prompt_tokens = int(
-                            getattr(usage, "prompt_token_count", 0) or 0
-                        )
-                        cache_hit_tokens = int(
-                            getattr(usage, "cached_content_token_count", 0) or 0
-                        )
-                        candidate_tokens = int(
-                            getattr(usage, "candidates_token_count", 0) or 0
-                        )
-                        thought_tokens = int(
-                            getattr(usage, "thoughts_token_count", 0) or 0
-                        )
+                        prompt_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+                        cache_hit_tokens = int(getattr(usage, "cached_content_token_count", 0) or 0)
+                        candidate_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+                        thought_tokens = int(getattr(usage, "thoughts_token_count", 0) or 0)
                         tool_result_tokens = int(
                             getattr(usage, "tool_use_prompt_token_count", 0) or 0
                         )
@@ -1224,7 +1279,8 @@ class GeminiBrain:
                             "input_tokens": max(
                                 prompt_tokens - cache_hit_tokens,
                                 0,
-                            ) + tool_result_tokens,
+                            )
+                            + tool_result_tokens,
                             "output_tokens": candidate_tokens + thought_tokens,
                             "cache_hit_tokens": cache_hit_tokens,
                         }
@@ -1236,25 +1292,19 @@ class GeminiBrain:
                     # on this instance skip that budget (and the extra 400)
                     # entirely.
                     self._rejected_thinking_budgets.add(pending_rejected_budget)
-                    _REJECTED_THINKING_BUDGETS.add(
-                        (self._model, pending_rejected_budget)
-                    )
+                    _REJECTED_THINKING_BUDGETS.add((self._model, pending_rejected_budget))
                     log.info(
-                        "Gemini model %s rejects thinking_budget=%d — "
-                        "omitting it from now on",
+                        "Gemini model %s rejects thinking_budget=%d — omitting it from now on",
                         self._model,
                         pending_rejected_budget,
                     )
                 return
             except Exception as exc:  # noqa: BLE001 — BUG-019 stale-cache recovery
-                if (
-                    attempt == 1
-                    and cache_name
-                    and _is_stale_context_cache_error(exc)
-                ):
+                if attempt == 1 and cache_name and _is_stale_context_cache_error(exc):
                     log.warning(
                         "Gemini stale context-cache (BUG-019) — invalidating "
-                        "and retrying once without cache: %s", exc,
+                        "and retrying once without cache: %s",
+                        exc,
                     )
                     self.invalidate_cache()
                     config_dict.pop("cached_content", None)
@@ -1267,10 +1317,7 @@ class GeminiBrain:
                 if (
                     not yielded_delta
                     and "thinking_config" in config_dict
-                    and (
-                        thinking_config_blamed
-                        or _is_generic_invalid_argument_error(exc)
-                    )
+                    and (thinking_config_blamed or _is_generic_invalid_argument_error(exc))
                 ):
                     # Some models REQUIRE thinking mode and 400 on budget=0
                     # ("Budget 0 is invalid. This model only works in thinking
@@ -1284,8 +1331,9 @@ class GeminiBrain:
                     # the error still propagates — one extra round trip, no
                     # behavior change.
                     log.info(
-                        "Gemini model %s rejected thinking_config — retrying "
-                        "once without it: %s", self._model, exc,
+                        "Gemini model %s rejected thinking_config — retrying once without it: %s",
+                        self._model,
+                        exc,
                     )
                     rejected_budget = getattr(
                         config_dict.get("thinking_config"),
@@ -1293,9 +1341,8 @@ class GeminiBrain:
                         None,
                     )
                     cache_on_wire = bool(cache_name and "cached_content" in config_dict)
-                    if (
-                        thinking_kind == "level"
-                        and not (not thinking_config_blamed and cache_on_wire)
+                    if thinking_kind == "level" and not (
+                        not thinking_config_blamed and cache_on_wire
                     ):
                         # Gemini 2.5 400s on thinking_level. Fall through to
                         # the budget path instead of dropping the knob —
@@ -1306,15 +1353,14 @@ class GeminiBrain:
                         # the two-variable retry must not blame either.
                         _REJECTED_THINKING_LEVELS.add(self._model)
                         from google.genai import types as _retry_types
+
                         fallback = None
                         if (
                             0 not in self._rejected_thinking_budgets
                             and (self._model, 0) not in _REJECTED_THINKING_BUDGETS
                         ):
                             try:
-                                fallback = _retry_types.ThinkingConfig(
-                                    thinking_budget=0
-                                )
+                                fallback = _retry_types.ThinkingConfig(thinking_budget=0)
                             except (TypeError, AttributeError, ValueError):
                                 # Last rung of the same ladder, on the retry
                                 # path: no usable config means the request is
@@ -1351,9 +1397,7 @@ class GeminiBrain:
                             # The message names the thinking config — no
                             # further evidence needed.
                             self._rejected_thinking_budgets.add(rejected_budget)
-                            _REJECTED_THINKING_BUDGETS.add(
-                                (self._model, rejected_budget)
-                            )
+                            _REJECTED_THINKING_BUDGETS.add((self._model, rejected_budget))
                         elif not dropped_cache:
                             pending_rejected_budget = rejected_budget
                     continue
@@ -1369,9 +1413,7 @@ class GeminiBrain:
                     ep = self._resolve_endpoint()
                     if not self._credential_is_sufficient(ep):
                         raise
-                    _reject_compat_fallback_for_vertex(
-                        ep, exc, pinned_route=self.pinned_route
-                    )
+                    _reject_compat_fallback_for_vertex(ep, exc, pinned_route=self.pinned_route)
                     log.info(
                         "Gemini native stream dependency unavailable (%s); "
                         "using the OpenAI-compatible transport",

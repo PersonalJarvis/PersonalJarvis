@@ -77,6 +77,26 @@ def test_sanitizer_recurses_into_nested_and_lists():
     assert clean["properties"]["outer"]["items"]["type"] == "object"
 
 
+def test_json_schema_union_type_flattens_to_one_gemini_enum() -> None:
+    """Linear MCP shipped ``type: [string, number, boolean]`` (live 2026-08-31 17:06)."""
+    bad = {
+        "type": "object",
+        "properties": {
+            "issue_fields": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "value": {"type": ["string", "number", "boolean"]},
+                    },
+                },
+            }
+        },
+    }
+    clean = _sanitize_for_gemini(bad)
+    assert clean["properties"]["issue_fields"]["items"]["properties"]["value"]["type"] == ("string")
+
+
 def test_an_unknown_extension_key_is_dropped_whatever_it_is_called():
     """The 2026-08-26 outage: the GitHub MCP server tags parameters with
     ``x-mcp-header``. It was on no block-list, so 81 validation errors killed
