@@ -512,7 +512,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
               height={14}
               alt=""
               aria-hidden
-              className="h-3.5 w-3.5 shrink-0"
+              className="jarvis-logo-mark h-3.5 w-3.5 shrink-0"
             />
           ) : (
             <FolderCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />

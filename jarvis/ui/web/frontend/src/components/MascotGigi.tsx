@@ -128,7 +128,7 @@ export function MascotGigi({
             className="gigi-halo"
             d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
             fill="hsl(var(--gigi-trim))"
-            opacity="0.28"
+            opacity="0.42"
             filter="url(#gigiSoftGlow)"
           />
 

@@ -646,7 +646,7 @@ describe("Sidebar icon rail", () => {
     const sidebar = screen.getByTestId("sidebar");
     expect(sidebar.querySelector(".jarvis-shell-surface")).toBeNull();
     expect(screen.getByTestId("nav-row-chats").classList).toContain(
-      "jarvis-message-surface",
+      "jarvis-nav-active",
     );
   });
 

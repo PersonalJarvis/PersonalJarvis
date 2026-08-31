@@ -370,10 +370,10 @@ function DockIcon({
           // The active control is the app's glass surface with the accent on
           // the glyph — the same language as the expanded sidebar's row.
           active
-            ? "jarvis-message-surface border-primary/40 text-primary"
+            ? "jarvis-nav-active border-transparent"
             : hovered
-              ? "border-border/60 bg-card/40 text-foreground"
-              : "border-transparent text-muted-foreground",
+              ? "border-transparent bg-secondary text-foreground"
+              : "border-transparent text-foreground/55",
         )}
         style={{ top: PAD_TOP + restCenter - BASE / 2, width: BASE, height: BASE }}
       >

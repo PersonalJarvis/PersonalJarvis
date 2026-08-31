@@ -33,13 +33,15 @@ export function Greeting({
       data-testid="home-greeting"
     >
       <h1 className="flex items-center gap-3 font-display text-3xl tracking-tight text-foreground [text-wrap:balance]">
-        <img
-          src="/jarvis-logo.png"
-          width={30}
-          height={30}
-          alt={PRODUCT_NAME}
-          className="h-[30px] w-[30px] shrink-0"
-        />
+        <span className="jarvis-logo-well flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full">
+          <img
+            src="/jarvis-logo.png"
+            width={32}
+            height={32}
+            alt={PRODUCT_NAME}
+            className="jarvis-logo-mark h-8 w-8"
+          />
+        </span>
         <span>{text}</span>
       </h1>
       {subtitle && !muted && (

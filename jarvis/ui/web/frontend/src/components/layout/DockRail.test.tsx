@@ -69,11 +69,11 @@ describe("DockRail", () => {
     expect(screen.getByTestId("nav-row-chats").getAttribute("title")).toBeNull();
   });
 
-  test("keeps the active control on the app's glass surface", () => {
+  test("keeps the active control on a lit fill", () => {
     renderRail();
-    expect(screen.getByTestId("nav-row-chats").classList).toContain("jarvis-message-surface");
+    expect(screen.getByTestId("nav-row-chats").classList).toContain("jarvis-nav-active");
     expect(screen.getByTestId("nav-row-tasks").classList).not.toContain(
-      "jarvis-message-surface",
+      "jarvis-nav-active",
     );
   });
 

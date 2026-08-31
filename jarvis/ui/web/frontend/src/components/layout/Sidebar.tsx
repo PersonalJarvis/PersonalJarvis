@@ -392,7 +392,7 @@ export function Sidebar({
             data-variant="logo"
             title={railed ? `${assistantName} — ${voiceLabel}` : undefined}
             className={cn(
-              "relative flex shrink-0 items-center justify-center",
+              "jarvis-logo-well relative flex shrink-0 items-center justify-center overflow-hidden rounded-full",
               railed ? "h-9 w-9" : "h-11 w-11",
             )}
           >
@@ -400,7 +400,7 @@ export function Sidebar({
               <span
                 data-testid="sidebar-instance-tag"
                 title={t("sidebar.instance_dev_hint")}
-                className="absolute -bottom-1 -right-1 rounded-[3px] bg-foreground/70 px-[3px] py-px font-mono text-[7px] font-bold leading-none tracking-wider text-primary-foreground"
+                className="absolute -bottom-1 -right-1 z-10 rounded-[3px] bg-foreground/70 px-[3px] py-px font-mono text-[7px] font-bold leading-none tracking-wider text-primary-foreground"
               >
                 {devTag}
               </span>
@@ -414,7 +414,7 @@ export function Sidebar({
               width={railed ? 32 : 40}
               height={railed ? 32 : 40}
               alt={PRODUCT_NAME}
-              className="shrink-0"
+              className="jarvis-logo-mark shrink-0"
               onError={() => {
                 if (logoRetry < LOGO_RETRY_MAX) {
                   window.setTimeout(
@@ -427,7 +427,7 @@ export function Sidebar({
           </span>
           {!railed && (
             <div className="flex min-w-0 flex-1 flex-col">
-              <span className="flex min-w-0 items-center gap-1.5 font-display text-sm font-semibold tracking-tight">
+              <span className="flex min-w-0 items-center gap-1.5 font-display text-[15px] font-semibold tracking-tight text-foreground">
                 <span className="truncate">{assistantName}</span>
                 {devTag && (
                   <span
@@ -439,7 +439,7 @@ export function Sidebar({
                   </span>
                 )}
               </span>
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              <span className="mt-0.5 inline-flex w-fit items-center rounded-full bg-secondary px-1.5 py-px text-[10px] font-medium uppercase tracking-wider text-foreground/70">
                 {voiceLabel}
               </span>
             </div>
@@ -495,9 +495,9 @@ export function Sidebar({
               type="button"
               onClick={onVoiceSurface ? startNewVoice : startNewChat}
               data-testid="sidebar-new-chat"
-              className="mt-2 flex w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="mt-2 flex w-full items-center gap-2 rounded-xl bg-secondary px-2.5 py-2 text-xs font-medium text-foreground transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
-              <span className="flex h-4 w-4 items-center justify-center rounded bg-foreground/70 text-primary-foreground">
+              <span className="flex h-5 w-5 items-center justify-center rounded-md bg-foreground/15 text-foreground">
                 <Plus aria-hidden className="h-3 w-3" />
               </span>
               {onVoiceSurface ? t("sidebar.new_voice_chat") : t("sidebar.new_chat")}
@@ -569,8 +569,9 @@ export function Sidebar({
                 key={groupIndex}
                 className={cn(
                   "space-y-0.5",
-                  // Thin divider + breathing room above every group after the first.
-                  groupIndex > 0 && "mt-2 border-t border-border/40 pt-2",
+                  // Breathing room above every group after the first. A hairline
+                  // here read as a dead rule on charcoal, so the gap does the work.
+                  groupIndex > 0 && "mt-3 pt-1",
                 )}
               >
                 {group.map((raw) => {
@@ -642,7 +643,7 @@ export function Sidebar({
           type="button"
           onClick={() => setActive("apikeys")}
           className={cn(
-            "jarvis-message-surface group flex w-full items-center rounded-lg border border-border text-left transition-colors hover:border-primary/40",
+            "group flex w-full items-center rounded-xl bg-secondary text-left transition-colors hover:bg-secondary/80",
             railed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2",
           )}
           // On the rail the card shrinks to its status dot, so everything it
@@ -736,21 +737,21 @@ function NavRow({
         onClick={onClick}
         title={hint}
         className={cn(
-          "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all",
-          "hover:bg-background/20",
+          "group relative flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-[13px] font-medium transition-colors",
+          "hover:bg-secondary/70",
           // Leave the chevron its own column so the two buttons never overlap.
           expand && "pr-9",
-          active
-            ? "jarvis-message-surface text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
-            : "text-muted-foreground hover:text-foreground",
+          active ? "jarvis-nav-active" : "text-foreground/80 hover:text-foreground",
         )}
       >
-        <Icon
+        <span
           className={cn(
-            "h-4 w-4 shrink-0 transition-colors",
-            active ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
+            "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors",
+            active ? "bg-foreground/10 text-foreground" : "text-foreground/55 group-hover:text-foreground",
           )}
-        />
+        >
+          <Icon className="h-4 w-4" />
+        </span>
         <span className="flex flex-1 items-center gap-1.5 text-left">
           {label}
           {betaLabel && (
@@ -793,7 +794,7 @@ function NavRow({
           title={expand.label}
           data-testid={`nav-expand-${item.id}`}
           className={cn(
-            "absolute right-1.5 top-2 flex h-5 w-5 items-center justify-center rounded-md transition-colors",
+            "absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-md transition-colors",
             "text-muted-foreground hover:bg-background/60 hover:text-foreground",
             "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           )}
