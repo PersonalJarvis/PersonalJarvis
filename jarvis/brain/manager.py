@@ -2524,6 +2524,28 @@ _PROVIDER_DOWN_CAUSE_PHRASES: dict[str, dict[str, str]] = {
             "de nuevo en un momento."
         ),
     },
+    # A screenshot was attached but every reachable brain reported blind.
+    # This is NOT a missing/invalid API key — the key is often present and
+    # the API-Keys card is green; the model simply cannot inspect images.
+    # Spoken separately so a vision skip is not heard as "your key is broken".
+    "vision_unsupported": {
+        "de": (
+            "Entschuldige — ich habe den Bildschirm aufgenommen, aber keiner "  # i18n-allow
+            "der verbundenen Assistenten kann gerade Bilder auswerten. Der "  # i18n-allow
+            "Schlüssel ist da, nur das Sehen fehlt. Nimm unter API-Keys "  # i18n-allow
+            "einen Anbieter mit Bildverarbeitung."  # i18n-allow
+        ),
+        "en": (
+            "Sorry — I captured the screen, but none of the connected "
+            "assistants can inspect images right now. The key is there; "
+            "vision is not. Pick a vision-capable provider under API keys."
+        ),
+        "es": (
+            "Lo siento: capturé la pantalla, pero ninguno de los asistentes "
+            "conectados puede analizar imágenes ahora. La clave está; falta "
+            "la visión. Elige un proveedor con visión en Claves API."
+        ),
+    },
 }
 
 # Priority when several providers failed for different reasons — the FIRST
@@ -2535,6 +2557,7 @@ _PROVIDER_DOWN_CAUSE_PRIORITY: tuple[str, ...] = (
     "missing_key",
     "bad_key",
     "account_blocked",
+    "vision_unsupported",
     "invalid_model",
     "context_overflow",
     "rate_limit",
@@ -2555,6 +2578,7 @@ def _primary_provider_down_cause(
         "missing_key",
         "bad_key",
         "account_blocked",
+        "vision_unsupported",
         "invalid_model",
         "context_overflow",
         "rate_limit",
@@ -13572,6 +13596,7 @@ def _format_provider_chain_error(
     missing_keys: list[str] = []
     invalid_keys: list[str] = []
     account_blocked: list[str] = []
+    vision_unsupported: list[str] = []
     invalid_models: list[str] = []
     context_overflow: list[str] = []
     rate_limited: list[str] = []
@@ -13584,6 +13609,8 @@ def _format_provider_chain_error(
             invalid_keys.append(prov_name)
         elif kind == "account_blocked":
             account_blocked.append(prov_name)
+        elif kind == "vision_unsupported":
+            vision_unsupported.append(prov_name)
         elif kind == "invalid_model":
             invalid_models.append(prov_name)
         elif kind == "context_overflow":
@@ -13608,6 +13635,7 @@ def _format_provider_chain_error(
     missing_keys = _uniq(missing_keys)
     invalid_keys = _uniq(invalid_keys)
     account_blocked = _uniq(account_blocked)
+    vision_unsupported = _uniq(vision_unsupported)
     invalid_models = _uniq(invalid_models)
     context_overflow = _uniq(context_overflow)
     rate_limited = _uniq(rate_limited)
@@ -13640,6 +13668,12 @@ def _format_provider_chain_error(
             "Credit aufladen, Plan upgraden oder Modell-Tier freischalten. "
             "Bei Anthropic: console.anthropic.com/settings/billing. "
             "Bei xAI: console.x.ai/team/billing."
+        )
+    if vision_unsupported:
+        parts.append(
+            f"Kein Bildverstehen bei {', '.join(vision_unsupported)} — "  # i18n-allow
+            "der Key ist da, aber das Modell sieht keine Bilder. "  # i18n-allow
+            "Unter API-Keys einen Anbieter mit Bildverarbeitung aktivieren."  # i18n-allow
         )
     if invalid_models:
         parts.append(

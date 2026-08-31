@@ -1,4 +1,5 @@
 """xAI Grok brain over its OpenAI-compatible API."""
+
 from __future__ import annotations
 
 import asyncio
@@ -20,8 +21,12 @@ class GrokBrain:
     name: str = "grok"
     context_window: int = 1_000_000
     supports_tools: bool = True
-    # The OpenAI-compatible image path has not been verified end to end yet.
-    supports_vision: bool = False
+    # xAI's OpenAI-compatible chat API accepts ``image_url`` data URIs on
+    # grok-4.x. A False here made Screen Context / Computer-Use skip a live
+    # key and tell the user to "connect a vision-capable provider" even
+    # though the card in API Keys was green (architecture-overview: the
+    # 2026-06-21 CU "no vision" incident).
+    supports_vision: bool = True
 
     def __init__(self, model: str | None = None) -> None:
         self._model = model or DEFAULT_MODEL
@@ -32,9 +37,7 @@ class GrokBrain:
 
     def _ensure_client(self) -> Any:
         if self._client is None:
-            ep = cfg.resolve_provider_endpoint(
-                "grok", vendor_default_base_url=BASE_URL
-            )
+            ep = cfg.resolve_provider_endpoint("grok", vendor_default_base_url=BASE_URL)
             if not ep.credential:
                 raise RuntimeError(
                     "No xAI API key found "

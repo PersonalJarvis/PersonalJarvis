@@ -13,6 +13,7 @@ Drei zusammenhaengende Defekte gefixt:
 3. _format_provider_chain_error — User-actionable Account-Block-Message
    statt "Provider unerreichbar"-Halluzination.
 """
+
 from __future__ import annotations
 
 from jarvis.brain.manager import (
@@ -31,6 +32,7 @@ from jarvis.plugins.brain.gemini import (
 )
 
 # ---- 1. Gemini-Schema-Sanitizer ----------------------------------------
+
 
 class TestGeminiSchemaSanitize:
     def test_strips_strict_at_root(self) -> None:
@@ -206,8 +208,7 @@ class TestGeminiSdkAcceptsSanitizedSchema:
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "size": {"type": "integer", "exclusiveMinimum": 0,
-                                 "title": "Size"},
+                        "size": {"type": "integer", "exclusiveMinimum": 0, "title": "Size"},
                         "ratio": {"type": "number", "exclusiveMaximum": 10},
                     },
                     "required": ["size"],
@@ -273,6 +274,7 @@ class TestGeminiFunctionNameSanitize:
 
     def test_collision_on_overlong_base_stays_valid_and_distinct(self) -> None:
         import re
+
         rx = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$")
         taken: set[str] = set()
         first = _sanitize_gemini_function_name("a" * 400, taken)
@@ -306,11 +308,13 @@ class TestGeminiFunctionNameSanitize:
         assert m1["wiki-recall"] == "wiki-recall"
         # every sanitized name is Gemini-valid
         import re
+
         rx = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$")
         assert all(rx.match(v) for v in m1.values())
 
     def test_tools_format_emits_only_valid_names(self) -> None:
         import re
+
         rx = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$")
         tools = (
             {"name": "Spotify: play track", "description": "d", "input_schema": {}},
@@ -332,8 +336,11 @@ class TestGeminiFunctionNameSanitize:
             pytest.skip("google-genai SDK not installed")
 
         tools = tuple(
-            {"name": f"plugin {i}/do something!", "description": "d",
-             "input_schema": {"type": "object", "properties": {}}}
+            {
+                "name": f"plugin {i}/do something!",
+                "description": "d",
+                "input_schema": {"type": "object", "properties": {}},
+            }
             for i in range(40)
         )
         payload = _tools_gemini_format(tools)
@@ -343,18 +350,23 @@ class TestGeminiFunctionNameSanitize:
 
 # ---- 2. _is_account_blocked_exc ---------------------------------------
 
+
 class TestAccountBlocked:
     def test_anthropic_credit_too_low(self) -> None:
-        msg = ("Error code: 400 - {'type': 'error', 'error': {"
-               "'message': 'Your credit balance is too low to access "
-               "the Anthropic API. Please go to Plans & Billing.'}}")
+        msg = (
+            "Error code: 400 - {'type': 'error', 'error': {"
+            "'message': 'Your credit balance is too low to access "
+            "the Anthropic API. Please go to Plans & Billing.'}}"
+        )
         assert _is_account_blocked_exc(msg)
         assert _classify_provider_error(msg, default="call_fail") == "account_blocked"
 
     def test_xai_team_does_not_have_access(self) -> None:
-        msg = ("Error code: 404 - {'code': 'Some requested entity was not "
-               "found', 'error': 'The model grok-4.1-fast does not exist or "
-               "your team does not have access to it.'}")
+        msg = (
+            "Error code: 404 - {'code': 'Some requested entity was not "
+            "found', 'error': 'The model grok-4.1-fast does not exist or "
+            "your team does not have access to it.'}"
+        )
         assert _is_account_blocked_exc(msg)
         # Becomes account_blocked, not invalid_model — important for the user message.
         assert _classify_provider_error(msg, default="call_fail") == "account_blocked"
@@ -377,11 +389,11 @@ class TestAccountBlocked:
 
 # ---- 3. _format_provider_chain_error ----------------------------------
 
+
 class TestChainErrorFormat:
     def test_account_blocked_message_user_actionable(self) -> None:
         errors = [
-            ("claude-api", "claude-haiku-4-5", "account_blocked",
-             "credit balance too low"),
+            ("claude-api", "claude-haiku-4-5", "account_blocked", "credit balance too low"),
         ]
         msg = _format_provider_chain_error(errors)
         assert "Account-Problem" in msg
@@ -409,3 +421,12 @@ class TestChainErrorFormat:
         # Both areas are addressed
         assert "Brain-Key" in msg or "missing" in msg.lower()
         assert "Account-Problem" in msg
+
+    def test_vision_unsupported_is_not_reported_as_a_missing_key(self) -> None:
+        errors = [
+            ("grok", "grok-4.3", "vision_unsupported", "vision unsupported"),
+        ]
+        msg = _format_provider_chain_error(errors)
+        assert "Bildverstehen" in msg  # i18n-allow: developer diagnostic
+        assert "Kein Brain-Key gefunden" not in msg  # i18n-allow: quoted German diagnostic
+        assert "grok" in msg

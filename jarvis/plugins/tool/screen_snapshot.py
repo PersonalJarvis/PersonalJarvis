@@ -27,6 +27,7 @@ Flow in `execute`:
    <base64>}]` so the vision-capable brain can consume the screenshot
    directly.
 """
+
 from __future__ import annotations
 
 import base64
@@ -139,7 +140,16 @@ class ScreenSnapshotTool:
             )
 
         try:
-            with mss.mss() as sct:
+            from jarvis.cu.indicator.capture_guard import (  # noqa: PLC0415
+                indicator_suppressed,
+            )
+        except Exception:  # noqa: BLE001 — grab must still work without CU
+            from contextlib import nullcontext  # noqa: PLC0415
+
+            indicator_suppressed = nullcontext
+
+        try:
+            with indicator_suppressed(), mss.mss() as sct:
                 monitors = sct.monitors
                 if len(monitors) < 2:
                     return ToolResult(

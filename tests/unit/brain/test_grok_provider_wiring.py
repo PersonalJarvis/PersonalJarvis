@@ -1,4 +1,5 @@
 """xAI Grok is a first-class Brain and Jarvis-Agent provider."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -15,7 +16,7 @@ from jarvis.brain.manager import (
 from jarvis.brain.model_catalog import _ENDPOINTS, CATALOG_PROVIDERS, catalog_spec
 from jarvis.brain.provider_registry import BrainProviderRegistry
 from jarvis.core import config as cfg
-from jarvis.core.protocols import BrainMessage, BrainRequest
+from jarvis.core.protocols import BrainMessage, BrainRequest, ImageBlock
 from jarvis.missions.critic.runner import _API_CRITIC_PROVIDERS
 from jarvis.missions.init import _API_AGENT_SLUGS, _select_subagent_worker_kind
 from jarvis.missions.worker_runtime.provider_map import env_vars_for, to_worker_slug
@@ -104,7 +105,7 @@ def test_grok_defaults_are_universal_and_tool_capable() -> None:
     brain = GrokBrain()
     assert brain.context_window == 1_000_000
     assert brain.can_call_tools() is True
-    assert brain.supports_vision is False
+    assert brain.supports_vision is True
 
 
 def test_grok_has_authenticated_live_model_catalog() -> None:
@@ -174,6 +175,55 @@ async def test_grok_streams_a_local_tool_call_round_trip() -> None:
         }
     ]
     assert completions.kwargs["model"] == DEFAULT_MODEL
+
+
+class _VisionStream:
+    def __init__(self) -> None:
+        self.kwargs: dict[str, Any] = {}
+
+    async def create(self, **kwargs: Any):  # noqa: ANN201
+        self.kwargs = kwargs
+
+        async def _chunks():  # noqa: ANN202
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content="a window", tool_calls=None),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=None,
+            )
+
+        return _chunks()
+
+
+@pytest.mark.asyncio
+async def test_grok_forwards_attached_images_on_the_openai_path() -> None:
+    """A screenshot attached to a Grok turn must reach xAI as image_url.
+
+    Live 2026-08-31: GrokBrain.supports_vision was False, so Screen Context
+    skipped a working xAI key and told the user to connect a vision provider
+    even though the API-Keys card was green.
+    """
+    completions = _VisionStream()
+    brain = GrokBrain()
+    brain._client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    request = BrainRequest(
+        messages=(
+            BrainMessage(
+                role="user",
+                content="what is on the screen?",
+                images=(ImageBlock(mime="image/jpeg", data_b64="AAAA"),),
+            ),
+        ),
+    )
+    deltas = [delta async for delta in brain.complete(request)]
+    assert deltas, "Grok must complete a vision turn instead of dropping the image"
+    user = next(m for m in completions.kwargs["messages"] if m["role"] == "user")
+    assert isinstance(user["content"], list)
+    img = next(b for b in user["content"] if b.get("type") == "image_url")
+    assert img["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
 
 def test_grok_runs_in_process_for_worker_and_critic() -> None:

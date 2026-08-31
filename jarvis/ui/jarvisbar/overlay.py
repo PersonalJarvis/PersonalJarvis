@@ -278,6 +278,11 @@ def _apply_macos_clear_backing() -> None:
             win.setOpaque_(False)
             win.setBackgroundColor_(NSColor.clearColor())
             win.setHasShadow_(False)
+        from jarvis.platform.capture_exclusion import (  # noqa: PLC0415
+            exclude_macos_app_windows,
+        )
+
+        exclude_macos_app_windows()
         log.debug("macOS clear-backing applied to %d window(s)", len(wins))
     except Exception:  # noqa: BLE001 — cosmetic; the grey box is the degrade
         log.warning("macOS clear-backing pass failed", exc_info=True)
@@ -295,6 +300,19 @@ def _create_hidden_tk_root(tk: Any) -> Any:
     root = tk.Tk()
     root.withdraw()
     return root
+
+
+def _exclude_tk_window_from_capture(root: Any) -> bool:
+    """Keep the bar out of screenshots. Best-effort, never raises."""
+    try:
+        from jarvis.platform.capture_exclusion import (  # noqa: PLC0415
+            exclude_tk_window_from_capture,
+        )
+
+        return bool(exclude_tk_window_from_capture(root))
+    except Exception:  # noqa: BLE001 — overlay must degrade, never crash
+        log.debug("jarvisbar capture exclusion skipped", exc_info=True)
+        return False
 
 
 def _win32_force_topmost(root: Any, *, user32: Any | None = None) -> bool:
@@ -918,6 +936,9 @@ class JarvisBarOverlay:
         self._start_loop_waker()  # outside Tk: wakes the thread itself (BUG-202)
         self._schedule_z_order_guard()
         self._schedule_cursor_monitor_guard()  # follow the mouse across monitors
+        # Affinity can be set on a still-withdrawn HWND. Do it before the
+        # first map so the first screenshot never photographs the bar.
+        _exclude_tk_window_from_capture(root)
         if not self._should_start_withdrawn():
             self._do_show()
         self._started.set()
@@ -1225,6 +1246,10 @@ class JarvisBarOverlay:
         # only raised within the wrong band. Other desktop window managers use
         # Tk's portable -topmost request + lift fallback.
         self._do_pin_topmost()
+        # Style mutations (BUG-030 class) can silently drop display affinity
+        # the same way they drop the layered color-key. Re-pin after every
+        # topmost repair so the bar never re-enters screenshots.
+        _exclude_tk_window_from_capture(self._root)
         # BUG-030 guard: re-asserting ``-topmost`` is itself a Win32 style
         # mutation on this layered (color-key + alpha) window, and Windows can
         # silently drop the layered attributes on such a mutation — the bar
@@ -1911,9 +1936,7 @@ class JarvisBarOverlay:
             # The dictation modes render on the active pill too (dictate →
             # "speak", dictate_transcribing → "think"), so their close-X sits
             # where the active pill puts it.
-            active = self._mode in ("listen", "think", "speak") or (
-                self._mode in DICTATION_MODES
-            )
+            active = self._mode in ("listen", "think", "speak") or (self._mode in DICTATION_MODES)
             # The idle pill is OPEN while its controls are up, and the
             # sparkle's hit-box has to track that pill, not the window.
             pill_w = renderer.ACTIVE_W if active else renderer.OPEN_W
@@ -1968,9 +1991,7 @@ class JarvisBarOverlay:
                 cb = self._on_prompt_mode_toggle
                 if cb is not None:
                     cb()
-                    self._prompt_mode_paused = not getattr(
-                        self, "_prompt_mode_paused", False
-                    )
+                    self._prompt_mode_paused = not getattr(self, "_prompt_mode_paused", False)
             elif action == "hangup":
                 callback = self._on_hangup
                 if callback is not None:

@@ -5,6 +5,7 @@ from ctypes import wintypes
 from types import SimpleNamespace
 
 from jarvis.cu.indicator.win32 import _configure_user32 as configure_indicator_api
+from jarvis.platform.capture_exclusion import _configure_user32 as configure_exclusion_api
 from jarvis.platform.window_state import _configure_window_query_api
 
 
@@ -44,9 +45,7 @@ def test_window_query_bindings_preserve_pointer_sized_hwnds() -> None:
 
     assert user32.GetForegroundWindow.restype is wintypes.HWND
     assert user32.GetWindowRect.argtypes[0] is wintypes.HWND
-    assert ctypes.sizeof(user32.GetWindowRect.argtypes[0]) == ctypes.sizeof(
-        ctypes.c_void_p
-    )
+    assert ctypes.sizeof(user32.GetWindowRect.argtypes[0]) == ctypes.sizeof(ctypes.c_void_p)
 
 
 def test_indicator_bindings_preserve_pointer_sized_hwnds() -> None:
@@ -60,6 +59,20 @@ def test_indicator_bindings_preserve_pointer_sized_hwnds() -> None:
 
     assert user32.GetWindowLongW.argtypes[0] is wintypes.HWND
     assert user32.SetWindowDisplayAffinity.argtypes[0] is wintypes.HWND
-    assert ctypes.sizeof(user32.GetWindowLongW.argtypes[0]) == ctypes.sizeof(
+    assert ctypes.sizeof(user32.GetWindowLongW.argtypes[0]) == ctypes.sizeof(ctypes.c_void_p)
+
+
+def test_capture_exclusion_bindings_preserve_pointer_sized_hwnds() -> None:
+    user32 = _api(
+        "GetParent",
+        "SetWindowDisplayAffinity",
+    )
+
+    configure_exclusion_api(user32, ctypes, wintypes)
+
+    assert user32.GetParent.argtypes[0] is wintypes.HWND
+    assert user32.GetParent.restype is wintypes.HWND
+    assert user32.SetWindowDisplayAffinity.argtypes[0] is wintypes.HWND
+    assert ctypes.sizeof(user32.SetWindowDisplayAffinity.argtypes[0]) == ctypes.sizeof(
         ctypes.c_void_p
     )

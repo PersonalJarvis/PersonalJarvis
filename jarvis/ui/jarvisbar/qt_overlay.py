@@ -200,8 +200,7 @@ def _macos_dock_is_visible_on_screen(screen: GeometryBounds) -> bool | None:
         import Quartz  # type: ignore[import-not-found] # noqa: PLC0415
 
         options = (
-            Quartz.kCGWindowListOptionOnScreenOnly
-            | Quartz.kCGWindowListExcludeDesktopElements
+            Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
         )
         windows = Quartz.CGWindowListCopyWindowInfo(
             options,
@@ -660,15 +659,14 @@ class QtJarvisBarOverlay:
             # in points, not physical pixels — mixing a physical-DPI anchor here
             # would regress the signed-off Mac look. Physical sizing on macOS is a
             # documented follow-up (renderer.resolve_screen_scale accepts a dpi).
-            self._screen_scale = renderer.resolve_screen_scale(
-                geometry.width(), geometry.height()
-            )
+            self._screen_scale = renderer.resolve_screen_scale(geometry.width(), geometry.height())
         renderer.apply_display_scale(self._screen_scale, user_size=self._user_size_scale)
         self._renderer = renderer.JarvisBarRenderer(accent=self._accent)
 
         window_type = _window_class()
         self._window = window_type(self)
         self._configure_macos_nonactivating_window_ui()
+        self._exclude_from_capture_ui()
         self._resolve_position_ui()
         self._window.move(self._x, self._y)
 
@@ -843,10 +841,29 @@ class QtJarvisBarOverlay:
         self._invalidate_static_frame()
         self._render_frame_ui()
         self._window.show()
+        self._exclude_from_capture_ui()
         self._raise_ui()
         q = _qt()
         mode = self._mode
         q.QtCore.QTimer.singleShot(50, lambda: self._publish_visibility_ui(mode))
+
+    def _exclude_from_capture_ui(self) -> None:
+        """Keep the Qt bar out of screenshots. Best-effort, never raises."""
+        window = self._window
+        if window is None:
+            return
+        try:
+            from jarvis.platform.capture_exclusion import (  # noqa: PLC0415
+                exclude_hwnd_from_capture,
+                exclude_macos_app_windows,
+            )
+
+            if sys.platform == "darwin":
+                exclude_macos_app_windows()
+                return
+            exclude_hwnd_from_capture(int(window.winId()))
+        except Exception:  # noqa: BLE001 — overlay must degrade, never crash
+            log.debug("qt bar capture exclusion skipped", exc_info=True)
 
     def _raise_ui(self) -> None:
         window = self._window
@@ -995,12 +1012,8 @@ class QtJarvisBarOverlay:
         x = float(point.x())
         y = float(point.y())
         return (
-            center_x - pill_w / 2.0 - slop
-            <= x
-            < center_x + pill_w / 2.0 + slop
-            and center_y - pill_h / 2.0 - slop
-            <= y
-            < center_y + pill_h / 2.0 + slop
+            center_x - pill_w / 2.0 - slop <= x < center_x + pill_w / 2.0 + slop
+            and center_y - pill_h / 2.0 - slop <= y < center_y + pill_h / 2.0 + slop
         )
 
     def _poll_hover_ui(self) -> None:
@@ -1033,9 +1046,7 @@ class QtJarvisBarOverlay:
         full_bounds = _geometry_bounds(full)
         available_bounds = _geometry_bounds(available)
         dock_visible = (
-            _macos_dock_is_visible_on_screen(full_bounds)
-            if respect_visible_dock
-            else False
+            _macos_dock_is_visible_on_screen(full_bounds) if respect_visible_dock else False
         )
         if dock_visible is not False:
             return available
@@ -1425,9 +1436,7 @@ class QtJarvisBarOverlay:
         protocol, so this is reached from the stdin reader thread and marshals
         onto the Qt UI thread like every other cross-thread mutation.
         """
-        state = (
-            renderer.DROP_STATE_OK if accepted else renderer.DROP_STATE_REJECTED
-        )
+        state = renderer.DROP_STATE_OK if accepted else renderer.DROP_STATE_REJECTED
         self._enqueue_if_started(lambda s=state: self._set_drop_visual_ui(s))
 
     def _deliver_drop_ui(self, mime: Any) -> None:
@@ -1466,9 +1475,7 @@ class QtJarvisBarOverlay:
         # The dictation modes render on the active pill (dictate → "speak",
         # dictate_transcribing → "think"), so their close-X sits where the
         # active pill puts it.
-        active = self._mode in ("listen", "think", "speak") or (
-            self._mode in DICTATION_MODES
-        )
+        active = self._mode in ("listen", "think", "speak") or (self._mode in DICTATION_MODES)
         action = interaction.resolve_click(
             click_x,
             renderer.WIN_W,

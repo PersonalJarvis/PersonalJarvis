@@ -306,6 +306,11 @@ def apply_macos_clear_backing() -> None:
             win.setOpaque_(False)
             win.setBackgroundColor_(NSColor.clearColor())
             win.setHasShadow_(False)
+        from jarvis.platform.capture_exclusion import (  # noqa: PLC0415
+            exclude_macos_app_windows,
+        )
+
+        exclude_macos_app_windows()
         orb_log.debug("macOS clear-backing applied to %d window(s)", len(wins))
     except Exception:  # noqa: BLE001 — cosmetic; the grey box is the degrade
         orb_log.warning("macOS clear-backing pass failed", exc_info=True)
@@ -496,6 +501,18 @@ def _hide_tk_window_from_task_switcher(root: tk.Tk) -> None:
     except Exception:
         # Pure desktop cosmetics. If Win32 doesn't take effect, the orb
         # stays functional and may just show up as an extra window.
+        return
+
+
+def _exclude_tk_window_from_capture(root: tk.Tk) -> None:
+    """Keep the orb / transcription bubble out of screenshots. Best-effort."""
+    try:
+        from jarvis.platform.capture_exclusion import (  # noqa: PLC0415
+            exclude_tk_window_from_capture,
+        )
+
+        exclude_tk_window_from_capture(root)
+    except Exception:  # noqa: BLE001 — overlay must degrade, never crash
         return
 
 
@@ -1206,6 +1223,7 @@ class OrbCommentBubble:
             top.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
             top.configure(bg=COLOR_KEY_HEX)
         _hide_tk_window_from_task_switcher(top)
+        _exclude_tk_window_from_capture(top)
         top.withdraw()
 
         canvas = tk.Canvas(
@@ -1663,6 +1681,7 @@ class OrbControlRow:
             top.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
             top.configure(bg=COLOR_KEY_HEX)
         _hide_tk_window_from_task_switcher(top)
+        _exclude_tk_window_from_capture(top)
         top.withdraw()
 
         canvas = tk.Canvas(
@@ -2070,6 +2089,7 @@ class OrbOverlay:
         # way to override the class-default that drives the taskbar icon).
         _apply_jarvis_icon_to_tk_root(self._root)
         _hide_tk_window_from_task_switcher(self._root)
+        _exclude_tk_window_from_capture(self._root)
 
         # Resolve mascot anchor. If the user has manually pinned the orb
         # in a prior session, restore that position; otherwise compute

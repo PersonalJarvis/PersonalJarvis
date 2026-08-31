@@ -171,6 +171,24 @@ def test_explicit_z_order_reassert_repins_an_already_mapped_window(
     assert root.attrs.get("-transparentcolor") == COLOR_KEY_HEX
 
 
+def test_z_order_reassert_excludes_the_bar_from_screenshots(monkeypatch) -> None:
+    """The last transcription bubble / bar must not appear in a screenshot.
+
+    Live 2026-08-31: only the Computer-Use indicator used
+    WDA_EXCLUDEFROMCAPTURE, so a screen look photographed the overlay
+    showing the previous utterance.
+    """
+    seen: list[object] = []
+    monkeypatch.setattr(
+        overlay_module,
+        "_exclude_tk_window_from_capture",
+        lambda root: seen.append(root) or True,
+    )
+    bar, root = _bar_with_fake_root(mapped=True)
+    bar._do_reassert_z_order()  # noqa: SLF001
+    assert seen == [root]
+
+
 def test_win32_native_pin_targets_toplevel_parent_without_activation() -> None:
     root = _FakeNativeRoot()
     user32 = _FakeUser32()

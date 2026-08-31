@@ -8,6 +8,7 @@ never read provider names or billing URLs; it speaks a short, provider-
 agnostic apology in the user's SELECTED reply language (de/en/es; "auto" → de)
 with three variants so repeated failures don't sound robotic.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -21,8 +22,16 @@ from jarvis.brain.manager import (
 # The exact leak tokens emitted by _format_provider_chain_error — none may
 # survive into the spoken phrase.
 _JARGON = (
-    "grok", "anthropic", "openai", "openrouter", "gemini", "xai",
-    "console.", "http", "billing", "credit",
+    "grok",
+    "anthropic",
+    "openai",
+    "openrouter",
+    "gemini",
+    "xai",
+    "console.",
+    "http",
+    "billing",
+    "credit",
 )
 
 
@@ -100,8 +109,15 @@ class TestCauseAwareProviderDownPhrase:
     # phrases; naming the CAUSE ("credit used up") is the whole point, so
     # "credit"/"Guthaben" are deliberately allowed here.  # i18n-allow
     _CAUSE_JARGON = (
-        "grok", "anthropic", "openai", "openrouter", "gemini", "xai",
-        "console.", "http", "billing",
+        "grok",
+        "anthropic",
+        "openai",
+        "openrouter",
+        "gemini",
+        "xai",
+        "console.",
+        "http",
+        "billing",
     )
 
     def test_every_cause_covers_every_supported_language(self) -> None:
@@ -126,9 +142,7 @@ class TestCauseAwareProviderDownPhrase:
         assert got == _PROVIDER_DOWN_CAUSE_PHRASES["missing_key"]["en"]
 
     def test_unknown_cause_falls_back_to_generic_rotation(self) -> None:
-        assert _provider_down_phrase("en", 1, "weird_kind") == (
-            _PROVIDER_DOWN_PHRASES["en"][1]
-        )
+        assert _provider_down_phrase("en", 1, "weird_kind") == (_PROVIDER_DOWN_PHRASES["en"][1])
 
     def test_unknown_language_falls_back_to_german_cause_phrase(self) -> None:
         from jarvis.brain.manager import _PROVIDER_DOWN_CAUSE_PHRASES
@@ -151,18 +165,12 @@ class TestPrimaryProviderDownCause:
     def test_skipped_cooldown_reads_as_rate_limit(self) -> None:
         from jarvis.brain.manager import _primary_provider_down_cause
 
-        assert (
-            _primary_provider_down_cause([self._err("skipped_cooldown")])
-            == "rate_limit"
-        )
+        assert _primary_provider_down_cause([self._err("skipped_cooldown")]) == "rate_limit"
 
     def test_unclassified_failure_reads_as_unreachable(self) -> None:
         from jarvis.brain.manager import _primary_provider_down_cause
 
-        assert (
-            _primary_provider_down_cause([self._err("network_error")])
-            == "unreachable"
-        )
+        assert _primary_provider_down_cause([self._err("network_error")]) == "unreachable"
 
     def test_empty_response_only_keeps_generic_phrase(self) -> None:
         from jarvis.brain.manager import _primary_provider_down_cause
@@ -174,3 +182,21 @@ class TestPrimaryProviderDownCause:
 
         assert _primary_provider_down_cause([]) is None
         assert _primary_provider_down_cause(None) is None
+
+    def test_vision_unsupported_is_not_heard_as_a_missing_key(self) -> None:
+        from jarvis.brain.manager import (
+            _PROVIDER_DOWN_CAUSE_PHRASES,
+            _primary_provider_down_cause,
+            _provider_down_phrase,
+        )
+
+        errors = [self._err("vision_unsupported", "grok")]
+        assert _primary_provider_down_cause(errors) == "vision_unsupported"
+        phrase = _provider_down_phrase("de", 0, "vision_unsupported")
+        assert phrase == _PROVIDER_DOWN_CAUSE_PHRASES["vision_unsupported"]["de"]
+        low = phrase.lower()
+        assert "schlüssel" in low or "schluessel" in low  # i18n-allow: the honest cause
+        assert "kein" in low  # i18n-allow: quoted German spoken phrase
+        # Must not collapse onto the missing-key sentence (the API-Keys card
+        # was green; the model simply cannot inspect images).
+        assert "kein api-schlüssel hinterlegt" not in low  # i18n-allow

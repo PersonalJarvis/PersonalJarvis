@@ -25,7 +25,6 @@ _WS_EX_LAYERED = 0x00080000
 _WS_EX_TRANSPARENT = 0x00000020
 _WS_EX_NOACTIVATE = 0x08000000
 _WS_EX_TOOLWINDOW = 0x00000080
-_WDA_EXCLUDEFROMCAPTURE = 0x00000011
 
 CAPTURABLE_ENV = "JARVIS_CU_INDICATOR_CAPTURABLE"
 
@@ -57,13 +56,7 @@ def harden_window(hwnd: int) -> bool:
         return False
     try:
         style = user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
-        wanted = (
-            style
-            | _WS_EX_LAYERED
-            | _WS_EX_TRANSPARENT
-            | _WS_EX_NOACTIVATE
-            | _WS_EX_TOOLWINDOW
-        )
+        wanted = style | _WS_EX_LAYERED | _WS_EX_TRANSPARENT | _WS_EX_NOACTIVATE | _WS_EX_TOOLWINDOW
         if wanted != style:
             user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, wanted)
         return True
@@ -76,14 +69,11 @@ def exclude_from_capture(hwnd: int) -> bool:
     """Hide ``hwnd`` from all screen capture (BitBlt/mss/OBS/CU frames)."""
     if os.environ.get(CAPTURABLE_ENV, "").strip() in {"1", "true", "yes"}:
         return False
-    user32 = _user32()
-    if user32 is None or not hwnd:
-        return False
-    try:
-        return bool(user32.SetWindowDisplayAffinity(hwnd, _WDA_EXCLUDEFROMCAPTURE))
-    except Exception:  # noqa: BLE001
-        log.debug("exclude_from_capture failed for hwnd=%s", hwnd, exc_info=True)
-        return False
+    from jarvis.platform.capture_exclusion import (  # noqa: PLC0415
+        exclude_hwnd_from_capture,
+    )
+
+    return exclude_hwnd_from_capture(hwnd)
 
 
 def capture_exclusion_available() -> bool:
