@@ -15,7 +15,7 @@ import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
 import { DockRail } from "@/components/layout/DockRail";
 import { TopBarActions } from "@/components/layout/TopBar";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
-import { MascotGigi } from "@/components/MascotGigi";
+import { GigiMark } from "@/components/GigiMark";
 import { DeckOrb, type OrbReadouts } from "@/components/deck/DeckOrb";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
 import { DeckStandby, ORB_TRAVEL } from "@/components/deck/DeckStandby";
@@ -250,7 +250,7 @@ export function MissionDeckView({
           className="flex h-8 w-8 shrink-0 items-center justify-center"
           data-testid="deck-header-gigi"
         >
-          <MascotGigi size={32} reactToVoice enableComments={false} />
+          <GigiMark size={32} />
         </span>
         <div className="flex items-center gap-3">
           <VoiceWaveform

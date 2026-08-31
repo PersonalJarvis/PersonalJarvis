@@ -4,12 +4,12 @@ import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { TopBarActions } from "@/components/layout/TopBar";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
-import { MascotGigi } from "@/components/MascotGigi";
+import { GigiMark } from "@/components/GigiMark";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
- * The front page's header row: who is talking (mascot, name, voice state),
+ * The front page's header row: who is talking (Gigi mark, name, voice state),
  * what will answer (engine + model — click to change), and the app chrome
  * actions (coding mode, theme, own window, update, restart).
  *
@@ -44,7 +44,7 @@ export function HomeHeader() {
       className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4"
     >
       <span className="flex h-7 w-7 shrink-0 items-center justify-center" aria-hidden>
-        <MascotGigi size={28} reactToVoice enableComments={false} />
+        <GigiMark size={28} />
       </span>
       <div className="flex min-w-0 items-baseline gap-2">
         <span className="font-display text-sm font-semibold tracking-tight">{assistantName}</span>

@@ -233,12 +233,33 @@ describe("Sidebar header avatar", () => {
     overlayMock.style = "jarvis_bar";
   });
 
-  test("renders live Gigi in the header as a black-and-white mark", () => {
+  test("renders the original Gigi logo on a white tile", () => {
     const { container } = renderSidebar();
     const avatar = container.querySelector('[data-testid="sidebar-style-avatar"]');
     expect(avatar).not.toBeNull();
-    expect(avatar?.getAttribute("data-variant")).toBe("mascot");
-    expect(avatar?.querySelector("svg")).not.toBeNull();
+    expect(avatar?.getAttribute("data-variant")).toBe("logo");
+    const logo = avatar?.querySelector("img") as HTMLImageElement;
+    expect(logo.getAttribute("src")).toBe("/jarvis-logo.png");
+  });
+
+  test("retries a failed logo load with a cache-busted URL (self-healing)", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = renderSidebar();
+      const logo = container.querySelector(
+        '[data-testid="sidebar-style-avatar"] img',
+      ) as HTMLImageElement;
+      expect(logo.getAttribute("src")).toBe("/jarvis-logo.png");
+
+      act(() => {
+        logo.dispatchEvent(new Event("error"));
+        vi.advanceTimersByTime(2_000);
+      });
+
+      expect(logo.getAttribute("src")).toBe("/jarvis-logo.png?retry=1");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

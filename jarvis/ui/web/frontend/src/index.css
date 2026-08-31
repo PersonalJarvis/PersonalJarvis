@@ -869,15 +869,6 @@ label,
     color: hsl(var(--user-bubble-foreground));
   }
 
-  /* The PNG ghost has a black plate. Multiply drops the white on paper;
-     screen drops the black on charcoal — no disc behind it. */
-  .jarvis-logo-mark {
-    mix-blend-mode: multiply;
-  }
-  .dark .jarvis-logo-mark {
-    mix-blend-mode: screen;
-  }
-
   /* Selected nav row — a fill, one step toward the light, like a messenger
      chip. Not a hairline and not an inset accent bar. */
   .jarvis-nav-active {

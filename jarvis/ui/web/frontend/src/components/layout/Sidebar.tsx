@@ -33,7 +33,7 @@ import { useAgentChatStore } from "@/store/agentChat";
 import { useIdeChatStore } from "@/store/ideChat";
 import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
 import { useAppInstance } from "@/hooks/useAppInstance";
-import { MascotGigi } from "@/components/MascotGigi";
+import { GigiMark } from "@/components/GigiMark";
 
 /** Where the Chat row remembers whether its history is folded out. */
 const CHATS_OPEN_KEY = "jarvis.sidebar.recent-chats-open";
@@ -376,15 +376,11 @@ export function Sidebar({
             railed && "flex-col justify-center gap-1.5",
           )}
         >
-          {/* Gigi as a black-and-white mark — no disc behind it. */}
           <span
             data-testid="sidebar-style-avatar"
-            data-variant="mascot"
+            data-variant="logo"
             title={railed ? `${assistantName} — ${voiceLabel}` : undefined}
-            className={cn(
-              "relative flex shrink-0 items-center justify-center",
-              railed ? "h-9 w-9" : "h-11 w-11",
-            )}
+            className={cn("relative shrink-0", railed ? "h-9 w-9" : "h-11 w-11")}
           >
             {railed && devTag && (
               <span
@@ -395,12 +391,7 @@ export function Sidebar({
                 {devTag}
               </span>
             )}
-            <MascotGigi
-              size={railed ? 34 : 42}
-              enableComments={false}
-              reactToVoice
-              className="pointer-events-none"
-            />
+            <GigiMark size={railed ? 36 : 44} />
           </span>
           {!railed && (
             <div className="flex min-w-0 flex-1 flex-col">

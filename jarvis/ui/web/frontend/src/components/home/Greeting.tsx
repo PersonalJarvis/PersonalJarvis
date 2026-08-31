@@ -1,7 +1,7 @@
 import { useUserName } from "@/hooks/useUserName";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { MascotGigi } from "@/components/MascotGigi";
+import { GigiMark } from "@/components/GigiMark";
 
 /**
  * "Good morning, Ruben" — the front page's opening line, on both stages.
@@ -33,7 +33,7 @@ export function Greeting({
       data-testid="home-greeting"
     >
       <h1 className="flex items-center gap-3 font-display text-3xl tracking-tight text-foreground [text-wrap:balance]">
-        <MascotGigi size={32} enableComments={false} reactToVoice={false} className="pointer-events-none shrink-0" />
+        <GigiMark size={36} />
         <span>{text}</span>
       </h1>
       {subtitle && !muted && (

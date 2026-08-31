@@ -30,6 +30,7 @@ import { usePasteRescue } from "@/components/agentchat/usePasteRescue";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
+import { GigiMark } from "@/components/GigiMark";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -506,14 +507,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           className="inline-flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-lg bg-secondary/60 px-2 text-xs font-medium text-foreground"
         >
           {surface === "jarvis" ? (
-            <img
-              src="/jarvis-logo.png"
-              width={14}
-              height={14}
-              alt=""
-              aria-hidden
-              className="jarvis-logo-mark h-3.5 w-3.5 shrink-0"
-            />
+            <GigiMark size={18} />
           ) : (
             <FolderCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
           )}

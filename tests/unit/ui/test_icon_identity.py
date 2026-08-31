@@ -118,6 +118,36 @@ def test_bundled_icon_is_byte_identical_to_repo_root_copy() -> None:
     )
 
 
+def test_bundled_ico_carries_taskbar_sizes() -> None:
+    """A 16-px-only ICO looks like a blur in the taskbar and Start menu."""
+    from PIL import Image
+
+    from jarvis.assets import bundled_app_icon
+
+    ico = bundled_app_icon()
+    assert ico is not None and ico.is_file()
+    with Image.open(ico) as image:
+        sizes = {tuple(size) for size in image.info.get("sizes", [])}
+    assert (16, 16) in sizes
+    assert (256, 256) in sizes
+
+
+def test_bundled_app_icon_png_is_white_rounded_tile() -> None:
+    """Desktop PNG is original Gigi on a white squircle, corners transparent."""
+    from PIL import Image
+
+    from jarvis.assets import bundled_app_icon_png
+
+    png = bundled_app_icon_png()
+    assert png is not None and png.is_file()
+    image = Image.open(png).convert("RGBA")
+    width, height = image.size
+    assert width == height
+    assert image.getpixel((0, 0))[3] < 10
+    tile = image.getpixel((width // 2, 2))
+    assert tile[0] > 240 and tile[1] > 240 and tile[2] > 240 and tile[3] > 240
+
+
 def test_bundled_app_icon_png_exists_for_linux() -> None:
     """Linux's .desktop Icon= needs a PNG (most desktops can't render .ico).
 
