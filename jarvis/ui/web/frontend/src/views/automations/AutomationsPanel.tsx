@@ -37,6 +37,7 @@ import {
 } from "./automationsModel";
 import {
   Countdown,
+  IdentityGlyph,
   ResultText,
   SectionLabel,
   StateDot,
@@ -181,6 +182,7 @@ function AutomationRow({
   const paused = task.state === "paused";
   const running = task.state === "running";
   const lastState = task.last_run_state ?? null;
+  const seed = templateKeyOf(task) || task.id;
 
   return (
     <TableRow
@@ -196,9 +198,12 @@ function AutomationRow({
     >
       <Cell>
         <div className="flex min-w-0 items-center gap-3">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border bg-secondary/40">
-            <Icon className="h-4 w-4 text-primary" />
-          </span>
+          <IdentityGlyph
+            seed={seed}
+            className="h-8 w-8"
+          >
+            <Icon className="h-4 w-4" />
+          </IdentityGlyph>
           <span className="min-w-0">
             <span className="block truncate font-medium text-foreground">
               {task.title || t("tasks_view.untitled")}

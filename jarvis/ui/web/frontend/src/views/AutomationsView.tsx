@@ -273,7 +273,7 @@ export function AutomationsView() {
                   ? fill(t("automations_view.stat_active_paused"), { n: stats.paused })
                   : t("automations_view.stat_active_hint")
               }
-              tone="primary"
+              tone="success"
               loading={tasksQuery.isLoading}
             />
             <StatTile

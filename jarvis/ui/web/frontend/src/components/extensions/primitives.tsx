@@ -507,12 +507,7 @@ export function ClampedText({
 /** Rounded card used for the file viewer and the fact sheets. */
 export function Panel({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div
-      className={cn(
-        "overflow-hidden rounded-xl border border-border bg-card/50",
-        className,
-      )}
-    >
+    <div className={cn("jarvis-quiet-panel", className)}>
       {children}
     </div>
   );
@@ -551,11 +546,11 @@ export function StatusDot({
   pulse?: boolean;
 }) {
   const color = {
-    ok: "bg-muted-foreground",
+    ok: "bg-success",
     off: "bg-muted-foreground/40",
     warn: "bg-foreground",
     error: "bg-destructive",
-    busy: "bg-foreground/70",
+    busy: "bg-success",
   }[tone];
   return (
     <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
@@ -661,8 +656,8 @@ export function SegmentedFilter<T extends string>({
  * exactly the drift this file exists to prevent. Four per row on a wide pane,
  * two on a narrow one — the caller supplies the grid.
  *
- * `tone` colours only the icon; the value itself always stays `foreground` so
- * a row of tiles reads as one block of numbers rather than a traffic light.
+ * `tone` colours the icon and a live pip; the value itself stays
+ * `foreground` so a row of tiles reads as one block of numbers.
  */
 export function StatTile({
   icon,
@@ -685,7 +680,7 @@ export function StatTile({
     <div
       role="group"
       aria-label={label}
-      className="rounded-xl border border-border bg-card/50 px-4 py-3.5"
+      className="jarvis-stat-tile"
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {icon ? (
@@ -694,10 +689,7 @@ export function StatTile({
               tone === "warn" && "text-foreground",
               tone === "danger" && "text-destructive",
               tone === "primary" && "text-primary",
-              // Emerald carries a meaning the token set has no name for
-              // ("finished cleanly") and needs its own value per theme: the
-              // 400 shade glows on charcoal and drops to ~2:1 on paper.
-              tone === "success" && "text-muted-foreground",
+              tone === "success" && "text-success",
             )}
           >
             {icon}

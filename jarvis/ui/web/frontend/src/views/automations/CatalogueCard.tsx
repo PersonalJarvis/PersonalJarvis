@@ -13,6 +13,7 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { templateIcon } from "./automationIcons";
 import { humanizeMissing, type AutomationTemplate } from "./automationsModel";
+import { IdentityGlyph } from "./shared";
 
 export interface CatalogueCardProps {
   template: AutomationTemplate;
@@ -42,9 +43,9 @@ export function CatalogueCard({
       )}
     >
       <div className="flex items-start gap-3">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border bg-secondary/40">
-          <Icon className="h-4 w-4 text-primary" />
-        </span>
+        <IdentityGlyph seed={template.key} className="h-9 w-9">
+          <Icon className="h-4 w-4" />
+        </IdentityGlyph>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold text-foreground">{template.name}</h3>
           <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">

@@ -5,7 +5,7 @@
  * the two semantic tailwind hues the rest of the app already uses for
  * "good" and "attention"), so light mode keeps its ink-outline look.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
@@ -60,14 +60,55 @@ export function useStateLabels(): Record<TaskState, string> {
 
 const DOT_CLASS: Record<TaskState, string> = {
   pending: "bg-muted-foreground/50",
-  scheduled: "bg-foreground/70",
-  running: "bg-foreground/70 animate-pulse",
+  scheduled: "bg-success",
+  running: "bg-success animate-pulse",
   paused: "bg-muted-foreground/50",
-  completed: "bg-muted-foreground",
+  completed: "bg-success",
   failed: "bg-destructive",
   cancelled: "bg-muted-foreground/50",
   interrupted: "bg-foreground",
 };
+
+/**
+ * A stable saturated hue for an identity chip — the Grok-Bot coloured
+ * avatar trick. Hash the seed onto a short palette so two nearby rows
+ * do not land on neighbouring yellows.
+ */
+const IDENTITY_HUES = [262, 221, 199, 152, 28, 8, 338, 291] as const;
+
+export function identityTint(seed: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const hue = IDENTITY_HUES[Math.abs(hash) % IDENTITY_HUES.length];
+  return `hsl(${hue} 58% 46%)`;
+}
+
+/** Coloured round mark for a person / bot / automation — the live-dot's sibling. */
+export function IdentityGlyph({
+  seed,
+  children,
+  className,
+}: {
+  seed: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "grid shrink-0 place-items-center rounded-full text-white",
+        className,
+      )}
+      style={{ backgroundColor: identityTint(seed) }}
+    >
+      {children}
+    </span>
+  );
+}
 
 /** A coloured state dot with the localized state as its accessible name. */
 export function StateDot({ state, className }: { state: TaskState | null | undefined; className?: string }) {
