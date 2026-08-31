@@ -376,13 +376,13 @@ export function Sidebar({
             railed && "flex-col justify-center gap-1.5",
           )}
         >
-          {/* Live Gigi — signal-yellow on matte black, the original mark. */}
+          {/* Gigi as a black-and-white mark — no disc behind it. */}
           <span
             data-testid="sidebar-style-avatar"
             data-variant="mascot"
             title={railed ? `${assistantName} — ${voiceLabel}` : undefined}
             className={cn(
-              "jarvis-logo-well relative flex shrink-0 items-center justify-center overflow-hidden rounded-full",
+              "relative flex shrink-0 items-center justify-center",
               railed ? "h-9 w-9" : "h-11 w-11",
             )}
           >

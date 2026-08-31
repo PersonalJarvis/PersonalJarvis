@@ -233,7 +233,7 @@ describe("Sidebar header avatar", () => {
     overlayMock.style = "jarvis_bar";
   });
 
-  test("renders live Gigi in the header (signal-yellow on black)", () => {
+  test("renders live Gigi in the header as a black-and-white mark", () => {
     const { container } = renderSidebar();
     const avatar = container.querySelector('[data-testid="sidebar-style-avatar"]');
     expect(avatar).not.toBeNull();

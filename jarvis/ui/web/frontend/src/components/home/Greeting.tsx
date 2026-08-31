@@ -33,9 +33,7 @@ export function Greeting({
       data-testid="home-greeting"
     >
       <h1 className="flex items-center gap-3 font-display text-3xl tracking-tight text-foreground [text-wrap:balance]">
-        <span className="jarvis-logo-well flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full">
-          <MascotGigi size={32} enableComments={false} reactToVoice={false} className="pointer-events-none" />
-        </span>
+        <MascotGigi size={32} enableComments={false} reactToVoice={false} className="pointer-events-none shrink-0" />
         <span>{text}</span>
       </h1>
       {subtitle && !muted && (

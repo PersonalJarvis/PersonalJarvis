@@ -595,10 +595,10 @@ label,
                    invisible on paper, which is the "partly wrong" the
                    maintainer saw.
 
-       Eyes and mouth are signal-yellow (#FFD60A) on the black body in both
-       themes — that is the original Gigi. Trim (arms, halo) still flips with
-       the PAGE so the silhouette reads on paper. */
-    --gigi-on-body: 50 100% 52%; /* #FFD60A signal-yellow */
+       Gigi is black-and-white. Eyes stay light on the black body in both
+       themes. Trim (outline, arms) flips with the PAGE so the silhouette
+       reads on paper and on charcoal. */
+    --gigi-on-body: 0 0% 100%; /* white eyes on the black body */
     --gigi-trim: 53 12% 13%; /* ink — reads on paper */
     --jarvis-yellow: 38 37 30;
     --jarvis-yellow-dim: 128 125 114;
@@ -703,10 +703,9 @@ label,
     --viz-result: 0 0% 100%;
     --viz-deliverable: 0 0% 64%;
 
-    /* Original Gigi: signal-yellow markings on the black body. Trim is a
-       quieter gold so the arms frame the figure instead of matching the eyes. */
-    --gigi-on-body: 50 100% 52%; /* #FFD60A */
-    --gigi-trim: 48 82% 42%; /* #C49B13 */
+    /* Black-and-white Gigi: white eyes and a white outline on charcoal. */
+    --gigi-on-body: 0 0% 100%;
+    --gigi-trim: 0 0% 100%;
     --jarvis-yellow: 247 247 247;
     --jarvis-yellow-dim: 163 163 163;
     --jarvis-grid: 0 0% 8%;
@@ -870,13 +869,8 @@ label,
     color: hsl(var(--user-bubble-foreground));
   }
 
-  /* The brand ghost is a black body with white markings. On paper, multiply
-     drops the white plate so the body sits as ink. On charcoal, screen drops
-     the black plate so the eyes and outline glow on a lit disc. */
-  .jarvis-logo-well {
-    background: hsl(var(--secondary));
-    box-shadow: inset 0 1px 0 rgb(var(--sheen-rgb) / 0.12);
-  }
+  /* The PNG ghost has a black plate. Multiply drops the white on paper;
+     screen drops the black on charcoal — no disc behind it. */
   .jarvis-logo-mark {
     mix-blend-mode: multiply;
   }
@@ -1818,10 +1812,15 @@ label,
     transform-origin: 50% 50%;
   }
 
-  /* The body stays near-black; signal-yellow does the lighting. A small lift
-     keeps the silhouette from collapsing into the charcoal page. */
+  /* White outline does the lighting. A small lift keeps the black body a
+     figure on charcoal instead of a hole. */
   .dark .gigi-body {
-    filter: brightness(1.2);
+    filter: brightness(1.15);
+  }
+
+  .gigi-compact .gigi-root,
+  .gigi-compact .gigi-svg {
+    animation: none;
   }
 
   /* Auto-blink (a natural blink every ~7s — parallel to random actions) */

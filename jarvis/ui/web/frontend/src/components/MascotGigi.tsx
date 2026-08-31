@@ -89,9 +89,17 @@ export function MascotGigi({
   }, []);
 
   const voiceClass = reactToVoice ? voiceClassFor(voiceState) : "";
+  // Below ~80px blur-halos turn into a muddy disc. The mark is then just
+  // ink: black body, white eyes and outline, no plate behind it.
+  const compact = size < 80;
+  const glow = compact ? undefined : `url(#${uid}YGlow)`;
+  const soft = compact ? undefined : `url(#${uid}SoftGlow)`;
 
   return (
-    <div className="gigi-container" style={{ width: size, height: size }}>
+    <div
+      className={cn("gigi-container", compact && "gigi-compact")}
+      style={{ width: size, height: size }}
+    >
       <div
         className={cn("gigi-root", `gigi-${action}`, voiceClass, className)}
         aria-label={t("mascot_gigi.aria_label")}
@@ -124,14 +132,15 @@ export function MascotGigi({
             </linearGradient>
           </defs>
 
-          {/* Outer halo */}
-          <path
-            className="gigi-halo"
-            d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
-            fill="hsl(var(--gigi-trim))"
-            opacity="0.42"
-            filter={`url(#${uid}SoftGlow)`}
-          />
+          {!compact && (
+            <path
+              className="gigi-halo"
+              d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
+              fill="hsl(var(--gigi-trim))"
+              opacity="0.18"
+              filter={soft}
+            />
+          )}
 
           {/* Body */}
           <path
@@ -139,8 +148,8 @@ export function MascotGigi({
             d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
             fill={`url(#${uid}Body)`}
             stroke="hsl(var(--gigi-trim))"
-            strokeWidth="1.8"
-            strokeOpacity="0.85"
+            strokeWidth={compact ? 3.2 : 2.2}
+            strokeOpacity="1"
           />
 
           {/* Scanlines */}
@@ -150,7 +159,7 @@ export function MascotGigi({
           </g>
 
           {/* Glitch pixels right */}
-          <g className="gigi-glitch-right" fill="hsl(var(--gigi-trim))" filter={`url(#${uid}YGlow)`}>
+          <g className="gigi-glitch-right" fill="hsl(var(--gigi-trim))" filter={glow}>
             <rect x="200" y="104" width="6" height="6" />
             <rect x="208" y="128" width="4" height="4" />
             <rect x="202" y="146" width="9" height="3" />
@@ -158,7 +167,7 @@ export function MascotGigi({
             <rect x="206" y="176" width="5" height="3" />
           </g>
           {/* Glitch pixels left */}
-          <g className="gigi-glitch-left" fill="hsl(var(--gigi-trim))" opacity="0.7" filter={`url(#${uid}YGlow)`}>
+          <g className="gigi-glitch-left" fill="hsl(var(--gigi-trim))" opacity="0.7" filter={glow}>
             <rect x="44" y="96" width="6" height="4" />
             <rect x="48" y="124" width="4" height="6" />
             <rect x="40" y="148" width="8" height="3" />
@@ -169,14 +178,17 @@ export function MascotGigi({
           <rect x="64" y="118" width="18" height="10" fill="hsl(var(--gigi-on-body))" opacity="0.32" />
           <rect x="170" y="118" width="18" height="10" fill="hsl(var(--gigi-on-body))" opacity="0.32" />
 
-          {/* Eye glows */}
-          <ellipse cx="102" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter={`url(#${uid}SoftGlow)`} />
-          <ellipse cx="154" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter={`url(#${uid}SoftGlow)`} />
+          {!compact && (
+            <>
+              <ellipse cx="102" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter={soft} />
+              <ellipse cx="154" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter={soft} />
+            </>
+          )}
 
           {/* Eye sockets — auto-blinkend */}
           <g className="gigi-eyes">
-            <ellipse cx="102" cy="108" rx="10" ry="14" fill={`url(#${uid}YAccent)`} filter={`url(#${uid}YGlow)`} />
-            <ellipse cx="154" cy="108" rx="10" ry="14" fill={`url(#${uid}YAccent)`} filter={`url(#${uid}YGlow)`} />
+            <ellipse cx="102" cy="108" rx="10" ry="14" fill={`url(#${uid}YAccent)`} filter={glow} />
+            <ellipse cx="154" cy="108" rx="10" ry="14" fill={`url(#${uid}YAccent)`} filter={glow} />
           </g>
 
           {/* Pupils — driften sanft */}
@@ -193,7 +205,7 @@ export function MascotGigi({
 
           {/* Mouth — subtile Atmung */}
           <g className="gigi-mouth">
-            <ellipse cx="128" cy="146" rx="7" ry="10" fill={`url(#${uid}YAccent)`} filter={`url(#${uid}YGlow)`} />
+            <ellipse cx="128" cy="146" rx="7" ry="10" fill={`url(#${uid}YAccent)`} filter={glow} />
             <ellipse cx="128" cy="146" rx="3" ry="5" fill="#050505" />
           </g>
 
@@ -205,7 +217,7 @@ export function MascotGigi({
             strokeWidth="5.5"
             fill="none"
             strokeLinecap="round"
-            filter={`url(#${uid}YGlow)`}
+            filter={glow}
           />
           <path
             className="gigi-arm gigi-arm-right"
@@ -214,7 +226,7 @@ export function MascotGigi({
             strokeWidth="5.5"
             fill="none"
             strokeLinecap="round"
-            filter={`url(#${uid}YGlow)`}
+            filter={glow}
           />
         </svg>
       </div>
