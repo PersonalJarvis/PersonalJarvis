@@ -603,83 +603,72 @@ label,
     --jarvis-yellow: 38 37 30;
     --jarvis-yellow-dim: 128 125 114;
     --jarvis-grid: 50 11% 89%;
+    /* Outbound chat fill. Light: the ink itself. Dark overrides to a mid grey
+       so the bubble does not become inverted cream on black. */
+    --user-bubble: 53 12% 13%;
+    --user-bubble-foreground: 60 16% 96%;
   }
 
   .dark {
-    /* --- Dark: derived, because the Design.md has none --------------------
-       That document describes a warm-cream page; its darkest value is
-       #26251E `ink`, and ink is a TEXT colour. The app had been using very
-       nearly that value (#262624) as its background, which is exactly why
-       the dark theme read as grey — it was the document's ink used as paper
-       (maintainer, 2026-08-28). This reverses the 2026-08-23 move away from
-       black.
+    /* --- Dark: charcoal, not inverted cream --------------------------------
+       The Design.md describes a warm-cream MARKETING page. Inverting that
+       page — cream #F7F7F4 as ink, hue-50 olive as paper — is what made the
+       dark theme look muddy: "white" went yellow, cards went brown, muted
+       text went taupe, hairlines went #322F2B. Measured against a reference
+       dark messenger (true-neutral greys, fill-only layers, no cream), every
+       channel that carried warmth was the defect.
 
-       The mirror rule instead: the canvas becomes the ink (#F7F7F4), and the
-       ground drops BELOW the document's darkest value rather than sitting on
-       it — same family as the light theme, so toggling changes the value, not
-       the temperature.
-
-       --- The surface ramp, and why it is not the light one mirrored ---------
-       Every surface used to sit between 2 % and 12 % lightness, and the nav
-       column at 2 % was DARKER than the page at 4 %. On paper that reads as
-       "one step below"; in the dark it reads as nothing at all, because the
-       eye judges lightness relatively — the four points that separate 92 %
-       from 96 % are plainly visible, and the same four between 2 % and 6 %
-       are not (maintainer, 2026-08-28: "practically every section is the same
-       black").
-
-       So the dark ramp is WIDER than the light one, and the nav column moves
-       ABOVE the page rather than below it. In a dark theme, "one step off the
-       ground" means one step toward the light:
+       Light mode keeps the paper. Dark mode does not inherit its temperature.
+       Channels are r = g = b. Layers are FILLS, a long way apart, because
+       four lightness points that read on cream are invisible on near-black.
 
          2 %   stage        full-bleed canvas behind the knowledge graphs
-         4 %   background   the work surface — the black
-         6 %   sidebar      the nav column — a breath off the ground
-         9 %   card         a card on that surface
-        12 %   secondary    hover and active rows
-        15 %   popover      menus
+         3 %   background   the work surface — #080808
+         7 %   sidebar      the nav column — #121212
+        14 %   card         a card / assistant bubble — #242424
+        16 %   border       quiet rim, almost the fill
+        18 %   secondary    hover, menus, composer chrome — #2E2E2E
+        34 %   user bubble  the one lifted grey — #575757
+        64 %   muted text   cool grey, not taupe
+        97 %   foreground   #F7F7F7 crisp, not cream
+       100 %   primary      true white, actions only
 
-       The ZONE whispers and the ELEMENTS on it speak. A first attempt put the
-       nav column nine points above the page and it read as a grey band bolted
-       onto the app rather than as a surface (maintainer, 2026-08-28, against a
-       measured reference: that editor separates its rail from its editor by
-       1.6 points, and lets the active row jump 5). These proportions match it
-       — two points for the zone, five to eight for anything sitting on it —
-       on our warm hue rather than its neutral grey, and on the near-black the
-       maintainer approved. */
-    --background: 50 8% 4%; /* #0A0A09 near-black, warm */
-    --foreground: 60 16% 96%; /* #F7F7F4 — the canvas, inverted into ink */
-    --card: 50 7% 9%; /* #191815 */
-    --card-foreground: 60 16% 96%;
-    --popover: 48 7% 15%;
-    --popover-foreground: 60 16% 96%;
+       The ZONE whispers and the ELEMENTS on it speak. */
+    --background: 0 0% 3%; /* #080808 */
+    --foreground: 0 0% 97%; /* #F7F7F7 — crisp, not cream */
+    --card: 0 0% 14%; /* #242424 */
+    --card-foreground: 0 0% 97%;
+    --popover: 0 0% 18%; /* #2E2E2E */
+    --popover-foreground: 0 0% 97%;
     /* #FFFFFF. The brand is whichever end of the value scale the ground is
-       not. Here it does sit one step past --foreground (the canvas #F7F7F4),
-       because on a near-black ground there is headroom for it; the light
-       theme has none above `ink` and keeps the two equal. 19.8:1. */
+       not. Here it sits one step past --foreground because on a near-black
+       ground there is headroom for it; the light theme has none above `ink`
+       and keeps the two equal. 19.8:1. */
     --primary: 0 0% 100%;
-    --primary-foreground: 60 5% 4%; /* the ground */
-    --secondary: 48 7% 12%; /* #21201C hover, active rows */
-    --secondary-foreground: 60 16% 96%;
-    --muted: 48 7% 12%;
-    --muted-foreground: 47 6% 58%; /* #9A978C */
+    --primary-foreground: 0 0% 4%; /* the ground */
+    --secondary: 0 0% 18%; /* #2E2E2E hover, active rows, composer */
+    --secondary-foreground: 0 0% 97%;
+    --muted: 0 0% 18%;
+    --muted-foreground: 0 0% 64%; /* #A3A3A3 cool grey */
     --accent: 0 0% 100%;
-    --accent-foreground: 60 5% 4%;
+    --accent-foreground: 0 0% 4%;
     --destructive: 349 76% 62%;
-    --destructive-foreground: 60 16% 96%;
-    --diff-add: 60 16% 96%;
-    --diff-add-bg: 40 5% 12%;
-    --diff-del: 47 6% 58%;
-    --diff-del-bg: 60 5% 3%;
-    --border: 48 6% 18%; /* #322F2B */
-    --input: 48 7% 12%;
+    --destructive-foreground: 0 0% 97%;
+    --diff-add: 0 0% 97%;
+    --diff-add-bg: 0 0% 14%;
+    --diff-del: 0 0% 64%;
+    --diff-del-bg: 0 0% 4%;
+    --border: 0 0% 16%; /* #292929 — a rim, not a brown line */
+    --input: 0 0% 18%;
     --ring: 0 0% 100%;
-    --sidebar: 50 8% 6%; /* #11100E — two points off the ground, no more */
+    --sidebar: 0 0% 7%; /* #121212 */
+    --user-bubble: 0 0% 34%; /* #575757 */
+    --user-bubble-foreground: 0 0% 97%;
 
-    --accent-rgb: 247 247 244;
+    --accent-rgb: 247 247 247;
     --scrim-rgb: 0 0 0;
     --sheen-rgb: 255 255 255;
-    --shell-rgb: 10 10 9;
+    --shell-rgb: 8 8 8;
 
     --surface-card-alpha: 0.6;
     --surface-panel-alpha: 0.58;
@@ -688,11 +677,11 @@ label,
     --surface-wiki-pane-alpha: 0.36;
     --surface-wiki-stage-alpha: 0.34;
 
-    --stage-bg: 50 8% 2%;
+    --stage-bg: 0 0% 2%;
     --stage-dot-rgb: 255 255 255;
     --stage-dot-strong: 0.5;
     --stage-dot-soft: 0.35;
-    --stage-wash-rgb: 247 247 244;
+    --stage-wash-rgb: 247 247 247;
     --stage-wash-strength: 0.055;
     --stage-vignette-rgb: 0 0 0;
     --stage-vignette-strength: 0.62;
@@ -701,24 +690,24 @@ label,
        full accent; every step between them is neutral and leaves the telling
        to its glyph. */
     --viz-trigger: 0 0% 100%;
-    --viz-reasoning: 47 6% 58%;
-    --viz-terminal: 47 6% 58%;
-    --viz-file: 47 6% 58%;
-    --viz-search: 47 6% 58%;
-    --viz-web: 47 6% 58%;
-    --viz-integration: 47 6% 58%;
-    --viz-agent: 47 6% 58%;
-    --viz-tool: 47 6% 58%;
+    --viz-reasoning: 0 0% 64%;
+    --viz-terminal: 0 0% 64%;
+    --viz-file: 0 0% 64%;
+    --viz-search: 0 0% 64%;
+    --viz-web: 0 0% 64%;
+    --viz-integration: 0 0% 64%;
+    --viz-agent: 0 0% 64%;
+    --viz-tool: 0 0% 64%;
     --viz-result: 0 0% 100%;
-    --viz-deliverable: 47 6% 58%;
+    --viz-deliverable: 0 0% 64%;
 
     /* See the mascot note in :root. On this ground the trim steps DOWN to
        muted rather than up to white: it frames the figure, it is not it. */
     --gigi-on-body: 0 0% 100%;
-    --gigi-trim: 47 6% 58%;
-    --jarvis-yellow: 247 247 244;
-    --jarvis-yellow-dim: 154 151 140;
-    --jarvis-grid: 60 4% 8%;
+    --gigi-trim: 0 0% 64%;
+    --jarvis-yellow: 247 247 247;
+    --jarvis-yellow-dim: 163 163 163;
+    --jarvis-grid: 0 0% 8%;
   }
 }
 
@@ -870,6 +859,13 @@ label,
     background: rgb(var(--shell-rgb) / var(--surface-control-alpha));
     -webkit-backdrop-filter: blur(14px) saturate(1.08);
     backdrop-filter: blur(14px) saturate(1.08);
+  }
+
+  /* Outbound chat bubble. Fill-only — the dirty look was inverted cream
+     (`bg-foreground/70`) sitting on near-black. The tokens flip with theme. */
+  .jarvis-user-bubble {
+    background: hsl(var(--user-bubble));
+    color: hsl(var(--user-bubble-foreground));
   }
 
   /* Section-level grounds disappear everywhere the wallpaper is active. The

@@ -124,15 +124,15 @@ function FriendMessageBubble({ message }: { message: FriendMessage }) {
         className={cn(
           "max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
           isOutbound
-            ? "bg-foreground/70 text-primary-foreground"
-            : "border border-border bg-card/80 text-foreground backdrop-blur"
+            ? "jarvis-user-bubble"
+            : "jarvis-message-surface text-foreground"
         )}
       >
         <div className="whitespace-pre-wrap">{message.text}</div>
         <div
           className={cn(
             "mt-1 text-[10px]",
-            isOutbound ? "text-primary-foreground/70" : "text-muted-foreground"
+            isOutbound ? "opacity-70" : "text-muted-foreground"
           )}
         >
           {formatTimestamp(message.timestamp_ns)}

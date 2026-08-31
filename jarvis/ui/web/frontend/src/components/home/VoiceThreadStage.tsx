@@ -130,8 +130,8 @@ function SpokenTurn({ message }: { message: ChatMessage }) {
         className={cn(
           "max-w-[80%] px-4 py-3 text-sm leading-relaxed",
           isUser
-            ? "rounded-2xl rounded-br-sm bg-foreground/70 text-primary-foreground"
-            : "jarvis-message-surface rounded-2xl rounded-bl-sm border border-border text-foreground",
+            ? "jarvis-user-bubble rounded-2xl rounded-br-sm"
+            : "jarvis-message-surface rounded-2xl rounded-bl-sm text-foreground",
         )}
       >
         {!isUser && (

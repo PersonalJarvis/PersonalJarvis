@@ -12,21 +12,26 @@ playful.
 ## Color
 
 Two values and the distance between them. The primary is whichever end of the value scale
-the ground is not: ink on paper in light mode, paper on ink in dark mode. State is not a
-colour either, so warning and success read on the same ink token.
+the ground is not: ink on paper in light mode, white on charcoal in dark mode. State is not a
+colour either, so warning and success read on the same ink token. Dark does not inherit the
+paper's warmth — that was the muddy look.
 
 | Role | Hex | Chip |
 |---|---|---|
 | Ink (light primary, light text) | `#26251E` | ![](https://img.shields.io/badge/_-26251E?style=flat-square&labelColor=26251E) |
 | Canvas / paper (light ground, dark text) | `#F7F7F4` | ![](https://img.shields.io/badge/_-F7F7F4?style=flat-square&labelColor=F7F7F4) |
-| Ground (dark canvas) | `#0A0A09` | ![](https://img.shields.io/badge/_-0A0A09?style=flat-square&labelColor=0A0A09) |
+| Ground (dark canvas) | `#080808` | ![](https://img.shields.io/badge/_-080808?style=flat-square&labelColor=080808) |
 | White (dark primary, actions only) | `#FFFFFF` | ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
+| Foreground, dark | `#F7F7F7` | ![](https://img.shields.io/badge/_-F7F7F7?style=flat-square&labelColor=F7F7F7) |
 | Card, light | `#FFFFFF` | ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
-| Card, dark | `#191815` | ![](https://img.shields.io/badge/_-191815?style=flat-square&labelColor=191815) |
+| Card, dark | `#242424` | ![](https://img.shields.io/badge/_-242424?style=flat-square&labelColor=242424) |
+| Sidebar, dark | `#121212` | ![](https://img.shields.io/badge/_-121212?style=flat-square&labelColor=121212) |
+| Hover / composer, dark | `#2E2E2E` | ![](https://img.shields.io/badge/_-2E2E2E?style=flat-square&labelColor=2E2E2E) |
+| User bubble, dark | `#575757` | ![](https://img.shields.io/badge/_-575757?style=flat-square&labelColor=575757) |
 | Hairline, light | `#E6E5E0` | ![](https://img.shields.io/badge/_-E6E5E0?style=flat-square&labelColor=E6E5E0) |
-| Hairline, dark | `#322F2B` | ![](https://img.shields.io/badge/_-322F2B?style=flat-square&labelColor=322F2B) |
+| Hairline, dark | `#292929` | ![](https://img.shields.io/badge/_-292929?style=flat-square&labelColor=292929) |
 | Muted text, light | `#747167` | ![](https://img.shields.io/badge/_-747167?style=flat-square&labelColor=747167) |
-| Muted text, dark | `#9A978C` | ![](https://img.shields.io/badge/_-9A978C?style=flat-square&labelColor=9A978C) |
+| Muted text, dark | `#A3A3A3` | ![](https://img.shields.io/badge/_-A3A3A3?style=flat-square&labelColor=A3A3A3) |
 | Destructive, light | `#C0392B` | ![](https://img.shields.io/badge/_-C0392B?style=flat-square&labelColor=C0392B) |
 
 Three things keep their own colour on purpose, because taking it away would remove
@@ -41,6 +46,10 @@ must stay on the same values so nothing drifts.
 
 - **Full white is for actions.** On the dark ground, white is the primary. Spend it on
   something the reader can press, not on an indicator that is merely reporting a fact.
+- **Dark is charcoal, not inverted cream.** Light mode is the Design.md paper (`#F7F7F4`
+  canvas, warm ink). Dark mode does not flip that page: greys are `r = g = b`, body text
+  is `#F7F7F7` not cream, muted is `#A3A3A3` not taupe, and chat bubbles are fills
+  (`#242424` in, `#575757` out) rather than a 70 % cream wash.
 - **Both modes, always.** A colour comes from a theme token or from the per-appearance
   tables in `terminalThemes.ts`. Never hardcode one mode's value.
 - **No second accent.** There is no brand hue to reintroduce. The cyan and magenta in the

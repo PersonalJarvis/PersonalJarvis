@@ -107,7 +107,7 @@ export function AgentTimeline({
               data-testid="agent-message-user"
               data-message-id={item.id}
             >
-              <div className="max-w-[78%] rounded-2xl rounded-br-md border border-border bg-secondary px-4 py-2.5 text-[15px] leading-relaxed text-foreground">
+              <div className="jarvis-user-bubble max-w-[78%] rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] leading-relaxed">
                 {item.text && <div className="whitespace-pre-wrap">{item.text}</div>}
                 {item.attachments.length > 0 && (
                   <div

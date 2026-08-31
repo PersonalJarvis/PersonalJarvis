@@ -418,5 +418,7 @@ describe("the person's turn with files", () => {
     expect(within(turn).queryByTestId("agent-message-image")).toBeNull();
     expect(turn.textContent).toContain("notes.md");
     expect(turn.textContent).toContain("front-page.png");
+    // Fill bubble, not inverted cream (`bg-foreground/70` on near-black).
+    expect(turn.querySelector(".jarvis-user-bubble")).not.toBeNull();
   });
 });
