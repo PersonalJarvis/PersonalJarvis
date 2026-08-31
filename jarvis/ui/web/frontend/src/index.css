@@ -595,10 +595,10 @@ label,
                    invisible on paper, which is the "partly wrong" the
                    maintainer saw.
 
-       Trim is also deliberately quiet on the dark ground: it is decoration
-       around the figure, not the figure, and pure white on near-black made
-       the glitch pixels louder than the eyes. */
-    --gigi-on-body: 60 16% 96%; /* the canvas — legible on the body */
+       Eyes and mouth are signal-yellow (#FFD60A) on the black body in both
+       themes — that is the original Gigi. Trim (arms, halo) still flips with
+       the PAGE so the silhouette reads on paper. */
+    --gigi-on-body: 50 100% 52%; /* #FFD60A signal-yellow */
     --gigi-trim: 53 12% 13%; /* ink — reads on paper */
     --jarvis-yellow: 38 37 30;
     --jarvis-yellow-dim: 128 125 114;
@@ -703,10 +703,10 @@ label,
     --viz-result: 0 0% 100%;
     --viz-deliverable: 0 0% 64%;
 
-    /* See the mascot note in :root. On this ground the trim steps DOWN to
-       muted rather than up to white: it frames the figure, it is not it. */
-    --gigi-on-body: 0 0% 100%;
-    --gigi-trim: 0 0% 64%;
+    /* Original Gigi: signal-yellow markings on the black body. Trim is a
+       quieter gold so the arms frame the figure instead of matching the eyes. */
+    --gigi-on-body: 50 100% 52%; /* #FFD60A */
+    --gigi-trim: 48 82% 42%; /* #C49B13 */
     --jarvis-yellow: 247 247 247;
     --jarvis-yellow-dim: 163 163 163;
     --jarvis-grid: 0 0% 8%;
@@ -1818,10 +1818,10 @@ label,
     transform-origin: 50% 50%;
   }
 
-  /* The body is drawn near-black so the white eyes read. On charcoal that
-     silhouette disappears; a little lift keeps the ghost a figure, not a hole. */
+  /* The body stays near-black; signal-yellow does the lighting. A small lift
+     keeps the silhouette from collapsing into the charcoal page. */
   .dark .gigi-body {
-    filter: brightness(1.45);
+    filter: brightness(1.2);
   }
 
   /* Auto-blink (a natural blink every ~7s — parallel to random actions) */

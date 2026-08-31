@@ -233,41 +233,12 @@ describe("Sidebar header avatar", () => {
     overlayMock.style = "jarvis_bar";
   });
 
-  // NOTE: an earlier change had the header avatar mirror the overlay display
-  // style (bar glyph for "jarvis_bar"). A later snapshot reverted it to the
-  // canonical static brand logo (jarvis-logo.png) regardless of style. This
-  // test pins the CURRENT behavior; the bar-vs-mascot-vs-logo choice is a
-  // product/branding decision tracked separately from the boot-speed work.
-  test("renders the static brand-logo avatar (one stable header identity)", () => {
+  test("renders live Gigi in the header (signal-yellow on black)", () => {
     const { container } = renderSidebar();
     const avatar = container.querySelector('[data-testid="sidebar-style-avatar"]');
     expect(avatar).not.toBeNull();
-    expect(avatar?.getAttribute("data-variant")).toBe("logo");
-  });
-
-  test("retries a failed logo load with a cache-busted URL (self-healing)", () => {
-    // A load that fails once (backend restarting, dist mid-rebuild) must not
-    // stick as the browser's broken-image glyph forever: after an error the
-    // <img> re-requests the logo under a cache-busting query.
-    vi.useFakeTimers();
-    try {
-      const { container } = renderSidebar();
-      const logo = container.querySelector(
-        '[data-testid="sidebar-style-avatar"] img',
-      ) as HTMLImageElement;
-      expect(logo.getAttribute("src")).toBe("/jarvis-logo.png");
-
-      act(() => {
-        logo.dispatchEvent(new Event("error"));
-        // Past the first retry delay only: the sidebar also owns a polling
-        // interval (recent chats), so running ALL timers would never return.
-        vi.advanceTimersByTime(2_000);
-      });
-
-      expect(logo.getAttribute("src")).toBe("/jarvis-logo.png?retry=1");
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(avatar?.getAttribute("data-variant")).toBe("mascot");
+    expect(avatar?.querySelector("svg")).not.toBeNull();
   });
 });
 

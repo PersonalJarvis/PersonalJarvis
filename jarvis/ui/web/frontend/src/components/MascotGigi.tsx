@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { translate, useT } from "@/i18n";
 import { useEventStore, type VoiceState, type SectionId } from "@/store/events";
@@ -53,6 +53,7 @@ export function MascotGigi({
   enableComments = true,
 }: Props) {
   const t = useT();
+  const uid = `gigi${useId().replace(/:/g, "")}`;
   const [action, setAction] = useState<MascotAction>("idle");
   const voiceState = useEventStore((s) => s.voiceState);
   const transcription = useEventStore((s) => s.transcription);
@@ -98,26 +99,26 @@ export function MascotGigi({
       >
         <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" className="gigi-svg">
           <defs>
-            <filter id="gigiYGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <filter id={`${uid}YGlow`} x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur stdDeviation="3" result="b" />
               <feMerge>
                 <feMergeNode in="b" />
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
-            <filter id="gigiSoftGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <filter id={`${uid}SoftGlow`} x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur stdDeviation="6" result="b" />
               <feMerge>
                 <feMergeNode in="b" />
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
-            <radialGradient id="gigiBody" cx="50%" cy="35%">
+            <radialGradient id={`${uid}Body`} cx="50%" cy="35%">
               <stop offset="0%" stopColor="#232323" />
               <stop offset="55%" stopColor="#0E0E0E" />
               <stop offset="100%" stopColor="#050505" />
             </radialGradient>
-            <linearGradient id="gigiYAccent" x1="0%" y1="0%" x2="0%" y2="100%">
+            <linearGradient id={`${uid}YAccent`} x1="0%" y1="0%" x2="0%" y2="100%">
               <stop offset="0%" stopColor="hsl(var(--gigi-on-body))" />
               <stop offset="100%" stopColor="hsl(var(--gigi-on-body))" stopOpacity="0.78" />
             </linearGradient>
@@ -129,14 +130,14 @@ export function MascotGigi({
             d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
             fill="hsl(var(--gigi-trim))"
             opacity="0.42"
-            filter="url(#gigiSoftGlow)"
+            filter={`url(#${uid}SoftGlow)`}
           />
 
           {/* Body */}
           <path
             className="gigi-body"
             d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
-            fill="url(#gigiBody)"
+            fill={`url(#${uid}Body)`}
             stroke="hsl(var(--gigi-trim))"
             strokeWidth="1.8"
             strokeOpacity="0.85"
@@ -149,7 +150,7 @@ export function MascotGigi({
           </g>
 
           {/* Glitch pixels right */}
-          <g className="gigi-glitch-right" fill="hsl(var(--gigi-trim))" filter="url(#gigiYGlow)">
+          <g className="gigi-glitch-right" fill="hsl(var(--gigi-trim))" filter={`url(#${uid}YGlow)`}>
             <rect x="200" y="104" width="6" height="6" />
             <rect x="208" y="128" width="4" height="4" />
             <rect x="202" y="146" width="9" height="3" />
@@ -157,7 +158,7 @@ export function MascotGigi({
             <rect x="206" y="176" width="5" height="3" />
           </g>
           {/* Glitch pixels left */}
-          <g className="gigi-glitch-left" fill="hsl(var(--gigi-trim))" opacity="0.7" filter="url(#gigiYGlow)">
+          <g className="gigi-glitch-left" fill="hsl(var(--gigi-trim))" opacity="0.7" filter={`url(#${uid}YGlow)`}>
             <rect x="44" y="96" width="6" height="4" />
             <rect x="48" y="124" width="4" height="6" />
             <rect x="40" y="148" width="8" height="3" />
@@ -169,13 +170,13 @@ export function MascotGigi({
           <rect x="170" y="118" width="18" height="10" fill="hsl(var(--gigi-on-body))" opacity="0.32" />
 
           {/* Eye glows */}
-          <ellipse cx="102" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter="url(#gigiSoftGlow)" />
-          <ellipse cx="154" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter="url(#gigiSoftGlow)" />
+          <ellipse cx="102" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter={`url(#${uid}SoftGlow)`} />
+          <ellipse cx="154" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter={`url(#${uid}SoftGlow)`} />
 
           {/* Eye sockets — auto-blinkend */}
           <g className="gigi-eyes">
-            <ellipse cx="102" cy="108" rx="10" ry="14" fill="url(#gigiYAccent)" filter="url(#gigiYGlow)" />
-            <ellipse cx="154" cy="108" rx="10" ry="14" fill="url(#gigiYAccent)" filter="url(#gigiYGlow)" />
+            <ellipse cx="102" cy="108" rx="10" ry="14" fill={`url(#${uid}YAccent)`} filter={`url(#${uid}YGlow)`} />
+            <ellipse cx="154" cy="108" rx="10" ry="14" fill={`url(#${uid}YAccent)`} filter={`url(#${uid}YGlow)`} />
           </g>
 
           {/* Pupils — driften sanft */}
@@ -192,7 +193,7 @@ export function MascotGigi({
 
           {/* Mouth — subtile Atmung */}
           <g className="gigi-mouth">
-            <ellipse cx="128" cy="146" rx="7" ry="10" fill="url(#gigiYAccent)" filter="url(#gigiYGlow)" />
+            <ellipse cx="128" cy="146" rx="7" ry="10" fill={`url(#${uid}YAccent)`} filter={`url(#${uid}YGlow)`} />
             <ellipse cx="128" cy="146" rx="3" ry="5" fill="#050505" />
           </g>
 
@@ -204,7 +205,7 @@ export function MascotGigi({
             strokeWidth="5.5"
             fill="none"
             strokeLinecap="round"
-            filter="url(#gigiYGlow)"
+            filter={`url(#${uid}YGlow)`}
           />
           <path
             className="gigi-arm gigi-arm-right"
@@ -213,7 +214,7 @@ export function MascotGigi({
             strokeWidth="5.5"
             fill="none"
             strokeLinecap="round"
-            filter="url(#gigiYGlow)"
+            filter={`url(#${uid}YGlow)`}
           />
         </svg>
       </div>

@@ -32,14 +32,8 @@ import { useHomeStore } from "@/store/home";
 import { useAgentChatStore } from "@/store/agentChat";
 import { useIdeChatStore } from "@/store/ideChat";
 import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
-import { PRODUCT_NAME } from "@/lib/branding";
 import { useAppInstance } from "@/hooks/useAppInstance";
-
-// A logo request that fails once (backend restarting, dist mid-rebuild) would
-// otherwise stick as the browser's broken-image glyph forever — an <img> never
-// retries on its own. Bounded cache-busted retries let it heal itself.
-const LOGO_RETRY_MAX = 5;
-const LOGO_RETRY_BASE_MS = 1500;
+import { MascotGigi } from "@/components/MascotGigi";
 
 /** Where the Chat row remembers whether its history is folded out. */
 const CHATS_OPEN_KEY = "jarvis.sidebar.recent-chats-open";
@@ -348,8 +342,6 @@ export function Sidebar({
   const footerProvider = engine.providerLabel;
   const footerModel = engine.model;
 
-  const [logoRetry, setLogoRetry] = useState(0);
-
   // Dragged past the snap point the sidebar becomes a rail of icons. Everything
   // that only makes sense with a label beside it — the wake-word hint, the
   // realtime control, the brain card's provider and model — steps aside; the
@@ -377,19 +369,17 @@ export function Sidebar({
       data-railed={railed ? "true" : "false"}
       className="jarvis-nav-surface relative isolate z-20 flex h-full shrink-0 flex-col"
     >
-      <div className={cn("border-b border-border", railed ? "px-2 py-3" : "px-4 py-4")}>
+      <div className={cn("border-b border-border", railed ? "px-2 py-2.5" : "px-3 py-3")}>
         <div
           className={cn(
             "flex items-center gap-3",
             railed && "flex-col justify-center gap-1.5",
           )}
         >
-          {/* The original Personal Jarvis logo — the ghost mascot. A snapshot
-              had swapped the header avatar for a bar glyph / gold-spark mark;
-              this is the canonical brand identity (jarvis-gigi). */}
+          {/* Live Gigi — signal-yellow on matte black, the original mark. */}
           <span
             data-testid="sidebar-style-avatar"
-            data-variant="logo"
+            data-variant="mascot"
             title={railed ? `${assistantName} — ${voiceLabel}` : undefined}
             className={cn(
               "jarvis-logo-well relative flex shrink-0 items-center justify-center overflow-hidden rounded-full",
@@ -405,24 +395,11 @@ export function Sidebar({
                 {devTag}
               </span>
             )}
-            <img
-              src={
-                logoRetry === 0
-                  ? "/jarvis-logo.png"
-                  : `/jarvis-logo.png?retry=${logoRetry}`
-              }
-              width={railed ? 32 : 40}
-              height={railed ? 32 : 40}
-              alt={PRODUCT_NAME}
-              className="jarvis-logo-mark shrink-0"
-              onError={() => {
-                if (logoRetry < LOGO_RETRY_MAX) {
-                  window.setTimeout(
-                    () => setLogoRetry((n) => n + 1),
-                    (logoRetry + 1) * LOGO_RETRY_BASE_MS,
-                  );
-                }
-              }}
+            <MascotGigi
+              size={railed ? 34 : 42}
+              enableComments={false}
+              reactToVoice
+              className="pointer-events-none"
             />
           </span>
           {!railed && (
@@ -490,7 +467,7 @@ export function Sidebar({
                 onto the voice stage itself, where it has the room to be read.
                 Hidden while the IDE's chats own the column: two switches with
                 "Chat" on both halves are two questions nobody asked. */}
-            <SurfaceSwitch className="mt-3" />
+            <SurfaceSwitch className="mt-2" />
             <button
               type="button"
               onClick={onVoiceSurface ? startNewVoice : startNewChat}
@@ -545,7 +522,7 @@ export function Sidebar({
               </button>
             </>
           ) : (
-          <nav className="p-2">
+          <nav className="px-1.5 py-1.5">
             {chatFace && (
               <button
                 type="button"
@@ -569,9 +546,9 @@ export function Sidebar({
                 key={groupIndex}
                 className={cn(
                   "space-y-0.5",
-                  // Breathing room above every group after the first. A hairline
-                  // here read as a dead rule on charcoal, so the gap does the work.
-                  groupIndex > 0 && "mt-3 pt-1",
+                  // One window: groups sit in one list. A hairline here read as
+                  // a dead rule; a large gap read as separate panes.
+                  groupIndex > 0 && "mt-1",
                 )}
               >
                 {group.map((raw) => {
@@ -638,7 +615,7 @@ export function Sidebar({
         </div>
       )}
 
-      <div className={cn("border-t border-border", railed ? "p-1.5" : "p-3")}>
+      <div className={cn("border-t border-border", railed ? "p-1.5" : "p-2")}>
         <button
           type="button"
           onClick={() => setActive("apikeys")}
@@ -737,7 +714,7 @@ function NavRow({
         onClick={onClick}
         title={hint}
         className={cn(
-          "group relative flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-[13px] font-medium transition-colors",
+          "group relative flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-[13px] font-medium transition-colors",
           "hover:bg-secondary/70",
           // Leave the chevron its own column so the two buttons never overlap.
           expand && "pr-9",
@@ -746,7 +723,7 @@ function NavRow({
       >
         <span
           className={cn(
-            "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors",
+            "flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors",
             active ? "bg-foreground/10 text-foreground" : "text-foreground/55 group-hover:text-foreground",
           )}
         >

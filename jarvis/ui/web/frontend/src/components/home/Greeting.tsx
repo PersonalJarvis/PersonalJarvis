@@ -1,7 +1,7 @@
 import { useUserName } from "@/hooks/useUserName";
 import { fill, useT } from "@/i18n";
-import { PRODUCT_NAME } from "@/lib/branding";
 import { cn } from "@/lib/utils";
+import { MascotGigi } from "@/components/MascotGigi";
 
 /**
  * "Good morning, Ruben" — the front page's opening line, on both stages.
@@ -34,13 +34,7 @@ export function Greeting({
     >
       <h1 className="flex items-center gap-3 font-display text-3xl tracking-tight text-foreground [text-wrap:balance]">
         <span className="jarvis-logo-well flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full">
-          <img
-            src="/jarvis-logo.png"
-            width={32}
-            height={32}
-            alt={PRODUCT_NAME}
-            className="jarvis-logo-mark h-8 w-8"
-          />
+          <MascotGigi size={32} enableComments={false} reactToVoice={false} className="pointer-events-none" />
         </span>
         <span>{text}</span>
       </h1>

@@ -33,6 +33,7 @@ paper's warmth — that was the muddy look.
 | Muted text, light | `#747167` | ![](https://img.shields.io/badge/_-747167?style=flat-square&labelColor=747167) |
 | Muted text, dark | `#A3A3A3` | ![](https://img.shields.io/badge/_-A3A3A3?style=flat-square&labelColor=A3A3A3) |
 | Destructive, light | `#C0392B` | ![](https://img.shields.io/badge/_-C0392B?style=flat-square&labelColor=C0392B) |
+| Signal-yellow (Gigi only) | `#FFD60A` | ![](https://img.shields.io/badge/_-FFD60A?style=flat-square&labelColor=FFD60A) |
 
 Three things keep their own colour on purpose, because taking it away would remove
 information rather than noise: third-party provider logos, the sixteen ANSI slots a
@@ -52,8 +53,10 @@ must stay on the same values so nothing drifts.
   (`#242424` in, `#575757` out) rather than a 70 % cream wash.
 - **Both modes, always.** A colour comes from a theme token or from the per-appearance
   tables in `terminalThemes.ts`. Never hardcode one mode's value.
-- **No second accent.** There is no brand hue to reintroduce. The cyan and magenta in the
-  wordmark are a *glitch artifact*, not part of the palette; never use them as UI colours.
+- **No second accent in the chrome.** There is no brand hue to reintroduce on buttons,
+  rows or panels. The cyan and magenta in the wordmark are a *glitch artifact*, not part
+  of the palette. **Gigi** is the one exception: eyes and mouth are **signal-yellow**
+  (`#FFD60A`) on the black body — matte-black + signal-yellow, the original mark.
 - **Rasters convert on max(r, g, b), the orb on luma.** That is what keeps a mark legible
   after it loses its colour.
 
