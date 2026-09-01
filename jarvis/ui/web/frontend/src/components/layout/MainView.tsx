@@ -6,7 +6,6 @@ import {
   useState,
   type ComponentType,
   type LazyExoticComponent,
-  type ReactNode,
 } from "react";
 import { QueryClientContext } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
@@ -369,69 +368,15 @@ const CODING_SECTION_IDS = ["agentic-ide", "agentic-ide-classic", "chat-workspac
  */
 const STICKY_SECTION = "agentic-ide";
 
-/**
- * The sections that opt OUT of the page measure, and why each one earns it.
- *
- * Content is bounded by the shell rather than by each view (see
- * `SectionMeasure`): a settings card holding two words has no business
- * spanning 1170 px, and an explanatory sentence that runs the full width of a
- * maximised window cannot be read. A view does not get to decide that for
- * itself — 46 views deciding it independently is how the app ended up with no
- * measure at all.
- *
- * A genuine full-bleed section is one whose CONTENT is the surface:
- *   - the coding workspace is a wall of terminals, and every pixel taken off
- *     its width is taken off a pane (it renders through the sticky branch
- *     below, which never passes through the measure — the ids are listed for
- *     completeness, so this stays the one place the question is answered);
- *   - the visualization stage shows pictures somebody else produced, framed
- *     edge to edge and already sized by their own aspect;
- *   - the board is a horizontally scrolling column layout, which a centred
- *     1080 px column would simply cut in half.
- *
- * Everything else is text, rows, forms and cards, and all four read better
- * inside a measure. Adding an id here is a design decision, not a fix for a
- * cramped view: a view that feels cramped at 1080 px usually has a nested
- * layout that wants flattening.
+/*
+ * No shell-level page measure. One was tried on 2026-09-01 (a centred 1080 px
+ * column around every section except the coding workspace): on a 4K window it
+ * squeezed the wiki graph into a thumbnail, tore the sub-navigation columns
+ * off the left edge, and centred single-column forms in a sea of black. The
+ * maintainer's verdict was "you broke many sections". Every view keeps
+ * deciding its own width; a view that needs a measure applies `max-w-reading`
+ * / `max-w-form` / `max-w-page` to the element that actually needs it.
  */
-const FULL_BLEED_SECTIONS: readonly string[] = [
-  ...CODING_SECTION_IDS,
-  "visualization",
-  "board",
-];
-
-/**
- * The page measure, applied once, by the shell.
- *
- * `max-w-page` is 1080 px and the padding is the 28 px page step; both come
- * from the token scale rather than from a number typed here. Full-bleed
- * sections keep the whole window (see `FULL_BLEED_SECTIONS`).
- *
- * `h-full` is load-bearing: sections are full-height flex columns that scroll
- * internally (nothing in this app scrolls the page itself), so the measure has
- * to be as tall as the stage it sits in or every one of them would collapse to
- * its content height.
- */
-function SectionMeasure({
-  bleed,
-  children,
-}: {
-  bleed: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <div
-      data-testid="section-measure"
-      data-bleed={bleed ? "true" : "false"}
-      className={cn(
-        "h-full w-full",
-        !bleed && "mx-auto max-w-page px-7",
-      )}
-    >
-      {children}
-    </div>
-  );
-}
 
 /**
  * Main area to the right of the sidebar. Views are switched the classic way
@@ -531,9 +476,7 @@ export function MainView() {
           {/* Keyed on the active section so switching away from a still-loading
               view cannot leave the previous section's fallback on screen. */}
           <Suspense key={active} fallback={<ViewLoadingFallback />}>
-            <SectionMeasure bleed={FULL_BLEED_SECTIONS.includes(active)}>
-              <SwitchOnActiveSection active={active} />
-            </SectionMeasure>
+            <SwitchOnActiveSection active={active} />
           </Suspense>
         </ViewErrorBoundary>
       )}

@@ -98,7 +98,9 @@ const IDE_SECTIONS: readonly string[] = [
  * half up, and neutral ink when it is simply at rest.
  */
 const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
-  idle: { dot: "bg-muted-foreground", pulse: false },
+  // "Ready" IS a life state: the stack is up and waiting for the wake word.
+  // A grey dot beside the word "Ready" told the reader "off".
+  idle: { dot: "bg-success", pulse: false },
   listening: { dot: "bg-success", pulse: true },
   thinking: { dot: "bg-success", pulse: true },
   speaking: { dot: "bg-success", pulse: true },

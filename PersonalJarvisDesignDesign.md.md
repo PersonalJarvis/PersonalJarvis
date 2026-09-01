@@ -680,7 +680,12 @@ Every section owns four states, and all four are designed.
 - Set navigation and buttons in `label` (500), not `body` (400).
 - Spend `life` green on anything that is actually running.
 - Cap ink below white and reserve `fill` for fills.
-- Bound the measure. Every screen, every time.
+- Bound the measure IN THE VIEW, on the element that needs it — a prose
+  column, a form, a card grid. Never in the shell: a shell-level 1080 px
+  column (tried 2026-09-01, reverted the same evening) squeezed the wiki graph
+  into a thumbnail on a 4K window, tore sub-navigation columns off the left
+  edge and centred every form in a sea of black. Graphs, terminals, boards
+  and tables keep the whole window.
 - Remove before you restyle — and check what is left still has edges.
 
 ### Don't
