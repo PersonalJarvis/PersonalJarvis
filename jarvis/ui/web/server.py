@@ -393,6 +393,7 @@ class WebServer:
         from .setup_routes import router as setup_router
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
+        from .society_routes import router as society_router
         from .starter_plan_routes import router as starter_plan_router
         from .sub_agents_routes import router as sub_agents_router
         from .tasks_routes import router as tasks_router
@@ -560,6 +561,13 @@ class WebServer:
         app.state.agent_chat = None
         app.state.agent_chat_factory = self._build_agent_chat_service
         app.include_router(agent_chat_router)
+        # Agent society (jarvis/society) — the roster, the typed board, the
+        # scheduler and the mission bridge. Built on the first /api/society
+        # call from the factory (store = data/society.db); nothing opens on
+        # the boot path (AP-26).
+        app.state.society = None
+        app.state.society_factory = self._build_society_runtime
+        app.include_router(society_router)
         app.include_router(drop_router)
         # Default: no recorder wired up — _init_session_stack() in start()
         # sets this once it succeeds.
@@ -3500,6 +3508,52 @@ class WebServer:
                 logger.info("Friends-Stack live: Telegram-Channel disabled ({})", errs)
             else:
                 logger.info("Friends-Stack live: Telegram-Channel disabled (config off)")
+
+    def _build_society_runtime(self) -> Any:
+        """Build the agent-society runtime on first use (see society_routes).
+
+        Every collaborator is a getter over ``app.state`` so the runtime
+        follows the live mission manager, budget tracker, brain tool surface
+        and skill registry — whichever of them exists at call time.
+        """
+        from jarvis.society.runtime import SocietyRuntime
+
+        data_dir = Path(getattr(getattr(self.cfg, "memory", None), "data_dir", None) or "data")
+        state = self.app.state
+
+        def _manager() -> Any | None:
+            return getattr(state, "mission_manager", None)
+
+        def _mission_bus() -> Any | None:
+            manager = getattr(state, "mission_manager", None)
+            return getattr(manager, "bus", None) if manager is not None else None
+
+        def _budget() -> Any | None:
+            return getattr(state, "missions_budget", None)
+
+        def _tools() -> Any | None:
+            brain = getattr(state, "brain", None)
+            tools = getattr(brain, "_tools", None)
+            return tools if tools is not None and hasattr(tools, "items") else None
+
+        def _skills() -> Any | None:
+            registry = getattr(state, "skill_registry", None)
+            if registry is None:
+                return None
+            lister = getattr(registry, "all", None) or getattr(registry, "list", None)
+            try:
+                return list(lister()) if callable(lister) else None
+            except Exception:  # noqa: BLE001 — the catalog then shows no skills
+                return None
+
+        return SocietyRuntime(
+            data_dir,
+            mission_manager=_manager,
+            mission_bus=_mission_bus,
+            budget_tracker=_budget,
+            brain_tools=_tools,
+            skills=_skills,
+        )
 
     def _build_agent_chat_service(self) -> Any:
         """Build the agent-chat service on first use (see agent_chat_routes)."""

@@ -1,0 +1,408 @@
+"""REST surface of the agent society (``/api/society``).
+
+The runtime is built on first use from ``app.state.society_factory`` (set in
+``server.py``), so nothing opens on the boot path (AP-26). Every mutating
+route that starts spend or stops work carries ``x-jarvis-dangerous`` so the
+dynamic ``jarvis api society …`` CLI layer demands confirmation.
+
+The roster is user content: creating an agent executes nothing and is not
+dangerous; messaging one can trigger a turn (spend) and is; the kill switch
+is dangerous in both directions because releasing it resumes work.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
+
+from jarvis.society.events import MsgType
+from jarvis.society.failure_reasons import FailureReason, retry_action
+from jarvis.society.rooms import RoomError
+from jarvis.society.roster import RosterError
+from jarvis.society.runtime import SocietyRuntime
+
+log = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/society", tags=["society"])
+
+
+# ------------------------------------------------------------------ runtime
+
+
+async def _runtime(request: Request) -> SocietyRuntime:
+    state = request.app.state
+    runtime = getattr(state, "society", None)
+    if runtime is None:
+        factory = getattr(state, "society_factory", None)
+        if factory is None:
+            raise HTTPException(503, "society runtime not configured")
+        try:
+            runtime = factory()
+        except Exception as exc:  # noqa: BLE001 — surfaces as 503 with the reason in the log
+            log.warning("society: runtime could not be built: %s", exc)
+            raise HTTPException(503, "society runtime unavailable") from exc
+        state.society = runtime
+    await runtime.ensure_started()
+    return runtime
+
+
+def _typed_error(exc: RosterError | RoomError) -> HTTPException:
+    reason = exc.reason
+    status = 404 if reason is FailureReason.TARGET_UNKNOWN else 409
+    return HTTPException(
+        status,
+        {"reason": str(reason), "retry": str(retry_action(reason)), "detail": str(exc)},
+    )
+
+
+# ------------------------------------------------------------------- models
+
+
+class CreateAgentBody(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    title: str = ""
+    description: str = ""
+    tier: str = "specialist"
+    parent_agent_id: str | None = None
+    provider: str = ""
+    model: str = ""
+    effort: str = ""
+    grant_mode: str | None = None
+    grants: list[str] | None = None
+    focus: list[str] | None = None
+    denies: list[str] | None = None
+    skills: list[str] | None = None
+    permission_ceiling: str | None = None
+    approval_rules: dict[str, list[str]] | None = None
+    daily_budget_usd: float | None = None
+    max_concurrent_runs: int | None = None
+    avatar: dict[str, Any] | None = None
+
+
+class PatchAgentBody(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    tier: str | None = None
+    parent_agent_id: str | None = None
+    state: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    grant_mode: str | None = None
+    grants: list[str] | None = None
+    focus: list[str] | None = None
+    denies: list[str] | None = None
+    skills: list[str] | None = None
+    knowledge_scope: str | None = None
+    permission_ceiling: str | None = None
+    approval_rules: dict[str, list[str]] | None = None
+    daily_budget_usd: float | None = None
+    max_concurrent_runs: int | None = None
+    avatar: dict[str, Any] | None = None
+    checkpoint: str | None = None
+
+
+class MessageBody(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+    from_agent: str = "user"
+    msg_type: str = "SAY"
+    trace_id: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssignBody(BaseModel):
+    task: str = Field(min_length=1, max_length=20_000)
+    from_agent: str = "user"
+    trace_id: str | None = None
+    lang: str | None = None
+
+
+class OpenRoomBody(BaseModel):
+    members: list[str] = Field(min_length=2, max_length=6)
+    topic: str = ""
+    opened_by: str = "user"
+
+
+class RoomSayBody(BaseModel):
+    member: str
+    text: str = ""
+
+
+# ------------------------------------------------------------------- agents
+
+
+@router.get("/agents")
+async def list_agents(request: Request, include_archived: bool = False) -> dict[str, Any]:
+    rt = await _runtime(request)
+    agents = await rt.roster.list(include_archived=include_archived)
+    running = rt.scheduler.running
+    rows = []
+    for agent in agents:
+        row = agent.to_dict()
+        if agent.state == "paused":
+            row["run_state"] = "paused"
+        elif agent.agent_id in running.values():
+            row["run_state"] = "working"
+        else:
+            row["run_state"] = "idle"
+        rows.append(row)
+    return {"agents": rows, "total": len(rows)}
+
+
+@router.post("/agents")
+async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    fields = body.model_dump(exclude_none=True, exclude={"name", "title", "description", "tier"})
+    derived_focus, derived_rules = rt.derive(body.title, body.description)
+    if body.focus is None and derived_focus:
+        fields["focus"] = derived_focus
+    if body.approval_rules is None and derived_rules["require_approval"]:
+        fields["approval_rules"] = derived_rules
+    try:
+        agent, created = await rt.roster.create(
+            name=body.name,
+            title=body.title,
+            description=body.description,
+            tier=body.tier,
+            **fields,
+        )
+    except RosterError as exc:
+        raise _typed_error(exc) from exc
+    return {"agent": agent.to_dict(), "created": created}
+
+
+@router.get("/agents/{agent_id}")
+async def get_agent(agent_id: str, request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    events = await rt.store.events_for_agent(agent.agent_id, limit=50)
+    return {
+        "agent": agent.to_dict(),
+        "recent_events": [e.model_dump() for e in events],
+        "active_runs": rt.scheduler.active_runs(agent.agent_id),
+    }
+
+
+@router.patch("/agents/{agent_id}")
+async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    fields = body.model_dump(exclude_none=True)
+    if ("title" in fields or "description" in fields) and "focus" not in fields:
+        title = fields.get("title", agent.title)
+        description = fields.get("description", agent.description)
+        derived_focus, derived_rules = rt.derive(title, description)
+        fields["focus"] = derived_focus
+        if "approval_rules" not in fields and derived_rules["require_approval"]:
+            fields["approval_rules"] = derived_rules
+    try:
+        updated = await rt.roster.update(agent.agent_id, fields)
+    except RosterError as exc:
+        raise _typed_error(exc) from exc
+    return {"agent": updated.to_dict()}
+
+
+@router.delete("/agents/{agent_id}")
+async def archive_agent(agent_id: str, request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        archived = await rt.roster.archive(agent.agent_id)
+    except RosterError as exc:
+        raise _typed_error(exc) from exc
+    return {"agent": archived.to_dict()}
+
+
+@router.post("/agents/{agent_id}/message", openapi_extra={"x-jarvis-dangerous": True})
+async def message_agent(agent_id: str, body: MessageBody, request: Request) -> dict[str, Any]:
+    """Append a message to the agent (user → agent by default). May start a turn."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        msg_type = MsgType(body.msg_type)
+    except ValueError as exc:
+        raise HTTPException(422, f"msg_type must be one of {[str(m) for m in MsgType]}") from exc
+    if msg_type in (MsgType.ASSIGN, MsgType.ROOM_OPEN, MsgType.ROOM_SETTLE, MsgType.VETO):
+        raise HTTPException(422, "use /assign or /rooms for that message type")
+    env = await rt.say(
+        from_agent=body.from_agent,
+        to_agent=agent.agent_id,
+        text=body.text,
+        trace_id=body.trace_id,
+        msg_type=msg_type,
+        payload=body.payload,
+    )
+    return {"event": env.model_dump()}
+
+
+@router.post("/agents/{agent_id}/assign", openapi_extra={"x-jarvis-dangerous": True})
+async def assign_agent(agent_id: str, body: AssignBody, request: Request) -> dict[str, Any]:
+    """Give the agent a task: an ASSIGN the scheduler turns into real work."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    payload: dict[str, Any] = {"text": body.task}
+    if body.lang:
+        payload["lang"] = body.lang
+    env = await rt.say(
+        from_agent=body.from_agent,
+        to_agent=agent.agent_id,
+        text=body.task,
+        trace_id=body.trace_id or f"task:{env_trace_seed()}",
+        msg_type=MsgType.ASSIGN,
+        payload=payload,
+    )
+    outcome = await rt.store.events_for_trace(env.trace_id)
+    verdict = next((e for e in outcome if e.seq and env.seq and e.seq > env.seq), None)
+    return {
+        "event": env.model_dump(),
+        "outcome": verdict.model_dump() if verdict else None,
+    }
+
+
+def env_trace_seed() -> str:
+    from jarvis.missions.ids import uuid7_str
+
+    return uuid7_str()
+
+
+@router.post("/agents/{agent_id}/kill", openapi_extra={"x-jarvis-dangerous": True})
+async def kill_agent(agent_id: str, request: Request) -> dict[str, Any]:
+    """Pause the agent and drop its run slots (its missions are cancelled when possible)."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    dropped = 0
+    manager = rt._get_manager()  # noqa: SLF001 — the route is the runtime's operator
+    for run_id, owner in list(rt.scheduler.running.items()):
+        if owner != agent.agent_id:
+            continue
+        rt.scheduler.note_run_ended(run_id)
+        dropped += 1
+        if manager is not None and hasattr(manager, "cancel"):
+            try:
+                await manager.cancel(run_id)
+            except Exception:  # noqa: BLE001 — already gone is fine
+                log.debug("society kill: mission %s not cancellable", run_id)
+    paused = await rt.roster.update(agent.agent_id, {"state": "paused"})
+    return {"agent": paused.to_dict(), "runs_dropped": dropped}
+
+
+# ------------------------------------------------------------------- board
+
+
+@router.get("/events")
+async def list_events(
+    request: Request,
+    after_seq: int = 0,
+    trace_id: str | None = None,
+    agent_id: str | None = None,
+    limit: int = 200,
+) -> dict[str, Any]:
+    rt = await _runtime(request)
+    limit = max(1, min(int(limit), 1000))
+    if trace_id:
+        events = await rt.store.events_for_trace(trace_id)
+    elif agent_id:
+        events = await rt.store.events_for_agent(agent_id, after_seq=after_seq, limit=limit)
+    else:
+        events = await rt.store.events_since(after_seq, limit=limit)
+    return {"events": [e.model_dump() for e in events], "last_seq": await rt.store.last_seq()}
+
+
+@router.get("/agents/{agent_id}/inbox")
+async def agent_inbox(agent_id: str, request: Request, after_seq: int = 0) -> dict[str, Any]:
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    events = await rt.store.inbox_for(agent.agent_id, after_seq=after_seq)
+    return {"events": [e.model_dump() for e in events]}
+
+
+# ----------------------------------------------------------------- catalog
+
+
+@router.get("/capabilities")
+async def list_capabilities(request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    rows = rt.catalog()
+    return {"capabilities": [r.to_dict() for r in rows], "total": len(rows)}
+
+
+# ------------------------------------------------------------------- rooms
+
+
+@router.get("/rooms")
+async def list_rooms(request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    return {"rooms": [r.to_dict() for r in await rt.rooms.list()]}
+
+
+@router.post("/rooms")
+async def open_room(body: OpenRoomBody, request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    for member in body.members:
+        if await rt.roster.resolve(member) is None:
+            raise HTTPException(
+                404, {"reason": str(FailureReason.TARGET_UNKNOWN), "member": member}
+            )
+    try:
+        room = await rt.rooms.open(opened_by=body.opened_by, members=body.members, topic=body.topic)
+    except RoomError as exc:
+        raise _typed_error(exc) from exc
+    return {"room": room.to_dict()}
+
+
+@router.post("/rooms/{room_id}/say", openapi_extra={"x-jarvis-dangerous": True})
+async def room_say(room_id: str, body: RoomSayBody, request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    try:
+        room = await rt.rooms.say(room_id, body.member, body.text)
+    except RoomError as exc:
+        raise _typed_error(exc) from exc
+    return {"room": room.to_dict()}
+
+
+@router.post("/rooms/{room_id}/settle", openapi_extra={"x-jarvis-dangerous": True})
+async def room_settle(room_id: str, request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    try:
+        room = await rt.rooms.settle(room_id, reason="user", by="user")
+    except RoomError as exc:
+        raise _typed_error(exc) from exc
+    return {"room": room.to_dict()}
+
+
+# ----------------------------------------------------------------- controls
+
+
+@router.get("/status")
+async def society_status(request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    return await rt.status()
+
+
+@router.post("/kill-switch", openapi_extra={"x-jarvis-dangerous": True})
+async def engage_kill_switch(request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    return await rt.engage_kill_switch()
+
+
+@router.post("/kill-switch/release", openapi_extra={"x-jarvis-dangerous": True})
+async def release_kill_switch(request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    return await rt.release_kill_switch()
