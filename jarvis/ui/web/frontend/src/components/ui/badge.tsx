@@ -34,6 +34,7 @@ const badgeVariants = cva(
         fault: "border-transparent bg-destructive text-destructive-foreground",
         /** Stale, partial, needs attention. */
         degraded: "border-transparent bg-warning text-primary-foreground",
+        info: "border-transparent bg-info text-info-foreground",
         /**
          * Retained so the ~30 existing call sites keep compiling; `fault` is
          * the name to use for new code.

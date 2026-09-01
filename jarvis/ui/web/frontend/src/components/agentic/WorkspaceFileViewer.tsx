@@ -269,7 +269,7 @@ function ViewerContent({
         </div>
       )}
       {kind === "markdown" ? (
-        <article className="prose prose-neutral max-w-none text-sm dark:prose-invert prose-a:text-primary prose-code:text-foreground prose-pre:border prose-pre:border-border prose-pre:bg-card">
+        <article className="prose prose-neutral max-w-none text-sm dark:prose-invert prose-a:text-accent prose-code:text-foreground prose-pre:border prose-pre:border-border prose-pre:bg-card">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>
         </article>
       ) : text ? (

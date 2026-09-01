@@ -41,6 +41,12 @@ const config: Config = {
          * place hue is allowed to appear, so it needs its own token.
          */
         warning: "hsl(var(--warning))",
+        /* The fourth semantic hue: counts, new items, hints — "note this"
+           without "something is wrong". Cursor's badge cyan. */
+        info: {
+          DEFAULT: "hsl(var(--info))",
+          foreground: "hsl(var(--info-foreground))",
+        },
         muted: {
           DEFAULT: "hsl(var(--muted))",
           foreground: "hsl(var(--muted-foreground))",

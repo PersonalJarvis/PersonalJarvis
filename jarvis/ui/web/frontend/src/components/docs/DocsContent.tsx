@@ -116,7 +116,7 @@ function DocsContentInner({
   }
 
   return (
-    <article className="prose prose-neutral dark:prose-invert prose-base mx-auto max-w-3xl px-8 py-10 prose-headings:scroll-mt-20 prose-headings:text-pretty prose-p:text-pretty prose-code:before:hidden prose-code:after:hidden prose-a:text-primary prose-a:no-underline hover:prose-a:underline lg:px-10">
+    <article className="prose prose-neutral dark:prose-invert prose-base mx-auto max-w-3xl px-8 py-10 prose-headings:scroll-mt-20 prose-headings:text-pretty prose-p:text-pretty prose-code:before:hidden prose-code:after:hidden prose-a:text-accent prose-a:no-underline hover:prose-a:underline lg:px-10">
       <header className="not-prose mb-9 border-b border-border pb-6">
         <nav
           aria-label="Breadcrumb"

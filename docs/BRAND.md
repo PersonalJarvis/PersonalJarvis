@@ -32,11 +32,12 @@ paper's warmth — that was the muddy look.
 | Hairline, dark | `#2B2B2B` | ![](https://img.shields.io/badge/_-2B2B2B?style=flat-square&labelColor=2B2B2B) |
 | Muted text, light | `#66635A` | ![](https://img.shields.io/badge/_-66635A?style=flat-square&labelColor=66635A) |
 | Muted text, dark | `#A3A3A3` | ![](https://img.shields.io/badge/_-A3A3A3?style=flat-square&labelColor=A3A3A3) |
-| Destructive, light | `#C0392B` | ![](https://img.shields.io/badge/_-C0392B?style=flat-square&labelColor=C0392B) |
+| Destructive, light | `#BE1744` | ![](https://img.shields.io/badge/_-BE1744?style=flat-square&labelColor=BE1744) |
 
-Three things keep their own colour on purpose, because taking it away would remove
-information rather than noise: third-party provider logos, the sixteen ANSI slots a
-terminal paints with, and the destructive action. Everything else is ink and paper.
+Surfaces, rims and ink are neutral. Colour is spent only where it carries information:
+provider logos in their real colours, the sixteen ANSI slots, and the five colour jobs
+below (signal, life, fault, degraded, info) plus coloured diffs. Everything else is ink
+and paper.
 
 These are the exact tokens from the desktop app
 (`jarvis/ui/web/frontend/src/index.css`). The README, the product, and any brand asset
@@ -53,9 +54,13 @@ must stay on the same values so nothing drifts.
   hairline, and chat bubbles are quiet fills (`#1F1F1F` in, `#2E2E2E` out).
 - **Both modes, always.** A colour comes from a theme token or from the per-appearance
   tables in `terminalThemes.ts`. Never hardcode one mode's value.
-- **No second accent.** There is no brand hue to reintroduce. The cyan and magenta in the
-  wordmark are a *glitch artifact*, not part of the palette; never use them as UI colours.
-  **Gigi** is black-and-white: a black body, white eyes and outline, no disc behind it.
+- **One signal hue, five colour jobs, no brand hue.** Surfaces and rims stay neutral. Colour
+  appears only where it means something: `signal` blue (`#81A1C1` dark / `#2778C1` light)
+  for links, focus and the active row's bar; `life` green, `fault` rose, `degraded` amber and
+  `info` cyan for state; green/rose grounds under diffs. All of it on Cursor's desaturated
+  values so the set reads as one family. The cyan and magenta in the wordmark are a *glitch
+  artifact*, never UI colours. **Gigi** is black-and-white: a black body, white eyes and
+  outline, no disc behind it.
 - **Rasters convert on max(r, g, b), the orb on luma.** That is what keeps a mark legible
   after it loses its colour.
 

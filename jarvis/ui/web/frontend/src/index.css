@@ -523,19 +523,20 @@ label,
        carried by weight and by --foreground-strong instead. 14.3:1 on paper. */
     --primary: 53 12% 13%;
     --primary-foreground: 60 16% 96%; /* the paper, not pure white */
-    --accent: 53 12% 13%;
-    --accent-foreground: 60 16% 96%;
-    --ring: 53 12% 13%;
+    --accent: 206 66% 45%; /* #2778C1 — the SIGNAL: links, focus, active marks */
+    --accent-foreground: 0 0% 99%;
+    --ring: 206 66% 45%;
 
-    /* --- Status. The only hue in the product ------------------------------
-       Three meanings, identical in both themes so a status never changes
-       meaning with the theme; the lightness is tuned per ground so each one
-       stays legible on it. Nothing else in the interface carries hue except
-       identity — a vendor logo in its real colours, or a coloured avatar. */
-    --success: 153 62% 32%; /* life: running, live, connected, passed */
-    --destructive: 4 70% 46%; /* fault: failed, blocked, disconnected */
+    /* --- Status. Colour has jobs again (v3.1, 2026-09-01) ------------------
+       The all-neutral product read as dead. Cursor's Anysphere theme is the
+       model: neutral greys carrying one desaturated signal hue and a small
+       semantic set — green life, rose fault, amber degraded, cyan info —
+       plus coloured diffs and a coloured run graph. Same meanings in both
+       themes; the lightness is tuned per ground. */
+    --success: 156 100% 22%; /* #007041 — life */
+    --destructive: 344 78% 42%; /* #BE1744 — fault */
     --destructive-foreground: 0 0% 100%;
-    --warning: 41 70% 38%; /* degraded: stale, partial, needs attention */
+    --warning: 38 100% 32%; /* #A46700 — degraded */
 
     /* Added / removed code in a chat diff. Green and red were always the
        weaker half of this signal: a diff already carries + and - in its
@@ -543,10 +544,10 @@ label,
        says it more directly — an added line comes FORWARD (strong ink on a
        lifted ground) and a deleted one RECEDES (meta ink, struck through,
        see .diff-line-del). Strike-through is the move colour cannot make. */
-    --diff-add: 50 13% 8%;
-    --diff-add-bg: 50 11% 89%;
-    --diff-del: 46 6% 38%;
-    --diff-del-bg: 51 18% 94%;
+    --diff-add: 156 100% 22%; /* #007041 */
+    --diff-add-bg: 155 100% 35%; /* #00B068, read at 18 % */
+    --diff-del: 344 78% 42%; /* #BE1744 */
+    --diff-del-bg: 350 100% 69%; /* #FF617B, read at 22 % */
 
     --radius: 0.75rem;
 
@@ -554,7 +555,7 @@ label,
     /* The accent as raw channels, for glows / grid lines / halos. Now the ink
        itself: on paper a "glow" means a faint darkening, not a light source,
        so every grid and halo built from this reads as a pencil rule. */
-    --accent-rgb: 38 37 30;
+    --accent-rgb: 39 120 193;
     /* What a translucent overlay DARKENS with (backdrops, vignettes, shadows).
        Warm near-black rather than pure black, so a scrim over paper does not
        turn grey-blue. */
@@ -604,17 +605,17 @@ label,
        What survives is the only distinction worth a value: where a run starts
        and where it lands are full ink, everything in between is neutral. Only
        the card's icon tile reads `hsl(var(--viz-*))`. */
-    --viz-trigger: 53 12% 13%; /* full ink — the run's ignition */
-    --viz-reasoning: 46 6% 41%; /* the worker thinking */
-    --viz-terminal: 46 6% 41%; /* shell commands */
-    --viz-file: 46 6% 41%; /* file writes/edits */
-    --viz-search: 46 6% 41%; /* read/grep/glob */
-    --viz-web: 46 6% 41%; /* fetch/web */
-    --viz-integration: 46 6% 41%; /* MCP / external tools */
-    --viz-agent: 46 6% 41%; /* sub-agent spawns */
-    --viz-tool: 46 6% 41%; /* unrecognised tools */
-    --viz-result: 53 12% 13%; /* full ink — the run's landing */
-    --viz-deliverable: 46 6% 41%; /* files left behind */
+    --viz-trigger: 206 66% 45%;
+    --viz-reasoning: 247 45% 52%;
+    --viz-terminal: 184 67% 27%;
+    --viz-file: 38 100% 32%;
+    --viz-search: 208 100% 35%;
+    --viz-web: 184 67% 27%;
+    --viz-integration: 315 75% 33%;
+    --viz-agent: 330 60% 45%;
+    --viz-tool: 46 6% 38%;
+    --viz-result: 156 100% 22%;
+    --viz-deliverable: 38 100% 32%;
 
     /* --- The mascot's two marking roles ----------------------------------
        The ghost was drawn with one hardcoded white for everything, which is
@@ -643,6 +644,11 @@ label,
     --jarvis-yellow: 38 37 30;
     --jarvis-yellow-dim: 128 125 114;
     --jarvis-grid: 45 10% 86%;
+
+    /* --- Info. The fourth semantic hue — see .dark ------------------------- */
+    --info: 184 67% 27%; /* #176C74 */
+    --info-foreground: 0 0% 99%;
+
   }
 
   .dark {
@@ -718,26 +724,26 @@ label,
        has none above `ink` and keeps the two equal. 19.8:1. */
     --primary: 0 0% 100%;
     --primary-foreground: 0 0% 7%; /* the room */
-    --accent: 0 0% 100%;
-    --accent-foreground: 0 0% 7%;
-    --ring: 0 0% 100%;
+    --accent: 208 33% 63%; /* #81A1C1 — the SIGNAL: links, focus, active marks */
+    --accent-foreground: 0 0% 8%;
+    --ring: 208 33% 63%;
 
-    /* --- Status. Same three meanings as light, lifted for a black ground -- */
-    --success: 153 62% 46%; /* #2DBE7E — life */
-    --destructive: 4 77% 60%; /* #E8574C — fault */
+    /* --- Status. Same meanings as light; Cursor Dark's own values ---------- */
+    --success: 143 43% 44%; /* #3FA266 — life: running, live, passed */
+    --destructive: 344 74% 58%; /* #E34671 — fault: failed, blocked, error */
     --destructive-foreground: 0 0% 98%;
-    --warning: 41 63% 57%; /* #D6A94A — degraded */
+    --warning: 36 76% 67%; /* #F1B467 — degraded: stale, modified, attention */
 
     /* Added / removed code — see :root. The added line takes the lift so it
        comes forward off the card it sits on; the deleted line takes the card
        itself, i.e. no ground of its own, and recedes through meta ink and the
        strike-through. It must never be DARKER than the surface under it. */
-    --diff-add: 0 0% 98%;
-    --diff-add-bg: 0 0% 16%;
-    --diff-del: 0 0% 64%;
-    --diff-del-bg: 0 0% 12%;
+    --diff-add: 143 30% 57%; /* #70B489 */
+    --diff-add-bg: 143 43% 44%; /* #3FA266, read at 18 % */
+    --diff-del: 350 96% 71%; /* #FC6B83 */
+    --diff-del-bg: 336 100% 36%; /* #B80049, read at 20 % */
 
-    --accent-rgb: 255 255 255;
+    --accent-rgb: 129 161 193;
     --scrim-rgb: 0 0 0;
     --sheen-rgb: 255 255 255;
     --shell-rgb: 18 18 18; /* the room, as channels */
@@ -759,17 +765,17 @@ label,
     /* Run-graph node categories — see :root. Ignition and landing take the
        full accent; every step between them is neutral and leaves the telling
        to its glyph. */
-    --viz-trigger: 0 0% 100%;
-    --viz-reasoning: 0 0% 64%;
-    --viz-terminal: 0 0% 64%;
-    --viz-file: 0 0% 64%;
-    --viz-search: 0 0% 64%;
-    --viz-web: 0 0% 64%;
-    --viz-integration: 0 0% 64%;
-    --viz-agent: 0 0% 64%;
-    --viz-tool: 0 0% 64%;
-    --viz-result: 0 0% 100%;
-    --viz-deliverable: 0 0% 64%;
+    --viz-trigger: 208 33% 63%; /* blue — the run's ignition */
+    --viz-reasoning: 247 90% 80%; /* lavender — thinking */
+    --viz-terminal: 193 43% 67%; /* cyan — shell */
+    --viz-file: 36 76% 67%; /* amber — writes */
+    --viz-search: 212 100% 76%; /* sky — read/grep/glob */
+    --viz-web: 193 43% 67%; /* cyan — fetch/web */
+    --viz-integration: 308 18% 62%; /* mauve — MCP / external */
+    --viz-agent: 317 63% 75%; /* pink — sub-agents */
+    --viz-tool: 0 0% 64%; /* neutral — unrecognised tools */
+    --viz-result: 143 43% 44%; /* green — the run's landing */
+    --viz-deliverable: 36 76% 67%; /* amber — files left behind */
 
     /* Black-and-white Gigi: white eyes and a white outline on charcoal. */
     --gigi-on-body: 0 0% 100%;
@@ -779,6 +785,13 @@ label,
     --jarvis-yellow: 255 255 255;
     --jarvis-yellow-dim: 163 163 163;
     --jarvis-grid: 0 0% 17%;
+
+    /* --- Info. The fourth semantic hue --------------------------------------
+       Cursor's badge / untracked / find-match cyan (#88C0D0). It says "note
+       this" without saying "something is wrong": counts, new items, hints. */
+    --info: 193 43% 67%;
+    --info-foreground: 0 0% 8%;
+
   }
 }
 
@@ -848,6 +861,13 @@ body {
 .font-mono {
   font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   letter-spacing: 0;
+}
+
+/* Links in rendered prose take the signal hue. The typography plugin reads
+   these two variables for its `a` rules in both palettes. */
+.prose {
+  --tw-prose-links: hsl(var(--accent));
+  --tw-prose-invert-links: hsl(var(--accent));
 }
 
 /* Selecting text answers in the theme's own material, not the engine's
@@ -1005,6 +1025,7 @@ body {
   .jarvis-nav-active {
     background: hsl(var(--secondary));
     color: hsl(var(--foreground-strong));
+    box-shadow: inset 2px 0 0 hsl(var(--accent));
   }
 
   /* Section-level grounds disappear everywhere the wallpaper is active. The
@@ -3467,28 +3488,15 @@ body {
  */
 @layer components {
   .diff-line-add {
-    background-color: hsl(var(--diff-add-bg));
+    background-color: hsl(var(--diff-add-bg) / 0.18);
     color: hsl(var(--diff-add));
   }
 
-  /* Struck through, not just dimmed. With no red to say "removed", the line
-     has to show it: the rule is drawn in the line's own muted ink so it reads
-     as a cancellation rather than as a second underline, and it is scoped to
-     whole diff LINES — the "+12 -3" counters below must stay legible. */
+  /* Removed lines keep their ink readable: the rose ground is faint and the
+     rose ink carries the meaning. Cursor draws exactly this pair
+     (diffEditor.removedTextBackground #B80049 at 13-20 %, gutter #E34671). */
   .diff-line-del {
-    background-color: hsl(var(--diff-del-bg));
-    color: hsl(var(--diff-del));
-    text-decoration: line-through;
-    text-decoration-color: hsl(var(--diff-del) / 0.55);
-    text-decoration-thickness: 1px;
-  }
-
-  /* The same two inks with no ground, for the "+12 -3" on a row. */
-  .diff-ink-add {
-    color: hsl(var(--diff-add));
-  }
-
-  .diff-ink-del {
+    background-color: hsl(var(--diff-del-bg) / 0.2);
     color: hsl(var(--diff-del));
   }
 }

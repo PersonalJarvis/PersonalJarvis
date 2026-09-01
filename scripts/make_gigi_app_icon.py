@@ -38,7 +38,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -90,6 +90,8 @@ POOL_RADIUS = 0.66
 BODY_INK = (10, 10, 10)
 FACE_INK = (6, 6, 6)  # pupils and the mouth's core, a touch deeper still
 PAPER = (255, 255, 255)
+DEV_AMBER = (241, 180, 103)  # the interface's "degraded" amber (#F1B467)
+DEV_INK = (20, 20, 20)
 #: The mark's box as a fraction of the tile — bigger where the tile is smaller.
 SPAN_LARGE = 0.62
 SPAN_SMALL = 0.76
@@ -287,6 +289,42 @@ def render_tile(size: int) -> Image.Image:
     return tile
 
 
+def _dev_ribbon(size: int) -> Image.Image:
+    """The amber DEV label the dev instance wears in its lower-right corner.
+
+    Drawn from the same amber the interface uses for "degraded" so the two
+    icons share a palette, and sized from the tile so it survives every ICO
+    member: below 32 px the word cannot be read, so the label collapses to a
+    plain amber block that still says "this is the other one" at a glance.
+    """
+    ribbon = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(ribbon)
+    width = size * 0.5
+    height = size * 0.2
+    margin = size * 0.05
+    x1 = size - margin
+    y1 = size - margin
+    x0 = x1 - width
+    y0 = y1 - height
+    radius = height * 0.28
+    draw.rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=(*DEV_AMBER, 255))
+    if size >= 32:
+        font = ImageFont.load_default(size=int(height * 0.78))
+        text = "DEV"
+        left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+        tx = x0 + (width - (right - left)) / 2 - left
+        ty = y0 + (height - (bottom - top)) / 2 - top
+        draw.text((tx, ty), text, font=font, fill=(*DEV_INK, 255))
+    return ribbon
+
+
+def render_dev_tile(size: int) -> Image.Image:
+    """The dev instance's icon: the same tile, wearing the DEV ribbon."""
+    tile = render_tile(size)
+    tile.alpha_composite(_dev_ribbon(size))
+    return tile
+
+
 def render_mark(size: int) -> Image.Image:
     """The free-standing mark, for surfaces that bring their own frame.
 
@@ -338,7 +376,20 @@ def main() -> None:
         ROOT / "jarvis" / "ui" / "web" / "frontend" / "public" / "jarvis-gigi.ico",
     ):
         write_ico(path, members)
-    print(f"wrote the app icon at {MASTER} px, 256 px, and {len(ICO_SIZES)} ICO members")
+    # The dev instance (``--instance dev``) shows its own DEV-badged copy on the
+    # taskbar and in its shortcut. It is rendered here, from the same drawing,
+    # so a redrawn Gigi can no longer leave the dev icon one draft behind.
+    dev_members = [render_dev_tile(s) for s in sorted(ICO_SIZES, reverse=True)]
+    write_png(ROOT / "assets" / "icons" / "jarvis-dev.png", render_dev_tile(256))
+    for path in (
+        ROOT / "jarvis" / "assets" / "icons" / "jarvis-dev.ico",
+        ROOT / "assets" / "icons" / "jarvis-dev.ico",
+    ):
+        write_ico(path, dev_members)
+    print(
+        f"wrote the app icon at {MASTER} px, 256 px, {len(ICO_SIZES)} ICO members, "
+        "and the DEV-badged copy"
+    )
 
 
 if __name__ == "__main__":

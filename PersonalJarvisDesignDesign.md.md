@@ -1,17 +1,18 @@
 ---
-version: 3.0
+version: 3.1
 name: Personal Jarvis
 description: >-
   The design system for the Personal Jarvis DESKTOP APP — not a marketing site.
   Graphite, not void: a near-black room whose surfaces have edges you can see,
   whose ink is bright enough to read at a glance, and whose type ships with the
-  app. Black-and-white by conviction — colour has exactly three jobs (life,
-  identity, fault) and appears nowhere else — but never grey-on-black. Version
-  2.0 (the "black room", 2026-09-01 afternoon) was rejected by the maintainer
-  the same evening as "dead, like a skeleton", "a funeral", "you cannot
-  recognise the type". This version keeps its structure and replaces its
-  values, re-measured against the live references that evening. Light mode is
-  the same system with the value scale inverted, never an afterthought.
+  app. Graphite carries the structure; colour carries meaning on top of it —
+  one desaturated signal blue, four semantic tones, coloured diffs, a coloured
+  run graph — on the model of Cursor's own theme, read from its installed
+  build. Version 2.0 (the "black room") was rejected as "dead, like a
+  skeleton"; 3.0 fixed the greys and 3.1 (same evening) gave colour its jobs
+  back after the maintainer pointed at Cursor: same greys, but the diffs,
+  warnings and links are coloured, and that is what makes it look finished.
+  Light mode is the same system with the value scale inverted.
 sources:
   maintainer-verdict-2026-09-01: >-
     On the 2.0 build: black-and-white is wanted, but this one looks dead — a
@@ -81,10 +82,25 @@ colors:
   light-fill: "#26251E"
   light-on-fill: "#F7F7F4"
 
-  # --- Status. The ONLY hues in the product, identical in both themes. ------
-  life: "#2DBE7E"
-  fault: "#E8574C"
-  degraded: "#D6A94A"
+  # --- Signal + semantic. Cursor Dark Anysphere / Cursor Light values. -----
+  dark-signal: "#81A1C1"
+  dark-life: "#3FA266"
+  dark-fault: "#E34671"
+  dark-degraded: "#F1B467"
+  dark-info: "#88C0D0"
+  dark-diff-add-ink: "#70B489"
+  dark-diff-add-ground: "#3FA266 @ 18%"
+  dark-diff-del-ink: "#FC6B83"
+  dark-diff-del-ground: "#B80049 @ 20%"
+  light-signal: "#2778C1"
+  light-life: "#007041"
+  light-fault: "#BE1744"
+  light-degraded: "#A46700"
+  light-info: "#176C74"
+  light-diff-add-ink: "#007041"
+  light-diff-add-ground: "#00B068 @ 18%"
+  light-diff-del-ink: "#BE1744"
+  light-diff-del-ground: "#FF617B @ 22%"
 
 typography:
   display:
@@ -287,12 +303,31 @@ components:
     typography: "{typography.title}"
     rounded: "{rounded.pill}"
     size: 36px
+  nav-row-selected-bar:
+    backgroundColor: "{colors.dark-signal}"
+    width: 2px
+  link:
+    textColor: "{colors.dark-signal}"
+    typography: "{typography.body}"
+  badge-info:
+    backgroundColor: "{colors.dark-info}"
+    textColor: "{colors.dark-on-fill}"
+    typography: "{typography.micro}"
+    rounded: "{rounded.pill}"
+  diff-line-add:
+    backgroundColor: "{colors.dark-diff-add-ground}"
+    textColor: "{colors.dark-diff-add-ink}"
+    typography: "{typography.code}"
+  diff-line-del:
+    backgroundColor: "{colors.dark-diff-del-ground}"
+    textColor: "{colors.dark-diff-del-ink}"
+    typography: "{typography.code}"
   status-dot-live:
-    backgroundColor: "{colors.life}"
+    backgroundColor: "{colors.dark-life}"
     rounded: "{rounded.pill}"
     size: 8px
   status-dot-fault:
-    backgroundColor: "{colors.fault}"
+    backgroundColor: "{colors.dark-fault}"
     rounded: "{rounded.pill}"
     size: 8px
   status-dot-idle:
@@ -364,9 +399,13 @@ status hues, the seven-step scale) and changes what it was wrong about:
 - **Nothing below 11 px.** The 271 remaining `text-[7–10px]` sites were swept
   to the `micro` step in the same change.
 
-Still black-and-white. Still neutral greys (`r = g = b` in dark, warm paper in
-light). Still exactly three hues. The conviction was never the problem; the
-values were.
+Still neutral greys (`r = g = b` in dark, warm paper in light) for every
+surface and every rim. **But no longer colourless.** 3.1 — the same evening,
+after the maintainer held the 3.0 build next to Cursor — puts colour back
+where it means something. Cursor's greys are practically ours; what makes
+Cursor look finished is that a removed line is rose, an added one green, a
+warning amber, a link blue, and all of it desaturated to one family. That is
+the whole difference, and it is now ours too (see *Colour has jobs*).
 
 ## Colors
 
@@ -433,21 +472,45 @@ measures. But the floor for anything a person is meant to read is now 64 %,
 up from 58 %, and the placeholder step is 48 %, up from 44 %. Small numbers;
 the difference between "meta" and "faded".
 
-### Status — the only hue in the product
+### Colour has jobs
 
-Three colours, identical in both themes because a status must not change
-meaning with the theme. Everything else in the interface is neutral.
+Read from Cursor's installed theme (`cursor-dark-color-theme.json`, 252
+roles) rather than from screenshots. The recipe: neutral greys carry the
+structure; colour appears only where it *means* something; every hue is
+desaturated to about the same chroma so the set reads as one family. One
+signal hue, four semantic tones, coloured diffs. Nothing else.
 
-| Token | Meaning | Value |
-|---|---|---|
-| `life` | Running, live, connected, on, passed. | `#2DBE7E` |
-| `fault` | Failed, blocked, disconnected, error. | `#E8574C` |
-| `degraded` | Stale, partial, needs attention. | `#D6A94A` |
+| Token | Job | Dark | Light |
+|---|---|---|---|
+| `signal` (`--accent`) | Links, focus ring token, the active nav row's leading bar, the install caret, prose links. **Press this / follow this.** | `#81A1C1` | `#2778C1` |
+| `life` (`--success`) | Running, live, connected, passed, progress. | `#3FA266` | `#007041` |
+| `fault` (`--destructive`) | Failed, blocked, error, destructive action. | `#E34671` | `#BE1744` |
+| `degraded` (`--warning`) | Stale, modified, partial, needs attention. | `#F1B467` | `#A46700` |
+| `info` (`--info`) | Counts, new items, hints — "note this" without "something is wrong". | `#88C0D0` | `#176C74` |
 
-A status may **never** be encoded as `ink` or `fill`. A status ramp may
-**never** render "ok" dimmer than "unknown". A success state must actually
-use `life` — four green rings are most of what makes Grok's window read as
-running.
+`--primary` stays the white fill: the primary button, marks and the orb ring
+are still ink-on-ink, as in Grok and ChatGPT. `signal` is a *colour*, not a
+fill for buttons — the exception a Cursor "Install" button makes is not one
+this product needs.
+
+Binding rules. A status may **never** be encoded as `ink` or `fill`. A status
+ramp may **never** render "ok" dimmer than "unknown". A success state must
+actually use `life`. And a hue is never decorative: if an element is coloured,
+the colour must be readable as one of the five jobs above.
+
+### Diffs
+
+Monochrome diffs with strike-through (3.0) are withdrawn. An added line is
+green ink on green at 18 %; a removed line is rose ink on rose at 20 %. That
+is Cursor's `diffEditor.*` / `gitDecoration.*` pair exactly, and it is the
+single most-cited reason the maintainer named for Cursor looking finished.
+
+### The run graph
+
+Eleven step families on the same palette Cursor paints code in — lavender
+reasoning, cyan shell and web, amber writes and deliverables, sky search,
+mauve integrations, pink sub-agents, blue ignition, green landing, neutral
+unknown. Two values (3.0) were honest but unreadable at a glance.
 
 ### Identity
 
@@ -461,7 +524,7 @@ are never read as state.
 ### Selection
 
 Dragging across text answers in the theme's own material — `sheen` at 22 % —
-never the engine's default blue. It was the one saturated slab a
+never the engine's default blue. Selection is not a job for `signal`. It was the one saturated slab a
 black-and-white product showed every time someone selected a sentence.
 
 ## Typography
@@ -630,6 +693,9 @@ Every section owns four states, and all four are designed.
   it encloses, it is not a rim.
 - Don't set a status in `ink` or `fill`, and never let "ok" be quieter than
   "unknown".
+- Don't colour anything that is not one of the five jobs. A hue with no
+  meaning is noise; five hues with meaning are the difference between a
+  wireframe and a product.
 - Don't use tiny uppercase labels. Don't go below 11 px.
 - Don't add a shadow to anything that is not floating.
 - Don't fetch a font from a remote host. Ever.
@@ -644,7 +710,8 @@ graphite: `rim` down to `#DFDDD5` so it reads on white cards, `ink-meta`
 down to `#66635A` (6.6 : 1 on paper), and the user bubble becomes a quiet
 `lift` fill with strong ink rather than a black slab.
 
-The three status hues do **not** change between themes.
+The five colour jobs keep their meaning between themes and take Cursor
+Light's values (`#2778C1`, `#007041`, `#BE1744`, `#A46700`, `#176C74`).
 
 ## The Agentic IDE panes
 
@@ -653,8 +720,9 @@ ladder re-derived per appearance in `terminalThemes.ts`, because a light pane
 inside a dark app is a supported combination and xterm cannot read a CSS
 token. The values there are this document's values: dark shell over `#121212`,
 rims at white 12 %, float `#303030`, ink `#F0F0F0` / `#A3A3A3` / `#7A7A7A`.
-The 16 ANSI slots keep their hues — a terminal's palette is one of the few
-places colour legitimately survives.
+The 16 ANSI slots are Cursor's own terminal set (rose, green, `#D2943E`,
+`#81A1C1`, `#B48EAD`, `#88C0D0`, brights one step lighter) so a CLI's output
+and the app's chrome share one palette; the light pane takes Cursor Light's.
 
 ## Enforcement
 
