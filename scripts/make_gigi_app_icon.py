@@ -1,32 +1,36 @@
-"""Render the desktop app icon: the Gigi mark in paper on an ink squircle.
+"""Render the desktop app icon: Gigi standing in a pool of light.
 
     python scripts/make_gigi_app_icon.py
 
-The icon is drawn from vector geometry, not resampled from a raster. The body
-path, the eyes and the mouth are copied verbatim from the canonical mascot in
+The icon is drawn from vector geometry, not resampled from a raster. Every
+shape — the body path, the trim outline, eyes, mouth, scanlines, cheek slices,
+glitch pixels and arms — is copied from the canonical mascot in
 ``jarvis/ui/web/frontend/src/components/MascotGigi.tsx`` (viewBox ``0 0 256
 256``); ``tests/test_app_icon.py`` fails if the two drift apart.
 
-What the icon deliberately drops from the live mascot: scanlines, glitch
-pixels, chromatic slices and arms. Those are motion decoration — below 48 px
-they turn to mush, and above it they read as noise. An app icon carries a
-shape, not an illustration. What is left is what Grok Bot and Hermes also show:
-one silhouette, two eyes, a mouth.
+**The lighting is the whole design.** Gigi's white accents are what make him
+alive, and a white tile is exactly the background that hides them — the trim
+outline, the arms and the glitch pixels all vanish into it, leaving a flat
+black blob. Turning the tile black is not the fix either: then his body
+disappears instead. What works is a value sandwich, darkest in the middle:
 
-Three details do the heavy lifting, and all three exist because a near-black
-tile has to survive a near-black taskbar:
+* the tile is a pool of light — bright behind him, falling away to near-black
+  at the corners;
+* his body is a solid ink darker than any part of that pool, so he reads as a
+  silhouette standing *in* the light rather than a drawing pasted onto it;
+* his trim, eyes and mouth are paper white with a soft glow, and the glow has
+  somewhere dark to land.
 
-* a superellipse (n=5) rather than a rounded rectangle — the tile shape every
-  platform's own icons use;
-* a vertical ink gradient, so the tile reads as a body instead of a hole;
-* a hairline of white just inside the edge, which draws the outline even when
-  the background matches the fill.
+Two more details, both because a dark tile meets a dark taskbar: the tile is a
+superellipse, the shape platforms use for their own icons, and a hairline of
+white sits just inside the edge to draw the outline when fill and background
+match.
 
-Small sizes are rendered, not downsampled, and they are not the same drawing
-shrunk. At 16 px on a dark taskbar the ink tile is nearly invisible, so the
-paper ghost has to carry the icon on its own: it grows from 74 % of the tile at
-64 px and up to 86 % at 16 px, drops the paper gradient that would only grey out
-its lower half, and takes a stronger hairline.
+Sizes are rendered, not downsampled, and they are not the same drawing shrunk.
+Below 48 px the scanlines, cheeks, glitch pixels and arms are dropped — they
+are under a pixel there and only muddy the face — and Gigi grows to fill more
+of the tile, because at 16 px it is the ghost, not the frame, that a person
+recognises.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -51,38 +55,59 @@ BODY_SKIRT = (
     (80, 208),
     (58, 186),
 )
-#: Eyes and mouth as (cx, cy, rx, ry) — punched out of the body, never drawn on.
+#: Eyes, pupils, mouth as (cx, cy, rx, ry); sparkles as (cx, cy, r).
 EYES = ((102, 108, 10, 14), (154, 108, 10, 14))
+PUPILS = ((104, 112, 4, 6), (156, 112, 4, 6))
+SPARKLES = ((106, 105, 2), (158, 105, 2))
 MOUTH = (128, 146, 7, 10)
+MOUTH_INNER = (128, 146, 3, 5)
+#: Body decoration as (x, y, w, h[, opacity]) — the pixel-ghost character.
+SCANLINES = ((58, 132, 140, 2.4, 0.55), (58, 160, 140, 1.4, 0.30))
+CHEEKS = ((64, 118, 18, 10), (170, 118, 18, 10))
+GLITCH_RIGHT = (
+    (200, 104, 6, 6),
+    (208, 128, 4, 4),
+    (202, 146, 9, 3),
+    (197, 168, 3, 5),
+    (206, 176, 5, 3),
+)
+GLITCH_LEFT = ((44, 96, 6, 4), (48, 124, 4, 6), (40, 148, 8, 3), (50, 170, 3, 5))
+#: Arms, as the control points of one quadratic each.
+ARM_LEFT = ((58, 140), (40, 148), (42, 162))
+ARM_RIGHT = ((198, 140), (216, 148), (214, 162))
+#: Horizontal extent of the drawing including arms and glitch pixels.
+DRAWING_X = (40.0, 216.0)
 
 # ── Treatment ────────────────────────────────────────────────────────────────
 SQUIRCLE_N = 5.0  # superellipse exponent; 5 is the shape platforms settled on
 SUPERSAMPLE = 4
-#: The mark's bounding box as a fraction of the tile. Small sizes carry a
-#: larger mark: at 16 px an ink tile on a dark taskbar is nearly invisible,
-#: so the paper ghost has to be the thing that reads, not the frame.
-MARK_SPAN_LARGE = 0.74
-MARK_SPAN_SMALL = 0.86
-MARK_SPAN_FULL_AT = 64  # at and above this the large span applies
-MARK_SPAN_SMALL_AT = 16
-MARK_RISE = 0.012  # optical centring: the zigzag skirt needs air below it
-INK_TOP = (30, 30, 30)
-INK_BOTTOM = (7, 7, 7)
-PAPER_TOP = (255, 255, 255)
-PAPER_BOTTOM = (206, 205, 201)
-PAPER_FLAT = (250, 249, 246)
-HAIRLINE_ALPHA = 0.11
-HAIRLINE_ALPHA_SMALL = 0.16
+#: The pool of light: bright at its centre, near-black by the corners.
+POOL_INNER = (122, 122, 122)
+POOL_OUTER = (11, 11, 11)
+POOL_CENTRE = (0.5, 0.44)
+POOL_RADIUS = 0.66
+#: Ink darker than every part of the pool, so he is always the darkest thing.
+BODY_INK = (10, 10, 10)
+FACE_INK = (6, 6, 6)  # pupils and the mouth's core, a touch deeper still
+PAPER = (255, 255, 255)
+#: The mark's box as a fraction of the tile — bigger where the tile is smaller.
+SPAN_LARGE = 0.62
+SPAN_SMALL = 0.76
+SPAN_FULL_AT = 64
+SPAN_SMALL_AT = 16
+#: Below this, scanlines/cheeks/glitch/arms are under a pixel and only muddy it.
+DETAIL_FROM = 48
+HAIRLINE_ALPHA = 0.12
 HAIRLINE_WIDTH = 0.007
-#: Below this, gradients cost more contrast than the volume they buy.
-FLAT_BELOW = 40
+TRIM_WIDTH = 2.6  # stroke width in mascot units
+ARM_WIDTH = 5.5
 
 MASTER = 1024
 ICO_SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
 
 
 def _quadratic(p0, p1, p2, steps: int = 64):
-    """Sample a quadratic Bezier — the ``Q`` segments of the body path."""
+    """Sample a quadratic Bezier — the ``Q`` segments of the body and arms."""
     for i in range(steps + 1):
         t = i / steps
         u = 1.0 - t
@@ -118,101 +143,159 @@ def squircle_mask(size: int) -> Image.Image:
     return mask.resize((size, size), Image.Resampling.LANCZOS)
 
 
-def _vertical_gradient(size: int, top, bottom) -> Image.Image:
-    column = Image.new("RGB", (1, size))
-    draw = ImageDraw.Draw(column)
-    for y in range(size):
-        t = y / max(1, size - 1)
-        draw.point((0, y), tuple(round(top[i] + (bottom[i] - top[i]) * t) for i in range(3)))
-    return column.resize((size, size), Image.Resampling.BILINEAR)
-
-
-def _diagonal_gradient(width: int, height: int, top, bottom) -> Image.Image:
-    """Light from the upper left, the way every platform lights its icons."""
-    image = Image.new("RGB", (width, height))
+def pool_of_light(size: int) -> Image.Image:
+    """A radial field: lit where Gigi stands, falling away at the corners."""
+    image = Image.new("RGB", (size, size))
     pixels = image.load()
-    for y in range(height):
-        for x in range(width):
-            t = min(1.0, x / max(1, width) * 0.42 + y / max(1, height) * 0.58)
-            pixels[x, y] = tuple(round(top[i] + (bottom[i] - top[i]) * t) for i in range(3))
+    cx, cy = POOL_CENTRE
+    for y in range(size):
+        dy = (y / size - cy) / POOL_RADIUS
+        for x in range(size):
+            dx = (x / size - cx) / POOL_RADIUS
+            t = min(1.0, math.hypot(dx, dy))
+            t = t * t * (3.0 - 2.0 * t)  # smoothstep, so the falloff has no seam
+            pixels[x, y] = tuple(
+                round(POOL_INNER[i] + (POOL_OUTER[i] - POOL_INNER[i]) * t) for i in range(3)
+            )
     return image
 
 
 def mark_span(size: int) -> float:
     """Interpolate the mark size, so no two neighbouring sizes jump."""
-    lo, hi = MARK_SPAN_SMALL_AT, MARK_SPAN_FULL_AT
-    t = min(1.0, max(0.0, (size - lo) / (hi - lo)))
-    return MARK_SPAN_SMALL + (MARK_SPAN_LARGE - MARK_SPAN_SMALL) * t
+    t = min(1.0, max(0.0, (size - SPAN_SMALL_AT) / (SPAN_FULL_AT - SPAN_SMALL_AT)))
+    return SPAN_SMALL + (SPAN_LARGE - SPAN_SMALL) * t
 
 
-def mark_mask(size: int, span: float | None = None) -> Image.Image:
-    """The Gigi silhouette with eyes and mouth punched out, sized for a tile."""
-    big = size * SUPERSAMPLE
-    polygon = body_polygon()
-    xs = [p[0] for p in polygon]
-    ys = [p[1] for p in polygon]
-    box_w, box_h = max(xs) - min(xs), max(ys) - min(ys)
-    scale = (big * (mark_span(size) if span is None else span)) / max(box_w, box_h)
-    off_x, off_y = -min(xs) * scale, -min(ys) * scale
+class _Mascot:
+    """Maps mascot units onto a supersampled canvas and draws Gigi there."""
 
-    def place(x: float, y: float) -> tuple[float, float]:
-        return (x * scale + off_x, y * scale + off_y)
+    def __init__(self, size: int, span: float, detail: bool) -> None:
+        ys = [p[1] for p in body_polygon()]
+        self.x0, self.x1 = DRAWING_X
+        self.y0, self.y1 = min(ys), max(ys)
+        self.scale = (size * SUPERSAMPLE * span) / max(self.x1 - self.x0, self.y1 - self.y0)
+        self.width = round((self.x1 - self.x0) * self.scale) + 4
+        self.height = round((self.y1 - self.y0) * self.scale) + 4
+        self.detail = detail
 
-    width, height = round(box_w * scale), round(box_h * scale)
-    mask = Image.new("L", (width + 2, height + 2), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.polygon([place(x, y) for x, y in polygon], fill=255)
-    for cx, cy, rx, ry in (*EYES, MOUTH):
-        draw.ellipse((*place(cx - rx, cy - ry), *place(cx + rx, cy + ry)), fill=0)
-    return mask.resize(
-        (max(1, width // SUPERSAMPLE), max(1, height // SUPERSAMPLE)),
-        Image.Resampling.LANCZOS,
-    )
+    def at(self, x: float, y: float) -> tuple[float, float]:
+        return ((x - self.x0) * self.scale, (y - self.y0) * self.scale)
+
+    def _oval(self, cx: float, cy: float, rx: float, ry: float) -> tuple[float, ...]:
+        return (*self.at(cx - rx, cy - ry), *self.at(cx + rx, cy + ry))
+
+    def _rect(self, x: float, y: float, w: float, h: float) -> tuple[float, ...]:
+        return (*self.at(x, y), *self.at(x + w, y + h))
+
+    def _stroke(self, draw, points, width: float, fill) -> None:
+        """Stamp a disc along a path — PIL has no round cap and frays on curves.
+
+        The path is densified first: a polygon's straight flanks carry only
+        their end points, and stamping those alone leaves a dotted line.
+        """
+        radius = max(1.0, width * self.scale / 2.0)
+        step = max(0.5, radius / 2.0)
+        for (x0, y0), (x1, y1) in zip(points, points[1:], strict=False):
+            span = math.hypot(x1 - x0, y1 - y0)
+            for i in range(max(1, int(span / step)) + 1):
+                t = min(1.0, i * step / span) if span else 0.0
+                x, y = x0 + (x1 - x0) * t, y0 + (y1 - y0) * t
+                draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=fill)
+
+    def _layer(self) -> tuple[Image.Image, ImageDraw.ImageDraw]:
+        layer = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
+        return layer, ImageDraw.Draw(layer)
+
+    def render(self) -> Image.Image:
+        polygon = [self.at(x, y) for x, y in body_polygon()]
+
+        # Solid ink body — darker than any part of the pool behind it.
+        silhouette = Image.new("L", (self.width, self.height), 0)
+        ImageDraw.Draw(silhouette).polygon(polygon, fill=255)
+        body = Image.new("RGB", (self.width, self.height), BODY_INK)
+        gigi = Image.merge("RGBA", (*body.split(), silhouette))
+
+        # Trim: the paper outline that separates ink from a dark ground.
+        self._stroke(ImageDraw.Draw(gigi), [*polygon, polygon[0]], TRIM_WIDTH, (*PAPER, 255))
+
+        glowing, glow_draw = self._layer()  # gets a blurred copy underneath
+        matte, matte_draw = self._layer()  # stays crisp, no glow
+        if self.detail:
+            for x, y, w, h, opacity in SCANLINES:
+                matte_draw.rectangle(self._rect(x, y, w, h), fill=(*PAPER, round(255 * opacity)))
+            for x, y, w, h in CHEEKS:
+                matte_draw.rectangle(self._rect(x, y, w, h), fill=(*PAPER, 82))
+            for pixels, alpha in ((GLITCH_RIGHT, 255), (GLITCH_LEFT, 179)):
+                for x, y, w, h in pixels:
+                    glow_draw.rectangle(self._rect(x, y, w, h), fill=(*PAPER, alpha))
+            for arm in (ARM_LEFT, ARM_RIGHT):
+                self._stroke(
+                    glow_draw,
+                    [self.at(*point) for point in _quadratic(*arm, steps=160)],
+                    ARM_WIDTH,
+                    (*PAPER, 255),
+                )
+        for eye in EYES:
+            glow_draw.ellipse(self._oval(*eye), fill=(*PAPER, 255))
+        glow_draw.ellipse(self._oval(*MOUTH), fill=(*PAPER, 255))
+
+        # A wide soft halo, then the tight glow, then the crisp shapes.
+        halo, halo_draw = self._layer()
+        for cx, cy, rx, ry in EYES:
+            halo_draw.ellipse(self._oval(cx, cy, rx + 4, ry + 4), fill=(*PAPER, 165))
+        halo_draw.ellipse(
+            self._oval(MOUTH[0], MOUTH[1], MOUTH[2] + 4, MOUTH[3] + 4), fill=(*PAPER, 130)
+        )
+        gigi.alpha_composite(halo.filter(ImageFilter.GaussianBlur(max(1.0, 8.0 * self.scale))))
+        gigi.alpha_composite(glowing.filter(ImageFilter.GaussianBlur(max(1.0, 3.2 * self.scale))))
+        gigi.alpha_composite(glowing)
+        gigi.alpha_composite(matte)
+
+        face, face_draw = self._layer()
+        for pupil in PUPILS:
+            face_draw.ellipse(self._oval(*pupil), fill=(*FACE_INK, 255))
+        face_draw.ellipse(self._oval(*MOUTH_INNER), fill=(*FACE_INK, 255))
+        if self.detail:
+            for cx, cy, r in SPARKLES:
+                face_draw.ellipse(self._oval(cx, cy, r, r), fill=(*PAPER, 255))
+        gigi.alpha_composite(face)
+
+        return gigi.resize(
+            (max(1, self.width // SUPERSAMPLE), max(1, self.height // SUPERSAMPLE)),
+            Image.Resampling.LANCZOS,
+        )
 
 
-def _hairline(size: int, alpha: float) -> Image.Image:
+def _hairline(size: int) -> Image.Image:
     """A ring just inside the tile edge, so the shape survives a dark taskbar."""
     inset = max(1, round(size * HAIRLINE_WIDTH))
     inner = Image.new("L", (size, size), 0)
     inner.paste(squircle_mask(size - 2 * inset), (inset, inset))
     ring = ImageChops.subtract(squircle_mask(size), inner)
-    line = Image.new("RGBA", (size, size), (255, 255, 255, 255))
-    line.putalpha(ring.point(lambda v: int(v * alpha)))
+    line = Image.new("RGBA", (size, size), (*PAPER, 255))
+    line.putalpha(ring.point(lambda v: int(v * HAIRLINE_ALPHA)))
     return line
 
 
 def render_tile(size: int) -> Image.Image:
     """Render one icon size from scratch — never by resampling a bigger one."""
-    flat = size < FLAT_BELOW
-    tile = _vertical_gradient(size, INK_TOP, INK_BOTTOM).convert("RGBA")
-    tile.alpha_composite(_hairline(size, HAIRLINE_ALPHA_SMALL if flat else HAIRLINE_ALPHA))
-
-    mask = mark_mask(size)
-    if flat:
-        paper = Image.new("RGB", mask.size, PAPER_FLAT)
-    else:
-        paper = _diagonal_gradient(*mask.size, PAPER_TOP, PAPER_BOTTOM)
-    mark = Image.merge("RGBA", (*paper.split(), mask))
-    tile.alpha_composite(
-        mark,
-        ((size - mask.width) // 2, (size - mask.height) // 2 - round(size * MARK_RISE)),
-    )
+    tile = pool_of_light(size).convert("RGBA")
+    tile.alpha_composite(_hairline(size))
+    gigi = _Mascot(size, mark_span(size), size >= DETAIL_FROM).render()
+    tile.alpha_composite(gigi, ((size - gigi.width) // 2, (size - gigi.height) // 2))
     tile.putalpha(squircle_mask(size))
     return tile
 
 
 def render_mark(size: int) -> Image.Image:
-    """The free-standing mark: paper Gigi on transparency, no tile.
+    """The free-standing mark, for surfaces that bring their own frame.
 
-    Used where the surface already provides the frame — the share card's ring,
-    for one. With no tile there is no edge to keep clear of, so it fills the
-    canvas instead of sitting inside a tile's margin.
+    The share card's ring, for one. With no tile there is no edge to keep clear
+    of, so it fills the canvas instead of sitting inside a tile's margin.
     """
-    mask = mark_mask(size, span=1.0)
-    paper = _diagonal_gradient(*mask.size, PAPER_TOP, PAPER_BOTTOM)
-    mark = Image.merge("RGBA", (*paper.split(), mask))
+    gigi = _Mascot(size, 1.0, True).render()
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    canvas.alpha_composite(mark, ((size - mask.width) // 2, (size - mask.height) // 2))
+    canvas.alpha_composite(gigi, ((size - gigi.width) // 2, (size - gigi.height) // 2))
     return canvas
 
 
