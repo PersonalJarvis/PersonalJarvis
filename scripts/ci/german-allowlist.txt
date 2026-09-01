@@ -478,3 +478,7 @@ tests/unit/dictation/test_prompt_mode.py
 #     USER.md capture recognises ARE the content under test, and the negative
 #     corpus only proves precision if it holds real German near-misses ---
 tests/unit/memory/test_profile_capture.py
+
+# --- Agent society (2026-09-01): the focus alias table maps the words people
+#     write in agent descriptions (de/en) onto capability ids ---
+jarvis/society/focus.py
