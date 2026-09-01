@@ -21,3 +21,22 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+----------------------------------------------------------------------
+
+Inter (variable build)
+Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
+
+JetBrains Mono
+Copyright 2020 The JetBrains Mono Project Authors
+(https://github.com/JetBrains/JetBrainsMono)
+
+Space Grotesk
+Copyright 2020 Florian Karsten (https://github.com/floriankarsten/space-grotesk)
+
+The three families are bundled as web fonts (via the @fontsource packages)
+and are licensed under the SIL Open Font License, Version 1.1. The full
+licence text and a FAQ are available at https://openfontlicense.org. The
+fonts may be used, studied, modified and redistributed freely as long as
+they are not sold by themselves; the reserved font names may not be used
+for modified versions.
