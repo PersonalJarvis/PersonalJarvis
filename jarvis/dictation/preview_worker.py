@@ -35,10 +35,10 @@ from __future__ import annotations
 import json
 import struct
 import sys
-from typing import Any, BinaryIO
+from typing import IO, Any
 
 
-def _read_exact(stream: BinaryIO, n: int) -> bytes | None:
+def _read_exact(stream: IO[bytes], n: int) -> bytes | None:
     """``n`` bytes, or ``None`` on EOF — a torn read means the peer is gone."""
     chunks: list[bytes] = []
     remaining = n
@@ -51,7 +51,7 @@ def _read_exact(stream: BinaryIO, n: int) -> bytes | None:
     return b"".join(chunks)
 
 
-def read_message(stream: BinaryIO) -> dict[str, Any] | None:
+def read_message(stream: IO[bytes]) -> dict[str, Any] | None:
     """One length-prefixed JSON message, or ``None`` on EOF."""
     header = _read_exact(stream, 4)
     if header is None:
@@ -63,13 +63,13 @@ def read_message(stream: BinaryIO) -> dict[str, Any] | None:
     return json.loads(payload.decode("utf-8"))
 
 
-def write_message(stream: BinaryIO, message: dict[str, Any]) -> None:
+def write_message(stream: IO[bytes], message: dict[str, Any]) -> None:
     payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
     stream.write(struct.pack(">I", len(payload)) + payload)
     stream.flush()
 
 
-def serve(stdin: BinaryIO, stdout: BinaryIO, model_name: str) -> int:
+def serve(stdin: IO[bytes], stdout: IO[bytes], model_name: str) -> int:
     """Build the engine, report readiness, then answer requests until EOF."""
     from jarvis.dictation.local_preview import LocalPreviewTranscriber
 
