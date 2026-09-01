@@ -169,7 +169,11 @@ decision 2026-09-01; GLB asset, nearest-filtered texture sheet), drag-to-orbit, 
 Figure details:
 Pipeline: ONE shared low-poly base rig (built once, e.g. in Blender), customization through
 swappable part meshes (hair/headgear/outfit) plus palette/texture-sheet variants; AI generation
-targets the flat texture sheet and runs through a validate-and-repair step. Right: the spec sheet — provider/model pill,
+targets the flat texture sheet and runs through a validate-and-repair step. The full figure
+standard — archetypes (`biped` / `quadruped` / `spirit`), the asset contract (+Z forward, origin
+at the feet, bone and clip names, sheet layout), the locomotion rules that prevent backwards
+walking and foot sliding, the headless Blender build, the four creation workflows and the CI
+gate — is [`character-pipeline.md`](character-pipeline.md). Right: the spec sheet — provider/model pill,
 effort default; tools & plugins (per-agent allowlist *under* the global tiers); permission badge;
 memory scope; routines with next-fire times; lifetime stats (runs, cost, last active). Actions:
 Chat, Assign task, Edit, Change avatar (preset parts + palettes / texture upload / AI-generate),
@@ -351,3 +355,7 @@ Still open:
    research identified it as the one meant; it is an inference, not a certainty.
 6. First-run seed agents: ship a starter coordinator + one specialist, or start empty?
 7. Content of the thin top strip above the world stage (§4.1).
+8. The three figure-pipeline decisions in [`character-pipeline.md`](character-pipeline.md) §12:
+   CC0 skeleton + clip base for the biped (widens the "first-party rig" wording in §7 to "own
+   meshes and textures on a CC0 skeleton"), `figure_json` instead of `avatar_uri` in the M1
+   schema, and whether the Tripo likeness route ships behind the keyring flow.
