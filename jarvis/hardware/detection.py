@@ -742,6 +742,50 @@ def _probe_accelerator_gb() -> tuple[float, str]:
     return 0.0, "none"
 
 
+def free_accelerator_gb() -> tuple[float, str]:
+    """FREE accelerator memory in GiB right now, and where the figure came from.
+
+    ``(gb, source)`` with source ``"nvml"`` | ``"nvidia-smi"`` | ``"none"``.
+    ``(0.0, "none")`` means *unknown* — no NVIDIA tooling answered — and a
+    caller must treat it as "cannot vouch for free memory", never as "the card
+    is full": Apple's unified memory and ROCm have no cheap free-memory reading
+    here, and refusing to spawn on an unknowable number would turn every such
+    box into a brick (AP-22 shape).
+
+    Deliberately UNCACHED, unlike :func:`usable_accelerator_gb`: free memory
+    moves with every model load/unload, and the one caller that needs it (the
+    local-realtime spawn gate) asks at most once per spawn attempt, which the
+    supervisor already rate-limits. The LARGEST single device's free figure,
+    matching the total probe's one-GPU-runs-inference rule.
+    """
+    try:
+        import pynvml  # type: ignore[import-untyped]
+
+        pynvml.nvmlInit()
+        try:
+            free_mb = 0
+            for i in range(pynvml.nvmlDeviceGetCount()):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                free_mb = max(free_mb, int(mem.free) // (1024 * 1024))
+        finally:
+            pynvml.nvmlShutdown()
+        if free_mb > 0:
+            return free_mb / 1024.0, "nvml"
+    except Exception:  # noqa: BLE001 — no pynvml / no driver is a normal state
+        log.debug("hardware: NVML free-memory probe unavailable", exc_info=True)
+    out = _run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"])
+    free_mb = 0
+    for line in out.strip().splitlines():
+        try:
+            free_mb = max(free_mb, int(line.strip()))
+        except ValueError:
+            continue
+    if free_mb > 0:
+        return free_mb / 1024.0, "nvidia-smi"
+    return 0.0, "none"
+
+
 def system_ram_gb() -> float | None:
     """Total system memory in GiB, or ``None`` when it cannot be read.
 

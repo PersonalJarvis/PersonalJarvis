@@ -65,13 +65,17 @@ def test_ladder_helper_is_capped_by_native_window_and_budget() -> None:
     assert largest_context_for(size_gb=3.4, native_context=None, budget_gb=None) == 4096
 
 
-def test_a_16gb_card_gets_a_64k_voice_context(monkeypatch) -> None:
+def test_a_16gb_card_gets_a_32k_voice_context(monkeypatch) -> None:
+    # 15.9 GB minus the MEASURED 6 GB STT/TTS reserve (BUG-204: the TTS alone
+    # holds ~5.4 GB; the old 4 GB reserve never actually reserved) leaves
+    # 9.9 GB — the 64k rung (11.1 GB) no longer pretends to fit beside the
+    # voice stack, the 32k rung does.
     _fake_ollama(monkeypatch, size_bytes=3_400_000_000, native=262_144, created=[])
     monkeypatch.setattr(
         "jarvis.hardware.detection.usable_accelerator_gb", lambda: (15.9, "nvidia-smi")
     )
     tokens, why = supervisor.voice_brain_context_tokens("http://127.0.0.1:11434", "qwen3.5:4b")
-    assert tokens == 65_536
+    assert tokens == 32_768
     assert "reserved for local STT/TTS" in why
 
 
@@ -99,7 +103,7 @@ def test_no_accelerator_uses_the_ram_rule(monkeypatch) -> None:
     monkeypatch.setattr("jarvis.hardware.detection.usable_accelerator_gb", lambda: (0.0, "none"))
     monkeypatch.setattr("jarvis.hardware.detection.system_ram_gb", lambda: 32.0)
     tokens, why = supervisor.voice_brain_context_tokens("http://127.0.0.1:11434", "qwen3.5:4b")
-    # 60 % of 32 GB minus the 4 GB reserve = 15.2 GB -> the 64k rung fits (11.1 GB).
+    # 60 % of 32 GB minus the 6 GB reserve = 13.2 GB -> the 64k rung fits (11.1 GB).
     assert tokens == 65_536
     assert "RAM" in why
 
@@ -115,8 +119,8 @@ def test_prepare_creates_an_alias_named_after_the_chosen_context(monkeypatch) ->
         "--responses_api_base_url http://127.0.0.1:11434/v1 --responses_api_api_key ollama"
     )
     out = supervisor.prepare_voice_brain_command(command)
-    assert "qwen3.5:4b-voice-64k" in out
-    assert created and created[0]["parameters"] == {"num_ctx": 65_536}
+    assert "qwen3.5:4b-voice-32k" in out
+    assert created and created[0]["parameters"] == {"num_ctx": 32_768}
     assert created[0]["from"] == "qwen3.5:4b"
 
 

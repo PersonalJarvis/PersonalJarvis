@@ -171,7 +171,10 @@ VOICE_BRAIN_CONTEXT_TOKENS_FLOOR = 8192
 #: instructions, the transcript and the answer, so the cache survives the call.
 VOICE_BRAIN_DECLARATION_SHARE = 0.25
 #: Accelerator memory kept free for the local STT + TTS models beside the brain.
-VOICE_STACK_RESERVE_GB = 4.0
+#: Measured, not guessed (BUG-204 forensics 2026-08-28): the Qwen3-TTS server
+#: alone holds ~5.4 GB plus CUDA-graph warm-up headroom; the old 4.0 was
+#: smaller than the TTS by itself, so the reserve never actually reserved.
+VOICE_STACK_RESERVE_GB = 6.0
 #: Historical name of the floor; readers that only need "some bound" keep it.
 VOICE_BRAIN_CONTEXT_TOKENS = VOICE_BRAIN_CONTEXT_TOKENS_FLOOR
 _VOICE_MODEL_SUFFIX_RE = re.compile(r"-voice-(\d+)k$")
@@ -1210,6 +1213,47 @@ def _local_models_switched_off() -> str:
     return "refused:local-models-off"
 
 
+def _accelerator_memory_refusal() -> str:
+    """``"refused:accelerator-memory"`` when the card provably cannot take the
+    stack, ``""`` when it can — or when free memory is UNKNOWN.
+
+    BUG-204's unfixed half: nothing ever checked FREE memory before spawning
+    the multi-GB TTS server, so on a card already holding the voice brain and
+    the desktop the spawn oversubscribed VRAM and the whole machine dropped to
+    1 FPS. The gate asks for :data:`VOICE_STACK_RESERVE_GB` of free memory —
+    the measured STT+TTS footprint — right before the spawn (after the orphan
+    sweep, so a killed stale server's memory already counts as free).
+
+    An unknown reading (no NVIDIA tooling — Apple unified memory, ROCm, a
+    locked-down host) allows the spawn: refusing on a number nobody can read
+    would brick every such box (AP-22), and the install-time preflight already
+    vouched for the hardware class. The refusal is capability-shaped, so the
+    caller's normal fallback chain (hosted realtime) takes over — degrading
+    honestly instead of freezing the desktop.
+    """
+    try:
+        from jarvis.hardware.detection import free_accelerator_gb  # lazy (AP-26)
+
+        free_gb, source = free_accelerator_gb()
+    except Exception:  # noqa: BLE001 — a broken probe must never veto the spawn
+        log.debug("supervisor: free-memory probe failed", exc_info=True)
+        return ""
+    if source == "none" or free_gb <= 0.0:
+        return ""
+    if free_gb >= VOICE_STACK_RESERVE_GB:
+        return ""
+    log.warning(
+        "local-realtime supervisor: not spawning — only %.1f GB of accelerator "
+        "memory is free (%s) and the voice stack needs ~%.1f GB. The hosted "
+        "fallback takes this call; free the card (or stop other models) to "
+        "run locally.",
+        free_gb,
+        source,
+        VOICE_STACK_RESERVE_GB,
+    )
+    return "refused:accelerator-memory"
+
+
 def ensure_running(
     *,
     launch_command: str,
@@ -1383,6 +1427,9 @@ def ensure_running(
                     "local-realtime supervisor: removed %s orphan process(es) before spawn",
                     killed,
                 )
+            refused = _accelerator_memory_refusal()
+            if refused:
+                return refused
             try:
                 command = prepare_voice_brain_command(command)
             except RuntimeError as exc:
