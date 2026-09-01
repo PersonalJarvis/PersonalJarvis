@@ -3,10 +3,10 @@
 Not built yet. Reserved home for the society surfaces planned in
 `docs/agent-society/MASTERPLAN.md` (§4, §9):
 
-- `world/` — the isometric retro pixel world (three + @react-three/fiber v8 + drei, orthographic
-  dimetric camera, ~320×180 nearest-filtered render target / `RenderPixelatedPass`), checkpoints,
-  skin-format voxel walkers, the client-side choreography queue.
-- `card/` — the agent model card: rotating `skinview3d` figure on the left, spec sheet on the right.
+- `world/` — the isometric retro pixel open-island world (three + @react-three/fiber v8 + drei,
+  orthographic dimetric camera, ~320×180 nearest-filtered render target / `RenderPixelatedPass`),
+  checkpoint places, low-poly pixel-textured walkers, the client-side choreography queue.
+- `card/` — the agent model card: rotating low-poly GLB figure on the left, spec sheet right.
 - `ledger/` — the data-dense board tab (successor of the DepartureBoard) and the declared fallback
   for no-WebGL, reduced-motion, and headless contexts.
 - `feed/` — society message feed and bounded room transcripts.

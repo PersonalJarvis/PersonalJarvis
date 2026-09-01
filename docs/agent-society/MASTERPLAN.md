@@ -125,7 +125,7 @@ bubble). Multi-window/dev-instance viewers are independent projections of the sa
 
 ### 4.1 World view (the section's face)
 
-One viewport (one-viewer doctrine, overflow in drawers). Isometric pixel room rendered with the
+One viewport (one-viewer doctrine, overflow in drawers). Isometric pixel island rendered with the
 **already-shipped stack**: three ^0.185 + @react-three/fiber v8 + drei, orthographic dimetric
 camera, scene rendered into a ~320×180 nearest-filtered render target (`RenderPixelatedPass`) —
 crisp retro pixels AND a ~16–36× fragment-cost reduction, which is the medicine for WebView2's
@@ -134,10 +134,12 @@ context-loss recovery, context budget); rAF pauses via IntersectionObserver (nev
 `document.hidden` — unreliable in this shell); `frameloop="demand"` when nothing moves;
 devicePixelRatio capped at 1.
 
-Checkpoints with meaning: **desk row** (agent at desk + glowing screen = mission running),
-**meeting table** (bounded rooms, visible round counter "Runde 2/3"), **archive** (knowledge
-writes), **gate** (routines firing / outbound actions / pending approvals), **Jarvis' podium**
-(Gigi, mapped to the voice orb). Idle agents wander client-side (rest-biased, exponential dwell).
+The world is an **open island** (maintainer decision 2026-09-01 — not a single room), with
+checkpoints as places: a **workshop** with a desk row (agent at its desk + glowing screen =
+mission running), a **meeting pavilion** (bounded rooms, visible round counter "Runde 2/3"), an
+**archive house** (knowledge writes), a **harbor gate** (routines firing / outbound actions /
+pending approvals), and **Jarvis' lighthouse** (the lead agent, mapped to the voice orb). Idle
+agents wander the island client-side (rest-biased, exponential dwell).
 Click a figure → model card. HUD: active count, today's cost (from the costs ledger, §5), "Active
 now" face strip. A **Ledger tab** keeps the current DepartureBoard as the data-dense secondary view
 — and is the *declared* fallback wherever WebGL is absent, reduced motion is requested, or the
@@ -145,14 +147,17 @@ box is headless.
 
 ### 4.2 Agent model card
 
-Left: rotating voxel figure — the agent's 64×64 **Minecraft-skin-format PNG** rendered by
-`skinview3d` (MIT), drag-to-orbit, walking idle. Right: the spec sheet — provider/model pill,
+Left: rotating figure — the agent's **low-poly character with pixel-art textures** (maintainer
+decision 2026-09-01; GLB asset, nearest-filtered texture sheet), drag-to-orbit, idle animation.
+Pipeline: ONE shared low-poly base rig (built once, e.g. in Blender), customization through
+swappable part meshes (hair/headgear/outfit) plus palette/texture-sheet variants; AI generation
+targets the flat texture sheet and runs through a validate-and-repair step. Right: the spec sheet — provider/model pill,
 effort default; tools & plugins (per-agent allowlist *under* the global tiers); permission badge;
 memory scope; routines with next-fire times; lifetime stats (runs, cost, last active). Actions:
-Chat, Assign task, Edit, Change avatar (preset / upload / AI-generate with a validate-and-repair
-step for exact 64×64 layout), Pause. Creation = **three fields (name, role, description) + an
-Advanced disclosure**; the agent introduces itself as its first chat message (Hermes' lesson: no
-wizard). One PNG per agent drives world walker + card figure + 2D face crop for chat avatars.
+Chat, Assign task, Edit, Change avatar (preset parts + palettes / texture upload / AI-generate),
+Pause. Creation = **three fields (name, role, description) + an Advanced disclosure**; the agent
+introduces itself as its first chat message (Hermes' lesson: no wizard). One rig + one per-agent
+texture/part set drives world walker AND card figure; a rendered face crop feeds chat avatars.
 
 ### 4.3 World branding (maintainer directive, 2026-09-01)
 
@@ -240,7 +245,9 @@ add the four controls it lacked: authenticated writes (chokepoint), bounded non-
   voice announcements; an expired approval re-asks on next focus (§2.9).
 - **Licensing:** Hermes is MIT (attribution NOTICE when copying substantial code; repo keeps
   provenance headers). skinview3d MIT. Asset/skin uploads follow the existing report-then-delist
-  precedent; no "Minecraft" branding in product copy (trademark) — "voxel retro" language only.
+  precedent; the character pipeline is first-party (own base rig + textures — the earlier
+  skinview3d/Minecraft-skin route was dropped with the avatar decision); no third-party game
+  trademarks in product copy — "pixel retro" language only.
   World visual identity: see §4.3 — the world carries its own bright game branding and is exempt
   from both Ink & Paper and the Cursor-derived design doc.
 
@@ -254,10 +261,13 @@ add the four controls it lacked: authenticated writes (chokepoint), bounded non-
   yet), per-agent model/provider/tools/permissions, canonical chats via `agent_chat`, approvals
   queue + cards, `[agent:*]` routines in Automations, i18n. *Exit: create "Scout", chat with it,
   give it a routine, approve one asked action.*
-- **M3 — World V1 (T2).** Isometric room + checkpoints + skin-format walkers + model-card
-  skinview3d figure; snapshot+delta WS; wander; click-to-inspect; Ledger fallback wired;
-  reduced-motion; AP-32; lazy chunk; VRAM policy. *Exit: watching a real mission play out in the
-  world, on integrated graphics, with WebGL forced off falling back cleanly.*
+- **M3 — World V1 (T2).** Art-direction pass FIRST (§4.3 — island mood boards, palette, tile/
+  building set), then: island terrain + checkpoint places + low-poly pixel-textured walkers (base
+  rig + first part/palette set) + model-card figure viewer; snapshot+delta WS; wander;
+  click-to-inspect; Ledger fallback wired; reduced-motion; AP-32; lazy chunk; VRAM policy. The
+  open-island decision makes this the largest milestone — split into M3a (terrain, navigation,
+  walkers) and M3b (buildings, polish) if it crowds the month. *Exit: watching a real mission
+  play out on the island, on integrated graphics, with WebGL forced off falling back cleanly.*
 - **M4 — Society dynamics (T2/T3 for voice).** Bounded group rooms (meeting table), curator +
   taint + wiki review gate, `delegate-to-agent` router tool + ADR amendment + voice status/ack
   paths, notifications. *Exit: the spoken request "Jarvis, lass Scout und Archivist das zusammen klären" (i18n-allow: quoted German voice example)
@@ -286,20 +296,25 @@ jarvis/society/                     # backend package (M1) — see its README
 jarvis/ui/web/society_routes.py     # REST (+ CLI coverage via generate-cli-command)
 jarvis/ui/web/frontend/src/components/society/
   world/                            # R3F scene, checkpoints, walkers, choreography queue
-  card/                             # model card (skinview3d figure + spec sheet)
+  card/                             # model card (rotating GLB figure + spec sheet)
   ledger/                           # DepartureBoard successor tab / fallback
   feed/                             # society message feed & room transcripts
 docs/agent-society/                 # this plan + research (already present)
 tests/contract/ + tests/unit/society/
 ```
 
-## 10. Open questions for the maintainer
+## 10. Maintainer decisions & open questions
 
-1. **Product name** for the section (working codename `society`).
-2. **World V1 scope:** one room (recommended — fastest path to something beautiful) vs. an open
-   island vs. multiple rooms/floors.
-3. **Avatar style:** voxel Minecraft-skin figures (recommended; pipeline is solved) vs. 2D pixel
-   sprites (billboards) vs. low-poly with pixel textures.
-4. Confirm the DeepMind paper: *From AGI to ASI* (arXiv 2606.12683, Hutter & Legg et al.) — the
+Decided 2026-09-01:
+
+1. **Name:** the section keeps the name **Jarvis Agents** (codename `society` stays internal).
+2. **World V1 scope:** an **open island** (not a single room) — M3 sized accordingly.
+3. **Avatar style:** **low-poly figures with pixel-art textures** (not Minecraft-skin voxels) —
+   one shared base rig, swappable parts, texture/palette variants (§4.2).
+4. **World branding:** its own bright video-game identity (§4.3).
+
+Still open:
+
+5. Confirm the DeepMind paper: *From AGI to ASI* (arXiv 2606.12683, Hutter & Legg et al.) — the
    research identified it as the one meant; it is an inference, not a certainty.
-5. First-run seed agents: ship a starter coordinator + one specialist, or start empty?
+6. First-run seed agents: ship a starter coordinator + one specialist, or start empty?
