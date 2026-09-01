@@ -386,8 +386,8 @@ def test_the_dictation_provider_is_built_without_the_voice_bias_prompt(
 
     seen: list[Any] = []
 
-    def _build(cfg: Any) -> Any:
-        seen.append(cfg)
+    def _build(cfg: Any, **kwargs: Any) -> Any:
+        seen.append((cfg, kwargs))
         return SimpleNamespace(name="built")
 
     monkeypatch.setattr(stt_plugins, "build_stt_from_config", _build)
@@ -399,7 +399,11 @@ def test_the_dictation_provider_is_built_without_the_voice_bias_prompt(
     instance = pipe._dictation_stt()
 
     assert instance is not None
-    assert seen and seen[0].bias_prompt == ""
+    assert seen and seen[0][0].bias_prompt == ""
+    # ...and the STT dictionary stays out of the decoder prompt too (BUG-211):
+    # Whisper recites a primed word list over pauses, and a lone recited item
+    # passes the echo guard and lands in the document.
+    assert seen[0][1] == {"dictionary_bias": False}
     # The VOICE config is untouched — this is a copy, not a mutation.
     assert pipe._config.stt.bias_prompt == "Jarvis, Adex, Ruben, Vokando"
 
@@ -413,7 +417,7 @@ def test_the_dictation_provider_is_built_once_and_cached(
     monkeypatch.setattr(
         stt_plugins,
         "build_stt_from_config",
-        lambda cfg: builds.append(cfg) or SimpleNamespace(),
+        lambda cfg, **_k: builds.append(cfg) or SimpleNamespace(),
     )
     monkeypatch.setattr(stt_plugins, "resolve_keyed_stt_fallback", lambda *_a, **_k: ())
     pipe = _pipeline_with_config(provider="groq-api")
@@ -442,7 +446,7 @@ def test_the_dictation_provider_arms_the_cross_family_chain(
     from jarvis.speech.stt_fallback import FallbackSTT
 
     monkeypatch.setattr(
-        stt_plugins, "build_stt_from_config", lambda cfg: SimpleNamespace()
+        stt_plugins, "build_stt_from_config", lambda cfg, **_k: SimpleNamespace()
     )
     monkeypatch.setattr(
         pipeline_mod,
@@ -467,7 +471,7 @@ def test_an_unbuildable_dictation_provider_falls_back_to_the_voice_one(
     """A dictation with the wrong prompt beats a dictation with no provider."""
     import jarvis.plugins.stt as stt_plugins
 
-    def _boom(cfg: Any) -> Any:
+    def _boom(cfg: Any, **_kwargs: Any) -> Any:
         raise RuntimeError("no entry-point")
 
     monkeypatch.setattr(stt_plugins, "build_stt_from_config", _boom)

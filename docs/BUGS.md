@@ -14825,3 +14825,45 @@ off-Windows no-op), `tests/unit/platform/test_deescalate.py`
 **Related.** BUG-204 (the VRAM holder this amplified), BUG-189 (the cold-boot
 start storm the priority made fatal), AP-17 (the task stays `RunLevel
 Limited` — priority is orthogonal to elevation).
+
+## BUG-211: dictation pasted dictionary words nobody said ("IDE, gone.") (HIGH, FIXED 2026-09-01)
+
+**Symptom.** A dictation lands in the document with a dictionary term the
+user never spoke — "IDE." on a 0.8 s near-silent press, "IDE, gone.",
+"IDE, noFableForCent, …" — and longer recitations ("IDE, Agentic IDE,
+Agentic IDE, Agentic") show up in the log as stripped echoes five times in
+sixteen minutes. Words that only resemble a dictionary term also arrive as
+the term, and the whole lane feels laggy.
+
+**Root cause.** Two things stacked. A user-scope environment variable
+(`JARVIS__STT__PROVIDER=groq-api`) overrode the `faster-whisper` the config
+file names, so every dictation ran on cloud Whisper — 208 of 208 history
+rows that day — even though the local engine was installed in the app's
+interpreter. The dictation lane then handed the STT dictionary
+("GitHub, Grok, Claude, Agentic IDE, Agentic") to that provider as the
+Whisper `prompt`. Whisper answers a pause or silence by reciting the primed
+list; `strip_prompt_echo` (BUG-185) removes a RUN of items but must leave a
+single one alone, because "Claude." is something a person says. The local
+engine never receives a prompt by design, which is why the defect only
+appeared once the crossover put a prompt-capable provider in front. The lag
+is the cloud round-trip per window (median 440 ms, p90 1.6 s, max 10.9 s).
+
+**Fix.** `build_stt_from_config` / `build_named_stt_provider` grew a
+`dictionary_bias` keyword; `_dictation_stt` builds its primary AND every
+fallback alternate with `dictionary_bias=False`. The dictation lane now sends
+NO decoder prompt at all — neither the voice bias paragraph (F14) nor the
+dictionary — on any provider, so there is nothing to recite. The dictionary
+keeps correcting the finished transcript through `DictionaryCorrectingSTT`,
+the half of the feature that cannot invent a word. The voice lane is
+unchanged. The environment override is a per-machine setting and was left
+in place; the history row's `metadata.stt_providers` names the recognizer
+that really ran.
+
+**Guard.** `tests/unit/dictation/test_stt_retry_and_isolation.py`
+(`test_the_dictation_provider_is_built_without_the_voice_bias_prompt`
+asserts `dictionary_bias=False`),
+`tests/unit/plugins/stt/test_dictionary_bias_opt_out.py`.
+
+**Related.** BUG-185 (the echo guard, which stays as the net for the voice
+lane), F14 (dictation builds its own prompt-free provider), AP-21/22 (the
+opt-out rides the same cross-family chain).

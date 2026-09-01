@@ -491,11 +491,19 @@ def _load_provider_class(name: str) -> type | None:
     return None
 
 
-def build_stt_from_config(stt_cfg: Any) -> Any:
+def build_stt_from_config(stt_cfg: Any, *, dictionary_bias: bool = True) -> Any:
     """Return an STTProvider instance for ``stt_cfg.provider``.
 
     Falls back to a local FasterWhisperProvider if the configured provider has
     no entry-point or raises on construction.
+
+    ``dictionary_bias=False`` keeps the user's STT dictionary OUT of the
+    decoder prompt. The dictation lane asks for this (BUG-211): a
+    prompt-capable Whisper answers a pause or a near-silent press by reciting
+    the primed word list ("IDE, Agentic IDE, Agentic"), and the echo guard can
+    only strip a RUN of items — a lone "IDE" reads as a word and lands in the
+    document. The dictionary still applies to every transcript through the
+    post-STT corrector, which is the half of the feature that cannot invent.
     """
     configured_name = (getattr(stt_cfg, "provider", "") or "").strip()
     # Both crossings — the on-device engine missing from THIS interpreter, and a
@@ -522,13 +530,14 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     # still gets the dictionary's post-STT corrections — AP-21/22). The local
     # utterance fwhisper deliberately receives NO initial_prompt (silence-
     # hallucination risk, see _build_local_fallback).
-    try:
-        from jarvis.speech.stt_dictionary import dictionary_bias_words
+    vocab: list[str] = []
+    if dictionary_bias:
+        try:
+            from jarvis.speech.stt_dictionary import dictionary_bias_words
 
-        vocab = dictionary_bias_words()
-    except Exception as exc:  # noqa: BLE001 — the dictionary must never break STT build
-        logger.debug("STT dictionary bias words unavailable: {}", exc)
-        vocab = []
+            vocab = dictionary_bias_words()
+        except Exception as exc:  # noqa: BLE001 — the dictionary must never break STT build
+            logger.debug("STT dictionary bias words unavailable: {}", exc)
     if vocab:
         joined = ", ".join(vocab)
         bias_prompt = f"{bias_prompt}, {joined}" if bias_prompt else joined
@@ -688,7 +697,9 @@ def available_stt_provider_names() -> list[str]:
     return names
 
 
-def build_named_stt_provider(name: str, stt_cfg: Any) -> Any:
+def build_named_stt_provider(
+    name: str, stt_cfg: Any, *, dictionary_bias: bool = True
+) -> Any:
     """Build the provider called ``name`` using ``stt_cfg`` for everything else.
 
     Language, bias prompt, dictionary vocabulary and the team-proxy handling all
@@ -702,7 +713,7 @@ def build_named_stt_provider(name: str, stt_cfg: Any) -> Any:
     except AttributeError:
         # Not a pydantic model (test doubles); a tiny view is enough.
         patched = _StttConfigView(stt_cfg, name)
-    return build_stt_from_config(patched)
+    return build_stt_from_config(patched, dictionary_bias=dictionary_bias)
 
 
 class _StttConfigView:

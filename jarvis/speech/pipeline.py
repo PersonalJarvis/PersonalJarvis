@@ -10781,7 +10781,11 @@ class SpeechPipeline:
             # reads as empty, which is the shipped behaviour we want anyway.
             own_prompt = str(getattr(dictation_cfg, "bias_prompt", "") or "").strip()
             patched = stt_cfg.model_copy(update={"bias_prompt": own_prompt})
-            instance = build_stt_from_config(patched)
+            # No dictionary words in the decoder prompt either (BUG-211): a
+            # prompt-capable Whisper recites the primed list over every pause
+            # and a lone recited item survives the echo guard. The dictionary
+            # still corrects the finished transcript — see the wrapper below.
+            instance = build_stt_from_config(patched, dictionary_bias=False)
         except Exception as exc:  # noqa: BLE001 — never lose dictation over this
             log.warning(
                 "Dictation-specific STT could not be built (%s); reusing the "
@@ -10804,7 +10808,9 @@ class SpeechPipeline:
                 from jarvis.speech.stt_fallback import FallbackSTT
 
                 def _build(name: str) -> Any:
-                    return build_named_stt_provider(name, patched)
+                    return build_named_stt_provider(
+                        name, patched, dictionary_bias=False
+                    )
 
                 instance = FallbackSTT(
                     instance, alternates, _build, primary_name=configured
