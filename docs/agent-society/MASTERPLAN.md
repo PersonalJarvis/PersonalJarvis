@@ -348,6 +348,13 @@ Decided 2026-09-01:
    society — backend and UI — is built in-house (§7).
 8. **Build start:** frontend card work may proceed on clearly-labeled sample data while M1 lands
    (`components/society/data.ts` is the single swap point).
+9. **Agent definition & ecosystem wiring:** see [`agent-definition.md`](agent-definition.md)
+   (binding). Highlights: full customization per agent (brain, grant/focus/deny over ONE
+   capability catalog of plugins + CLIs + MCPs + skills, approval rules, budget, workspace);
+   a "Gmail agent" is `grant_mode=all` + `focus=[plugin:gmail]` derived from its description;
+   the **Obsidian wiki is the society's shared memory** (namespaced `society/<agent>/` writes,
+   reviewed promotion to `society/shared/`) — the `knowledge` table of §3.1 becomes the
+   staging/provenance layer, not the truth. Grok Bot re-analyzed there as the product floor.
 
 Still open:
 
