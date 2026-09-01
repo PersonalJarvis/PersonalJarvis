@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic } from "lucide-react";
 import { useT } from "@/i18n";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
-import { cn } from "@/lib/utils";
 
 /**
  * Honest "can I speak yet?" indicator.
@@ -49,28 +48,25 @@ export function VoiceWarmingBanner() {
       data-state={warming ? "warming" : "ready"}
       role="status"
       aria-live="polite"
-      className={cn(
-        "flex items-center gap-3 border-b px-4 py-2.5 text-sm transition-colors",
-        // The pale -200 tints are dark-mode ink; on light they land near-white
-        // on a bright wallpaper and disappear (the banner spans raw artwork).
-        warming
-          ? "border-foreground/30 bg-foreground/10 text-foreground"
-          : "border-muted-foreground/30 bg-muted-foreground/10 text-muted-foreground",
-      )}
+      // No wash. The banner spans the whole window, and a full-bleed region
+      // never rises off the page it sits on — so the state is carried by the
+      // GLYPH's colour and the hairline under it, the way a status is meant to
+      // be, instead of by a tinted slab across the top of the app.
+      className="flex items-center gap-3 border-b border-border px-4 py-2.5"
     >
       {warming ? (
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-warning" aria-hidden />
       ) : (
-        <Mic className="h-4 w-4 shrink-0" aria-hidden />
+        <Mic className="h-4 w-4 shrink-0 text-success" aria-hidden />
       )}
       <div className="flex min-w-0 flex-col">
-        <span className="font-medium leading-tight">
+        <span className="text-body font-medium text-foreground-strong">
           {warming
             ? t("voice_state.warming_title")
             : t("voice_state.ready_title")}
         </span>
         {warming && (
-          <span className="text-xs leading-tight opacity-80">
+          <span className="text-meta text-muted-foreground">
             {t("voice_state.warming_hint")}
           </span>
         )}

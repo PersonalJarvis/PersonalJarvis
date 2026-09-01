@@ -156,7 +156,7 @@ function PaneRow({
       data-testid={`interrupted-pane-${pane.name}`}
       className={cn(
         "rounded-lg border p-3",
-        pane.continuable ? "border-border bg-card/60" : "border-foreground/40 bg-foreground/10",
+        pane.continuable ? "border-border bg-card" : "border-foreground/40 bg-foreground/10",
       )}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -326,7 +326,7 @@ export function ContinueInterrupted({
           {waiting && (
             <span
               data-testid="continue-interrupted-count"
-              className="rounded bg-foreground/25 px-1.5 py-0.5 font-mono text-[10px]"
+              className="rounded bg-foreground/25 px-1.5 py-0.5 font-mono text-micro"
             >
               {offer.count}
             </span>
@@ -335,10 +335,10 @@ export function ContinueInterrupted({
       </Dialog.Trigger>
 
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-background backdrop-blur-sm" />
         <Dialog.Content
           data-testid="continue-interrupted"
-          className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(40rem,calc(100vh-4rem))] w-[min(40rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-border bg-card"
+          className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(40rem,calc(100vh-4rem))] w-[min(40rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg bg-popover shadow-float"
           onEscapeKeyDown={(event) => {
             if (working) event.preventDefault();
           }}

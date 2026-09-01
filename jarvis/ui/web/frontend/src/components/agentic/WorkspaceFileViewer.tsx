@@ -176,15 +176,15 @@ export function WorkspaceFileViewer({
     <section
       data-testid="workspace-file-viewer"
       aria-label={`${t("agentic_grid.viewer.title")}: ${name}`}
-      className="absolute inset-0 z-40 flex min-h-0 flex-col bg-background/95 backdrop-blur-xl"
+      className="absolute inset-0 z-40 flex min-h-0 flex-col bg-background backdrop-blur-xl"
     >
-      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border/70 bg-card/50 px-3">
+      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-3">
         <FileText className="h-4 w-4 shrink-0 text-primary" aria-hidden />
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-medium text-foreground">{name}</div>
-          <div className="truncate text-[10px] text-muted-foreground">{path}</div>
+          <div className="truncate text-micro text-muted-foreground">{path}</div>
         </div>
-        <span className="rounded-full border border-border/70 bg-secondary/60 px-2 py-0.5 text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
+        <span className="rounded-full border border-border bg-secondary px-2 py-0.5 text-micro text-muted-foreground">
           {kind}
         </span>
         <button
@@ -199,7 +199,7 @@ export function WorkspaceFileViewer({
         </button>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-background/35 scrollbar-jarvis">
+      <div className="min-h-0 flex-1 overflow-auto bg-background scrollbar-jarvis">
         {error ? (
           <div role="alert" className="m-auto flex h-full max-w-md flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground">
             <AlertTriangle className="h-7 w-7 text-destructive" aria-hidden />
@@ -269,7 +269,7 @@ function ViewerContent({
         </div>
       )}
       {kind === "markdown" ? (
-        <article className="prose prose-neutral max-w-none text-sm dark:prose-invert prose-a:text-primary prose-code:text-foreground prose-pre:border prose-pre:border-border prose-pre:bg-card/80">
+        <article className="prose prose-neutral max-w-none text-sm dark:prose-invert prose-a:text-primary prose-code:text-foreground prose-pre:border prose-pre:border-border prose-pre:bg-card">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>
         </article>
       ) : text ? (
@@ -277,7 +277,7 @@ function ViewerContent({
       ) : preview?.hex_preview ? (
         <div>
           <p className="mb-3 text-xs text-muted-foreground">{t("agentic_grid.viewer.binary")}</p>
-          <pre className="whitespace-pre-wrap break-words rounded-card border border-border bg-card/70 p-4 font-mono text-xs leading-relaxed text-foreground">{preview.hex_preview}</pre>
+          <pre className="whitespace-pre-wrap break-words rounded-card border border-border bg-card p-4 font-mono text-xs leading-relaxed text-foreground">{preview.hex_preview}</pre>
         </div>
       ) : (
         <p className="text-center text-sm text-muted-foreground">{t("agentic_grid.viewer.empty")}</p>

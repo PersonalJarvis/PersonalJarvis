@@ -61,8 +61,11 @@ export function DocsSidebar({
     return filteredSections.reduce((acc, section) => acc + section.docs.length, 0);
   }, [filteredSections]);
 
+  // A standing rail, not a card: it runs the full height of the section, so it
+  // takes the rail ground and separates from the page by fill alone — a
+  // content-sized surface is what earns --card, and this is not one.
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border bg-card/40">
+    <aside className="flex h-full w-72 shrink-0 flex-col bg-sidebar">
       {/* Header */}
       <div className="border-b border-border px-3 py-3">
         <div className="mb-2 flex items-center justify-between">

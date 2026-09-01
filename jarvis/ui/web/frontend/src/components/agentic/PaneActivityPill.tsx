@@ -56,18 +56,19 @@ import type { PaneActivity } from "@/lib/agenticIdeApi";
  * had to compare against its neighbours to judge.
  *
  * The finished state is a CHECK and not a still dot for the same reason. A dot
- * is what every list uses for "online", and beside a row of amber spinners an
- * amber dot read as "also busy, just not animated right now" — the maintainer
+ * is what every list uses for "online", and beside a row of green spinners a
+ * green dot read as "also busy, just not animated right now" — the maintainer
  * asked for an indicator that says working or done, looking at a list that
  * already had one (2026-08-27). A check says finished the way a spinner says
  * busy: on its own, without a neighbour to compare against.
  *
- * Colour then carries the second question — is this pane's stillness news? Amber
- * is the app's own accent and marks a pane holding something for you: a check
- * for a finished job, a hollow ring for one that is merely ready and has done
- * nothing yet. Blue is spent on the one state that wants an action from you
- * right now, a pane stopped on a question. Grey is for a pane with nothing to
- * report, red for a broken one.
+ * Colour then carries the second question — is this pane's stillness news?
+ * The product has three status hues and this badge uses all three and nothing
+ * else. Green (life) marks a pane that is healthy: working, a check for a
+ * finished job, a hollow ring for one that is merely ready and has done
+ * nothing yet. Amber (degraded) is spent on the one state that wants an action
+ * from you right now, a pane stopped on a question. Grey — which is ink, not a
+ * status — is for a pane with nothing to report, red for a broken one.
  */
 
 /**
@@ -118,7 +119,9 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
   working: {
     state: "working",
     label: "working",
-    className: "text-foreground",
+    // Life. A status is never --foreground: ink is the colour of everything
+    // that is NOT a signal, so a state painted in it reads as a label.
+    className: "text-success",
     icon: "spinner",
     hint: "Working — its screen is still changing.",
   },
@@ -132,7 +135,10 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
   asking: {
     state: "asking",
     label: "needs you",
-    className: "text-sky-400",
+    // Degraded — the pane is stalled until somebody answers it. It used to be
+    // a Tailwind sky blue, which is a literal colour and a fourth hue in a
+    // palette that has exactly three.
+    className: "text-warning",
     /*
      * The one deliberate exception to "motion means busy": a slow radiating
      * ring around a STILL dot. It does not share the spinner's silhouette —
@@ -162,25 +168,24 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
 const DONE: Look = {
   state: "done",
   label: "done",
-  className: "text-foreground",
+  className: "text-success",
   icon: "check",
   glow: true,
   hint: "Finished and waiting at its prompt. That it stopped, not that the work is right.",
 };
 
 /**
- * Ready, but holding nothing — the same amber, drawn as an empty ring.
+ * Ready, but holding nothing — the same green, drawn as an empty ring.
  *
  * A ring rather than a second colour because this is the SAME piece of news as
  * `done` with one part missing: the pane is quiet and yours to talk to, it just
  * has no finished job behind it. Reading "nothing here yet" out of an unfilled
- * shape is what a fuel gauge does, and it keeps the accent colour meaning one
- * thing.
+ * shape is what a fuel gauge does, and it keeps green meaning one thing.
  */
 const IDLE: Look = {
   state: "idle",
   label: "idle",
-  className: "text-foreground/60",
+  className: "text-success",
   icon: "ring",
   hint: "Waiting at its prompt. Nothing has been sent to it yet.",
 };
@@ -218,7 +223,7 @@ const BROKEN: Look = {
  * before its first status poll answers.
  *
  * Grey, and hollow: neither pane has a finished job behind it, so neither has
- * earned the accent colour that means "something here is yours".
+ * earned the green that means "something here is yours".
  */
 const CONNECTED: Look = {
   state: "live",

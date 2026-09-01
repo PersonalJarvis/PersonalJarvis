@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { useRunDetail } from "@/hooks/useRuns";
 import { Badge } from "@/components/ui/badge";
+import { PanelSkeleton } from "@/components/layout/PanelSkeleton";
 import { runExportUrl } from "@/components/runs/api";
 import { RunTurnCard } from "@/components/runs/RunTurnCard";
 import { OutcomeBadge } from "@/components/runs/OutcomeBadge";
@@ -27,7 +28,14 @@ export function RunDetail({ sessionId }: { sessionId: string }) {
   const [showEnv, setShowEnv] = useState(false);
   const [showSessionEvents, setShowSessionEvents] = useState(false);
   if (isLoading || !run) {
-    return <div className="p-6 text-sm text-muted-foreground">…</div>;
+    // The real column at its real height with bars where the turn cards go —
+    // a centred "…" in a black rectangle is indistinguishable from a section
+    // that failed to load.
+    return (
+      <div className="mx-auto w-full max-w-reading p-5">
+        <PanelSkeleton rows={4} rowHeight={132} label={t("run_inspector.title")} />
+      </div>
+    );
   }
 
   const a = run.analytics;
@@ -51,11 +59,11 @@ export function RunDetail({ sessionId }: { sessionId: string }) {
     <div className="flex h-full min-h-0 flex-col" data-testid="run-detail">
       {/* ── Run header (sticky) ─────────────────────────────────── */}
       <div className="shrink-0 border-b border-border px-5 py-4">
-        <div className="mx-auto flex w-full max-w-5xl items-start justify-between gap-3">
+        <div className="mx-auto flex w-full max-w-reading items-start justify-between gap-3">
           <div className="min-w-0 space-y-2">
             <div className="flex items-center gap-2">
               <OutcomeBadge outcome={run.outcome} />
-              <span className="font-mono text-xs text-muted-foreground">
+              <span className="font-mono text-meta tabular-nums text-muted-foreground">
                 {started.toLocaleString(locale)}
                 {ended && ` — ${ended.toLocaleTimeString(locale)}`}
               </span>
@@ -69,15 +77,13 @@ export function RunDetail({ sessionId }: { sessionId: string }) {
                 <Badge variant="outline">${run.session.total_cost_usd.toFixed(3)}</Badge>
               )}
               {tokens > 0 && (
-                <Badge variant="outline" className="text-[10px]">
-                  {tokens.toLocaleString(locale)} tok
-                </Badge>
+                <Badge variant="outline">{tokens.toLocaleString(locale)} tok</Badge>
               )}
               {run.session.hangup_reason && (
                 <Badge variant="outline">{run.session.hangup_reason}</Badge>
               )}
               {totalEvents > 0 && (
-                <Badge variant="outline" className="text-[10px]">
+                <Badge variant="outline">
                   {totalEvents.toLocaleString(locale)} {t("run_inspector.stream.events")}
                 </Badge>
               )}
@@ -85,13 +91,13 @@ export function RunDetail({ sessionId }: { sessionId: string }) {
             </div>
             {/* The run's recorded setup, always visible: mode + provider decide
                 how every number below should be read. */}
-            <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[10px] text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
               {[env.voice_mode, env.wake_source, env.language, ...env.providers, ...env.models]
                 .filter(Boolean)
                 .map((v, i) => (
                   <span
                     key={`${v}-${i}`}
-                    className="rounded bg-muted/40 px-1.5 py-px font-mono ring-1 ring-inset ring-border/60"
+                    className="rounded-full bg-secondary px-2 py-0.5 font-mono text-micro text-muted-foreground"
                   >
                     {v}
                   </span>
@@ -105,7 +111,7 @@ export function RunDetail({ sessionId }: { sessionId: string }) {
           </div>
 
           <a
-            className="shrink-0 rounded-md border border-border/70 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+            className="shrink-0 rounded-md px-2 py-1 text-meta text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             href={runExportUrl(sessionId)}
             target="_blank"
             rel="noreferrer"
@@ -117,7 +123,7 @@ export function RunDetail({ sessionId }: { sessionId: string }) {
 
       {/* ── Scrollable body (centered reading column) ───────────── */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-5xl space-y-3 p-5">
+        <div className="mx-auto w-full max-w-reading space-y-stack p-5">
           <Collapsible
             label={t("run_inspector.environment")}
             open={showEnv}
@@ -158,31 +164,35 @@ export function RunDetail({ sessionId }: { sessionId: string }) {
   );
 }
 
+/**
+ * The worst latency this run reached, shown only when it is not "ok".
+ * `warn` is degraded and `breach` is a fault — it used to be drawn in
+ * --foreground, which made a warning the brightest chip in the header.
+ */
 function LatencyChip({ status }: { status: string }) {
   if (status === "ok") return null;
-  const cls =
-    status === "breach"
-      ? "border-rose-500/30 bg-rose-500/10 text-rose-300"
-      : "border-foreground/30 bg-foreground/10 text-foreground";
   return (
-    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${cls}`}>
-      latency {status}
-    </span>
+    <Badge variant={status === "breach" ? "fault" : "degraded"}>latency {status}</Badge>
   );
 }
 
+/**
+ * A disclosure row. No box: the header is a row that hovers and the body is
+ * separated by the padding it opens into, which is what the rest of the app
+ * does. An outline around a closed section is chrome around nothing.
+ */
 function Collapsible({
   label, open, onToggle, children, testId = "metrics-toggle",
 }: {
   label: string; open: boolean; onToggle: () => void; children: ReactNode; testId?: string;
 }) {
   return (
-    <div className="rounded-lg border border-border/70">
+    <div>
       <button
         type="button"
         data-testid={testId}
         onClick={onToggle}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-foreground/90 transition-colors hover:text-foreground"
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-body font-medium text-foreground transition-colors hover:bg-secondary"
       >
         <span className="text-muted-foreground">{open ? "▾" : "▸"}</span>
         {label}
@@ -190,7 +200,7 @@ function Collapsible({
       {open && (
         <div
           data-testid={testId.replace(/-toggle$/, "")}
-          className="border-t border-border/60 px-3 py-3 text-xs"
+          className="px-2 pb-stack pt-stack"
         >
           {children}
         </div>

@@ -359,7 +359,7 @@ export function McpsView() {
               <div className="py-8 text-center text-sm text-muted-foreground">{t("common.loading")}</div>
             )}
             {error && (
-              <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <div className="rounded-lg bg-secondary p-3 text-sm text-destructive">
                 {t("common.error")}: {(error as Error).message}
               </div>
             )}
@@ -385,7 +385,7 @@ export function McpsView() {
                     >
                       <Cell>
                         <div className="flex items-center gap-2" title={s.description}>
-                          <span className="truncate text-[15px] font-medium">{s.name}</span>
+                          <span className="truncate text-title font-medium">{s.name}</span>
                           {s.tools.length > 0 && (
                             <span className="shrink-0 text-xs text-muted-foreground">
                               {toolCountLabel(s.tools.length, t)}
@@ -463,7 +463,7 @@ function McpDetail({
     <div className="mt-5">
       <DetailHeader
         leading={
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border bg-sheen/[0.05]">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary">
             <McpLogo className="h-5 w-5 text-muted-foreground" />
           </span>
         }
@@ -528,7 +528,7 @@ function McpDetail({
       )}
 
       {server.error && (
-        <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
+        <div className="mt-4 rounded-md bg-secondary p-2.5 text-xs text-destructive">
           {server.error}
         </div>
       )}
@@ -541,7 +541,7 @@ function McpDetail({
               { label: t("mcps_view.col_transport"), value: server.transport ?? null },
               {
                 label: t("mcps_view.command"),
-                value: command ? <code className="font-mono text-[13px]">{command}</code> : null,
+                value: command ? <code className="font-mono text-meta">{command}</code> : null,
               },
               {
                 label: t("mcps_view.credentials"),
@@ -571,7 +571,7 @@ function McpDetail({
       />
 
       <Panel className="mt-4">
-        <div className="flex items-center gap-2 border-b border-border/70 px-5 py-2.5">
+        <div className="flex items-center gap-2 border-b border-border px-5 py-2.5">
           <span className="text-sm font-medium">{t("mcps_view.tools_heading")}</span>
           <span className="text-sm text-muted-foreground">{server.tools.length}</span>
         </div>
@@ -581,9 +581,9 @@ function McpDetail({
           <ul className="divide-y divide-border/70">
             {server.tools.map((tool) => (
               <li key={tool.name} className="px-5 py-3">
-                <p className="font-mono text-[13px]">{tool.name}</p>
+                <p className="font-mono text-meta">{tool.name}</p>
                 {tool.description && (
-                  <p className="mt-0.5 line-clamp-2 text-[13px] text-muted-foreground" title={tool.description}>
+                  <p className="mt-0.5 line-clamp-2 text-meta text-muted-foreground" title={tool.description}>
                     {tool.description}
                   </p>
                 )}
@@ -662,7 +662,7 @@ function EmptyState({
           {importing ? t("mcps_view.importing") : t("mcps_view.import_claude")}
         </Button>
       </div>
-      <p className="mt-4 text-[11px] text-muted-foreground/80">{t("mcps_view.empty_tip")}</p>
+      <p className="mt-4 text-micro text-muted-foreground">{t("mcps_view.empty_tip")}</p>
     </EmptyRow>
   );
 }
@@ -727,11 +727,11 @@ function ConfigModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60 backdrop-blur-sm">
-      <div className="flex w-full max-w-3xl flex-col rounded-xl border border-border bg-card">
+      <div className="flex w-full max-w-3xl flex-col rounded-lg bg-popover shadow-float">
         <div className="flex items-start justify-between gap-4 border-b border-border p-6">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <FileJson className="h-4 w-4 text-primary" />
+              <FileJson className="h-4 w-4 text-muted-foreground" />
               <h3 className="font-display text-lg font-semibold tracking-tight">
                 mcp.json
               </h3>
@@ -763,10 +763,10 @@ function ConfigModal({ onClose }: { onClose: () => void }) {
             value={editing}
             onChange={(e) => setEditing(e.target.value)}
             spellCheck={false}
-            className="h-[420px] w-full resize-none rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="h-[420px] w-full resize-none rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             placeholder='{"mcpServers": {...}}'
           />
-          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+          <p className="mt-2 text-micro text-muted-foreground">
             {t("mcps_view.config_format_hint")}
           </p>
         </div>

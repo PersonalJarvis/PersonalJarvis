@@ -39,7 +39,7 @@ export function ProviderBillingBadge({ billing, className }: { billing: Billing;
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-micro font-medium",
         meta.className,
         className,
       )}

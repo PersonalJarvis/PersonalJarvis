@@ -2523,7 +2523,7 @@ describe("pane status", () => {
     const frame = screen.getByTestId("agentic-pane-Dana");
 
     expect(frame.style.borderColor).toBe("");
-    expect(frame.className).toContain("border-primary/60");
+    expect(frame.className).toContain("border-border-strong");
 
     view.rerender(pane({ focused: false }));
     expect(frame.style.borderColor).not.toBe("");

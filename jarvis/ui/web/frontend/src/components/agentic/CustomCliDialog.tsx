@@ -151,13 +151,13 @@ export function CustomCliDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[80] bg-[#090909]/75 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none" />
+        <Dialog.Overlay className="fixed inset-0 z-[80] bg-scrim/75 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none" />
         <Dialog.Content
           data-testid="custom-cli-dialog"
           className={cn(
             "fixed left-1/2 top-1/2 z-[90] flex max-h-[min(88dvh,44rem)] w-[min(560px,calc(100vw-2rem))]",
-            "-translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border",
-            "bg-card outline-none",
+            "-translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg",
+            "bg-popover shadow-float outline-none",
             "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none",
           )}
         >
@@ -251,7 +251,7 @@ export function CustomCliDialog({
                   placeholder={t("custom_cli.name_placeholder")}
                   onChange={(event) => setName(event.currentTarget.value)}
                 />
-                <span className="text-[11px] leading-relaxed text-muted-foreground">
+                <span className="text-micro text-muted-foreground">
                   {t("custom_cli.name_hint")}
                 </span>
               </label>
@@ -273,7 +273,7 @@ export function CustomCliDialog({
                   if (event.key === "Enter" && canSave) void save();
                 }}
               />
-              <span className="text-[11px] leading-relaxed text-muted-foreground">
+              <span className="text-micro text-muted-foreground">
                 {throughShell
                   ? t("custom_cli.command_shell_hint")
                   : t("custom_cli.command_hint")}
@@ -303,7 +303,7 @@ export function CustomCliDialog({
                 <span className="block text-sm text-foreground">
                   {t("custom_cli.at_reference")}
                 </span>
-                <span className="block text-[11px] leading-relaxed text-muted-foreground">
+                <span className="block text-micro text-muted-foreground">
                   {t("custom_cli.at_reference_hint")}
                 </span>
               </span>

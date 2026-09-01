@@ -25,7 +25,9 @@ export function ChatTab() {
 
   return (
     <div className="flex h-full min-h-0 gap-4">
-      <aside className="flex w-72 flex-shrink-0 flex-col rounded-xl border border-border bg-card/30 p-2">
+      {/* The friends rail is a standing column, not a card — it takes the rail
+          ground and separates from the stage by fill alone. */}
+      <aside className="flex w-72 flex-shrink-0 flex-col rounded-lg bg-sidebar p-2">
         {friends.isLoading && (
           <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t("chat_tab.loading_friends")}
@@ -55,7 +57,9 @@ export function ChatTab() {
         </div>
       </aside>
 
-      <section className="flex-1 min-w-0 rounded-xl border border-border bg-card/20">
+      {/* The conversation stage fills the rest of the section, so it stays on
+          the page's own ground; the rim is what draws its edge now. */}
+      <section className="min-w-0 flex-1 rounded-lg border border-border bg-background">
         {selectedId === null && (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             {t("chat_tab.select_hint")}

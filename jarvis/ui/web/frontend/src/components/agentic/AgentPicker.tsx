@@ -302,7 +302,7 @@ export function AgentPickerMenu({
             it is the one line that says what the click will do. The rule under
             it separates the question from the answers, so the first entry does
             not read as part of the heading. */}
-        <p className="mb-1 border-b border-border/60 px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-foreground/70">
+        <p className="mb-1 border-b border-border px-2 pb-1.5 pt-1 text-micro font-semibold text-foreground">
           {title}
         </p>
         {agents.map((agent) => {
@@ -361,7 +361,7 @@ export function AgentPickerMenu({
                   is the difference a user needs before clicking, and it is the
                   entry's own words rather than a name this menu recognises. */}
               {agent.description && (
-                <span className="block truncate text-[11px] text-muted-foreground">
+                <span className="block truncate text-micro text-muted-foreground">
                   {agent.description}
                 </span>
               )}
@@ -371,7 +371,7 @@ export function AgentPickerMenu({
                 in a 272px menu costs the entry's description its line and says
                 nothing the button does not. */}
             {!agent.installed && !installable && (
-              <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              <span className="shrink-0 text-micro font-medium text-muted-foreground">
                 {agent.kind === "shell" ? "no shell here" : "not installed"}
               </span>
             )}
@@ -390,7 +390,7 @@ export function AgentPickerMenu({
                      action, and a column of solid buttons would read as the
                      menu itself being about installing. Its colours are theme
                      tokens, so it follows light and dark. */
-                  className="my-0.5 shrink-0 self-center rounded-md border border-border px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-primary/10"
+                  className="my-0.5 shrink-0 self-center rounded-md border border-border px-2 py-1 text-micro font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-primary/10"
                 >
                   Install
                 </button>

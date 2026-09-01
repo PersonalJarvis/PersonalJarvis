@@ -9,6 +9,7 @@
  */
 import { Fragment, useMemo, useState } from "react";
 import { Loader2, MoreHorizontal, Trash2, X } from "lucide-react";
+import { PanelSkeleton } from "@/components/layout/PanelSkeleton";
 import {
   ActionMenu,
   Cell,
@@ -98,7 +99,7 @@ export function RunsPanel({ tasks, filter, onNotice }: RunsPanelProps) {
                     <span className="block truncate font-medium text-foreground">
                       {run.title || t("tasks_view.untitled")}
                     </span>
-                    <span className="block truncate text-xs text-muted-foreground">
+                    <span className="block truncate text-meta text-muted-foreground">
                       {stateLabels[state]}
                     </span>
                   </span>
@@ -108,7 +109,7 @@ export function RunsPanel({ tasks, filter, onNotice }: RunsPanelProps) {
                 <span
                   className={cn(
                     "block truncate",
-                    run.last_error && !run.last_result && "text-destructive/90",
+                    run.last_error && !run.last_result && "text-destructive",
                   )}
                 >
                   {run.last_result || run.last_error || "—"}
@@ -119,7 +120,7 @@ export function RunsPanel({ tasks, filter, onNotice }: RunsPanelProps) {
                   run.finished_at_ns ?? run.started_at_ns ?? run.due_at_ns ?? run.created_at_ns,
                 )}
               </Cell>
-              <Cell muted align="right" className="font-mono">
+              <Cell muted align="right" className="font-mono tabular-nums">
                 {duration ?? "—"}
               </Cell>
               <Cell align="right" stop>
@@ -195,29 +196,32 @@ export function RunsPanel({ tasks, filter, onNotice }: RunsPanelProps) {
 function RunDetail({ taskId, fallbackResult }: { taskId: string; fallbackResult?: string | null }) {
   const t = useT();
   const { data, isLoading, error } = useTaskDetail(taskId);
+  // The opened row's detail. No fill of its own: the rows above and below
+  // already answer to the pointer with one, and a second resting surface here
+  // would give them nowhere left to travel to.
   if (isLoading) {
     return (
-      <div role="presentation" className="border-b border-border/70 bg-sheen/[0.03] px-4 py-3 text-xs text-muted-foreground last:border-b-0">
-        {t("tasks_view.loading_details")}
+      <div role="presentation" className="border-b border-border px-4 py-4 last:border-b-0">
+        <PanelSkeleton rows={3} rowHeight={28} label={t("tasks_view.loading_details")} />
       </div>
     );
   }
   if (error) {
     return (
-      <div role="presentation" className="border-b border-border/70 bg-sheen/[0.03] px-4 py-3 text-xs text-destructive last:border-b-0">
+      <div role="presentation" className="border-b border-border px-4 py-3 text-body text-destructive last:border-b-0">
         {t("common.error")}: {(error as Error).message}
       </div>
     );
   }
   const steps = data?.steps ?? [];
   return (
-    <div role="presentation" className="space-y-3 border-b border-border/70 bg-sheen/[0.03] px-4 py-4 last:border-b-0">
+    <div role="presentation" className="space-y-group border-b border-border px-4 py-4 last:border-b-0">
       <div>
-        <SectionLabel className="mb-1.5">{t("automations_view.result")}</SectionLabel>
+        <SectionLabel className="mb-stack">{t("automations_view.result")}</SectionLabel>
         <ResultText steps={steps} fallback={fallbackResult} />
       </div>
       <div>
-        <SectionLabel className="mb-1.5">
+        <SectionLabel className="mb-stack">
           {t("automations_view.timeline")} ({steps.length})
         </SectionLabel>
         <StepTimeline steps={steps} />

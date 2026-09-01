@@ -1,8 +1,8 @@
 import { Brain } from "lucide-react";
+import { clsx } from "clsx";
 
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
-import { cn } from "@/lib/utils";
 
 /**
  * App-wide indicator: is Jarvis an Agentic IDE right now?
@@ -63,16 +63,28 @@ export function CodingModeBadge({ className }: { className?: string }) {
       // Claiming a pressed state for something it cannot change would be a lie
       // to exactly the users who depend on it most.
       disabled={activeSection === "agentic-ide" || activeSection === "agentic-ide-classic"}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1",
-        "text-xs font-medium transition-colors disabled:cursor-default",
+      // `clsx`, not `cn`: tailwind-merge reads `text-body` as a colour and
+      // would drop it in favour of the state colour below, leaving the chip at
+      // the inherited 16 px.
+      className={clsx(
+        "inline-flex h-8 items-center gap-2 rounded-md px-3",
+        "text-body font-medium transition-colors disabled:cursor-default",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+        // ON is a live state, so it says so in the one hue that means "this is
+        // running" — a green dot beside plain ink, rather than a whole chip
+        // recoloured in the accent, which put the loudest mark in the window
+        // on a status. OFF keeps the quiet chrome shape.
         mode.active
-          ? "border-primary/60 bg-primary/15 text-primary hover:bg-primary/25"
-          : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground",
+          ? "bg-card text-foreground hover:bg-secondary"
+          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
         className,
       )}
     >
-      <Brain aria-hidden className="h-3.5 w-3.5" />
+      {mode.active ? (
+        <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-success" />
+      ) : (
+        <Brain aria-hidden className="h-4 w-4 shrink-0" />
+      )}
       {label}
     </button>
   );

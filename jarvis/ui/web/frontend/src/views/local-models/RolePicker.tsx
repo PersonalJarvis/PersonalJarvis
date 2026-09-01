@@ -256,8 +256,8 @@ export function RolePicker({
         data-testid={`role-picker-${row.id}`}
         data-value={row.current}
         className={cn(
-          "flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-2.5 text-left text-sm text-foreground",
-          "transition-colors hover:border-border/80 focus:outline-none focus:ring-1 focus:ring-primary",
+          "flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-border bg-background px-2.5 text-left text-sm text-foreground",
+          "transition-colors hover:border-border focus:outline-none focus:ring-2 focus:ring-border-strong",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}
       >
@@ -267,7 +267,7 @@ export function RolePicker({
 
       {open && (
         <div
-          className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-border bg-card"
+          className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-lg bg-popover shadow-float"
           data-testid={`role-picker-popover-${row.id}`}
         >
           <label className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
@@ -278,7 +278,7 @@ export function RolePicker({
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t("local_models.roles.pick_search")}
               aria-label={t("local_models.roles.pick_search")}
-              className="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
+              className="w-full bg-transparent text-sm text-foreground placeholder:text-faint-foreground focus:outline-none"
               data-testid={`role-picker-search-${row.id}`}
             />
           </label>
@@ -297,7 +297,7 @@ export function RolePicker({
                 <span className="text-sm text-foreground">
                   {t("local_models.roles.pick_discovery")}
                 </span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-micro text-muted-foreground">
                   {t("local_models.roles.discovery")}
                 </span>
               </Option>
@@ -309,7 +309,7 @@ export function RolePicker({
             )}
             {groups.map((group) => (
               <li key={group.id} role="presentation" data-testid={`role-picker-group-${group.id}`}>
-                <p className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                <p className="px-3 pb-0.5 pt-2 text-micro font-semibold text-muted-foreground">
                   {groupLabel(group.id)}
                 </p>
                 <ul role="group" aria-label={groupLabel(group.id)}>
@@ -336,22 +336,22 @@ export function RolePicker({
                       >
                         <span className="flex min-w-0 items-baseline gap-2">
                           <span className="truncate text-sm text-foreground">{entry.label}</span>
-                          <span className="truncate font-mono text-[10px] text-muted-foreground/80">
+                          <span className="truncate font-mono text-micro text-muted-foreground">
                             {entry.tag}
                           </span>
                           {!entry.installed && !isDownload && (
-                            <span className="text-[10px] text-muted-foreground">
+                            <span className="text-micro text-muted-foreground">
                               {t("local_models.roles.pick_missing_suffix")}
                             </span>
                           )}
                         </span>
                         <span className="flex items-center justify-between gap-2">
-                          <span className="truncate text-[11px] text-muted-foreground">
+                          <span className="truncate text-micro text-muted-foreground">
                             {entry.facts}
                           </span>
                           <span
                             className={cn(
-                              "shrink-0 text-[11px]",
+                              "shrink-0 text-micro",
                               isDownload ? "text-primary" : TONE_TEXT[tone],
                             )}
                             data-testid={`role-option-verdict-${entry.tag}`}
@@ -422,7 +422,7 @@ function Option({
         "grid gap-0.5 px-3 py-1.5 outline-none",
         disabled
           ? "cursor-not-allowed opacity-50"
-          : "cursor-pointer hover:bg-sheen/[0.05] focus-visible:bg-sheen/[0.07]",
+          : "cursor-pointer hover:bg-secondary focus-visible:bg-secondary",
         selected && "bg-primary/[0.06]",
       )}
     >

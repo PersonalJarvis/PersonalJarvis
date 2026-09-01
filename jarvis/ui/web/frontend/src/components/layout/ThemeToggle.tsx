@@ -30,11 +30,16 @@ export function ThemeToggle({ className }: { className?: string }) {
       aria-label={label}
       data-testid="theme-toggle"
       className={cn(
-        "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-secondary/40 text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground",
+        // Same recipe as the rest of the bar: no fill at rest, one step up
+        // under the pointer. The old version answered a hover by recolouring
+        // its BORDER, which is a rim doing a fill's job.
+        "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+        "text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
         className,
       )}
     >
-      <Icon aria-hidden className="h-3.5 w-3.5" />
+      <Icon aria-hidden className="h-4 w-4" />
     </button>
   );
 }

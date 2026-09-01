@@ -202,7 +202,7 @@ export function PublisherAvatar({
       style={{ width: size, height: size }}
       aria-hidden
     >
-      <span className="text-[11px] font-bold">{initial}</span>
+      <span className="text-micro font-bold">{initial}</span>
       {url && !failed && (
         <img
           src={url}
@@ -239,14 +239,14 @@ function DeviceCodeTicket({
   const verifyUrl = flow.verification_uri ?? GITHUB_DEVICE_URL;
   return (
     <div
-      className="relative isolate overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 via-card to-card p-5"
+      className="relative isolate overflow-hidden rounded-2xl border border-border-strong bg-gradient-to-br from-primary/10 via-card to-card p-5"
       data-testid="device-code-ticket"
     >
       <div
         aria-hidden
-        className="pointer-events-none absolute -z-10 -right-16 -top-16 h-48 w-48 rounded-full bg-primary/15 blur-3xl"
+        className="pointer-events-none absolute -z-10 -right-16 -top-16 h-48 w-48 rounded-full bg-secondary blur-3xl"
       />
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+      <p className="text-micro font-semibold text-muted-foreground">
         {t("marketplace.identity_code_label")}
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -268,11 +268,11 @@ function DeviceCodeTicket({
           onClick={async () => {
             if (await robustCopy(flow.user_code)) setCopied(true);
           }}
-          className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-background/60 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           title={copied ? t("marketplace.identity_copied") : t("marketplace.identity_copy_code")}
           aria-label={t("marketplace.identity_copy_code")}
         >
-          {copied ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
+          {copied ? <Check className="h-4 w-4 text-muted-foreground" /> : <Copy className="h-4 w-4" />}
         </button>
       </div>
       <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
@@ -287,10 +287,10 @@ function DeviceCodeTicket({
         <Button size="sm" variant="ghost" onClick={onCancel}>
           {t("marketplace.identity_cancel")}
         </Button>
-        <span className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
+        <span className="ml-auto flex items-center gap-2 text-micro text-muted-foreground">
           <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/70" />
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-secondary" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-secondary" />
           </span>
           {t("marketplace.identity_waiting")}
         </span>
@@ -337,7 +337,7 @@ export function GithubSignInDialog({ onClose }: { onClose: () => void }) {
       aria-modal="true"
       aria-label={t("marketplace.identity_dialog_title")}
       data-testid="github-signin-dialog"
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-background p-6 backdrop-blur-sm"
     >
       <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground">
         <header className="flex items-start gap-3 border-b border-border px-5 py-4">
@@ -364,7 +364,7 @@ export function GithubSignInDialog({ onClose }: { onClose: () => void }) {
 
         <div className="space-y-4 px-5 py-5">
           {signedIn ? (
-            <div className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 p-4">
+            <div className="flex items-center gap-3 rounded-xl bg-secondary p-4">
               <PublisherAvatar
                 login={identity.data?.login}
                 url={identity.data?.avatar_url}
@@ -380,12 +380,12 @@ export function GithubSignInDialog({ onClose }: { onClose: () => void }) {
                   {t("marketplace.identity_signed_in_hint")}
                 </p>
               </div>
-              <Check className="h-5 w-5 text-primary" />
+              <Check className="h-5 w-5 text-muted-foreground" />
             </div>
           ) : signIn.flow ? (
             <DeviceCodeTicket flow={signIn.flow} onCancel={signIn.cancel} />
           ) : (
-            <div className="flex items-center gap-3 rounded-xl border border-border bg-secondary/30 p-4 text-sm text-muted-foreground">
+            <div className="flex items-center gap-3 rounded-xl bg-secondary p-4 text-sm text-muted-foreground">
               {signIn.starting || identity.isLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -399,23 +399,23 @@ export function GithubSignInDialog({ onClose }: { onClose: () => void }) {
           )}
 
           {signIn.error && (
-            <p className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            <p className="flex items-start gap-2 rounded-lg bg-secondary px-3 py-2 text-xs text-destructive">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               {signIn.error}
             </p>
           )}
 
           <ul className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-            <li className="flex items-start gap-2 rounded-lg border border-border/70 bg-background/50 p-2.5">
-              <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+            <li className="flex items-start gap-2 rounded-lg border border-border bg-background p-2.5">
+              <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               {t("marketplace.identity_fact_scope")}
             </li>
-            <li className="flex items-start gap-2 rounded-lg border border-border/70 bg-background/50 p-2.5">
-              <Store className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+            <li className="flex items-start gap-2 rounded-lg border border-border bg-background p-2.5">
+              <Store className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               {t("marketplace.identity_fact_name")}
             </li>
-            <li className="flex items-start gap-2 rounded-lg border border-border/70 bg-background/50 p-2.5">
-              <LogOut className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+            <li className="flex items-start gap-2 rounded-lg border border-border bg-background p-2.5">
+              <LogOut className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               {t("marketplace.identity_fact_keyring")}
             </li>
           </ul>
@@ -498,8 +498,8 @@ export function PublisherChip({
         aria-expanded={open}
         data-testid="publisher-chip"
         className={cn(
-          "flex h-8 items-center gap-2 rounded-full border border-border bg-card/70 pl-1 pr-2.5",
-          "text-xs font-medium text-foreground backdrop-blur transition-colors hover:border-primary/50",
+          "flex h-8 items-center gap-2 rounded-full border border-border bg-card pl-1 pr-2.5",
+          "text-xs font-medium text-foreground backdrop-blur transition-colors hover:border-border-strong",
         )}
       >
         <PublisherAvatar login={data.login} url={data.avatar_url} size={24} />
@@ -513,7 +513,7 @@ export function PublisherChip({
         >
           <div className="px-2.5 py-2">
             <p className="truncate text-xs font-semibold text-foreground">@{data.login}</p>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-micro text-muted-foreground">
               {t("marketplace.identity_menu_hint")}
             </p>
           </div>
@@ -573,7 +573,7 @@ export function PublishIdentityCard({
   const signedIn = identity?.signed_in === true;
   return (
     <section
-      className={cn(!compact && "rounded-xl border border-border bg-card/40 p-4")}
+      className={cn(!compact && "rounded-xl border border-border bg-card p-4")}
       data-testid="publish-identity"
       data-signed-in={signedIn ? "yes" : "no"}
     >
@@ -586,7 +586,7 @@ export function PublishIdentityCard({
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-wider text-foreground">
+          <p className="text-xs font-semibold text-foreground">
             {t("marketplace.identity_label")}
           </p>
           <p className="text-xs text-muted-foreground">
@@ -601,7 +601,7 @@ export function PublishIdentityCard({
             )}
           </p>
           {identity?.unreachable && (
-            <p className="mt-1 text-[11px] text-muted-foreground">
+            <p className="mt-1 text-micro text-muted-foreground">
               {t("marketplace.identity_unreachable")}
             </p>
           )}
@@ -636,7 +636,7 @@ export function PublishIdentityCard({
         </div>
       )}
       {signIn.error && (
-        <p className="mt-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+        <p className="mt-2 flex items-start gap-2 rounded-md bg-secondary px-2 py-1.5 text-xs text-destructive">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {signIn.error}
         </p>

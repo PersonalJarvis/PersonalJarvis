@@ -7,6 +7,7 @@ import {
   useUpdate,
   type UpdateProgress,
 } from "@/hooks/useUpdate";
+import { clsx } from "clsx";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
@@ -46,6 +47,39 @@ import { openExternalUrl } from "@/lib/openExternal";
  */
 const CONFIRM_TIMEOUT_MS = 4000;
 
+/**
+ * The one recipe every control in this bar follows.
+ *
+ * The three buttons had drifted into three different shapes — a bordered
+ * `bg-secondary/40` pill, a bordered `bg-primary/10` pill in accent ink, and a
+ * bordered `bg-foreground/10` pill — none of which is a surface in the system:
+ * each was a token multiplied by an opacity, so all three sat at whatever value
+ * the ground behind them happened to be. Shape, size, radius and focus ring
+ * live here; only the FILL differs, and only because the three states differ.
+ *
+ * Composed with `clsx`, not `cn`: tailwind-merge reads any unfamiliar `text-*`
+ * class as a colour, so `cn("text-body", "text-muted-foreground")` throws the
+ * SIZE away and the button falls back to the inherited 16 px. Font size and
+ * colour never conflict in real CSS. (The durable fix is teaching
+ * tailwind-merge the scale in `lib/utils.ts`; that file is not part of this
+ * change.)
+ */
+const CHROME_BUTTON =
+  "inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-3 text-body font-medium " +
+  "transition-[background-color,color,transform] duration-150 " +
+  "motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 " +
+  "focus-visible:ring-border-strong disabled:cursor-default disabled:opacity-70";
+
+/** Resting chrome: no fill of its own, one step up under the pointer. */
+const CHROME_QUIET = "text-muted-foreground hover:bg-secondary hover:text-foreground";
+
+/**
+ * A control waiting for a second, deliberate click — "confirm restart",
+ * "restart anyway". Amber is the product's "needs attention" hue and this is
+ * the only place in the shell that earns it: the guard already refused once.
+ */
+const CHROME_ARMED = "bg-warning text-background";
+
 const CODING_SECTIONS = new Set<SectionId>([
   "agentic-ide",
   "agentic-ide-classic",
@@ -80,7 +114,10 @@ export function TopBar() {
   }
 
   return (
-    <div className="jarvis-shell-surface flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border px-4 backdrop-blur-md">
+    // 44px, so a 32px control has room to breathe in it. At 40px the buttons
+    // filled the bar edge to edge and the strip read as a container that had
+    // burst rather than as chrome.
+    <div className="jarvis-shell-surface flex h-11 shrink-0 items-center justify-end gap-2 border-b border-border px-4 backdrop-blur-md">
       {/* Status, not an action — `mr-auto` pins it left so it never crowds
           the buttons. The deck header does not pass this: it already sits
           in a right-hand cluster. */}
@@ -187,9 +224,9 @@ function DetachButton() {
       disabled={busy}
       title={t("topbar.detach_hint")}
       data-testid="detach-view-button"
-      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:cursor-default disabled:opacity-70"
+      className={clsx(CHROME_BUTTON, CHROME_QUIET)}
     >
-      <AppWindow aria-hidden className="h-3.5 w-3.5" />
+      <AppWindow aria-hidden className="h-4 w-4" />
       {t("topbar.detach")}
     </button>
   );
@@ -294,16 +331,14 @@ function RestartButton() {
       onClick={onClick}
       disabled={restarting}
       title={t("topbar.restart_hint")}
-      className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70",
-        confirming || forceArmed
-          ? "border-foreground/60 bg-foreground/10 text-foreground hover:bg-foreground/20"
-          : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/50 hover:text-foreground",
+      className={clsx(
+        CHROME_BUTTON,
+        confirming || forceArmed ? CHROME_ARMED : CHROME_QUIET,
       )}
     >
       <RotateCw
         aria-hidden
-        className={cn("h-3.5 w-3.5", restarting && "animate-spin")}
+        className={cn("h-4 w-4", restarting && "animate-spin")}
       />
       {label}
     </button>
@@ -583,40 +618,47 @@ function UpdateButton() {
         aria-valuemin={busy ? 0 : undefined}
         aria-valuemax={busy ? 100 : undefined}
         aria-valuenow={busy ? percent : undefined}
-        className={cn(
-          "relative inline-flex items-center gap-1.5 overflow-hidden rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70",
-          forceArmed
-            ? "border-foreground/60 bg-foreground/10 text-foreground hover:bg-foreground/20"
-            : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20",
+        className={clsx(
+          CHROME_BUTTON,
+          "relative overflow-hidden",
+          // The one offer in the bar, so it is the one thing here with a fill
+          // of its own: an object on the chrome, answering the pointer one
+          // step up. It used to be accent-tinted TEXT on an accent-tinted
+          // wash, which put the loudest ink in the window on a button most
+          // users never need.
+          forceArmed ? CHROME_ARMED : "bg-card text-foreground hover:bg-secondary",
         )}
       >
         {busy && (
           <span
             aria-hidden
             data-testid="update-progress-fill"
-            // A token tint on the button's own token background: it reads as a
-            // fill in light and dark alike, with no hardcoded colour.
-            className="absolute inset-y-0 left-0 bg-primary/25 transition-[width] duration-300 ease-out"
+            // The bar is the next surface UP from the button's own, so it
+            // stays readable whether the button is resting or hovered — and
+            // it is a named token, not a tint of one.
+            className="absolute inset-y-0 left-0 bg-popover transition-[width] duration-300 ease-out"
             style={{ width: `${percent}%` }}
           />
         )}
         <Download
           aria-hidden
-          className={cn("relative h-3.5 w-3.5", busy && "animate-pulse")}
+          className={cn("relative h-4 w-4", busy && "animate-pulse")}
         />
         <span className="relative tabular-nums">{label}</span>
         {!busy && !forceArmed && shownVersion && (
-          <span className="relative rounded bg-primary/20 px-1 text-[10px] tabular-nums">
+          <span className="relative rounded-full bg-secondary px-1.5 text-micro tabular-nums text-muted-foreground">
             v{shownVersion}
           </span>
         )}
       </button>
       {showNotes && status.notes && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-80 rounded-md border border-border bg-background p-3 text-left">
-          <div className="mb-1 text-xs font-semibold text-foreground">
+        // A floating layer: the float surface, the float shadow, and no border
+        // of its own — the shadow already carries the rim.
+        <div className="absolute right-0 top-full z-50 mt-2 w-80 rounded-lg bg-popover p-block text-left shadow-float">
+          <div className="mb-2 text-title font-semibold text-foreground-strong">
             {t("topbar.update_available")} · v{shownVersion}
           </div>
-          <div className="max-h-64 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
+          <div className="max-h-64 overflow-y-auto whitespace-pre-wrap text-meta text-muted-foreground">
             {status.notes.slice(0, 800)}
           </div>
         </div>

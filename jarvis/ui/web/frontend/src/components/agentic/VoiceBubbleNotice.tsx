@@ -139,10 +139,10 @@ export function VoiceBubbleNotice({
       {/* Two lines rather than one truncated one: this is the sentence that
           tells the user WHICH of their agents this is about, and half of it is
           often the half that names the thing. */}
-      <span className="line-clamp-2 text-[12px] font-semibold leading-snug text-foreground">
+      <span className="line-clamp-2 text-meta font-semibold leading-snug text-foreground">
         {headline}
       </span>
-      <span className="mt-0.5 block truncate text-[11px] leading-snug text-muted-foreground">
+      <span className="mt-0.5 block truncate text-micro text-muted-foreground">
         {subline}
       </span>
     </>
@@ -157,7 +157,7 @@ export function VoiceBubbleNotice({
       aria-live="polite"
       className={cn(
         "pointer-events-auto flex w-full shrink-0 items-center gap-2.5",
-        "rounded-2xl border border-border/50 bg-background/90 px-3 py-2.5",
+        "rounded-2xl border border-border bg-background px-3 py-2.5",
         "text-left backdrop-blur",
       )}
     >

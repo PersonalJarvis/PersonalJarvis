@@ -381,20 +381,20 @@ export function CommunityTab() {
         (data?.skills.length ?? 0) +
         (data?.wallpapers?.length ?? 0) >
         0 && (
-        <label className="flex items-center gap-2 rounded-lg border border-border bg-card/40 px-3 py-2">
+        <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
           <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search community plugins, skills and wallpapers…"
-            className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-faint-foreground"
           />
         </label>
       )}
 
       {plugins.length > 0 && (
         <section>
-          <h3 className="mb-3 font-display text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <h3 className="mb-3 font-display text-xs font-semibold text-muted-foreground">
             Plugins
           </h3>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -416,7 +416,7 @@ export function CommunityTab() {
 
       {skills.length > 0 && (
         <section>
-          <h3 className="mb-3 font-display text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <h3 className="mb-3 font-display text-xs font-semibold text-muted-foreground">
             Skills
           </h3>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -443,7 +443,7 @@ export function CommunityTab() {
 
       {wallpapers.length > 0 && (
         <section>
-          <h3 className="mb-3 font-display text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <h3 className="mb-3 font-display text-xs font-semibold text-muted-foreground">
             Wallpapers
           </h3>
           <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -575,10 +575,10 @@ function Notice({
     <p
       className={cn(
         "flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
-        tone === "muted" && "border-border bg-card/40 text-muted-foreground",
-        tone === "warn" && "border-foreground/40 bg-foreground/5 text-foreground",
+        tone === "muted" && "border-border bg-card text-muted-foreground",
+        tone === "warn" && "bg-secondary text-foreground",
         tone === "error" &&
-          "border-destructive/40 bg-destructive/5 text-destructive",
+          "bg-secondary text-destructive",
       )}
     >
       {tone !== "muted" && <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
@@ -619,33 +619,33 @@ function ContentsPanel({ name }: { name: string }) {
     <div>
       <div className="mb-1.5 flex items-baseline justify-between gap-3">
         <p className="text-xs font-medium text-foreground">What's inside</p>
-        <p className="shrink-0 text-[11px] text-muted-foreground">
+        <p className="shrink-0 text-micro text-muted-foreground">
           {data.files.length === 1 ? "1 file" : `${data.files.length} files`} ·{" "}
           {formatBytes(total)}
         </p>
       </div>
       <div className="overflow-hidden rounded-md border border-border">
-        <p className="border-b border-border bg-muted/40 px-2.5 py-1.5 font-mono text-[11px] text-muted-foreground">
+        <p className="border-b border-border bg-muted px-2.5 py-1.5 font-mono text-micro text-muted-foreground">
           {data.root}
         </p>
         {data.files.map((file) => (
           <div key={file.path} className="border-b border-border last:border-b-0">
-            <div className="flex items-baseline justify-between gap-3 bg-card/60 px-2.5 py-1.5">
-              <span className="truncate font-mono text-[11px] text-foreground">
+            <div className="flex items-baseline justify-between gap-3 bg-card px-2.5 py-1.5">
+              <span className="truncate font-mono text-micro text-foreground">
                 {file.path}
               </span>
-              <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+              <span className="shrink-0 font-mono text-micro text-muted-foreground">
                 {formatBytes(file.size)}
               </span>
             </div>
             {/* Long lines scroll inside the file rather than widening the
                 dialog. The text is interpolated, never dangerouslySetInnerHTML
                 — a publisher's file is untrusted text and stays text. */}
-            <pre className="max-h-[420px] overflow-auto bg-background/60 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+            <pre className="max-h-[420px] overflow-auto bg-background px-2.5 py-2 font-mono text-micro text-muted-foreground">
               {file.text}
             </pre>
             {file.truncated && (
-              <p className="bg-card/60 px-2.5 py-1.5 text-[11px] text-foreground">
+              <p className="bg-card px-2.5 py-1.5 text-micro text-foreground">
                 Shown up to 256 kB — the published file is longer. Open the
                 source to read the rest.
               </p>
@@ -653,7 +653,7 @@ function ContentsPanel({ name }: { name: string }) {
           </div>
         ))}
       </div>
-      <p className="mt-1.5 text-[11px] text-muted-foreground/70">
+      <p className="mt-1.5 text-micro text-muted-foreground">
         Exactly as published. These are the bytes {PRODUCT_NAME} downloads when
         you install it — nothing is added or rewritten in between.
       </p>
@@ -675,7 +675,7 @@ function CommunityTile({ plugin }: { plugin: CommunityPluginWire }) {
   const name = plugin.display_name ?? plugin.name;
   return (
     <div
-      className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-border/60"
+      className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-border"
       style={{ backgroundColor: tile }}
     >
       {failed || !src ? (
@@ -709,8 +709,8 @@ function CommunityPluginRow({
   const name = plugin.display_name ?? plugin.name;
   if (!plugin.valid) {
     return (
-      <article className="flex items-center gap-3 rounded-lg border border-border bg-card/20 px-3 py-2.5 opacity-70">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border/60 bg-muted">
+      <article className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 opacity-70">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border bg-muted">
           <AlertTriangle className="h-4 w-4 text-muted-foreground" />
         </div>
         <div className="min-w-0 flex-1">
@@ -730,10 +730,10 @@ function CommunityPluginRow({
   return (
     <article
       className={cn(
-        "group flex items-center gap-3 rounded-lg border bg-card/40 px-3 py-2.5 transition-[colors,box-shadow]",
+        "group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 transition-[colors,box-shadow]",
         plugin.installed
           ? "border-primary/30"
-          : "border-border hover:border-primary/40 hover:bg-card/70",
+          : "border-border hover:border-border-strong hover:bg-secondary",
       )}
     >
       <CommunityTile plugin={plugin} />
@@ -749,11 +749,11 @@ function CommunityPluginRow({
           <h4 className="min-w-0 max-w-full truncate text-sm font-semibold tracking-tight text-foreground">
             {name}
           </h4>
-          <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-foreground/80">
+          <span className="shrink-0 text-micro font-medium text-foreground">
             Community · not reviewed
           </span>
           {plugin.installed && (
-            <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-primary">
+            <span className="shrink-0 text-micro font-medium text-foreground-strong">
               · Installed
             </span>
           )}
@@ -761,7 +761,7 @@ function CommunityPluginRow({
         <p className="truncate text-xs text-muted-foreground" title={plugin.description}>
           {plugin.description}
         </p>
-        <p className="truncate text-[11px] text-muted-foreground/70">
+        <p className="truncate text-micro text-muted-foreground">
           {plugin.publisher ? `by ${plugin.publisher}` : "unknown publisher"}
           {plugin.version ? ` · v${plugin.version}` : ""}
         </p>
@@ -793,7 +793,7 @@ function CommunityPluginRow({
         </Button>
       ) : plugin.seed_conflict ? (
         <span
-          className="shrink-0 text-[10px] text-muted-foreground"
+          className="shrink-0 text-micro text-muted-foreground"
           title="A built-in plugin already uses this name"
         >
           Name taken
@@ -821,10 +821,10 @@ function CommunitySkillRow({
   return (
     <article
       className={cn(
-        "flex items-center gap-3 rounded-lg border bg-card/40 px-3 py-2.5",
+        "flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5",
         skill.installed
           ? "border-primary/30"
-          : "border-border hover:border-primary/40 hover:bg-card/70",
+          : "border-border hover:border-border-strong hover:bg-secondary",
       )}
     >
       {/* Same as the plugin card: the body opens the skill so its instructions
@@ -839,12 +839,12 @@ function CommunitySkillRow({
           <h4 className="min-w-0 max-w-full truncate text-sm font-semibold tracking-tight text-foreground">
             {skill.title}
           </h4>
-          <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-foreground/80">
+          <span className="shrink-0 text-micro font-medium text-foreground">
             Community · not reviewed
           </span>
           {skill.flavor === "portable" && (
             <span
-              className="shrink-0 rounded-full border border-border px-1.5 text-[9px] font-medium uppercase tracking-wider text-muted-foreground"
+              className="shrink-0 rounded-full border border-border px-1.5 text-micro font-medium text-muted-foreground"
               title={portableNote(skill) ?? undefined}
             >
               Portable
@@ -854,7 +854,7 @@ function CommunitySkillRow({
         <p className="truncate text-xs text-muted-foreground" title={skill.description}>
           {skill.description}
         </p>
-        <p className="truncate text-[11px] text-muted-foreground/70">
+        <p className="truncate text-micro text-muted-foreground">
           {skill.publisher ? `by ${skill.publisher}` : "unknown publisher"}
           {installError ? ` · ${installError}` : ""}
         </p>
@@ -871,7 +871,7 @@ function CommunitySkillRow({
         </button>
       )}
       {skill.installed ? (
-        <span className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-primary">
+        <span className="inline-flex shrink-0 items-center gap-1 text-micro font-medium text-foreground-strong">
           <Check className="h-3 w-3" /> Installed
         </span>
       ) : skill.raw_url ? (
@@ -880,7 +880,7 @@ function CommunitySkillRow({
         </Button>
       ) : (
         <span
-          className="shrink-0 text-[10px] text-muted-foreground"
+          className="shrink-0 text-micro text-muted-foreground"
           title="No direct download — open the source and follow its steps"
         >
           Manual
@@ -908,15 +908,15 @@ function CommunityWallpaperCard({
       onClick={onOpen}
       title={`Preview ${paper.title}`}
       className={cn(
-        "group overflow-hidden rounded-lg border bg-card/40 text-left transition-colors",
+        "group overflow-hidden rounded-lg border bg-card text-left transition-colors",
         paper.installed
           ? "border-primary/30"
-          : "border-border hover:border-primary/40 hover:bg-card/70",
+          : "border-border hover:border-border-strong hover:bg-secondary",
       )}
     >
       <div className="grid aspect-video place-items-center overflow-hidden bg-muted">
         {failed || !paper.raw_url ? (
-          <span className="text-[11px] text-muted-foreground">No preview</span>
+          <span className="text-micro text-muted-foreground">No preview</span>
         ) : (
           <img
             src={paper.raw_url}
@@ -933,10 +933,10 @@ function CommunityWallpaperCard({
             {paper.title}
           </h4>
           {paper.installed && (
-            <Check className="h-3 w-3 shrink-0 text-primary" aria-label="Installed" />
+            <Check className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Installed" />
           )}
         </div>
-        <p className="truncate text-[11px] text-muted-foreground/70">
+        <p className="truncate text-micro text-muted-foreground">
           {paper.publisher ? `by ${paper.publisher}` : "unknown publisher"}
         </p>
       </div>
@@ -980,7 +980,7 @@ export function WallpaperPreviewDialog({
         if (e.target === e.currentTarget && !isPending) onCancel();
       }}
     >
-      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-popover shadow-float">
         <header className="border-b border-border px-5 py-4">
           <h2
             id="community-wallpaper-title"
@@ -988,7 +988,7 @@ export function WallpaperPreviewDialog({
           >
             {paper.installed ? paper.title : `Install ${paper.title}?`}
           </h2>
-          <p className="text-[11px] uppercase tracking-wider text-foreground/80">
+          <p className="text-micro text-foreground">
             Community wallpaper · not reviewed
             {paper.installed ? " · installed" : ""}
           </p>
@@ -1019,7 +1019,7 @@ export function WallpaperPreviewDialog({
             uploads. It carries no code and no credentials.
           </p>
           {errorMessage && (
-            <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+            <p className="flex items-start gap-2 rounded-md bg-secondary px-2 py-1.5 text-xs text-destructive">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               {errorMessage}
             </p>
@@ -1087,7 +1087,7 @@ export function SkillInstallConsentDialog({
         if (e.target === e.currentTarget && !isPending) onCancel();
       }}
     >
-      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg bg-popover shadow-float">
         <header className="border-b border-border px-5 py-4">
           <h2
             id="community-skill-install-title"
@@ -1095,7 +1095,7 @@ export function SkillInstallConsentDialog({
           >
             {skill.installed ? skill.title : `Install ${skill.title}?`}
           </h2>
-          <p className="text-[11px] uppercase tracking-wider text-foreground/80">
+          <p className="text-micro text-foreground">
             Community skill · not reviewed
             {skill.installed ? " · installed" : ""}
           </p>
@@ -1126,7 +1126,7 @@ export function SkillInstallConsentDialog({
             <p className="mb-1 text-xs font-medium text-foreground">
               The instructions are downloaded from:
             </p>
-            <code className="block break-all rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs text-foreground">
+            <code className="block break-all rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground">
               {skill.raw_url}
             </code>
           </div>
@@ -1145,7 +1145,7 @@ export function SkillInstallConsentDialog({
             above is exactly what it would be told to do.
           </p>
           {errorMessage && (
-            <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+            <p className="flex items-start gap-2 rounded-md bg-secondary px-2 py-1.5 text-xs text-destructive">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               {errorMessage}
             </p>
@@ -1210,7 +1210,7 @@ export function InstallConsentDialog({
         if (e.target === e.currentTarget && !isPending) onCancel();
       }}
     >
-      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg bg-popover shadow-float">
         <header className="flex items-center gap-3 border-b border-border px-5 py-4">
           <CommunityTile plugin={plugin} />
           <div className="min-w-0">
@@ -1220,7 +1220,7 @@ export function InstallConsentDialog({
             >
               {plugin.installed ? name : `Install ${name}?`}
             </h2>
-            <p className="text-[11px] uppercase tracking-wider text-foreground/80">
+            <p className="text-micro text-foreground">
               Community plugin · not reviewed
               {plugin.installed ? " · installed" : ""}
             </p>
@@ -1243,7 +1243,7 @@ export function InstallConsentDialog({
                 After you connect it, requests and your {name} access token go
                 to:
               </p>
-              <code className="block break-all rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs text-foreground">
+              <code className="block break-all rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground">
                 {mcp.url}
               </code>
             </div>
@@ -1253,7 +1253,7 @@ export function InstallConsentDialog({
               <p className="mb-1 text-xs font-medium text-foreground">
                 After you connect it, this command runs on your computer:
               </p>
-              <code className="block break-all rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs text-foreground">
+              <code className="block break-all rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground">
                 {(mcp.install ?? []).join(" ")}
               </code>
             </div>
@@ -1288,7 +1288,7 @@ export function InstallConsentDialog({
           )}
 
           {errorMessage && (
-            <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+            <p className="flex items-start gap-2 rounded-md bg-secondary px-2 py-1.5 text-xs text-destructive">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               {errorMessage}
             </p>

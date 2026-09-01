@@ -50,7 +50,7 @@ export function LanguagesGroup() {
 
   return (
     <div className="mb-8 space-y-4">
-      <h3 className="font-display text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <h3 className="font-display text-xs font-semibold text-muted-foreground">
         {t("settings_view.languages_group_title")}
       </h3>
 
@@ -125,7 +125,7 @@ function Section({
 }) {
   return (
     <div>
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+      <div className="mb-1 text-micro text-muted-foreground">
         {title}
       </div>
       <div className="mb-3 text-xs text-muted-foreground">{hint}</div>
@@ -154,15 +154,15 @@ function LanguageRow({
         className={cn(
           "flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors",
           active
-            ? "border-primary/40 bg-primary/5 shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]"
-            : "border-border bg-card/60 hover:border-primary/30 hover:bg-card/80",
+            ? "bg-secondary shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]"
+            : "border-border bg-card hover:border-border-strong hover:bg-secondary",
         )}
       >
         <div className="flex-1">
           <div className="font-medium">{label}</div>
           <div className="mt-0.5 text-xs text-muted-foreground">{description}</div>
         </div>
-        {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
+        {active && <Check className="h-4 w-4 shrink-0 text-muted-foreground" />}
       </button>
     </li>
   );

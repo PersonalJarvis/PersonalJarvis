@@ -145,7 +145,7 @@ export function AgentMark({
       data-ground={asset?.ground ?? "none"}
       aria-hidden="true"
       className={cn(
-        "inline-flex shrink-0 items-center justify-center overflow-hidden text-[9px] font-bold tracking-tight text-muted-foreground",
+        "inline-flex shrink-0 items-center justify-center overflow-hidden text-micro font-bold tracking-tight text-muted-foreground",
         // The tile, and the brightness that goes with being one. Without it the
         // glyph sits at the weight of the text it accompanies, which is the
         // point of `plain`.
@@ -154,8 +154,8 @@ export function AgentMark({
             ? "rounded-[4px] bg-scrim/95 p-px"
             : "opacity-70"
           : canvased
-            ? "border border-border/80 bg-scrim/95"
-            : "border border-border/80 bg-background/80",
+            ? "border border-border bg-scrim/95"
+            : "border border-border bg-background",
         sizeClass,
         className,
       )}

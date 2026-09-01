@@ -13,8 +13,8 @@ const STATUS_ICON: Record<string, JSX.Element> = {
   done: <CheckCircle2 className="h-4 w-4 text-primary" />,
   failed: <XCircle className="h-4 w-4 text-destructive" />,
   running: <Loader2 className="h-4 w-4 animate-spin text-primary" />,
-  skipped: <Circle className="h-4 w-4 text-muted-foreground/40" />,
-  pending: <Circle className="h-4 w-4 text-muted-foreground/40" />,
+  skipped: <Circle className="h-4 w-4 text-muted-foreground" />,
+  pending: <Circle className="h-4 w-4 text-muted-foreground" />,
 };
 
 export function PlanStepList({ steps }: { steps: PlanStep[] }) {
@@ -37,30 +37,30 @@ export function PlanStepList({ steps }: { steps: PlanStep[] }) {
               ? "border-destructive/30 bg-destructive/5"
               : s.status === "done"
                 ? "border-primary/30 bg-primary/5"
-                : "border-border bg-card/40",
+                : "border-border bg-card",
           )}
         >
           <div className="flex items-center gap-2">
             {STATUS_ICON[s.status] ?? STATUS_ICON.pending}
-            <span className="text-muted-foreground/50">{idx + 1}.</span>
+            <span className="text-muted-foreground">{idx + 1}.</span>
             <span className="font-medium">{s.name || s.step_id}</span>
             {typeof s.duration_s === "number" && (
-              <span className="ml-auto text-[10px] text-muted-foreground">
+              <span className="ml-auto text-micro text-muted-foreground">
                 {s.duration_s.toFixed(1)}s
               </span>
             )}
           </div>
           {s.error && (
-            <div className="mt-1 break-words font-mono text-[10px] text-destructive">
+            <div className="mt-1 break-words font-mono text-micro text-destructive">
               {s.error}
             </div>
           )}
           {s.output && s.status === "done" && (
             <details className="mt-1">
-              <summary className="cursor-pointer text-[10px] text-muted-foreground hover:text-foreground">
+              <summary className="cursor-pointer text-micro text-muted-foreground hover:text-foreground">
                 {t("plan_step_list.show_output")}
               </summary>
-              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-background/40 p-2 font-mono text-[10px]">
+              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-background p-2 font-mono text-micro">
                 {s.output}
               </pre>
             </details>

@@ -3,6 +3,7 @@ import { AlertTriangle, Keyboard } from "lucide-react";
 
 import { ViewHeader } from "@/views/ChatsView";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { KeybindRow } from "@/views/settings/KeybindRow";
 import { useKeybinds, type KeybindAction } from "@/hooks/useHotkey";
 import { useEventStore } from "@/store/events";
@@ -123,7 +124,7 @@ export function ShortcutsTab({ hideHeader = false }: ShortcutsTabProps = {}) {
     <div className="flex h-full flex-col">
       {!hideHeader && (
         <ViewHeader
-          icon={<Keyboard className="h-4 w-4 text-primary" />}
+          icon={<Keyboard className="h-4 w-4 text-foreground" />}
           title={t("voice.shortcuts.title")}
           subtitle={t("voice.shortcuts.description")}
         />
@@ -132,62 +133,75 @@ export function ShortcutsTab({ hideHeader = false }: ShortcutsTabProps = {}) {
         className="flex-1 overflow-y-auto scrollbar-jarvis p-6"
         data-testid="voice-shortcuts-tab"
       >
-        <div className="mx-auto flex max-w-3xl flex-col gap-4">
+        {/* Three key rows are a form, so they take the form measure rather
+            than stretching a 60-character hint across a desktop window. */}
+        <div className="mx-auto flex max-w-form flex-col gap-group">
           {/* Embedded, the band above carries the section brand rather than
               this tab's purpose — so the purpose is stated here instead. */}
           {hideHeader && (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               {t("voice.shortcuts.description")}
             </p>
           )}
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {error && <p className="text-meta text-destructive">{error}</p>}
 
+          {/* A setting that contradicts its own label is degraded, not
+              broken — so a --warning glyph on an ordinary card, never the
+              near-white wash this used to be. */}
           {pttIsToggle && (
-            <div
-              className="flex items-start gap-3 rounded-lg border border-foreground/40 bg-foreground/10 p-3"
+            <Card
+              className="flex items-start gap-3 p-5"
               data-testid="shortcuts-mode-notice"
             >
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
+              <AlertTriangle
+                aria-hidden="true"
+                className="mt-0.5 h-4 w-4 shrink-0 text-warning"
+              />
               <div className="min-w-0 flex-1">
-                <p className="text-xs text-muted-foreground">
+                <p className="text-meta text-muted-foreground">
                   {t("voice.shortcuts.mode_notice")}
                 </p>
                 <Button
                   size="sm"
                   variant="outline"
-                  className="mt-2"
+                  className="mt-stack"
                   data-testid="shortcuts-mode-fix"
                   onClick={() => void pinHoldMode()}
                 >
                   {t("voice.shortcuts.mode_notice_fix")}
                 </Button>
               </div>
-            </div>
+            </Card>
           )}
 
-          {ROWS.map((row) => (
-            <div key={row.action} className="flex flex-col gap-1">
-              <KeybindRow
-                action={row.action}
-                variant="voice"
-                label={t(row.labelKey)}
-                hint={t(row.hintKey)}
-                config={config}
-                loading={loading}
-                onSave={saveKeybind}
-                suggestions={config?.suggestions}
-                onSaved={row.action === "dictate" ? pinHoldMode : undefined}
-              />
-              {row.action === "paste_last" && insertionBlocked && (
-                <p
-                  className="text-[11px] text-foreground"
-                  data-testid="shortcuts-paste-last-blocked"
-                >
-                  {t("voice.shortcuts.paste_last_blocked")}
-                </p>
-              )}
-            </div>
-          ))}
+          <div className="flex flex-col gap-stack">
+            {ROWS.map((row) => (
+              <div key={row.action} className="flex flex-col gap-1">
+                <KeybindRow
+                  action={row.action}
+                  variant="voice"
+                  label={t(row.labelKey)}
+                  hint={t(row.hintKey)}
+                  config={config}
+                  loading={loading}
+                  onSave={saveKeybind}
+                  suggestions={config?.suggestions}
+                  onSaved={row.action === "dictate" ? pinHoldMode : undefined}
+                />
+                {/* "The key works, the paste does not" is the degraded case
+                    this whole line exists to name, so it wears the degraded
+                    hue instead of the same ink as the label above it. */}
+                {row.action === "paste_last" && insertionBlocked && (
+                  <p
+                    className="text-meta text-warning"
+                    data-testid="shortcuts-paste-last-blocked"
+                  >
+                    {t("voice.shortcuts.paste_last_blocked")}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>

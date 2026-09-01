@@ -109,7 +109,7 @@ export function PermissionRows({
   const items = snapshot?.permissions ?? [];
   if (items.length === 0 || snapshot?.platform !== "darwin") {
     return (
-      <div className="flex items-start gap-2 rounded-lg border border-border bg-background/40 p-3 text-xs text-muted-foreground">
+      <div className="flex items-start gap-2 rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground">
         <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         {t("permissions.not_required")}
       </div>
@@ -119,7 +119,7 @@ export function PermissionRows({
   return (
     <div className="space-y-2">
       {snapshot?.app_identity.stable === false && (
-        <div className="flex items-start gap-2 rounded-lg border border-foreground/40 bg-foreground/5 p-3 text-xs text-foreground">
+        <div className="flex items-start gap-2 rounded-lg bg-secondary p-3 text-xs text-foreground">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           {t("permissions.identity_warning")}
         </div>
@@ -127,7 +127,7 @@ export function PermissionRows({
       {/* A rebuild changed the app's signature, so macOS discarded every
           recorded grant. Without this the app just looks amnesic. */}
       {snapshot?.identity_reset && (
-        <div className="flex items-start gap-2 rounded-lg border border-foreground/40 bg-foreground/5 p-3 text-xs text-foreground">
+        <div className="flex items-start gap-2 rounded-lg bg-secondary p-3 text-xs text-foreground">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           {t("permissions.identity_reset")}
         </div>
@@ -149,7 +149,7 @@ export function PermissionRows({
         </p>
       )}
       {snapshot?.restart_required && !deferRestartNote && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-foreground/40 bg-foreground/5 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-secondary p-3">
           <p className="text-xs text-foreground">{t("permissions.restart_required")}</p>
           <Button size="sm" disabled={restarting} onClick={() => void restartApp()}>
             {restarting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
@@ -207,9 +207,9 @@ function PermissionRow({
       : item.status;
 
   return (
-    <div className={`rounded-lg border border-border bg-background/40 ${compact ? "p-3" : "p-4"}`}>
+    <div className={`rounded-lg border border-border bg-background ${compact ? "p-3" : "p-4"}`}>
       <div className="flex flex-wrap items-center gap-3">
-        <Icon className="h-4 w-4 shrink-0 text-primary" />
+        <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-[12rem] flex-1">
           <div className="text-sm font-medium">{t(`permissions.items.${item.id}.title`)}</div>
           {/* Compact rows drop descriptions to stay scannable — except when
@@ -222,10 +222,10 @@ function PermissionRow({
           )}
         </div>
         <span
-          className={`rounded-full px-2 py-1 text-[10px] font-medium uppercase tracking-wide ${
+          className={`rounded-full px-2 py-1 text-micro font-medium ${
             ready
               ? "bg-muted-foreground/10 text-muted-foreground"
-              : "bg-foreground/10 text-foreground"
+              : "bg-secondary text-foreground"
           }`}
         >
           {t(`permissions.status.${statusKey}`)}
@@ -260,7 +260,7 @@ export function PermissionsPanel() {
   const t = useT();
   return (
     <div className="mt-8 space-y-4">
-      <h3 className="font-display text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <h3 className="font-display text-xs font-semibold text-muted-foreground">
         {t("permissions.group_title")}
       </h3>
       <SettingsBlock

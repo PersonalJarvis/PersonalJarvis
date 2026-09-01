@@ -47,7 +47,7 @@ export function ProviderSwitcher() {
 
   return (
     <div className="space-y-3">
-      <label className="text-xs uppercase tracking-wide text-muted-foreground">
+      <label className="text-xs text-muted-foreground">
         Active Brain
       </label>
       <BrandedSelect
@@ -59,7 +59,7 @@ export function ProviderSwitcher() {
           label: `${provider.label}${
             provider.configured
               ? ""
-              : ` — ${t("provider_switcher.no_credential")}`
+              :}` — ${t("provider_switcher.no_credential")}`
           }`,
           disabled: !provider.configured,
         }))}

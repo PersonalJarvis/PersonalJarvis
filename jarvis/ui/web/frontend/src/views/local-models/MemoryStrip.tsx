@@ -42,7 +42,7 @@ export function MemoryStrip({ resident, roleLabel }: MemoryStripProps) {
 
   return (
     <section
-      className="rounded-2xl border border-border bg-card/40 px-4 py-3"
+      className="rounded-2xl border border-border bg-card px-4 py-3"
       data-testid="memory-strip"
       data-over={resident.over ? "true" : "false"}
       aria-label={k("resident_title")}
@@ -60,19 +60,19 @@ export function MemoryStrip({ resident, roleLabel }: MemoryStripProps) {
         </p>
       </div>
       <div
-        className="mt-2 flex h-2.5 overflow-hidden rounded-full bg-sheen/[0.08]"
+        className="mt-2 flex h-2.5 overflow-hidden rounded-full bg-secondary"
         role="img"
         aria-label={headline}
       >
         {resident.items.map((item, i) => (
           <span key={item.tag} className="contents">
             <span
-              className={cn("h-full bg-foreground/70", i % 2 === 1 && "opacity-75")}
+              className={cn("h-full bg-secondary", i % 2 === 1 && "opacity-75")}
               style={{ width: width(item.weights_gb) }}
               title={`${item.display_label || item.tag} · ${gb(item.weights_gb)}`}
             />
             <span
-              className="h-full bg-primary/40"
+              className="h-full bg-secondary"
               style={{ width: width(item.context_gb) }}
               title={`${k("resident_context")} · ${gb(item.context_gb)}`}
             />
@@ -80,16 +80,16 @@ export function MemoryStrip({ resident, roleLabel }: MemoryStripProps) {
         ))}
         {resident.reserve_gb > 0 && (
           <span
-            className="h-full bg-sheen/25"
+            className="h-full bg-secondary"
             style={{ width: width(resident.reserve_gb) }}
             title={`${k("resident_reserve")} · ${gb(resident.reserve_gb)}`}
           />
         )}
       </div>
-      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-micro text-muted-foreground">
         {resident.items.map((item) => (
           <li key={item.tag} className="flex items-center gap-1.5" data-testid={`memory-strip-${item.tag}`}>
-            <i className="inline-block h-2 w-2 rounded-[2px] bg-foreground/70" aria-hidden />
+            <i className="inline-block h-2 w-2 rounded-[2px] bg-secondary" aria-hidden />
             <span className="text-foreground/90">{item.display_label || item.tag}</span>
             <span>
               {item.roles.map(roleLabel).join(" · ")} · {gb(item.weights_gb)}
@@ -100,7 +100,7 @@ export function MemoryStrip({ resident, roleLabel }: MemoryStripProps) {
         ))}
         {resident.reserve_gb > 0 && (
           <li className="flex items-center gap-1.5">
-            <i className="inline-block h-2 w-2 rounded-[2px] bg-sheen/25" aria-hidden />
+            <i className="inline-block h-2 w-2 rounded-[2px] bg-secondary" aria-hidden />
             <span>
               {k("resident_reserve")} · {gb(resident.reserve_gb)}
             </span>

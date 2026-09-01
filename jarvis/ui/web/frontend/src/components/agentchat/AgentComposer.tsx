@@ -430,7 +430,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         <div
           data-testid="composer-drop-overlay"
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/70 bg-card/90 text-sm font-medium text-primary"
+          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/70 bg-card text-sm font-medium text-primary"
         >
           {t("agent_chat.attach_drop_hint")}
         </div>
@@ -485,7 +485,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         // Grows with the text up to half the window (useAutoGrowTextarea), so
         // a message is read whole while it is written; past the cap the box
         // scrolls rather than pushing the picks and Send out of reach.
-        className="max-h-[50vh] w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-relaxed text-foreground scrollbar-jarvis placeholder:text-muted-foreground focus-visible:outline-none disabled:opacity-50"
+        className="max-h-[50vh] w-full resize-none bg-transparent px-1 py-1 text-reading text-foreground scrollbar-jarvis placeholder:text-muted-foreground focus-visible:outline-none disabled:opacity-50"
       />
       <div className="flex flex-wrap items-center gap-1">
         {/*
@@ -504,7 +504,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
               ? t("agent_chat.surface_jarvis_hint")
               : `${t("agent_chat.surface_agent_hint")}: ${draft.cwd || folderLeaf("")}`
           }
-          className="inline-flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-lg bg-secondary/60 px-2 text-xs font-medium text-foreground"
+          className="inline-flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-lg bg-secondary px-2 text-xs font-medium text-foreground"
         >
           {surface === "jarvis" ? (
             <GigiMark size={18} />
@@ -617,7 +617,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             className="inline-flex h-7 max-w-[160px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             <FolderOpen className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span className="hidden truncate font-mono text-[11px] 2xl:inline">{folderLeaf(draft.cwd)}</span>
+            <span className="hidden truncate font-mono text-micro 2xl:inline">{folderLeaf(draft.cwd)}</span>
           </button>
         )}
         <span className="flex-1" />
@@ -687,7 +687,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
               "inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
               canSend
                 ? "bg-foreground/70 text-primary-foreground hover:bg-primary/90"
-                : "bg-secondary text-muted-foreground/60",
+                : "bg-secondary text-muted-foreground",
             )}
           >
             <ArrowUp className="h-4 w-4" />

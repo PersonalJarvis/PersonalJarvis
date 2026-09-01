@@ -228,16 +228,16 @@ export function WorkspaceLauncher({
       data-testid="workspace-launcher"
       className="flex h-full min-h-0 flex-col font-display"
     >
-      <header className="shrink-0 border-b border-border/70 px-5 py-5 sm:px-8">
+      <header className="shrink-0 border-b border-border px-5 py-5 sm:px-8">
         <div className="mx-auto flex w-full max-w-6xl items-start justify-between gap-6">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/80">
+            <p className="text-micro font-semibold text-primary/80">
               {t(
                 addingNew
                   ? "workspace_launcher.wizard.additional_workspace"
                   : "workspace_launcher.wizard.new_workspace",
               )}
-              <span className="px-2 text-muted-foreground/50">/</span>
+              <span className="px-2 text-muted-foreground">/</span>
               {t("workspace_launcher.wizard.step_progress")
                 .replace("{0}", String(step + 1))
                 .replace("{1}", String(STEPS.length))}
@@ -257,7 +257,7 @@ export function WorkspaceLauncher({
           </div>
           {folder && (
             <code
-              className="hidden max-w-[36%] truncate pt-1 font-mono text-[11px] text-muted-foreground xl:block"
+              className="hidden max-w-[36%] truncate pt-1 font-mono text-micro text-muted-foreground xl:block"
               title={folder}
             >
               {folder}
@@ -288,7 +288,7 @@ export function WorkspaceLauncher({
                   </span>
                   <Button
                     variant="subtle"
-                    className="h-6 px-2 text-foreground/90"
+                    className="h-6 px-2 text-foreground"
                     onClick={onOpenClis}
                   >
                     {t("workspace_launcher.wizard.open_clis")}
@@ -323,7 +323,7 @@ export function WorkspaceLauncher({
               aria-labelledby="workspace-launcher-title"
             >
               {step === 0 && (
-                <div className="flex min-h-[28rem] flex-col border-y border-border/70">
+                <div className="flex min-h-[28rem] flex-col border-y border-border">
                   <FolderPicker
                     selected={folder}
                     onSelect={onSelectFolder}
@@ -334,7 +334,7 @@ export function WorkspaceLauncher({
 
               {step === 1 && (
                 <div>
-                  <div className="flex items-end justify-between gap-5 border-b border-border/70 pb-5">
+                  <div className="flex items-end justify-between gap-5 border-b border-border pb-5">
                     <div>
                       <SectionLabel>
                         {t("workspace_launcher.wizard.terminal_panes")}
@@ -391,7 +391,7 @@ export function WorkspaceLauncher({
                 />
               )}
 
-              <footer className="mt-7 flex min-h-10 items-center justify-between border-t border-border/70 pt-5">
+              <footer className="mt-7 flex min-h-10 items-center justify-between border-t border-border pt-5">
                 {step > 0 ? (
                   <Button
                     variant="subtle"
@@ -432,7 +432,7 @@ export function WorkspaceLauncher({
                       ? t("workspace_launcher.wizard.opening")
                       : t("workspace_launcher.wizard.open_workspace")}
                     {!busy && (
-                      <kbd className="ml-1 hidden font-mono text-[10px] font-normal opacity-60 sm:inline">
+                      <kbd className="ml-1 hidden font-mono text-micro font-normal opacity-60 sm:inline">
                         {workspaceLaunchShortcut()}
                       </kbd>
                     )}
@@ -481,7 +481,7 @@ function CrowdedWarning({
     <div
       data-testid="workspace-crowded-warning"
       role="note"
-      className="mt-3 flex items-start gap-3 rounded-control border border-border/70 bg-muted/30 px-3 py-2.5"
+      className="mt-3 flex items-start gap-3 rounded-control border border-border bg-muted px-3 py-2.5"
     >
       <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
       <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
@@ -538,7 +538,7 @@ function StepNavigation({
       aria-label={t("workspace_launcher.wizard.setup_label")}
       className="min-w-0"
     >
-      <ol className="grid grid-cols-5 border-b border-border/70 lg:flex lg:flex-col lg:border-b-0 lg:border-r lg:pr-6">
+      <ol className="grid grid-cols-5 border-b border-border lg:flex lg:flex-col lg:border-b-0 lg:border-r lg:pr-6">
         {STEPS.map((item, index) => {
           const target = index as LauncherStep;
           const selected = target === step;
@@ -563,13 +563,13 @@ function StepNavigation({
                     selected ? "bg-foreground/70" : "bg-transparent",
                   )}
                 />
-                <span className="block font-mono text-[10px] tabular-nums text-muted-foreground/70">
+                <span className="block font-mono text-micro tabular-nums text-muted-foreground">
                   0{index + 1}
                 </span>
                 <span className="mt-1 block truncate text-sm font-medium">
                   {t(item.label)}
                 </span>
-                <span className="mt-0.5 hidden truncate text-[11px] text-muted-foreground lg:block">
+                <span className="mt-0.5 hidden truncate text-micro text-muted-foreground lg:block">
                   {summaries[index]}
                 </span>
               </button>
@@ -661,7 +661,7 @@ function ViewOption({
         "group min-w-0 border px-5 py-5 text-left transition-colors",
         selected
           ? "border-primary/70 bg-primary/[0.04]"
-          : "border-border/70 hover:border-border",
+          : "border-border hover:border-border",
       )}
     >
       {preview}
@@ -674,7 +674,7 @@ function ViewOption({
         {icon}
         {title}
         {selected && (
-          <span className="ml-auto text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+          <span className="ml-auto text-micro font-semibold text-primary">
             {t("workspace_launcher.wizard.selected")}
           </span>
         )}
@@ -767,8 +767,8 @@ function WorkspaceReview({
           {folder}
         </code>
 
-        <dl className="mt-7 border-y border-border/70">
-          <div className="flex items-center justify-between gap-5 border-b border-border/50 py-3 text-sm">
+        <dl className="mt-7 border-y border-border">
+          <div className="flex items-center justify-between gap-5 border-b border-border py-3 text-sm">
             <dt className="text-muted-foreground">
               {t("workspace_launcher.wizard.terminal_panes")}
             </dt>
@@ -776,7 +776,7 @@ function WorkspaceReview({
               {planned.length}
             </dd>
           </div>
-          <div className="flex items-center justify-between gap-5 border-b border-border/50 py-3 text-sm">
+          <div className="flex items-center justify-between gap-5 border-b border-border py-3 text-sm">
             <dt className="text-muted-foreground">
               {t("workspace_launcher.wizard.opens_as")}
             </dt>
@@ -797,13 +797,13 @@ function WorkspaceReview({
 
       <div className="min-w-0">
         <SectionLabel>{t("workspace_launcher.wizard.terminal_plan")}</SectionLabel>
-        <ol className="mt-3 border-t border-border/70">
+        <ol className="mt-3 border-t border-border">
           {planned.map((pane, index) => (
             <li
               key={`${pane.name}-${index}`}
-              className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-baseline gap-2 border-b border-border/50 py-2.5 text-sm"
+              className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-baseline gap-2 border-b border-border py-2.5 text-sm"
             >
-              <span className="font-mono text-[10px] tabular-nums text-muted-foreground/70">
+              <span className="font-mono text-micro tabular-nums text-muted-foreground">
                 {(index + 1).toString().padStart(2, "0")}
               </span>
               <span className="truncate font-mono text-foreground">

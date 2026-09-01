@@ -16,18 +16,28 @@ import { useT } from "@/i18n";
 
 import type { ToolCall } from "./types";
 
+/**
+ * The risk ladder, read left to right: two quiet tiers, then the two that want
+ * a human. `ask` is degraded (someone has to answer), `block` is a fault. The
+ * old table painted `monitor` sky and `ask` in near-white, which made the
+ * second-quietest tier the loudest thing in the row.
+ */
 const RISK_STYLE: Record<string, string> = {
-  safe: "text-muted-foreground/80",
-  monitor: "text-sky-300/80",
-  ask: "text-foreground/90",
-  block: "text-rose-300",
+  safe: "text-faint-foreground",
+  monitor: "text-muted-foreground",
+  ask: "text-warning",
+  block: "text-destructive",
 };
 
 export function ToolTable({ tools }: { tools: ToolCall[] }) {
   const t = useT();
   const [open, setOpen] = useState<Set<number>>(new Set());
   if (tools.length === 0) {
-    return <span className="text-muted-foreground/60">{t("run_inspector.tools.empty")}</span>;
+    return (
+      <span className="text-body text-muted-foreground">
+        {t("run_inspector.tools.empty")}
+      </span>
+    );
   }
   const toggle = (i: number) =>
     setOpen((prev) => {
@@ -47,45 +57,61 @@ export function ToolTable({ tools }: { tools: ToolCall[] }) {
             key={`${tool.name}-${i}`}
             data-tool={tool.name}
             data-success={tool.success}
-            className="rounded-md border border-border/50 bg-background/40"
+            className="overflow-hidden rounded-md"
           >
             <button
               type="button"
               onClick={() => detail && toggle(i)}
-              className={`flex w-full items-center gap-2 px-2 py-1.5 text-left text-[11px] ${detail ? "hover:bg-muted/30" : "cursor-default"}`}
+              className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-micro transition-colors ${
+                detail ? "hover:bg-secondary" : "cursor-default"
+              }`}
             >
               <span className="w-3 shrink-0 text-muted-foreground">
                 {detail ? (
-                  isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />
+                  isOpen ? (
+                    <ChevronDown className="h-3 w-3" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3" />
+                  )
                 ) : null}
               </span>
-              <span className="min-w-0 flex-1 truncate font-mono text-foreground/90">{tool.name}</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-foreground">
+                {tool.name}
+              </span>
               {tool.caller && (
-                <span className="shrink-0 text-[10px] text-muted-foreground">{tool.caller}</span>
+                <span className="shrink-0 text-muted-foreground">{tool.caller}</span>
               )}
               {tool.risk_tier && (
-                <span className={`shrink-0 text-[10px] ${RISK_STYLE[tool.risk_tier] ?? "text-muted-foreground"}`}>
+                <span
+                  className={`shrink-0 ${RISK_STYLE[tool.risk_tier] ?? "text-muted-foreground"}`}
+                >
                   {tool.risk_tier}
                 </span>
               )}
               {tool.approved_by && (
-                <span className="shrink-0 text-[10px] text-muted-foreground">
+                <span className="shrink-0 text-muted-foreground">
                   ✓ {tool.approved_by}
                 </span>
               )}
               {tool.duration_ms != null && (
-                <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+                <span className="shrink-0 font-mono tabular-nums text-muted-foreground">
                   {tool.duration_ms}ms
                 </span>
               )}
               <span
-                className={`shrink-0 font-mono text-[10px] ${tool.success ? "text-muted-foreground" : "text-rose-300"}`}
+                className={`shrink-0 font-mono tabular-nums ${
+                  tool.success ? "text-success" : "text-destructive"
+                }`}
               >
-                {tool.exit_code != null ? `exit ${tool.exit_code}` : tool.success ? "ok" : "fail"}
+                {tool.exit_code != null
+                  ? `exit ${tool.exit_code}`
+                  : tool.success
+                    ? "ok"
+                    : "fail"}
               </span>
             </button>
             {isOpen && detail && (
-              <div className="space-y-1.5 border-t border-border/40 px-3 py-2">
+              <div className="space-y-stack px-3 pb-2 pt-1.5">
                 {tool.command && (
                   <Field label={t("run_inspector.tools.command")} value={tool.command} />
                 )}
@@ -93,7 +119,11 @@ export function ToolTable({ tools }: { tools: ToolCall[] }) {
                   <Field label={t("run_inspector.tools.output")} value={tool.output} />
                 )}
                 {tool.error_line && (
-                  <Field label={t("run_inspector.tools.error")} value={tool.error_line} tone="error" />
+                  <Field
+                    label={t("run_inspector.tools.error")}
+                    value={tool.error_line}
+                    tone="error"
+                  />
                 )}
               </div>
             )}
@@ -105,17 +135,21 @@ export function ToolTable({ tools }: { tools: ToolCall[] }) {
 }
 
 function Field({
-  label, value, tone = "default",
+  label,
+  value,
+  tone = "default",
 }: {
-  label: string; value: string; tone?: "default" | "error";
+  label: string;
+  value: string;
+  tone?: "default" | "error";
 }) {
   return (
     <div>
-      <div className="mb-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-        {label}
-      </div>
+      <div className="mb-1 text-micro text-muted-foreground">{label}</div>
       <pre
-        className={`overflow-x-auto whitespace-pre-wrap break-words rounded bg-background/70 px-2 py-1 font-mono text-[10px] leading-relaxed [overflow-wrap:anywhere] ${tone === "error" ? "text-rose-300" : "text-foreground/80"}`}
+        className={`overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-secondary px-2 py-1.5 font-mono text-micro [overflow-wrap:anywhere] ${
+          tone === "error" ? "text-destructive" : "text-foreground"
+        }`}
       >
         {value}
       </pre>

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Mic, MicOff, RotateCcw } from "lucide-react";
 
 import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { useCapabilities } from "@/hooks/useCapabilities";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useT } from "@/i18n";
@@ -364,46 +366,53 @@ export function BrowserRealtimeControl() {
           ? "sidebar.realtime_transcribing"
           : "sidebar.realtime_listening";
 
+  // A failure and a note are different things and used to be painted the
+  // same: both ran as near-white 10px lines under the button, so a dead
+  // session looked exactly like a provider warning the call survived.
+  const faultLine = error || (supportIssue ? supportMessage(supportIssue) : "");
+
   return (
-    <div className="mt-2 rounded-md border border-border/70 bg-background/50 p-2">
-      <button
-        type="button"
+    // An object on the rail, not a translucent wash of the room behind it:
+    // this control is sized to its content, so it is allowed to lift.
+    <Card className="mt-2 p-2">
+      <Button
+        variant={connected ? "secondary" : "default"}
         disabled={unavailable || connecting}
         aria-label={label}
         aria-pressed={connected}
         onClick={() => void (connected ? stop() : start())}
-        className={cn(
-          "flex min-h-9 w-full touch-manipulation items-center justify-center gap-2 rounded-md px-2",
-          "text-xs font-medium transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-          connected
-            ? "bg-foreground/70 text-primary-foreground hover:bg-primary/90"
-            : "border border-border bg-card text-foreground hover:border-primary/50",
-          (unavailable || connecting) && "cursor-not-allowed opacity-60",
-        )}
+        className="w-full touch-manipulation gap-2"
       >
         <Icon
           className={cn("h-3.5 w-3.5", connecting && "animate-spin motion-reduce:animate-none")}
           aria-hidden="true"
         />
         <span>{connecting ? t("sidebar.realtime_connecting") : label}</span>
-      </button>
+      </Button>
       {(connected || connecting) && (
-        <div className="mt-1.5">
+        <div className="mt-2">
           <VoiceWaveform levelRef={levelRef} phase={phase} />
         </div>
       )}
-      <div className="mt-1.5 min-h-4 text-[10px] text-muted-foreground" aria-live="polite">
-        {error ||
-          (supportIssue ? supportMessage(supportIssue) : "") ||
+      <div
+        className={cn(
+          "mt-2 min-h-4 text-micro",
+          faultLine ? "text-destructive" : "text-muted-foreground",
+        )}
+        aria-live="polite"
+      >
+        {faultLine ||
           (connected
             ? [t(progressKey), effectiveProvider].filter(Boolean).join(" · ")
             : t("sidebar.realtime_browser_hint"))}
       </div>
+      {/* The call survived — a different provider answered, or one warned
+          about itself. Degraded, so it wears the degraded hue rather than the
+          brightest ink on the rail. */}
       {notice && !error && (
         <div
           data-testid="realtime-provider-notice"
-          className="mt-1 text-[10px] leading-snug text-foreground"
+          className="mt-1 text-micro text-warning"
           aria-live="polite"
         >
           {notice}
@@ -414,11 +423,11 @@ export function BrowserRealtimeControl() {
       {spokenText && error && (
         <div
           data-testid="realtime-spoken-text"
-          className="mt-1 text-[10px] leading-snug text-foreground"
+          className="mt-1 text-micro text-foreground"
         >
           {spokenText}
         </div>
       )}
-    </div>
+    </Card>
   );
 }

@@ -45,7 +45,15 @@ const ScrollBar = React.forwardRef<
     )}
     {...props}
   >
-    <ScrollAreaPrimitive.ScrollAreaThumb className="relative flex-1 rounded-full bg-border" />
+    {/*
+      The thumb rides OVER content on whatever surface the area happens to
+      sit on, so it is the one place a value is allowed to be translucent:
+      it is genuinely see-through, not a fill faking a depth step. It used
+      to be bound to --border, a structural hairline only a few values above
+      its own track — on near-black that is a scratch, not a control. Meta
+      ink at 35% reads on every ground in both themes and answers to hover.
+    */}
+    <ScrollAreaPrimitive.ScrollAreaThumb className="relative flex-1 rounded-full bg-muted-foreground/35 transition-colors hover:bg-muted-foreground/55" />
   </ScrollAreaPrimitive.ScrollAreaScrollbar>
 ));
 ScrollBar.displayName = ScrollAreaPrimitive.ScrollAreaScrollbar.displayName;

@@ -428,10 +428,10 @@ export function AssistantPanel({
                       disabled={!activeSessionId || busyNow}
                       onClick={() => void send(text)}
                       className={cn(
-                        "rounded-full border border-border bg-card px-3.5 py-2 text-[13px] text-muted-foreground",
-                        "transition-colors hover:border-primary/50 hover:text-foreground",
+                        "rounded-full border border-border bg-card px-3.5 py-2 text-meta text-muted-foreground",
+                        "transition-colors hover:border-border-strong hover:text-foreground",
                         "disabled:cursor-not-allowed disabled:opacity-50",
-                        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       )}
                     >
                       {text}
@@ -447,9 +447,9 @@ export function AssistantPanel({
               type="button"
               onClick={() => setShowEarlier((v) => !v)}
               className={cn(
-                "mx-auto inline-flex items-center gap-1.5 rounded-full border border-border bg-card/60 px-3 py-1",
+                "mx-auto inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1",
                 "text-[11.5px] text-muted-foreground hover:text-foreground",
-                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               )}
               data-testid="assistant-earlier"
             >
@@ -492,7 +492,7 @@ export function AssistantPanel({
                   className={cn(
                     "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
                     live
-                      ? "animate-pulse bg-primary/15 text-primary"
+                      ? "animate-pulse bg-secondary text-foreground-strong"
                       : "bg-muted text-muted-foreground",
                   )}
                 >
@@ -502,7 +502,7 @@ export function AssistantPanel({
                   <AssistantSteps blocks={item.blocks} live={live} onDecide={onDecide} />
                   {answer && (
                     <div
-                      className="flex flex-col gap-3 text-[15px] leading-[1.7] text-foreground"
+                      className="flex flex-col gap-3 text-title text-foreground"
                       data-testid="assistant-answer"
                     >
                       {answer.split(/\n{2,}/).map((para, k) => (
@@ -540,12 +540,12 @@ export function AssistantPanel({
       </div>
 
       {/* ── composer ───────────────────────────────────────────────────── */}
-      <div className="shrink-0 border-t border-border/70 bg-card px-5 py-3">
+      <div className="shrink-0 border-t border-border bg-card px-5 py-3">
         <div className="mx-auto w-full max-w-[46rem]">
           <form
             className={cn(
               "flex items-end gap-2 rounded-2xl border border-border bg-background px-2.5 py-2",
-              "transition-colors focus-within:border-primary/60",
+              "transition-colors focus-within:border-border-strong",
               !activeSessionId && "opacity-60",
             )}
             onSubmit={(e) => {
@@ -573,7 +573,7 @@ export function AssistantPanel({
               data-testid="assistant-composer"
               className={cn(
                 "max-h-40 min-h-[1.75rem] flex-1 resize-none bg-transparent px-1.5 py-1 text-[14.5px] leading-relaxed text-foreground",
-                "placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed",
+                "placeholder:text-faint-foreground focus:outline-none disabled:cursor-not-allowed",
               )}
             />
             <button
@@ -581,23 +581,23 @@ export function AssistantPanel({
               aria-label={t("local_models.assistant.send")}
               disabled={!activeSessionId || !draft.trim() || busy || running}
               className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-foreground/70 text-primary-foreground",
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground",
                 "transition-opacity hover:opacity-90 disabled:opacity-30",
-                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               )}
             >
               <Send className="h-3.5 w-3.5" />
             </button>
           </form>
           <div className="mt-1.5 flex items-center justify-between gap-3 px-1">
-            <span className="text-[11px] text-muted-foreground/70">
+            <span className="text-micro text-muted-foreground">
               {t("local_models.assistant.composer_hint")}
             </span>
             {onOpenServerLog && (
               <button
                 type="button"
                 onClick={onOpenServerLog}
-                className="text-[11px] text-muted-foreground/70 underline-offset-4 hover:text-foreground hover:underline"
+                className="text-micro text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                 data-testid="assistant-open-server-log"
               >
                 {t("local_models.assistant.open_server_log")}
@@ -630,9 +630,9 @@ function ChipButton({
       className={cn(
         "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium",
         "transition-colors disabled:cursor-not-allowed disabled:opacity-45",
-        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         primary
-          ? "bg-foreground/70 text-primary-foreground hover:opacity-90"
+          ? "bg-primary text-primary-foreground hover:opacity-90"
           : "border border-border text-muted-foreground hover:text-foreground",
       )}
     >

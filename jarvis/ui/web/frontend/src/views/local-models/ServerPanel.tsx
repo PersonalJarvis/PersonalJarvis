@@ -71,7 +71,7 @@ const KEEP_ALIVE_DEFAULT = "5m";
 const LOG_LINES = 40;
 
 const EYEBROW =
-  "text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground";
+  "text-micro font-semibold text-muted-foreground";
 
 /** "18.2 GB" from a byte count; "—" for nothing loaded. */
 export function formatGb(bytes: number | null | undefined): string {
@@ -717,7 +717,7 @@ export function ServerPanel({
           )}
           {guide.data && guide.data.rows.length > 0 && (
             <ul
-              className="divide-y divide-border/70 rounded-xl border border-border bg-card/60"
+              className="divide-y divide-border/70 rounded-xl border border-border bg-card"
               data-testid="env-guide"
             >
               {guide.data.rows.map((row) => (
@@ -732,11 +732,11 @@ export function ServerPanel({
                     <div className="text-xs text-muted-foreground">
                       {row.purpose}
                     </div>
-                    <code className="mt-1 block truncate rounded bg-sheen/[0.06] px-2 py-1 font-mono text-xs text-foreground">
+                    <code className="mt-1 block truncate rounded bg-secondary px-2 py-1 font-mono text-xs text-foreground">
                       {row.command}
                     </code>
                     {row.restart ? (
-                      <div className="mt-1 text-[11px] text-muted-foreground">
+                      <div className="mt-1 text-micro text-muted-foreground">
                         {row.restart}
                       </div>
                     ) : null}
@@ -763,7 +763,7 @@ export function ServerPanel({
                 type="button"
                 onClick={() => setLogOpen((v) => !v)}
                 aria-expanded={logOpen}
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground/90 hover:text-foreground"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-foreground"
               >
                 {logOpen ? (
                   <ChevronDown className="h-4 w-4" />
@@ -785,7 +785,7 @@ export function ServerPanel({
             {logOpen &&
               (log.data && log.data.lines.length > 0 ? (
                 <pre
-                  className="max-h-72 overflow-auto rounded-lg border border-border bg-sheen/[0.04] p-3 font-mono text-[11px] leading-5 text-foreground"
+                  className="max-h-72 overflow-auto rounded-lg bg-secondary p-3 font-mono text-micro text-foreground"
                   data-testid="server-log"
                 >
                   {log.data.lines.join("\n")}

@@ -138,9 +138,12 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
           vertical
             ? "inset-y-0 left-1/2 w-px -translate-x-1/2"
             : "inset-x-0 top-1/2 h-px -translate-y-1/2",
+          // Rim → strong rim → fill. Three named steps rather than three
+          // opacities: a seam has to read on the page's own ground in both
+          // themes, and an alpha of the ink lands differently in each.
           active
-            ? "bg-foreground/70"
-            : "bg-border group-hover:bg-primary/60 group-focus-visible:bg-primary/60",
+            ? "bg-primary"
+            : "bg-border group-hover:bg-border-strong group-focus-visible:bg-border-strong",
         )}
       />
       {/* A short thicker stub in the middle: without it the seam reads as a
@@ -151,8 +154,8 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
           "pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors",
           vertical ? "h-8 w-[3px]" : "h-[3px] w-8",
           active
-            ? "bg-foreground/70"
-            : "bg-border group-hover:bg-primary/70 group-focus-visible:bg-primary/70",
+            ? "bg-primary"
+            : "bg-border group-hover:bg-border-strong group-focus-visible:bg-border-strong",
         )}
       />
     </div>

@@ -28,12 +28,12 @@ export function OverlayTaskbarGroup() {
 
   return (
     <div className="mt-8 space-y-4">
-      <h3 className="font-display text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <h3 className="font-display text-xs font-semibold text-muted-foreground">
         {t("settings_view.overlay_taskbar_group_title")}
       </h3>
 
       <section>
-        <h4 className="mb-2 font-display text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h4 className="mb-2 font-display text-xs font-semibold text-muted-foreground">
           {t("taskbar_view.appearance_title")}
         </h4>
         <OverlayStylePanel />
@@ -41,16 +41,16 @@ export function OverlayTaskbarGroup() {
       </section>
 
       <section>
-        <h4 className="mb-2 font-display text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h4 className="mb-2 font-display text-xs font-semibold text-muted-foreground">
           {t("taskbar_view.behavior_title")}
         </h4>
-        <div className="overflow-hidden rounded-lg border border-border bg-card/60">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
           <BarPersistentRow />
-          <div className="mx-4 border-t border-border/60" />
+          <div className="mx-4 border-t border-border" />
           <FollowCursorRow />
-          <div className="mx-4 border-t border-border/60" />
+          <div className="mx-4 border-t border-border" />
           <MuteMusicRow />
-          <div className="mx-4 border-t border-border/60" />
+          <div className="mx-4 border-t border-border" />
           <SoundEffectsRow />
         </div>
       </section>
@@ -76,7 +76,7 @@ function ToggleRow({
 }) {
   return (
     <div className="flex items-start gap-3 p-4">
-      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
         <div className="font-medium">{title}</div>
         <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
@@ -307,9 +307,9 @@ function OverlayStylePanel() {
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card/60 p-4">
+    <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-start gap-3">
-        <Monitor className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <Monitor className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <h4 className="font-display text-sm font-semibold">
             {t("settings_view.overlay_style.title")}
@@ -332,11 +332,11 @@ function OverlayStylePanel() {
                 className={cn(
                   "flex flex-col items-center gap-2 rounded-lg border p-3 transition-all disabled:opacity-60",
                   opt === style
-                    ? "border-primary bg-primary/5 ring-1 ring-primary/50"
-                    : "border-border bg-background/40 hover:border-primary/50",
+                    ? "bg-secondary ring-1 ring-primary/50"
+                    : "border-border bg-background hover:border-border-strong",
                 )}
               >
-                <div className="flex h-16 w-full items-center justify-center overflow-hidden rounded-md bg-card/80">
+                <div className="flex h-16 w-full items-center justify-center overflow-hidden rounded-md bg-card">
                   <StylePreview style={opt} />
                 </div>
                 <span
@@ -360,7 +360,7 @@ function OverlayStylePanel() {
                 type="button"
                 onClick={() => onRestartNow(forceArmed)}
                 disabled={restarting}
-                className="rounded-md border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-60"
+                className="rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-foreground-strong transition-colors hover:bg-popover disabled:opacity-60"
               >
                 {restarting
                   ? t("taskbar_view.restarting")

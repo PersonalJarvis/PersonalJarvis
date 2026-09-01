@@ -154,8 +154,8 @@ export function WorkspaceExplorer({
       style={{ background: "rgb(var(--shell-rgb) / 0.22)" }}
       aria-label={t("agentic_grid.explorer.title")}
     >
-      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3">
-        <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
+        <span className="min-w-0 flex-1 truncate text-micro font-semibold text-muted-foreground">
           {t("agentic_grid.explorer.title")}
         </span>
         <button
@@ -185,7 +185,7 @@ export function WorkspaceExplorer({
             role="treeitem"
             aria-expanded={rootOpen}
             onClick={() => toggleDirectory("")}
-            className="flex h-7 w-full items-center gap-1.5 rounded-control px-1.5 text-left text-xs font-semibold uppercase tracking-[0.08em] text-foreground transition-colors hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60"
+            className="flex h-7 w-full items-center gap-1.5 rounded-control px-1.5 text-left text-xs font-semibold text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60"
           >
             <ChevronRight
               className={cn(
@@ -236,7 +236,7 @@ export function WorkspaceExplorer({
         </div>
       </div>
 
-      <footer className="shrink-0 border-t border-border/60 px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
+      <footer className="shrink-0 border-t border-border px-3 py-2 text-micro text-muted-foreground">
         {rootPath
           ? t("agentic_grid.explorer.drag_hint")
           : t("agentic_grid.explorer.open_hint")}
@@ -275,7 +275,7 @@ function TreeLevel({
     return (
       <div
         role="status"
-        className="flex h-7 items-center gap-2 text-[11px] text-muted-foreground"
+        className="flex h-7 items-center gap-2 text-micro text-muted-foreground"
         style={{ paddingLeft: `${depth * 12 + 9}px` }}
       >
         <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden />
@@ -288,7 +288,7 @@ function TreeLevel({
     return (
       <div
         role="alert"
-        className="my-1 border-l-2 border-destructive/70 py-1 pr-2 text-[11px] leading-relaxed text-destructive"
+        className="my-1 border-l-2 border-destructive/70 py-1 pr-2 text-micro text-destructive"
         style={{ marginLeft: `${depth * 12 + 9}px`, paddingLeft: "8px" }}
       >
         {directory.error}
@@ -343,7 +343,7 @@ function TreeLevel({
                 "group flex h-7 w-full items-center rounded-control transition-colors",
                 selected
                   ? "bg-primary/10 text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
-                  : "text-muted-foreground hover:bg-secondary/65 hover:text-foreground",
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}
             >
               <button
@@ -364,7 +364,7 @@ function TreeLevel({
                     onOpenFile(entry.path, event.currentTarget);
                   }
                 }}
-                className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left text-[12px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring/60"
+                className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left text-meta focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring/60"
                 style={{ paddingLeft: `${depth * 12}px` }}
               >
                 {expandable ? (
@@ -380,7 +380,7 @@ function TreeLevel({
                 )}
                 {entry.is_symlink ? (
                   <Link2
-                    className="h-4 w-4 shrink-0 text-muted-foreground/70"
+                    className="h-4 w-4 shrink-0 text-muted-foreground"
                     aria-hidden
                   />
                 ) : (
@@ -398,7 +398,7 @@ function TreeLevel({
                   }}
                   aria-label={`${t("agentic_grid.explorer.open_file")} ${entry.name}`}
                   title={t("agentic_grid.explorer.open_file")}
-                  className="mr-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-muted-foreground/70 opacity-70 transition hover:bg-primary/10 hover:text-primary hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60"
+                  className="mr-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-muted-foreground opacity-70 transition hover:bg-primary/10 hover:text-primary hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60"
                 >
                   <FileSearch className="h-3 w-3" aria-hidden />
                 </button>
@@ -425,7 +425,7 @@ function TreeLevel({
 
       {directory.entries.length === 0 && (
         <div
-          className="h-6 truncate text-[11px] italic leading-6 text-muted-foreground/70"
+          className="h-6 truncate text-micro italic leading-6 text-muted-foreground"
           style={{ paddingLeft: `${depth * 12 + 21}px` }}
         >
           {t("agentic_grid.explorer.empty")}
@@ -434,7 +434,7 @@ function TreeLevel({
       {directory.truncated && (
         <div
           role="note"
-          className="py-1 pr-2 text-[10px] leading-relaxed text-foreground"
+          className="py-1 pr-2 text-micro text-foreground"
           style={{ paddingLeft: `${depth * 12 + 21}px` }}
         >
           {t("agentic_grid.explorer.truncated")}

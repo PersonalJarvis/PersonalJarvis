@@ -94,7 +94,7 @@ export function WorkspaceSettings({
           title={`New ${account.display_name} terminals open on ${account.active_label}. Panes already running keep theirs. Click to switch.`}
           aria-label={`Switch which ${account.display_name} subscription new terminals use`}
           className={cn(
-            "hidden h-7 max-w-[16rem] items-center gap-1.5 rounded-md bg-secondary/50 px-2 text-[11px] text-muted-foreground transition-colors xl:flex",
+            "hidden h-7 max-w-[16rem] items-center gap-1.5 rounded-md bg-secondary px-2 text-micro text-muted-foreground transition-colors xl:flex",
             "hover:bg-secondary hover:text-foreground",
           )}
         >
@@ -120,10 +120,10 @@ export function WorkspaceSettings({
         </Dialog.Trigger>
 
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm" />
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-background backdrop-blur-sm" />
           <Dialog.Content
             data-testid="agentic-settings"
-            className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(44rem,calc(100vh-4rem))] w-[min(52rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-border bg-card"
+            className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(44rem,calc(100vh-4rem))] w-[min(52rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg bg-popover shadow-float"
           >
             <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
               <div className="min-w-0">
@@ -153,9 +153,9 @@ export function WorkspaceSettings({
                 {accounts.map((account) => (
                   <li
                     key={account.agent}
-                    className="rounded-xl border border-border bg-background/40 px-3 py-2"
+                    className="rounded-xl border border-border bg-background px-3 py-2"
                   >
-                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <p className="text-micro text-muted-foreground">
                       {account.display_name} · new terminals
                     </p>
                     <p

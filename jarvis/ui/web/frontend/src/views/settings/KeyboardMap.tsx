@@ -68,16 +68,16 @@ function Key({
   // Visual precedence: a live press always wins (you must SEE the key you hit),
   // then the in-combo selection, then the "used by another action" marker.
   const cls = pressed
-    ? "border-primary bg-foreground/70 text-primary-foreground"
+    ? "border-border-strong bg-primary text-primary-foreground"
     : selected
-      ? "border-primary bg-primary/20 text-primary"
+      ? "bg-secondary text-foreground-strong"
       : boundLabel
-        ? "border-foreground/50 bg-foreground/10 text-foreground"
+        ? "bg-secondary text-foreground"
         : bindable
           ? // Hover stays clearly weaker than the "pressed" fill — a full
             // bg-accent hover read as "this key is pressed" in live testing.
-            "border-input bg-background text-foreground hover:border-primary/60 hover:bg-accent/40"
-          : "border-transparent bg-muted/30 text-muted-foreground/50";
+            "border-input bg-background text-foreground hover:border-border-strong hover:bg-secondary"
+          : "border-transparent bg-muted text-muted-foreground";
 
   return (
     <button
@@ -89,7 +89,7 @@ function Key({
       disabled={!bindable}
       onClick={bindable ? () => onToggleToken(token) : undefined}
       style={{ flexGrow: cap.width ?? 1, flexBasis: 0 }}
-      className={`relative flex h-7 min-w-0 items-center justify-center rounded border px-0.5 font-mono text-[10px] leading-none transition-colors ${cls} ${
+      className={`relative flex h-7 min-w-0 items-center justify-center rounded border px-0.5 font-mono text-micro transition-colors ${cls} ${
         bindable ? "cursor-pointer" : "cursor-default"
       }`}
     >
@@ -143,7 +143,7 @@ export function KeyboardMap({
   const rows = useMemo(() => mainRows(platform), [platform]);
 
   return (
-    <div className="mt-3 rounded-md border border-border/60 bg-background/40 p-2">
+    <div className="mt-3 rounded-md border border-border bg-background p-2">
       <div className="flex flex-wrap items-start gap-3">
         {/* Main alpha block */}
         <div className="flex min-w-[280px] flex-1 flex-col gap-1">
@@ -197,7 +197,7 @@ export function KeyboardMap({
             mouseReason && (
               <p
                 data-testid="mouse-unavailable"
-                className="max-w-[10rem] text-[10px] leading-snug text-muted-foreground"
+                className="max-w-[10rem] text-micro text-muted-foreground"
               >
                 {mouseReason}
               </p>
@@ -207,13 +207,13 @@ export function KeyboardMap({
       </div>
 
       {/* Legend */}
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-micro text-muted-foreground">
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-foreground/70" />
+          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-secondary" />
           {t("settings_view.keybinds.keyboard.legend_pressed")}
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2.5 w-2.5 rounded-sm border border-primary bg-primary/20" />
+          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-secondary" />
           {t("settings_view.keybinds.keyboard.legend_selected")}
         </span>
         <span className="flex items-center gap-1">

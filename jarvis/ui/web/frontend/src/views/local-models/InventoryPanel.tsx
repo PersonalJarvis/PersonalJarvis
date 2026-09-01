@@ -84,10 +84,10 @@ function Badge({
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-micro font-medium",
         tone === "primary"
-          ? "bg-primary/10 text-primary"
-          : "bg-sheen/[0.08] text-muted-foreground",
+          ? "bg-secondary text-foreground-strong"
+          : "bg-secondary text-muted-foreground",
       )}
     >
       {children}
@@ -110,7 +110,7 @@ function DetailsDrawer({
   const template = detail.data?.template ?? "";
   return (
     <div
-      className="space-y-4 rounded-xl border border-border bg-card/60 p-4"
+      className="space-y-4 rounded-xl border border-border bg-card p-4"
       data-testid={`details-${row.name}`}
     >
       <DetailHeader
@@ -182,7 +182,7 @@ function DeleteDrawer({
   const used = row.used_by.length > 0;
   return (
     <div
-      className="space-y-3 rounded-xl border border-destructive/40 bg-card/60 p-4"
+      className="space-y-3 rounded-xl border border-destructive/40 bg-card p-4"
       data-testid={`delete-${row.name}`}
     >
       <p className="text-sm text-foreground">
@@ -415,7 +415,7 @@ export function InventoryPanel({ providerId }: InventoryPanelProps) {
         </p>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-border bg-card/60">
+      <div className="overflow-x-auto rounded-xl border border-border bg-card">
         <div className="min-w-[1040px]">
           <Table label={k("table_label")}>
             <TableHead columns={columns} />
@@ -521,7 +521,7 @@ export function InventoryPanel({ providerId }: InventoryPanelProps) {
                     </Cell>
                   </TableRow>
                   {open && (
-                    <div className="border-b border-border/70 px-3 py-3 last:border-b-0">
+                    <div className="border-b border-border px-3 py-3 last:border-b-0">
                       {open === "details" && (
                         <DetailsDrawer
                           providerId={providerId}

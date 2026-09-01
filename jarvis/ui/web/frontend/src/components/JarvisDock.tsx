@@ -190,7 +190,7 @@ export function JarvisDock() {
         ? "bloom"
         : "idle";
   const stateClass = {
-    idle: "border-border bg-card/70",
+    idle: "border-border bg-card",
     bloom:
       "scale-105 border-primary/70 bg-primary/15 ring-2 ring-primary/40 animate-[dock-breathe_2.2s_ease-in-out_infinite]",
     armed:

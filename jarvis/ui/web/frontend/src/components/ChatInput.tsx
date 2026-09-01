@@ -167,21 +167,29 @@ export function ChatInput() {
     <div
       data-testid="chat-composer"
       className={cn(
-        "flex flex-col gap-2 rounded-2xl border border-border bg-card p-3 transition-[border-color,box-shadow] dark:border-transparent",
-        "focus-within:border-primary/40",
+        // The composer is an object: card fill, the strong rim, one radius.
+        // `dark:border-transparent` used to erase that rim in the theme the
+        // app opens in, which left the box with no outline and no focus state
+        // at all on near-black. The ring is the focus device everywhere else
+        // in the system, so it is the focus device here.
+        "flex flex-col gap-row rounded-lg border border-border-strong bg-card p-3",
+        "transition-[box-shadow] focus-within:ring-2 focus-within:ring-border-strong",
       )}
     >
       {dictating && (
         <div
-          className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary"
+          className="flex items-center gap-row rounded-md bg-secondary px-3 py-1.5 text-meta text-foreground"
           role="status"
           aria-live="polite"
         >
+          {/* Listening is a live state, and life is green. It used to be
+              --primary, which on near-black is pure white — the loudest mark
+              on the screen for a thing that is merely running. */}
           <span className="relative flex h-2 w-2" aria-hidden>
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/70" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/70" />
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/70" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
           </span>
-          <span className="font-medium">{t("chats_view.dictation_listening")}</span>
+          <span>{t("chats_view.dictation_listening")}</span>
         </div>
       )}
       <textarea
@@ -205,9 +213,9 @@ export function ChatInput() {
         rows={2}
         // Grows with the text up to half the window (useAutoGrowTextarea);
         // past the cap the box scrolls rather than pushing Send out of reach.
-        className="max-h-[50vh] w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-relaxed text-foreground scrollbar-jarvis placeholder:text-muted-foreground focus-visible:outline-none disabled:opacity-50"
+        className="max-h-[50vh] w-full resize-none bg-transparent px-1 py-1 text-reading text-foreground scrollbar-jarvis placeholder:text-faint-foreground focus-visible:outline-none disabled:opacity-50"
       />
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-row">
         <button
           type="button"
           data-jarvis-dictation-trigger
@@ -216,10 +224,10 @@ export function ChatInput() {
           aria-label={dictating ? t("chats_view.dictation_stop") : t("chats_view.dictation_start")}
           title={dictating ? t("chats_view.dictation_stop") : t("chats_view.dictation_start")}
           className={cn(
-            "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors disabled:opacity-50",
+            "inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors disabled:opacity-50",
             dictating
-              ? "animate-jarvis-pulse border-primary/50 bg-primary/15 text-primary"
-              : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
+              ? "animate-jarvis-pulse bg-secondary text-success"
+              : "text-muted-foreground hover:bg-secondary hover:text-foreground",
           )}
         >
           {dictating ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
@@ -230,11 +238,11 @@ export function ChatInput() {
           onClick={() => setActiveSection("apikeys")}
           title={t("home.model_hint")}
           data-testid="composer-model"
-          className="inline-flex h-8 max-w-[280px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="inline-flex h-8 max-w-[280px] items-center gap-1.5 rounded-md px-2 text-meta text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <span className="truncate font-medium text-foreground">{engine.providerLabel}</span>
           {engine.model && (
-            <span className="truncate font-mono text-[10px] text-muted-foreground">{engine.model}</span>
+            <span className="truncate font-mono text-micro text-muted-foreground">{engine.model}</span>
           )}
         </button>
         <button
@@ -244,10 +252,13 @@ export function ChatInput() {
           aria-label="Send"
           data-testid="composer-send"
           className={cn(
-            "inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
+            // --primary is a fill and this is the one place in the composer
+            // that earns it. There is no step above it in dark mode, so hover
+            // answers with opacity rather than a colour that does not exist.
+            "inline-flex h-8 w-8 items-center justify-center rounded-md transition-opacity",
             canSend
-              ? "bg-foreground/70 text-primary-foreground hover:bg-primary/90"
-              : "bg-secondary text-muted-foreground/60",
+              ? "bg-primary text-primary-foreground hover:opacity-90"
+              : "bg-secondary text-faint-foreground",
           )}
         >
           <ArrowUp className="h-4 w-4" />

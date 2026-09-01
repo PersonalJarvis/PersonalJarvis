@@ -485,7 +485,7 @@ export function SkillsView() {
                     value={categoryFilter ?? ""}
                     onValueChange={(value) => setCategoryFilter(value || null)}
                     ariaLabel={t("skills_view.all_categories")}
-                    className="w-auto rounded-full px-2 py-0.5 text-[11px]"
+                    className="w-auto rounded-full px-2 py-0.5 text-micro"
                     options={[
                       { value: "", label: t("skills_view.all_categories") },
                       ...categoryOptions.map((category) => ({
@@ -496,7 +496,7 @@ export function SkillsView() {
                   />
                 )}
                 {searchActive && search.data && (
-                  <span className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <span className="ml-auto flex items-center gap-2 text-micro text-muted-foreground">
                     {search.data.total} {t("skills_view.matches")}
                     {search.data.brain_used && (
                       <span className="flex items-center gap-1">
@@ -527,7 +527,7 @@ export function SkillsView() {
               </div>
             )}
             {error && (
-              <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <div className="rounded-lg bg-secondary p-3 text-sm text-destructive">
                 {t("skills_view.load_error")}: {(error as Error).message}
               </div>
             )}
@@ -540,7 +540,7 @@ export function SkillsView() {
                   </div>
                 )}
                 {searchActive && search.error && (
-                  <div className="m-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                  <div className="m-3 rounded-lg bg-secondary p-3 text-xs text-destructive">
                     {t("skills_view.search_failed")}: {(search.error as Error).message}
                   </div>
                 )}
@@ -628,13 +628,13 @@ function SkillRow({
       )}
       <Cell>
         <div className="flex items-center gap-2" title={skill.description}>
-          <span className="truncate text-[15px] font-medium">{skill.name}</span>
+          <span className="truncate text-title font-medium">{skill.name}</span>
           {skill.origin?.source === "marketplace" && (
             <MarketplaceBadge compact publisher={skill.origin.publisher} />
           )}
           {skill.triggers.map((tr, i) => {
             const Icon = TRIGGER_ICON[tr.type];
-            return <Icon key={i} className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" aria-label={tr.type} />;
+            return <Icon key={i} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label={tr.type} />;
           })}
         </div>
         {reason && (
@@ -648,7 +648,7 @@ function SkillRow({
       <Cell align="right" stop>
         {broken ? (
           <span
-            className="flex items-center gap-1 text-[11px] font-medium text-destructive"
+            className="flex items-center gap-1 text-micro font-medium text-destructive"
             title={skill.error ?? undefined}
           >
             <AlertTriangle className="h-3.5 w-3.5" />
@@ -669,7 +669,7 @@ function SkillRow({
             onClick={onDelete}
             aria-label={t("skills_view.delete")}
             title={t("skills_view.delete")}
-            className="rounded p-1 text-muted-foreground/0 transition-colors hover:bg-destructive/10 hover:text-destructive group-hover:text-muted-foreground/70 focus-visible:text-muted-foreground"
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-destructive group-hover:text-muted-foreground focus-visible:text-muted-foreground"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -713,7 +713,7 @@ function SelectBox({
       className={cn(
         "flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border transition-colors",
         checked
-          ? "border-primary bg-foreground/70 text-primary-foreground"
+          ? "border-border-strong bg-primary text-primary-foreground"
           : "border-muted-foreground/50 hover:border-muted-foreground",
         disabled && "cursor-not-allowed opacity-40",
         className,
@@ -740,7 +740,7 @@ function SelectionToolbar({
   const t = useT();
   const hasSelection = checkedCount > 0;
   return (
-    <div className="mt-4 flex items-center gap-2.5 rounded-lg border border-border bg-sheen/[0.04] px-3 py-2">
+    <div className="mt-4 flex items-center gap-2.5 rounded-lg bg-secondary px-3 py-2">
       <SelectBox
         checked={allChecked}
         onChange={onToggleAll}
@@ -801,7 +801,7 @@ function BulkDeleteConfirmDialog({
         <p className="mt-2 text-sm text-muted-foreground">
           {t("skills_view.bulk_delete_body")}
         </p>
-        <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto rounded-md border border-border bg-muted/20 p-2">
+        <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto rounded-md border border-border bg-muted p-2">
           {names.map((n) => (
             <li key={n} className="truncate font-mono text-xs">
               {n}
@@ -1098,7 +1098,7 @@ function SkillDetailPage({
         )}
 
         {data.error && (
-          <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
+          <div className="mt-4 rounded-md bg-secondary p-2.5 text-xs text-destructive">
             {t("skills_view.validation_error")}: {data.error}
           </div>
         )}
@@ -1107,10 +1107,10 @@ function SkillDetailPage({
             the dropped keys, because the owner of the file has to be able to
             see what this app did not read. */}
         {data.portable && (
-          <div className="mt-4 rounded-md border border-border bg-muted/40 p-2.5 text-xs text-muted-foreground">
+          <div className="mt-4 rounded-md border border-border bg-muted p-2.5 text-xs text-muted-foreground">
             {t("skills_view.portable_notice")}
             {data.ignored_fields && data.ignored_fields.length > 0 && (
-              <span className="mt-1 block font-mono text-[11px]">
+              <span className="mt-1 block font-mono text-micro">
                 {t("skills_view.portable_ignored")}{" "}
                 {data.ignored_fields.join(", ")}
               </span>
@@ -1118,7 +1118,7 @@ function SkillDetailPage({
           </div>
         )}
         {saveError && !showAdminDialog && (
-          <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
+          <div className="mt-4 rounded-md bg-secondary p-2.5 text-xs text-destructive">
             {saveError}
           </div>
         )}
@@ -1130,8 +1130,8 @@ function SkillDetailPage({
         )}
 
         <Panel className="mt-4">
-          <div className="flex items-center gap-3 border-b border-border/70 px-3 py-2">
-            <span className="inline-flex h-8 min-w-0 items-center gap-2 px-1 font-mono text-[13px] text-foreground">
+          <div className="flex items-center gap-3 border-b border-border px-3 py-2">
+            <span className="inline-flex h-8 min-w-0 items-center gap-2 px-1 font-mono text-meta text-foreground">
               <OpenFileIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <span className="truncate">{openLabel}</span>
             </span>
@@ -1140,7 +1140,7 @@ function SkillDetailPage({
             </span>
             <div className="ml-auto flex items-center gap-1">
               {data.is_builtin && mode === "source" && (
-                <span className="mr-2 hidden text-[11px] text-muted-foreground sm:inline">
+                <span className="mr-2 hidden text-micro text-muted-foreground sm:inline">
                   {t("skills_view.builtin_admin_needed")}
                 </span>
               )}
@@ -1155,7 +1155,7 @@ function SkillDetailPage({
                   {save.isPending ? t("common.saving") : t("common.save")}
                 </Button>
               )}
-              <div className="flex items-center rounded-md bg-sheen/[0.05] p-0.5" role="tablist" aria-label={t("skills_view.view_mode")}>
+              <div className="flex items-center rounded-md bg-secondary p-0.5" role="tablist" aria-label={t("skills_view.view_mode")}>
                 <ModeButton
                   active={mode === "preview"}
                   label={t("skills_view.view_preview")}
@@ -1176,7 +1176,7 @@ function SkillDetailPage({
 
           <div className="flex min-h-[160px]">
             <FileTree
-              className="w-56 shrink-0 border-r border-border/70 py-2"
+              className="w-56 shrink-0 border-r border-border py-2"
               rootLabel={data.name}
               paths={treePaths}
               openPath={openLabel}
@@ -1227,7 +1227,7 @@ function SkillDetailPage({
             ) : (
               <textarea
                 className={cn(
-                  "block min-h-[420px] w-full resize-y bg-transparent px-6 py-5 font-mono text-[13px] leading-relaxed",
+                  "block min-h-[420px] w-full resize-y bg-transparent px-6 py-5 font-mono text-meta ",
                   "focus:outline-none",
                 )}
                 aria-label="SKILL.md"
@@ -1283,7 +1283,7 @@ function TriggerList({ triggers }: { triggers: SkillTrigger[] }) {
             <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-label={tr.type} />
             <span className="font-mono text-xs">{detail || tr.type}</span>
             {tr.language && tr.language.length > 0 && (
-              <span className="text-[11px] text-muted-foreground">{tr.language.join(", ")}</span>
+              <span className="text-micro text-muted-foreground">{tr.language.join(", ")}</span>
             )}
           </li>
         );
@@ -1322,7 +1322,7 @@ function ResourceBody({
     );
   }
   return (
-    <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words px-6 py-5 font-mono text-[13px] leading-relaxed">
+    <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words px-6 py-5 font-mono text-meta ">
       {data}
     </pre>
   );
@@ -1367,7 +1367,7 @@ function AdminPassDialog({
             if (e.key === "Enter" && passInput) onConfirm(passInput);
             if (e.key === "Escape") onCancel();
           }}
-          className="mt-4 w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+          className="mt-4 w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-border-strong"
           placeholder="Password"
         />
         {errorHint && (
@@ -1546,7 +1546,7 @@ function SkillLinks({
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="group flex items-center gap-1.5 rounded-md border border-border bg-background/60 px-2 py-1 text-xs text-foreground hover:bg-muted/40"
+            className="group flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-muted"
             title={url}
           >
             <Icon className="h-3 w-3 text-muted-foreground" />
@@ -1600,10 +1600,10 @@ function FilterChip({
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+        "rounded-full border px-2 py-0.5 text-micro transition-colors",
         active
-          ? "border-primary/60 bg-primary/10 text-primary"
-          : "border-border bg-background/60 hover:bg-muted/40",
+          ? "bg-secondary text-foreground-strong"
+          : "border-border bg-background hover:bg-muted",
       )}
     >
       {label}

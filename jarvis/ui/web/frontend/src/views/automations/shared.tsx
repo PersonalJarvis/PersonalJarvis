@@ -1,9 +1,12 @@
 /**
  * Small building blocks shared by the Automations cards and the Runs tab:
  * the state dot, the live countdown, the schedule words, the step timeline
- * and the readable result block. All colours come from theme tokens (plus
- * the two semantic tailwind hues the rest of the app already uses for
- * "good" and "attention"), so light mode keeps its ink-outline look.
+ * and the readable result block.
+ *
+ * Every colour is a named token. Status is the only thing here that carries
+ * hue, and it carries exactly three: life, degraded, fault. The one documented
+ * exception is `identityTint`, which derives a stable avatar hue from a name —
+ * an identity mark, never a state.
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
@@ -58,15 +61,23 @@ export function useStateLabels(): Record<TaskState, string> {
   );
 }
 
+/**
+ * The state ramp. Anything alive or finished well is `life`; anything that
+ * needs a person is `degraded`; a failure is `fault`; and the three states
+ * that mean "nothing is happening" recede to the faint step.
+ *
+ * `interrupted` used to be painted --foreground, which made the one state
+ * nobody acts on the brightest mark in a list of running automations.
+ */
 const DOT_CLASS: Record<TaskState, string> = {
-  pending: "bg-muted-foreground/50",
+  pending: "bg-faint-foreground",
   scheduled: "bg-success",
   running: "bg-success animate-pulse",
-  paused: "bg-muted-foreground/50",
+  paused: "bg-faint-foreground",
   completed: "bg-success",
   failed: "bg-destructive",
-  cancelled: "bg-muted-foreground/50",
-  interrupted: "bg-foreground",
+  cancelled: "bg-faint-foreground",
+  interrupted: "bg-warning",
 };
 
 /**
@@ -201,12 +212,16 @@ export function ResultText({ steps, fallback }: { steps: TaskStep[] | undefined;
   const t = useT();
   const text = extractAgentResult(steps) ?? fallback ?? null;
   if (!text) {
-    return <p className="text-xs text-muted-foreground">{t("automations_view.no_result_yet")}</p>;
+    return (
+      <p className="text-body text-muted-foreground">
+        {t("automations_view.no_result_yet")}
+      </p>
+    );
   }
   return (
     <div
       data-testid="run-result"
-      className="whitespace-pre-wrap rounded-xl border border-border/70 bg-background/30 px-4 py-3 text-sm leading-relaxed text-foreground"
+      className="max-w-reading whitespace-pre-wrap rounded-lg bg-secondary px-4 py-3 text-reading text-foreground"
     >
       {text}
     </div>
@@ -217,21 +232,23 @@ export function ResultText({ steps, fallback }: { steps: TaskStep[] | undefined;
 export function StepTimeline({ steps }: { steps: TaskStep[] }) {
   const t = useT();
   if (steps.length === 0) {
-    return <div className="text-xs text-muted-foreground">{t("tasks_view.no_steps")}</div>;
+    return <div className="text-body text-muted-foreground">{t("tasks_view.no_steps")}</div>;
   }
   return (
-    <ol className="space-y-1">
+    <ol>
       {steps.map((s) => (
         <li
           key={s.seq}
-          className="flex items-start gap-3 rounded-md border border-border/60 px-2.5 py-1.5 text-[11px]"
+          className="flex items-start gap-3 rounded-md px-2.5 py-1.5 text-micro transition-colors hover:bg-secondary"
         >
-          <span className="w-5 shrink-0 font-mono text-muted-foreground">{s.seq}</span>
-          <span className="w-20 shrink-0 text-primary">{s.kind}</span>
+          <span className="w-5 shrink-0 font-mono tabular-nums text-muted-foreground">
+            {s.seq}
+          </span>
+          <span className="w-20 shrink-0 text-foreground">{s.kind}</span>
           <span className="min-w-0 flex-1 break-words text-muted-foreground">
             {summarizePayload(s.payload)}
           </span>
-          <span className="shrink-0 font-mono text-muted-foreground/70">
+          <span className="shrink-0 font-mono tabular-nums text-muted-foreground">
             {formatWhen(s.timestamp_ns)}
           </span>
         </li>
@@ -240,10 +257,17 @@ export function StepTimeline({ steps }: { steps: TaskStep[] }) {
   );
 }
 
-/** Section label — small caps, the way the rest of the app labels groups. */
+/**
+ * A group's name inside a panel.
+ *
+ * Was an 11px letter-spaced all-caps line — the construction that makes an
+ * interface read as an admin panel, and the one this design system bans
+ * outright. A group label is a title: sentence case, one weight up, in the
+ * ink ceiling.
+ */
 export function SectionLabel({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("text-[11px] font-medium uppercase tracking-wider text-muted-foreground", className)}>
+    <div className={cn("text-title font-semibold text-foreground-strong", className)}>
       {children}
     </div>
   );

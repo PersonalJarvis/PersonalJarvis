@@ -106,7 +106,7 @@ function RiskBadge({ tier }: { tier: RiskTier | null }) {
       <span
         data-testid="risk-badge"
         data-risk="unknown"
-        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-0.5 text-micro font-medium text-muted-foreground"
       >
         {t("cli_test_hub_view.no_risk_tier")}
       </span>
@@ -119,7 +119,7 @@ function RiskBadge({ tier }: { tier: RiskTier | null }) {
       data-testid="risk-badge"
       data-risk={tier}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium",
+        "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-micro font-medium",
         style.badge,
       )}
     >
@@ -305,7 +305,7 @@ function Composer({
       className={cn(
         // One card, not a labelled form field: the border belongs to the whole
         // composer and lights up when the caret is anywhere inside it.
-        "rounded-2xl border border-border bg-card/50 transition-colors",
+        "rounded-2xl border border-border bg-card transition-colors",
         "focus-within:border-foreground/25",
       )}
     >
@@ -318,10 +318,10 @@ function Composer({
         rows={3}
         aria-label={`${t("cli_test_hub_view.instruction_to")} ${assistantName}`}
         placeholder={`${t("cli_test_hub_view.subtitle_tell")} ${assistantName}, ${t("cli_test_hub_view.placeholder_rest")}`}
-        className="w-full resize-none bg-transparent px-4 pb-2 pt-4 text-[15px] leading-relaxed placeholder:text-muted-foreground focus:outline-none disabled:opacity-60"
+        className="w-full resize-none bg-transparent px-4 pb-2 pt-4 text-reading placeholder:text-muted-foreground focus:outline-none disabled:opacity-60"
       />
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-border/70 px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2.5">
         <TargetPicker
           value={cliHint}
           onChange={onCliHintChange}
@@ -329,7 +329,7 @@ function Composer({
           disabled={isPending}
         />
         <div className="ml-auto flex items-center gap-3">
-          <span className="hidden text-[11px] text-muted-foreground sm:inline">
+          <span className="hidden text-micro text-muted-foreground sm:inline">
             {t("cli_test_hub_view.ctrl_cmd_enter")}
           </span>
           <Button
@@ -479,7 +479,7 @@ function Starters({
             <button
               type="button"
               onClick={() => onPick(cli.name, text)}
-              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card/40 px-3 py-1.5 text-left text-xs text-foreground/85 transition-colors hover:border-foreground/20 hover:bg-sheen/[0.06]"
+              className="inline-flex items-center gap-2 rounded-md bg-secondary px-3 py-1.5 text-left text-body text-foreground transition-colors hover:bg-popover"
             >
               <CliLogo
                 cliName={cli.name}
@@ -537,7 +537,7 @@ function ConnectedClisPanel({
     return (
       <div
         data-testid="clis-empty"
-        className="rounded-xl border border-border bg-card/50 p-5"
+        className="rounded-xl border border-border bg-card p-5"
       >
         <div className="flex flex-col items-start gap-3">
           <div className="flex items-center gap-2 text-sm font-medium">
@@ -565,7 +565,7 @@ function ConnectedClisPanel({
         {clis.map((cli) => (
           <li
             key={cli.name}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card/40 py-1 pl-1.5 pr-2.5 text-xs"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card py-1 pl-1.5 pr-2.5 text-xs"
             title={cli.description}
           >
             <CliLogo
@@ -576,7 +576,7 @@ function ConnectedClisPanel({
             />
             <span className="font-medium">{cli.name}</span>
             {cli.version && (
-              <span className="font-mono text-[11px] text-muted-foreground">
+              <span className="font-mono text-micro text-muted-foreground">
                 {cli.version}
               </span>
             )}
@@ -598,7 +598,7 @@ function ResultSkeleton() {
     <div
       data-testid="result-skeleton"
       aria-busy="true"
-      className="space-y-3 rounded-xl border border-border bg-card/50 p-5"
+      className="space-y-3 rounded-xl border border-border bg-card p-5"
     >
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -682,18 +682,18 @@ function RunCard({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-sheen/[0.04]"
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-secondary"
       >
         {cli ? (
           <CliLogo cliName={cli} category="other" size="sm" />
         ) : (
-          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background/60">
+          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-background">
             <FlaskConical className="h-4 w-4 text-muted-foreground" />
           </span>
         )}
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm">{run.instruction}</span>
-          <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+          <span className="mt-0.5 block truncate font-mono text-micro text-muted-foreground">
             {run.result?.command ?? run.error?.message ?? t("cli_test_hub_view.no_command")}
           </span>
         </span>
@@ -707,7 +707,7 @@ function RunCard({
       </button>
 
       {open && (
-        <div className="border-t border-border/70 px-4 py-4">
+        <div className="border-t border-border px-4 py-4">
           {run.error ? (
             <RequestErrorPanel error={run.error} />
           ) : run.result ? (
@@ -733,8 +733,8 @@ function RequestErrorPanel({ error }: { error: Error }) {
       <h3 className="mb-1 text-sm font-semibold text-destructive">
         {t("cli_test_hub_view.request_failed")}
       </h3>
-      <p className="break-words text-xs text-destructive/90">{error.message}</p>
-      <p className="mt-2 text-[11px] text-muted-foreground">
+      <p className="break-words text-xs text-destructive">{error.message}</p>
+      <p className="mt-2 text-micro text-muted-foreground">
         {t("cli_test_hub_view.backend_check_prefix")}
         <code className="mx-1 font-mono">/api/clis/test-run</code>{" "}
         {t("cli_test_hub_view.backend_check_suffix")}
@@ -763,7 +763,7 @@ function ResultPanel({ result }: { result: TestRunResponse }) {
         </div>
         <p
           data-testid="result-summary"
-          className="text-[15px] leading-relaxed text-foreground"
+          className="text-reading text-foreground"
         >
           {result.summary || (failed ? t("cli_test_hub_view.command_failed") : "—")}
         </p>
@@ -834,18 +834,18 @@ function ResultPanel({ result }: { result: TestRunResponse }) {
             {result.steps.map((step, idx) => (
               <li
                 key={`${step.tool}-${idx}`}
-                className="flex items-start gap-2.5 rounded-lg border border-border bg-background/40 px-3 py-2"
+                className="flex items-start gap-2.5 rounded-lg border border-border bg-background px-3 py-2"
               >
-                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sheen/[0.08] text-[11px] font-medium tabular-nums text-muted-foreground">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-secondary text-micro font-medium tabular-nums text-muted-foreground">
                   {idx + 1}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <div className="flex items-center gap-1.5 text-micro text-muted-foreground">
                     <span className="font-mono">{step.tool}</span>
                     <ChevronRight className="h-3 w-3" />
                     <StepExitCode code={step.exit_code} />
                   </div>
-                  <code className="mt-0.5 block break-all font-mono text-[11px] text-foreground">
+                  <code className="mt-0.5 block break-all font-mono text-micro text-foreground">
                     {step.command}
                   </code>
                 </div>
@@ -857,7 +857,7 @@ function ResultPanel({ result }: { result: TestRunResponse }) {
 
       {/* Empty result hint — no tool resolved at all. */}
       {!result.tool_called && !result.command && !result.error && (
-        <div className="rounded-lg border border-border bg-background/40 px-3 py-2 text-xs text-muted-foreground">
+        <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
           {assistantName} {t("cli_test_hub_view.no_tool_found")}
         </div>
       )}
@@ -877,7 +877,7 @@ function MetaChip({
   children: React.ReactNode;
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/40 px-2 py-0.5 text-[11px]">
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-0.5 text-micro">
       <span className="text-muted-foreground">{label}</span>
       <span className="text-foreground">{children}</span>
     </span>
@@ -905,7 +905,7 @@ function ExitCodeBadge({
       <span
         data-testid={testId}
         data-exit="null"
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-background/40 px-2 py-0.5 text-[11px] text-muted-foreground"
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 py-0.5 text-micro text-muted-foreground"
       >
         {!compact && <span className="text-muted-foreground">Exit</span>}
         <span>—</span>
@@ -918,7 +918,7 @@ function ExitCodeBadge({
       data-testid={testId}
       data-exit={String(code)}
       className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium tabular-nums",
+        "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 text-micro font-medium tabular-nums",
         ok
           ? "border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground"
           : "border-destructive/50 bg-destructive/10 text-destructive",
@@ -932,7 +932,7 @@ function ExitCodeBadge({
 
 function StepExitCode({ code }: { code: number | null }) {
   if (code === null || code === undefined) {
-    return <span className="text-muted-foreground/70">exit —</span>;
+    return <span className="text-muted-foreground">exit —</span>;
   }
   return (
     <span
@@ -972,7 +972,7 @@ function CodeBlock({
               window.setTimeout(() => setCopied(false), 1500);
             });
           }}
-          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+          className="inline-flex items-center gap-1 text-micro text-muted-foreground transition-colors hover:text-foreground"
         >
           {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
           {copied ? t("cli_test_hub_view.copied") : t("cli_test_hub_view.copy")}
@@ -1006,8 +1006,8 @@ function OutputBlock({
         <pre
           data-testid={testId}
           className={cn(
-            "whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] leading-relaxed",
-            tone === "error" ? "text-destructive/90" : "text-foreground/90",
+            "whitespace-pre-wrap break-words px-3 py-2 font-mono text-micro",
+            tone === "error" ? "text-destructive" : "text-foreground",
           )}
         >
           {content}

@@ -74,9 +74,9 @@ export class SettingsGroupBoundary extends Component<
     }
 
     return (
-      <div className="mt-2 rounded-lg border border-destructive/30 bg-card/60 p-4">
+      <div className="mt-2 rounded-lg border border-destructive/30 bg-card p-4">
         <div className="flex items-start gap-3">
-          <div className="rounded-md bg-destructive/10 p-2 text-destructive">
+          <div className="rounded-md bg-secondary p-2 text-destructive">
             <AlertTriangle className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
@@ -87,7 +87,7 @@ export class SettingsGroupBoundary extends Component<
               {translate("view_error_boundary.group_hint")}
             </p>
             {this.state.message && (
-              <pre className="mt-2 max-h-24 overflow-auto rounded-md border border-border bg-background/80 p-2 text-[11px] text-muted-foreground">
+              <pre className="mt-2 max-h-24 overflow-auto rounded-md border border-border bg-background p-2 text-micro text-muted-foreground">
                 {this.state.message}
               </pre>
             )}

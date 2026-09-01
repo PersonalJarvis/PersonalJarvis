@@ -19,14 +19,6 @@ interface TreeSidebarProps {
   onSelect: (slug: string) => void;
 }
 
-const FOLDER_SWATCH: Record<string, string> = {
-  entities: "bg-[#6aa9ff]",
-  concepts: "bg-[#b48cf2]",
-  projects: "bg-[#ffb84d]",
-  sessions: "bg-[#5bd4a4]",
-  _archive: "bg-muted-foreground",
-};
-
 const DEFAULT_OPEN = new Set(["entities", "projects"]);
 
 export function TreeSidebar({ selectedSlug, onSelect }: TreeSidebarProps) {
@@ -87,16 +79,12 @@ export function TreeSidebar({ selectedSlug, onSelect }: TreeSidebarProps) {
 
   return (
     <aside
-      className="flex h-full w-[260px] shrink-0 flex-col overflow-y-auto border-r border-border"
+      className="flex h-full w-[260px] shrink-0 flex-col overflow-y-auto bg-sidebar"
       data-testid="wiki-tree-sidebar"
     >
       <div className="flex items-center justify-between border-b border-border px-3 py-3">
-        <h2 className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-          Vault
-        </h2>
-        <span className="text-[11px] text-muted-foreground">
-          wiki/obsidian-vault/
-        </span>
+        <h2 className="text-title font-semibold text-foreground-strong">Vault</h2>
+        <span className="text-meta text-muted-foreground">wiki/obsidian-vault/</span>
       </div>
 
       <div className="flex-1 p-2">
@@ -104,7 +92,7 @@ export function TreeSidebar({ selectedSlug, onSelect }: TreeSidebarProps) {
         {isError && (
           <div
             role="alert"
-            className="m-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            className="m-2 text-meta text-destructive"
           >
             {t("tree_sidebar.load_error")}
           </div>
@@ -113,36 +101,26 @@ export function TreeSidebar({ selectedSlug, onSelect }: TreeSidebarProps) {
         {!isLoading && !isError &&
           folders.map((folder) => {
             const isOpen = openFolders.has(folder.name);
-            const swatch =
-              FOLDER_SWATCH[folder.name] ?? "bg-muted-foreground";
             return (
               <div key={folder.name} className="mb-1">
                 <button
                   type="button"
                   onClick={() => toggle(folder.name)}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm",
-                    "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-body",
+                    "text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground",
                   )}
                   data-folder={folder.name}
                   data-open={isOpen ? "true" : "false"}
                 >
                   <ChevronRight
                     className={cn(
-                      "h-3 w-3 shrink-0 text-muted-foreground transition-transform",
+                      "h-3 w-3 shrink-0 transition-transform",
                       isOpen && "rotate-90",
                     )}
                   />
-                  <span
-                    className={cn(
-                      "h-2 w-2 shrink-0 rounded-full",
-                      swatch,
-                    )}
-                  />
                   <span className="flex-1 text-left">{folder.name}</span>
-                  <span className="rounded-full bg-secondary/80 px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
-                    {folder.count}
-                  </span>
+                  <span className="text-meta tabular-nums">{folder.count}</span>
                 </button>
 
                 {isOpen && folder.files.length > 0 && (
@@ -157,18 +135,13 @@ export function TreeSidebar({ selectedSlug, onSelect }: TreeSidebarProps) {
                             data-slug={file.slug}
                             data-active={isActive ? "true" : "false"}
                             className={cn(
-                              "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm transition-colors",
+                              "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-body transition-colors",
                               isActive
-                                ? "bg-primary/10 text-primary shadow-[inset_2px_0_0_hsl(var(--primary))]"
-                                : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                                ? "bg-secondary text-foreground-strong"
+                                : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                             )}
                           >
-                            <FileText
-                              className={cn(
-                                "h-3 w-3 shrink-0",
-                                isActive ? "text-primary" : "text-muted-foreground",
-                              )}
-                            />
+                            <FileText className="h-3 w-3 shrink-0" />
                             <span className="truncate">{file.slug}.md</span>
                           </button>
                         </li>
@@ -183,18 +156,18 @@ export function TreeSidebar({ selectedSlug, onSelect }: TreeSidebarProps) {
 
       {stats && (
         <div
-          className="border-t border-border px-3 py-3 text-[11px] text-muted-foreground"
+          className="space-y-1 border-t border-border px-3 py-3 text-meta text-muted-foreground"
           data-testid="wiki-tree-meta"
         >
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-2">
             <span>Total pages</span>
-            <span className="text-foreground">{stats.total_pages}</span>
+            <span className="tabular-nums text-foreground">{stats.total_pages}</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-2">
             <span>Total links</span>
-            <span className="text-foreground">{stats.total_links}</span>
+            <span className="tabular-nums text-foreground">{stats.total_links}</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-2">
             <span>{t("tree_sidebar.last_change")}</span>
             <span className="text-foreground">{lastChangedLabel}</span>
           </div>
@@ -208,7 +181,7 @@ function TreeSkeleton() {
   return (
     <div className="space-y-2 p-2" data-testid="wiki-tree-skeleton">
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="h-4 animate-pulse rounded bg-muted" />
+        <div key={i} className="h-4 animate-pulse rounded-full bg-sheen/[0.06]" />
       ))}
     </div>
   );

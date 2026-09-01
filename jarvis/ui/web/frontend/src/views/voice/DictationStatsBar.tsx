@@ -1,5 +1,4 @@
-import { Flame, Gauge, Type } from "lucide-react";
-
+import { Card } from "@/components/ui/card";
 import type { DictationStats } from "@/hooks/useDictation";
 import { useT } from "@/i18n";
 
@@ -13,6 +12,13 @@ import { useT } from "@/i18n";
  * back to deriving them from the rolling history window, the strip says "Last
  * N days" instead — a 30-day slice labelled "All time" would quietly understate
  * every long-time user's numbers.
+ *
+ * That window line now stands where the card's own title used to. Three
+ * numbers labelled "Words", "Words per minute" and "Day streak" do not need a
+ * heading saying "Your dictation" above them — it repeated what the tiles
+ * already said — while the window they cover is the one fact nothing else on
+ * the screen carries. The three decorative icons went for the same reason: at
+ * --primary they rendered brighter than the numbers they decorated.
  *
  * Informational only. No goal, no nag, no popup.
  */
@@ -28,68 +34,60 @@ export function DictationStatsBar({ stats }: { stats: DictationStats }) {
         );
 
   return (
-    <div
-      className="rounded-lg border border-border bg-card/60 p-4"
-      data-testid="dictation-stats"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <h4 className="font-display text-sm font-semibold">
-          {t("dictation.stats.title")}
-        </h4>
-        <span
-          className="rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-          data-testid="dictation-stats-window"
-        >
-          {windowLabel}
-        </span>
-      </div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+    <Card className="p-5" data-testid="dictation-stats">
+      <p
+        className="text-meta text-muted-foreground"
+        data-testid="dictation-stats-window"
+      >
+        {windowLabel}
+      </p>
+      <div className="mt-stack grid gap-stack sm:grid-cols-3">
         <StatTile
-          icon={<Type className="h-3.5 w-3.5 text-primary" />}
           label={t("dictation.stats.words")}
           value={formatCount(stats.totals.words)}
           testId="dictation-stat-words"
         />
         <StatTile
-          icon={<Gauge className="h-3.5 w-3.5 text-primary" />}
           label={t("dictation.stats.wpm")}
           value={formatWpm(stats.totals.wpm)}
           testId="dictation-stat-wpm"
         />
         <StatTile
-          icon={<Flame className="h-3.5 w-3.5 text-primary" />}
           label={t("dictation.stats.streak")}
           value={formatCount(stats.streak.current_days)}
           testId="dictation-stat-streak"
         />
       </div>
-    </div>
+    </Card>
   );
 }
 
+/**
+ * One tile: the number first, its name under it.
+ *
+ * --secondary, one step ABOVE the card it sits in. It used to be
+ * `bg-background/40` inside `bg-card/60`, which rendered the three headline
+ * numbers darker than their own container — a child below its parent, and on
+ * exactly the elements someone opens this screen to read.
+ */
 function StatTile({
-  icon,
   label,
   value,
   testId,
 }: {
-  icon: React.ReactNode;
   label: string;
   value: string;
   testId: string;
 }) {
   return (
-    <div className="rounded-md border border-border/60 bg-background/40 p-3">
-      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-        {icon}
-        <span className="truncate">{label}</span>
-      </div>
+    <div className="rounded-md bg-secondary p-4">
       <p
-        className="mt-1 font-display text-xl font-semibold tabular-nums"
+        className="text-display tabular-nums text-foreground-strong"
         data-testid={testId}
       >
         {value}
       </p>
+      <p className="mt-1 text-meta text-muted-foreground">{label}</p>
     </div>
   );
 }

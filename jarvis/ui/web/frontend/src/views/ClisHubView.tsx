@@ -52,9 +52,9 @@ export function ClisHubView() {
     <div className="flex h-full min-h-0">
       <nav
         aria-label={t("clis_view.group_label")}
-        className="flex w-[200px] shrink-0 flex-col border-r border-border/60 px-3 py-3"
+        className="flex w-[200px] shrink-0 flex-col border-r border-border px-3 py-3"
       >
-        <p className="px-2.5 pb-2 text-[11px] font-medium uppercase tracking-wider text-foreground/50">
+        <p className="px-2.5 pb-2 text-micro font-medium text-foreground">
           {t("clis_view.group_label")}
         </p>
         <ul className="space-y-0.5">
@@ -68,16 +68,16 @@ export function ClisHubView() {
                   onClick={() => setActive(area.id)}
                   aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] font-medium transition-colors",
+                    "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-meta font-medium transition-colors",
                     isActive
                       ? "jarvis-nav-active"
-                      : "text-foreground/80 hover:bg-secondary/70 hover:text-foreground",
+                      : "text-foreground hover:bg-secondary hover:text-foreground",
                   )}
                 >
                   <Icon
                     className={cn(
                       "h-4 w-4 shrink-0",
-                      isActive ? "text-foreground" : "text-foreground/55",
+                      isActive ? "text-foreground" : "text-foreground",
                     )}
                   />
                   <span className="flex-1 truncate">{t(area.labelKey)}</span>

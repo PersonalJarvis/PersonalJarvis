@@ -3,7 +3,14 @@ import type { ReactNode } from "react";
 import { fmtInt, fmtMs, useRunLocale } from "./format";
 import type { Run } from "./types";
 
-/** A compact labelled metric: small uppercase label over a mono value. */
+/**
+ * One measured number with the word for it underneath.
+ *
+ * A real tile — `.jarvis-stat-tile` is the shared lift surface — rather than
+ * the outlined transparent box it used to be, and the label is sentence case
+ * at the type floor instead of a 9px letter-spaced all-caps line. `breach`
+ * is the only tone carrying hue, because it is the only one that is a fault.
+ */
 export function StatChip({
   label,
   value,
@@ -14,14 +21,35 @@ export function StatChip({
   tone?: "default" | "warn" | "breach";
 }) {
   const valueCls =
-    tone === "breach" ? "text-rose-300" : tone === "warn" ? "text-foreground" : "text-foreground";
+    tone === "breach"
+      ? "text-destructive"
+      : tone === "warn"
+        ? "text-warning"
+        : "text-foreground-strong";
   return (
-    <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-2">
-      <div className="text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-        {label}
-      </div>
-      <div className={`mt-0.5 font-mono text-sm tabular-nums ${valueCls}`}>{value}</div>
+    <div className="jarvis-stat-tile">
+      <div className={`font-mono text-title tabular-nums ${valueCls}`}>{value}</div>
+      <div className="mt-0.5 text-micro text-muted-foreground">{label}</div>
     </div>
+  );
+}
+
+/** A group's name. One weight, one size, no letter-spaced caps. */
+function GroupLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-stack text-title font-semibold text-foreground-strong">
+      {children}
+    </div>
+  );
+}
+
+/** A neutral count chip: `name ×n`. */
+function CountChip({ name, count }: { name: string; count: number }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 font-mono text-micro text-muted-foreground">
+      {name}
+      <span className="tabular-nums text-foreground">×{count}</span>
+    </span>
   );
 }
 
@@ -33,8 +61,8 @@ export function MetricsPanel({ run }: { run: Run }) {
   const tools = Object.entries(a.tool_counts).sort((x, y) => y[1] - x[1]);
   const eventKinds = Object.entries(run.event_counts ?? {}).sort((x, y) => y[1] - x[1]);
   return (
-    <div className="space-y-3" data-testid="metrics-panel">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+    <div className="space-y-group" data-testid="metrics-panel">
+      <div className="grid grid-cols-2 gap-stack sm:grid-cols-3 lg:grid-cols-4">
         <StatChip label="Think" value={fmtMs(a.total_think_ms)} />
         <StatChip label="Speak" value={fmtMs(a.total_speak_ms)} />
         <StatChip label="Tokens in" value={fmtInt(a.total_tokens_in, locale)} />
@@ -47,20 +75,26 @@ export function MetricsPanel({ run }: { run: Run }) {
         <StatChip
           label="Worst latency"
           value={a.worst_slo_status}
-          tone={a.worst_slo_status === "breach" ? "breach" : a.worst_slo_status === "warn" ? "warn" : "default"}
+          tone={
+            a.worst_slo_status === "breach"
+              ? "breach"
+              : a.worst_slo_status === "warn"
+                ? "warn"
+                : "default"
+          }
         />
       </div>
 
       {providers.length > 0 && (
         <div>
-          <div className="mb-1 text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            Cost by provider
-          </div>
-          <div className="space-y-0.5">
+          <GroupLabel>Cost by provider</GroupLabel>
+          <div className="space-y-1">
             {providers.map(([p, c]) => (
-              <div key={p} className="flex items-center justify-between text-[11px]">
+              <div key={p} className="flex items-center justify-between text-body">
                 <span className="text-muted-foreground">{p}</span>
-                <span className="font-mono tabular-nums">${c.toFixed(4)}</span>
+                <span className="font-mono tabular-nums text-foreground">
+                  ${c.toFixed(4)}
+                </span>
               </div>
             ))}
           </div>
@@ -72,18 +106,10 @@ export function MetricsPanel({ run }: { run: Run }) {
           40% CUStepProfiled, and the shape alone often locates a problem. */}
       {eventKinds.length > 0 && (
         <div>
-          <div className="mb-1 text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            Recorded events
-          </div>
+          <GroupLabel>Recorded events</GroupLabel>
           <div className="flex flex-wrap gap-1" data-testid="event-histogram">
             {eventKinds.map(([kind, n]) => (
-              <span
-                key={kind}
-                className="inline-flex items-center gap-1 rounded-md bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground ring-1 ring-inset ring-border/60"
-              >
-                {kind}
-                <span className="text-foreground/80">×{n}</span>
-              </span>
+              <CountChip key={kind} name={kind} count={n} />
             ))}
           </div>
         </div>
@@ -91,18 +117,10 @@ export function MetricsPanel({ run }: { run: Run }) {
 
       {tools.length > 0 && (
         <div>
-          <div className="mb-1 text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            Tool usage
-          </div>
+          <GroupLabel>Tool usage</GroupLabel>
           <div className="flex flex-wrap gap-1">
             {tools.map(([name, n]) => (
-              <span
-                key={name}
-                className="inline-flex items-center gap-1 rounded-md bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground ring-1 ring-inset ring-border/60"
-              >
-                {name}
-                <span className="text-foreground/80">×{n}</span>
-              </span>
+              <CountChip key={name} name={name} count={n} />
             ))}
           </div>
         </div>

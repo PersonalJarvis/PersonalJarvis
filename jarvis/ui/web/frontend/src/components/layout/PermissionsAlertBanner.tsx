@@ -11,6 +11,8 @@ import {
   MousePointer2,
   ShieldAlert,
 } from "lucide-react";
+import { clsx } from "clsx";
+
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
@@ -105,18 +107,20 @@ export function PermissionsAlertBanner() {
       data-testid="permissions-alert-banner"
       data-state={restartOnly ? "restart" : "missing"}
       role="alert"
-      className="border-b-2 border-foreground/50 bg-foreground/10 text-foreground"
+      // Same rule as the other shell banners: a full-width strip does not rise
+      // off the page. The alert is carried by the glyph and the hairline.
+      className="border-b border-warning"
     >
       <div className="flex items-center gap-3 px-4 py-2.5">
-        <ShieldAlert className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
+        <ShieldAlert className="h-5 w-5 shrink-0 text-warning" aria-hidden />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold leading-tight">
+          <p className="text-body font-semibold text-foreground-strong">
             {restartOnly
               ? t("permissions.restart_required")
               : t("permissions.banner.title")}
           </p>
           {!restartOnly && brokenFeatures.length > 0 && (
-            <p className="text-xs leading-tight text-foreground/90">
+            <p className="text-meta text-muted-foreground">
               {t("permissions.banner.impact").replace("{0}", brokenFeatures.join(", "))}
             </p>
           )}
@@ -144,12 +148,12 @@ export function PermissionsAlertBanner() {
       </div>
 
       {!restartOnly && !collapsed && (
-        <div className="space-y-2 px-4 pb-3">
+        <div className="space-y-stack px-4 pb-3">
           {snapshot.app_identity.stable === false && (
-            <p className="text-xs text-foreground/90">{t("permissions.identity_warning")}</p>
+            <p className="text-meta text-muted-foreground">{t("permissions.identity_warning")}</p>
           )}
           {snapshot.identity_reset && (
-            <p className="text-xs text-foreground/90">{t("permissions.identity_reset")}</p>
+            <p className="text-meta text-muted-foreground">{t("permissions.identity_reset")}</p>
           )}
           {missing.map((item) => (
             <MissingPermissionRow
@@ -162,15 +166,18 @@ export function PermissionsAlertBanner() {
             />
           ))}
           {snapshot.restart_required && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-foreground/30 bg-background/40 p-3">
-              <p className="text-xs text-foreground">{t("permissions.restart_required")}</p>
+            // Rim-only, no fill: these rows are as wide as the window, and a
+            // surface that wide never rises off the page. When a fill is out,
+            // the hairline is what is left to group with.
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-block">
+              <p className="text-body text-foreground">{t("permissions.restart_required")}</p>
               <Button size="sm" disabled={restarting} onClick={() => void restartApp()}>
                 {restarting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                 {t(restarting ? "permissions.restarting" : "permissions.restart_now")}
               </Button>
             </div>
           )}
-          <p className="text-xs text-foreground/70">{t("permissions.banner.hint")}</p>
+          <p className="text-meta text-muted-foreground">{t("permissions.banner.hint")}</p>
         </div>
       )}
     </div>
@@ -203,23 +210,35 @@ function MissingPermissionRow({
       : item.status;
 
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-foreground/30 bg-background/40 p-3">
-      <Icon className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-block">
+      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
       <div className="min-w-[12rem] flex-1">
-        <div className="text-sm font-medium text-foreground">
+        <div className="text-title font-semibold text-foreground-strong">
           {t(`permissions.items.${item.id}.title`)}
         </div>
-        <p className="mt-0.5 text-xs text-muted-foreground">
+        <p className="mt-0.5 text-meta text-muted-foreground">
           {t(`permissions.items.${item.id}.description`)}
         </p>
         {/* macOS will not prompt again and the grant is missing: the
             checkmark in System Settings belongs to an older signature of
             this app, so toggling it there leads nowhere (BUG-159). */}
         {item.can_reset && !item.can_request && (
-          <p className="mt-1 text-xs text-foreground/90">{t("permissions.stale_grant_hint")}</p>
+          <p className="mt-1 text-meta text-muted-foreground">
+            {t("permissions.stale_grant_hint")}
+          </p>
         )}
       </div>
-      <span className="rounded-full bg-foreground/10 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-foreground">
+      {/* A status is never ink: every row here is a permission the app does
+          NOT have, so it reads as a fault — except the one that is only
+          waiting for a restart, which is the "degraded" case. */}
+      {/* `clsx`, not `cn`: tailwind-merge treats `text-meta` as a colour and
+          would drop the size in favour of the status colour beside it. */}
+      <span
+        className={clsx(
+          "shrink-0 text-meta font-medium",
+          statusKey === "restart_pending" ? "text-warning" : "text-destructive",
+        )}
+      >
         {t(`permissions.status.${statusKey}`)}
       </span>
       {item.can_request && (

@@ -211,7 +211,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
       href={dashboardUrl}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground-strong"
     >
       <ExternalLink className="h-3 w-3" />{" "}
       {dashboardHost
@@ -227,7 +227,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
   const scopeQuestion = scopeChoice ? (
     <div
       data-testid="secret-scope-choice"
-      className="space-y-2 rounded-control border border-border bg-background/60 px-3 py-2"
+      className="space-y-2 rounded-control border border-border bg-background px-3 py-2"
     >
       <p className="text-xs leading-relaxed text-foreground">
         {scopeChoice.choice_kind === "family_vs_dedicated"
@@ -298,7 +298,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
     // beside a box read as three controls for one fact.
     return (
       <div className="space-y-2">
-        <div className="flex h-9 min-w-0 items-center gap-2.5 rounded-control border border-border bg-background/60 pl-3 pr-1.5">
+        <div className="flex h-9 min-w-0 items-center gap-2.5 rounded-control border border-border bg-background pl-3 pr-1.5">
           <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span className="shrink-0 text-xs font-medium text-foreground">
             {t("apikeys_view.key_saved_label")}
@@ -369,7 +369,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
             placeholder={t("apikeys_view.paste_key_placeholder")}
             className={cn(
               "h-9 w-full rounded-control border border-input bg-background px-3 pr-9 font-mono text-xs",
-              "focus:outline-none focus:ring-1 focus:ring-primary",
+              "focus:outline-none focus:ring-2 focus:ring-border-strong",
             )}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !scopeChoice) void handleSave();

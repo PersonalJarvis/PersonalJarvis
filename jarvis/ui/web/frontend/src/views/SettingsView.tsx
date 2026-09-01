@@ -6,7 +6,7 @@ import {
   Loader2,
   Languages,
 } from "lucide-react";
-import { ViewHeader } from "@/views/ChatsView";
+import { SectionHeader } from "@/components/layout/SectionHeader";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
@@ -22,6 +22,7 @@ import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
 import { SettingsGroupBoundary } from "@/views/settings/SettingsGroupBoundary";
 import { ScreenContextGroup } from "@/views/settings/ScreenContextGroup";
+import { settingsInputCls } from "@/views/settings/SettingsBlock";
 import {
   useWakeWord,
   useLocalSpeechInstall,
@@ -96,15 +97,22 @@ export function SettingsView() {
 
   return (
     <div className="flex h-full flex-col">
-      <ViewHeader
-        icon={<Settings className="h-4 w-4 text-primary" />}
+      <SectionHeader
+        icon={<Settings />}
         title={t("settings_view.title")}
         subtitle={t("settings_view.subtitle")}
       />
       {/* Each group is fault-isolated. The panels are independent, each backed
           by its own route, so one of them throwing must cost the user that one
-          panel — not the ability to change any setting at all. */}
-      <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
+          panel — not the ability to change any setting at all.
+
+          The measure and the rhythm live here, once: settings are option lists
+          and single-column forms, so they stop at the 640px form measure rather
+          than stretching an option card holding two words across the window,
+          and the groups are separated by the 32px group step — the step the
+          section was missing entirely, which is why it read as one mesh. The
+          horizontal page padding comes from the shell, not from here. */}
+      <div className="flex-1 space-y-group overflow-y-auto scrollbar-jarvis pb-group [&>*]:max-w-form">
         <SettingsGroupBoundary group="languages">
           <LanguagesGroup />
         </SettingsGroupBoundary>
@@ -142,7 +150,7 @@ export function SettingsView() {
           <KeybindsPanel />
         </SettingsGroupBoundary>
 
-        <ul className="mt-2 space-y-2">
+        <ul className="space-y-stack">
           {rows.map((r) => (
             <SettingRow key={r.title} row={r} />
           ))}
@@ -159,14 +167,20 @@ export function SettingsView() {
 function SettingRow({ row }: { row: SettingRow }) {
   const Icon = row.icon;
   return (
-    <li className="card-outline flex items-center gap-4 p-4">
-      <Icon className="h-4 w-4 shrink-0 text-primary" />
+    <li className="flex items-center gap-3 rounded-lg border border-border bg-card p-block">
+      {/* Secondary ink, never --primary: an icon that is brighter than the
+          heading it labels inverts the ramp (rule 8). */}
+      <Icon className="h-5 w-5 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
-        <div className="font-medium">{row.title}</div>
-        <p className="mt-0.5 text-xs text-muted-foreground">{row.description}</p>
+        <div className="text-title font-semibold text-foreground-strong">
+          {row.title}
+        </div>
+        <p className="mt-1 text-meta text-muted-foreground">{row.description}</p>
       </div>
       {row.value && (
-        <span className="font-mono text-xs text-muted-foreground">{row.value}</span>
+        <span className="font-mono text-meta tabular-nums text-muted-foreground">
+          {row.value}
+        </span>
       )}
       {row.control}
     </li>
@@ -186,12 +200,13 @@ function SettingRow({ row }: { row: SettingRow }) {
  * (WakeWordOnboardingGate) handles the mandatory first-run flow.
  */
 /**
- * Branded language dropdown (GTC black/yellow) — a native <select> cannot style
- * its option list (the OS renders it), which clashed with the theme. This is a
- * self-contained button + positioned listbox: dark card surface, primary-yellow
- * accent on the active/hover row, closes on outside-click and Escape. Shows a
- * placeholder when the value is not one of the offered concrete languages (e.g.
- * a fresh "auto" config), nudging the user to make an explicit choice.
+ * The wake-word language dropdown — a native <select> cannot style its option
+ * list (the OS renders it), which clashed with the theme. Presentation is the
+ * shared BrandedSelect's: a float surface for the list and the interaction
+ * ladder for its rows. Nothing is passed in here, because a select that carries
+ * a coloured hairline at one call site and not at the others is two controls.
+ * Shows a placeholder when the value is not one of the offered concrete
+ * languages (e.g. a fresh "auto" config), nudging an explicit choice.
  */
 function LanguageDropdown({
   value,
@@ -215,7 +230,6 @@ function LanguageDropdown({
       ariaLabel={placeholder}
       placeholder={placeholder}
       disabled={disabled}
-      className="border-primary/40"
       options={options.map((code) => ({
         value: code,
         label: labelFor(code),
@@ -416,19 +430,19 @@ function WakeWordPanel() {
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card/60 p-4">
+    <div className="rounded-lg border border-border bg-card p-block">
       <div className="flex items-start gap-3">
-        <Mic className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <Mic className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <h4 className="font-display text-sm font-semibold">
+          <h4 className="text-title font-semibold text-foreground-strong">
             {t("settings_view.wake_word.title")}
           </h4>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 text-meta text-muted-foreground">
             {t("settings_view.wake_word.description")}
           </p>
 
-          <div className="mt-3 flex items-center justify-between gap-4">
-            <span className="text-xs font-medium">
+          <div className="mt-block flex items-center justify-between gap-4">
+            <span className="text-body text-foreground">
               {t("settings_view.wake_word.activation_title")}
             </span>
             <Switch
@@ -438,16 +452,16 @@ function WakeWordPanel() {
               onCheckedChange={onToggleActivation}
             />
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 text-meta text-muted-foreground">
             {t("settings_view.wake_word.activation_hint")}
           </p>
 
           {error && (
-            <p className="mt-3 text-xs text-destructive">{error}</p>
+            <p className="mt-stack text-meta text-destructive">{error}</p>
           )}
 
           {/* Phrase input — free text, no quick-picks */}
-          <label className="mt-4 block text-xs font-medium text-muted-foreground">
+          <label className="mt-block block text-meta text-muted-foreground">
             {t("settings_view.wake_word.phrase_label")}
           </label>
           <input
@@ -456,11 +470,11 @@ function WakeWordPanel() {
             maxLength={64}
             placeholder={t("settings_view.wake_word.phrase_placeholder")}
             disabled={loading}
-            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+            className={settingsInputCls + " mt-1.5 disabled:opacity-50"}
           />
 
           {derivedName ? (
-            <p className="mt-1.5 text-xs text-muted-foreground">
+            <p className="mt-1.5 text-meta text-muted-foreground">
               {t("settings_view.wake_word.derived_name").replace("{0}", derivedName)}
             </p>
           ) : null}
@@ -474,17 +488,23 @@ function WakeWordPanel() {
               word's OWN language pin ([trigger.wake_word] language) — the app
               display language and the STT recognition language stay untouched,
               and neither can move this choice. */}
-          <div className="mt-4 rounded-md border border-primary/50 bg-primary/5 p-3">
+          {/* A lift surface inside the card — the step up the ladder that says
+              "this one matters", drawn in fill rather than in a tinted rim.
+              It used to be --primary at 5 % behind a --primary hairline with a
+              --primary heading: white ink on a white wash, which made a piece
+              of guidance the loudest mark on the page and read as a status it
+              is not. Emphasis is the surface and the ink ceiling now. */}
+          <div className="mt-block rounded-md bg-secondary p-4">
             <div className="flex items-center gap-2">
-              <Languages className="h-4 w-4 shrink-0 text-primary" />
-              <span className="text-xs font-semibold">
+              <Languages className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="text-title font-semibold text-foreground-strong">
                 {t("settings_view.wake_word.language_label")}
               </span>
             </div>
-            <p className="mt-1.5 text-xs font-semibold text-primary">
+            <p className="mt-1.5 text-body text-foreground">
               {t("settings_view.wake_word.language_callout_title")}
             </p>
-            <div className="mt-2">
+            <div className="mt-stack">
               <LanguageDropdown
                 value={wakeLang}
                 options={WAKE_LANGUAGES}
@@ -494,13 +514,13 @@ function WakeWordPanel() {
                 disabled={loading}
               />
             </div>
-            <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+            <p className="mt-stack text-meta text-muted-foreground">
               {t("settings_view.wake_word.language_hint")}
             </p>
           </div>
 
           {/* Engine select */}
-          <label className="mt-4 block text-xs font-medium text-muted-foreground">
+          <label className="mt-block block text-meta text-muted-foreground">
             {t("settings_view.wake_word.engine_label")}
           </label>
           <BrandedSelect
@@ -518,7 +538,7 @@ function WakeWordPanel() {
           {/* Custom ONNX model path */}
           {engine === "custom_onnx" && (
             <>
-              <label className="mt-4 block text-xs font-medium text-muted-foreground">
+              <label className="mt-block block text-meta text-muted-foreground">
                 {t("settings_view.wake_word.custom_model_path_label")}
               </label>
               <input
@@ -526,7 +546,7 @@ function WakeWordPanel() {
                 onChange={(e) => setCustomModelPath(e.target.value)}
                 placeholder="C:\\Users\\...\\my_wakeword.onnx"
                 disabled={loading}
-                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                className={settingsInputCls + " mt-1.5 font-mono text-meta disabled:opacity-50"}
               />
             </>
           )}
@@ -534,13 +554,15 @@ function WakeWordPanel() {
           {/* Any-phrase enablement: install the local speech pack in-app so
               an arbitrary wake word works, instead of silently degrading. */}
           {showNeedsWhisperHint && (
-            <div className="mt-3 rounded-md border border-foreground/40 bg-foreground/10 p-3 text-xs text-foreground">
-              <p>{t("settings_view.wake_word.needs_whisper_hint")}</p>
+            <div className="mt-stack rounded-md bg-secondary p-4 text-body text-foreground">
+              <p className="text-warning">
+                {t("settings_view.wake_word.needs_whisper_hint")}
+              </p>
 
               {installStatus.state === "idle" && (
                 <Button
                   size="sm"
-                  className="mt-2"
+                  className="mt-stack"
                   onClick={() => void install()}
                 >
                   {t("settings_view.wake_word.enable_local_button")}
@@ -548,23 +570,23 @@ function WakeWordPanel() {
               )}
 
               {installStatus.state === "running" && (
-                <p className="mt-2 flex items-center gap-2 text-foreground">
+                <p className="mt-stack flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   {t("settings_view.wake_word.enable_local_installing")}
                 </p>
               )}
 
               {installStatus.state === "error" && (
-                <div className="mt-2 text-destructive">
+                <div className="mt-stack text-destructive">
                   <p>{t("settings_view.wake_word.enable_local_error")}</p>
                   {installStatus.message && (
-                    <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    <p className="mt-1 font-mono text-micro text-muted-foreground">
                       {installStatus.message}
                     </p>
                   )}
                   <Button
                     size="sm"
-                    className="mt-2"
+                    className="mt-stack"
                     onClick={() => void install()}
                   >
                     {t("settings_view.wake_word.enable_local_retry")}
@@ -573,15 +595,15 @@ function WakeWordPanel() {
               )}
 
               {installStatus.state === "done" && (
-                <div className="mt-2 text-foreground">
-                  <p>{t("settings_view.wake_word.enable_local_done")}</p>
-                </div>
+                <p className="mt-stack text-success">
+                  {t("settings_view.wake_word.enable_local_done")}
+                </p>
               )}
             </div>
           )}
 
           {/* Save + Test buttons */}
-          <div className="mt-4 flex items-center gap-3">
+          <div className="mt-block flex items-center gap-3">
             <Button
               size="sm"
               onClick={onSave}
@@ -611,18 +633,23 @@ function WakeWordPanel() {
           {/* Self-test result — honest readiness verdict (engine + language +
               vocabulary + mic), the fast way to see WHY a word won't wake. */}
           {selfTest.state === "done" && selfTest.data && (
-            <div
-              className={`mt-3 rounded-md border p-3 text-xs ${
-                selfTest.data.ok
-                  ? "border-primary/40 bg-primary/10 text-foreground"
-                  : "border-foreground/40 bg-foreground/10 text-foreground"
-              }`}
-            >
-              <p>{selfTest.data.message}</p>
+            /* One surface for both verdicts, the verdict carried by the status
+               ink on the sentence. A pass used to be a --primary wash and a
+               fail a --foreground wash: two brightness washes standing in for
+               a meaning that colour states directly, on a ground where neither
+               was legible as a state at all. */
+            <div className="mt-stack rounded-md bg-secondary p-4 text-body">
+              <p
+                className={
+                  selfTest.data.ok ? "text-success" : "text-destructive"
+                }
+              >
+                {selfTest.data.message}
+              </p>
               {selfTest.data.hint && (
                 <p className="mt-1 text-muted-foreground">{selfTest.data.hint}</p>
               )}
-              <p className="mt-1 font-mono text-muted-foreground">
+              <p className="mt-1 font-mono text-meta text-muted-foreground">
                 engine: {selfTest.data.engine} · language: {selfTest.data.language}
                 {selfTest.data.phrase_in_vocab === false ? " · not in vocabulary" : ""}
                 {selfTest.data.mic_ok ? "" : " · mic quiet"}
@@ -632,19 +659,13 @@ function WakeWordPanel() {
 
           {/* Save result */}
           {result && (
-            <div
-              className={`mt-3 rounded-md border p-3 text-xs ${
-                result.degraded
-                  ? "border-foreground/40 bg-foreground/10 text-foreground"
-                  : "border-primary/40 bg-primary/10 text-foreground"
-              }`}
-            >
-              <p>
+            <div className="mt-stack rounded-md bg-secondary p-4 text-body">
+              <p className={result.degraded ? "text-warning" : "text-success"}>
                 {result.degraded
                   ? t("settings_view.wake_word.degraded_warning")
                   : result.message}
               </p>
-              <p className="mt-1 font-mono text-muted-foreground">
+              <p className="mt-1 font-mono text-meta text-muted-foreground">
                 engine: {result.resolved_engine}
               </p>
               {result.degraded && result.message && (
@@ -661,7 +682,7 @@ function WakeWordPanel() {
                   "Download wake model") to a real button instead of a
                   CLI/API-only route. */}
               {result.degraded && (
-                <div className="mt-2">
+                <div className="mt-stack">
                   {wakeModelDownload.state === "idle" && (
                     <Button
                       size="sm"
@@ -672,14 +693,14 @@ function WakeWordPanel() {
                   )}
 
                   {wakeModelDownload.state === "running" && (
-                    <p className="flex items-center gap-2 text-foreground">
+                    <p className="flex items-center gap-2 text-muted-foreground">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       {t("settings_view.wake_word.download_model_downloading")}
                     </p>
                   )}
 
                   {wakeModelDownload.state === "done" && (
-                    <p className="text-foreground">
+                    <p className="text-success">
                       {wakeModelDownload.message ||
                         t("settings_view.wake_word.download_model_done")}
                     </p>
@@ -693,7 +714,7 @@ function WakeWordPanel() {
                       </p>
                       <Button
                         size="sm"
-                        className="mt-2"
+                        className="mt-stack"
                         onClick={() => void onDownloadWakeModel()}
                       >
                         {t("settings_view.wake_word.download_model_retry")}
@@ -740,18 +761,20 @@ export function KeybindsPanel() {
   const { config, loading, error, saveKeybind } = useKeybinds();
 
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
+    <div className="rounded-lg border border-border bg-card p-block">
       <div className="flex items-start gap-3">
-        <Keyboard className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <Keyboard className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <h4 className="font-display text-sm font-semibold">
+          <h4 className="text-title font-semibold text-foreground-strong">
             {t("settings_view.keybinds.title")}
           </h4>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 text-meta text-muted-foreground">
             {t("settings_view.keybinds.description")}
           </p>
-          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
-          <div className="mt-4 space-y-3">
+          {error && (
+            <p className="mt-stack text-meta text-destructive">{error}</p>
+          )}
+          <div className="mt-block space-y-stack">
             {_KEYBIND_ROWS.map((row) => (
               <KeybindRow
                 key={row.action}

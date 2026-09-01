@@ -5,7 +5,7 @@
  * + turn timeline + click-to-copy. Live updates via the useSessions hook,
  * which reacts to VoiceSessionStarted/Ended bus events.
  */
-import { Mic } from "lucide-react";
+import { AlertTriangle, Mic } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useEventStore } from "@/store/events";
 
@@ -43,22 +43,36 @@ export function SessionsView() {
 
   return (
     <div className="flex h-full flex-col">
+      {/* --primary is a fill, never a decorative glyph. */}
       <ViewHeader
-        icon={<Mic className="h-4 w-4 text-primary" />}
+        icon={<Mic className="h-4 w-4 text-foreground" />}
         title={t("sessions_view.title")}
         subtitle={t("sessions_view.subtitle")}
       />
 
+      {/* The recorder being switched off is a degraded state, not a failure:
+          everything else on this screen still works. So it is a --warning
+          glyph on the room's own ground, and NOT the near-white band this
+          used to be — a full-bleed region never rises above its room, and a
+          status painted in --foreground outshouts every real heading. */}
       {errorMessage && /HTTP 503/.test(errorMessage) && (
-        <div className="border-b border-foreground/30 bg-foreground/10 px-5 py-3 text-sm text-foreground">
-          <div className="font-medium">{t("sessions_view.recorder_disabled")}</div>
-          <div className="mt-0.5 text-xs text-foreground/80">
-            {t("sessions_view.recorder_hint_a")}{" "}
-            <code className="font-mono">[sessions]</code>{" "}
-            {t("sessions_view.recorder_hint_b")}{" "}
-            <code className="font-mono">jarvis.toml</code>{" "}
-            (<code className="font-mono">enabled = true</code>){" "}
-            {t("sessions_view.recorder_hint_c")} {assistantName}.
+        <div className="flex items-start gap-3 border-b border-border px-6 py-4">
+          <AlertTriangle
+            aria-hidden="true"
+            className="mt-0.5 h-4 w-4 shrink-0 text-warning"
+          />
+          <div className="min-w-0">
+            <div className="text-title font-semibold text-foreground-strong">
+              {t("sessions_view.recorder_disabled")}
+            </div>
+            <div className="mt-1 text-meta text-muted-foreground">
+              {t("sessions_view.recorder_hint_a")}{" "}
+              <code className="font-mono">[sessions]</code>{" "}
+              {t("sessions_view.recorder_hint_b")}{" "}
+              <code className="font-mono">jarvis.toml</code>{" "}
+              (<code className="font-mono">enabled = true</code>){" "}
+              {t("sessions_view.recorder_hint_c")} {assistantName}.
+            </div>
           </div>
         </div>
       )}

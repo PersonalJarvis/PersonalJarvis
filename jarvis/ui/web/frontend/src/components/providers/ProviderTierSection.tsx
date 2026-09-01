@@ -306,11 +306,11 @@ export function EngineModeSwitch({
       <span data-testid="voice-engine-pick-one-hint" className="sr-only">
         {pickOneHint}
       </span>
-      <div className="relative grid min-w-48 grid-cols-2 rounded-surface border border-border bg-card/40 p-0.5">
+      <div className="relative grid min-w-48 grid-cols-2 rounded-surface border border-border bg-card p-0.5">
         <span
           data-testid="voice-engine-selection-thumb"
           aria-hidden="true"
-          className="absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-control bg-foreground/70 transition-transform duration-200 ease-out motion-reduce:transition-none"
+          className="absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-control bg-secondary transition-transform duration-200 ease-out motion-reduce:transition-none"
           style={{ transform: `translateX(${selectedIndex * 100}%)` }}
         />
         {segments.map((seg) => {
@@ -339,7 +339,7 @@ export function EngineModeSwitch({
                 isSelected
                   ? "text-primary-foreground"
                   : needsKey
-                    ? "text-muted-foreground/60 hover:text-muted-foreground"
+                    ? "text-muted-foreground hover:text-muted-foreground"
                     : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -454,9 +454,9 @@ export function LocalModeNotice({
       // is a translated template, so this is the one place a test (or a support
       // screenshot) can read the number without depending on wording.
       data-hidden-count={hiddenCount}
-      className="mb-3 flex items-start gap-2.5 rounded-surface border border-border bg-card/40 px-3 py-2"
+      className="mb-3 flex items-start gap-2.5 rounded-surface border border-border bg-card px-3 py-2"
     >
-      <HardDrive aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+      <HardDrive aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
       <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
         <span className="font-medium text-foreground">
           {t("apikeys_view.local_mode_label")}
@@ -466,7 +466,7 @@ export function LocalModeNotice({
         <button
           type="button"
           onClick={onDisable}
-          className="font-medium text-primary underline-offset-2 hover:underline"
+          className="font-medium text-foreground-strong underline-offset-2 hover:underline"
         >
           {t("apikeys_view.local_mode_show_all")}
         </button>
@@ -535,7 +535,7 @@ export function VoiceEngineContext({
     : transitioning
       ? t("apikeys_view.runtime_switching")
       : sessionActive && activeSessionMode === "realtime"
-        ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ? ` · ${runtimeDetail}` : ""}`
+        ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ?}` · ${runtimeDetail}` : ""}`
         : sessionActive && activeSessionMode === "pipeline" && liveMode === "realtime"
           ? t("apikeys_view.runtime_fallback_pipeline")
           : sessionActive && activeSessionMode === "pipeline"
@@ -634,7 +634,7 @@ export function VoiceEngineContext({
             </span>
             <span className="hidden sm:inline">{t("apikeys_view.voice_engine_label")}</span>
           </summary>
-          <div className="absolute right-0 top-full z-20 mt-2 w-80 rounded-surface border border-border bg-card p-3 text-xs leading-relaxed text-muted-foreground">
+          <div className="absolute right-0 top-full z-20 mt-2 w-80 rounded-lg bg-popover p-3 shadow-float text-xs leading-relaxed text-muted-foreground">
             <p className="font-medium text-foreground">
               {t("apikeys_view.voice_engine_desc")}
             </p>
@@ -727,10 +727,10 @@ function RecommendedSetupPanel({
   return (
     <div
       data-testid="recommended-setup-panel"
-      className="flex min-w-0 items-center gap-3 border-t border-border/60 py-1.5 text-xs"
+      className="flex min-w-0 items-center gap-3 border-t border-border py-1.5 text-xs"
     >
       <p className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
-        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         {t("apikeys_view.reco_title")}
       </p>
       {/* Text links, not capsules: three picks in a row already read as a
@@ -780,7 +780,7 @@ export function CategoryHero({
   // a hero: icon, title and the one-line description on a single baseline.
   return (
     <div className="mb-3 flex min-w-0 items-center gap-2 pt-1">
-      <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-primary" />
+      <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
       <h3 className="shrink-0 font-display text-sm font-semibold tracking-tight">
         {title}
       </h3>
@@ -805,8 +805,8 @@ export function CategoryHero({
 export function GuidancePanel({ title, body }: { title: string; body: string }) {
   return (
     <details className="group mb-3 text-xs">
-      <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 font-medium text-foreground/90 transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
-        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 font-medium text-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         {title}
         <ChevronDown
           aria-hidden="true"
@@ -887,7 +887,7 @@ export function ProviderCategory({
       )}
 
       {error && (
-        <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="flex items-start gap-2 rounded-md bg-secondary p-4 text-sm text-destructive">
           <AlertCircle className="mt-0.5 h-4 w-4" />
           <div>
             {error === PROVIDER_BACKEND_UNREACHABLE
@@ -970,7 +970,7 @@ export function TierSection({
   return (
     <ul
       data-testid="provider-list"
-      className="divide-y divide-border/70 overflow-hidden rounded-surface border border-border bg-card/50"
+      className="divide-y divide-border/70 overflow-hidden rounded-surface border border-border bg-card"
     >
       {sorted.map((p) => (
         <li key={p.id}>
@@ -1374,7 +1374,7 @@ export function ProviderCard({
         title={rowTitle}
         className={cn(
           "flex items-center gap-3 px-3.5 py-3 outline-none",
-          collapsible && "cursor-pointer hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          collapsible && "cursor-pointer hover:bg-secondary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           !isBrainSwitchable && "opacity-80",
         )}
       >
@@ -1444,7 +1444,7 @@ export function ProviderCard({
               e.stopPropagation();
               setActiveSection("local-models");
             }}
-            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/70 px-2.5 text-xs font-medium text-foreground/90 transition-colors hover:bg-secondary/60 hover:text-foreground"
+            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             <Cpu aria-hidden="true" className="h-3.5 w-3.5" />
             {t("apikeys_view.local_models_open")}
@@ -1490,7 +1490,7 @@ export function ProviderCard({
         <div
           id={`provider-body-${descriptor.id}`}
           data-testid={`provider-body-${descriptor.id}`}
-          className="space-y-3 border-t border-border/60 bg-background/30 px-3.5 pb-3.5 pl-[3.75rem] pt-3"
+          className="space-y-3 border-t border-border bg-background px-3.5 pb-3.5 pl-[3.75rem] pt-3"
         >
           {/* The precise "this card is the problem" banner: only on the active card,
               only when the live check actually failed. Names the cause in plain
@@ -1516,7 +1516,7 @@ export function ProviderCard({
           />
 
           {!isBrainSwitchable && (
-            <p className="rounded-control border border-foreground/25 bg-foreground/10 px-3 py-2 text-xs leading-relaxed text-foreground">
+            <p className="rounded-control bg-secondary px-3 py-2 text-xs leading-relaxed text-foreground">
               {t("apikeys_view.agents_only_note").replace(
                 "{0}",
                 agentBrand(assistantName),
@@ -1604,7 +1604,7 @@ export function ProviderCard({
 
           {/* Footer: the live connectivity test, visually separated from the
               configuration body so "set up" and "verify" read as two steps. */}
-          <div className="border-t border-border/60 pt-2.5">
+          <div className="border-t border-border pt-2.5">
             <ProviderTestControl
               providerId={descriptor.id}
               providerLabel={descriptor.label}
@@ -1807,8 +1807,8 @@ export function ActiveControl({
         descriptor.active
           ? "font-medium text-foreground"
           : descriptor.configured
-            ? "border border-border bg-background/60 text-muted-foreground hover:border-primary/50 hover:text-foreground"
-            : "border border-dashed border-border/80 text-muted-foreground/80 hover:text-foreground",
+            ? "border border-border bg-background text-muted-foreground hover:border-border-strong hover:text-foreground"
+            : "border border-dashed border-border text-muted-foreground hover:text-foreground",
       )}
       title={labelTitle}
     >
@@ -1824,7 +1824,7 @@ export function ActiveControl({
         <span
           aria-hidden="true"
           className={cn(
-            "h-[7px] w-[7px] rounded-full bg-foreground/70",
+            "h-[7px] w-[7px] rounded-full bg-secondary",
             activating && "animate-pulse motion-reduce:animate-none",
           )}
         />
@@ -1878,7 +1878,7 @@ export function BaseUrlField({
 
   return (
     <div className="space-y-1">
-      <label className="text-xs uppercase tracking-wider text-muted-foreground">
+      <label className="text-xs text-muted-foreground">
         {t("apikeys_base_url.label")}
       </label>
       <div className="flex gap-2">
@@ -2020,7 +2020,7 @@ function LocalRuntimePanel({
   const showAccelerator =
     accelerator !== null && accelerator.reason !== "not_requested" && accelerator.reason !== "";
   return (
-    <div className="space-y-2 border-t border-border/60 pt-3">
+    <div className="space-y-2 border-t border-border pt-3">
       <div className="flex items-start gap-2 text-xs">
         {status.ready ? (
           <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -2477,7 +2477,7 @@ function ManagedServerPanel({
       .includes(normalizedVoiceQuery);
   });
   return (
-    <div className="space-y-2 border-t border-border/60 pt-3">
+    <div className="space-y-2 border-t border-border pt-3">
       <div className="flex items-start gap-2 text-xs">
         {status.ready ? (
           <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -2603,12 +2603,12 @@ function ManagedServerPanel({
                   value: choice.id,
                   label: `${choice.label} · ~${choice.size_gb} GB${
                     choice.recommended
-                      ? ` · ${t("apikeys_view.managed_brain_recommended")}`
+                      ?}` · ${t("apikeys_view.managed_brain_recommended")}`
                       : ""
                   }${
                     choice.fits
                       ? ""
-                      : ` · ${t("apikeys_view.managed_brain_no_fit")}`
+                      :}` · ${t("apikeys_view.managed_brain_no_fit")}`
                   }`,
                   disabled: !choice.fits,
                 }))}
@@ -2630,11 +2630,11 @@ function ManagedServerPanel({
                   value: choice.id,
                   label: `${choice.label}${
                     choice.recommended
-                      ? ` · ${t("apikeys_view.managed_brain_recommended")}`
+                      ?}` · ${t("apikeys_view.managed_brain_recommended")}`
                       : ""
                   }${
                     !choice.selectable
-                      ? ` · ${t("apikeys_view.managed_voice_unavailable")}`
+                      ?}` · ${t("apikeys_view.managed_voice_unavailable")}`
                       : choice.runtime_ready === false
                         ? ` · ${t("apikeys_view.managed_voice_install_required")}`
                         : ""
@@ -2717,15 +2717,15 @@ function ManagedServerPanel({
                       className={cn(
                         "flex items-start justify-between gap-3 rounded-md border px-2.5 py-2",
                         choice.id === selectedVoice
-                          ? "border-primary/45 bg-primary/[0.05]"
-                          : "border-border/50 bg-background/50",
+                          ? "border-border-strong bg-primary/[0.05]"
+                          : "border-border bg-background",
                       )}
                     >
                       <div className="min-w-0 space-y-1">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="text-xs font-medium">{choice.label}</span>
                           {choice.frontier && (
-                            <span className="rounded-full bg-primary/15 px-1.5 py-px text-xs font-semibold uppercase tracking-wide text-primary">
+                            <span className="rounded-full bg-secondary px-1.5 py-px text-xs font-semibold text-foreground-strong">
                               {t("apikeys_view.managed_voice_frontier")}
                             </span>
                           )}
@@ -2739,7 +2739,7 @@ function ManagedServerPanel({
                               "rounded-full border px-1.5 py-px text-xs",
                               choice.selectable
                                 ? "border-muted-foreground/30 bg-muted-foreground/10 text-muted-foreground"
-                                : "border-foreground/30 bg-foreground/10 text-foreground",
+                                : "bg-secondary text-foreground",
                             )}
                           >
                             {t(
@@ -2757,7 +2757,7 @@ function ManagedServerPanel({
                         </p>
                         <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                           {(choice.languages ?? []).slice(0, 12).map((language) => (
-                            <span key={language} className="rounded bg-muted px-1 py-px uppercase">
+                            <span key={language} className="rounded bg-muted px-1 py-px ">
                               {language}
                             </span>
                           ))}
@@ -2772,7 +2772,7 @@ function ManagedServerPanel({
                               href={choice.source_url}
                               target="_blank"
                               rel="noreferrer"
-                              className="font-medium text-primary hover:underline"
+                              className="font-medium text-foreground-strong hover:underline"
                             >
                               {t("apikeys_view.managed_voice_source")}
                             </a>
@@ -2812,7 +2812,7 @@ function ManagedServerPanel({
         <div className="space-y-1">
           <div className="h-1.5 w-full overflow-hidden rounded bg-muted">
             <div
-              className="h-full rounded bg-foreground/70 transition-all"
+              className="h-full rounded bg-secondary transition-all"
               style={{ width: `${Math.max(2, progress?.percent ?? 0)}%` }}
             />
           </div>
@@ -3029,7 +3029,7 @@ export function OllamaRuntimePanel({
 
   return (
     <div
-      className="space-y-2 border-t border-border/60 pt-3"
+      className="space-y-2 border-t border-border pt-3"
       data-testid="ollama-runtime-panel"
     >
       <div className="flex items-start gap-2 text-xs">
@@ -3042,7 +3042,7 @@ export function OllamaRuntimePanel({
       {installing && (
         <div className="h-1.5 w-full overflow-hidden rounded bg-muted">
           <div
-            className="h-full rounded bg-foreground/70 transition-all"
+            className="h-full rounded bg-secondary transition-all"
             style={{ width: `${Math.max(2, progress?.percent ?? 0)}%` }}
           />
         </div>
@@ -3179,7 +3179,7 @@ export function LibraryBrowser({
   };
 
   return (
-    <div className="space-y-2 border-t border-border/50 pt-2" data-testid="model-library">
+    <div className="space-y-2 border-t border-border pt-2" data-testid="model-library">
       {/* The first version of this shipped as a bare input with a changed
           placeholder, in the exact spot the old blind text field had occupied.
           It worked and nobody could see it: a feature that looks identical to
@@ -3238,7 +3238,7 @@ export function LibraryBrowser({
             <div
               key={model.name}
               data-testid={`library-row-${model.name}`}
-              className="rounded border border-border/50 bg-background/50"
+              className="rounded border border-border bg-background"
             >
               <button
                 type="button"
@@ -3263,7 +3263,7 @@ export function LibraryBrowser({
                     {model.capabilities.map((cap) => (
                       <span
                         key={cap}
-                        className="rounded bg-primary/10 px-1 py-px text-xs font-medium uppercase tracking-wide text-primary"
+                        className="rounded bg-secondary px-1 py-px text-xs font-medium text-foreground-strong"
                       >
                         {cap}
                       </span>
@@ -3290,7 +3290,7 @@ export function LibraryBrowser({
                 // A popular family publishes well over a hundred tags
                 // (qwen2.5: 133). Un-capped, one opened model would push the
                 // whole settings page down by several screens.
-                <div className="max-h-56 space-y-1 overflow-y-auto border-t border-border/40 px-2 py-1.5">
+                <div className="max-h-56 space-y-1 overflow-y-auto border-t border-border px-2 py-1.5">
                   {loadingTags && !tags[model.name] && (
                     <p className="text-xs text-muted-foreground">
                       {t("apikeys_model_pull.library_loading_versions")}
@@ -3511,7 +3511,7 @@ export function LocalModelDownloadPanel({
   return (
     <div
       data-testid={`provider-model-pull-${descriptor.id}`}
-      className="space-y-2 border-t border-border/60 pt-3"
+      className="space-y-2 border-t border-border pt-3"
     >
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium">{t("apikeys_model_pull.title")}</p>
@@ -3532,7 +3532,7 @@ export function LocalModelDownloadPanel({
       {groups.map((group) => (
         <div key={group.role ?? "all"} className="space-y-1.5">
           {group.role && (
-            <p className="pt-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">
+            <p className="pt-1 text-xs font-semibold text-muted-foreground">
               {t(`apikeys_model_pull.role_${group.role}`)}
             </p>
           )}
@@ -3542,9 +3542,9 @@ export function LocalModelDownloadPanel({
             data-testid={`model-pull-row-${row.id}`}
             data-recommended={row.recommended ? "true" : "false"}
             className={cn(
-              "flex items-start justify-between gap-2 rounded border bg-background/50 px-2 py-1.5",
+              "flex items-start justify-between gap-2 rounded border bg-background px-2 py-1.5",
               row.recommended
-                ? "border-primary/40 bg-primary/[0.04]"
+                ? "border-border-strong bg-primary/[0.04]"
                 : "border-border/50",
             )}
           >
@@ -3558,7 +3558,7 @@ export function LocalModelDownloadPanel({
                   )}
                 </span>
                 {row.recommended && (
-                  <span className="ml-1.5 whitespace-nowrap rounded-full bg-primary/15 px-1.5 py-px text-xs font-semibold uppercase tracking-wide text-primary">
+                  <span className="ml-1.5 whitespace-nowrap rounded-full bg-secondary px-1.5 py-px text-xs font-semibold text-foreground-strong">
                     {t("apikeys_model_pull.best_for_machine")}
                   </span>
                 )}
@@ -3624,7 +3624,7 @@ export function LocalModelDownloadPanel({
           {running && (
             <div className="h-1 w-full overflow-hidden rounded bg-border">
               <div
-                className="h-full bg-foreground/70 transition-all"
+                className="h-full bg-secondary transition-all"
                 style={{ width: `${percent}%` }}
               />
             </div>
@@ -3944,7 +3944,7 @@ function CodexAuthWidget({
   // Not connected: status + (install hint) + the single "connect" action.
   return (
     <div className="space-y-3">
-      <div className="rounded-md border border-border bg-background/40 p-3 text-xs text-muted-foreground">
+      <div className="rounded-md border border-border bg-background p-3 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center gap-2">
           <span>
             {subscriptionOnly
@@ -3966,7 +3966,7 @@ function CodexAuthWidget({
           status.message && (
             <div
               data-testid="codex-setup-detail"
-              className="mt-2 break-words border-t border-border/60 pt-2 font-mono text-xs"
+              className="mt-2 break-words border-t border-border pt-2 font-mono text-xs"
             >
               <span className="mr-1 font-sans">
                 {t("apikeys_codex.setup_detail_label")}
@@ -3985,7 +3985,7 @@ function CodexAuthWidget({
       {!status?.installed &&
         !CODEX_NO_INSTALL_PROMPT_REASONS.has(status?.reason_code ?? "") && (
         <div className="flex flex-wrap items-center gap-2">
-          <code className="min-w-[220px] flex-1 rounded-md border border-border bg-muted/30 px-3 py-1.5 font-mono text-xs">
+          <code className="min-w-[220px] flex-1 rounded-md border border-border bg-muted px-3 py-1.5 font-mono text-xs">
             {installCommand}
           </code>
           <Button size="sm" variant="outline" onClick={handleCopy} disabled={pending === "copy"}>
@@ -4139,7 +4139,7 @@ function AntigravityAuthWidget({
   // Not connected: status + (install hint) + the single "connect" action.
   return (
     <div className="space-y-3">
-      <div className="rounded-md border border-border bg-background/40 p-3 text-xs text-muted-foreground">
+      <div className="rounded-md border border-border bg-background p-3 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center gap-2">
           <span>{status?.message ?? t("apikeys_antigravity.status_loading")}</span>
           {status?.version && (
@@ -4150,7 +4150,7 @@ function AntigravityAuthWidget({
 
       {!status?.installed && (
         <div className="flex flex-wrap items-center gap-2">
-          <code className="min-w-[220px] flex-1 rounded-md border border-border bg-muted/30 px-3 py-1.5 font-mono text-xs">
+          <code className="min-w-[220px] flex-1 rounded-md border border-border bg-muted px-3 py-1.5 font-mono text-xs">
             {installCommand}
           </code>
           <Button size="sm" variant="outline" onClick={handleCopy} disabled={pending === "copy"}>
@@ -4191,7 +4191,7 @@ function AntigravityAuthWidget({
  */
 const STATE_CHIP_TONE = {
   active: {
-    wrap: "rounded-[4px] border border-primary/40 px-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-primary",
+    wrap: "rounded-[4px] border border-border-strong px-1.5 text-[10.5px] font-semibold text-foreground-strong",
     dot: null,
   },
   ready: { wrap: "text-muted-foreground", dot: "bg-muted-foreground" },
@@ -4246,10 +4246,10 @@ export function Tag({
       {...rest}
       title={title}
       className={cn(
-        "inline-flex shrink-0 items-center rounded-[4px] border px-1.5 text-[10.5px] font-semibold uppercase leading-[18px] tracking-[0.06em]",
-        tone === "accent" && "border-primary/40 text-primary",
+        "inline-flex shrink-0 items-center rounded-[4px] border px-1.5 text-[10.5px] font-semibold leading-[18px] tracking-[0.06em]",
+        tone === "accent" && "border-border-strong text-foreground-strong",
         tone === "neutral" && "border-border text-muted-foreground",
-        tone === "warn" && "border-foreground/40 text-foreground",
+        tone === "warn" && "border-border-strong text-foreground",
       )}
     >
       {children}

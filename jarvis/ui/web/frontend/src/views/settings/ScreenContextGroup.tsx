@@ -104,9 +104,9 @@ export function ScreenContextGroup() {
   // mismatch that only became visible once the card got short. Do not
   // reintroduce a width cap here; the settings column owns the width.
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
+    <div className="mt-2 rounded-lg border border-border bg-card p-4">
       <div className="flex items-start gap-3">
-        <Eye className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <Eye className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-4">
             <h4 className="font-medium">
@@ -128,7 +128,7 @@ export function ScreenContextGroup() {
           </p>
           {settings?.enabled && status && (
             <p
-              className={`mt-1.5 text-[11px] ${
+              className={`mt-1.5 text-micro ${
                 status.available ? "text-muted-foreground" : "text-foreground"
               }`}
               aria-live="polite"

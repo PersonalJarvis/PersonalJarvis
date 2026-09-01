@@ -61,19 +61,19 @@ export function SystemPromptGroup() {
   }
 
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
+    <div className="mt-2 rounded-lg border border-border bg-card p-4">
       <div className="flex items-start gap-3">
-        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h4 className="font-display text-sm font-semibold">
               {t("settings_view.system_prompt.title")}
             </h4>
             <span
-              className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+              className={`rounded-full px-2 py-0.5 text-micro font-medium ${
                 isCustom
-                  ? "border border-primary/40 bg-primary/10 text-primary"
-                  : "border border-border bg-muted/60 text-muted-foreground"
+                  ? "bg-secondary text-foreground-strong"
+                  : "border border-border bg-muted text-muted-foreground"
               }`}
             >
               {isCustom
@@ -98,15 +98,15 @@ export function SystemPromptGroup() {
             spellCheck={false}
             rows={14}
             placeholder={t("settings_view.system_prompt.placeholder")}
-            className="jarvis-input-surface mt-1 w-full resize-y rounded-md border border-input px-3 py-2 font-mono text-xs leading-relaxed focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+            className="jarvis-input-surface mt-1 w-full resize-y rounded-md border border-input px-3 py-2 font-mono text-xs leading-relaxed focus:outline-none focus:ring-2 focus:ring-border-strong disabled:opacity-50"
           />
 
           <div className="mt-1.5 flex items-center justify-between">
-            <span className="font-mono text-[11px] text-muted-foreground">
+            <span className="font-mono text-micro text-muted-foreground">
               {t("settings_view.system_prompt.chars").replace("{0}", String(draft.length))}
             </span>
             {trimmedEmpty && (
-              <span className="text-[11px] text-foreground">
+              <span className="text-micro text-foreground">
                 {t("settings_view.system_prompt.empty_hint")}
               </span>
             )}
@@ -134,7 +134,7 @@ export function SystemPromptGroup() {
             </Button>
           </div>
 
-          <p className="mt-3 text-[11px] text-muted-foreground">
+          <p className="mt-3 text-micro text-muted-foreground">
             {t("settings_view.system_prompt.applies_next_turn")}
           </p>
         </div>

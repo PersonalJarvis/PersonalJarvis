@@ -199,14 +199,14 @@ function format(text: string, ...values: Array<string | number>): string {
  */
 const BUBBLE_BTN =
   "pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full " +
-  "border border-border/50 bg-background/85 text-muted-foreground " +
+  "border border-border bg-background text-muted-foreground " +
   "backdrop-blur transition-colors hover:bg-secondary hover:text-foreground " +
   "focus-visible:outline-none focus-visible:ring-2 " +
   "focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40";
 
 /** The small floating surfaces (status, transcript, receipts) share this look. */
 const BUBBLE_SURFACE =
-  "pointer-events-auto border border-border/50 bg-background/85 backdrop-blur";
+  "pointer-events-auto border border-border bg-background backdrop-blur";
 
 export function VoiceBubble({
   open,
@@ -705,7 +705,7 @@ export function VoiceBubble({
           data-testid="voice-bubble-status"
           aria-live="polite"
           className={cn(
-            "text-[11px] font-medium uppercase tracking-[0.1em] transition-colors",
+            "text-micro font-medium transition-colors",
             active ? "text-primary" : "text-muted-foreground",
           )}
         >
@@ -739,9 +739,9 @@ export function VoiceBubble({
           <p
             ref={transcriptWindowRef}
             className={cn(
-              "agentic-voice-transcript-window break-words text-center text-[13px]",
+              "agentic-voice-transcript-window break-words text-center text-meta",
               "font-medium leading-relaxed transition-colors duration-300",
-              transcriptionFinal ? "text-foreground/90" : "text-muted-foreground",
+              transcriptionFinal ? "text-foreground" : "text-muted-foreground",
             )}
           >
             {transcriptWords.map((word, index) => (
@@ -770,7 +770,7 @@ export function VoiceBubble({
           <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-primary/15 text-primary">
             <Check className="h-2.5 w-2.5" aria-hidden="true" />
           </span>
-          <span className="min-w-0 flex-1 text-[11px] leading-relaxed text-muted-foreground">
+          <span className="min-w-0 flex-1 text-micro text-muted-foreground">
             <span className="block truncate font-medium text-foreground">
               <FilePlus2
                 className="mr-1 inline h-3.5 w-3.5 text-primary"

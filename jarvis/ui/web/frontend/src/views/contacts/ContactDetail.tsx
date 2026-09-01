@@ -22,8 +22,9 @@ import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
+import { IdentityAvatar } from "@/components/identity/IdentityAvatar";
+import { PROSE_BASE } from "@/components/outputs/MarkdownProse";
 import { relationshipLabel } from "./constants";
-import { contactAvatarStyle, contactInitials } from "./avatar";
 import { updateContact, type Contact } from "./api";
 
 /**
@@ -130,7 +131,7 @@ export function ContactDetail({
   }
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto scrollbar-jarvis">
+    <div className="flex h-full flex-col overflow-y-auto bg-background scrollbar-jarvis">
       <div className="border-b border-border p-6">
         <div className="flex items-start gap-4">
           {onBack && (
@@ -138,36 +139,30 @@ export function ContactDetail({
               type="button"
               onClick={onBack}
               aria-label={t("contacts.back")}
-              className="mt-1 shrink-0 rounded-md border border-border p-1.5 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+              className="mt-1 shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
           )}
-          <span
-            aria-hidden
-            style={contactAvatarStyle(contact.name)}
-            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-xl font-semibold"
-          >
-            {contactInitials(contact.name)}
-          </span>
+          <IdentityAvatar name={contact.name} size="lg" />
           <div className="min-w-0 flex-1">
-            <h3 className="font-display text-lg font-semibold tracking-tight">{contact.name}</h3>
-            {orgLine && (
-              <p className="truncate text-xs text-muted-foreground">{orgLine}</p>
-            )}
+            <h3 className="font-display text-page font-semibold text-foreground-strong">
+              {contact.name}
+            </h3>
+            {orgLine && <p className="truncate text-meta text-muted-foreground">{orgLine}</p>}
             {contact.aliases.length > 0 && (
-              <p className="truncate text-xs text-muted-foreground">
+              <p className="truncate text-meta text-muted-foreground">
                 {t("contacts.aliases")}: {contact.aliases.join(", ")}
               </p>
             )}
             <div className="mt-1 flex flex-wrap items-center gap-2">
               {rel && (
-                <span className="inline-block rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
+                <span className="inline-block rounded-full bg-secondary px-2 py-0.5 text-micro text-muted-foreground">
                   {rel}
                 </span>
               )}
               {updated && (
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-meta text-muted-foreground">
                   {t("contacts.lastUpdated")}: {updated}
                 </span>
               )}
@@ -181,10 +176,10 @@ export function ContactDetail({
               title={t("contacts.favorite")}
               disabled={togglingFav}
               className={cn(
-                "rounded-md border border-border p-1.5 transition-colors disabled:opacity-50",
+                "rounded-md p-1.5 transition-colors disabled:opacity-50",
                 contact.favorite
-                  ? "border-primary/40 text-primary"
-                  : "text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                  ? "bg-secondary text-foreground-strong"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}
             >
               <Star className={cn("h-3.5 w-3.5", contact.favorite && "fill-current")} />
@@ -193,7 +188,7 @@ export function ContactDetail({
               type="button"
               onClick={onEdit}
               aria-label={t("contacts.edit")}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-body text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >
               <Pencil className="h-3.5 w-3.5" />
               {t("contacts.edit")}
@@ -202,7 +197,7 @@ export function ContactDetail({
               type="button"
               onClick={onDelete}
               aria-label={t("contacts.delete")}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive"
+              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-body text-muted-foreground transition-colors hover:bg-secondary hover:text-destructive"
             >
               <Trash2 className="h-3.5 w-3.5" />
               {t("contacts.delete")}
@@ -216,7 +211,7 @@ export function ContactDetail({
             <button
               type="button"
               onClick={() => setConfirmCall(callPhone)}
-              className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20"
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-body font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               <PhoneCall className="h-3.5 w-3.5" />
               {t("contacts.call")}
@@ -225,7 +220,7 @@ export function ContactDetail({
           <button
             type="button"
             onClick={() => requestWikiPage(contact.slug)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground"
+            className="inline-flex items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-body text-foreground transition-colors hover:bg-popover"
           >
             <BookOpen className="h-3.5 w-3.5" />
             {t("contacts.openWiki")}
@@ -233,7 +228,7 @@ export function ContactDetail({
         </div>
       </div>
 
-      <div className="space-y-6 p-6">
+      <div className="max-w-reading space-y-group p-6">
         {contact.emails.length > 0 && (
           <Field icon={<Mail className="h-4 w-4" />} label={t("contacts.emails")}>
             <ul className="space-y-1">
@@ -241,7 +236,7 @@ export function ContactDetail({
                 <li key={e} className="flex items-center gap-1.5">
                   <a
                     href={`mailto:${e}`}
-                    className="text-sm text-primary hover:underline"
+                    className="text-body text-foreground underline decoration-border-strong underline-offset-2 hover:decoration-foreground"
                   >
                     {e}
                   </a>
@@ -257,7 +252,7 @@ export function ContactDetail({
             <ul className="space-y-1">
               {contact.phones.map((p) => (
                 <li key={p} className="flex items-center gap-1.5">
-                  <a href={`tel:${p}`} className="text-sm text-primary hover:underline">
+                  <a href={`tel:${p}`} className="text-body text-foreground underline decoration-border-strong underline-offset-2 hover:decoration-foreground">
                     {p}
                   </a>
                   <CopyButton value={p} label={t("contacts.copy")} />
@@ -269,7 +264,7 @@ export function ContactDetail({
 
         {contact.birthday && (
           <Field icon={<Cake className="h-4 w-4" />} label={t("contacts.birthday")}>
-            <p className="text-sm text-foreground">{formatBirthday(contact.birthday)}</p>
+            <p className="text-body text-foreground">{formatBirthday(contact.birthday)}</p>
           </Field>
         )}
 
@@ -282,7 +277,7 @@ export function ContactDetail({
                     href={u.includes("://") ? u : `https://${u}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="truncate text-sm text-primary hover:underline"
+                    className="truncate text-body text-foreground underline decoration-border-strong underline-offset-2 hover:decoration-foreground"
                   >
                     {u}
                   </a>
@@ -296,7 +291,7 @@ export function ContactDetail({
         {addr && (
           <Field icon={<MapPin className="h-4 w-4" />} label={t("contacts.address")}>
             <div className="flex items-start gap-1.5">
-              <p className="whitespace-pre-line text-sm text-foreground">{addr}</p>
+              <p className="whitespace-pre-line text-body text-foreground">{addr}</p>
               <CopyButton value={addr.replace(/\n/g, ", ")} label={t("contacts.copy")} />
             </div>
           </Field>
@@ -308,7 +303,7 @@ export function ContactDetail({
               {contact.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground"
+                  className="rounded-full bg-secondary px-2 py-0.5 text-meta text-muted-foreground"
                 >
                   #{tag}
                 </span>
@@ -319,7 +314,11 @@ export function ContactDetail({
 
         {contact.note.trim() && (
           <Field label={t("contacts.readme")}>
-            <article className="prose prose-neutral max-w-none text-sm dark:prose-invert prose-a:text-primary prose-code:text-foreground prose-pre:border prose-pre:border-border prose-pre:bg-card/80">
+            <article className={cn(
+                PROSE_BASE,
+                "max-w-reading text-reading text-foreground",
+                "prose-headings:text-foreground-strong prose-p:text-foreground prose-li:text-foreground",
+              )}>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{contact.note.trim()}</ReactMarkdown>
             </article>
           </Field>
@@ -332,24 +331,24 @@ export function ContactDetail({
           onClick={() => !calling && setConfirmCall(null)}
         >
           <div
-            className="w-full max-w-sm rounded-xl border border-border bg-card p-6"
+            className="w-full max-w-sm rounded-lg bg-popover p-6 shadow-float"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="font-display text-base font-semibold">
+            <h3 className="font-display text-page font-semibold text-foreground-strong">
               {t("contacts.callTitle")}
             </h3>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <p className="mt-2 text-body text-foreground">
               {t("contacts.callConfirm")
                 .replace("{0}", contact.name)
                 .replace("{1}", confirmCall)}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">{t("contacts.callNote")}</p>
+            <p className="mt-1 text-meta text-muted-foreground">{t("contacts.callNote")}</p>
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
                 disabled={calling}
                 onClick={() => setConfirmCall(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                className="rounded-md px-3 py-1.5 text-body text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
               >
                 {t("contacts.cancel")}
               </button>
@@ -357,7 +356,7 @@ export function ContactDetail({
                 type="button"
                 disabled={calling}
                 onClick={() => void placeCall(confirmCall)}
-                className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-body font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 {calling && <Loader2 className="h-3 w-3 animate-spin" />}
                 {t("contacts.call")}
@@ -384,10 +383,10 @@ function CopyButton({ value, label }: { value: string; label: string }) {
           window.setTimeout(() => setCopied(false), 1500);
         });
       }}
-      className="rounded p-1 text-muted-foreground/60 transition-colors hover:bg-background/60 hover:text-foreground"
+      className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
     >
       {copied ? (
-        <Check className="h-3.5 w-3.5 text-primary" />
+        <Check className="h-3.5 w-3.5 text-success" />
       ) : (
         <Copy className="h-3.5 w-3.5" />
       )}
@@ -404,9 +403,12 @@ function Field({
   label: string;
   children: React.ReactNode;
 }) {
+  // Was a 10px all-caps label — below the type floor and the exact
+  // construction that makes a screen read as an admin form. It is now a plain
+  // meta label, and the 32px between fields does the separating.
   return (
     <section>
-      <div className="mb-1.5 flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+      <div className="mb-1.5 flex items-center gap-2 text-meta text-muted-foreground">
         {icon}
         {label}
       </div>

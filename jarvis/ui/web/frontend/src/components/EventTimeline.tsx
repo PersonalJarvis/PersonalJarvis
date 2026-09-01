@@ -1,27 +1,17 @@
 import { useState } from "react";
 import { useEventStore, type EventItem } from "@/store/events";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
 
-const LAYER_COLOR: Record<string, string> = {
-  bus:        "bg-slate-500",
-  brain:      "bg-violet-500",
-  voice:      "bg-muted-foreground",
-  audio:      "bg-muted-foreground",
-  tool:       "bg-foreground",
-  skill:      "bg-sky-500",
-  ui:         "bg-blue-500",
-  harness:    "bg-fuchsia-500",
-  mcp:        "bg-muted-foreground",
-  channel:    "bg-indigo-500",
-  system:     "bg-zinc-500",
-  debug:      "bg-gray-500",
-};
-
-function layerColor(layer?: string): string {
-  if (!layer) return "bg-gray-500";
-  return LAYER_COLOR[layer] ?? "bg-gray-500";
-}
+/*
+ * There is no colour key here any more.
+ *
+ * Twelve layers used to get twelve dots out of Tailwind's own palette —
+ * slate, violet, sky, blue, fuchsia, indigo, zinc, gray — which is twelve
+ * literal colours and, worse, twelve hues in a product where hue means life,
+ * fault, degraded or identity and nothing else. A reader had no key to decode
+ * them with, and the row already prints the layer's name in words a few
+ * columns to the right. The dot was a legend for a legend.
+ */
 
 function fmtTime(ts: number): string {
   const d = new Date(ts);
@@ -37,7 +27,7 @@ export function EventTimeline() {
     <ScrollArea className="h-full">
       <ul className="divide-y divide-border">
         {visible.length === 0 && (
-          <li className="p-4 text-sm text-muted-foreground">
+          <li className="p-4 text-body text-muted-foreground">
             No events yet. Emit a test event from the Debug tab.
           </li>
         )}
@@ -53,23 +43,19 @@ function EventRow({ event }: { event: EventItem }) {
   const [open, setOpen] = useState(false);
   const hasPayload = event.payload !== undefined && event.payload !== null;
   return (
-    <li className="px-4 py-2 text-sm">
-      <div className="flex items-center gap-3">
-        <span
-          className={cn("h-2 w-2 rounded-full shrink-0", layerColor(event.layer))}
-          aria-hidden
-        />
-        <span className="font-mono text-xs text-muted-foreground tabular-nums">
+    <li className="px-4 py-2">
+      <div className="flex items-center gap-stack">
+        <span className="font-mono text-meta tabular-nums text-muted-foreground">
           {fmtTime(event.ts)}
         </span>
-        <span className="font-medium truncate flex-1">{event.name}</span>
+        <span className="min-w-0 flex-1 truncate text-body text-foreground">{event.name}</span>
         {event.layer && (
-          <span className="text-xs text-muted-foreground uppercase">{event.layer}</span>
+          <span className="shrink-0 text-meta text-muted-foreground">{event.layer}</span>
         )}
         {hasPayload && (
           <button
             type="button"
-            className="text-xs text-muted-foreground hover:text-foreground"
+            className="shrink-0 rounded-md px-1.5 py-0.5 text-meta font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
           >
@@ -78,7 +64,7 @@ function EventRow({ event }: { event: EventItem }) {
         )}
       </div>
       {open && hasPayload && (
-        <pre className="mt-2 overflow-auto rounded bg-muted/50 p-2 text-xs">
+        <pre className="mt-2 overflow-auto rounded-md bg-secondary p-2 font-mono text-meta">
           {JSON.stringify(event.payload, null, 2)}
         </pre>
       )}

@@ -280,7 +280,7 @@ export function WikiView(): JSX.Element {
         <div className="flex flex-1 items-center justify-center p-6">
           <div
             role="alert"
-            className="max-w-md rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            className="max-w-reading text-body text-destructive"
             data-testid="wiki-tree-error"
           >
             {t("wiki_view.load_error")}
@@ -335,7 +335,7 @@ export function WikiView(): JSX.Element {
               {centreTab === "graph" && (
                 <button
                   type="button"
-                  className="ml-auto mr-2 my-1.5 inline-flex items-center gap-1.5 self-center rounded-md border border-border bg-background/70 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                  className="ml-auto mr-2 my-1.5 inline-flex items-center gap-1.5 self-center rounded-md px-2.5 py-1.5 text-body text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong"
                   onClick={() => setIsGraphExpanded((expanded) => !expanded)}
                   aria-controls="wiki-workspace"
                   aria-expanded={isGraphExpanded}
@@ -386,7 +386,7 @@ export function WikiView(): JSX.Element {
                     />
                   ) : (
                     <div
-                      className="px-7 py-10 text-center text-sm text-muted-foreground"
+                      className="px-7 py-10 text-center text-body text-muted-foreground"
                       data-testid="wiki-page-no-selection"
                     >
                       {t("wiki_view.no_selection_hint")}
@@ -402,12 +402,10 @@ export function WikiView(): JSX.Element {
               <BacklinksPanel slug={selectedSlug} onSelect={handleSelect} />
             ) : (
               <aside
-                className="flex h-full w-[380px] shrink-0 flex-col border-l border-border p-4"
+                className="flex h-full w-[380px] shrink-0 flex-col bg-sidebar p-4"
                 data-testid="wiki-backlinks-placeholder"
               >
-                <div className="rounded-lg border border-border bg-secondary/30 p-4 text-xs text-muted-foreground">
-                  {t("wiki_view.backlinks_hint")}
-                </div>
+                <p className="text-body text-muted-foreground">{t("wiki_view.backlinks_hint")}</p>
               </aside>
             ))}
         </div>
@@ -415,7 +413,7 @@ export function WikiView(): JSX.Element {
 
       {toast && (
         <div
-          className="pointer-events-none fixed bottom-12 right-6 z-50 max-w-sm rounded-lg border border-border bg-card px-4 py-3 text-sm text-foreground"
+          className="pointer-events-none fixed bottom-12 right-6 z-50 max-w-sm rounded-lg bg-popover px-4 py-3 text-body text-foreground shadow-float"
           data-testid="wiki-toast"
           role="status"
         >
@@ -428,11 +426,13 @@ export function WikiView(): JSX.Element {
 
 type WikiHealthVisual = "green" | "amber" | "red" | "unknown";
 
+// The three status hues and nothing else. "unknown" is the ONLY state allowed
+// to be neutral — an "ok" that renders dimmer than an "unknown" inverts the ramp.
 const HEALTH_DOT_STYLE: Record<WikiHealthVisual, string> = {
-  green: "bg-[#5bd4a4]",
-  amber: "bg-[#ffb84d]",
+  green: "bg-success",
+  amber: "bg-warning",
   red: "bg-destructive",
-  unknown: "bg-muted-foreground/40",
+  unknown: "bg-faint-foreground",
 };
 
 function classifyWikiHealth(health: WikiHealthSnapshot): WikiHealthVisual {
@@ -519,11 +519,11 @@ function WikiHealthStrip({
   if (isLoading) {
     return (
       <div
-        className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground"
+        className="flex items-center gap-2 border-b border-border px-4 py-2 text-meta text-muted-foreground"
         data-testid="wiki-health-strip"
       >
         <span
-          className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-muted-foreground/40"
+          className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-faint-foreground"
           data-testid="wiki-health-dot"
           data-visual="loading"
           aria-hidden
@@ -536,11 +536,11 @@ function WikiHealthStrip({
   if (!health) {
     return (
       <div
-        className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground"
+        className="flex items-center gap-2 border-b border-border px-4 py-2 text-meta text-muted-foreground"
         data-testid="wiki-health-strip"
       >
         <span
-          className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/40"
+          className="h-2 w-2 shrink-0 rounded-full bg-faint-foreground"
           data-testid="wiki-health-dot"
           data-visual="unknown"
           aria-hidden
@@ -558,7 +558,7 @@ function WikiHealthStrip({
 
   return (
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-2 text-xs text-muted-foreground"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-2 text-meta text-muted-foreground"
       data-testid="wiki-health-strip"
     >
       <span
@@ -580,7 +580,7 @@ function WikiHealthStrip({
       {health.journal_backlog > 0 && (
         <span
           data-testid="wiki-health-backlog"
-          className="rounded-full border border-[#ffb84d]/40 bg-[#ffb84d]/10 px-1.5 py-0.5 text-[#ffb84d]"
+          className="rounded-full bg-secondary px-2 py-0.5 text-warning"
         >
           {t("wiki_health.backlog_count").replace(
             "{0}",
@@ -592,7 +592,7 @@ function WikiHealthStrip({
         <>
           <span
             data-testid="wiki-health-index-stale"
-            className="rounded-full border border-[#ffb84d]/40 bg-[#ffb84d]/10 px-1.5 py-0.5 text-[#ffb84d]"
+            className="rounded-full bg-secondary px-2 py-0.5 text-warning"
           >
             {t("wiki_health.index_stale")
               .replace("{0}", String(health.indexed_pages))
@@ -603,7 +603,7 @@ function WikiHealthStrip({
             onClick={onReindex}
             disabled={isReindexing}
             data-testid="wiki-health-reindex"
-            className="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-foreground hover:bg-muted disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-foreground transition-colors hover:bg-popover disabled:opacity-50"
           >
             <RefreshCw className={cn("h-3 w-3", isReindexing && "animate-spin")} />
             {t(isReindexing ? "wiki_health.reindexing" : "wiki_health.reindex")}
@@ -612,7 +612,7 @@ function WikiHealthStrip({
             <span
               role="alert"
               data-testid="wiki-health-reindex-error"
-              className="font-medium text-destructive"
+              className="text-destructive"
             >
               {t("wiki_health.reindex_failed_detail").replace("{0}", reindexError)}
             </span>
@@ -622,7 +622,7 @@ function WikiHealthStrip({
       {health.vault_legacy_conflict && (
         <span
           data-testid="wiki-health-legacy-conflict"
-          className="rounded-full border border-[#ffb84d]/40 bg-[#ffb84d]/10 px-1.5 py-0.5 text-[#ffb84d]"
+          className="rounded-full bg-secondary px-2 py-0.5 text-warning"
         >
           {t("wiki_health.legacy_conflict")}
         </span>
@@ -671,13 +671,13 @@ function WikiCaptureFunnelStrip({
   return (
     <section
       aria-label={t("wiki_health.capture_aria").replace("{0}", String(windowHours))}
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-1.5 text-[11px]"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-1.5 text-meta"
       data-testid="wiki-capture-funnel"
     >
-      <span className="font-medium text-foreground">{windowLabel}</span>
+      <span className="text-foreground">{windowLabel}</span>
       {errorText && (
         <span
-          className="font-medium text-destructive"
+          className="text-destructive"
           data-testid="wiki-capture-error"
           role="alert"
         >
@@ -686,7 +686,7 @@ function WikiCaptureFunnelStrip({
       )}
       {!error && funnel.failed > 0 && (
         <span
-          className="font-medium text-destructive"
+          className="text-destructive"
           data-testid="wiki-capture-failed-detail"
           role="status"
         >
@@ -709,10 +709,8 @@ function WikiCaptureFunnelStrip({
             <dt>{label}</dt>
             <dd
               className={cn(
-                "font-medium",
-                key === "failed" && value > 0
-                  ? "text-destructive"
-                  : "text-foreground",
+                "tabular-nums",
+                key === "failed" && value > 0 ? "text-destructive" : "text-foreground",
               )}
             >
               {value}
@@ -743,9 +741,9 @@ function TabButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-xs transition-colors",
+        "flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-body transition-colors",
         active
-          ? "border-primary text-foreground"
+          ? "border-primary text-foreground-strong"
           : "border-transparent text-muted-foreground hover:text-foreground",
         disabled && "cursor-not-allowed opacity-50 hover:text-muted-foreground",
       )}
@@ -764,23 +762,23 @@ function EmptyState() {
   return (
     <div className="flex flex-1 items-center justify-center p-6">
       <div
-        className="max-w-lg rounded-xl border border-dashed border-border/70 bg-card/30 px-8 py-10 text-center"
+        className="max-w-form rounded-lg bg-card px-8 py-10 text-center shadow-rim"
         data-testid="wiki-empty-state"
       >
         <Notebook className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
-        <h3 className="mb-2 text-base font-semibold text-foreground">
+        <h3 className="mb-2 text-page font-semibold text-foreground-strong">
           {t("wiki_view.empty_title")}
         </h3>
-        <p className="mb-2 text-sm text-muted-foreground">
+        <p className="mb-2 text-reading text-foreground">
           {t("wiki_view.empty_body_a")} {assistantName} {t("wiki_view.empty_body_b")}
         </p>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-reading text-muted-foreground">
           {t("wiki_view.manual_a")}{" "}
-          <code className="rounded bg-background px-1 py-0.5 font-mono text-[12px]">
+          <code className="rounded-sm bg-secondary px-1 py-0.5 font-mono text-meta text-foreground">
             .md
           </code>
           {t("wiki_view.manual_b")}{" "}
-          <code className="rounded bg-background px-1 py-0.5 font-mono text-[12px]">
+          <code className="rounded-sm bg-secondary px-1 py-0.5 font-mono text-meta text-foreground">
             wiki/obsidian-vault/entities/
           </code>{" "}
           {t("wiki_view.manual_c")}
@@ -796,7 +794,7 @@ function GraphSkeleton() {
       className="flex h-full min-h-[400px] items-center justify-center p-6"
       data-testid="wiki-graph-skeleton"
     >
-      <div className="h-full w-full max-w-3xl animate-pulse rounded-xl bg-muted/30" />
+      <div className="h-full w-full max-w-page animate-pulse rounded-lg bg-sheen/[0.06]" />
     </div>
   );
 }

@@ -159,7 +159,7 @@ export function TeamProxyGroup() {
             </div>
 
             <div>
-              <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+              <div className="mb-2 text-micro text-muted-foreground">
                 {t("settings_view.team_proxy.local_label")}
               </div>
               <div className="flex flex-wrap gap-2">
@@ -174,7 +174,7 @@ export function TeamProxyGroup() {
                       className={cn(
                         "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors",
                         on
-                          ? "border-primary/50 bg-primary/10 text-primary"
+                          ? "bg-secondary text-foreground-strong"
                           : "border-border text-muted-foreground hover:text-foreground",
                       )}
                     >
@@ -182,7 +182,7 @@ export function TeamProxyGroup() {
                         className={cn(
                           "flex h-3.5 w-3.5 items-center justify-center rounded border",
                           on
-                            ? "border-primary bg-foreground/70 text-primary-foreground"
+                            ? "border-border-strong bg-primary text-primary-foreground"
                             : "border-muted-foreground/50",
                         )}
                       >

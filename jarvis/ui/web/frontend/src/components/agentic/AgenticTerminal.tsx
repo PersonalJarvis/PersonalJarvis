@@ -2239,15 +2239,22 @@ export function AgenticTerminal({
         // read as a flicker rather than as a pane taking focus.
         "relative flex h-full w-full flex-col overflow-hidden rounded-lg border backdrop-blur-[4px]",
         "transition-[box-shadow,border-color,opacity] duration-150 ease-out motion-reduce:transition-none",
-        focused &&
-          "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.3)]",
-        dragging && "border-primary shadow-[0_0_0_2px_hsl(var(--primary)/0.5)]",
-        // A prompt just landed here. Two seconds of ring, for the one job the
-        // receipt below cannot do: telling the user WHICH pane out of eight to
-        // look at. Colour and shadow only — nothing moves, because a pane that
-        // jumps while an agent is drawing into it is worse than a quiet one.
-        justDelivered &&
-          "border-primary shadow-[0_0_0_2px_hsl(var(--primary)/0.6),0_0_28px_-4px_hsl(var(--primary)/0.55)]",
+        // Focus steps the RIM one notch, from the structural hairline to
+        // `--border-strong`, and stops there. It used to add a translucent
+        // white edge and a shadow ring on top, which put three marks on a
+        // state the header already announces three other ways (the filled
+        // call-sign plate, the accent hairline under it, the visible action
+        // cluster). A rim is the second separation device, never the first,
+        // and a shadow belongs only to something that floats.
+        focused && "border-border-strong",
+        // Being carried, and "a prompt just landed here", are the two states
+        // that must be findable across a wall of twelve. They get the fill —
+        // a solid `--primary` edge plus the sanctioned focus ring — because
+        // that is the loudest neutral mark the system has. The old version
+        // added a 28px bloom around it; a glow is additive light standing in
+        // for a fill, and the fill is right here.
+        dragging && "border-primary ring-2 ring-primary",
+        justDelivered && "border-primary ring-2 ring-primary",
         // Lifted out of the grid while it is being carried: the pane stays where
         // it is (moving it under the cursor would tear down nothing but would
         // reflow every other pane on every mouse move) and says so by fading.
@@ -2394,26 +2401,34 @@ export function AgenticTerminal({
             className="pointer-events-none absolute inset-0 flex items-center justify-center"
           >
             <div
-              className="flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm text-muted-foreground"
+              // `rounded-lg` is the radius every card-shaped thing in the
+              // product takes; `rounded-xl` was a fourth step nothing else
+              // used. The spinner is decoration beside the sentence, so it
+              // wears the same meta ink — `--primary` is a fill, and an icon
+              // brighter than the words it sits next to is a bug.
+              className="flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm text-muted-foreground"
               style={{ background: chrome.shell, borderColor: chrome.border }}
             >
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <Loader2 className="h-4 w-4 animate-spin" />
               <span>Starting {displayName}…</span>
             </div>
           </div>
         )}
       </div>
       {(dragging || attaching) && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
-          <div className="flex items-center gap-2 rounded-xl border border-primary/50 bg-card px-4 py-2.5 text-sm">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background backdrop-blur-[2px]">
+          {/* A real card fill separates this from the pane behind it, so it
+              needs no rim of its own — and the two glyphs are decoration
+              beside their sentence, not marks, so they take the meta ink. */}
+          <div className="flex items-center gap-2 rounded-lg bg-card px-4 py-2.5 text-sm text-foreground">
             {attaching ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 <span>Attaching to {name}…</span>
               </>
             ) : (
               <>
-                <Paperclip className="h-4 w-4 text-primary" />
+                <Paperclip className="h-4 w-4 text-muted-foreground" />
                 <span>
                   Drop to put it in front of <strong>{name}</strong>
                 </span>
@@ -2700,16 +2715,11 @@ function PaneHeader({
       style={
         {
           borderColor: PANE_CHROME[appearance].border,
-          // The focused pane's bar gets a whisper of the accent — one wash on
-          // one pane, never twelve tinted bands (see the class note above).
-          backgroundImage: focused
-            ? `linear-gradient(180deg, ${brand.accentWash}, transparent)`
-            : undefined,
           // Claims the touch gesture for the drag. Without it a touch that
           // starts on the header scrolls the workspace instead of lifting the
           // pane, and the drag never begins at all.
           touchAction: onArrangeStart ? "none" : undefined,
-          // The bar's brand, published as variables so hover/focus states can
+          // The bar's ladder, published as variables so hover/focus states can
           // be CLASSES. An inline `color` beats every class (see PaneAction's
           // note), so anything that changes on interaction reads these instead
           // of receiving an inline style.
@@ -2717,6 +2727,8 @@ function PaneHeader({
           "--pane-accent-soft": brand.accentSoft,
           "--pane-ink": brand.ink,
           "--pane-ink-muted": brand.inkMuted,
+          "--pane-ink-faint": brand.inkFaint,
+          "--pane-chip": brand.chip,
         } as React.CSSProperties
       }
     >
@@ -2773,10 +2785,14 @@ function PaneHeader({
                 event.stopPropagation();
               }}
               className={cn(
-                "w-full min-w-0 max-w-[9rem] rounded-md px-2 py-0.5 font-display text-[13px] font-semibold tracking-tight outline-none",
-                // The pane's own accent, not the app's: the vars are set on the
-                // header, so a light pane in a dark app still edits in gold.
-                "border border-[color:var(--pane-accent-soft)] transition-colors focus:border-[color:var(--pane-accent)] disabled:opacity-60",
+                "w-full min-w-0 max-w-[9rem] rounded-md px-2 py-0.5 font-display text-meta font-semibold tracking-tight outline-none",
+                // A field is a LIFT surface, and a surface with a real fill
+                // needs no rim: the chip ground is what says "you can type
+                // here". Focus answers with a ring rather than a second fill
+                // or a brighter edge. Both come from the pane's own ladder
+                // (the `--pane-*` variables the header publishes), so a light
+                // pane inside a dark app still edits on its own ground.
+                "transition-shadow focus:ring-2 focus:ring-[color:var(--pane-accent-soft)] disabled:opacity-60",
               )}
               style={{ color: brand.ink, background: brand.chip }}
             />
@@ -2786,8 +2802,8 @@ function PaneHeader({
               aria-label={`Save name for ${name}`}
               data-testid={`pane-rename-save-${name}`}
               className={cn(
-                "flex h-5 w-5 shrink-0 items-center justify-center rounded text-[color:var(--pane-accent)]",
-                "transition-colors duration-150 hover:bg-[color:var(--pane-accent-soft)] disabled:opacity-40",
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[color:var(--pane-ink)]",
+                "transition-colors duration-150 hover:bg-[color:var(--pane-chip)] disabled:opacity-40",
                 "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--pane-accent)]",
               )}
             >
@@ -2803,14 +2819,16 @@ function PaneHeader({
               aria-label={`Cancel renaming ${name}`}
               onClick={() => setDraft(null)}
               className={cn(
-                "flex h-5 w-5 shrink-0 items-center justify-center rounded",
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded-md",
                 "transition-colors duration-150",
                 "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--pane-accent)]",
                 // On the pane's ground, so the pane's ink — not the app's
                 // muted-foreground, which disagrees exactly in mixed mode.
-                light
-                  ? "text-[#6b6b73] hover:bg-scrim/10 hover:text-[#2b2b33]"
-                  : "text-[#9a9aa5] hover:bg-sheen/10 hover:text-[#e8e8ec]",
+                // Read from the `--pane-*` variables the header publishes
+                // rather than from a hex per appearance: the ladder lives in
+                // ONE table (./terminalThemes) and every reader of it agrees.
+                "text-[color:var(--pane-ink-muted)] hover:bg-[color:var(--pane-chip)]",
+                "hover:text-[color:var(--pane-ink)]",
               )}
             >
               <X className="h-3 w-3" />
@@ -2837,21 +2855,21 @@ function PaneHeader({
               }
               // No native `title` here: the rename gesture is a row in the
               // bar's own explainer card, which replaced the system tooltip.
-              // The focused pane's call-sign wears the brand plate — filled
-              // signal-yellow with black type on dark panes, gold with white
-              // type on light ones. Every other name sits on a quiet chip so
-              // the plate stays the workspace's one standing accent: a filled
-              // badge on all twelve panes marked nothing, because a marker
-              // everyone wears is a uniform. The colours come from PANE_BRAND
-              // (the pane's own ground), never the app theme.
-              className="shrink-0 rounded-md px-1.5 py-0.5 font-display text-[13px] font-semibold leading-none tracking-tight transition-[background-color,color,box-shadow] duration-150"
+              // The focused pane's call-sign wears the FILL — white type-holes
+              // on a dark pane, warm near-black on a light one. Every other
+              // name sits on a quiet chip (the pane's lift step) so the plate
+              // stays the workspace's one standing mark: a filled badge on all
+              // twelve panes marked nothing, because a marker everyone wears
+              // is a uniform. The colours come from PANE_BRAND (the pane's own
+              // ground), never the app theme.
+              //
+              // No shadow under the plate any more. Depth on this ground is
+              // carried by the fill; a soft glow around a 40px badge was a
+              // bloom standing in for the contrast the fill already has.
+              className="shrink-0 rounded-md px-1.5 py-0.5 font-display text-meta font-semibold leading-none tracking-tight transition-[background-color,color] duration-150"
               style={
                 focused
-                  ? {
-                      background: brand.accent,
-                      color: brand.onAccent,
-                      boxShadow: `0 1px 8px ${brand.accentSoft}`,
-                    }
+                  ? { background: brand.accent, color: brand.onAccent }
                   : { background: brand.chip, color: brand.ink }
               }
             >
@@ -2866,11 +2884,14 @@ function PaneHeader({
                 onClick={() => setDraft(name)}
                 onMouseDown={(event) => event.stopPropagation()}
                 className={cn(
-                  "flex h-5 w-5 shrink-0 items-center justify-center rounded transition-opacity",
+                  // Ink and hover ground come from the pane's own ladder
+                  // (`--pane-*`, published on the header), not from a literal
+                  // per-appearance hex and not from the app's tokens: a light
+                  // pane can sit inside a dark app, and this button has to read
+                  // on the ground it is actually drawn on.
+                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-opacity",
+                  "text-[color:var(--pane-ink-muted)] hover:bg-[color:var(--pane-chip)]",
                   "opacity-0 focus-visible:opacity-100 group-hover/header:opacity-100",
-                  light
-                    ? "text-[#6b6b73] hover:bg-scrim/10"
-                    : "text-[#9a9aa5] hover:bg-sheen/10",
                 )}
               >
                 <Pencil className="h-3 w-3" />
@@ -2927,12 +2948,12 @@ function PaneHeader({
             // Allowed to give way (`min-w-0`, no `shrink-0`): which seat a pane
             // bills is worth a badge, but never worth pushing the call-sign or
             // the pane's own state off a narrow header to say it.
-            className="min-w-0 max-w-[8rem] truncate rounded-full px-2 py-px font-display text-[10px] font-medium tracking-wide"
-            style={{
-              color: brand.inkFaint,
-              backgroundColor: brand.chip,
-              boxShadow: `inset 0 0 0 1px ${PANE_CHROME[appearance].border}`,
-            }}
+            // 11px is the type floor, and this badge sat below it. It also
+            // wore the placeholder ink, which is reserved for text that is NOT
+            // information — which seat a pane bills plainly is. Meta ink, on
+            // the lift chip, with no rim: the fill already separates it.
+            className="min-w-0 max-w-[8rem] truncate rounded-full px-2 py-px font-display text-micro font-medium tracking-wide"
+            style={{ color: brand.inkMuted, backgroundColor: brand.chip }}
             title={`Running on ${accountLabel}`}
             data-testid={`pane-account-${name}`}
           >
@@ -2969,7 +2990,6 @@ function PaneHeader({
           <PaneAction
             label={t("agentic_grid.pane_chat.open").replace("{0}", name)}
             testId={`pane-open-chat-${name}`}
-            light={light}
             onClick={onOpenChat}
           >
             <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
@@ -2981,7 +3001,6 @@ function PaneHeader({
         <PaneAction
           label={t("agentic_grid.conversation.open").replace("{0}", name)}
           testId={`pane-conversation-${name}`}
-          light={light}
           onClick={onOpenConversation}
         >
           <BookOpenText className="h-3.5 w-3.5" aria-hidden="true" />
@@ -2989,7 +3008,6 @@ function PaneHeader({
         <PaneAction
           label={maximized ? `Restore ${name}` : `Maximize ${name}`}
           testId={`pane-maximize-${name}`}
-          light={light}
           onClick={onToggleMaximize}
         >
           {maximized ? (
@@ -3001,7 +3019,6 @@ function PaneHeader({
         <PaneAction
           label={`Open another terminal beside ${name}`}
           testId={`pane-split-right-${name}`}
-          light={light}
           disabled={splitDisabled}
           expanded={offersChoice ? picking === "right" : undefined}
           onClick={onSplit ? () => startSplit("right") : undefined}
@@ -3011,7 +3028,6 @@ function PaneHeader({
         <PaneAction
           label={`Split ${name} and open a terminal below it`}
           testId={`pane-split-down-${name}`}
-          light={light}
           disabled={splitDisabled}
           expanded={offersChoice ? picking === "down" : undefined}
           onClick={onSplit ? () => startSplit("down") : undefined}
@@ -3021,7 +3037,6 @@ function PaneHeader({
         <PaneAction
           label={`Close ${name}`}
           testId={`pane-close-${name}`}
-          light={light}
           danger
           onClick={onClose}
         >
@@ -3100,27 +3115,31 @@ function PaneHeaderTip({
   text: string;
 }) {
   const brand = PANE_BRAND[appearance];
-  const light = appearance === "light";
+  const chrome = PANE_CHROME[appearance];
   return (
     <div
       role="tooltip"
       data-testid={`pane-header-tip-${name}`}
       className={cn(
-        "pointer-events-none fixed z-[70] w-max max-w-[360px] overflow-hidden rounded-xl border",
+        // `rounded-lg` — the one radius a floating surface takes. It used to be
+        // `rounded-xl`, a fourth radius in a section that already has three.
+        "pointer-events-none fixed z-[70] w-max max-w-[360px] overflow-hidden rounded-lg border",
         "animate-in fade-in-0 duration-150",
         pos.top !== undefined ? "slide-in-from-top-1" : "slide-in-from-bottom-1",
       )}
       style={{
         left: pos.left,
         ...(pos.top !== undefined ? { top: pos.top } : { bottom: pos.bottom }),
-        // Nearly opaque, unlike the pane's glass: the card can land on top of
-        // another pane's text, and an explainer must not be read THROUGH.
-        background: light ? "rgba(252,251,248,0.97)" : "rgba(13,14,18,0.96)",
-        borderColor: PANE_CHROME[appearance].border,
-        boxShadow: "0 14px 36px -14px rgba(0,0,0,0.6)",
+        // Opaque, unlike the pane's glass: the card can land on top of another
+        // pane's text, and an explainer must not be read THROUGH. This is the
+        // pane's own float step — the one surface here that is genuinely off
+        // the plane, so the one that gets a real shadow.
+        background: chrome.float,
+        borderColor: chrome.border,
+        boxShadow: "0 12px 32px -8px rgb(var(--scrim-rgb) / 0.55)",
       }}
     >
-      {/* The same brand hairline the focused pane wears under its bar. */}
+      {/* The same hairline the focused pane wears under its bar. */}
       <span
         aria-hidden="true"
         className="block h-[2px]"
@@ -3129,7 +3148,7 @@ function PaneHeaderTip({
         }}
       />
       <p
-        className="px-3.5 py-2.5 text-[11.5px] leading-relaxed"
+        className="px-3.5 py-2.5 text-[13px] leading-relaxed"
         style={{ color: brand.ink }}
       >
         {text}
@@ -3138,10 +3157,18 @@ function PaneHeaderTip({
   );
 }
 
+/*
+ * A header button.
+ *
+ * It no longer takes the pane's appearance: every colour it wears is read from
+ * the `--pane-*` variables the header publishes, which resolve against the
+ * PANE's ground whatever the app theme is doing. The prop used to pick between
+ * two hard-coded hexes per state — the same ladder written a second time, and
+ * the copy that drifted.
+ */
 function PaneAction({
   label,
   testId,
-  light,
   danger = false,
   disabled = false,
   expanded,
@@ -3150,7 +3177,6 @@ function PaneAction({
 }: {
   label: string;
   testId: string;
-  light: boolean;
   danger?: boolean;
   disabled?: boolean;
   /** Set when this button opens a menu — announces its state to a screen reader. */
@@ -3183,17 +3209,18 @@ function PaneAction({
         // Reachable by keyboard and visibly so. The cluster is revealed by
         // `focus-within`, which is worth nothing if the focused button then
         // looks identical to its four neighbours. The ring reads the header's
-        // brand variable, so it is yellow on dark panes and gold on light ones.
+        // own fill variable, so it lands on the PANE's ground rather than the
+        // app's — a light pane inside a dark app is a supported combination.
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--pane-accent)]",
         // The resting colour is a CLASS rather than an inline style, and that is
         // load-bearing rather than tidiness: an inline `color` beats every
         // class, so the hover colour below would simply never take effect.
-        light ? "text-[#55555e]" : "text-[#a8a8b2]",
+        // Both steps come from the header's `--pane-*` ladder; they used to be
+        // a hex per appearance, which is the same ladder written twice.
+        "text-[color:var(--pane-ink-muted)]",
         danger
           ? "hover:bg-destructive/20 hover:text-destructive"
-          : light
-            ? "hover:bg-scrim/10 hover:text-[#2b2b33]"
-            : "hover:bg-sheen/10 hover:text-[#e8e8ec]",
+          : "hover:bg-[color:var(--pane-chip)] hover:text-[color:var(--pane-ink)]",
       )}
     >
       {children}
@@ -3204,31 +3231,33 @@ function PaneAction({
 /**
  * The two tones a pane notice comes in, resolved against the PANE's own ground.
  *
- * Not the app's `--destructive` tokens, and that is the whole reason this
- * table exists rather than a call to the section's shared `Notice`: the
- * terminal appearance is a separate setting from the app theme (plenty of
- * people run dark panes in a light app, and the reverse — see the appearance
- * note in ./AgenticGrid). A token picked for the app would land on the wrong
- * ground in exactly those two configurations, which is where a warning is least
- * affordable. The values are the pane's OWN ink (./terminalThemes), so a notice
- * reads as part of the terminal rather than as the app leaning in over it.
+ * Not read from the app's `--warning` / `--destructive` variables, and that is
+ * the whole reason this table exists rather than a call to the section's shared
+ * `Notice`: the terminal appearance is a separate setting from the app theme
+ * (plenty of people run dark panes in a light app, and the reverse — see the
+ * appearance note in ./AgenticGrid), so a value resolved from the app's `.dark`
+ * block lands on the wrong ground in exactly those two configurations.
  *
- * The two tones no longer differ by hue, so they differ by weight: a warning
- * takes a half-strength rule and muted ink, an error takes a solid rule and
- * the pane's full ink. Severity is how much of the pane's contrast the notice
- * is allowed to spend.
+ * The values ARE those tokens, re-derived per appearance: `#D6A94A` / `#A57A1D`
+ * is the degraded hue, `#E8574C` / `#C72E23` the fault hue. An earlier version
+ * dropped the hue entirely and separated the two tones by weight, using the
+ * pane's full ink for an error — which puts a status in the ink ramp, makes the
+ * loudest thing on a dead pane indistinguishable from its brightest heading,
+ * and leaves colour with nothing to say. Fault and degraded are two of the
+ * three jobs colour has in this product; a pane notice is exactly where they
+ * are spent.
  */
 const NOTICE_TONE: Record<
   "warning" | "error",
   Record<TerminalAppearance, { border: string; text: string }>
 > = {
   warning: {
-    light: { border: "rgba(43,43,51,0.45)", text: "#54545d" },
-    dark: { border: "rgba(242,242,245,0.38)", text: "#a8a8b4" },
+    light: { border: "rgba(165,122,29,0.85)", text: "#a57a1d" },
+    dark: { border: "rgba(214,169,74,0.85)", text: "#d6a94a" },
   },
   error: {
-    light: { border: "rgba(43,43,51,0.85)", text: "#2b2b33" },
-    dark: { border: "rgba(242,242,245,0.8)", text: "#f2f2f5" },
+    light: { border: "rgba(199,46,35,0.9)", text: "#c72e23" },
+    dark: { border: "rgba(232,87,76,0.9)", text: "#e8574c" },
   },
 };
 
@@ -3272,9 +3301,9 @@ function PaneStatusNotice({
   onRestart?: () => void;
 }) {
   if (status !== "exited" && status !== "error") return null;
-  const tone = NOTICE_TONE[status === "error" ? "error" : "warning"][
-    light ? "light" : "dark"
-  ];
+  const appearance: TerminalAppearance = light ? "light" : "dark";
+  const tone = NOTICE_TONE[status === "error" ? "error" : "warning"][appearance];
+  const brand = PANE_BRAND[appearance];
   /*
    * The two details are written for different sentences and cannot be shown the
    * same way. A trouble message is already one ("This terminal is no longer part
@@ -3301,8 +3330,20 @@ function PaneStatusNotice({
       // The shared section's notice shape — a rule down the left edge, no fill,
       // no icon — one size down for a pane header's scale. A filled box here
       // would read as a second, louder terminal sitting on top of the first.
-      className="flex shrink-0 items-center gap-2 border-l-2 px-2 py-1 text-[11px] leading-tight"
-      style={{ borderColor: tone.border, color: tone.text }}
+      className="flex shrink-0 items-center gap-2 border-l-2 px-2 py-1 text-micro"
+      style={
+        {
+          borderColor: tone.border,
+          color: tone.text,
+          // The pane's ladder, published here as well as on the header: this
+          // strip is a sibling of the header, not a child, so the Restart
+          // button below cannot inherit the header's copy.
+          "--pane-accent": brand.accent,
+          "--pane-ink": brand.ink,
+          "--pane-chip": brand.chip,
+          "--pane-accent-soft": brand.accentSoft,
+        } as React.CSSProperties
+      }
     >
       <span className="min-w-0 flex-1 truncate" title={message}>
         {message}
@@ -3319,10 +3360,15 @@ function PaneStatusNotice({
           }}
           onMouseDown={(e) => e.stopPropagation()}
           className={cn(
-            "flex shrink-0 items-center gap-1 rounded bg-primary/20 px-2 py-0.5",
-            "text-[11px] font-medium text-primary",
-            "transition-colors duration-150 hover:bg-primary/30",
-            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
+            // The pane's own secondary button: a real lift fill with the
+            // pane's ink on it. It used to be `--primary` at 20 % with
+            // `--primary` as the label — an opacity standing in for a surface,
+            // and a fill used as an ink. Both land wrong when the pane's
+            // appearance and the app's theme disagree.
+            "flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5",
+            "bg-[color:var(--pane-chip)] text-micro font-medium text-[color:var(--pane-ink)]",
+            "transition-colors duration-150 hover:bg-[color:var(--pane-accent-soft)]",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--pane-accent)]",
           )}
         >
           <RotateCcw className="h-3 w-3" aria-hidden="true" />

@@ -339,7 +339,7 @@ export function MarketplaceView() {
         }
       />
 
-      <div className="flex items-center gap-3 border-b border-border bg-background/60 px-6 py-3 backdrop-blur-sm">
+      <div className="flex items-center gap-3 border-b border-border bg-background px-6 py-3 backdrop-blur-sm">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute -z-10 left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -349,8 +349,8 @@ export function MarketplaceView() {
             aria-label={t("marketplace.search_placeholder")}
             className={cn(
               "h-9 w-full rounded-md border border-border bg-background pl-9 pr-3",
-              "text-sm text-foreground placeholder:text-muted-foreground",
-              "outline-none transition-colors focus:border-primary/60",
+              "text-sm text-foreground placeholder:text-faint-foreground",
+              "outline-none transition-colors focus:border-border-strong",
             )}
           />
         </div>
@@ -370,7 +370,7 @@ export function MarketplaceView() {
       </div>
 
       {offline && (
-        <p className="flex items-center gap-2 border-b border-border bg-foreground/10 px-6 py-2 text-xs text-foreground">
+        <p className="flex items-center gap-2 border-b bg-secondary px-6 py-2 text-xs text-foreground">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           {status === "unavailable"
             ? t("marketplace.status_unavailable")
@@ -462,7 +462,7 @@ export function MarketplaceView() {
                 entries={skills}
                 onOpen={setOpenEntry}
                 icon={() => (
-                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border/60 bg-secondary/50">
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary">
                     <Wand2 className="h-4 w-4 text-muted-foreground" />
                   </div>
                 )}
@@ -563,7 +563,7 @@ function FilterChips({
             "rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors",
             active === chip.id
               ? "bg-secondary text-foreground"
-              : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
+              : "text-muted-foreground hover:bg-secondary hover:text-foreground",
           )}
         >
           {chip.label}
@@ -593,7 +593,7 @@ function Shelf({
           {title}
         </h3>
         <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
-        <span className="min-w-0 truncate text-xs font-medium text-foreground/75">{hint}</span>
+        <span className="min-w-0 truncate text-xs font-medium text-foreground">{hint}</span>
       </div>
       {children}
     </section>
@@ -615,9 +615,9 @@ function WallpaperTile({
       onClick={onOpen}
       className={cn(
         "group relative block aspect-[16/10] w-full overflow-hidden rounded-xl",
-        "border border-border bg-secondary/40 text-left",
-        "transition-colors hover:border-primary/50",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+        "bg-secondary text-left",
+        "transition-colors hover:border-border-strong",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong/60",
       )}
     >
       {entry.thumbUrl ? (
@@ -635,11 +635,11 @@ function WallpaperTile({
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/35 to-transparent p-3">
         <p className="truncate text-sm font-medium text-white">{entry.title}</p>
         {entry.publisher && (
-          <p className="truncate text-[11px] text-white/70">{entry.publisher}</p>
+          <p className="truncate text-micro text-white/70">{entry.publisher}</p>
         )}
       </div>
       {entry.installed && (
-        <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur">
+        <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-micro font-medium text-white backdrop-blur">
           <Check className="h-3 w-3" />
           {t("marketplace.installed")}
         </span>
@@ -652,7 +652,7 @@ function BrandTile({ entry }: { entry: Entry }) {
   const [failed, setFailed] = useState(false);
   return (
     <div
-      className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-border/60"
+      className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-border"
       style={{ backgroundColor: entry.logoColor ?? undefined }}
     >
       {failed || !entry.logoUrl ? (
@@ -690,7 +690,7 @@ function EntryList({
   t: Translate;
 }) {
   return (
-    <div className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card/60 backdrop-blur-sm">
+    <div className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card backdrop-blur-sm">
       {entries.map((entry) => (
         <button
           key={`${entry.kind}:${entry.name}`}
@@ -698,11 +698,11 @@ function EntryList({
           onClick={() => onOpen(entry)}
           className={cn(
             "flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors",
-            "hover:bg-secondary/60 focus-visible:outline-none focus-visible:bg-secondary/60",
+            "hover:bg-secondary focus-visible:outline-none focus-visible:bg-secondary",
           )}
         >
           {entry.broken ? (
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border/60 bg-muted">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border bg-muted">
               <AlertTriangle className="h-4 w-4 text-muted-foreground" />
             </div>
           ) : (
@@ -714,7 +714,7 @@ function EntryList({
                 {entry.title}
               </span>
               {entry.installed && (
-                <span className="flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                <span className="flex shrink-0 items-center gap-1 rounded-full bg-secondary px-1.5 py-0.5 text-micro font-medium text-foreground-strong">
                   <Check className="h-3 w-3" />
                   {t("marketplace.installed")}
                 </span>
@@ -726,11 +726,11 @@ function EntryList({
                 : entry.description}
             </p>
           </div>
-          <div className="hidden shrink-0 items-center gap-3 text-[11px] text-muted-foreground sm:flex">
+          <div className="hidden shrink-0 items-center gap-3 text-micro text-muted-foreground sm:flex">
             {entry.publisher && <span className="truncate">{entry.publisher}</span>}
             {entry.version && <span className="tabular-nums">v{entry.version}</span>}
           </div>
-          <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+          <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
         </button>
       ))}
     </div>
@@ -753,7 +753,7 @@ function EmptyState({
   if (mine && !query) {
     return (
       <div className="py-16 text-center" data-testid="marketplace-empty-mine">
-        <UploadCloud className="mx-auto mb-3 h-6 w-6 text-muted-foreground/60" />
+        <UploadCloud className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
         <p className="text-sm text-muted-foreground">{t("marketplace.empty_mine")}</p>
         <Button size="sm" className="mt-3" onClick={onPublish}>
           <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
@@ -764,7 +764,7 @@ function EmptyState({
   }
   return (
     <div className="py-16 text-center">
-      <Package className="mx-auto mb-3 h-6 w-6 text-muted-foreground/60" />
+      <Package className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
       <p className="text-sm text-muted-foreground">
         {query ? fill(t("marketplace.empty_search"), { query }) : t("marketplace.empty")}
       </p>
@@ -805,20 +805,20 @@ function Hero({
   };
   return (
     <section
-      className="relative isolate mb-8 overflow-hidden rounded-2xl border border-border bg-card/60 p-6 backdrop-blur-sm"
+      className="relative isolate mb-8 overflow-hidden rounded-2xl border border-border bg-card p-6 backdrop-blur-sm"
       data-testid="marketplace-hero"
     >
       <div
         aria-hidden
-        className="pointer-events-none absolute -z-10 -right-24 -top-24 hidden h-72 w-72 rounded-full bg-primary/15 blur-3xl dark:block"
+        className="pointer-events-none absolute -z-10 -right-24 -top-24 hidden h-72 w-72 rounded-full bg-secondary blur-3xl dark:block"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -z-10 -bottom-28 left-1/3 hidden h-64 w-64 rounded-full bg-primary/10 blur-3xl dark:block"
+        className="pointer-events-none absolute -z-10 -bottom-28 left-1/3 hidden h-64 w-64 rounded-full bg-secondary blur-3xl dark:block"
       />
       <div className="relative flex flex-wrap items-end gap-6">
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <p className="text-micro font-semibold text-muted-foreground">
             {t("marketplace.hero_eyebrow")}
           </p>
           <h3 className="mt-1 font-display text-2xl tracking-tight text-foreground">
@@ -853,11 +853,11 @@ function Hero({
 
 function Stat({ value, label }: { value: number; label: string }) {
   return (
-    <div className="rounded-xl border border-border/70 bg-background/50 px-4 py-3 text-center">
+    <div className="rounded-xl border border-border bg-background px-4 py-3 text-center">
       <dd className="font-display text-2xl tabular-nums tracking-tight text-foreground">
         {value}
       </dd>
-      <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</dt>
+      <dt className="text-micro text-muted-foreground">{label}</dt>
     </div>
   );
 }
@@ -872,7 +872,7 @@ function PublishFooter({
   t: Translate;
 }) {
   return (
-    <div className="mt-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-card/50 px-4 py-3 backdrop-blur-sm">
+    <div className="mt-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-card px-4 py-3 backdrop-blur-sm">
       <p className="text-xs text-muted-foreground">{t("marketplace.publish_hint")}</p>
       <div className="flex items-center gap-2">
         <Button
@@ -947,12 +947,14 @@ function EntryDrawer({
         type="button"
         aria-label={t("marketplace.close")}
         onClick={onClose}
-        className="absolute inset-0 bg-background/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-background backdrop-blur-sm"
       />
-      <aside className="relative flex h-full w-full max-w-md flex-col border-l border-border bg-card">
+      {/* A drawer over a scrim leaves the plane, so it takes the floating
+          ground and its cast edge instead of the card ground. */}
+      <aside className="relative flex h-full w-full max-w-md flex-col bg-popover shadow-float">
         <header className="flex items-start gap-3 border-b border-border px-5 py-4">
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            <p className="text-micro text-muted-foreground">
               {t(`marketplace.kind_${entry.kind}`)}
             </p>
             <h3 className="truncate font-display text-base font-semibold tracking-tight">
@@ -980,7 +982,7 @@ function EntryDrawer({
             )}
 
             {entry.description && (
-              <p className="text-sm leading-relaxed text-foreground/90">
+              <p className="text-sm leading-relaxed text-foreground">
                 {entry.description}
               </p>
             )}
@@ -990,7 +992,7 @@ function EntryDrawer({
                 {entry.categories.map((category) => (
                   <span
                     key={category}
-                    className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground"
+                    className="rounded-full border border-border px-2 py-0.5 text-micro text-muted-foreground"
                   >
                     {category}
                   </span>
@@ -998,7 +1000,7 @@ function EntryDrawer({
               </div>
             )}
 
-            <p className="rounded-lg border border-border bg-secondary/30 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+            <p className="rounded-lg bg-secondary px-3 py-2 text-xs leading-relaxed text-muted-foreground">
               {t("marketplace.unreviewed_note")}
             </p>
 
@@ -1017,7 +1019,7 @@ function EntryDrawer({
             )}
 
             <div>
-              <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                 <FileText className="h-3.5 w-3.5" />
                 {t("marketplace.files")}
               </h4>
@@ -1042,7 +1044,7 @@ function EntryDrawer({
                   {contents.data.files.map((file) => (
                     <details
                       key={file.path}
-                      className="rounded-lg border border-border bg-background/50"
+                      className="rounded-lg border border-border bg-background"
                     >
                       <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-foreground">
                         {file.path}
@@ -1052,7 +1054,7 @@ function EntryDrawer({
                             : `${(file.size / 1024).toFixed(1)} kB`}
                         </span>
                       </summary>
-                      <pre className="max-h-64 overflow-auto border-t border-border px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                      <pre className="max-h-64 overflow-auto border-t border-border px-3 py-2 text-micro text-muted-foreground">
                         {file.text}
                         {file.truncated ? `\n${t("marketplace.files_truncated")}` : ""}
                       </pre>
@@ -1077,7 +1079,7 @@ function EntryDrawer({
             </p>
           ) : entry.installed ? (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Check className="h-3.5 w-3.5 text-primary" />
+              <Check className="h-3.5 w-3.5 text-muted-foreground" />
               {t("marketplace.already_installed")}
             </p>
           ) : (
@@ -1139,7 +1141,7 @@ function Destination({ entry, t }: { entry: Entry; t: Translate }) {
   return (
     <div className="space-y-2">
       {entry.seedConflict && (
-        <p className="flex items-start gap-2 rounded-lg border border-foreground/40 bg-foreground/10 px-3 py-2 text-xs text-foreground">
+        <p className="flex items-start gap-2 rounded-lg bg-secondary px-3 py-2 text-xs text-foreground">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {t("marketplace.seed_conflict")}
         </p>
@@ -1148,7 +1150,7 @@ function Destination({ entry, t }: { entry: Entry; t: Translate }) {
         <div key={row.label}>
           <p className="mb-1 text-xs font-medium text-foreground">{row.label}</p>
           {row.code && (
-            <code className="block break-all rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs text-foreground">
+            <code className="block break-all rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground">
               {row.code}
             </code>
           )}
@@ -1193,7 +1195,7 @@ function LandingToast({
         <div
           className={cn(
             "grid h-8 w-8 shrink-0 place-items-center rounded-lg",
-            ready ? "bg-primary/15 text-primary" : "bg-foreground/15 text-foreground",
+            ready ? "bg-secondary text-foreground-strong" : "bg-secondary text-foreground",
           )}
         >
           {ready ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}

@@ -131,9 +131,13 @@ export function MissionsView() {
         }
       />
 
+      {/* Three full-height panes. None of them is a card: the two side rails
+          take the rail ground and the centre stays on the page's own ground,
+          so the section reads as one room with columns in it rather than as
+          three grey slabs. */}
       <div className="grid flex-1 grid-cols-[280px_1fr_320px] overflow-hidden">
         {/* Left pane */}
-        <div className="flex h-full flex-col overflow-hidden border-r border-border bg-card/20">
+        <div className="flex h-full flex-col overflow-hidden bg-sidebar">
           <div className="border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">
             {t("missions_view.tree_label")}
           </div>
@@ -144,7 +148,7 @@ export function MissionsView() {
 
         {/* Center pane */}
         <div className="grid h-full grid-rows-[1fr_240px] overflow-hidden">
-          <div className="overflow-hidden border-b border-border bg-background/20 p-3">
+          <div className="overflow-hidden border-b border-border bg-background p-3">
             {selectedWorkerId ? (
               <Suspense fallback={<TerminalFallback />}>
                 <PtyTerminal
@@ -156,7 +160,7 @@ export function MissionsView() {
               <SelectionPlaceholder hasMission={!!selectedMissionId} />
             )}
           </div>
-          <div className="overflow-hidden bg-card/20">
+          <div className="overflow-hidden bg-sidebar">
             <div className="border-b border-border px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
               {t("missions_view.timeline_label")}
             </div>
@@ -167,7 +171,7 @@ export function MissionsView() {
         </div>
 
         {/* Right pane */}
-        <div className="flex h-full flex-col overflow-hidden border-l border-border bg-card/20">
+        <div className="flex h-full flex-col overflow-hidden bg-sidebar">
           <Tabs defaultValue="verdicts" className="flex h-full flex-col">
             <div className="border-b border-border px-2 py-2">
               <TabsList className="grid w-full grid-cols-5">

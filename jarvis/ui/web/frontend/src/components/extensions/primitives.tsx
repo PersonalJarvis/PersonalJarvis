@@ -129,8 +129,8 @@ export function SoftButton({
         "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors",
         "disabled:cursor-not-allowed disabled:opacity-50",
         primary
-          ? "bg-foreground/70 text-primary-foreground hover:bg-primary/90"
-          : "bg-sheen/[0.06] text-foreground hover:bg-sheen/[0.12]",
+          ? "bg-primary text-primary-foreground hover:bg-primary/90"
+          : "bg-secondary text-foreground hover:bg-popover",
         className,
       )}
     >
@@ -220,7 +220,7 @@ export function ActionMenu({
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors",
                   "hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
-                  a.destructive && "text-destructive hover:bg-destructive/10",
+                  a.destructive && "text-destructive hover:bg-secondary",
                 )}
               >
                 {a.icon ? (
@@ -288,7 +288,7 @@ export function TableHead({ columns }: { columns: Column[] }) {
   return (
     <div
       role="row"
-      className="grid items-center gap-x-5 border-b border-border px-3 py-2.5 text-[13px] text-muted-foreground"
+      className="grid items-center gap-x-5 border-b border-border px-3 py-2.5 text-meta text-muted-foreground"
       style={{ gridTemplateColumns: gridTemplate(columns) }}
     >
       {columns.map((c) => (
@@ -349,9 +349,9 @@ export function TableRow({
           : undefined
       }
       className={cn(
-        "group grid min-h-[54px] items-center gap-x-5 border-b border-border/70 px-3 py-2.5 transition-colors last:border-b-0",
+        "group grid min-h-[54px] items-center gap-x-5 border-b border-border px-3 py-2.5 transition-colors last:border-b-0",
         clickable &&
-          "cursor-pointer hover:bg-sheen/[0.05] focus:outline-none focus-visible:bg-sheen/[0.06]",
+          "cursor-pointer hover:bg-secondary focus:outline-none focus-visible:bg-secondary",
         selected && "bg-sheen/[0.06]",
         className,
       )}
@@ -412,7 +412,7 @@ export function BackLink({ label, onClick }: { label: string; onClick: () => voi
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground/90 transition-colors hover:text-foreground"
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground transition-colors hover:text-foreground"
     >
       <ArrowLeft className="h-4 w-4" />
       {label}
@@ -475,7 +475,7 @@ export function ClampedText({
 
   if (!text) return null;
   return (
-    <div className={cn("text-[15px] leading-relaxed text-foreground/85", className)}>
+    <div className={cn("text-reading text-foreground", className)}>
       <p ref={ref} className={cn(!expanded && "line-clamp-2")}>
         {text}
         {expanded && overflows && (
@@ -495,7 +495,7 @@ export function ClampedText({
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="mt-0.5 text-sm text-primary hover:underline"
+          className="mt-0.5 text-sm text-foreground-strong hover:underline"
         >
           {moreLabel}
         </button>
@@ -524,7 +524,7 @@ export function FactRows({
   const visible = rows.filter((r) => r.value !== null && r.value !== undefined && r.value !== "");
   if (visible.length === 0) return null;
   return (
-    <dl className={cn("grid grid-cols-[max-content_minmax(0,1fr)] gap-x-8 gap-y-2.5 text-[15px]", className)}>
+    <dl className={cn("grid grid-cols-[max-content_minmax(0,1fr)] gap-x-8 gap-y-2.5 text-title", className)}>
       {visible.map((r) => (
         <div key={r.label} className="contents">
           <dt className="text-sm leading-6 text-muted-foreground">{r.label}</dt>
@@ -596,7 +596,7 @@ export function InlineSearch({
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       aria-label={placeholder}
-      className="h-8 w-full rounded-md border border-border bg-background/60 px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+      className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm placeholder:text-faint-foreground focus:outline-none focus:ring-2 focus:ring-border-strong"
     />
   );
 }
@@ -627,7 +627,7 @@ export function SegmentedFilter<T extends string>({
             className={cn(
               "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors",
               active
-                ? "bg-sheen/[0.08] font-medium text-foreground"
+                ? "bg-secondary font-medium text-foreground"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -729,7 +729,7 @@ export function StatTile({
         </div>
       ) : hint ? (
         <div
-          className="mt-0.5 truncate text-[11px] text-muted-foreground"
+          className="mt-0.5 truncate text-micro text-muted-foreground"
           title={typeof hint === "string" ? hint : undefined}
         >
           {hint}

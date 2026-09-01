@@ -500,7 +500,7 @@ function SubagentModelCard({
     (p) => p.id === catalogProvider && p.supports_model_pull,
   );
   return (
-    <div className="space-y-3 rounded-surface border border-border bg-card/50 p-3.5">
+    <div className="space-y-3 rounded-surface border border-border bg-card p-3.5">
       <p className="text-xs leading-relaxed text-muted-foreground">
         {t("subagent_model.description")}
       </p>
@@ -545,7 +545,7 @@ function SubagentModelCard({
 
 function SectionHeader({ label }: { label: string }) {
   return (
-    <h3 className="mb-3 inline-flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
+    <h3 className="mb-3 inline-flex items-center gap-2 text-micro text-muted-foreground">
       <Bot className="h-3.5 w-3.5" /> {label}
     </h3>
   );
@@ -650,11 +650,11 @@ function AgentGroup({
     <div data-testid={testId} className="space-y-2">
       <div className="flex min-w-0 items-center gap-2 px-0.5 text-xs">
         <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
-        <span className="font-display text-[13px] font-semibold tracking-tight">{title}</span>
+        <span className="font-display text-meta font-semibold tracking-tight">{title}</span>
         <span aria-hidden="true" className="text-border">·</span>
         <span className="truncate text-muted-foreground">{hint}</span>
       </div>
-      <ul className="divide-y divide-border/70 overflow-hidden rounded-surface border border-border bg-card/50">
+      <ul className="divide-y divide-border overflow-hidden rounded-surface border border-border bg-card">
         {children}
       </ul>
     </div>
@@ -744,7 +744,7 @@ function AgentRow({
         className={cn(
           "flex items-center gap-3 px-3.5 py-3 outline-none",
           collapsible &&
-            "cursor-pointer hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+            "cursor-pointer hover:bg-secondary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         )}
       >
         <ProviderLogo providerId={slug ?? label} label={label} />
@@ -787,7 +787,7 @@ function AgentRow({
       {body && expanded && (
         <div
           data-agent-card-control
-          className="space-y-3 border-t border-border/60 bg-background/30 px-3.5 pb-3.5 pl-[3.75rem] pt-3"
+          className="space-y-3 border-t border-border bg-background px-3.5 pb-3.5 pl-[3.75rem] pt-3"
         >
           {body}
         </div>
@@ -887,7 +887,7 @@ function CliTestControl({
   }
 
   return (
-    <div className="space-y-2 border-t border-border/60 pt-2.5" data-agent-card-control>
+    <div className="space-y-2 border-t border-border pt-2.5" data-agent-card-control>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button
           size="sm"
@@ -1733,8 +1733,8 @@ function SubagentActiveControl({
         isActive
           ? "font-medium text-foreground"
           : row.key_set
-            ? "border border-border bg-background/60 text-muted-foreground hover:border-primary/50 hover:text-foreground"
-            : "border border-dashed border-border/80 text-muted-foreground/80 hover:text-foreground",
+            ? "border border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+            : "border border-dashed border-border text-muted-foreground hover:text-foreground",
       )}
       title={labelTitle}
     >

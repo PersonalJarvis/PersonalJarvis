@@ -240,7 +240,7 @@ export function PromptReceipt({
   return (
     <div
       className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 rounded-md border
-                 border-primary/50 bg-card/95 shadow-lg backdrop-blur
+                 border-primary/50 bg-card shadow-lg backdrop-blur
                  transition-opacity duration-300"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -265,17 +265,17 @@ export function PromptReceipt({
           data-testid="prompt-receipt-toggle"
           title={`Read exactly what was sent to ${terminal}`}
         >
-          <span className="shrink-0 truncate text-[11px] font-medium text-foreground">
+          <span className="shrink-0 truncate text-micro font-medium text-foreground">
             {verdict.label}
           </span>
-          <span className="shrink-0 text-[11px] text-muted-foreground">
+          <span className="shrink-0 text-micro text-muted-foreground">
             {agoLabel(at, now)}
             {clock ? ` · ${clock}` : ""}
           </span>
           {/* The opening of the brief, on the line itself. Even closed, the
               receipt shows a piece of the real text — a bare "sent" is another
               claim, and claims are what the user already had. */}
-          <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/80">
+          <span className="min-w-0 flex-1 truncate text-micro text-muted-foreground">
             {preview}
           </span>
           <ChevronDown
@@ -300,21 +300,21 @@ export function PromptReceipt({
           covering the terminal for five seconds to say what the first row
           already said. */}
       {submitted === false && !open && (
-        <p className="px-2 pb-1.5 text-[10px] leading-snug text-muted-foreground">
+        <p className="px-2 pb-1.5 text-micro text-muted-foreground">
           {verdict.note} · click to read what was sent
         </p>
       )}
 
       {open && (
-        <div className="border-t border-border/60 px-2 py-2" data-testid="prompt-receipt-body">
+        <div className="border-t border-border px-2 py-2" data-testid="prompt-receipt-body">
           <pre
             className="max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded
-                       bg-background/60 px-2 py-1.5 font-mono text-[11px] leading-relaxed
+                       bg-background px-2 py-1.5 font-mono text-micro
                        text-foreground"
           >
             {full ?? preview}
           </pre>
-          <p className="mt-1.5 text-[10px] text-muted-foreground">
+          <p className="mt-1.5 text-micro text-muted-foreground">
             {full === null && !loadError
               ? `Opening of ${chars.toLocaleString()} characters — reading the rest…`
               : loadError

@@ -50,8 +50,11 @@ export function VoiceHubView() {
 
   return (
     <div className="flex h-full flex-col">
+      {/* --primary is a fill — buttons, marks, focus rings. A header glyph
+          painted with it renders brighter than the title beside it, which is
+          why every icon in this section is body ink. */}
       <ViewHeader
-        icon={<Mic className="h-4 w-4 text-primary" />}
+        icon={<Mic className="h-4 w-4 text-foreground" />}
         title={t("nav.voice")}
         subtitle={t("voice.hub.subtitle")}
       />

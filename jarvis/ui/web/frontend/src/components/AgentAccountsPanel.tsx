@@ -202,10 +202,10 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
     <div className="space-y-3">
       <div className="flex items-center gap-2 px-1">
         <Users className="h-4 w-4 text-violet-400" />
-        <span className="text-xs font-semibold uppercase tracking-wider text-violet-400">
+        <span className="text-xs font-semibold text-violet-400">
           {t("agent_accounts.title")}
         </span>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           · {t("agent_accounts.hint")}
         </span>
         {usageAvailable && (
@@ -215,24 +215,24 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
             disabled={refreshing}
             aria-label={t("agent_accounts.usage.refresh")}
             title={t("agent_accounts.usage.refresh")}
-            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:opacity-50"
+            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-micro text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-50"
           >
             <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
             {t("agent_accounts.usage.refresh")}
           </button>
         )}
       </div>
-      <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">
+      <p className="px-1 text-micro text-muted-foreground">
         {t("agent_accounts.description")}
       </p>
       {note && (
-        <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">
+        <p className="px-1 text-micro text-muted-foreground">
           {note}
         </p>
       )}
 
       {error && (
-        <p className="px-1 text-[11px] text-foreground" role="alert">
+        <p className="px-1 text-micro text-foreground" role="alert">
           {error}
         </p>
       )}
@@ -294,14 +294,14 @@ function PlatformCard({
   }
 
   return (
-    <div className="relative flex flex-col gap-3 rounded-2xl border border-border bg-card/60 p-4 backdrop-blur">
+    <div className="relative flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 backdrop-blur">
       <span
         aria-hidden="true"
         className="absolute bottom-4 left-0 top-4 w-[3px] rounded-r-full bg-violet-400/60"
       />
       <div className="flex items-center justify-between gap-2">
         <h4 className="text-sm font-semibold">{group?.display_name || platform}</h4>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           {accounts.length} {t("agent_accounts.accounts")}
         </span>
       </div>
@@ -320,7 +320,7 @@ function PlatformCard({
           />
         ))}
         {accounts.length === 0 && (
-          <li className="text-[11px] text-muted-foreground">
+          <li className="text-micro text-muted-foreground">
             {t("agent_accounts.loading")}
           </li>
         )}
@@ -344,7 +344,7 @@ function PlatformCard({
             type="button"
             onClick={() => void add()}
             disabled={!label.trim() || busy === `add:${platform}`}
-            className="shrink-0 rounded-lg bg-foreground/70 px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
             {t("agent_accounts.add_confirm")}
           </button>
@@ -360,7 +360,7 @@ function PlatformCard({
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs hover:border-primary/40"
+          className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs hover:border-border-strong"
         >
           <Plus className="h-3.5 w-3.5" />
           {t("agent_accounts.add")}
@@ -473,8 +473,8 @@ function AccountRow({
       className={cn(
         "flex flex-col gap-1.5 rounded-xl border px-3 py-2 transition-colors",
         active
-          ? "border-primary/55 bg-primary/[0.06]"
-          : "border-border/70 hover:border-primary/30",
+          ? "border-border-strong bg-primary/[0.06]"
+          : "border-border hover:border-border-strong",
       )}
     >
       <div className="flex items-center gap-2">
@@ -488,8 +488,8 @@ function AccountRow({
           className={cn(
             "grid h-4 w-4 shrink-0 place-items-center rounded-full border",
             active
-              ? "border-primary bg-foreground/70 text-primary-foreground"
-              : "border-muted-foreground/50 hover:border-primary",
+              ? "border-border-strong bg-primary text-primary-foreground"
+              : "border-muted-foreground/50 hover:border-border-strong",
           )}
         >
           {active && <Check className="h-2.5 w-2.5" />}
@@ -523,7 +523,7 @@ function AccountRow({
             type="button"
             onClick={() => void signIn()}
             disabled={pending}
-            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-foreground/70 px-2 py-1 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-2 py-1 text-micro font-medium text-primary-foreground disabled:opacity-50"
           >
             <LogIn className="h-3 w-3" />
             {t("agent_accounts.sign_in")}
@@ -562,7 +562,7 @@ function AccountRow({
 
       <p
         className={cn(
-          "flex items-start gap-1.5 pl-6 text-[11px]",
+          "flex items-start gap-1.5 pl-6 text-micro",
           account.connected ? "text-muted-foreground" : "text-foreground",
         )}
       >
@@ -575,7 +575,7 @@ function AccountRow({
           draining twice as fast. So it is said out loud, next to the row that
           duplicates another, rather than left to be deduced from a usage page. */}
       {account.warning && (
-        <p className="flex items-start gap-1.5 pl-6 text-[11px] text-foreground">
+        <p className="flex items-start gap-1.5 pl-6 text-micro text-foreground">
           <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
           <span className="min-w-0 break-words">{account.warning}</span>
         </p>
@@ -661,15 +661,15 @@ function LoginFlowBox({
   return (
     <div
       data-testid={`login-flow-${flow.account_id}`}
-      className="ml-6 space-y-2 rounded-xl border border-border/70 bg-background/50 p-3"
+      className="ml-6 space-y-2 rounded-xl border border-border bg-background p-3"
     >
       <div className="flex items-center gap-2">
         {!flow.finished && (
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
         )}
         <span
           className={cn(
-            "min-w-0 flex-1 break-words text-[11px]",
+            "min-w-0 flex-1 break-words text-micro",
             failed ? "text-foreground" : "text-muted-foreground",
           )}
         >
@@ -695,7 +695,7 @@ function LoginFlowBox({
           <div className="flex items-center gap-1.5">
             <code
               data-testid="login-flow-url"
-              className="min-w-0 flex-1 truncate rounded-md border border-border bg-background px-2 py-1 font-mono text-[10px] text-muted-foreground"
+              className="min-w-0 flex-1 truncate rounded-md border border-border bg-background px-2 py-1 font-mono text-micro text-muted-foreground"
               title={flow.url}
             >
               {flow.url}
@@ -703,7 +703,7 @@ function LoginFlowBox({
             <button
               type="button"
               onClick={() => void copyUrl()}
-              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] hover:border-primary/40"
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-micro hover:border-border-strong"
             >
               <Copy className="h-3 w-3" />
               {t("agent_accounts.flow.copy")}
@@ -711,13 +711,13 @@ function LoginFlowBox({
             <button
               type="button"
               onClick={() => void openExternalUrl(flow.url!)}
-              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] hover:border-primary/40"
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-micro hover:border-border-strong"
             >
               <ExternalLink className="h-3 w-3" />
               {t("agent_accounts.flow.open")}
             </button>
           </div>
-          <p className="text-[10px] leading-relaxed text-muted-foreground">
+          <p className="text-micro text-muted-foreground">
             {t("agent_accounts.flow.link_hint")}
           </p>
         </div>
@@ -742,7 +742,7 @@ function LoginFlowBox({
             onClick={() => void pasteCode()}
             aria-label={t("agent_accounts.flow.paste")}
             title={t("agent_accounts.flow.paste")}
-            className="shrink-0 rounded-lg border border-border p-1.5 hover:border-primary/40"
+            className="shrink-0 rounded-lg border border-border p-1.5 hover:border-border-strong"
           >
             <ClipboardPaste className="h-3.5 w-3.5" />
           </button>
@@ -750,7 +750,7 @@ function LoginFlowBox({
             type="button"
             onClick={() => void submit()}
             disabled={!code.trim() || sending}
-            className="shrink-0 rounded-lg bg-foreground/70 px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
             {t("agent_accounts.flow.submit")}
           </button>
@@ -762,14 +762,14 @@ function LoginFlowBox({
           <button
             type="button"
             onClick={onRetry}
-            className="rounded-lg bg-foreground/70 px-3 py-1.5 text-xs font-medium text-primary-foreground"
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
           >
             {t("agent_accounts.flow.retry")}
           </button>
           <button
             type="button"
             onClick={onFallback}
-            className="rounded-lg border border-border px-3 py-1.5 text-xs hover:border-primary/40"
+            className="rounded-lg border border-border px-3 py-1.5 text-xs hover:border-border-strong"
           >
             {t("agent_accounts.flow.fallback")}
           </button>
@@ -777,11 +777,11 @@ function LoginFlowBox({
       )}
 
       {flow.tail && !flow.finished && (
-        <details className="text-[10px] text-muted-foreground">
+        <details className="text-micro text-muted-foreground">
           <summary className="cursor-pointer select-none">
             {t("agent_accounts.flow.show_cli")}
           </summary>
-          <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-background/70 p-2">
+          <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-2">
             {flow.tail}
           </pre>
         </details>

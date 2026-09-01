@@ -376,7 +376,7 @@ function CliRow({
           <CliLogo cliName={cli.name} category={cli.category} />
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="truncate text-[15px] font-medium">{cli.display_name}</span>
+              <span className="truncate text-reading font-medium">{cli.display_name}</span>
               <span className="shrink-0 font-mono text-xs text-muted-foreground">
                 {cli.name}
               </span>
@@ -413,12 +413,12 @@ function CliRow({
             <span className="tabular-nums">
               {fill(t("clis_view.usage_7d"), { count: cli.usage_count_7d })}
             </span>
-            <span className="block text-[11px] text-muted-foreground/70">
+            <span className="block text-micro text-muted-foreground">
               {formatRelativeTime(cli.last_used_at)}
             </span>
           </button>
         ) : (
-          <span className="text-xs text-muted-foreground/60">
+          <span className="text-xs text-muted-foreground">
             {t("clis_view.never_used")}
           </span>
         )}
@@ -431,7 +431,7 @@ function EmptyCatalog() {
   const t = useT();
   return (
     <div className="flex flex-col items-center justify-center gap-5 py-16 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-card/60">
+      <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-card">
         <Terminal className="h-7 w-7 text-muted-foreground" />
       </div>
       <h3 className="font-display text-xl font-semibold tracking-tight">
@@ -489,7 +489,7 @@ function CliDetailPage({
               }
               title={data.display_name}
               titleAccessory={
-                <span className="rounded-md bg-sheen/[0.08] px-2 py-0.5 font-mono text-xs text-muted-foreground">
+                <span className="rounded-md bg-secondary px-2 py-0.5 font-mono text-meta text-muted-foreground">
                   {data.name}
                 </span>
               }
@@ -745,7 +745,7 @@ function DetailPanel({
 }) {
   return (
     <Panel className={cn("p-5", className)}>
-      <h4 className="mb-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-3 text-micro font-medium text-muted-foreground">
         {title}
       </h4>
       <div className="space-y-3">{children}</div>
@@ -775,7 +775,7 @@ function PatternList({
             key={pattern}
             className={cn(
               "break-all font-mono text-xs",
-              tone === "deny" ? "text-destructive/80" : "text-muted-foreground/90",
+              tone === "deny" ? "text-destructive" : "text-muted-foreground",
             )}
           >
             {pattern}
@@ -875,7 +875,7 @@ function DialogShell({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60 backdrop-blur-sm">
       <div
         className={cn(
-          "flex w-full flex-col overflow-hidden rounded-xl border border-border bg-card",
+          "flex w-full flex-col overflow-hidden rounded-lg bg-popover shadow-float",
           width,
         )}
       >
@@ -957,7 +957,7 @@ function ApiKeyDialog({
             <div className="mb-1 flex items-center justify-between">
               <span className="font-medium">{sk.env_var}</span>
               {sk.required && (
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-micro text-muted-foreground">
                   {t("clis_view.required_word")}
                 </span>
               )}
@@ -1080,7 +1080,7 @@ function InstallDialog({
                   "flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 transition-colors",
                   selected === m.manager
                     ? "border-primary/40 bg-primary/10"
-                    : "border-border hover:bg-sheen/[0.05]",
+                    : "border-border hover:bg-secondary",
                 )}
               >
                 <input
@@ -1454,7 +1454,7 @@ function UsageDrawer({ name, onClose }: { name: string; onClose: () => void }) {
             {usage && usage.entries.length > 0 && (
               <ul className="space-y-1.5">
                 {usage.entries.map((e) => (
-                  <li key={e.id} className="rounded-lg border border-border bg-background/40 px-3 py-2">
+                  <li key={e.id} className="rounded-lg border border-border bg-background px-3 py-2">
                     <div className="flex items-start justify-between gap-2">
                       <code className="min-w-0 flex-1 break-all font-mono text-xs">
                         {e.full_command}
@@ -1468,14 +1468,14 @@ function UsageDrawer({ name, onClose }: { name: string; onClose: () => void }) {
                         {e.exit_code === 0 ? "✓" : e.exit_code !== null ? `✗ ${e.exit_code}` : "…"}
                       </span>
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground tabular-nums">
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-micro text-muted-foreground tabular-nums">
                       <span>{formatDateTime(e.started_at)}</span>
                       {e.duration_ms !== null && <span>{e.duration_ms} ms</span>}
                       <span>{e.caller}</span>
                       {e.trace_id && <span title={e.trace_id}>T:{e.trace_id.slice(0, 8)}</span>}
                     </div>
                     {e.stderr_preview && (
-                      <div className="mt-1.5 rounded border border-destructive/30 bg-destructive/5 px-2 py-1 font-mono text-[11px] text-destructive/90">
+                      <div className="mt-1.5 rounded border border-destructive/30 bg-destructive/5 px-2 py-1 font-mono text-micro text-destructive">
                         {e.stderr_preview}
                       </div>
                     )}
@@ -1488,7 +1488,7 @@ function UsageDrawer({ name, onClose }: { name: string; onClose: () => void }) {
 
         {stats && stats.top_commands.length > 0 && (
           <div className="border-t border-border px-5 py-3">
-            <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            <div className="mb-1.5 text-micro font-medium text-muted-foreground">
               {t("clis_view.top_commands")}
             </div>
             <ul className="space-y-0.5">

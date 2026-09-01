@@ -20,9 +20,18 @@ import {
 } from "./automationsModel";
 import { SectionLabel } from "./shared";
 
+/*
+ * A field inside a dialog.
+ *
+ * The dialog IS the floating layer, so there is no surface left above it to
+ * fill a field with — a child darker than its parent is the one nesting error
+ * this system calls hard. So the field is described by a rim instead, the way
+ * the composer is, and focus thickens that same rim rather than inventing a
+ * third colour.
+ */
 const inputCls =
-  "w-full rounded-lg border border-border bg-background/60 px-3 py-2 text-sm text-foreground " +
-  "placeholder:text-muted-foreground/60 focus:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary/40";
+  "w-full rounded-md border border-border-strong bg-transparent px-3 py-2 text-body text-foreground " +
+  "placeholder:text-faint-foreground focus:outline-none focus:ring-2 focus:ring-border-strong";
 
 const KINDS: ScheduleKind[] = ["hourly", "daily", "weekly"];
 
@@ -89,19 +98,19 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
       <div
         role="dialog"
         aria-label={fill(t("automations_view.add_dialog_title"), { title: template.name })}
-        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card"
+        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-lg bg-popover shadow-float"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/30 bg-primary/10">
-              <Icon className="h-4 w-4 text-primary" />
-            </div>
+            <Icon className="h-5 w-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold">
+              <h2 className="truncate text-title font-semibold text-foreground-strong">
                 {fill(t("automations_view.add_dialog_title"), { title: template.name })}
               </h2>
-              <p className="truncate text-[11px] text-muted-foreground">{template.description}</p>
+              <p className="truncate text-meta text-muted-foreground">
+                {template.description}
+              </p>
             </div>
           </div>
           <Button size="sm" variant="ghost" onClick={onClose} aria-label={t("tasks_view.create.cancel")}>
@@ -110,9 +119,10 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis">
-          <div className="space-y-4 px-5 py-4">
+          <div className="space-y-group px-5 py-4">
+            {/* Missing prerequisites are a degraded state, not a headline. */}
             {!template.ready && template.missing.length > 0 && (
-              <p className="flex items-start gap-1.5 rounded-lg border border-foreground/40 px-3 py-2 text-[11px] leading-relaxed text-foreground/90">
+              <p className="flex items-start gap-1.5 rounded-md border border-border-strong px-3 py-2 text-meta text-warning">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 {fill(t("automations_view.needs_warning"), { tools: humanizeMissing(template.missing) })}
               </p>
@@ -134,10 +144,12 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
                 <label key={input.key} className="block space-y-1.5">
                   <SectionLabel>
                     {input.label}
-                    {input.required && <span className="ml-1 text-primary">*</span>}
+                    {input.required && (
+                      <span className="ml-1 text-muted-foreground">*</span>
+                    )}
                   </SectionLabel>
                   <input
-                    className={cn(inputCls, invalid && "border-destructive/70")}
+                    className={cn(inputCls, invalid && "border-destructive")}
                     value={values[input.key] ?? ""}
                     placeholder={input.placeholder || undefined}
                     onChange={(e) => setValues((prev) => ({ ...prev, [input.key]: e.target.value }))}
@@ -145,23 +157,30 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
                     maxLength={2048}
                   />
                   {invalid && (
-                    <span className="text-[11px] text-destructive">{t("automations_view.required")}</span>
+                    <span className="text-meta text-destructive">
+                      {t("automations_view.required")}
+                    </span>
                   )}
                 </label>
               );
             })}
 
-            <div className="space-y-3 rounded-xl border border-border/70 p-4">
+            <div className="space-y-stack rounded-lg border border-border p-4">
               <SectionLabel>{t("tasks_view.create.schedule_label")}</SectionLabel>
-              <div className="inline-flex rounded-lg border border-border p-0.5">
+              {/* On the floating layer the surface ladder has run out, so the
+                  chosen segment is an --primary FILL (an active indicator, the
+                  one job that token has) rather than a fourth grey. */}
+              <div className="inline-flex rounded-md border border-border-strong p-0.5">
                 {KINDS.map((k) => (
                   <button
                     key={k}
                     type="button"
                     onClick={() => setKind(k)}
                     className={cn(
-                      "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                      kind === k ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground",
+                      "rounded-md px-3 py-1.5 text-meta font-medium transition-colors",
+                      kind === k
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground",
                     )}
                   >
                     {t(`automations_view.kind.${k}`)}
@@ -182,7 +201,9 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
                       }))}
                     />
                   )}
-                  <span className="text-xs text-muted-foreground">{t("tasks_view.create.at")}</span>
+                  <span className="text-body text-muted-foreground">
+                    {t("tasks_view.create.at")}
+                  </span>
                   <input
                     type="time"
                     className={cn(inputCls, "w-32")}
@@ -197,7 +218,9 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
-          {errorText && <span className="mr-auto text-xs text-destructive">{errorText}</span>}
+          {errorText && (
+            <span className="mr-auto text-meta text-destructive">{errorText}</span>
+          )}
           <Button variant="ghost" size="sm" onClick={onClose}>
             {t("tasks_view.create.cancel")}
           </Button>

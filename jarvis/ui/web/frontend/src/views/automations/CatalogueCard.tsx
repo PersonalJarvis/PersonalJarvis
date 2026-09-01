@@ -10,7 +10,6 @@
  */
 import { Check, Clock, Plus } from "lucide-react";
 import { fill, useT } from "@/i18n";
-import { cn } from "@/lib/utils";
 import { templateIcon } from "./automationIcons";
 import { humanizeMissing, type AutomationTemplate } from "./automationsModel";
 import { IdentityGlyph } from "./shared";
@@ -37,31 +36,32 @@ export function CatalogueCard({
   return (
     <article
       data-testid={`catalogue-${template.key}`}
-      className={cn(
-        "card-outline flex min-h-[148px] flex-col p-4",
-        installed && "border-primary/40",
-      )}
+      className="card-outline flex min-h-[148px] flex-col p-4 shadow-rim"
     >
       <div className="flex items-start gap-3">
         <IdentityGlyph seed={template.key} className="h-9 w-9">
           <Icon className="h-4 w-4" />
         </IdentityGlyph>
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-semibold text-foreground">{template.name}</h3>
-          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+          <h3 className="truncate text-title font-semibold text-foreground-strong">
+            {template.name}
+          </h3>
+          <p className="mt-1 line-clamp-2 text-meta text-muted-foreground">
             {template.description}
           </p>
         </div>
       </div>
 
+      {/* "needs Gmail" is a degraded state, not a headline: it used to be the
+          brightest line on the card at --foreground. */}
       {needsSomething && (
-        <p className="mt-2 truncate text-[11px] text-foreground/90">
+        <p className="mt-2 truncate text-micro text-warning">
           {fill(t("automations_view.needs"), { tools: humanizeMissing(template.missing) })}
         </p>
       )}
 
       <div className="mt-auto flex items-center gap-2 pt-3">
-        <span className="inline-flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span className="inline-flex min-w-0 items-center gap-1.5 text-micro text-muted-foreground">
           <Clock className="h-3 w-3 shrink-0" />
           <span className="truncate">{template.schedule_label}</span>
         </span>
@@ -71,7 +71,7 @@ export function CatalogueCard({
               type="button"
               onClick={() => onShowInstalled(installedTaskId)}
               title={t("automations_view.show_installed")}
-              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-primary/40 px-2.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-secondary px-2.5 text-meta font-medium text-foreground transition-colors hover:bg-popover"
             >
               <Check className="h-3.5 w-3.5" />
               {t("automations_view.added")}
@@ -80,7 +80,7 @@ export function CatalogueCard({
             <button
               type="button"
               onClick={() => onAdd(template)}
-              className="inline-flex h-7 items-center gap-1.5 rounded-md bg-sheen/[0.08] px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-sheen/[0.16]"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-secondary px-2.5 text-meta font-medium text-foreground transition-colors hover:bg-popover"
             >
               <Plus className="h-3.5 w-3.5" />
               {t("automations_view.add")}

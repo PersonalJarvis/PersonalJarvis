@@ -107,15 +107,12 @@ export function AgentTimeline({
               data-testid="agent-message-user"
               data-message-id={item.id}
             >
-              <div className="jarvis-user-bubble max-w-[78%] rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] leading-relaxed">
+              <div className="jarvis-user-bubble max-w-[85%] rounded-lg px-4 py-3 text-reading">
                 {item.text && <div className="whitespace-pre-wrap">{item.text}</div>}
                 {item.attachments.length > 0 && (
                   <div
                     data-testid="agent-message-attachments"
-                    className={cn(
-                      "flex flex-wrap gap-1.5",
-                      item.text && "mt-2 border-t border-border/60 pt-2",
-                    )}
+                    className={cn("flex flex-wrap gap-row", item.text && "mt-2.5")}
                   >
                     {item.attachments.map((file) =>
                       // The picture itself, where there is one to fetch: a
@@ -133,7 +130,10 @@ export function AgentTimeline({
                           loading="lazy"
                           decoding="async"
                           data-testid="agent-message-image"
-                          className="max-h-60 max-w-full rounded-lg border border-border/70 bg-background/40 object-contain"
+                          // A picture is its own fill. The frame and the wash
+                          // behind it were describing an object that was
+                          // already fully described.
+                          className="max-h-60 max-w-full rounded-lg object-contain"
                         />
                       ) : (
                       <span
@@ -147,7 +147,11 @@ export function AgentTimeline({
                             ? t("agent_chat.attach_not_described")
                             : file.name
                         }
-                        className="flex items-center gap-1.5 rounded-md border border-border/70 bg-background/40 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                        // No box. The user bubble is the loudest surface the
+                        // ladder has, so a chip inside it has nowhere to step
+                        // up to; the icon and the mono name carry the chip's
+                        // whole job on their own.
+                        className="flex items-center gap-1.5 text-micro opacity-80"
                       >
                         {file.kind === "image" ? (
                           <ImageIcon className="h-3 w-3 shrink-0" aria-hidden />
@@ -169,7 +173,10 @@ export function AgentTimeline({
             <div
               key={item.id}
               data-message-id={item.id}
-              className="mx-auto flex max-w-[85%] items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+              // Fault ink on a normal surface. A red-washed panel makes the
+              // failure the brightest object on the screen and buries what it
+              // says under what it looks like.
+              className="mx-auto flex max-w-[85%] items-center gap-row rounded-lg bg-card px-4 py-3 text-body text-destructive"
             >
               <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
               <span>{item.text}</span>
@@ -217,19 +224,27 @@ const Turn = memo(function Turn({
       data-message-id={turn.id}
       data-status={turn.status}
     >
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
+      {/*
+       * This byline stays where the home chat's was deleted, because it is not
+       * a repeat: it names WHICH agent, provider and model answered, and in a
+       * pane that can be pointed at any of them that is the fact the reader
+       * needs. It just stops shouting — no small caps, no --primary, and the
+       * dot is green only while the turn is actually running.
+       */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 font-mono text-micro text-muted-foreground">
         <span
-          className={cn("h-1 w-1 rounded-full bg-foreground/70", live && "motion-safe:animate-pulse")}
+          className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            live ? "bg-success motion-safe:animate-pulse" : "bg-muted-foreground",
+          )}
           aria-hidden
         />
-        <span>{assistantName}</span>
-        <span className="inline-flex items-center gap-1.5 normal-case tracking-normal text-muted-foreground">
+        <span className="text-foreground">{assistantName}</span>
+        <span className="inline-flex items-center gap-1.5">
           <ProviderLogo providerId={turn.provider} label={providerLabel} size="sm" />
           <span>{providerLabel}</span>
-          {turn.model && <span className="text-muted-foreground/70">· {turn.model}</span>}
-          {turn.effort && (
-            <span className="text-muted-foreground/70">· {effortLabel(turn.effort, t)}</span>
-          )}
+          {turn.model && <span>· {turn.model}</span>}
+          {turn.effort && <span>· {effortLabel(turn.effort, t)}</span>}
         </span>
       </div>
 
@@ -352,14 +367,14 @@ function LiveStatus({
 
   return (
     <div
-      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-xs"
+      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-meta"
       data-testid="agent-turn-live"
       role="status"
       aria-live="polite"
     >
       <LiveCore />
       <span className="thinking-shimmer font-medium">{word}</span>
-      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] tabular-nums text-muted-foreground/80">
+      <span className="inline-flex items-center gap-1.5 font-mono text-micro tabular-nums text-muted-foreground">
         <span>({formatThoughtDuration(elapsed)}</span>
         {out !== null && out > 0 && (
           <>
@@ -369,7 +384,7 @@ function LiveStatus({
         )}
         <span>)</span>
       </span>
-      <span className="text-muted-foreground/60">{t("agent_chat.interrupt_hint")}</span>
+      <span className="text-muted-foreground">{t("agent_chat.interrupt_hint")}</span>
     </div>
   );
 }
@@ -418,29 +433,36 @@ function TurnOutcome({ turn }: { turn: TurnItem }) {
   const out = outputTokens(usage);
   const answered = turn.blocks.some((b) => b.kind === "text" && b.text.trim().length > 0);
 
+  /*
+   * The closing line's colour is the turn's outcome, and the ramp used to run
+   * backwards: "done" was the DIMMEST of the four, quieter than "cancelled"
+   * and quieter than "finished without an answer". Success is life, a turn
+   * that produced nothing is degraded, a failure is fault, and a turn the
+   * person stopped themselves is not a status at all — it is meta.
+   */
   const { Icon, label, tone } =
     turn.status === "error"
-      ? { Icon: CircleAlert, label: t("agent_chat.turn_failed"), tone: "text-destructive/80" }
+      ? { Icon: CircleAlert, label: t("agent_chat.turn_failed"), tone: "text-destructive" }
       : turn.status === "cancelled"
         ? { Icon: Ban, label: t("agent_chat.turn_cancelled"), tone: "text-muted-foreground" }
         : answered
-          ? { Icon: Check, label: t("agent_chat.turn_done"), tone: "text-muted-foreground/70" }
+          ? { Icon: Check, label: t("agent_chat.turn_done"), tone: "text-success" }
           : {
               Icon: CircleAlert,
               label: t("agent_chat.turn_no_answer"),
-              tone: "text-muted-foreground",
+              tone: "text-warning",
             };
 
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center gap-x-2.5 gap-y-0.5 pt-0.5 font-mono text-[10px] tabular-nums",
+        "flex flex-wrap items-center gap-x-2.5 gap-y-0.5 pt-0.5 font-mono text-micro tabular-nums",
         tone,
       )}
       data-testid="agent-turn-footer"
       data-outcome={turn.status === "done" && !answered ? "no-answer" : turn.status}
     >
-      <span className="inline-flex items-center gap-1 font-sans text-[11px] font-medium normal-case">
+      <span className="inline-flex items-center gap-1 font-sans text-micro font-medium">
         <Icon className="h-3.5 w-3.5" aria-hidden />
         {label}
       </span>
@@ -457,11 +479,11 @@ function Prose({ block }: { block: TextBlock }) {
     <div
       data-testid="agent-text"
       className={cn(
-        "prose prose-neutral max-w-none text-[15px] leading-relaxed dark:prose-invert [overflow-wrap:anywhere]",
+        "prose prose-neutral max-w-none text-reading dark:prose-invert [overflow-wrap:anywhere]",
         "prose-p:my-2 prose-headings:font-display prose-headings:tracking-tight prose-h1:text-xl prose-h2:text-lg prose-h3:text-base",
-        "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
-        "prose-code:rounded prose-code:bg-muted/60 prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:before:hidden prose-code:after:hidden",
-        "prose-pre:my-2 prose-pre:border prose-pre:border-border prose-pre:bg-card/80 prose-pre:text-[13px]",
+        "prose-a:text-foreground-strong prose-a:underline prose-a:decoration-border-strong prose-a:underline-offset-2",
+        "prose-code:rounded prose-code:bg-secondary prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:before:hidden prose-code:after:hidden",
+        "prose-pre:my-2 prose-pre:bg-card prose-pre:text-meta",
         "prose-li:my-0.5 prose-ul:my-2 prose-ol:my-2",
       )}
     >
@@ -570,12 +592,12 @@ function Scratchpad({
             {fill(t("agent_chat.thinking_for"), { duration: formatThoughtDuration(thinking) })}
           </span>
           {out !== null && out > 0 && (
-            <span className="inline-flex items-center gap-1.5 font-mono text-[11px] tabular-nums text-muted-foreground/80">
+            <span className="inline-flex items-center gap-1.5 font-mono text-micro tabular-nums text-muted-foreground">
               <span aria-hidden>·</span>
               <OutTokens n={out} />
             </span>
           )}
-          <span className="text-muted-foreground/60">{t("agent_chat.interrupt_hint")}</span>
+          <span className="text-muted-foreground">{t("agent_chat.interrupt_hint")}</span>
         </div>
       ) : (
         <button
@@ -585,7 +607,7 @@ function Scratchpad({
           disabled={!foldable}
           className={cn(
             "-ml-1 inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-xs text-muted-foreground transition-colors",
-            foldable ? "hover:bg-secondary/50 hover:text-foreground" : "cursor-default",
+            foldable ? "hover:bg-secondary hover:text-foreground" : "cursor-default",
           )}
         >
           <ChevronRight
@@ -611,7 +633,7 @@ function Scratchpad({
       ) : (
         <div
           className={cn(
-            "ml-[1.25rem] text-[13px] leading-relaxed text-muted-foreground/80 [overflow-wrap:anywhere]",
+            "ml-[1.25rem] text-meta text-muted-foreground [overflow-wrap:anywhere]",
             foldable && "line-clamp-2",
           )}
           data-testid="agent-reasoning-preview"
@@ -662,11 +684,11 @@ function ThoughtProse({ text }: { text: string }) {
   return (
     <div
       className={cn(
-        "prose prose-neutral max-w-none text-[13px] leading-relaxed text-muted-foreground dark:prose-invert [overflow-wrap:anywhere]",
-        "prose-p:my-1.5 prose-headings:my-1.5 prose-headings:text-[13px] prose-headings:font-semibold prose-headings:text-foreground/80",
-        "prose-strong:text-foreground/80 prose-li:my-0.5 prose-ul:my-1.5 prose-ol:my-1.5",
+        "prose prose-neutral max-w-none text-meta text-muted-foreground dark:prose-invert [overflow-wrap:anywhere]",
+        "prose-p:my-1.5 prose-headings:my-1.5 prose-headings:text-meta prose-headings:font-semibold prose-headings:text-foreground",
+        "prose-strong:text-foreground prose-li:my-0.5 prose-ul:my-1.5 prose-ol:my-1.5",
         "prose-code:font-mono prose-code:text-[0.9em] prose-code:before:hidden prose-code:after:hidden",
-        "prose-pre:my-1.5 prose-pre:bg-transparent prose-pre:p-0 prose-pre:text-[11px]",
+        "prose-pre:my-1.5 prose-pre:bg-transparent prose-pre:p-0 prose-pre:text-micro",
       )}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
@@ -763,7 +785,7 @@ function DiffView({ files }: { files: DiffFile[] }) {
           {/* The path only when the row above cannot already be carrying it:
               one file is named on the row, several need naming here. */}
           {files.length > 1 && file.path && (
-            <span className="truncate font-mono text-[10px] text-muted-foreground/60">
+            <span className="truncate font-mono text-micro text-muted-foreground">
               {file.path}
             </span>
           )}
@@ -773,7 +795,7 @@ function DiffView({ files }: { files: DiffFile[] }) {
             ))}
           </div>
           {file.truncated > 0 && (
-            <span className="font-mono text-[10px] text-muted-foreground/50">
+            <span className="font-mono text-micro text-muted-foreground">
               {fill(t("agent_chat.diff_truncated"), { count: String(file.truncated) })}
             </span>
           )}
@@ -795,7 +817,7 @@ function DiffRow({ line }: { line: DiffLine }) {
     return (
       <div
         data-diff="gap"
-        className="select-none px-2 py-0.5 font-mono text-[10px] text-muted-foreground/40"
+        className="select-none px-2 py-0.5 font-mono text-micro text-muted-foreground"
       >
         {line.text ? fill(t("agent_chat.diff_skipped"), { count: line.text }) : "⋯"}
       </div>
@@ -808,7 +830,7 @@ function DiffRow({ line }: { line: DiffLine }) {
         "flex whitespace-pre-wrap break-words px-2 font-mono text-[11.5px] leading-relaxed",
         line.kind === "add" && "diff-line-add",
         line.kind === "del" && "diff-line-del",
-        line.kind === "ctx" && "text-muted-foreground/70",
+        line.kind === "ctx" && "text-muted-foreground",
       )}
     >
       <span aria-hidden className="mr-2 w-2 shrink-0 select-none opacity-70">
@@ -824,13 +846,13 @@ function DiffStat({ added, removed }: { added: number; removed: number }) {
   if (added === 0 && removed === 0) return null;
   return (
     <span
-      className="shrink-0 font-mono text-[10px] tabular-nums"
+      className="shrink-0 font-mono text-micro tabular-nums"
       data-testid="agent-diff-stat"
       data-added={added}
       data-removed={removed}
     >
       {added > 0 && <span className="diff-ink-add">+{added}</span>}
-      {added > 0 && removed > 0 && <span className="text-muted-foreground/40"> </span>}
+      {added > 0 && removed > 0 && <span className="text-muted-foreground"> </span>}
       {removed > 0 && <span className="diff-ink-del">-{removed}</span>}
     </span>
   );
@@ -952,12 +974,12 @@ function GroupToggle({
       data-testid="agent-tool-group-toggle"
       className={cn(
         "-ml-1 flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-1",
-        "text-left text-xs transition-colors hover:bg-secondary/50",
+        "text-left text-xs transition-colors hover:bg-secondary",
       )}
     >
       <ChevronRight
         className={cn(
-          "h-3.5 w-3.5 shrink-0 text-muted-foreground/50 transition-transform",
+          "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
           open && "rotate-90",
         )}
         aria-hidden
@@ -968,7 +990,7 @@ function GroupToggle({
       {stat && <DiffStat added={stat.added} removed={stat.removed} />}
       <span className="flex-1" />
       {duration > 0 && (
-        <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60">
+        <span className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground">
           {formatStepDuration(duration)}
         </span>
       )}
@@ -1044,7 +1066,7 @@ function ToolRow({
         aria-expanded={open}
         className={cn(
           "-ml-1 flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-1 text-left transition-colors",
-          pending ? "ml-0 px-2 pt-1.5" : "hover:bg-secondary/50",
+          pending ? "ml-0 px-2 pt-1.5" : "hover:bg-secondary",
         )}
       >
         <span className="grid h-4 w-4 shrink-0 place-items-center">
@@ -1062,7 +1084,7 @@ function ToolRow({
             <view.Icon
               className={cn(
                 "h-3.5 w-3.5",
-                block.isError ? "text-destructive/80" : "text-muted-foreground",
+                block.isError ? "text-destructive" : "text-muted-foreground",
               )}
               aria-hidden
             />
@@ -1077,7 +1099,7 @@ function ToolRow({
           {view.label}
         </span>
         {summary ? (
-          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground/80">
+          <span className="min-w-0 flex-1 truncate font-mono text-micro text-muted-foreground">
             {summary}
           </span>
         ) : (
@@ -1085,18 +1107,18 @@ function ToolRow({
         )}
         {stat && !running && <DiffStat added={stat.added} removed={stat.removed} />}
         {running ? (
-          <span className="inline-flex shrink-0 items-center gap-1.5 text-[10px] text-primary/90">
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-micro text-primary/90">
             <Spinner />
             <span className="font-mono tabular-nums">{formatStepDuration(elapsed)}</span>
           </span>
         ) : block.durationMs !== null && block.durationMs > 0 ? (
-          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60">
+          <span className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground">
             {formatStepDuration(block.durationMs)}
           </span>
         ) : null}
         <ChevronRight
           className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-foreground/50 transition-transform",
+            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
             open && "rotate-90",
           )}
           aria-hidden
@@ -1105,7 +1127,7 @@ function ToolRow({
 
       {gist && !open && (
         <div
-          className="ml-[1.375rem] truncate font-mono text-[11px] text-destructive/80"
+          className="ml-[1.375rem] truncate font-mono text-micro text-destructive"
           data-testid="agent-tool-gist"
         >
           {gist}
@@ -1207,13 +1229,13 @@ function Trace({
 function Detail({ label, text, error }: { label: string; text: string; error?: boolean }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
+      <span className="font-mono text-micro text-muted-foreground">
         {label}
       </span>
       <pre
         className={cn(
           "scrollbar-jarvis max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed",
-          error ? "text-destructive/90" : "text-muted-foreground",
+          error ? "text-destructive" : "text-muted-foreground",
         )}
       >
         {text}

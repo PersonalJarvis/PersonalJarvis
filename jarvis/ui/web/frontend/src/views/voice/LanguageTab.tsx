@@ -1,18 +1,14 @@
 import { useState } from "react";
-import {
-  ArrowRightLeft,
-  Info,
-  Languages,
-  Loader2,
-  MessageSquare,
-  PlugZap,
-  Scissors,
-  Sparkles,
-  Wand2,
-} from "lucide-react";
+// Five decorative glyphs left this file — one per card heading, plus two on
+// the sub-rows. Every one of them was --primary, which is a FILL: they
+// rendered brighter than the headings they were decorating and inverted the
+// ink ramp on a screen that is otherwise all reading. Nothing was lost with
+// them, because each sat beside a heading that already said the same word.
+import { Info, Languages, Loader2, PlugZap } from "lucide-react";
 
 import { ViewHeader } from "@/views/ChatsView";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import {
   polishStatusLabel,
@@ -22,6 +18,7 @@ import {
 } from "@/hooks/useDictation";
 import { Combobox } from "@/components/ui/combobox";
 import { LanguageSelect } from "@/components/ui/language-select";
+import { SkeletonBar } from "@/components/layout/PanelSkeleton";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { useProviders } from "@/hooks/useProviders";
 import { useEventStore } from "@/store/events";
@@ -254,7 +251,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
     <div className="flex h-full flex-col">
       {!hideHeader && (
         <ViewHeader
-          icon={<Languages className="h-4 w-4 text-primary" />}
+          icon={<Languages className="h-4 w-4 text-foreground" />}
           title={t("voice.language.title")}
           subtitle={t("voice.language.description")}
         />
@@ -263,24 +260,26 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
         className="flex-1 overflow-y-auto scrollbar-jarvis p-6"
         data-testid="voice-language-tab"
       >
-        <div className="mx-auto flex max-w-3xl flex-col gap-4">
-          {error && <p className="text-xs text-destructive">{error}</p>}
+        {/* Four settings groups at the form measure, 32px apart. They used to
+            run together at 16px inside cards painted with an opacity, which is
+            what made this tab read as one long undifferentiated mesh. */}
+        <div className="mx-auto flex max-w-form flex-col gap-group">
+          {error && <p className="text-meta text-destructive">{error}</p>}
 
-          <div className="rounded-lg border border-border bg-card/60 p-4">
-            <h4 className="font-display text-sm font-semibold">
+          <Card className="p-5">
+            <h4 className="text-title font-semibold text-foreground-strong">
               {t("voice.language.title")}
             </h4>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="mt-1 text-meta text-muted-foreground">
               {t("voice.language.description")}
             </p>
 
             {loading ? (
-              <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {t("dictation.loading")}
+              <div className="mt-block max-w-xs">
+                <SkeletonBar className="h-9 w-full" />
               </div>
             ) : (
-              <div className="mt-3 max-w-xs">
+              <div className="mt-block max-w-xs">
                 <LanguageSelect
                   value={value}
                   codes={languageCodes}
@@ -292,25 +291,27 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
               </div>
             )}
 
-            <div className="mt-4 flex items-start gap-2 rounded-md border border-border/60 bg-background/40 p-3">
-              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+            {/* A well inside a card steps UP to --secondary. It used to be
+                --background at 40 %, which rendered the note darker than the
+                card holding it. */}
+            <div className="mt-block flex items-start gap-2 rounded-md bg-secondary p-3">
+              <Info
+                aria-hidden="true"
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground"
+              />
               <p
-                className="text-[11px] text-muted-foreground"
+                className="text-meta text-muted-foreground"
                 data-testid="dictation-language-hint"
               >
                 {t("voice.language.auto_hint")}
               </p>
             </div>
-          </div>
+          </Card>
 
-          <div
-            className="rounded-lg border border-border bg-card/60 p-4"
-            data-testid="dictation-polish-card"
-          >
+          <Card className="p-5" data-testid="dictation-polish-card">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <h4 className="flex items-center gap-2 font-display text-sm font-semibold">
-                  <Wand2 aria-hidden="true" className="h-3.5 w-3.5 text-primary" />
+                <h4 className="text-title font-semibold text-foreground-strong">
                   {t("voice.polish.title")}
                 </h4>
                 {/* The honest trade, in one line: what it changes, what it does
@@ -318,7 +319,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     a model rewrite their own words deserves to read that before
                     the switch, not after. */}
                 <p
-                  className="mt-1 text-xs text-muted-foreground"
+                  className="mt-1 text-meta text-muted-foreground"
                   data-testid="dictation-polish-description"
                 >
                   {t("voice.polish.description")}
@@ -331,7 +332,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     whether the switch is on or off, because someone deciding
                     to turn it ON is exactly who needs it. */}
                 <p
-                  className="mt-1.5 text-[11px] text-muted-foreground"
+                  className="mt-1 text-meta text-muted-foreground"
                   data-testid="dictation-polish-sends-text"
                 >
                   {t("voice.polish.sends_text")}
@@ -351,16 +352,17 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                 switched off — hiding the switch there would leave it silently
                 in force with no way to see or reach it (AP-31). */}
             <div
-              className="mt-3 flex items-start justify-between gap-4 border-t border-border/60 pt-3"
+              className="mt-block flex items-start justify-between gap-4 border-t border-border pt-block"
               data-testid="dictation-precision-row"
             >
               <div className="min-w-0">
-                <h5 className="flex items-center gap-2 text-xs font-semibold">
-                  <Scissors aria-hidden="true" className="h-3 w-3 text-primary" />
+                {/* A row title inside a card is ink, not ink-strong — the
+                    card's own heading keeps that step to itself. */}
+                <h5 className="text-title font-semibold text-foreground">
                   {t("voice.polish.precision_title")}
                 </h5>
                 <p
-                  className="mt-1 text-[11px] text-muted-foreground"
+                  className="mt-1 text-meta text-muted-foreground"
                   data-testid="dictation-precision-description"
                 >
                   {t("voice.polish.precision_description")}
@@ -371,7 +373,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     is the difference between "off by default" and "on by
                     default" for everything else on this card. */}
                 <p
-                  className="mt-1.5 text-[11px] text-muted-foreground"
+                  className="mt-1 text-meta text-muted-foreground"
                   data-testid="dictation-precision-tradeoff"
                 >
                   {t("voice.polish.precision_tradeoff")}
@@ -394,19 +396,15 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     own. Showing it while the formatter is off would be a switch
                     that saves, reads as on, and does nothing (AP-31). */}
                 <div
-                  className="mt-3 flex items-start justify-between gap-4 border-t border-border/60 pt-3"
+                  className="mt-block flex items-start justify-between gap-4 border-t border-border pt-block"
                   data-testid="dictation-conversation-row"
                 >
                   <div className="min-w-0">
-                    <h5 className="flex items-center gap-2 text-xs font-semibold">
-                      <MessageSquare
-                        aria-hidden="true"
-                        className="h-3 w-3 text-primary"
-                      />
+                    <h5 className="text-title font-semibold text-foreground">
                       {t("voice.polish.conversation_title")}
                     </h5>
                     <p
-                      className="mt-1 text-[11px] text-muted-foreground"
+                      className="mt-1 text-meta text-muted-foreground"
                       data-testid="dictation-conversation-description"
                     >
                       {t("voice.polish.conversation_description")}
@@ -415,7 +413,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                         path, answered before it is asked. It runs beside the
                         reply, never in front of it. */}
                     <p
-                      className="mt-1.5 text-[11px] text-muted-foreground"
+                      className="mt-1 text-meta text-muted-foreground"
                       data-testid="dictation-conversation-latency"
                     >
                       {t("voice.polish.conversation_latency")}
@@ -434,8 +432,12 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     a native <select> sitting right beside one would put the
                     operating system's own grey list back on the card. No
                     search field: this list is six entries, not a hundred. */}
-                <div className="mt-3 flex max-w-xs flex-col gap-1">
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                {/* Sentence case, 13px. The 10px uppercase label it replaced
+                    was below the type floor twice over — under 11px, and the
+                    one construction that makes a screen read as an admin
+                    panel. */}
+                <div className="mt-block flex max-w-xs flex-col gap-2">
+                  <span className="text-meta text-muted-foreground">
                     {t("voice.polish.provider_label")}
                   </span>
                   <Combobox
@@ -457,38 +459,46 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     ]}
                   />
                 </div>
-                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                <p className="mt-2 text-meta text-muted-foreground">
                   {t("voice.polish.provider_hint")}
                 </p>
 
-                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+                <div className="mt-block flex flex-wrap items-center gap-2 border-t border-border pt-block">
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => void runPolishTest()}
                     disabled={testing}
                     data-testid="dictation-polish-test"
-                    className="h-7 gap-1.5 text-xs"
+                    className="gap-2"
                   >
                     {testing ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <Loader2
+                        aria-hidden="true"
+                        className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
+                      />
                     ) : (
-                      <PlugZap className="h-3.5 w-3.5" />
+                      <PlugZap aria-hidden="true" className="h-3.5 w-3.5" />
                     )}
                     {testing ? t("voice.polish.testing") : t("voice.polish.test")}
                   </Button>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-meta text-muted-foreground">
                     {t("voice.polish.test_hint")}
                   </span>
                 </div>
 
+                {/* The dry run's own result: what answered, and the same
+                    sentence before and after it. A lift panel inside the card,
+                    with the two samples set as prose rather than as two more
+                    12px interface labels — reading them side by side IS the
+                    point of the button. */}
                 {testResult && (
                   <div
-                    className="mt-3 space-y-2 rounded-md border border-border/60 bg-background/40 p-3"
+                    className="mt-block space-y-stack rounded-md bg-secondary p-3"
                     data-testid="dictation-polish-test-result"
                   >
-                    <p className="text-[11px] text-muted-foreground">
-                      <span className="font-medium text-foreground">
+                    <p className="text-meta text-muted-foreground">
+                      <span className="text-foreground">
                         {polishStatusLabel(t, testResult.status)}
                       </span>
                       {testResult.provider ? ` · ${testResult.provider}` : ""}
@@ -499,22 +509,22 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                       {testResult.reason ? ` · ${testResult.reason}` : ""}
                     </p>
                     <div>
-                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      <p className="text-meta text-muted-foreground">
                         {t("voice.polish.sample_before")}
                       </p>
                       <p
-                        className="break-words text-xs text-muted-foreground"
+                        className="mt-1 break-words text-reading text-muted-foreground"
                         data-testid="dictation-polish-sample-in"
                       >
                         {testResult.sample_in}
                       </p>
                     </div>
                     <div>
-                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      <p className="text-meta text-muted-foreground">
                         {t("voice.polish.sample_after")}
                       </p>
                       <p
-                        className="break-words text-xs"
+                        className="mt-1 break-words text-reading text-foreground"
                         data-testid="dictation-polish-sample-out"
                       >
                         {testResult.sample_out}
@@ -524,31 +534,27 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                 )}
               </>
             )}
-          </div>
+          </Card>
 
           {/* Prompt Mode sits between the wording pass and the translation
               because it outranks both: while it is on, the dictation is
               rewritten into an English brief for a coding agent by the
               Agentic IDE's own writer, and neither pass has anything left to
               do. The card says so, and says where the words go. */}
-          <div
-            className="rounded-lg border border-border bg-card/60 p-4"
-            data-testid="dictation-prompt-mode-card"
-          >
+          <Card className="p-5" data-testid="dictation-prompt-mode-card">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <h4 className="flex items-center gap-2 font-display text-sm font-semibold">
-                  <Sparkles aria-hidden="true" className="h-3.5 w-3.5 text-primary" />
+                <h4 className="text-title font-semibold text-foreground-strong">
                   {t("voice.prompt_mode.title")}
                 </h4>
                 <p
-                  className="mt-1 text-xs text-muted-foreground"
+                  className="mt-1 text-meta text-muted-foreground"
                   data-testid="dictation-prompt-mode-description"
                 >
                   {t("voice.prompt_mode.description")}
                 </p>
                 <p
-                  className="mt-1.5 text-[11px] text-muted-foreground"
+                  className="mt-1 text-meta text-muted-foreground"
                   data-testid="dictation-prompt-mode-sends-text"
                 >
                   {t("voice.prompt_mode.sends_text")}
@@ -569,44 +575,40 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     other two passes step back, and where the writer is chosen.
                     Shown only while on — while off they describe nothing. */}
                 <div
-                  className="mt-3 flex items-start gap-2 rounded-md border border-border/60 bg-background/40 p-3"
+                  className="mt-block flex items-start gap-2 rounded-md bg-secondary p-3"
                   data-testid="dictation-prompt-mode-outranks"
                 >
-                  <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-                  <p className="text-[11px] text-muted-foreground">
+                  <Info
+                    aria-hidden="true"
+                    className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                  />
+                  <p className="text-meta text-muted-foreground">
                     {t("voice.prompt_mode.outranks")}
                   </p>
                 </div>
                 <p
-                  className="mt-1.5 text-[11px] text-muted-foreground"
+                  className="mt-2 text-meta text-muted-foreground"
                   data-testid="dictation-prompt-mode-writer-hint"
                 >
                   {t("voice.prompt_mode.writer_hint")}
                 </p>
               </>
             )}
-          </div>
+          </Card>
 
           {/* Translation sits below the wording pass because it IS the wording
               pass, pointed at a different language: one model call does both,
               and the provider chosen above is the one that answers. Putting it
               on its own screen would hide that the two share a budget, a
               provider and a failure mode. */}
-          <div
-            className="rounded-lg border border-border bg-card/60 p-4"
-            data-testid="dictation-translate-card"
-          >
+          <Card className="p-5" data-testid="dictation-translate-card">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <h4 className="flex items-center gap-2 font-display text-sm font-semibold">
-                  <ArrowRightLeft
-                    aria-hidden="true"
-                    className="h-3.5 w-3.5 text-primary"
-                  />
+                <h4 className="text-title font-semibold text-foreground-strong">
                   {t("voice.translate.title")}
                 </h4>
                 <p
-                  className="mt-1 text-xs text-muted-foreground"
+                  className="mt-1 text-meta text-muted-foreground"
                   data-testid="dictation-translate-description"
                 >
                   {t("voice.translate.description")}
@@ -617,7 +619,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     wrong language — so saying it up front is the difference
                     between a known limit and a bug report. */}
                 <p
-                  className="mt-1.5 text-[11px] text-muted-foreground"
+                  className="mt-1 text-meta text-muted-foreground"
                   data-testid="dictation-translate-sends-text"
                 >
                   {t("voice.translate.sends_text")}
@@ -640,15 +642,15 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     off had nowhere to choose a provider or add a key at all:
                     the only picker lived inside the formatter's own block. */}
                 <div
-                  className="mt-3 rounded-md border border-border/60 bg-background/40 p-3"
+                  className="mt-block rounded-md bg-secondary p-3"
                   data-testid="dictation-translate-provider"
                 >
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <span className="text-meta text-muted-foreground">
                     {t("voice.translate.answers_label")}
                   </span>
                   {wordingProvider?.ready ? (
                     <p
-                      className="mt-1 text-xs font-medium"
+                      className="mt-1 text-title font-semibold text-foreground"
                       data-testid="dictation-translate-provider-name"
                     >
                       {POLISH_PROVIDER_LABELS[wordingProvider.family] ??
@@ -656,8 +658,10 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                         wordingProvider.family}
                     </p>
                   ) : (
+                    /* Nothing can answer, so the translation silently does
+                       nothing — degraded, and named as such. */
                     <p
-                      className="mt-1 text-[11px] text-muted-foreground"
+                      className="mt-1 text-meta text-warning"
                       data-testid="dictation-translate-no-provider"
                     >
                       {t("voice.translate.no_provider")}
@@ -665,8 +669,8 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                   )}
 
                   {showTranslateProvider && (
-                    <div className="mt-3 flex max-w-xs flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <div className="mt-block flex max-w-xs flex-col gap-2">
+                      <span className="text-meta text-muted-foreground">
                         {t("voice.polish.provider_label")}
                       </span>
                       <Combobox
@@ -691,7 +695,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                   )}
 
                   {wordingNeedsKey && wordingProvider && (
-                    <div className="mt-3" data-testid="dictation-translate-key">
+                    <div className="mt-block" data-testid="dictation-translate-key">
                       <ApiKeyForm
                         secretKey={wordingProvider.secret_key}
                         dashboardUrl={wordingCard?.dashboard_url ?? null}
@@ -706,15 +710,15 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                         }
                         onChanged={() => void refetchProviders()}
                       />
-                      <p className="mt-1.5 text-[10px] text-muted-foreground">
+                      <p className="mt-2 text-meta text-muted-foreground">
                         {t("voice.translate.key_saved_hint")}
                       </p>
                     </div>
                   )}
                 </div>
 
-                <div className="mt-3 flex max-w-xs flex-col gap-1">
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                <div className="mt-block flex max-w-xs flex-col gap-2">
+                  <span className="text-meta text-muted-foreground">
                     {t("voice.translate.target_label")}
                   </span>
                   <LanguageSelect
@@ -727,24 +731,27 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     testId="dictation-translate-target"
                   />
                 </div>
-                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                <p className="mt-2 text-meta text-muted-foreground">
                   {t("voice.translate.target_hint")}
                 </p>
 
                 {targetEqualsSource && (
                   <div
-                    className="mt-3 flex items-start gap-2 rounded-md border border-border/60 bg-background/40 p-3"
+                    className="mt-block flex items-start gap-2 rounded-md bg-secondary p-3"
                     data-testid="dictation-translate-same-language"
                   >
-                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-                    <p className="text-[11px] text-muted-foreground">
+                    <Info
+                      aria-hidden="true"
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                    />
+                    <p className="text-meta text-muted-foreground">
                       {t("voice.translate.same_language_notice")}
                     </p>
                   </div>
                 )}
               </>
             )}
-          </div>
+          </Card>
         </div>
       </div>
     </div>

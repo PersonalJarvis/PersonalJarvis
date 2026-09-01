@@ -247,7 +247,7 @@ export function AgentAllocation({
 
   return (
     <div>
-      <div className="border-b border-border/70 pb-5">
+      <div className="border-b border-border pb-5">
         <div className="flex items-end justify-between gap-5">
           <div>
             <SectionLabel>
@@ -276,7 +276,7 @@ export function AgentAllocation({
             }}
           />
         </div>
-        <p className="mt-2 text-right text-[11px] text-muted-foreground">
+        <p className="mt-2 text-right text-micro text-muted-foreground">
           {unassigned === 0
             ? t("workspace_launcher.agents.all_assigned")
             : t("workspace_launcher.agents.unassigned").replace(
@@ -286,7 +286,7 @@ export function AgentAllocation({
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-border/70 py-4">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border py-4">
         <SectionLabel className="mr-1">
           {t("workspace_launcher.agents.quick_fill")}
         </SectionLabel>
@@ -313,7 +313,7 @@ export function AgentAllocation({
         </Button>
       </div>
 
-      <div className="border-b border-border/70">
+      <div className="border-b border-border">
         {agents.map((agent) => {
           const count = counts[agent.name] ?? 0;
           const accounts = accountsFor(agent.name);
@@ -323,7 +323,7 @@ export function AgentAllocation({
             <div
               key={agent.name}
               className={cn(
-                "group grid gap-3 border-b border-border/50 px-1 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+                "group grid gap-3 border-b border-border px-1 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
                 count > 0 && "bg-primary/[0.035]",
               )}
             >
@@ -364,7 +364,7 @@ export function AgentAllocation({
                     <span className="font-medium text-foreground">
                       {agent.display_name}
                     </span>
-                    <span className="text-[11px] text-muted-foreground">
+                    <span className="text-micro text-muted-foreground">
                       {agent.installed
                         ? agent.version ||
                           t("workspace_launcher.agents.installed")
@@ -406,12 +406,12 @@ export function AgentAllocation({
                     )}
                   </div>
                   {agent.description && (
-                    <p className="truncate text-[11px] text-muted-foreground">
+                    <p className="truncate text-micro text-muted-foreground">
                       {agent.description}
                     </p>
                   )}
                   {accounts.length >= 2 && count > 0 && (
-                    <label className="mt-2 flex max-w-sm items-center gap-2 text-[11px] text-muted-foreground">
+                    <label className="mt-2 flex max-w-sm items-center gap-2 text-micro text-muted-foreground">
                       <span>{t("workspace_launcher.agents.account")}</span>
                       <BrandedSelect
                         value={selectedAccount}
@@ -447,7 +447,7 @@ export function AgentAllocation({
               <div className="flex items-center justify-end gap-2">
                 <Button
                   variant="subtle"
-                  className="h-10 min-w-12 px-3 text-[10px] uppercase tracking-[0.12em]"
+                  className="h-10 min-w-12 px-3 text-micro "
                   disabled={!agent.installed}
                   onClick={() => commitCounts({ [agent.name]: total })}
                 >
@@ -465,11 +465,11 @@ export function AgentAllocation({
                     )}
                     disabled={!agent.installed || count === 0}
                     onClick={() => setCount(agent.name, count - 1)}
-                    className="flex h-10 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground active:scale-95 disabled:opacity-30"
+                    className="flex h-10 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground active:scale-95 disabled:opacity-30"
                   >
                     <Minus className="h-3.5 w-3.5" />
                   </button>
-                  <label className="flex h-10 min-w-0 items-center justify-center border-x border-border bg-card/30 px-2 focus-within:bg-secondary/45">
+                  <label className="flex h-10 min-w-0 items-center justify-center border-x border-border bg-card px-2 focus-within:bg-secondary">
                     <input
                       type="number"
                       inputMode="numeric"
@@ -494,7 +494,7 @@ export function AgentAllocation({
                     />
                     <span
                       aria-hidden="true"
-                      className="ml-1 whitespace-nowrap font-mono text-[10px] tabular-nums text-muted-foreground"
+                      className="ml-1 whitespace-nowrap font-mono text-micro tabular-nums text-muted-foreground"
                     >
                       / {total}
                     </span>
@@ -507,7 +507,7 @@ export function AgentAllocation({
                     )}
                     disabled={!agent.installed || count >= total}
                     onClick={() => setCount(agent.name, count + 1)}
-                    className="flex h-10 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground active:scale-95 disabled:opacity-30"
+                    className="flex h-10 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground active:scale-95 disabled:opacity-30"
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </button>
@@ -521,10 +521,10 @@ export function AgentAllocation({
       {/* Adding your own sits at the END of the list rather than in a settings
           page, because this is where the question comes up: the user is
           looking at six CLIs and the one they wanted is not among them. */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-1 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-1 py-3">
         <div className="min-w-0">
           <p className="text-sm text-foreground">{t("custom_cli.add_title")}</p>
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <p className="text-micro text-muted-foreground">
             {t("custom_cli.add_hint")}
           </p>
         </div>
@@ -548,7 +548,7 @@ export function AgentAllocation({
         </p>
       )}
 
-      <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+      <p className="mt-3 text-micro text-muted-foreground">
         {t("workspace_launcher.agents.auto_names")}
       </p>
 

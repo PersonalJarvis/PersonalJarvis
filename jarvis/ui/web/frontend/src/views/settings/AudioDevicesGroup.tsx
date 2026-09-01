@@ -50,9 +50,9 @@ export function AudioDevicesGroup() {
   const autoValue = config?.auto_value ?? "auto-headset";
 
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
+    <div className="mt-2 rounded-lg border border-border bg-card p-4">
       <div className="flex items-start gap-3">
-        <Headphones className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <Headphones className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-4">
             <h4 className="font-display text-sm font-semibold">
@@ -84,7 +84,7 @@ export function AudioDevicesGroup() {
           ) : (
             <>
               <DevicePicker
-                icon={<Volume2 className="h-3.5 w-3.5 text-primary" />}
+                icon={<Volume2 className="h-3.5 w-3.5 text-muted-foreground" />}
                 label={t("settings_view.audio_devices.output_label")}
                 testId="audio-output-select"
                 devices={config?.outputs ?? []}
@@ -96,7 +96,7 @@ export function AudioDevicesGroup() {
                 onSelect={(device) => void onSelect("output", device)}
               />
               <DevicePicker
-                icon={<Mic className="h-3.5 w-3.5 text-primary" />}
+                icon={<Mic className="h-3.5 w-3.5 text-muted-foreground" />}
                 label={t("settings_view.audio_devices.input_label")}
                 testId="audio-input-select"
                 devices={config?.inputs ?? []}

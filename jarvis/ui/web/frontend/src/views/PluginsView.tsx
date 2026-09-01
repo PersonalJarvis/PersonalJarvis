@@ -1013,13 +1013,13 @@ export function PluginsView() {
         <div className="ml-auto flex items-center gap-2">
           {filtersActive && (
             <>
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-micro text-muted-foreground">
                 {fill(translate("plugins_view.matches"), { n: visible.length })}
               </span>
               <button
                 type="button"
                 onClick={resetFilters}
-                className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                className="text-micro text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
               >
                 {translate("plugins_view.clear_filters")}
               </button>
@@ -1030,7 +1030,7 @@ export function PluginsView() {
               value={filter}
               onValueChange={(v) => setFilter((v || "all") as FilterId)}
               ariaLabel={translate("plugins_view.col_category")}
-              className="h-7 w-auto rounded-md px-2 py-0 text-[11px]"
+              className="h-7 w-auto rounded-md px-2 py-0 text-micro"
               options={[
                 { value: "all", label: translate("plugins_view.all_categories") },
                 ...categoryOrder.map((c) => ({ value: c, label: c })),
@@ -1049,7 +1049,7 @@ export function PluginsView() {
           }}
         />
         {error && (
-          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+          <div className="rounded-lg bg-secondary p-3 text-sm text-destructive">
             {(error as Error).message}
           </div>
         )}
@@ -1162,7 +1162,7 @@ function PluginTable({
             <button
               type="button"
               onClick={onReset}
-              className="mt-3 text-xs text-primary hover:underline"
+              className="mt-3 text-xs text-foreground-strong hover:underline"
             >
               {translate("plugins_view.show_all")}
             </button>
@@ -1192,11 +1192,11 @@ function PluginTableRow({
           <BrandTile plugin={plugin} size="sm" />
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="truncate text-[15px] font-medium">{plugin.name}</span>
+              <span className="truncate text-title font-medium">{plugin.name}</span>
               {plugin.fromMarketplace && <MarketplaceBadge publisher={plugin.publisher} />}
               {plugin.selfUploaded && (
                 <span
-                  className="rounded-full border border-foreground/40 bg-foreground/10 px-1.5 text-[9px] font-medium uppercase tracking-wider text-foreground"
+                  className="rounded-full bg-secondary px-1.5 text-micro font-medium text-foreground"
                   title={translate("plugin_upload.unreviewed")}
                 >
                   {translate("plugin_upload.self_badge")}
@@ -1285,7 +1285,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
             {plugin.fromMarketplace && <MarketplaceBadge publisher={plugin.publisher} />}
             {plugin.selfUploaded && (
               <span
-                className="rounded-full border border-foreground/40 bg-foreground/10 px-1.5 text-[9px] font-medium uppercase tracking-wider text-foreground"
+                className="rounded-full bg-secondary px-1.5 text-micro font-medium text-foreground"
                 title={translate("plugin_upload.unreviewed")}
               >
                 {translate("plugin_upload.self_badge")}
@@ -1305,7 +1305,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
         actions={
           <>
             {connected ? (
-              <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary/15 px-3 text-xs font-medium text-primary">
+              <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-secondary px-3 text-xs font-medium text-foreground-strong">
                 <Check className="h-3.5 w-3.5" />
                 {translate("plugins_view.status_connected")}
               </span>
@@ -1318,8 +1318,8 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
                 className={cn(
                   "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                   needsReconnect
-                    ? "border border-foreground/50 bg-foreground/10 text-foreground hover:bg-foreground/20"
-                    : "bg-foreground/70 text-primary-foreground hover:bg-primary/90",
+                    ? "bg-secondary text-foreground hover:bg-popover"
+                    : "bg-primary text-primary-foreground hover:bg-primary/90",
                 )}
               >
                 {busy ? (
@@ -1348,7 +1348,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
       />
 
       {plugin.status === "needs_reauth" ? (
-        <div className="mt-4 rounded-md border border-foreground/40 bg-foreground/10 px-3 py-2.5 text-xs">
+        <div className="mt-4 rounded-md bg-secondary px-3 py-2.5 text-xs">
           <ReauthExplanation plugin={plugin} />
         </div>
       ) : null}
@@ -1435,10 +1435,10 @@ function AttentionBanner({
     : `${plugins.length} connections need reconnecting`;
 
   return (
-    <div className="mb-4 flex items-center gap-3 rounded-lg border border-foreground/30 bg-foreground/[0.07] px-3 py-2">
+    <div className="mb-4 flex items-center gap-3 rounded-lg bg-secondary px-3 py-2">
       <AlertTriangle className="h-4 w-4 shrink-0 text-foreground" />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[13px] font-medium text-foreground">{headline}</p>
+        <p className="truncate text-meta font-medium text-foreground">{headline}</p>
         <p className="truncate text-xs text-muted-foreground">
           {one
             ? // The banner is the first thing the user reads, so it states the
@@ -1456,7 +1456,7 @@ function AttentionBanner({
       <button
         type="button"
         onClick={onJump}
-        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-foreground/40 bg-foreground/10 px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-foreground/20"
+        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-secondary px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-popover"
       >
         {one ? "Jump to it" : "Jump to first"}
         <ArrowRight className="h-3.5 w-3.5" />
@@ -1495,7 +1495,7 @@ export function BrandTile({ plugin, size = "md" }: { plugin: Plugin; size?: "sm"
         // own logo is near-black ship a light variant for exactly this case —
         // see LOGOS.md; without one, a dark mark would vanish here.
         fullColour && !showMonogram
-          ? "border-sheen/10 bg-sheen/[0.07]"
+          ? "bg-secondary"
           : "border-border/60",
       )}
       style={fullColour && !showMonogram ? undefined : { backgroundColor: tile }}
@@ -1536,7 +1536,7 @@ export function LongevityBadge({ plugin }: { plugin: Plugin }) {
     <span
       title={plugin.longevityNote ?? LONGEVITY_LABEL[plugin.longevity]}
       className={cn(
-        "text-[9px] font-medium uppercase tracking-wider",
+        "text-micro font-medium ",
         limited ? "text-foreground/80" : "text-muted-foreground/45",
       )}
     >
@@ -1577,7 +1577,7 @@ export function ReauthExplanation({ plugin, inline }: { plugin: Plugin; inline?:
   return (
     <>
       <p
-        className="truncate text-xs text-foreground/90"
+        className="truncate text-xs text-foreground"
         title={
           retrying
             ? `${headline}. Jarvis retries this once a day; reconnect to fix it now.`
@@ -1586,7 +1586,7 @@ export function ReauthExplanation({ plugin, inline }: { plugin: Plugin; inline?:
       >
         {headline}
       </p>
-      {fix && <p className="truncate text-[11px] text-muted-foreground" title={fix}>{fix}</p>}
+      {fix && <p className="truncate text-micro text-muted-foreground" title={fix}>{fix}</p>}
     </>
   );
 }
@@ -1644,7 +1644,7 @@ export function ConnectIconButton({
           e.stopPropagation();
           onDisconnect();
         }}
-        className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-primary/15 text-primary transition-colors hover:bg-destructive/20 hover:text-destructive"
+        className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-secondary text-foreground-strong transition-colors hover:bg-popover hover:text-destructive"
         aria-label="Disconnect plugin"
         title="Disconnect"
       >
@@ -1672,7 +1672,7 @@ export function ConnectIconButton({
         disabled={busy}
         aria-busy={busy}
         className={cn(
-          "grid h-7 w-7 shrink-0 place-items-center rounded-full border border-foreground/50 bg-foreground/10 text-foreground transition-all hover:bg-foreground/20 group-hover:scale-105",
+          "grid h-7 w-7 shrink-0 place-items-center rounded-full bg-secondary text-foreground transition-all hover:bg-popover group-hover:scale-105",
           busy && "cursor-not-allowed opacity-60 group-hover:scale-100",
         )}
         aria-label="Reconnect plugin"
@@ -1694,8 +1694,8 @@ export function ConnectIconButton({
       disabled={busy}
       aria-busy={busy}
       className={cn(
-        "grid h-7 w-7 shrink-0 place-items-center rounded-full border border-border bg-background/60 text-muted-foreground transition-all hover:border-primary/50 hover:bg-primary/10 hover:text-primary group-hover:scale-105",
-        busy && "cursor-not-allowed opacity-60 hover:bg-background/60 hover:text-muted-foreground group-hover:scale-100",
+        "grid h-7 w-7 shrink-0 place-items-center rounded-full border border-border bg-background text-muted-foreground transition-all hover:border-border-strong hover:bg-secondary hover:text-foreground-strong group-hover:scale-105",
+        busy && "cursor-not-allowed opacity-60 hover:bg-secondary hover:text-muted-foreground group-hover:scale-100",
       )}
       aria-label="Connect plugin"
     >
@@ -1736,20 +1736,20 @@ function CopyableUrl({ url, hint }: { url: string; hint?: string }) {
           value={url}
           onFocus={(e) => e.currentTarget.select()}
           aria-label="Authorization link"
-          className="min-w-0 flex-1 rounded-md border border-border bg-background/60 px-2.5 py-1.5 font-mono text-[11px] text-muted-foreground focus:border-primary/40 focus:outline-none"
+          className="min-w-0 flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-micro text-muted-foreground focus:border-border-strong focus:outline-none"
         />
         <button
           type="button"
           onClick={copy}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-[11px] font-medium text-foreground transition-colors hover:border-primary/50 hover:text-primary"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-micro font-medium text-foreground transition-colors hover:border-border-strong hover:text-foreground-strong"
           title="Copy link"
         >
-          {copied ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
+          {copied ? <Check className="h-3 w-3 text-muted-foreground" /> : <Copy className="h-3 w-3" />}
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
       {hint && (
-        <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground/80">{hint}</p>
+        <p className="mt-1.5 text-micro text-muted-foreground">{hint}</p>
       )}
     </div>
   );
@@ -1836,13 +1836,13 @@ function OAuthRedirectDialog({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="relative w-full max-w-md overflow-hidden rounded-lg bg-popover shadow-float">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <h2 className="font-display text-base font-semibold tracking-tight">
               Connecting {pluginName}
             </h2>
-            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            <p className="text-micro text-muted-foreground">
               Browser login
             </p>
           </div>
@@ -1859,7 +1859,7 @@ function OAuthRedirectDialog({
         <div className="space-y-5 px-5 py-6">
           {state === "pending" && (
             <div className="flex flex-col items-center gap-4 py-4 text-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <Loader2 className="h-8 w-8 animate-spin text-foreground-strong" />
               <div>
                 <p className="text-sm font-medium text-foreground">
                   Authorize {PRODUCT_NAME} in your browser
@@ -1877,7 +1877,7 @@ function OAuthRedirectDialog({
                   e.preventDefault();
                   void openExternalUrl(openUrl);
                 }}
-                className="text-[11px] uppercase tracking-wider text-muted-foreground/80 underline-offset-4 hover:text-primary hover:underline"
+                className="text-micro text-muted-foreground underline-offset-4 hover:text-foreground-strong hover:underline"
               >
                 Tab didn't open? Click here
               </a>
@@ -1890,7 +1890,7 @@ function OAuthRedirectDialog({
 
           {state === "connected" && (
             <div className="flex flex-col items-center gap-3 py-6 text-center">
-              <div className="grid h-12 w-12 place-items-center rounded-full bg-primary/15 text-primary">
+              <div className="grid h-12 w-12 place-items-center rounded-full bg-secondary text-foreground-strong">
                 <Check className="h-6 w-6" />
               </div>
               <p className="font-display text-base font-semibold tracking-tight text-foreground">
@@ -1900,7 +1900,7 @@ function OAuthRedirectDialog({
           )}
 
           {state === "error" && errorMessage && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div className="rounded-md bg-secondary px-3 py-2 text-xs text-destructive">
               {errorMessage}
             </div>
           )}
@@ -2011,13 +2011,13 @@ function DeviceCodeDialog({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="relative w-full max-w-md overflow-hidden rounded-lg bg-popover shadow-float">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <h2 className="font-display text-base font-semibold tracking-tight">
               Connect {pluginName}
             </h2>
-            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            <p className="text-micro text-muted-foreground">
               Device flow
             </p>
           </div>
@@ -2035,26 +2035,26 @@ function DeviceCodeDialog({
           {state === "pending" && (
             <>
               <div>
-                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                <p className="text-micro text-muted-foreground">
                   Step 1 — copy this code
                 </p>
                 <button
                   type="button"
                   onClick={copyCode}
-                  className="group mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-4 py-3 transition-colors hover:border-primary/50 hover:bg-primary/5"
+                  className="group mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-background px-4 py-3 transition-colors hover:border-border-strong hover:bg-secondary"
                   title="Copy"
                 >
                   <span className="font-mono text-2xl font-semibold tracking-[0.3em] tabular-nums text-foreground">
                     {userCode}
                   </span>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground group-hover:text-primary">
+                  <span className="text-micro text-muted-foreground group-hover:text-foreground-strong">
                     {copied ? "Copied!" : "Copy"}
                   </span>
                 </button>
               </div>
 
               <div>
-                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                <p className="text-micro text-muted-foreground">
                   Step 2 — paste it on {pluginName}
                 </p>
                 <a
@@ -2065,7 +2065,7 @@ function DeviceCodeDialog({
                     e.preventDefault();
                     void openExternalUrl(verificationUriComplete ?? verificationUri);
                   }}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-foreground/70 px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
                 >
                   Open {pluginName}
                   <ExternalLink className="h-3 w-3" />
@@ -2078,8 +2078,8 @@ function DeviceCodeDialog({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin text-primary" />
+              <div className="flex items-center gap-2 text-micro text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
                 Waiting for authorization…
                 {secondsLeft > 0 && (
                   <span className="ml-auto font-mono tabular-nums">
@@ -2093,7 +2093,7 @@ function DeviceCodeDialog({
 
           {state === "connected" && (
             <div className="flex flex-col items-center gap-3 py-6 text-center">
-              <div className="grid h-12 w-12 place-items-center rounded-full bg-primary/15 text-primary">
+              <div className="grid h-12 w-12 place-items-center rounded-full bg-secondary text-foreground-strong">
                 <Check className="h-6 w-6" />
               </div>
               <p className="font-display text-base font-semibold tracking-tight text-foreground">
@@ -2103,7 +2103,7 @@ function DeviceCodeDialog({
           )}
 
           {state === "error" && errorMessage && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div className="rounded-md bg-secondary px-3 py-2 text-xs text-destructive">
               {errorMessage}
             </div>
           )}
@@ -2203,9 +2203,9 @@ export function PkceConnectDialog({
         if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="relative w-full max-w-md overflow-hidden rounded-lg bg-popover shadow-float">
         <header className="flex items-center gap-3 border-b border-border px-5 py-4">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-white">
             <img
               src={resolveLogoUrl(plugin)}
               alt=""
@@ -2219,7 +2219,7 @@ export function PkceConnectDialog({
             >
               Connect {plugin.name}
             </h2>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-micro text-muted-foreground">
               You'll sign in with your {fam?.label ?? "provider"} account in the
               browser.
             </p>
@@ -2228,11 +2228,11 @@ export function PkceConnectDialog({
 
         <div className="space-y-3 px-5 py-4">
           {isGoogle && (
-            <div className="rounded-md border border-foreground/40 bg-foreground/10 px-3 py-2.5 text-[11px] leading-relaxed">
+            <div className="rounded-md bg-secondary px-3 py-2.5 text-micro ">
               <p className="font-medium text-foreground">
                 Keep it connected permanently
               </p>
-              <p className="mt-1 text-foreground/90">
+              <p className="mt-1 text-foreground">
                 Google drops the connection every 7 days while your OAuth app is
                 in "Testing". Publish your app to <strong>In production</strong>{" "}
                 (it can stay unverified for personal use) so it never expires.
@@ -2251,7 +2251,7 @@ export function PkceConnectDialog({
           {fam && (
             <div>
               {clientRequired && (
-                <p className="mb-2 rounded-md border border-foreground/40 bg-foreground/10 px-3 py-2 text-[11px] leading-relaxed text-foreground">
+                <p className="mb-2 rounded-md bg-secondary px-3 py-2 text-micro text-foreground">
                   This installation has no {fam.label} OAuth client yet. Add
                   your own Client ID below before browser sign-in can start.
                 </p>
@@ -2259,7 +2259,7 @@ export function PkceConnectDialog({
               <button
                 type="button"
                 onClick={() => setShowClient((v) => !v)}
-                className="text-[11px] font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                className="text-micro font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
                 {clientRequired
                   ? "OAuth client setup required"
@@ -2267,7 +2267,7 @@ export function PkceConnectDialog({
               </button>
               {showClient && (
                 <div className="mt-2 space-y-2">
-                  <p className="text-[10px] leading-relaxed text-muted-foreground">
+                  <p className="text-micro text-muted-foreground">
                     {clientRequired ? "Required. " : "Optional. "}Paste a client
                     from your own {fam.label}{" "}
                     {OAUTH_CLIENT_CONSOLE[fam.family] && (
@@ -2285,18 +2285,18 @@ export function PkceConnectDialog({
                       "One client covers Gmail, Drive, Calendar and YouTube Music."}
                   </p>
                   {redirectUri && (
-                    <div className="rounded-md border border-border bg-background/40 px-2.5 py-2">
-                      <p className="text-[10px] leading-relaxed text-muted-foreground">
+                    <div className="rounded-md border border-border bg-background px-2.5 py-2">
+                      <p className="text-micro text-muted-foreground">
                         While creating the app, register this as its{" "}
                         <span className="font-medium text-foreground">
                           redirect URI
                         </span>
                         , character for character:
                       </p>
-                      <code className="mt-1 block select-all break-all rounded bg-muted/60 px-1.5 py-1 text-[11px] text-foreground">
+                      <code className="mt-1 block select-all break-all rounded bg-muted px-1.5 py-1 text-micro text-foreground">
                         {redirectUri}
                       </code>
-                      <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+                      <p className="mt-1 text-micro text-muted-foreground">
                         It must be the numeric address, not{" "}
                         <code className="text-[10px]">localhost</code>, and
                         carry no trailing slash.
@@ -2306,7 +2306,7 @@ export function PkceConnectDialog({
                   <div>
                     <label
                       htmlFor="pkce-client-id"
-                      className="block text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+                      className="block text-micro font-medium text-muted-foreground"
                     >
                       Client ID
                     </label>
@@ -2314,7 +2314,7 @@ export function PkceConnectDialog({
                       id="pkce-client-id"
                       value={clientId}
                       onChange={(e) => setClientId(e.target.value)}
-                      className="mt-1 h-8 w-full rounded-md border border-border bg-background/60 px-2 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary/40 focus:outline-none"
+                      className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground placeholder:text-faint-foreground focus:border-border-strong focus:outline-none"
                       placeholder={
                         OAUTH_CLIENT_ID_PLACEHOLDER[fam.family] ??
                         `Client ID from ${fam.label}`
@@ -2324,7 +2324,7 @@ export function PkceConnectDialog({
                   <div>
                     <label
                       htmlFor="pkce-client-secret"
-                      className="block text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+                      className="block text-micro font-medium text-muted-foreground"
                     >
                       Client Secret
                     </label>
@@ -2333,7 +2333,7 @@ export function PkceConnectDialog({
                       type="password"
                       value={clientSecret}
                       onChange={(e) => setClientSecret(e.target.value)}
-                      className="mt-1 h-8 w-full rounded-md border border-border bg-background/60 px-2 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary/40 focus:outline-none"
+                      className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground placeholder:text-faint-foreground focus:border-border-strong focus:outline-none"
                       placeholder={
                         OAUTH_NO_SECRET_NEEDED[fam.family] ??
                         "optional for some providers"
@@ -2346,7 +2346,7 @@ export function PkceConnectDialog({
           )}
 
           {err && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div className="rounded-md bg-secondary px-3 py-2 text-xs text-destructive">
               {err}
             </div>
           )}
@@ -2365,7 +2365,7 @@ export function PkceConnectDialog({
             type="button"
             onClick={handleContinue}
             disabled={busy || (clientRequired && !clientId.trim())}
-            className="inline-flex items-center gap-1.5 rounded-md bg-foreground/70 px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
           >
             {busy && <Loader2 className="h-3 w-3 animate-spin" />}
             Continue
@@ -2414,10 +2414,10 @@ function DisconnectConfirmDialog({
         if (e.target === e.currentTarget && !isPending) onCancel();
       }}
     >
-      <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="relative w-full max-w-sm overflow-hidden rounded-lg bg-popover shadow-float">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-white">
               <img
                 src={resolveLogoUrl(plugin)}
                 alt=""
@@ -2431,7 +2431,7 @@ function DisconnectConfirmDialog({
               >
                 Remove {plugin.name}?
               </h2>
-              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              <p className="text-micro text-muted-foreground">
                 Disconnect plugin
               </p>
             </div>
@@ -2454,7 +2454,7 @@ function DisconnectConfirmDialog({
             deletes its stored credentials. {assistantName} loses access until you reconnect it.
           </p>
           {errorMessage && (
-            <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div className="mt-3 rounded-md bg-secondary px-3 py-2 text-xs text-destructive">
               {errorMessage}
             </div>
           )}
@@ -2473,7 +2473,7 @@ function DisconnectConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={isPending}
-            className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3.5 py-1.5 text-xs font-semibold text-destructive-foreground transition-all hover:bg-destructive/90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3.5 py-1.5 text-xs font-semibold text-destructive-foreground transition-all hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isPending ? (
               <>
@@ -2557,10 +2557,10 @@ export function PatConnectDialog({
         if (e.target === e.currentTarget && !isPending) onClose();
       }}
     >
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="relative w-full max-w-md overflow-hidden rounded-lg bg-popover shadow-float">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-white">
               <img
                 src={resolveLogoUrl(plugin)}
                 alt=""
@@ -2574,7 +2574,7 @@ export function PatConnectDialog({
               >
                 Connect {plugin.name}
               </h2>
-              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              <p className="text-micro text-muted-foreground">
                 Access token · {AUTH_LABELS[plugin.authMode]}
               </p>
             </div>
@@ -2604,7 +2604,7 @@ export function PatConnectDialog({
                 e.preventDefault();
                 void openExternalUrl(auth.token_creation_url);
               }}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-foreground/70 px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
             >
               Open {plugin.name} tokens
               <ExternalLink className="h-3 w-3" />
@@ -2630,7 +2630,7 @@ export function PatConnectDialog({
                   if (e.key === "Enter" && canSubmit) submit();
                 }}
                 placeholder={instanceField.placeholder}
-                className="mt-2 w-full rounded-md border border-border bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
+                className="mt-2 w-full rounded-md bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-faint-foreground focus:border-border-strong focus:outline-none focus:ring-2 focus:ring-border-strong/30"
                 disabled={isPending}
               />
             </Step>
@@ -2647,12 +2647,12 @@ export function PatConnectDialog({
                 if (e.key === "Enter" && canSubmit) submit();
               }}
               placeholder={expectedPrefix ? `${expectedPrefix}_…` : "Token"}
-              className="mt-2 w-full rounded-md border border-border bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
+              className="mt-2 w-full rounded-md bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-faint-foreground focus:border-border-strong focus:outline-none focus:ring-2 focus:ring-border-strong/30"
               autoFocus
               disabled={isPending}
             />
             {token && expectedPrefix && !prefixOk && (
-              <p className="mt-1.5 text-[11px] text-foreground">
+              <p className="mt-1.5 text-micro text-foreground">
                 Should start with{" "}
                 <span className="font-mono">{expectedPrefix}_</span>
               </p>
@@ -2673,15 +2673,15 @@ export function PatConnectDialog({
                   if (e.key === "Enter" && canSubmit) submit();
                 }}
                 placeholder="123456789"
-                className="mt-2 w-full rounded-md border border-border bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
+                className="mt-2 w-full rounded-md bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-faint-foreground focus:border-border-strong focus:outline-none focus:ring-2 focus:ring-border-strong/30"
                 disabled={isPending}
               />
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
+              <p className="mt-1.5 text-micro text-muted-foreground">
                 Only this user id can command the bot. Leave blank to let the
                 first person who messages it claim access instead.
               </p>
               {userIdTrimmed !== "" && !userIdOk && (
-                <p className="mt-1 text-[11px] text-foreground">
+                <p className="mt-1 text-micro text-foreground">
                   User id must be digits only.
                 </p>
               )}
@@ -2689,7 +2689,7 @@ export function PatConnectDialog({
           )}
 
           {errorMessage && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div className="rounded-md bg-secondary px-3 py-2 text-xs text-destructive">
               {errorMessage}
             </div>
           )}
@@ -2708,7 +2708,7 @@ export function PatConnectDialog({
             type="button"
             onClick={submit}
             disabled={!canSubmit}
-            className="inline-flex items-center gap-1.5 rounded-md bg-foreground/70 px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isPending ? (
               <>
@@ -2741,7 +2741,7 @@ function Step({
 }) {
   return (
     <div className="flex gap-3">
-      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-border text-[11px] font-semibold text-muted-foreground">
+      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-border text-micro font-semibold text-muted-foreground">
         {num}
       </span>
       <div className="min-w-0 flex-1">

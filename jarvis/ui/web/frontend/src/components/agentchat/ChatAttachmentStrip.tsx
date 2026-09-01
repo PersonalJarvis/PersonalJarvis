@@ -47,7 +47,7 @@ export function ChatAttachmentStrip({
                 : item.note || item.name
             }
             className={
-              "flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] " +
+              "flex items-center gap-1.5 rounded-md border px-2 py-1 text-micro " +
               (read
                 ? "border-primary/40 bg-primary/10 text-foreground"
                 : "border-border text-muted-foreground")
@@ -59,7 +59,7 @@ export function ChatAttachmentStrip({
               <FileText className="h-3 w-3 shrink-0" aria-hidden />
             )}
             <span className="max-w-[12rem] truncate font-mono">{item.name}</span>
-            <span className="shrink-0 text-[10px] text-muted-foreground">
+            <span className="shrink-0 text-micro text-muted-foreground">
               {read
                 ? item.described_by === "vision"
                   ? t("agent_chat.attach_described")
@@ -81,7 +81,7 @@ export function ChatAttachmentStrip({
       {analyzing > 0 && (
         <span
           data-testid="chat-attachment-working"
-          className="flex items-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1 text-[11px] text-muted-foreground"
+          className="flex items-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1 text-micro text-muted-foreground"
         >
           <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
           {t("agent_chat.attach_working")}

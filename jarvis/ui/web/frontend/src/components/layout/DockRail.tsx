@@ -287,16 +287,21 @@ export function DockRail({ className }: { className?: string }) {
               exit={{ opacity: 0, x: -4 }}
               transition={reduced ? { duration: 0 } : { duration: 0.12, ease: "easeOut" }}
               style={{ top: labelViewportTop, left: labelLeft, y: "-50%" }}
-              className="pointer-events-none fixed z-[70] flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-background/95 px-2 py-1 text-xs text-foreground backdrop-blur"
+              // A surface that has genuinely left the plane: the float token
+              // and the float shadow, which carries its own rim — so no
+              // border, and no `bg-background/95` standing in for a fill.
+              className="pointer-events-none fixed z-[70] flex items-center gap-2 whitespace-nowrap rounded-lg bg-popover px-2.5 py-1.5 text-meta text-foreground shadow-float"
             >
               {resolveNavLabel(t, hoveredItem)}
               {hoveredItem.beta && (
-                <span className="rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary">
+                <span className="rounded-full bg-secondary px-1.5 text-micro text-muted-foreground">
                   {t("nav.agentic_ide_beta")}
                 </span>
               )}
               {hoveredCount > 0 && (
-                <span className="font-mono text-[10px] text-primary">{hoveredCount}</span>
+                <span className="text-micro tabular-nums text-muted-foreground">
+                  {hoveredCount}
+                </span>
               )}
               {hoveredHint && (
                 <span className="max-w-[28ch] truncate text-muted-foreground">— {hoveredHint}</span>
@@ -365,15 +370,18 @@ function DockIcon({
         aria-label={label}
         aria-current={active ? "page" : undefined}
         className={cn(
-          "absolute left-1/2 flex -translate-x-1/2 items-center justify-center rounded-xl border transition-colors duration-150",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
-          // The active control is the app's glass surface with the accent on
-          // the glyph — the same language as the expanded sidebar's row.
+          "absolute left-1/2 flex -translate-x-1/2 items-center justify-center rounded-md transition-colors duration-150",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+          // The same ladder as the expanded sidebar's row, so a section reads
+          // identically whichever face the column is wearing: hover lifts to
+          // the object step, selection to the one above it with the strong
+          // ink. No border on any of the three — each already has its fill,
+          // and the resting one is meant to have none.
           active
-            ? "jarvis-nav-active border-transparent"
+            ? "jarvis-nav-active bg-secondary text-foreground-strong"
             : hovered
-              ? "border-transparent bg-secondary text-foreground"
-              : "border-transparent text-foreground/55",
+              ? "bg-card text-foreground"
+              : "text-muted-foreground",
         )}
         style={{ top: PAD_TOP + restCenter - BASE / 2, width: BASE, height: BASE }}
       >
@@ -387,24 +395,26 @@ function DockIcon({
 
         {/* Pips ride on the icon's corner. The signal is the point, not the
             row — and there is no room for anything beside a 30 px box. */}
+        {/* The three status hues, and the rail's own ground as the ring that
+            separates a pip from the glyph it overlaps. */}
         {alert ? (
           <span
             data-testid={`nav-alert-${item.id}`}
             role="status"
             aria-label={alertTitle}
-            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-background"
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-sidebar"
           />
         ) : warn ? (
           <span
             data-testid={`nav-warn-${item.id}`}
             role="status"
             aria-label={warnTitle}
-            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-foreground ring-2 ring-background"
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-warning ring-2 ring-sidebar"
           />
         ) : live ? (
           <span
             aria-hidden
-            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-foreground/70 ring-2 ring-background"
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-success ring-2 ring-sidebar"
           />
         ) : null}
       </button>

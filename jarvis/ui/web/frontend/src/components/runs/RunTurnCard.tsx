@@ -7,6 +7,10 @@
  * recorded rationale, the latency waterfall, tool I/O, the raw event stream and
  * errors. Tabs rather than five stacked sections, because the useful move is
  * "show me the events for THIS turn", not "scroll past four panels".
+ *
+ * Surfaces: the card is the object, everything nested inside it steps up to
+ * the lift token once and stops there — the forensic panel deliberately keeps
+ * NO fill so the rows inside it still have a hover to travel to.
  */
 import { useState } from "react";
 import type { ReactNode } from "react";
@@ -28,11 +32,14 @@ import { ErrorPanel } from "./ErrorPanel";
 import { EventStream } from "./EventStream";
 import type { RunTurn, TranscriptLine } from "./types";
 
-const ROLE_TONE: Record<string, string> = {
-  jarvis: "border-primary/20 bg-primary/5",
-  system: "border-border bg-muted/30",
-  tool: "border-sky-400/20 bg-sky-400/5",
-  error: "border-destructive/30 bg-destructive/10",
+/**
+ * A trace line's role is told by its LABEL, not by a tinted box — four boxes
+ * in four hues around four one-line strings was the loudest thing on the card
+ * and said less than the word already printed inside each badge. Only `error`
+ * keeps ink, because only `error` is a status.
+ */
+const ROLE_INK: Record<string, string> = {
+  error: "text-destructive",
 };
 
 const ROLE_LABEL: Record<string, string> = {
@@ -67,7 +74,11 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
   // quiet empty tab, never crash the inspector (BUG-008 degrade contract).
   const events = turn.events ?? [];
   const tabs: Array<{ id: TabId; label: string; count: number }> = [
-    { id: "decisions", label: t("run_inspector.panel.decision"), count: turn.decision_path.length },
+    {
+      id: "decisions",
+      label: t("run_inspector.panel.decision"),
+      count: turn.decision_path.length,
+    },
     { id: "latency", label: t("run_inspector.panel.latency"), count: turn.latency.length },
     { id: "tools", label: t("run_inspector.panel.tools"), count: turn.tools.length },
     { id: "events", label: t("run_inspector.panel.events"), count: events.length },
@@ -76,20 +87,20 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
   const hasForensics = tabs.some((x) => x.count > 0);
 
   return (
-    <Card className="bg-background/40" data-testid="run-turn-card">
-      <CardContent className="space-y-3 p-4">
+    <Card data-testid="run-turn-card">
+      <CardContent className="space-y-stack p-5">
         {/* Header: turn # + outcome + brain meta */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-sm font-semibold">Turn {turn.idx + 1}</span>
+            <span className="font-mono text-title font-semibold text-foreground-strong">
+              Turn {turn.idx + 1}
+            </span>
             <OutcomeBadge outcome={turn.outcome} />
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-            {turn.tier && (
-              <Badge variant="outline" className="text-[10px]">{turn.tier}</Badge>
-            )}
+          <div className="flex flex-wrap items-center gap-1.5 text-meta text-muted-foreground">
+            {turn.tier && <Badge variant="outline">{turn.tier}</Badge>}
             {(turn.model || turn.provider) && (
-              <Badge variant="outline" className="font-mono text-[10px]">
+              <Badge variant="outline" className="font-mono">
                 {turn.model || turn.provider}
               </Badge>
             )}
@@ -98,48 +109,46 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
                 would misreport it as free. */}
             {turn.usage_recorded ? (
               <>
-                <span>{fmtInt(turn.tokens_in, locale)}+{fmtInt(turn.tokens_out, locale)} tok</span>
-                {turn.cost_usd > 0 && <span>· ${turn.cost_usd.toFixed(4)}</span>}
+                <span className="tabular-nums">
+                  {fmtInt(turn.tokens_in, locale)}+{fmtInt(turn.tokens_out, locale)} tok
+                </span>
+                {turn.cost_usd > 0 && (
+                  <span className="tabular-nums">· ${turn.cost_usd.toFixed(4)}</span>
+                )}
               </>
             ) : (
-              <span className="italic text-muted-foreground/70">
-                {t("run_inspector.no_usage")}
-              </span>
+              <span className="italic">{t("run_inspector.no_usage")}</span>
             )}
           </div>
         </div>
 
         {/* User */}
         {turn.user_text && (
-          <Block icon={<Mic2 className="h-3 w-3" />} label="User" accent="text-muted-foreground"
-                 box="border-muted-foreground/20 bg-muted-foreground/5">
+          <Block icon={<Mic2 className="h-3.5 w-3.5" />} label="User">
             {turn.user_text}
           </Block>
         )}
 
         {/* Triggered capabilities — the per-turn headline */}
         {triggered.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-foreground/20 bg-foreground/5 px-2 py-1.5 text-[11px]">
-            <Zap className="h-3.5 w-3.5 shrink-0 text-foreground" />
-            <span className="font-medium uppercase tracking-wider text-foreground/90">
-              {t("run_inspector.triggered")}
-            </span>
+          <div className="flex flex-wrap items-center gap-2 text-meta">
+            <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="text-muted-foreground">{t("run_inspector.triggered")}</span>
             <FeatureBadges tags={triggered} />
           </div>
         )}
 
         {/* Assistant reply */}
         {turn.jarvis_text && (
-          <Block icon={<Volume2 className="h-3 w-3" />} label={assistantName} accent="text-primary"
-                 box="border-primary/20 bg-primary/5">
+          <Block icon={<Volume2 className="h-3.5 w-3.5" />} label={assistantName}>
             {turn.jarvis_text}
           </Block>
         )}
 
         {/* What happened — intermediate phrases, tool outcomes, system outputs */}
         {trace.length > 0 && (
-          <div className="space-y-1.5 border-t border-border/50 pt-2">
-            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          <div className="space-y-1 border-t border-border pt-stack">
+            <div className="text-meta text-muted-foreground">
               {t("run_inspector.what_happened")}
             </div>
             {trace.map((l, i) => (
@@ -155,33 +164,33 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
 
         {/* Think / speak */}
         {(turn.think_ms > 0 || turn.speak_ms > 0) && (
-          <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <Brain className="h-3 w-3 text-foreground" /> {fmtMs(turn.think_ms)} thinking
+          <div className="flex flex-wrap items-center gap-3 text-meta text-muted-foreground">
+            <span className="flex items-center gap-1 tabular-nums">
+              <Brain className="h-3.5 w-3.5" /> {fmtMs(turn.think_ms)} thinking
             </span>
-            <span className="flex items-center gap-1">
-              <Hourglass className="h-3 w-3 text-primary" /> {fmtMs(turn.speak_ms)} speaking
+            <span className="flex items-center gap-1 tabular-nums">
+              <Hourglass className="h-3.5 w-3.5" /> {fmtMs(turn.speak_ms)} speaking
             </span>
           </div>
         )}
 
         {/* Forensics — deep, on demand */}
         {hasForensics && (
-          <div className="border-t border-border/50 pt-2">
+          <div className="border-t border-border pt-stack">
             <button
               type="button"
               data-testid="forensics-toggle"
               onClick={() => setShowForensics((v) => !v)}
-              className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+              className="flex items-center gap-1.5 text-meta font-medium text-muted-foreground transition-colors hover:text-foreground"
             >
               <span>{showForensics ? "▾" : "▸"}</span>
               {t("run_inspector.forensics")}
-              <span className="text-[10px] text-muted-foreground/70">
+              <span className="tabular-nums">
                 · {events.length} {t("run_inspector.stream.events")}
               </span>
             </button>
             {showForensics && (
-              <div className="mt-2 space-y-2">
+              <div className="mt-stack space-y-stack">
                 <div className="flex flex-wrap gap-1" role="tablist">
                   {tabs.map((x) => (
                     <button
@@ -192,20 +201,22 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
                       data-testid={`forensic-tab-${x.id}`}
                       onClick={() => setTab(x.id)}
                       disabled={x.count === 0}
-                      className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                      className={`rounded-md px-2 py-1 text-meta font-medium transition-colors ${
                         tab === x.id
-                          ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/30"
+                          ? "bg-secondary text-foreground-strong"
                           : x.count === 0
-                            ? "text-muted-foreground/40"
-                            : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                            ? "text-faint-foreground"
+                            : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                       }`}
                     >
                       {x.label}
-                      <span className="ml-1 tabular-nums opacity-70">{x.count}</span>
+                      <span className="ml-1 tabular-nums text-muted-foreground">
+                        {x.count}
+                      </span>
                     </button>
                   ))}
                 </div>
-                <div className="rounded-md border border-border/50 bg-background/30 p-2 text-xs">
+                <div>
                   {tab === "decisions" && <DecisionPath steps={turn.decision_path} />}
                   {tab === "latency" && <LatencyWaterfall entries={turn.latency} />}
                   {tab === "tools" && <ToolTable tools={turn.tools} />}
@@ -233,54 +244,71 @@ function TurnFacts({ turn }: { turn: RunTurn }) {
   if (turn.extras.cache_hit !== null) {
     facts.push([
       t("run_inspector.facts.cache"),
-      turn.extras.cache_hit ? t("run_inspector.facts.cache_hit") : t("run_inspector.facts.cache_miss"),
+      turn.extras.cache_hit
+        ? t("run_inspector.facts.cache_hit")
+        : t("run_inspector.facts.cache_miss"),
     ]);
   }
   if (turn.extras.interrupted) {
     facts.push([t("run_inspector.facts.interrupted"), "yes"]);
   }
   if (turn.extras.context_tokens) {
-    facts.push([t("run_inspector.facts.context"), `${fmtInt(turn.extras.context_tokens, locale)} tok`]);
+    facts.push([
+      t("run_inspector.facts.context"),
+      `${fmtInt(turn.extras.context_tokens, locale)} tok`,
+    ]);
   }
   facts.push(["trace_id", turn.trace_id]);
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-micro text-muted-foreground">
       {facts.map(([k, v]) => (
         <span key={k} className="inline-flex items-center gap-1">
-          <span className="uppercase tracking-[0.1em] opacity-70">{k}</span>
-          <span className="font-mono text-foreground/70">{v}</span>
+          <span>{k}</span>
+          <span className="font-mono text-foreground">{v}</span>
         </span>
       ))}
     </div>
   );
 }
 
+/**
+ * One side of the conversation. The label names the speaker; the words sit on
+ * the card's lift surface so the reading block is an object, not an outline.
+ */
 function Block({
-  icon, label, accent, box, children,
+  icon,
+  label,
+  children,
 }: {
-  icon: ReactNode; label: string; accent: string; box: string; children: ReactNode;
+  icon: ReactNode;
+  label: string;
+  children: ReactNode;
 }) {
   return (
     <div className="space-y-1">
-      <div className={`flex items-center gap-1.5 text-[11px] uppercase tracking-wider ${accent}`}>
+      <div className="flex items-center gap-1.5 text-meta text-muted-foreground">
         {icon}
         {label}
       </div>
-      <div className={`rounded-md border p-2 text-sm leading-relaxed ${box}`}>{children}</div>
+      <div className="rounded-md bg-secondary p-stack text-reading text-foreground">
+        {children}
+      </div>
     </div>
   );
 }
 
 function TraceLine({ line }: { line: TranscriptLine }) {
-  const tone = ROLE_TONE[line.role] ?? "border-border bg-muted/20";
   const label = line.spoken_kind || ROLE_LABEL[line.role] || line.role;
   return (
-    <div className={`flex items-start gap-2 rounded-md border p-2 text-[13px] ${tone}`}>
-      <Badge variant="secondary" className="mt-0.5 shrink-0 text-[9px] uppercase tracking-wide">
+    <div className="flex items-start gap-2 rounded-md px-2 py-1.5 text-meta transition-colors hover:bg-secondary">
+      <Badge variant="secondary" className="mt-px shrink-0">
         {label}
       </Badge>
-      <span className="min-w-0 flex-1 break-words">{line.text}</span>
+      <span
+        className={`min-w-0 flex-1 break-words ${ROLE_INK[line.role] ?? "text-foreground"}`}
+      >
+        {line.text}
+      </span>
     </div>
   );
 }
-

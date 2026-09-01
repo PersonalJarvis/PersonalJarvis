@@ -160,7 +160,7 @@ export function CliLogo({
       className={cn(
         // One neutral tile for every mark, so a list of CLIs reads as one table
         // rather than a row of differently shaped app icons.
-        "inline-flex shrink-0 items-center justify-center overflow-hidden border border-border/70 bg-background/60",
+        "inline-flex shrink-0 items-center justify-center overflow-hidden border border-border bg-background",
         tile,
         className,
       )}

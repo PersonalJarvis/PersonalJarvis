@@ -285,7 +285,7 @@ function DictionaryEntryDialog({
       role="presentation"
     >
       <div
-        className="w-full max-w-md rounded-xl border border-border bg-card p-6"
+        className="w-full max-w-md rounded-lg bg-popover shadow-float p-6"
         onClick={(e) => e.stopPropagation()}
         data-testid="dictionary-dialog"
         role="dialog"

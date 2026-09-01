@@ -253,7 +253,7 @@ export function PaneRecap({
   if (!headline) {
     return (
       <span
-        className="truncate font-display text-[11px] font-medium uppercase tracking-[0.14em]"
+        className="truncate font-display text-micro font-medium "
         style={{ color: brand.inkFaint }}
         data-testid={`pane-agent-${name}`}
       >
@@ -310,7 +310,7 @@ export function PaneRecap({
         // The title is the bar's main text and dresses like it: the display
         // face at a readable size, quiet ink that sharpens under the pointer.
         className={cn(
-          "flex min-w-0 flex-1 items-center gap-1 rounded-sm text-left font-display text-[12px] font-medium leading-tight tracking-tight outline-none",
+          "flex min-w-0 flex-1 items-center gap-1 rounded-sm text-left font-display text-meta font-medium leading-tight tracking-tight outline-none",
           "text-[color:var(--pane-ink-muted)] transition-colors hover:text-[color:var(--pane-ink)]",
           "focus-visible:ring-1 focus-visible:ring-[color:var(--pane-accent)]",
         )}
@@ -346,7 +346,7 @@ export function PaneRecap({
                 : { bottom: anchor.bottom }),
             }}
             className={cn(
-              "z-[60] flex max-h-[70vh] flex-col gap-3 rounded-xl border border-border/90 bg-card p-4 text-left",
+              "z-[60] flex max-h-[70vh] flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left",
               "",
               "animate-in fade-in-0 zoom-in-95 duration-150",
               anchor.placement === "below"
@@ -359,16 +359,16 @@ export function PaneRecap({
               className={cn(
                 "absolute h-2.5 w-2.5 -translate-x-1/2 rotate-45 bg-card",
                 anchor.placement === "below"
-                  ? "-top-[6px] border-l border-t border-border/90"
-                  : "-bottom-[6px] border-b border-r border-border/90",
+                  ? "-top-[6px] border-l border-t border-border"
+                  : "-bottom-[6px] border-b border-r border-border",
               )}
               style={{ left: anchor.arrowX }}
             />
             <div className="flex items-center justify-between gap-2">
-              <span className="flex min-w-0 items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              <span className="flex min-w-0 items-center gap-2 text-micro text-muted-foreground">
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary/80" />
                 <span className="truncate">
-                  <strong className="font-semibold text-foreground/85">{name}</strong>
+                  <strong className="font-semibold text-foreground">{name}</strong>
                   <span className="mx-1.5 opacity-40">/</span>
                   {displayName}
                 </span>
@@ -404,7 +404,7 @@ export function PaneRecap({
                     place it is allowed to wrap, which is the whole reason
                     somebody opened the card. */}
                 <p
-                  className="font-display text-[14px] font-semibold leading-snug tracking-tight text-foreground"
+                  className="font-display text-body font-semibold leading-snug tracking-tight text-foreground"
                   data-testid={`pane-recap-headline-${name}`}
                 >
                   {headline}
@@ -419,7 +419,7 @@ export function PaneRecap({
                 )}
                 {WHY[reason] && (
                   <p
-                    className="border-l-2 border-primary/45 bg-primary/[0.035] px-3 py-2 text-[11px] leading-relaxed text-muted-foreground"
+                    className="border-l-2 border-primary/45 bg-primary/[0.035] px-3 py-2 text-micro text-muted-foreground"
                     data-testid={`pane-recap-why-${name}`}
                   >
                     {WHY[reason]}
@@ -431,7 +431,7 @@ export function PaneRecap({
 
             {failure && (
               <p
-                className="text-[11px] leading-relaxed text-destructive"
+                className="text-micro text-destructive"
                 data-testid={`pane-recap-error-${name}`}
               >
                 {failure}
@@ -439,8 +439,8 @@ export function PaneRecap({
             )}
 
             {!editing && (
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 border-t border-border/60 pt-2.5">
-                <span className="mr-auto flex min-w-0 items-center gap-1.5 rounded-full border border-border/60 bg-muted/35 px-2 py-1 text-[10px] text-muted-foreground">
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 border-t border-border pt-2.5">
+                <span className="mr-auto flex min-w-0 items-center gap-1.5 rounded-full border border-border bg-muted px-2 py-1 text-micro text-muted-foreground">
                   {attribution.icon}
                   <span className="truncate">{attribution.label}</span>
                   {generatedAt > 0 && (
@@ -514,7 +514,7 @@ function CardAction({
         e.stopPropagation();
         onClick();
       }}
-      className="flex h-7 items-center gap-1.5 rounded-md border border-transparent px-2 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:bg-muted hover:text-foreground disabled:opacity-40"
+      className="flex h-7 items-center gap-1.5 rounded-md border border-transparent px-2 text-micro font-medium text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground disabled:opacity-40"
     >
       {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : children}
       <span>{label}</span>
@@ -571,7 +571,7 @@ function RecapEditor({
   return (
     <div className="flex flex-col gap-2">
       <label className="flex flex-col gap-1">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           Header line
         </span>
         <input
@@ -582,11 +582,11 @@ function RecapEditor({
           data-testid={`pane-recap-input-${name}`}
           onChange={(e) => setLine(e.target.value)}
           onKeyDown={onKeyDown}
-          className="w-full rounded-lg border border-border bg-muted/25 px-2.5 py-2 text-[12.5px] text-foreground outline-none transition-colors focus:border-primary/60 focus:bg-background"
+          className="w-full rounded-lg border border-border bg-muted px-2.5 py-2 text-[12.5px] text-foreground outline-none transition-colors focus:border-primary/60 focus:bg-secondary"
         />
       </label>
       <label className="flex flex-col gap-1">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           The longer version <span className="opacity-60">— optional</span>
         </span>
         <textarea
@@ -597,11 +597,11 @@ function RecapEditor({
           data-testid={`pane-recap-detail-input-${name}`}
           onChange={(e) => setBody(e.target.value)}
           onKeyDown={onKeyDown}
-          className="w-full resize-y rounded-lg border border-border bg-muted/25 px-2.5 py-2 text-[12.5px] leading-relaxed text-foreground outline-none transition-colors focus:border-primary/60 focus:bg-background"
+          className="w-full resize-y rounded-lg border border-border bg-muted px-2.5 py-2 text-[12.5px] leading-relaxed text-foreground outline-none transition-colors focus:border-primary/60 focus:bg-secondary"
         />
       </label>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           {/* An empty header line is how you clear a hand-written recap, and
               saying so beats a disabled Save nobody can explain. */}
           {line.trim()
@@ -613,7 +613,7 @@ function RecapEditor({
             type="button"
             onClick={onCancel}
             data-testid={`pane-recap-cancel-${name}`}
-            className="rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="rounded-md px-2 py-1 text-micro text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             Cancel
           </button>
@@ -622,7 +622,7 @@ function RecapEditor({
             onClick={submit}
             disabled={saving}
             data-testid={`pane-recap-save-${name}`}
-            className="flex items-center gap-1 rounded-md bg-foreground/70 px-2.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition-[filter] hover:brightness-95 disabled:opacity-50"
+            className="flex items-center gap-1 rounded-md bg-foreground/70 px-2.5 py-1.5 text-micro font-semibold text-primary-foreground transition-[filter] hover:brightness-95 disabled:opacity-50"
           >
             {saving && <Loader2 className="h-3 w-3 animate-spin" />}
             Save

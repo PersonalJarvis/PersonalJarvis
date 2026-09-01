@@ -127,16 +127,16 @@ export function WorkspaceChats() {
       // is a child of the sidebar's flex scroll body: an `overflow-hidden`
       // flex item may shrink to nothing when the column is taller than the
       // window, and this one did — a two-pixel line where the list should be.
-      className="mx-2 mt-2 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-card/40"
+      className="mx-2 mt-2 shrink-0 overflow-hidden rounded-lg border border-border bg-card"
     >
       <div className="flex items-center justify-between px-3 pb-1 pt-2">
-        <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        <span className="font-mono text-micro font-medium text-muted-foreground">
           {t("ide_chats.heading")}
         </span>
         {workspaces.length > 0 && (
           <span
             data-testid="workspace-chats-count"
-            className="font-mono text-[10px] tabular-nums text-muted-foreground/60"
+            className="font-mono text-micro tabular-nums text-muted-foreground"
           >
             {workspaces.length}
           </span>
@@ -144,7 +144,7 @@ export function WorkspaceChats() {
       </div>
       <div className="px-1 pb-2">
         {workspaces.length === 0 ? (
-          <p className="px-3 py-2 text-[11px] text-muted-foreground/70">
+          <p className="px-3 py-2 text-micro text-muted-foreground">
             {t("ide_chats.no_workspaces")}
           </p>
         ) : (
@@ -170,7 +170,7 @@ export function WorkspaceChats() {
       </div>
       {/* The panel's foot: the two ways to add a workspace, on their own
           shelf under a rule so they are not read as rows of the last band. */}
-      <div className="border-t border-border/50 px-1 py-1">
+      <div className="border-t border-border px-1 py-1">
         {/* One more project.
             First of the two closing rows and in reading ink rather than muted,
             because opening a second folder is the ordinary next thing to want
@@ -185,7 +185,7 @@ export function WorkspaceChats() {
           type="button"
           onClick={requestAddWorkspace}
           data-testid="workspace-chats-new-workspace"
-          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs font-medium text-foreground transition-colors hover:bg-background/60"
+          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs font-medium text-foreground transition-colors hover:bg-secondary"
         >
           <FolderPlus aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           {t("ide_chats.new_workspace")}
@@ -196,7 +196,7 @@ export function WorkspaceChats() {
           type="button"
           onClick={requestSession}
           data-testid="workspace-chats-new-session"
-          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <Plus aria-hidden className="h-3.5 w-3.5 shrink-0" />
           {t("ide_chats.new_session")}
@@ -282,13 +282,13 @@ function WorkspaceBand({
             workspace.active ? "bg-foreground/70" : "bg-muted-foreground/30",
           )}
         />
-        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+        <span className="text-micro font-medium text-muted-foreground">
           {fill(t("ide_chats.workspace_band"), { n: index })}
         </span>
         {workspace.active && (
           <span
             data-testid="workspace-chats-active"
-            className="rounded bg-primary/15 px-1.5 py-px text-[10px] font-medium text-primary"
+            className="rounded bg-primary/15 px-1.5 py-px text-micro font-medium text-primary"
           >
             {t("ide_chats.active")}
           </span>
@@ -304,7 +304,7 @@ function WorkspaceBand({
           className={cn(
             "flex w-full items-center gap-1.5 rounded-md py-1.5 pl-2 pr-8 text-left transition-colors",
             "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-            workspace.active ? "text-foreground" : "hover:bg-background/60",
+            workspace.active ? "text-foreground" : "hover:bg-secondary",
           )}
         >
           <Folder
@@ -330,14 +330,14 @@ function WorkspaceBand({
           title={t("ide_chats.new_chat")}
           aria-label={t("ide_chats.new_chat")}
           data-testid={`workspace-chats-new-terminal-${workspace.id}`}
-          className="absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground focus-visible:opacity-100 group-hover/folder:opacity-100"
+          className="absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-foreground focus-visible:opacity-100 group-hover/folder:opacity-100"
         >
           <Plus className="h-3 w-3" />
         </button>
       </div>
 
       {panes.length === 0 && archived.length === 0 ? (
-        <p className="pl-8 pr-2 text-[11px] text-muted-foreground/50">{t("ide_chats.no_sessions")}</p>
+        <p className="pl-8 pr-2 text-micro text-muted-foreground">{t("ide_chats.no_sessions")}</p>
       ) : (
         // The rows hang off the folder on a thin guide line drawn at the
         // centre of the folder's icon, so "this folder, these sessions"
@@ -423,7 +423,7 @@ function SessionRow({
           // one way of saying "this is where you are" for the whole column.
           active
             ? "bg-card text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
-            : "hover:bg-background/60",
+            : "hover:bg-secondary",
         )}
       >
         <AgentMark
@@ -440,7 +440,7 @@ function SessionRow({
         >
           {label}
         </span>
-        <span className="mt-0.5 shrink-0 truncate font-mono text-[10px] text-muted-foreground/70">
+        <span className="mt-0.5 shrink-0 truncate font-mono text-micro text-muted-foreground">
           {pane.name}
         </span>
         {/* The grid's own badge, not a second reading of the same facts.
@@ -507,7 +507,7 @@ function ArchivedChats({
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         data-testid={`workspace-chats-archived-toggle-${workspaceId}`}
-        className="flex w-full items-center gap-2 rounded-md py-1.5 pl-8 pr-2 text-left text-[11px] text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+        className="flex w-full items-center gap-2 rounded-md py-1.5 pl-8 pr-2 text-left text-micro text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
       >
         <Archive aria-hidden className="h-3.5 w-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate">
@@ -529,7 +529,7 @@ function ArchivedChats({
                 placeholder={t("ide_chats.archived_search")}
                 aria-label={t("ide_chats.archived_search")}
                 data-testid="workspace-chats-archived-search"
-                className="w-full rounded-md border border-border bg-background/60 py-1 pl-7 pr-2 text-[11px] text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="w-full rounded-md border border-border bg-background py-1 pl-7 pr-2 text-micro text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               />
             </div>
           )}
@@ -680,7 +680,7 @@ function ConfirmCloseTerminal({
       aria-modal="true"
       aria-label={fill(t("ide_chats.close_title"), { name: pane.name })}
       data-testid="workspace-chats-confirm-close"
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-background p-6 backdrop-blur-sm"
       onClick={(event) => {
         if (event.target === event.currentTarget && !busy) onCancel();
       }}
@@ -688,7 +688,7 @@ function ConfirmCloseTerminal({
         if (event.key === "Escape" && !busy) onCancel();
       }}
     >
-      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5">
+      <div className="w-full max-w-sm rounded-lg bg-popover shadow-float p-5">
         <h3 className="font-display text-base font-semibold">
           {fill(t("ide_chats.close_title"), { name: pane.name })}
         </h3>

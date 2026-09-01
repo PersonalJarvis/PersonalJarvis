@@ -96,7 +96,7 @@ interface PullState {
 
 function Eyebrow({ children }: { children: ReactNode }) {
   return (
-    <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="text-micro text-muted-foreground">
       {children}
     </div>
   );
@@ -104,7 +104,7 @@ function Eyebrow({ children }: { children: ReactNode }) {
 
 function CapabilityBadge({ label }: { label: string }) {
   return (
-    <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+    <span className="rounded border border-border px-1.5 py-0.5 text-micro text-muted-foreground">
       {label}
     </span>
   );
@@ -283,9 +283,9 @@ function PullLine({ pull, t }: { pull: PullState | null; t: Translate }) {
           })}
           {p?.message ? ` — ${p.message}` : ""}
         </p>
-        <div className="h-1 w-full overflow-hidden rounded-full bg-sheen/[0.08]">
+        <div className="h-1 w-full overflow-hidden rounded-full bg-secondary">
           <div
-            className="h-full bg-foreground/70 transition-[width]"
+            className="h-full bg-secondary transition-[width]"
             style={{ width: `${percent}%` }}
           />
         </div>
@@ -383,7 +383,7 @@ function RecommendedList({
       {groups.map((g) => (
         <section key={g.role} className="space-y-2">
           <Eyebrow>{t(`local_models.catalogue.group_${g.role}`)}</Eyebrow>
-          <div className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card/60">
+          <div className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card">
             {g.rows.map((m) => (
               <div
                 key={m.id}
@@ -412,7 +412,7 @@ function RecommendedList({
                       />
                     )}
                     {m.recommended_for.length > 0 && (
-                      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                      <span className="rounded-full bg-secondary px-1.5 py-0.5 text-micro font-medium text-foreground-strong">
                         {fill(t("local_models.catalogue.recommended_badge"), {
                           roles: m.recommended_for
                             .map((r) => t(`local_models.catalogue.group_${r}`))
@@ -535,7 +535,7 @@ function TagLedger({
 
   return (
     <div
-      className="rounded-lg border border-border/70 bg-background/40"
+      className="rounded-lg border border-border bg-background"
       data-testid={`catalogue-tags-${model}`}
     >
       <Table label={fill(t("local_models.catalogue.tags_label"), { model })}>
@@ -668,7 +668,7 @@ function LibraryList({
         <EmptyRow>{t("local_models.catalogue.loading")}</EmptyRow>
       )}
       {models.length > 0 && (
-        <div className="overflow-hidden rounded-xl border border-border bg-card/60">
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
           <Table label={t("local_models.catalogue.library_label")}>
             <TableHead columns={columns} />
             {models.map((m) => {
@@ -687,7 +687,7 @@ function LibraryList({
                           {m.name}
                         </span>
                         {m.installed && (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <span className="inline-flex items-center gap-1 text-micro text-muted-foreground">
                             <Check className="h-3 w-3" />
                             {t("local_models.catalogue.installed")}
                           </span>
@@ -727,7 +727,7 @@ function LibraryList({
                     </Cell>
                   </TableRow>
                   {open && (
-                    <div className="border-b border-border/70 px-3 pb-3 pt-1 last:border-b-0">
+                    <div className="border-b border-border px-3 pb-3 pt-1 last:border-b-0">
                       <TagLedger
                         providerId={providerId}
                         model={m.name}
@@ -892,7 +892,7 @@ export function CataloguePanel({ providerId }: { providerId: string }) {
                 className={cn(
                   "inline-flex h-7 items-center rounded-md border px-2.5 text-xs transition-colors",
                   active
-                    ? "border-primary/40 bg-primary/10 text-foreground"
+                    ? "bg-secondary text-foreground"
                     : "border-border text-muted-foreground hover:text-foreground",
                 )}
               >
@@ -943,7 +943,7 @@ export function CataloguePanel({ providerId }: { providerId: string }) {
         </p>
       )}
 
-      <section className="space-y-2 border-t border-border/70 pt-4">
+      <section className="space-y-2 border-t border-border pt-4">
         <Eyebrow>{t("local_models.catalogue.exact_title")}</Eyebrow>
         <div className="flex items-center gap-2">
           <InlineSearch

@@ -72,12 +72,9 @@ export function PageRenderer({ slug, onWikilinkClick }: PageRendererProps) {
   if (pageQuery.isError) {
     return (
       <div className="px-7 py-6" data-testid="wiki-page-error">
-        <div
-          role="alert"
-          className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-        >
+        <p role="alert" className="text-body text-destructive">
           {t("page_renderer.load_error")}
-        </div>
+        </p>
       </div>
     );
   }
@@ -86,12 +83,9 @@ export function PageRenderer({ slug, onWikilinkClick }: PageRendererProps) {
   if (!page || !page.ok) {
     return (
       <div className="px-7 py-6" data-testid="wiki-page-error">
-        <div
-          role="alert"
-          className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-        >
+        <p role="alert" className="text-body text-destructive">
           {page?.error ?? t("page_renderer.not_found")}
-        </div>
+        </p>
       </div>
     );
   }
@@ -121,8 +115,13 @@ export function PageRenderer({ slug, onWikilinkClick }: PageRendererProps) {
         vaultRelPath={vaultRelPath}
       />
 
+      {/* A wiki page is a document, so it is set at the reading step in full
+          ink and bounded to the reading measure. It used to run every
+          paragraph, list and heading at muted ink under `prose-invert` — a
+          dark-only class — so a page read as text somebody had disabled, and
+          light mode got dark-mode typography. */}
       <div
-        className="prose prose-invert max-w-[820px] px-9 py-7 text-sm"
+        className="max-w-reading px-9 py-7 text-reading text-foreground"
         data-testid="wiki-page-body"
       >
         <ReactMarkdown
@@ -154,31 +153,29 @@ export function PageRenderer({ slug, onWikilinkClick }: PageRendererProps) {
               );
             },
             h1: ({ children }) => (
-              <h2 className="mb-3 mt-7 border-b border-border pb-2 text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <h2 className="mb-3 mt-group text-title font-semibold text-foreground-strong">
                 {children}
               </h2>
             ),
             h2: ({ children }) => (
-              <h2 className="mb-3 mt-7 border-b border-border pb-2 text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <h2 className="mb-3 mt-group text-title font-semibold text-foreground-strong">
                 {children}
               </h2>
             ),
             h3: ({ children }) => (
-              <h3 className="mb-2 mt-5 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+              <h3 className="mb-2 mt-block text-title font-semibold text-foreground-strong">
                 {children}
               </h3>
             ),
-            p: ({ children }) => (
-              <p className="my-2 text-muted-foreground">{children}</p>
-            ),
+            p: ({ children }) => <p className="my-stack text-foreground">{children}</p>,
             ul: ({ children }) => (
-              <ul className="my-2 list-disc pl-5 text-muted-foreground">{children}</ul>
+              <ul className="my-stack list-disc pl-5 text-foreground">{children}</ul>
             ),
             li: ({ children }) => <li className="my-0.5">{children}</li>,
             code: ({ children, ...rest }) => (
               <code
                 {...rest}
-                className="rounded bg-background px-1 py-0.5 font-mono text-[11px] text-muted-foreground"
+                className="rounded-sm bg-secondary px-1 py-0.5 font-mono text-meta text-foreground"
               >
                 {children}
               </code>
@@ -225,17 +222,22 @@ function buildKnownSlugSet(tree: WikiTreeResponse | undefined): Set<string> {
 
 function PageSkeleton() {
   return (
-    <div className="space-y-3 px-7 py-6" data-testid="wiki-page-skeleton">
-      <div className="h-3 w-32 animate-pulse rounded bg-muted" />
-      <div className="h-6 w-64 animate-pulse rounded bg-muted" />
+    <div
+      className="max-w-reading space-y-stack px-9 py-7"
+      data-testid="wiki-page-skeleton"
+      role="status"
+      aria-busy="true"
+    >
+      <div className="h-3 w-32 animate-pulse rounded-full bg-sheen/[0.06]" />
+      <div className="h-6 w-64 animate-pulse rounded-md bg-sheen/[0.06]" />
       <div className="flex gap-2">
-        <div className="h-4 w-20 animate-pulse rounded bg-muted" />
-        <div className="h-4 w-24 animate-pulse rounded bg-muted" />
+        <div className="h-4 w-20 animate-pulse rounded-full bg-sheen/[0.06]" />
+        <div className="h-4 w-24 animate-pulse rounded-full bg-sheen/[0.06]" />
       </div>
-      <div className="mt-6 space-y-2">
-        <div className="h-3 w-full animate-pulse rounded bg-muted" />
-        <div className="h-3 w-5/6 animate-pulse rounded bg-muted" />
-        <div className="h-3 w-4/6 animate-pulse rounded bg-muted" />
+      <div className="mt-group space-y-stack">
+        <div className="h-3 w-full animate-pulse rounded-full bg-sheen/[0.06]" />
+        <div className="h-3 w-5/6 animate-pulse rounded-full bg-sheen/[0.06]" />
+        <div className="h-3 w-4/6 animate-pulse rounded-full bg-sheen/[0.06]" />
       </div>
     </div>
   );

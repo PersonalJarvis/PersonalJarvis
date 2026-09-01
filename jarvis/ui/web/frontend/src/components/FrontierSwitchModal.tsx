@@ -88,7 +88,7 @@ export function FrontierSwitchModal() {
     >
       <div
         className={cn(
-          "w-full max-w-lg rounded-2xl border border-primary/40 bg-card",
+          "w-full max-w-lg rounded-lg bg-popover shadow-float",
           "p-6",
           "animate-in zoom-in-95 fade-in duration-200",
         )}

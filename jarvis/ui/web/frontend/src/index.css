@@ -1,3 +1,16 @@
+/* KNOWN GAP — the three interface families are fetched from a remote host.
+   The design system says they ship with the application ("Loaded locally,
+   never from a remote host"), and it is right: the desktop app is a WebView
+   that regularly starts with no network, and when this request fails the
+   whole product renders in Segoe UI / system fallbacks — a different typeface
+   at a different width on every surface at once.
+
+   Nothing is vendored under public/ or src/assets/ yet and no font may be
+   downloaded here, so the import stays for now. Closing the gap is a separate
+   change: add the three families as local files (or an @fontsource dependency),
+   replace this line with @font-face rules pointing at them, and delete this
+   comment. The family declarations themselves live at the bottom of this file,
+   outside the layers — see the note there. */
 @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700;800&display=swap");
 
 @tailwind base;
@@ -446,70 +459,90 @@ label,
    * looks correct in exactly one theme and is a bug in the other — and because
    * the app defaults to dark, that bug ships invisible to whoever wrote it.
    *
-   * The shadcn set below covers flat surfaces and text. Effects — glows, grid
-   * lines, scrims, glass, hatching — cannot use it, because they need colour
-   * CHANNELS to build an rgba() from. That is what the four `*-rgb` triples
-   * exist for; each is a bare `R G B` list meant for `rgb(var(--x) / <alpha>)`.
+   * THE SECOND RULE: a surface is a NAMED token, never a token multiplied by
+   * an opacity. `bg-card/40` as a resting ground is not "a quieter card", it
+   * is a colour nobody chose, and it changes with whatever happens to be
+   * behind it. Depth is picked from the ladder below, one step at a time.
+   *
+   * These two blocks are the only place a colour is decided. The set covers
+   * flat surfaces and text. Effects — glows, grid lines, scrims, glass,
+   * hatching — cannot use it, because they need colour CHANNELS to build an
+   * rgba() from. That is what the four `*-rgb` triples exist for; each is a
+   * bare `R G B` list meant for `rgb(var(--x) / <alpha>)`.
    */
   :root {
-    /* --- Light: the Design.md's palette, taken literally -------------------
-       Every value below is that document's own: `canvas`, `ink`,
-       `surface-card`, `surface-strong`, `hairline`, `hairline-soft`,
-       `semantic-error`. The ground is a solid colour by default
-       (2026-08-23, maintainer: the app no longer opens on a wallpaper).
+    /* --- Light: the same system, the value scale inverted ------------------
+       Warm paper, warm near-black ink. Every role below has exactly the job
+       its dark twin has; only the brightness swaps. Objects rise TOWARD white
+       and interaction answers by going DOWN into warm grey — the role is "the
+       surface that responds", not "the lighter surface".
 
-       ONE correction. The document's `muted` (#807D72) scores 3.84:1 on its
-       own canvas — under the 4.5:1 body text needs. On a marketing page it
-       sets sub-titles; here it carries secondary text in dense lists, so it
-       keeps the document's exact hue and saturation and drops four points of
-       lightness to #747167 (4.55:1). */
-    --background: 60 16% 96%; /* #F7F7F4 — Design.md `canvas` */
-    --foreground: 53 12% 13%; /* #26251E — Design.md `ink` */
-    --card: 0 0% 100%; /* white card on paper */
+       The one rule that governs both themes holds here too: lift scales
+       inversely with area. --background paints the room and every full-bleed
+       region; --card may only paint something sized to its content. A surface
+       wider than ~720px never rises above --sidebar. */
+
+    /* --- The surface ladder ---------------------------------------------- */
+    --background: 60 16% 96%; /* #F7F7F4 — the room, every full-bleed region */
+    --sidebar: 51 18% 92%; /* #EFEEE8 — the rail, standing chrome */
+    --card: 0 0% 100%; /* #FFFFFF — an OBJECT: card, bubble, panel */
     --card-foreground: 53 12% 13%;
-    --popover: 0 0% 100%;
+    --secondary: 50 11% 89%; /* #E6E5E0 — the LIFT: hover, selected, tile */
+    --secondary-foreground: 50 13% 9%; /* a selected label is ink-strong */
+    --muted: 50 11% 89%; /* = --secondary: the ~65 hover:bg-muted sites read this */
+    --input: 50 11% 89%; /* a field is a lift surface */
+    --popover: 0 0% 100%; /* #FFFFFF — the floating layer, plus .shadow-float */
     --popover-foreground: 53 12% 13%;
-    /* #26251E — the Design.md's `ink`, and equal to --foreground on purpose.
-       That document uses one value for three jobs: display type, emphasis
-       (`body-strong`, "Same as ink"), and the filled surface of a primary
-       action (`button-download`, `pricing-tier-featured`). It has no separate
-       "primary text" colour, so neither do we.
+    --user-bubble: 53 12% 13%; /* #26251E — the user's own turn */
+    --user-bubble-foreground: 60 16% 96%;
 
-       The cost is real and named here rather than engineered around: with no
-       hue and no separate value, `text-primary` cannot make a word louder on
-       its own. Emphasis is carried by weight in running text and by a filled
-       chip for state; the 857 uses of bg-/border-/ring-primary are unaffected,
-       since they read against the surface and the hairline. 14.3:1 on canvas. */
+    /* --- Rims. Two values, because one border cannot do two jobs ---------- */
+    --border: 53 12% 87%; /* #E2E1DA — structural hairlines, dividers, rules */
+    --border-strong: 50 9% 75%; /* #C4C2B8 — composer outline, float rim, focus */
+
+    /* --- Ink. Four steps, one job each ------------------------------------
+       The split is what stops a single ink slab from reading as harsh: with
+       no hierarchy behind it, one maximum-contrast value across a whole app
+       has nothing to justify its weight. */
+    --foreground-strong: 50 13% 9%; /* #1A1914 — headings, headline numbers */
+    --foreground: 53 12% 13%; /* #26251E — body, labels, running text */
+    --muted-foreground: 46 6% 41%; /* #6E6B61 — meta, timestamps, table heads */
+    --faint-foreground: 44 6% 54%; /* #918D82 — placeholder + disabled ONLY */
+
+    /* --primary is a FILL, not an ink: buttons, marks, active indicators,
+       focus rings. It never paints running text, a byline or a decorative
+       icon. On paper the fill IS the ink colour — the light scale has no step
+       above `ink` the way the dark one has white above 96% — so --primary and
+       --foreground share a value here, and emphasis in running text is
+       carried by weight and by --foreground-strong instead. 14.3:1 on paper. */
     --primary: 53 12% 13%;
-    --primary-foreground: 60 16% 96%; /* the canvas, not pure white */
-    --secondary: 50 11% 89%; /* #E6E5E0 — Design.md `surface-strong` */
-    --secondary-foreground: 53 12% 13%;
-    --muted: 50 11% 89%;
-    --muted-foreground: 47 6% 43%; /* #747167 — Design.md `muted`, see note above */
+    --primary-foreground: 60 16% 96%; /* the paper, not pure white */
     --accent: 53 12% 13%;
     --accent-foreground: 60 16% 96%;
-    --destructive: 345 64% 49%; /* #C0392B — the light terminal's red */
+    --ring: 53 12% 13%;
+
+    /* --- Status. The only hue in the product ------------------------------
+       Three meanings, identical in both themes so a status never changes
+       meaning with the theme; the lightness is tuned per ground so each one
+       stays legible on it. Nothing else in the interface carries hue except
+       identity — a vendor logo in its real colours, or a coloured avatar. */
+    --success: 153 62% 32%; /* life: running, live, connected, passed */
+    --destructive: 4 70% 46%; /* fault: failed, blocked, disconnected */
     --destructive-foreground: 0 0% 100%;
-    /* Live / ok. Dark overrides to a brighter sibling so a 8 px status
-       dot still reads on near-black (Grok-Bot green). */
-    --success: 152 48% 28%;
+    --warning: 41 70% 38%; /* degraded: stale, partial, needs attention */
+
     /* Added / removed code in a chat diff. Green and red were always the
        weaker half of this signal: a diff already carries + and - in its
        gutter, so hue was reinforcement, not information. Monochrome the pair
-       says it more directly — an added line comes FORWARD (full ink on a
-       raised ground) and a deleted one RECEDES (muted ink, struck through,
+       says it more directly — an added line comes FORWARD (strong ink on a
+       lifted ground) and a deleted one RECEDES (meta ink, struck through,
        see .diff-line-del). Strike-through is the move colour cannot make. */
-    --diff-add: 53 12% 13%;
+    --diff-add: 50 13% 9%;
     --diff-add-bg: 50 11% 89%;
-    --diff-del: 47 6% 43%;
+    --diff-del: 46 6% 41%;
     --diff-del-bg: 51 18% 94%;
-    --border: 50 11% 89%; /* #E6E5E0 — Design.md `hairline` */
-    --input: 50 11% 89%;
-    --ring: 53 12% 13%;
+
     --radius: 0.75rem;
-    /* The navigation column's own ground — a shade below the paper, so the
-       rail reads as a rail without a border doing all the work. */
-    --sidebar: 51 18% 92%; /* #EFEEE8 — Design.md `hairline-soft` */
 
     /* --- Effect channels (see the note above) ---------------------------- */
     /* The accent as raw channels, for glows / grid lines / halos. Now the ink
@@ -528,21 +561,18 @@ label,
        must read as "the app, blurred" rather than a grey rectangle. */
     --shell-rgb: 247 247 244;
 
-    /* Light mode changes the interface ink, not the chosen wallpaper. Fully
-       transparent surfaces were tried first, but with user-chosen wallpapers
-       (any subject, any brightness) ink regularly landed on same-value artwork
-       and disappeared. Light therefore carries the same glass system as dark,
-       tuned slightly lighter: the artwork stays visible around and through
-       every panel, and text always sits on a predictable ground. */
-    /* Matched to the dark theme's values: light used to run ~8 points more
-       transparent, and on bright, busy artwork the ivory glass stopped being
-       a ground at all — ink landed on the wallpaper itself and washed out. */
+    /* --- Glass alphas — WALLPAPER PATH ONLY -------------------------------
+       These are read exclusively by the readability floor further down, which
+       is now scoped to `:root.jarvis-wallpaper`. On the flat ground the app
+       opens with (the default since 2026-08-23) nothing reads them: a surface
+       there is a NAMED token, never a token multiplied by an opacity. They
+       exist because ink over user-chosen artwork — 500 pictures of any
+       brightness, in either theme — needs a predictable ground under it.
+       Three more (`stage`, `wiki-pane`, `wiki-stage`) were deleted: nothing
+       had read them since the wiki panes were made fully transparent. */
     --surface-card-alpha: 0.6;
     --surface-panel-alpha: 0.58;
     --surface-control-alpha: 0.72;
-    --surface-stage-alpha: 0.58;
-    --surface-wiki-pane-alpha: 0.3;
-    --surface-wiki-stage-alpha: 0.28;
 
     /* --- Stages ----------------------------------------------------------
        The full-bleed canvases behind the knowledge maps. They are not chrome:
@@ -569,22 +599,17 @@ label,
        and where it lands are full ink, everything in between is neutral. Only
        the card's icon tile reads `hsl(var(--viz-*))`. */
     --viz-trigger: 53 12% 13%; /* full ink — the run's ignition */
-    --viz-reasoning: 47 6% 43%; /* the worker thinking */
-    --viz-terminal: 47 6% 43%; /* shell commands */
-    --viz-file: 47 6% 43%; /* file writes/edits */
-    --viz-search: 47 6% 43%; /* read/grep/glob */
-    --viz-web: 47 6% 43%; /* fetch/web */
-    --viz-integration: 47 6% 43%; /* MCP / external tools */
-    --viz-agent: 47 6% 43%; /* sub-agent spawns */
-    --viz-tool: 47 6% 43%; /* unrecognised tools */
+    --viz-reasoning: 46 6% 41%; /* the worker thinking */
+    --viz-terminal: 46 6% 41%; /* shell commands */
+    --viz-file: 46 6% 41%; /* file writes/edits */
+    --viz-search: 46 6% 41%; /* read/grep/glob */
+    --viz-web: 46 6% 41%; /* fetch/web */
+    --viz-integration: 46 6% 41%; /* MCP / external tools */
+    --viz-agent: 46 6% 41%; /* sub-agent spawns */
+    --viz-tool: 46 6% 41%; /* unrecognised tools */
     --viz-result: 53 12% 13%; /* full ink — the run's landing */
-    --viz-deliverable: 47 6% 43%; /* files left behind */
+    --viz-deliverable: 46 6% 41%; /* files left behind */
 
-    /* Legacy aliases. Kept because they are referenced from a handful of
-       places that predate the token set; all now follow the theme. The names
-       outlived the colour — nothing yellow is left in either — but they stay
-       spelled this way until the call sites are renamed in their own pass,
-       because a rename and a recolour in one commit hides both. */
     /* --- The mascot's two marking roles ----------------------------------
        The ghost was drawn with one hardcoded white for everything, which is
        only correct for half of it. Its markings fall into two groups that
@@ -603,82 +628,122 @@ label,
        reads on paper and on charcoal. */
     --gigi-on-body: 0 0% 100%; /* white eyes on the black body */
     --gigi-trim: 53 12% 13%; /* ink — reads on paper */
+
+    /* Legacy aliases. The names outlived the colour — nothing yellow is left
+       in either theme — and no rule reads them any more either; they stay
+       declared until the last call sites that predate the token set are
+       renamed in their own pass, because a rename and a recolour in one
+       commit hides both. */
     --jarvis-yellow: 38 37 30;
     --jarvis-yellow-dim: 128 125 114;
     --jarvis-grid: 50 11% 89%;
-    /* Outbound chat fill. Light: the ink itself. Dark overrides to a mid grey
-       so the bubble does not become inverted cream on black. */
-    --user-bubble: 53 12% 13%;
-    --user-bubble-foreground: 60 16% 96%;
   }
 
   .dark {
-    /* --- Dark: one black room, colour only on life -------------------------
-       Warm-cream inversion was the first defect (muddy brown cards). The
-       charcoal pass after that painted the ROOM grey: a #1A1A1A rail and
-       #242424 cards on #050505, every status dot muted, no green. Against a
-       live Grok-Bot window (2026-08-31) that is the whole difference: Bot
-       is a black void with coloured avatars and green live-dots; our
-       sections were grey furniture filling the void.
+    /* --- Dark: a black room with lit objects in it -------------------------
+       LIFT SCALES INVERSELY WITH AREA. That single rule is the whole system,
+       and the resolution of two attempts that were both reverted. Lifting
+       every full-bleed region produced opaque grey furniture standing on a
+       black page ("grey slabs"). Refusing to lift anything produced surfaces
+       three byte-values above their ground — below the threshold at which an
+       eye perceives an edge at all ("dead"). Both were searching for one
+       correct value for a variable that should never have been global.
 
-       The room stays black. Surfaces lift a whisper. Colour is status and
-       identity, never walls.
+       So --background paints the room and everything that fills it, and lift
+       is spent only on things sized to their content: a bubble, a row, a
+       tile, a composer, a menu. A surface wider than ~720px never rises above
+       --sidebar, whatever class it carries.
 
-         2 %   background   the room — #050505
-         5 %   sidebar      same night, not a grey wall
-         8 %   card         a lifted bubble, sized to its content
-        12 %   border       a rim you should barely see
-        16 %   secondary    hover / menus
-        34 %   user bubble  the one obviously-lifted grey
-        46 %   success      live green (Grok-Bot's heartbeat)
-        64 %   muted text
-        97 %   foreground
-       100 %   primary      white, actions only */
-    --background: 0 0% 2%; /* #050505 */
-    --foreground: 0 0% 97%; /* #F7F7F7 — crisp, not cream */
-    --card: 0 0% 8%; /* #141414 — a bubble, not a grey slab */
-    --card-foreground: 0 0% 97%;
-    --popover: 0 0% 16%; /* #292929 */
-    --popover-foreground: 0 0% 97%;
-    /* #FFFFFF. The brand is whichever end of the value scale the ground is
-       not. Here it sits one step past --foreground because on a near-black
-       ground there is headroom for it; the light theme has none above `ink`
-       and keeps the two equal. 19.8:1. */
+       The steps are measured, not invented (Grok Bot and Cursor, 2026-09-01).
+       Grok's assistant bubble sits at #262626 and its selected row at
+       #313131; Cursor's composer at #212121 and its active row at #252525,
+       with 90.4 % of that window held in just two values. --card #212121 and
+       --secondary #333333 sit inside that measured band, with steps large
+       enough to survive an uncalibrated monitor.
+
+       INK STOPS BELOW WHITE. Cursor's brightest text measures #F0F0F0 and
+       never exceeds it. One maximum-contrast slab across a whole app has no
+       hierarchy behind it to justify its brightness, so the eye reads it as
+       harsh rather than as important — that is the "the white looks
+       artificial" report. Body runs at 90 %, headings at 96 %. Pure white is
+       a FILL — buttons, marks, focus rings — and never running text.
+
+          4 %  background         the room, every full-bleed region
+          7 %  sidebar            the rail, standing chrome
+         13 %  card               an OBJECT: card, bubble, panel
+         14 %  border             structural hairline
+         20 %  secondary / input  the LIFT: hover, selected, field, tile
+         24 %  popover            the floating layer
+         26 %  border-strong      composer outline, floating rim, focus
+         30 %  user bubble        the one deliberately loud surface
+         44 %  faint ink          placeholder and disabled only
+         58 %  muted ink          meta, timestamps, table heads
+         90 %  foreground         body, labels, running text
+         96 %  foreground-strong  headings, headline numbers
+        100 %  primary            white — a fill, never an ink */
+
+    /* --- The surface ladder ---------------------------------------------- */
+    --background: 0 0% 4%; /* #0A0A0A */
+    --sidebar: 0 0% 7%; /* #121212 — the same night, one step up */
+    --card: 0 0% 13%; /* #212121 — content-sized ONLY */
+    --card-foreground: 0 0% 90%;
+    --secondary: 0 0% 20%; /* #333333 — hover, selected, tile */
+    --secondary-foreground: 0 0% 96%; /* a selected label is ink-strong */
+    --muted: 0 0% 20%; /* = --secondary: the ~65 hover:bg-muted sites read this */
+    --input: 0 0% 20%; /* a field is a lift surface */
+    --popover: 0 0% 24%; /* #3D3D3D — plus .shadow-float */
+    --popover-foreground: 0 0% 90%;
+    --user-bubble: 0 0% 30%; /* #4D4D4D */
+    --user-bubble-foreground: 0 0% 96%;
+
+    /* --- Rims. A rim is LIGHTER than the fill it encloses ------------------
+       On near-black a dark border around a dark fill reads as a wireframe
+       with nothing inside it. Cursor's rims cover 0.2 % of its window — a
+       composer outline and a few dividers, not an edge around every card. */
+    --border: 0 0% 14%; /* #242424 */
+    --border-strong: 0 0% 26%; /* #424242 */
+
+    /* --- Ink -------------------------------------------------------------- */
+    --foreground-strong: 0 0% 96%; /* #F5F5F5 */
+    --foreground: 0 0% 90%; /* #E6E6E6 */
+    --muted-foreground: 0 0% 58%; /* #949494 */
+    --faint-foreground: 0 0% 44%; /* #707070 */
+
+    /* #FFFFFF, and a FILL. It sits one step past --foreground because a
+       near-black ground has headroom above the ink ceiling; the light theme
+       has none above `ink` and keeps the two equal. 19.8:1. */
     --primary: 0 0% 100%;
-    --primary-foreground: 0 0% 4%; /* the ground */
-    --secondary: 0 0% 16%; /* #292929 hover, menus, composer */
-    --secondary-foreground: 0 0% 97%;
-    --muted: 0 0% 16%;
-    --muted-foreground: 0 0% 64%; /* #A3A3A3 cool grey */
+    --primary-foreground: 0 0% 4%; /* the room */
     --accent: 0 0% 100%;
     --accent-foreground: 0 0% 4%;
-    --destructive: 349 76% 62%;
-    --destructive-foreground: 0 0% 97%;
-    --success: 152 62% 46%; /* Grok-Bot live green */
-    --diff-add: 0 0% 97%;
-    --diff-add-bg: 0 0% 14%;
-    --diff-del: 0 0% 64%;
-    --diff-del-bg: 0 0% 4%;
-    --border: 0 0% 12%; /* #1F1F1F — a rim you should barely see */
-    --input: 0 0% 16%;
     --ring: 0 0% 100%;
-    --sidebar: 0 0% 5%; /* #0D0D0D — same night as the page */
-    --user-bubble: 0 0% 34%; /* #575757 */
-    --user-bubble-foreground: 0 0% 97%;
 
-    --accent-rgb: 247 247 247;
+    /* --- Status. Same three meanings as light, lifted for a black ground -- */
+    --success: 153 62% 46%; /* #2DBE7E — life */
+    --destructive: 4 77% 60%; /* #E8574C — fault */
+    --destructive-foreground: 0 0% 96%;
+    --warning: 41 63% 57%; /* #D6A94A — degraded */
+
+    /* Added / removed code — see :root. The added line takes the lift so it
+       comes forward off the card it sits on; the deleted line takes the card
+       itself, i.e. no ground of its own, and recedes through meta ink and the
+       strike-through. It must never be DARKER than the surface under it. */
+    --diff-add: 0 0% 96%;
+    --diff-add-bg: 0 0% 20%;
+    --diff-del: 0 0% 58%;
+    --diff-del-bg: 0 0% 13%;
+
+    --accent-rgb: 255 255 255;
     --scrim-rgb: 0 0 0;
     --sheen-rgb: 255 255 255;
-    --shell-rgb: 5 5 5;
+    --shell-rgb: 10 10 10; /* the room, as channels */
 
+    /* Wallpaper path only — see the note in :root. */
     --surface-card-alpha: 0.6;
     --surface-panel-alpha: 0.58;
     --surface-control-alpha: 0.72;
-    --surface-stage-alpha: 0.58;
-    --surface-wiki-pane-alpha: 0.36;
-    --surface-wiki-stage-alpha: 0.34;
 
-    --stage-bg: 0 0% 2%;
+    --stage-bg: 0 0% 4%;
     --stage-dot-rgb: 255 255 255;
     --stage-dot-strong: 0.5;
     --stage-dot-soft: 0.35;
@@ -691,23 +756,25 @@ label,
        full accent; every step between them is neutral and leaves the telling
        to its glyph. */
     --viz-trigger: 0 0% 100%;
-    --viz-reasoning: 0 0% 64%;
-    --viz-terminal: 0 0% 64%;
-    --viz-file: 0 0% 64%;
-    --viz-search: 0 0% 64%;
-    --viz-web: 0 0% 64%;
-    --viz-integration: 0 0% 64%;
-    --viz-agent: 0 0% 64%;
-    --viz-tool: 0 0% 64%;
+    --viz-reasoning: 0 0% 58%;
+    --viz-terminal: 0 0% 58%;
+    --viz-file: 0 0% 58%;
+    --viz-search: 0 0% 58%;
+    --viz-web: 0 0% 58%;
+    --viz-integration: 0 0% 58%;
+    --viz-agent: 0 0% 58%;
+    --viz-tool: 0 0% 58%;
     --viz-result: 0 0% 100%;
-    --viz-deliverable: 0 0% 64%;
+    --viz-deliverable: 0 0% 58%;
 
     /* Black-and-white Gigi: white eyes and a white outline on charcoal. */
     --gigi-on-body: 0 0% 100%;
     --gigi-trim: 0 0% 100%;
-    --jarvis-yellow: 247 247 247;
-    --jarvis-yellow-dim: 163 163 163;
-    --jarvis-grid: 0 0% 8%;
+
+    /* Legacy aliases — see :root. Declared, read by nothing. */
+    --jarvis-yellow: 255 255 255;
+    --jarvis-yellow-dim: 148 148 148;
+    --jarvis-grid: 0 0% 14%;
   }
 }
 
@@ -731,26 +798,44 @@ label,
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-family:
-      "Inter",
-      ui-sans-serif,
-      system-ui,
-      -apple-system,
-      "Segoe UI",
-      sans-serif;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     overflow-x: hidden;
   }
+}
 
-  .font-display {
-    font-family: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
-    font-feature-settings: "ss01", "ss02";
-    letter-spacing: -0.02em;
-  }
+/* ----------------------------------------------------------------------
+   The three interface families — PLAIN (non-@layer) CSS on purpose.
 
-  .font-mono {
-    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  }
+   Tailwind hoists every `@layer base` rule into its base section, which is
+   emitted BEFORE the utilities. `.font-mono` there therefore lost to
+   Tailwind's own `.font-mono` utility at identical specificity, and
+   JetBrains Mono rendered on NONE of its several hundred call sites — every
+   terminal, path, transcript and code surface in the product silently fell
+   back to Consolas. Unlayered CSS after `@tailwind utilities` wins that tie
+   for good, whatever Tailwind generates.
+
+   Interface = Inter, display = Space Grotesk (section titles and headline
+   numbers only), code = JetBrains Mono. See the known-gap note at the top of
+   this file: they are still fetched from a remote host.
+   ---------------------------------------------------------------------- */
+body {
+  font-family:
+    "Inter",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+.font-display {
+  font-family: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "ss01", "ss02";
+  letter-spacing: -0.02em;
+}
+
+.font-mono {
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 @layer components {
@@ -781,11 +866,10 @@ label,
     left: clamp(20px, 22vw, 340px);
     bottom: clamp(28px, 11vh, 104px);
     z-index: 1;
-    filter: drop-shadow(0 16px 28px rgb(0 0 0 / 0.38));
-  }
-
-  :root:not(.dark) .jarvis-desktop-wallpaper-mascot {
-    filter: drop-shadow(0 14px 22px rgb(40 28 12 / 0.22));
+    /* --scrim-rgb is what a shadow is made of in either theme — black on the
+       dark ground, warm charcoal on paper — so one rule replaces the pair of
+       hardcoded shadows that used to live here. */
+    filter: drop-shadow(0 16px 28px rgb(var(--scrim-rgb) / 0.32));
   }
 
   .jarvis-desktop-wallpaper-veil {
@@ -820,14 +904,47 @@ label,
   }
 
   /*
-   * Transparent workspace chrome.
+   * The named app surfaces.
    *
-   * The wallpaper is the app's ground now, so navigation and section roots no
-   * longer repaint it with an opaque theme colour. Small content surfaces keep
-   * a restrained local veil for contrast; their colour still comes from the
-   * semantic shell channel and therefore follows light/dark mode automatically.
+   * Each one is a ROLE, and on the flat ground the app opens with, each is
+   * simply the token for that role — a fill, no alpha, no blur. Depth is a
+   * named token; a token multiplied by an opacity is not a surface.
+   *
+   * The wallpaper variants underneath are the exception the design system
+   * grants: a wallpaper user's chrome sits on arbitrary artwork, so it keeps
+   * the glass that made ink legible there. Everything about them is scoped to
+   * `:root.jarvis-wallpaper` so it costs the default path nothing.
    */
+  .jarvis-nav-surface {
+    background: hsl(var(--sidebar));
+  }
+
   .jarvis-shell-surface {
+    background: hsl(var(--background));
+  }
+
+  .jarvis-panel-surface {
+    background: hsl(var(--card));
+  }
+
+  .jarvis-message-surface {
+    background: hsl(var(--card));
+  }
+
+  .jarvis-input-surface {
+    background: hsl(var(--input));
+  }
+
+  /* NOTE (2026-08-11): a full glass ground for the nav column, top bar and
+     the Agentic IDE chrome was tried and rejected for the WALLPAPER mode —
+     the maintainer wants the artwork to shine through the chrome untinted.
+     So under a wallpaper the nav paints nothing and only stays as the scoping
+     hook for the ink/outline rules further down. */
+  :root.jarvis-wallpaper .jarvis-nav-surface {
+    background: transparent;
+  }
+
+  :root.jarvis-wallpaper .jarvis-shell-surface {
     background: linear-gradient(
       180deg,
       rgb(var(--shell-rgb) / 0.16),
@@ -835,17 +952,11 @@ label,
     );
   }
 
-  /* NOTE (2026-08-11): a full glass ground for the nav column, top bar and
-     the Agentic IDE chrome was tried and rejected — the maintainer wants the
-     wallpaper to shine through the chrome untinted. `.jarvis-nav-surface`
-     stays on the Sidebar as the scoping hook for the ink/outline rules in
-     the readability-floor section; it paints nothing itself. */
-
-  .jarvis-panel-surface {
+  :root.jarvis-wallpaper .jarvis-panel-surface {
     background: rgb(var(--shell-rgb) / var(--surface-panel-alpha));
   }
 
-  .jarvis-message-surface {
+  :root.jarvis-wallpaper .jarvis-message-surface {
     background: linear-gradient(
       135deg,
       rgb(var(--shell-rgb) / var(--surface-card-alpha)),
@@ -855,7 +966,7 @@ label,
     backdrop-filter: blur(12px) saturate(1.08);
   }
 
-  .jarvis-input-surface {
+  :root.jarvis-wallpaper .jarvis-input-surface {
     background: rgb(var(--shell-rgb) / var(--surface-control-alpha));
     -webkit-backdrop-filter: blur(14px) saturate(1.08);
     backdrop-filter: blur(14px) saturate(1.08);
@@ -868,24 +979,27 @@ label,
     color: hsl(var(--user-bubble-foreground));
   }
 
-  /* Selected nav row — a fill, one step toward the light, like a messenger
-     chip. Not a hairline and not an inset accent bar. */
+  /* Selected nav row — the lift surface across the WHOLE row, plus strong ink
+     on the label. Not a hairline, not an inset accent bar, and never drawn on
+     the icon box alone while the row it belongs to stays at ground. */
   .jarvis-nav-active {
     background: hsl(var(--secondary));
-    color: hsl(var(--foreground));
+    color: hsl(var(--foreground-strong));
   }
 
   /* Section-level grounds disappear everywhere the wallpaper is active. The
      selectors intentionally stop at page roots and purpose-built stages: cards,
-     dialogs and data tables retain their own hierarchy and remain readable. */
-  .jarvis-section-stage > [class~="bg-background"],
-  .jarvis-section-stage .agents-board-stage,
-  .jarvis-section-stage .uw-stage {
+     dialogs and data tables retain their own hierarchy and remain readable.
+     On the flat ground they keep their own token ground, which is the room —
+     the same colour, arrived at by the palette instead of by an exception. */
+  :root.jarvis-wallpaper .jarvis-section-stage > [class~="bg-background"],
+  :root.jarvis-wallpaper .jarvis-section-stage .agents-board-stage,
+  :root.jarvis-wallpaper .jarvis-section-stage .uw-stage {
     background-color: transparent;
   }
 
   /*
-   * Wallpaper readability floor.
+   * Wallpaper readability floor — WALLPAPER PATH ONLY.
    *
    * Everything inside a section stage may end up directly on user-chosen
    * artwork — 500 wallpapers of any brightness, in either theme. Nothing can
@@ -899,8 +1013,14 @@ label,
    * 2. Scoped token floors. Muted ink and hairline borders are re-declared on
    *    the stage only: strong enough to survive artwork, while popovers and
    *    dialogs outside the stage keep the quieter global values.
+   *
+   * Every rule in this floor is gated on `:root.jarvis-wallpaper`, because on
+   * a flat ground every one of these treatments is a defect: a halo around
+   * text on paper reads as a printing error, and a re-floored --border turns
+   * a hairline meant to be barely visible into a drawn box. The palette is
+   * calibrated for the flat ground; the floor is what a picture costs.
    */
-  .dark .jarvis-section-stage {
+  :root.jarvis-wallpaper.dark .jarvis-section-stage {
     --muted-foreground: 0 0% 68%;
     --border: 0 0% 24%;
     text-shadow:
@@ -918,9 +1038,9 @@ label,
      ink, and a tight outline-grade halo — the desktop-OS icon-label trick,
      where a 1–2px light ring makes dark ink read on ANY artwork. On calm
      ivory glass the ring is ivory-on-ivory and invisible. */
-  :root:not(.dark) .jarvis-section-stage,
-  :root:not(.dark) .jarvis-nav-surface,
-  :root:not(.dark) .jarvis-shell-surface {
+  :root.jarvis-wallpaper:not(.dark) .jarvis-section-stage,
+  :root.jarvis-wallpaper:not(.dark) .jarvis-nav-surface,
+  :root.jarvis-wallpaper:not(.dark) .jarvis-shell-surface {
     --muted-foreground: 240 9% 18%;
     --border: 40 12% 46%;
     /* Subtitle-grade outline, not a soft glow: eight hard offsets close a
@@ -947,10 +1067,10 @@ label,
      of an outline — invisible on calm glass, a rescue ring on busy artwork.
      Scoped to the chrome (nav, top bar, IDE toolbar + chat rail), where
      icons ARE the interface; content views draw icons on their own cards. */
-  :root:not(.dark) .jarvis-nav-surface svg,
-  :root:not(.dark) .jarvis-shell-surface svg,
-  :root:not(.dark) [data-testid="agentic-toolbar"] svg,
-  :root:not(.dark) [data-testid="agentic-chat-rail"] svg {
+  :root.jarvis-wallpaper:not(.dark) .jarvis-nav-surface svg,
+  :root.jarvis-wallpaper:not(.dark) .jarvis-shell-surface svg,
+  :root.jarvis-wallpaper:not(.dark) [data-testid="agentic-toolbar"] svg,
+  :root.jarvis-wallpaper:not(.dark) [data-testid="agentic-chat-rail"] svg {
     filter: drop-shadow(1px 0 0 rgb(var(--shell-rgb)))
       drop-shadow(-1px 0 0 rgb(var(--shell-rgb)))
       drop-shadow(0 1px 0 rgb(var(--shell-rgb)))
@@ -961,8 +1081,8 @@ label,
   /* The IDE toolbar and chat rail live INSIDE the stage but hold shell-grade
      small controls; give their text the same outline-grade ink as the chrome
      above (the stage floor alone was tuned for text on glass cards). */
-  :root:not(.dark) [data-testid="agentic-toolbar"],
-  :root:not(.dark) [data-testid="agentic-chat-rail"] {
+  :root.jarvis-wallpaper:not(.dark) [data-testid="agentic-toolbar"],
+  :root.jarvis-wallpaper:not(.dark) [data-testid="agentic-chat-rail"] {
     --muted-foreground: 240 9% 18%;
     text-shadow:
       1px 0 0 rgb(var(--shell-rgb)),
@@ -996,8 +1116,15 @@ label,
    * moment the shell laid something else out around it.
    */
   .jarvis-visualization-stage {
-    background: rgb(var(--shell-rgb) / 0.94);
+    background: hsl(var(--background));
     text-shadow: none;
+  }
+
+  /* Under a wallpaper the same stage keeps a near-opaque veil rather than the
+     flat token: a diagram is still judged against one predictable colour, but
+     the artwork stays faintly present at the frame. */
+  :root.jarvis-wallpaper .jarvis-visualization-stage {
+    background: rgb(var(--shell-rgb) / 0.94);
   }
 
   /* Subtle grid pattern in the background — gives a dashboard feel without
@@ -1065,80 +1192,110 @@ label,
       linear-gradient(90deg, rgb(var(--accent-rgb) / 0.04) 1px, transparent 1px);
   }
 
-  /* Button base — for CTAs */
+  /* Button base — for CTAs. The 32px accent bloom on hover is gone: a glow is
+     additive light standing in for a fill that should have been there, and on
+     paper it was never visible at all. Hover is one step of the fill, which is
+     the same move every other interactive surface in the app makes. */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 font-medium
            bg-primary text-primary-foreground
-           transition-all duration-200
-           hover:bg-primary/90 hover:shadow-[0_0_32px_rgb(var(--accent-rgb)/0.35)]
+           transition-colors duration-200
+           hover:bg-primary/90
            active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
   }
 
   .btn-ghost {
     @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 font-medium
            text-foreground border border-border
-           transition-all duration-200
-           hover:bg-secondary hover:border-primary/40
+           transition-colors duration-200
+           hover:bg-secondary
            active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
   }
 
+  .btn-ghost:hover {
+    border-color: hsl(var(--border-strong));
+  }
+
+  /* A chip is a lift surface with meta ink on it. The 60 % wash it used to
+     carry (plus a backdrop-blur with nothing behind it to blur) was depth
+     expressed as opacity; the border stays because several call sites answer
+     a hover on it. */
   .chip {
-    @apply inline-flex items-center gap-2 rounded-full border border-border bg-secondary/60
-           px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur;
+    @apply inline-flex items-center gap-2 rounded-full border border-border
+           px-3 py-1 text-xs font-medium text-muted-foreground;
+    background-color: hsl(var(--secondary));
   }
 
+  /* The emphasised sibling — "in use", "CHATGPT-LOGIN". Same surface, strong
+     ink instead of meta: a state marker may never be painted in --primary,
+     which on a black ground would make it the loudest mark on the screen. */
   .chip-yellow {
-    @apply inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10
-           px-3 py-1 text-xs font-semibold text-primary;
+    @apply inline-flex items-center gap-2 rounded-full border border-border
+           px-3 py-1 text-xs font-semibold;
+    background-color: hsl(var(--secondary));
+    color: hsl(var(--foreground-strong));
   }
 
+  /*
+   * A card has ONE resting value, in both themes: --card, a real fill, and a
+   * hairline only because a card can sit beside another card. The dark
+   * overrides these two carried — a 3.5 % and a 3 % white wash — were the
+   * "whisper" era: three byte-values above the ground, below the threshold at
+   * which an eye perceives an edge. They escaped every correction pass because
+   * @apply inlines its declarations and so hides the class from the converge
+   * selectors that were rewriting everything else.
+   */
   .card-outline {
-    @apply rounded-2xl border border-border bg-card/60 backdrop-blur
-           transition-colors duration-300
-           hover:border-primary/40;
+    @apply rounded-lg border border-border transition-colors duration-300;
+    background-color: hsl(var(--card));
   }
 
-  .dark .card-outline {
-    border-color: rgb(var(--sheen-rgb) / 0.07);
-    background-color: rgb(var(--sheen-rgb) / 0.035);
+  .card-outline:hover {
+    border-color: hsl(var(--border-strong));
   }
 
-  /* Headline numbers and table shells. The section-stage rewrite paints
-     any `bg-card/50` class opaque, which turned Spend / Automations /
-     Local models into grey slabs. These two names sit outside that list
-     so dark mode can be a black room with numbers on it. */
+  /* A headline number stands ON something. The dark override here stripped the
+     border, the background AND the radius, which is why every stat in Spend,
+     Automations and Local models read as a number floating in the void. It is
+     a tile now in both themes: the lift surface, no rim (it has a real fill),
+     one radius. */
   .jarvis-stat-tile {
-    @apply rounded-xl border border-border px-4 py-3.5;
-    background-color: hsl(var(--card) / 0.5);
-  }
-
-  .dark .jarvis-stat-tile {
-    border-color: transparent;
-    background-color: transparent;
-    border-radius: 0;
-    padding: 0.5rem 0.25rem;
+    @apply rounded-md px-4 py-3.5;
+    background-color: hsl(var(--secondary));
   }
 
   .jarvis-quiet-panel {
-    @apply overflow-hidden rounded-xl border border-border;
-    background-color: hsl(var(--card) / 0.5);
-  }
-
-  .dark .jarvis-quiet-panel {
-    border-color: rgb(var(--sheen-rgb) / 0.06);
-    background-color: rgb(var(--sheen-rgb) / 0.03);
+    @apply overflow-hidden rounded-lg border border-border;
+    background-color: hsl(var(--card));
   }
 }
 
 @layer utilities {
   /*
-   * One contrast system for every workspace section. Older views chose their
-   * own card opacity (or an opaque background), which made navigation feel
-   * like switching products. Exact class-token selectors preserve semantic
-   * colours and interaction variants while converging resting surfaces on the
-   * George Voice glass balance.
+   * ===========================================================================
+   * THE WALLPAPER APPARATUS — everything down to the `profile-rise` keyframes
+   * ===========================================================================
+   *
+   * These rules exist for exactly one situation: the app painted on artwork a
+   * user chose, which can be any picture at any brightness in either theme.
+   * They converge eleven bg-card steps, fifteen bg-background steps and nine
+   * bg-muted steps onto two composite colours, so that whatever a view asked
+   * for, the ink on top of it lands on a predictable ground.
+   *
+   * That convergence is exactly wrong on a flat ground — it flattens every
+   * hierarchy a section authored, which is the mechanism behind "every screen
+   * looks like one grey mesh". So every rule here is now scoped to
+   * `:root.jarvis-wallpaper`: the class the boot script in index.html stamps
+   * on <html> when, and only when, a wallpaper is really shown
+   * (`lib/backgroundMode.ts`; the flat colour has been the default since
+   * 2026-08-23). On the default path the palette in the token block is the
+   * whole answer and nothing here fires at all.
+   *
+   * Not everything below this point is wallpaper logic. The animation
+   * utilities, the Gigi mascot, the deck's ring and 3-D case, and the
+   * expanded-map `main:has(...)` rule are genuine utilities and stay global.
    */
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where(
       [class~="bg-card"],
       [class~="bg-card/20"],
@@ -1155,7 +1312,7 @@ label,
     background-color: hsl(var(--card) / var(--surface-card-alpha));
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where(
       div,
       aside,
@@ -1204,7 +1361,7 @@ label,
     background-color: hsl(var(--card) / var(--surface-panel-alpha));
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where(input, textarea, select, [role="combobox"]):where(
       [class~="bg-background"],
       [class~="bg-background/20"],
@@ -1231,7 +1388,7 @@ label,
      content surface. On detailed wallpaper that drops muted labels below the
      George Voice contrast baseline, so these cards now use the same 60% glass
      while the artwork remains clearly visible around and through them. */
-  .jarvis-section-stage :where([class~="bg-scrim/30"]) {
+  :root.jarvis-wallpaper .jarvis-section-stage :where([class~="bg-scrim/30"]) {
     background-color: hsl(var(--card) / var(--surface-card-alpha));
   }
 
@@ -1239,7 +1396,7 @@ label,
      edge highlight, not a readable surface, and it made both Board and Profile
      dissolve into detailed wallpaper. Keep the sheen, but give it the same
      card glass that George Voice uses underneath. */
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where(
       [class~="from-sheen/[0.055]"][class~="to-sheen/[0.015]"]
     ) {
@@ -1250,7 +1407,7 @@ label,
      Layer the wash over the shared glass instead: state stays recognisable,
      but provider forms, output cards and branded feedback remain as readable
      as their neutral neighbours. */
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where(div, section, article, li, label, button):where(
       [class~="bg-primary/5"],
       [class~="bg-primary/10"],
@@ -1272,27 +1429,27 @@ label,
     );
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where([class~="bg-primary/[0.04]"]) {
     --surface-tint-color: hsl(var(--primary) / 0.04);
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where([class~="bg-primary/5"], [class~="bg-primary/[0.05]"]) {
     --surface-tint-color: hsl(var(--primary) / 0.05);
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where([class~="bg-primary/[0.06]"]) {
     --surface-tint-color: hsl(var(--primary) / 0.06);
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where([class~="bg-primary/[0.07]"]) {
     --surface-tint-color: hsl(var(--primary) / 0.07);
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where([class~="bg-primary/10"]) {
     --surface-tint-color: hsl(var(--primary) / 0.1);
   }
@@ -1301,32 +1458,32 @@ label,
      rows). Without the card glass underneath, a 15-25% ink wash over
      artwork is no ground at all — the reported "active filter is
      invisible" symptom. */
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where([class~="bg-primary/15"]) {
     --surface-tint-color: hsl(var(--primary) / 0.15);
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where([class~="bg-primary/20"]) {
     --surface-tint-color: hsl(var(--primary) / 0.2);
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where([class~="bg-primary/25"]) {
     --surface-tint-color: hsl(var(--primary) / 0.25);
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where([class~="bg-primary/30"]) {
     --surface-tint-color: hsl(var(--primary) / 0.3);
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where([class~="bg-destructive/[0.05]"]) {
     --surface-tint-color: hsl(var(--destructive) / 0.05);
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     :where([class~="bg-[#5865F2]/10"]) {
     --surface-tint-color: rgb(88 101 242 / 0.1);
   }
@@ -1334,7 +1491,7 @@ label,
   /* Light mode uses transparent glass rather than stacked white sheets. A
      restrained blur separates content from the artwork while the
      warm inset highlight preserves the same glass hierarchy as dark mode. */
-  :root:not(.dark)
+  :root.jarvis-wallpaper:not(.dark)
     .jarvis-section-stage
     :where(
       [class~="bg-card"],
@@ -1401,7 +1558,7 @@ label,
      glass and those labels vanish completely — the reported symptom. Inside
      the light stage the variants converge on one readable floor; hierarchy
      survives through the size and weight steps the views already use. */
-  :root:not(.dark)
+  :root.jarvis-wallpaper:not(.dark)
     .jarvis-section-stage
     :where(
       [class~="text-muted-foreground/40"],
@@ -1412,7 +1569,7 @@ label,
     color: hsl(var(--muted-foreground) / 0.78);
   }
 
-  :root:not(.dark)
+  :root.jarvis-wallpaper:not(.dark)
     .jarvis-section-stage
     :where(
       [class~="text-muted-foreground/70"],
@@ -1428,7 +1585,7 @@ label,
      artwork the missing alpha is exactly the missing legibility, so inside
      the light floors they converge on near-full ink; hierarchy keeps
      reading through size and weight. */
-  :root:not(.dark)
+  :root.jarvis-wallpaper:not(.dark)
     :where(
       .jarvis-section-stage,
       .jarvis-nav-surface,
@@ -1444,7 +1601,7 @@ label,
     color: hsl(var(--foreground) / 0.95);
   }
 
-  :root:not(.dark)
+  :root.jarvis-wallpaper:not(.dark)
     :where(
       .jarvis-section-stage,
       .jarvis-nav-surface,
@@ -1464,7 +1621,7 @@ label,
      card-glass-under-tint rule cannot reach them. Same treatment, scoped to
      light: the pill gets a real ivory chip under its ink wash instead of
      15-25% ink over raw artwork. */
-  :root:not(.dark)
+  :root.jarvis-wallpaper:not(.dark)
     :where(.jarvis-nav-surface, .jarvis-shell-surface)
     :where(button, a, span, div):where(
       [class~="bg-primary/10"],
@@ -1480,8 +1637,8 @@ label,
     );
   }
 
-  :root:not(.dark) .jarvis-section-stage .card-outline,
-  :root:not(.dark)
+  :root.jarvis-wallpaper:not(.dark) .jarvis-section-stage .card-outline,
+  :root.jarvis-wallpaper:not(.dark)
     .jarvis-section-stage
     :where(div, section, article)[class~="bg-border"] {
     background-color: transparent;
@@ -1504,9 +1661,9 @@ label,
      These surfaces therefore carry their own near-opaque paper ground, a
      border firm enough to read as an edge, and no inherited halo (ink sits on
      paper here, so an outline would be pure noise). */
-  :root:not(.dark)
+  :root.jarvis-wallpaper:not(.dark)
     :where([class~="bg-popover"], [class~="bg-popover/95"]),
-  :root:not(.dark)
+  :root.jarvis-wallpaper:not(.dark)
     :where(
       [role="dialog"],
       [role="menu"],
@@ -1535,7 +1692,7 @@ label,
      it. The `:not()` chain protects the floating layer's own ground: a menu or
      a tooltip opened from within a dialog is a surface in front of it, not a
      panel inside it, and this selector outranks the rule above. */
-  :root:not(.dark)
+  :root.jarvis-wallpaper:not(.dark)
     [role="dialog"]
     :where(
       [class~="bg-card"],
@@ -1567,7 +1724,7 @@ label,
 
   /* Modal backdrops may blur the wallpaper, but must not tint it white or
      black. Semantic colour washes inside the modal remain untouched. */
-  :root:not(.dark)
+  :root.jarvis-wallpaper:not(.dark)
     :where(
       [class~="bg-scrim/40"],
       [class~="bg-scrim/50"],
@@ -1585,7 +1742,7 @@ label,
     backdrop-filter: blur(4px) saturate(0.92);
   }
 
-  .jarvis-section-stage > [class~="bg-background"] {
+  :root.jarvis-wallpaper .jarvis-section-stage > [class~="bg-background"] {
     background-color: transparent;
   }
 
@@ -1593,8 +1750,8 @@ label,
      structural wrapper its own glass fill compounds the alpha and turns three
      transparent layers into an almost opaque rectangle. Keep the workspace,
      centre column and side panes clear so the desktop artwork stays visible. */
-  .jarvis-section-stage #wiki-workspace,
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage #wiki-workspace,
+  :root.jarvis-wallpaper .jarvis-section-stage
     #wiki-workspace
     > section[class~="bg-background"] {
     background-color: transparent;
@@ -1611,7 +1768,7 @@ label,
     visibility: hidden;
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     #wiki-workspace
     :where(
       [data-testid="wiki-tree-sidebar"],
@@ -1623,7 +1780,7 @@ label,
     backdrop-filter: none;
   }
 
-  .jarvis-section-stage
+  :root.jarvis-wallpaper .jarvis-section-stage
     #wiki-workspace
     > section
     > [class~="bg-card/40"] {
@@ -2835,13 +2992,13 @@ label,
     -webkit-backdrop-filter: blur(14px) saturate(1.05);
     border-radius: 6px;
     box-shadow:
-      0 18px 34px -18px rgb(0 0 0 / 0.55),
+      0 18px 34px -18px rgb(var(--scrim-rgb) / 0.55),
       0 2px 0 -1px hsl(var(--primary) / 0.08) inset;
   }
   :root:not(.dark) .deck-board-3d .deck-card {
     background: hsl(var(--card) / 0.62);
     box-shadow:
-      0 18px 30px -18px rgb(40 28 12 / 0.35),
+      0 18px 30px -18px rgb(var(--scrim-rgb) / 0.35),
       0 1px 0 0 rgb(255 255 255 / 0.5) inset;
   }
   /* Cards behind the wall's plane read softer, like things further away. */
@@ -2897,13 +3054,15 @@ label,
     bottom: 2%;
     height: 9%;
     border-radius: 50%;
-    background: radial-gradient(ellipse at 50% 50%, rgb(0 0 0 / 0.5), transparent 70%);
+    /* One shadow for both themes: the scrim channel already flips. */
+    background: radial-gradient(
+      ellipse at 50% 50%,
+      rgb(var(--scrim-rgb) / 0.45),
+      transparent 70%
+    );
     filter: blur(6px);
     z-index: -1;
     pointer-events: none;
-  }
-  :root:not(.dark) .deck-orb-ground {
-    background: radial-gradient(ellipse at 50% 50%, rgb(40 28 12 / 0.32), transparent 70%);
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -3239,130 +3398,42 @@ label,
 
 /*
  * ===========================================================================
- * Solid ground — the default since 2026-08-23
+ * Elevation — two classes, and no third
  * ===========================================================================
  *
- * The app opens on a plain theme colour now; a wallpaper is an opt-in
- * (`lib/backgroundMode.ts`, toggled by the Wallpaper section). The whole
- * readability floor above — glass alphas, text halos, SVG outline rings,
- * token floors — exists to keep ink legible over arbitrary artwork, and
- * every one of those treatments is a defect on a flat colour: a halo around
- * text on paper reads as a printing error, and a 60 % glass card on its own
- * ground is just a slightly wrong card.
+ * Depth in this app is carried by FILL. A black shadow on a near-black ground
+ * is mathematically invisible, which is why the product had no working depth
+ * device at all and reached for glows instead. On this ground the device that
+ * works is a lighter fill plus a lighter top edge.
  *
- * So the floor is switched off as a whole wherever <html> lacks the
- * `jarvis-wallpaper` class (set by the boot script in index.html and kept in
- * step by the wallpaper store). Placed in the utilities layer on purpose:
- * a later layer beats an earlier one regardless of specificity, so these
- * few rules undo the components-layer floor without having to out-specify
- * each of its selectors one by one. Rules that live in the utilities layer
- * themselves are matched at equal specificity and simply come later.
+ *   .shadow-rim    A card or bubble catching light along its top edge. Not a
+ *                  drop shadow — one hairline of sheen, inside the box.
+ *   .shadow-float  The only real shadow in the product: menus, dialogs,
+ *                  tooltips, anything that has left the plane. The ring is
+ *                  --border-strong, because on near-black the ring is what
+ *                  actually separates the layer; the shadow is the hint.
+ *
+ * Both read in either theme without a variant: --sheen-rgb is white on dark
+ * and ink on light, --scrim-rgb is black on dark and warm charcoal on light,
+ * so "catches light" and "casts shadow" swap sides with the ground the way
+ * they should. Nothing that is not floating gets .shadow-float.
+ *
+ * `tailwind.config.ts` declares the same two under `boxShadow`, which is the
+ * better definition: a generated utility composes with `ring-*` and accepts
+ * variants. These live in the COMPONENTS layer on purpose, so the generated
+ * utility always outranks them and this is only the floor underneath —
+ * `shadow-float` already has ~50 call sites and must never resolve to
+ * nothing. If the two ever disagree, the config is the one to trust.
  */
-@layer utilities {
-  :root:not(.jarvis-wallpaper) {
-    /* Opaque surfaces: the card tokens ARE the surface hierarchy now. */
-    --surface-card-alpha: 1;
-    --surface-panel-alpha: 1;
-    --surface-control-alpha: 1;
-    --surface-stage-alpha: 1;
-    --surface-wiki-pane-alpha: 1;
-    --surface-wiki-stage-alpha: 1;
+@layer components {
+  .shadow-rim {
+    box-shadow: inset 0 1px 0 rgb(var(--sheen-rgb) / 0.05);
   }
 
-  /* No halos, no outline rings, no re-floored tokens. `inherit` hands the
-     custom property back to the value <html> carries for the active theme. */
-  :root:not(.jarvis-wallpaper) .jarvis-section-stage,
-  :root:not(.jarvis-wallpaper) .jarvis-nav-surface,
-  :root:not(.jarvis-wallpaper) .jarvis-shell-surface,
-  :root:not(.jarvis-wallpaper) [data-testid="agentic-toolbar"],
-  :root:not(.jarvis-wallpaper) [data-testid="agentic-chat-rail"] {
-    --muted-foreground: inherit;
-    --border: inherit;
-    text-shadow: none;
-  }
-
-  :root:not(.jarvis-wallpaper) .jarvis-nav-surface svg,
-  :root:not(.jarvis-wallpaper) .jarvis-shell-surface svg,
-  :root:not(.jarvis-wallpaper) [data-testid="agentic-toolbar"] svg,
-  :root:not(.jarvis-wallpaper) [data-testid="agentic-chat-rail"] svg {
-    filter: none;
-  }
-
-  /* The chrome gets a ground of its own on a flat colour: the nav column one
-     step OFF the page — below it on paper, above it in the dark (see the
-     surface ramp note in the token block) — and the top bar on the page
-     itself. */
-  :root:not(.jarvis-wallpaper) .jarvis-nav-surface {
-    background: hsl(var(--sidebar));
-  }
-
-  :root:not(.jarvis-wallpaper) .jarvis-shell-surface {
-    background: hsl(var(--background));
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-
-  /* The glass surfaces become the plain card / control / panel they stand
-     for. No blur: there is nothing behind them to blur. */
-  :root:not(.jarvis-wallpaper) .jarvis-message-surface,
-  :root:not(.jarvis-wallpaper) .jarvis-panel-surface {
-    background: hsl(var(--card));
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-
-  :root:not(.jarvis-wallpaper) .jarvis-input-surface {
-    background: hsl(var(--input));
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-
-  /* The pictures-only stage keeps its own flat ground either way. */
-  :root:not(.jarvis-wallpaper) .jarvis-visualization-stage {
-    background: hsl(var(--background));
-  }
-
-  /*
-   * Dark + no wallpaper: do not paint the room grey.
-   *
-   * The block above sets every surface alpha to 1 so a card on a flat colour
-   * is a real card, not 60% glass on the same colour. In light that is paper
-   * on paper and it works. In dark it turned Spend, Settings, Board and
-   * Local models into opaque grey furniture on a black page. Live 2026-08-31
-   * against Grok-Bot: Bot is a black void; grey is only the size of a
-   * bubble; colour sits on avatars and live-dots. Dark therefore keeps a
-   * whisper of lift, a hairline you should barely see, and lets the Board
-   * sheen stay a sheen instead of a slab.
-   */
-  :root.dark:not(.jarvis-wallpaper) {
-    --surface-card-alpha: 0.2;
-    --surface-panel-alpha: 0.14;
-    --surface-control-alpha: 0.4;
-    --surface-stage-alpha: 0.14;
-    --surface-wiki-pane-alpha: 0.12;
-    --surface-wiki-stage-alpha: 0.1;
-  }
-
-  :root.dark:not(.jarvis-wallpaper) .jarvis-section-stage {
-    --border: 0 0% 9%;
-  }
-
-  :root.dark:not(.jarvis-wallpaper) .jarvis-message-surface {
-    background: hsl(0 0% 12%);
-  }
-
-  :root.dark:not(.jarvis-wallpaper) .jarvis-panel-surface {
-    background: rgb(var(--sheen-rgb) / 0.035);
-  }
-
-  :root.dark:not(.jarvis-wallpaper) .jarvis-input-surface {
-    background: rgb(var(--sheen-rgb) / 0.06);
-  }
-
-  :root.dark:not(.jarvis-wallpaper)
-    .jarvis-section-stage
-    :where([class~="from-sheen/[0.055]"][class~="to-sheen/[0.015]"]) {
-    background-color: transparent;
+  .shadow-float {
+    box-shadow:
+      0 12px 32px -8px rgb(var(--scrim-rgb) / 0.55),
+      0 0 0 1px hsl(var(--border-strong));
   }
 }
 

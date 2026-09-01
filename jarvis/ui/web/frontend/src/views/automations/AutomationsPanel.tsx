@@ -11,6 +11,7 @@
 import { Fragment, useState } from "react";
 import { Loader2, MoreHorizontal, Play, Trash2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { PanelSkeleton } from "@/components/layout/PanelSkeleton";
 import {
   ActionMenu,
   Cell,
@@ -90,11 +91,22 @@ export function AutomationsPanel({
     { id: "actions", label: t("automations_view.col_actions"), width: "36px", align: "right", srOnly: true },
   ];
 
-  if (!loading && automations.length === 0) {
+  // While the list is in flight the table would otherwise render its header
+  // over nothing, which reads as "you have no automations" rather than as
+  // "these are on their way". Real rows, real height, no content.
+  if (loading) {
+    return (
+      <div className="px-3">
+        <PanelSkeleton rows={4} rowHeight={54} label={t("automations_view.tab_automations")} />
+      </div>
+    );
+  }
+
+  if (automations.length === 0) {
     return (
       <EmptyRow>
         <p>{t("automations_view.yours_empty")}</p>
-        <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground/80">
+        <p className="mx-auto mt-1 max-w-md text-meta text-muted-foreground">
           {t("automations_view.yours_empty_hint")}
         </p>
         <div className="mt-4 flex items-center justify-center gap-2">
@@ -192,7 +204,9 @@ function AutomationRow({
       selected={open}
       ariaLabel={task.title || t("tasks_view.untitled")}
       className={cn(
-        highlighted && "bg-primary/5 ring-1 ring-inset ring-primary/40",
+        // "I just added this one" — the row is lifted and ringed, the way a
+        // focused row is, rather than washed in a --primary tint.
+        highlighted && "bg-secondary ring-2 ring-inset ring-border-strong",
         paused && "opacity-70",
       )}
     >
@@ -217,7 +231,7 @@ function AutomationRow({
       </Cell>
       <Cell muted>
         {running ? (
-          <span className="text-primary">{t("tasks_view.running_now")}</span>
+          <span className="text-success">{t("tasks_view.running_now")}</span>
         ) : paused ? (
           <span>{stateLabels.paused}</span>
         ) : (
@@ -285,7 +299,7 @@ function AutomationSubline({ task, fallback }: { task: TaskSummary; fallback: st
   const { data } = useTaskDetail(task.id, needsSpec);
   const text = fallback || firstLine(promptOfSpec(data?.spec));
   if (!text) return null;
-  return <span className="block truncate text-xs text-muted-foreground">{text}</span>;
+  return <span className="block truncate text-meta text-muted-foreground">{text}</span>;
 }
 
 /** The one-question delete confirmation, in place under its row. */
@@ -302,14 +316,14 @@ function ConfirmDeleteRow({
   return (
     <div
       role="presentation"
-      className="flex items-center gap-2 border-b border-border/70 bg-destructive/5 px-3 py-2.5 text-sm last:border-b-0"
+      className="flex items-center gap-2 border-b border-border bg-secondary px-3 py-2.5 text-body last:border-b-0"
     >
-      <span className="flex-1 text-muted-foreground">{t("automations_view.delete_confirm")}</span>
+      <span className="flex-1 text-foreground">{t("automations_view.delete_confirm")}</span>
       <button
         type="button"
         disabled={busy}
         onClick={onConfirm}
-        className="inline-flex h-7 items-center gap-1.5 rounded-md bg-destructive px-3 text-xs font-medium text-destructive-foreground transition-colors hover:bg-destructive/90 disabled:opacity-50"
+        className="inline-flex h-8 items-center gap-1.5 rounded-md bg-destructive px-3 text-body font-medium text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
       >
         {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
         {t("tasks_view.delete")}
@@ -328,29 +342,31 @@ function AutomationDetail({
 }) {
   const t = useT();
   const { data, isLoading, error } = useTaskDetail(taskId);
+  // No fill of its own: the rows around it already answer to the pointer with
+  // one, and a second resting surface here leaves them nowhere to travel to.
   if (isLoading) {
     return (
-      <div role="presentation" className="border-b border-border/70 bg-sheen/[0.03] px-4 py-3 text-xs text-muted-foreground last:border-b-0">
-        {t("tasks_view.loading_details")}
+      <div role="presentation" className="border-b border-border px-4 py-4 last:border-b-0">
+        <PanelSkeleton rows={3} rowHeight={28} label={t("tasks_view.loading_details")} />
       </div>
     );
   }
   if (error) {
     return (
-      <div role="presentation" className="border-b border-border/70 bg-sheen/[0.03] px-4 py-3 text-xs text-destructive last:border-b-0">
+      <div role="presentation" className="border-b border-border px-4 py-3 text-body text-destructive last:border-b-0">
         {t("common.error")}: {(error as Error).message}
       </div>
     );
   }
   const steps = data?.steps ?? [];
   return (
-    <div role="presentation" className="space-y-3 border-b border-border/70 bg-sheen/[0.03] px-4 py-4 last:border-b-0">
+    <div role="presentation" className="space-y-group border-b border-border px-4 py-4 last:border-b-0">
       <div>
-        <SectionLabel className="mb-1.5">{t("automations_view.latest_result")}</SectionLabel>
+        <SectionLabel className="mb-stack">{t("automations_view.latest_result")}</SectionLabel>
         <ResultText steps={steps} fallback={fallbackResult} />
       </div>
       <div>
-        <SectionLabel className="mb-1.5">
+        <SectionLabel className="mb-stack">
           {t("automations_view.timeline")} ({steps.length})
         </SectionLabel>
         <StepTimeline steps={steps} />

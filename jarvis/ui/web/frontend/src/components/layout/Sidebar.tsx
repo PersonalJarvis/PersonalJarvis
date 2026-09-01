@@ -21,6 +21,7 @@ import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
+import { clsx } from "clsx";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
@@ -37,6 +38,24 @@ import { GigiMark } from "@/components/GigiMark";
 
 /** Where the Chat row remembers whether its history is folded out. */
 const CHATS_OPEN_KEY = "jarvis.sidebar.recent-chats-open";
+
+/*
+ * Why `clsx` and not `cn` on the rows below.
+ *
+ * `cn` runs tailwind-merge, which decides that anything matching `text-*` that
+ * is not one of ITS known size names is a text COLOUR. The design system's
+ * scale — `text-body`, `text-meta`, `text-title`, `text-micro` — is not in that
+ * list, so a class list holding both a size and a colour ends up with only the
+ * colour: `cn("text-body", "text-muted-foreground")` returns
+ * `"text-muted-foreground"` and the row silently falls back to the inherited
+ * 16 px. Font size and colour are different CSS properties and never conflict
+ * in the stylesheet, so plain concatenation is the correct behaviour here.
+ *
+ * The real fix is one line in `lib/utils.ts` — teach tailwind-merge the scale
+ * via `extendTailwindMerge({ extend: { classGroups: { "font-size": [{ text:
+ * ["display","page","title","reading","body","meta","micro"] }] } } })`. That
+ * file is outside this change; once it lands these can go back to `cn`.
+ */
 
 function readChatsOpen(): boolean {
   try {
@@ -67,17 +86,28 @@ const IDE_SECTIONS: readonly string[] = [
   "agentic-ide-classic",
 ];
 
+/**
+ * The voice status dot, in the three colours a status is allowed to have.
+ *
+ * It used to run on four shades of grey — `bg-muted-foreground/50`,
+ * `bg-muted-foreground`, `bg-foreground/70`, `bg-foreground` — which is a ramp
+ * nobody can read: "listening" and "idle" differed by an opacity, and the
+ * loudest value on the ramp was "paused". Colour carries exactly three
+ * meanings in this product, so the dot carries them too: green while the voice
+ * path is actually doing something, red when it broke, amber while it is only
+ * half up, and neutral ink when it is simply at rest.
+ */
 const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
-  idle: { dot: "bg-muted-foreground/50", pulse: false },
-  listening: { dot: "bg-muted-foreground", pulse: true },
-  thinking: { dot: "bg-foreground/70", pulse: true },
-  speaking: { dot: "bg-foreground/70", pulse: true },
+  idle: { dot: "bg-muted-foreground", pulse: false },
+  listening: { dot: "bg-success", pulse: true },
+  thinking: { dot: "bg-success", pulse: true },
+  speaking: { dot: "bg-success", pulse: true },
   // The user muted or suspended the pipeline: neither working nor broken.
-  paused: { dot: "bg-foreground", pulse: false },
+  paused: { dot: "bg-muted-foreground", pulse: false },
   error: { dot: "bg-destructive", pulse: false },
   // Not a supervisor state — the surface's own "a realtime transport is
-  // negotiating" phase, which no backend state covers.
-  connecting: { dot: "bg-foreground", pulse: true },
+  // negotiating" phase, which no backend state covers. Half up, so amber.
+  connecting: { dot: "bg-warning", pulse: true },
 };
 
 export interface SidebarProps {
@@ -278,6 +308,14 @@ export function Sidebar({
     () => Object.values(sectionHealth).some((h) => h?.status === "error"),
     [sectionHealth],
   );
+  // The footer card IS the button that opens API Keys, so its dot carries that
+  // page's verdict rather than a decorative grey mark. Three honest states:
+  // something is failing, something has answered, or nothing has reported yet
+  // — a fresh install must not claim green before a single provider replied.
+  const providersAnswering = useMemo(
+    () => Object.values(sectionHealth).some((h) => h?.status === "ok"),
+    [sectionHealth],
+  );
   // A connected marketplace plugin whose token was revoked/expired (needs_reauth)
   // — surfaced as an amber dot on the row that fronts Plugins ("Skills & Tools"),
   // so a dead connection is visible app-wide, not only on the Plugins page. The
@@ -369,7 +407,10 @@ export function Sidebar({
       data-railed={railed ? "true" : "false"}
       className="jarvis-nav-surface relative isolate z-20 flex h-full shrink-0 flex-col"
     >
-      <div className={cn("border-b border-border", railed ? "px-2 py-2.5" : "px-3 py-3")}>
+      {/* One 8px gutter down the whole column — header, navigation and footer
+          share it, so the rows, the "+ New" button and the brain card all line
+          up on the same left edge. */}
+      <div className={cn("border-b border-border px-2", railed ? "py-2.5" : "py-3")}>
         <div
           className={cn(
             "flex items-center gap-3",
@@ -386,7 +427,7 @@ export function Sidebar({
               <span
                 data-testid="sidebar-instance-tag"
                 title={t("sidebar.instance_dev_hint")}
-                className="absolute -bottom-1 -right-1 z-10 rounded-[3px] bg-foreground/70 px-[3px] py-px font-mono text-[7px] font-bold leading-none tracking-wider text-primary-foreground"
+                className="absolute -bottom-1 -right-1 z-10 rounded-full bg-primary px-1 text-micro font-medium leading-none text-primary-foreground"
               >
                 {devTag}
               </span>
@@ -395,19 +436,25 @@ export function Sidebar({
           </span>
           {!railed && (
             <div className="flex min-w-0 flex-1 flex-col">
-              <span className="flex min-w-0 items-center gap-1.5 font-display text-[15px] font-semibold tracking-tight text-foreground">
+              <span className="flex min-w-0 items-center gap-2 font-display text-title font-semibold text-foreground-strong">
                 <span className="truncate">{assistantName}</span>
                 {devTag && (
+                  // A mark, not a status: the fill is the neutral accent, so it
+                  // never competes with the green/amber/red the voice dot
+                  // beside it uses to mean something.
                   <span
                     data-testid="sidebar-instance-tag"
                     title={t("sidebar.instance_dev_hint")}
-                    className="shrink-0 rounded-[4px] bg-foreground/70 px-1 py-px font-mono text-[9px] font-bold leading-none tracking-wider text-primary-foreground"
+                    className="shrink-0 rounded-full bg-primary px-1.5 text-micro font-medium leading-none text-primary-foreground"
                   >
                     {devTag}
                   </span>
                 )}
               </span>
-              <span className="mt-0.5 inline-flex w-fit items-center rounded-full bg-secondary px-1.5 py-px text-[10px] font-medium uppercase tracking-wider text-foreground/70">
+              {/* The state, as a plain line rather than a tiny all-caps chip.
+                  The dot to its right already carries the colour; a pill here
+                  was a second, louder copy of the same fact. */}
+              <span className="truncate text-meta text-muted-foreground">
                 {voiceLabel}
               </span>
             </div>
@@ -438,8 +485,12 @@ export function Sidebar({
               aria-label={railed ? t("sidebar.expand") : t("sidebar.collapse")}
               className={cn(
                 "flex shrink-0 items-center justify-center rounded-md text-muted-foreground",
-                "transition-colors hover:bg-background/20 hover:text-foreground",
-                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                // Hover goes UP the surface ladder. It used to be
+                // `hover:bg-background/20`, which composites the PAGE colour
+                // over the rail — on near-black that is darker than rest, so
+                // the control dimmed under the pointer.
+                "transition-colors hover:bg-secondary hover:text-foreground",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
                 railed ? "h-7 w-7" : "-mr-1 h-7 w-7",
               )}
             >
@@ -459,15 +510,17 @@ export function Sidebar({
                 Hidden while the IDE's chats own the column: two switches with
                 "Chat" on both halves are two questions nobody asked. */}
             <SurfaceSwitch className="mt-2" />
+            {/* An object that answers a pointer by stepping up one surface —
+                `bg-card` at rest, `bg-secondary` under the cursor. The old
+                `hover:bg-secondary/80` went the other way: it thinned the fill
+                the button already had. */}
             <button
               type="button"
               onClick={onVoiceSurface ? startNewVoice : startNewChat}
               data-testid="sidebar-new-chat"
-              className="mt-2 flex w-full items-center gap-2 rounded-xl bg-secondary px-2.5 py-2 text-xs font-medium text-foreground transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="mt-2 flex h-9 w-full items-center gap-2 rounded-md bg-card px-3 text-body font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong"
             >
-              <span className="flex h-5 w-5 items-center justify-center rounded-md bg-foreground/15 text-foreground">
-                <Plus aria-hidden className="h-3 w-3" />
-              </span>
+              <Plus aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
               {onVoiceSurface ? t("sidebar.new_voice_chat") : t("sidebar.new_chat")}
             </button>
             <BrowserRealtimeControl />
@@ -495,10 +548,10 @@ export function Sidebar({
                 type="button"
                 onClick={() => setSectionsShown(true)}
                 data-testid="sidebar-show-sections"
-                className={cn(
-                  "group mx-2 mb-2 mt-3 flex shrink-0 items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                  "text-muted-foreground hover:bg-background/20 hover:text-foreground",
-                  "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                className={clsx(
+                  "group mx-2 mb-2 mt-3 flex h-10 shrink-0 items-center gap-2 rounded-md px-3 text-body transition-colors",
+                  "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
                 )}
               >
                 <LayoutList
@@ -508,26 +561,29 @@ export function Sidebar({
                 <span className="flex-1 text-left">{t("sidebar.sections")}</span>
                 <ChevronRight
                   aria-hidden
-                  className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+                  className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground"
                 />
               </button>
             </>
           ) : (
-          <nav className="px-1.5 py-1.5">
+          // 8px in from the column edge, because the SELECTION is drawn on the
+          // whole row now: the fill needs an inset to read as a rounded object
+          // sitting in the rail rather than as a stripe welded to its side.
+          <nav className="px-2 py-2">
             {chatFace && (
               <button
                 type="button"
                 onClick={() => setSectionsShown(false)}
                 data-testid="sidebar-show-chats"
-                className={cn(
-                  "group mb-2 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                  "text-muted-foreground hover:bg-background/20 hover:text-foreground",
-                  "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                className={clsx(
+                  "group mb-2 flex h-10 w-full items-center gap-2 rounded-md px-3 text-body transition-colors",
+                  "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
                 )}
               >
                 <ChevronLeft
                   aria-hidden
-                  className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:-translate-x-0.5 group-hover:text-primary"
+                  className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:-translate-x-0.5 group-hover:text-foreground"
                 />
                 <span className="flex-1 text-left">{t("sidebar.back_to_chats")}</span>
               </button>
@@ -606,12 +662,13 @@ export function Sidebar({
         </div>
       )}
 
-      <div className={cn("border-t border-border", railed ? "p-1.5" : "p-2")}>
+      <div className="border-t border-border p-2">
         <button
           type="button"
           onClick={() => setActive("apikeys")}
           className={cn(
-            "group flex w-full items-center rounded-xl bg-secondary text-left transition-colors hover:bg-secondary/80",
+            "group flex w-full items-center rounded-lg bg-card text-left transition-colors hover:bg-secondary",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
             railed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2",
           )}
           // On the rail the card shrinks to its status dot, so everything it
@@ -623,22 +680,38 @@ export function Sidebar({
               : footerTooltip
           }
         >
-          <div className="h-2 w-2 shrink-0 rounded-full bg-foreground/70" />
+          {/* Not decoration: the dot is this button's destination reporting in
+              — red when a configured provider is failing, green once one has
+              actually answered, neutral until any of them has. On the rail it
+              is the whole card, which is why it has to mean something. */}
+          <div
+            data-testid="sidebar-footer-health"
+            className={cn(
+              "h-2 w-2 shrink-0 rounded-full",
+              apikeysHasError
+                ? "bg-destructive"
+                : providersAnswering
+                  ? "bg-success"
+                  : "bg-muted-foreground",
+            )}
+          />
           {!railed && (
           <div className="flex-1 min-w-0">
             <div
-              className="text-[10px] uppercase tracking-wider text-muted-foreground"
+              className="text-meta text-muted-foreground"
               data-testid="sidebar-footer-tier"
             >
               {footerLabel}
             </div>
-            <div className="text-xs font-medium truncate">{footerProvider}</div>
+            <div className="truncate text-title font-semibold text-foreground-strong">
+              {footerProvider}
+            </div>
             {/* The model id actually in use (e.g. "claude-opus-4-8", or the
                 realtime model in realtime mode) — the user asked to see WHICH
                 model is in use, not just the provider. */}
             {footerModel && (
               <div
-                className="text-[10px] text-muted-foreground/70 truncate"
+                className="truncate text-meta text-muted-foreground"
                 title={footerModel}
                 data-testid="sidebar-brain-model"
               >
@@ -648,7 +721,7 @@ export function Sidebar({
           </div>
           )}
           {!railed && (
-            <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+            <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
           )}
         </button>
       </div>
@@ -697,6 +770,22 @@ function NavRow({
 }) {
   const Icon = item.icon;
   const hint = alert ? alertTitle : warn ? warnTitle : undefined;
+  /*
+   * Selection is drawn on the WHOLE ROW.
+   *
+   * It used to be a `bg-foreground/10` fill on the 24×24 icon box while the
+   * ~200×40 row it belongs to stayed at the rail's own ground — a correct lift
+   * spent on 3.5 % of the thing it was meant to mark, which is why "you are
+   * here" was the hardest question to answer in this app. The row takes the
+   * fill now (one step up the ladder, inset from the column edge by the nav's
+   * own padding) plus the strong ink, and the icon box is gone entirely: it
+   * existed only to hold that fill.
+   *
+   * Hover stops one rung BELOW selection — `bg-card`, not `bg-secondary` — so
+   * a hovered row and the selected row never look alike. That difference is
+   * the whole point of a fill-based selection; matching them would give the
+   * fill with one hand and take the meaning away with the other.
+   */
   return (
     <li className={cn(expand && "relative")}>
       <button
@@ -704,39 +793,46 @@ function NavRow({
         data-testid={`nav-row-${item.id}`}
         onClick={onClick}
         title={hint}
-        className={cn(
-          "group relative flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-[13px] font-medium transition-colors",
-          "hover:bg-secondary/70",
+        className={clsx(
+          "group relative flex h-10 w-full items-center gap-2 rounded-md px-3 text-body transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
           // Leave the chevron its own column so the two buttons never overlap.
           expand && "pr-9",
-          active ? "jarvis-nav-active" : "text-foreground/80 hover:text-foreground",
+          active
+            ? "jarvis-nav-active bg-secondary text-foreground-strong"
+            : "text-foreground hover:bg-card",
         )}
       >
-        <span
+        <Icon
+          aria-hidden
           className={cn(
-            "flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors",
-            active ? "bg-foreground/10 text-foreground" : "text-foreground/55 group-hover:text-foreground",
+            "h-4 w-4 shrink-0 transition-colors",
+            active
+              ? "text-foreground-strong"
+              : "text-muted-foreground group-hover:text-foreground",
           )}
-        >
-          <Icon className="h-4 w-4" />
-        </span>
-        <span className="flex flex-1 items-center gap-1.5 text-left">
-          {label}
+        />
+        <span className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          {/* The row is a fixed 40px now, so a long label has to be cut rather
+              than allowed to wrap out of it. */}
+          <span className="truncate">{label}</span>
           {betaLabel && (
             <span
               data-testid={`nav-beta-${item.id}`}
-              className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary"
+              className="shrink-0 rounded-full bg-secondary px-1.5 text-micro text-muted-foreground"
             >
               {betaLabel}
             </span>
           )}
         </span>
+        {/* No ring around these: they sit in clear space at the row's end, and
+            a rim on something that already has a fill is one device too many. */}
         {alert && (
           <span
             data-testid={`nav-alert-${item.id}`}
             role="status"
             aria-label={alertTitle}
-            className="h-2 w-2 shrink-0 rounded-full bg-destructive ring-2 ring-background"
+            className="h-2 w-2 shrink-0 rounded-full bg-destructive"
           />
         )}
         {!alert && warn && (
@@ -744,11 +840,11 @@ function NavRow({
             data-testid={`nav-warn-${item.id}`}
             role="status"
             aria-label={warnTitle}
-            className="h-2 w-2 shrink-0 rounded-full bg-foreground ring-2 ring-background"
+            className="h-2 w-2 shrink-0 rounded-full bg-warning"
           />
         )}
         {badge !== undefined && badge > 0 && (
-          <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+          <span className="shrink-0 rounded-full bg-secondary px-1.5 text-micro tabular-nums text-muted-foreground">
             {badge}
           </span>
         )}
@@ -762,9 +858,11 @@ function NavRow({
           title={expand.label}
           data-testid={`nav-expand-${item.id}`}
           className={cn(
-            "absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-md transition-colors",
-            "text-muted-foreground hover:bg-background/60 hover:text-foreground",
-            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            "absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md transition-colors",
+            // `hover:bg-background/60` painted the PAGE over the rail here,
+            // i.e. it went darker under the pointer. Up the ladder instead.
+            "text-muted-foreground hover:bg-secondary hover:text-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
           )}
         >
           <ChevronDown

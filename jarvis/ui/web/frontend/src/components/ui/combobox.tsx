@@ -49,7 +49,7 @@ export interface ComboboxOption {
 
 export interface ComboboxGroup {
   id: string;
-  /** Rendered as a small caps heading; omit for an ungrouped lead band. */
+  /** Rendered as a quiet micro heading; omit for an ungrouped lead band. */
   label?: string;
   options: ComboboxOption[];
 }
@@ -397,11 +397,16 @@ export function Combobox({
         data-value={value}
         onClick={() => !disabled && setOpen((wasOpen) => !wasOpen)}
         onKeyDown={onTriggerKeyDown}
+        // A field is a lift surface, so the fill does the separating and the
+        // trigger carries no border at all. Every state used to be a --primary
+        // wash — on this ground --primary is pure white, so hovering a select
+        // lit it up brighter than the heading above it. Hover steps up to the
+        // float surface and focus is a --border-strong ring, the same ladder
+        // every other control in the app climbs.
         className={cn(
-          "flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm",
-          "shadow-[inset_0_1px_0_hsl(var(--foreground)/0.04)] transition-[border-color,background-color,box-shadow]",
-          "hover:border-primary/40 hover:bg-muted/20 focus:outline-none focus-visible:border-primary/60 focus-visible:ring-1 focus-visible:ring-primary/70",
-          open && "border-primary/60 bg-primary/[0.03] ring-1 ring-primary/70",
+          "flex w-full items-center gap-2 rounded-md bg-input px-3 py-2 text-left text-sm text-foreground",
+          "transition-colors duration-150 hover:bg-popover focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+          open && "bg-popover ring-2 ring-border-strong",
           disabled && "cursor-not-allowed opacity-50",
           className,
         )}
@@ -409,7 +414,7 @@ export function Combobox({
         {selected?.icon}
         <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
         {triggerHint && selected?.hint && (
-          <span className="shrink-0 truncate text-xs text-muted-foreground">
+          <span className="shrink-0 truncate text-[13px] text-muted-foreground">
             {selected.hint}
           </span>
         )}
@@ -417,7 +422,9 @@ export function Combobox({
           aria-hidden="true"
           className={cn(
             "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-            open && "rotate-180 text-primary",
+            // Body ink, not --primary: an open chevron is a decoration, and a
+            // decoration is never brighter than the label it sits beside.
+            open && "rotate-180 text-foreground",
           )}
         />
       </button>
@@ -436,10 +443,13 @@ export function Combobox({
               maxHeight: position.maxHeight,
             }}
             onKeyDown={onKeyDown}
-            className="fixed z-[70] flex flex-col overflow-hidden rounded-lg border border-primary/25 bg-popover/95 shadow-[0_22px_55px_-16px_rgba(0,0,0,0.9),inset_0_1px_0_hsl(var(--foreground)/0.05)] backdrop-blur-xl"
+            // The one place a real shadow is allowed: this layer leaves the
+            // plane. Opaque --popover rather than a blurred translucent wash,
+            // so the list has a predictable ground whatever it covers.
+            className="fixed z-[70] flex flex-col overflow-hidden rounded-lg border border-border-strong bg-popover shadow-float"
           >
             {searchable && (
-              <div className="flex items-center gap-2 border-b border-border/70 px-3 py-2">
+              <div className="flex items-center gap-2 border-b border-border px-3 py-2">
                 <Search
                   aria-hidden="true"
                   className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
@@ -456,7 +466,7 @@ export function Combobox({
                     activeOption?.id
                   }
                   data-testid={testId ? `${testId}-search` : undefined}
-                  className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                  className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-faint-foreground"
                 />
               </div>
             )}
@@ -474,7 +484,7 @@ export function Combobox({
             >
               {flat.length === 0 && (
                 <p
-                  className="px-3 py-6 text-center text-xs text-muted-foreground"
+                  className="px-3 py-6 text-center text-[13px] text-muted-foreground"
                   data-testid={testId ? `${testId}-empty` : undefined}
                 >
                   {emptyLabel ?? "—"}
@@ -484,7 +494,10 @@ export function Combobox({
               {visibleGroups.map((group, groupIndex) => (
                 <div key={group.id}>
                   {group.label && (
-                    <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    // Micro, the scale's floor — not a 10px all-caps label.
+                    // Tiny uppercase is the single construction that makes an
+                    // interface read as an admin panel.
+                    <div className="px-3 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
                       {group.label}
                     </div>
                   )}
@@ -518,12 +531,18 @@ export function Combobox({
                           }
                         }}
                         onClick={() => commit(option)}
+                        // The highlight is drawn on the whole row, and it is a
+                        // sheen rather than a named surface because the ladder
+                        // has run out: the panel is already the float layer,
+                        // and --secondary would sit BELOW it in dark mode —
+                        // the "selection reads as a hole" defect. A true
+                        // overlay on a floating layer lifts on black and
+                        // deepens on paper, which is right in both themes.
                         className={cn(
-                          "relative flex cursor-pointer items-center gap-2 rounded-md border border-transparent px-3 py-1.5 text-sm transition-colors",
-                          isActive && "border-primary/15 bg-primary/10 text-foreground",
-                          isSelected && "bg-primary/15 font-medium text-primary",
-                          option.disabled &&
-                            "cursor-not-allowed text-muted-foreground/45",
+                          "relative flex cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
+                          isActive && "bg-sheen/[0.08] text-foreground",
+                          isSelected && "font-medium text-foreground-strong",
+                          option.disabled && "cursor-not-allowed text-faint-foreground",
                         )}
                       >
                         {option.icon}
@@ -531,14 +550,14 @@ export function Combobox({
                           {option.label}
                         </span>
                         {option.hint && (
-                          <span className="shrink-0 truncate text-xs text-muted-foreground">
+                          <span className="shrink-0 truncate text-[13px] text-muted-foreground">
                             {option.hint}
                           </span>
                         )}
                         {isSelected && (
                           <Check
                             aria-hidden="true"
-                            className="h-3.5 w-3.5 shrink-0 text-primary"
+                            className="h-3.5 w-3.5 shrink-0 text-foreground-strong"
                           />
                         )}
                       </div>

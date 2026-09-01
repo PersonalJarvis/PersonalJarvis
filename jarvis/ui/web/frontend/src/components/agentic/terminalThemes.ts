@@ -3,6 +3,23 @@ import type { ITheme } from "@xterm/xterm";
 /**
  * Terminal colour schemes for the Agentic IDE.
  *
+ * ## Why this file holds literal colours when nothing else may
+ *
+ * The design system forbids a literal colour anywhere in the product; every
+ * surface names a token. This module is its one sanctioned exception, for two
+ * reasons that cannot be designed away. xterm's `ITheme` takes resolved colour
+ * strings — it cannot read `hsl(var(--card))`, and the minimum-contrast maths
+ * below needs real numbers to compute a ratio from. And a pane's appearance is
+ * a SEPARATE setting from the app theme: a light pane inside a dark app is a
+ * supported combination, so a pane that read app tokens would paint its chrome
+ * for the wrong ground exactly when the two disagree.
+ *
+ * So the rule holds in a different shape: the 16 ANSI slots are the terminal's
+ * own palette (one of the few places hue legitimately survives), and everything
+ * else in this file — `PANE_CHROME`, `PANE_BRAND` — is the app's surface and
+ * ink ladder re-derived for each appearance. No value here is invented; each
+ * one names the step it stands for in its comment.
+ *
  * Why a hand-built light palette instead of "same colours, white background":
  * the 16 ANSI colours a coding agent emits were designed for dark terminals.
  * Their bright variants (yellow, cyan, white) have almost no contrast on paper,
@@ -126,6 +143,14 @@ export interface PaneChrome {
   shell: string;
   /** The pane's resting edge, and the rule under its header. */
   border: string;
+  /**
+   * The pane's float step: a tooltip or menu that leaves the plane.
+   *
+   * Opaque, unlike `shell`. A card that can land on top of another pane's
+   * output must not be read THROUGH, and it is small enough that lift costs
+   * the room nothing (see the "lift scales inversely with area" rule).
+   */
+  float: string;
   /** The edge that says what this pane's agent is doing. */
   edge: Record<PaneEdgeState, string>;
 }
@@ -133,8 +158,15 @@ export interface PaneChrome {
 /**
  * Chrome (pane frame) colours that go with each terminal theme.
  *
- * These alphas mirror the shared section-panel glass tokens. Keeping the tint
- * on this single layer lets xterm remain clear while preserving text contrast.
+ * Every value below is one of the app's own surface-ladder steps, expressed as
+ * an alpha over the pane's ground so it still composites correctly when a
+ * wallpaper is showing through the shell. On a flat ground they resolve to the
+ * tokens by name: `border` lands on `--border`, `edge.exited` a step below it,
+ * `PaneBrand.chip` on `--secondary`, `PaneBrand.accentSoft` on
+ * `--border-strong`. The table exists because a pane's appearance is a
+ * SEPARATE setting from the app theme — a light pane inside a dark app is a
+ * supported combination — so the pane resolves the ladder against its own
+ * ground rather than reading `hsl(var(--…))`, which would be the app's.
  *
  * ## Why the edge is a state and not a decoration
  *
@@ -147,89 +179,91 @@ export interface PaneChrome {
  *   panes are here, and a workspace where everything is marked marks nothing.
  * * `exited` — dimmer than resting. The agent is gone; the pane recedes rather
  *   than shouting, because a finished terminal is not a problem.
- * * `error` — the CLI's own red, at an alpha that reads across a room without
+ * * `error` — the fault hue, at an alpha that reads across a room without
  *   turning the pane into an alert box.
  *
- * The red is the matching terminal theme's own `red` slot rather than the app's
- * `--destructive`, and that is deliberate: terminal appearance is a separate
- * setting from the app theme (a light pane inside a dark app is a supported
- * combination), so a token picked for the app lands on the wrong ground exactly
- * when the two disagree.
+ * The red used to be the matching terminal theme's own `red` slot. It is now
+ * the app's fault hue re-derived per appearance — the same `#E8574C` the dark
+ * theme paints `--destructive` with, and the darker `#C72E23` light mode uses —
+ * because "this pane failed" is one status across the whole product and must
+ * not change hue with a per-pane preference. Re-deriving it here rather than
+ * reading the token keeps the ground correct when the two settings disagree.
  */
 /**
- * Brand ink for a pane's title bar, resolved against the PANE's own ground.
+ * Ink and accent for a pane's title bar, resolved against the PANE's own ground.
  *
- * Not the app's `--primary` token, for the same reason `NOTICE_TONE` exists in
+ * Not read from `hsl(var(--…))`, for the same reason `NOTICE_TONE` exists in
  * ./AgenticTerminal: terminal appearance is a separate setting from the app
- * theme (a light pane inside a dark app is a supported combination), and the
- * app's accent lands on the wrong ground exactly when the two disagree —
- * signal-yellow on paper is 1.4:1, a call-sign nobody can read. Each
- * appearance therefore carries its own accent, and it is the same hue that
- * appearance's terminal theme already uses for the cursor: the dark panes'
- * signal-yellow, the light panes' gold. The title bar reads as part of the
- * terminal it crowns, in the brand's two voices.
+ * theme, and an app token lands on the wrong ground exactly when the two
+ * disagree.
+ *
+ * The values are the app's ink scale, not a second palette: `ink` is the body
+ * step, `inkMuted` the meta step, `inkFaint` the placeholder step, and `accent`
+ * is the fill — white on a dark pane, warm near-black on a light one. It used
+ * to be a signal-yellow "brand" accent in two voices; the brand hue was retired
+ * (Ink & Paper), and a title bar is chrome rather than a place to spend colour.
+ * Hue now survives on a pane only where it means something: the terminal's own
+ * 16 ANSI slots, the activity pill, and a failed edge.
  */
 export interface PaneBrand {
-  /** The brand accent on this ground — the focused pane's call-sign plate. */
+  /** The fill — the focused pane's call-sign plate, and the header hairline. */
   accent: string;
-  /** Ink ON the filled accent plate (black on yellow, white on gold). */
+  /** Ink ON the filled plate. The pane's ground, so the plate reads as a hole. */
   onAccent: string;
-  /** Translucent accent for hairlines, tints, and hover grounds. */
+  /** The pane's `--border-strong`: field rims and the hairline's fade. */
   accentSoft: string;
-  /** A whisper of accent — the wash across the focused title bar. */
-  accentWash: string;
   /** Primary ink — the resting call-sign, the headline under the pointer. */
   ink: string;
-  /** Secondary ink — the recap headline at rest. */
+  /** Secondary ink — the recap headline at rest, and the seat chip. */
   inkMuted: string;
-  /** Tertiary ink — the CLI label and the seat chip. */
+  /** Placeholder and disabled ink only. Never information. */
   inkFaint: string;
-  /** Quiet chip ground behind the resting call-sign and the seat chip. */
+  /** The pane's `--secondary`: the resting call-sign chip, and hover grounds. */
   chip: string;
 }
 
 export const PANE_BRAND: Record<TerminalAppearance, PaneBrand> = {
   light: {
-    accent: "#0a0a0a",
-    onAccent: "#faf9f5",
-    accentSoft: "rgba(43,43,51,0.18)",
-    accentWash: "rgba(43,43,51,0.05)",
-    ink: "#2b2b33",
-    inkMuted: "#54545d",
-    inkFaint: "#77777f",
-    chip: "rgba(0,0,0,0.055)",
+    accent: "#26251e",
+    onAccent: "#f7f7f4",
+    accentSoft: "rgba(38,37,30,0.24)",
+    ink: "#26251e",
+    inkMuted: "#6e6b61",
+    inkFaint: "#918d82",
+    chip: "rgba(38,37,30,0.08)",
   },
   dark: {
     accent: "#ffffff",
-    onAccent: "#262624",
-    accentSoft: "rgba(245,244,239,0.18)",
-    accentWash: "rgba(245,244,239,0.05)",
-    ink: "#f2f2f5",
-    inkMuted: "#a8a8b4",
-    inkFaint: "#8a8a95",
-    chip: "rgba(255,255,255,0.07)",
+    onAccent: "#0a0a0a",
+    accentSoft: "rgba(255,255,255,0.23)",
+    ink: "#e6e6e6",
+    inkMuted: "#949494",
+    inkFaint: "#707070",
+    chip: "rgba(255,255,255,0.17)",
   },
 };
 
 export const PANE_CHROME: Record<TerminalAppearance, PaneChrome> = {
   light: {
     shell: "rgba(252, 251, 248, 0.68)",
-    border: "rgba(0,0,0,0.10)",
+    border: "rgba(38,37,30,0.115)",
+    float: "#ffffff",
     edge: {
-      connecting: "rgba(0,0,0,0.10)",
-      live: "rgba(0,0,0,0.10)",
-      exited: "rgba(0,0,0,0.05)",
-      error: "rgba(192,57,43,0.45)",
+      connecting: "rgba(38,37,30,0.115)",
+      live: "rgba(38,37,30,0.115)",
+      exited: "rgba(38,37,30,0.055)",
+      error: "rgba(199,46,35,0.45)",
     },
   },
   dark: {
     shell: "rgba(10, 10, 10, 0.58)",
     border: "rgba(255,255,255,0.10)",
+    float: "#3d3d3d",
     edge: {
       connecting: "rgba(255,255,255,0.10)",
       live: "rgba(255,255,255,0.10)",
       exited: "rgba(255,255,255,0.05)",
-      error: "rgba(255,107,94,0.50)",
+      error: "rgba(232,87,76,0.55)",
     },
   },
 };

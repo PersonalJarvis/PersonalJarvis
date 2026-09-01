@@ -255,7 +255,7 @@ export function CountStepper({
     <div className="flex flex-col items-end gap-1.5">
       <label
         htmlFor="workspace-terminal-count"
-        className="font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground"
+        className="font-mono text-micro font-medium text-muted-foreground"
       >
         Exact count · type a number
       </label>
@@ -264,7 +264,7 @@ export function CountStepper({
           label="Use one fewer terminal"
           disabled={count <= 1}
           onClick={() => set(count - 1)}
-          className="h-full w-11 rounded-none border-r border-border/70"
+          className="h-full w-11 rounded-none border-r border-border"
         >
           <Minus className="h-4 w-4" />
         </IconButton>
@@ -272,7 +272,7 @@ export function CountStepper({
           htmlFor="workspace-terminal-count"
           className={
             "group flex min-w-[7rem] cursor-text items-center justify-center gap-1.5 px-3 " +
-            "transition-colors hover:bg-secondary/50"
+            "transition-colors hover:bg-secondary"
           }
         >
           <input
@@ -334,7 +334,7 @@ export function CountStepper({
           />
           <span
             id="workspace-terminal-count-max"
-            className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70"
+            className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground"
           >
             / {max}
           </span>
@@ -343,7 +343,7 @@ export function CountStepper({
           label="Use one more terminal"
           disabled={count >= max}
           onClick={() => set(count + 1)}
-          className="h-full w-11 rounded-none border-l border-border/70"
+          className="h-full w-11 rounded-none border-l border-border"
         >
           <Plus className="h-4 w-4" />
         </IconButton>
@@ -411,10 +411,10 @@ export function CountTrack({
             style={{ left: `${((n - 1) / span) * 100}%` }}
             className={cn(
               "absolute top-0 flex -translate-x-1/2 flex-col items-center gap-1",
-              "px-1 font-mono text-[11px] tabular-nums transition-colors",
+              "px-1 font-mono text-micro tabular-nums transition-colors",
               count === n
                 ? "text-primary"
-                : "text-muted-foreground/60 hover:text-foreground",
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             <span
@@ -510,7 +510,7 @@ function WorkspaceStage({
   return (
     <div
       data-testid="workspace-stage"
-      className="overflow-hidden rounded-control bg-background/70 ring-1 ring-inset ring-border/60"
+      className="overflow-hidden rounded-control bg-background ring-1 ring-inset ring-border"
       style={{
         aspectRatio: `${WORKSPACE_ASPECT}`,
         minHeight: STAGE_MIN_HEIGHT_PX,
@@ -580,13 +580,13 @@ function StagePane({
        */
       className={cn(
         "flex min-h-0 min-w-0 items-start justify-start overflow-hidden rounded-[3px]",
-        focused ? "bg-primary/[0.09] ring-1 ring-inset ring-primary/40" : "bg-muted/40",
+        focused ? "bg-primary/[0.09] ring-1 ring-inset ring-primary/40" : "bg-muted",
       )}
     >
       {detail === "full" && (
         <span
           className={cn(
-            "truncate px-1.5 py-1 font-mono text-[10px] leading-none",
+            "truncate px-1.5 py-1 font-mono text-micro leading-none",
             focused ? "text-primary" : "text-muted-foreground",
           )}
         >

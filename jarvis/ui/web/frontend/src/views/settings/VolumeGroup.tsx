@@ -69,15 +69,15 @@ export function VolumeGroup() {
   const showReset = pct !== Math.round((config?.default ?? 1) * 100);
 
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
+    <div className="mt-2 rounded-lg border border-border bg-card p-4">
       <div className="flex items-start gap-3">
-        <Volume2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <Volume2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-4">
             <h4 className="font-display text-sm font-semibold">
               {t("settings_view.volume.title")}
             </h4>
-            <span className="font-mono text-sm text-primary">{`${pct}%`}</span>
+            <span className="font-mono text-sm text-foreground-strong">{`${pct}%`}</span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             {t("settings_view.volume.description")}
@@ -102,7 +102,7 @@ export function VolumeGroup() {
               type="button"
               onClick={onReset}
               disabled={saving}
-              className="mt-3 text-[11px] text-muted-foreground underline hover:text-foreground disabled:opacity-50"
+              className="mt-3 text-micro text-muted-foreground underline hover:text-foreground disabled:opacity-50"
             >
               {t("settings_view.volume.reset")}
             </button>

@@ -46,7 +46,7 @@ export function fileIconFor(path: string) {
 /** Rendered markdown — the body of a SKILL.md, a usage card, a README. */
 export function MarkdownBody({ text }: { text: string }) {
   return (
-    <article className="prose prose-neutral max-w-none text-[15px] leading-relaxed dark:prose-invert prose-headings:font-display prose-headings:tracking-tight prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-a:text-primary prose-code:text-foreground prose-pre:border prose-pre:border-border prose-pre:bg-card/80">
+    <article className="prose prose-neutral max-w-none text-reading dark:prose-invert prose-headings:font-display prose-headings:tracking-tight prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-a:text-foreground-strong prose-code:text-foreground prose-pre:border prose-pre:border-border prose-pre:bg-card">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -84,7 +84,7 @@ export function ModeButton({
       onClick={onClick}
       className={cn(
         "grid h-7 w-8 place-items-center rounded transition-colors",
-        active ? "bg-sheen/[0.12] text-foreground" : "text-muted-foreground hover:text-foreground",
+        active ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
       )}
     >
       {children}
@@ -170,7 +170,7 @@ export function FileTree({
               onClick={() => toggle(node.path)}
               aria-expanded={!closed}
               style={pad}
-              className="flex h-8 w-full items-center gap-1.5 pr-2 text-left text-[13px] text-foreground/85 hover:bg-sheen/[0.05]"
+              className="flex h-8 w-full items-center gap-1.5 pr-2 text-left text-meta text-foreground hover:bg-secondary"
             >
               {closed ? (
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -195,10 +195,10 @@ export function FileTree({
             title={node.path}
             style={{ paddingLeft: `${12 + depth * 14 + 20}px` }}
             className={cn(
-              "flex h-8 w-full items-center gap-2 pr-2 text-left font-mono text-[13px] transition-colors",
+              "flex h-8 w-full items-center gap-2 pr-2 text-left font-mono text-meta transition-colors",
               active
-                ? "bg-sheen/[0.08] text-foreground"
-                : "text-foreground/80 hover:bg-sheen/[0.05] hover:text-foreground",
+                ? "bg-secondary text-foreground"
+                : "text-foreground hover:bg-secondary hover:text-foreground",
             )}
           >
             <Icon className={cn("h-4 w-4 shrink-0", active ? "text-foreground" : "text-muted-foreground")} />
@@ -210,8 +210,8 @@ export function FileTree({
 
   return (
     <nav aria-label={t("extensions.files_menu")} className={cn("min-w-0", className)}>
-      <div className="flex h-8 items-center gap-1.5 px-3 text-[13px] font-medium text-foreground">
-        <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
+      <div className="flex h-8 items-center gap-1.5 px-3 text-meta font-medium text-foreground">
+        <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="truncate">{rootLabel}</span>
       </div>
       <ul>{renderNodes(tree, 0)}</ul>
@@ -259,8 +259,8 @@ export function FileCard({
 
   return (
     <Panel className={className}>
-      <div className="flex items-center gap-3 border-b border-border/70 px-3 py-2">
-        <span className="inline-flex h-8 min-w-0 items-center gap-2 px-1 font-mono text-[13px] text-foreground">
+      <div className="flex items-center gap-3 border-b border-border px-3 py-2">
+        <span className="inline-flex h-8 min-w-0 items-center gap-2 px-1 font-mono text-meta text-foreground">
           <OpenIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate">{open?.path ?? "—"}</span>
         </span>
@@ -270,7 +270,7 @@ export function FileCard({
             : fill(t("extensions.files"), { n: files.length })}
         </span>
         <div
-          className="ml-auto flex items-center rounded-md bg-sheen/[0.05] p-0.5"
+          className="ml-auto flex items-center rounded-md bg-secondary p-0.5"
           role="tablist"
           aria-label={t("extensions.view_mode")}
         >
@@ -293,7 +293,7 @@ export function FileCard({
 
       <div className="flex min-h-[160px]">
         <FileTree
-          className="w-56 shrink-0 border-r border-border/70 py-2"
+          className="w-56 shrink-0 border-r border-border py-2"
           rootLabel={rootLabel}
           paths={files.map((f) => f.path)}
           openPath={openPath}
@@ -317,7 +317,7 @@ export function FileCard({
                 <MarkdownBody text={open.text} />
               </div>
             ) : (
-              <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words px-6 py-5 font-mono text-[13px] leading-relaxed">
+              <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words px-6 py-5 font-mono text-meta ">
                 {open.text}
                 {open.truncated ? "\n…" : ""}
               </pre>

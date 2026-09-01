@@ -64,7 +64,7 @@ export function WikiProviderCard() {
       pushToast(
         "success",
         next.provider
-          ? `Wiki → ${next.provider}${next.model ? ` · ${next.model}` : ""}`
+          ? `Wiki → ${next.provider}${next.model ?}` · ${next.model}` : ""}`
           : t("wiki_provider.follow_primary"),
       );
     } catch (e) {
@@ -135,7 +135,7 @@ export function WikiProviderCard() {
       {!loading && data && (
         <div className="space-y-4">
           {/* "How does this work?" — native <details>, the app's collapsible idiom. */}
-          <details className="group rounded-md border border-border/60 bg-muted/20 px-3 py-2">
+          <details className="group rounded-md border border-border bg-muted px-3 py-2">
             <summary className="flex cursor-pointer select-none list-none items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
               <Info className="h-3.5 w-3.5 shrink-0" />
               {t("wiki_provider.how_title")}
@@ -197,7 +197,7 @@ export function WikiProviderCard() {
                     type="button"
                     onClick={() => void handleModelReset()}
                     disabled={pending}
-                    className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    className="text-micro text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                   >
                     {t("wiki_provider.model_reset")}
                   </button>
@@ -209,23 +209,23 @@ export function WikiProviderCard() {
           {/* Honest ground truth: what the next maintenance run will actually use. */}
           {resolved && resolved.provider && (
             <div className="space-y-1">
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-micro text-muted-foreground">
                 {t("wiki_provider.resolved_label")}{" "}
-                <span className="font-mono text-foreground/80">
+                <span className="font-mono text-foreground">
                   {resolved.provider}
                   {" · "}
                   {resolved.model || t("wiki_provider.provider_default_model")}
                 </span>
               </p>
               {resolved.ready === false && (
-                <p className="text-[11px] text-foreground">
+                <p className="text-micro text-foreground">
                   {t("wiki_provider.resolved_fallback_warning")}
                 </p>
               )}
             </div>
           )}
 
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-micro text-muted-foreground">
             {t("wiki_provider.model_hint")}
           </p>
 

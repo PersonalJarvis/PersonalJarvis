@@ -24,7 +24,7 @@ export function AppSettingsGroup() {
 
   return (
     <div className="mt-8 space-y-4">
-      <h3 className="font-display text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <h3 className="font-display text-xs font-semibold text-muted-foreground">
         {t("settings_view.app_settings_group_title")}
       </h3>
       <AppearanceRow />
@@ -57,12 +57,12 @@ function AppearanceRow() {
   const { preference, theme, setPreference } = useTheme();
 
   return (
-    <div className="rounded-lg border border-border bg-card/60 p-4">
+    <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-start gap-3">
         {theme === "dark" ? (
-          <Moon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <Moon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         ) : (
-          <Sun className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <Sun className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -70,7 +70,7 @@ function AppearanceRow() {
             <div
               role="radiogroup"
               aria-label={t("settings_view.appearance.title")}
-              className="inline-flex rounded-lg border border-border bg-background/60 p-0.5"
+              className="inline-flex rounded-lg border border-border bg-background p-0.5"
             >
               {THEME_OPTIONS.map(({ value, icon: Icon, labelKey }) => {
                 const active = preference === value;
@@ -84,7 +84,7 @@ function AppearanceRow() {
                     className={
                       "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors " +
                       (active
-                        ? "bg-foreground/70 text-primary-foreground"
+                        ? "bg-primary text-primary-foreground"
                         : "text-muted-foreground hover:bg-secondary hover:text-foreground")
                     }
                   >
@@ -173,9 +173,9 @@ function AutostartRow() {
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card/60 p-4">
+    <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-start gap-3">
-        <Power className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <Power className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-4">
             <h4 className="font-medium">{t("settings_view.autostart.title")}</h4>
@@ -205,7 +205,7 @@ function AutostartRow() {
           )}
 
           {canUpgradeInstantStart && (
-            <div className="mt-3 rounded-md border border-border bg-background/50 p-3">
+            <div className="mt-3 rounded-md border border-border bg-background p-3">
               <p className="text-xs text-muted-foreground">
                 {t("settings_view.autostart.instant_start_hint")}
               </p>
@@ -213,7 +213,7 @@ function AutostartRow() {
                 type="button"
                 disabled={saving}
                 onClick={onEnableInstantStart}
-                className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-foreground/70 px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 <Zap className="h-3.5 w-3.5" />
                 {t("settings_view.autostart.enable_instant_start")}
@@ -222,7 +222,7 @@ function AutostartRow() {
           )}
 
           {supported && config?.entry_path && (
-            <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
+            <p className="mt-2 break-all font-mono text-micro text-muted-foreground">
               {config.entry_path}
             </p>
           )}

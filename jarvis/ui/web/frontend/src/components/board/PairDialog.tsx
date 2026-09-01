@@ -36,7 +36,7 @@ export function PairDialog({ onClose }: PairDialogProps) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-xl border border-border bg-card p-6"
+        className="w-full max-w-md rounded-lg bg-popover shadow-float p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="mb-4 flex items-center gap-3">

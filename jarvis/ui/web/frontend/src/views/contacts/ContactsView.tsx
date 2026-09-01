@@ -273,7 +273,7 @@ export function ContactsView() {
   return (
     <div ref={rootRef} className="flex h-full flex-col">
       <ViewHeader
-        icon={<ContactIcon className="h-4 w-4 text-primary" />}
+        icon={<ContactIcon className="h-4 w-4" />}
         title={t("nav.contacts")}
         subtitle={t("contacts.subtitle")}
         right={
@@ -295,7 +295,7 @@ export function ContactsView() {
               disabled={importing}
               aria-label={t("contacts.import")}
               title={t("contacts.import")}
-              className="rounded-md border border-border p-1.5 text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:opacity-50"
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
             >
               {importing ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -309,14 +309,17 @@ export function ContactsView() {
               disabled={!hasContacts}
               aria-label={t("contacts.export")}
               title={t("contacts.export")}
-              className="rounded-md border border-border p-1.5 text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:opacity-50"
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
             >
               <Download className="h-3.5 w-3.5" />
             </button>
+            {/* --primary is a fill, so the one affirmative action on this
+                screen is a filled button rather than primary-coloured text on
+                a primary-coloured wash. */}
             <button
               type="button"
               onClick={() => setDialog("create")}
-              className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20"
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-body font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               <Plus className="h-3.5 w-3.5" />
               {t("contacts.add")}
@@ -328,20 +331,21 @@ export function ContactsView() {
       <div className="flex min-h-0 flex-1">
         {/* Master list */}
         {showList && (
+          // A standing column the full height of the section: far too wide to
+          // earn --card, so it separates from the detail pane by taking the
+          // rail's own ground. The hairline it used to rely on was the "three
+          // columns separated by nothing" complaint.
           <div
-            className={cn(
-              "flex shrink-0 flex-col",
-              narrow ? "w-full" : "w-[320px] border-r border-border",
-            )}
+            className={cn("flex shrink-0 flex-col bg-sidebar", narrow ? "w-full" : "w-[320px]")}
           >
-            <div className="space-y-2 border-b border-border p-3">
-              <div className="flex items-center gap-2 rounded-md border border-border bg-background/40 px-2.5 py-1.5">
+            <div className="space-y-stack border-b border-border p-3">
+              <div className="flex items-center gap-2 rounded-md bg-secondary px-2.5 py-1.5">
                 <Search className="h-3.5 w-3.5 text-muted-foreground" />
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder={t("contacts.search")}
-                  className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
+                  className="w-full bg-transparent text-body text-foreground outline-none placeholder:text-faint-foreground"
                 />
               </div>
               {hasContacts && (
@@ -384,38 +388,49 @@ export function ContactsView() {
             </div>
             <nav className="flex-1 overflow-y-auto scrollbar-jarvis p-2">
               {loading ? (
-                <div className="flex items-center justify-center py-10 text-muted-foreground">
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                </div>
+                // Real rows at real height, not a spinner in a void.
+                <ul className="space-y-1 p-1" aria-busy="true" role="status">
+                  {[0, 1, 2, 3, 4, 5].map((i) => (
+                    <li key={i} className="flex items-center gap-row px-3 py-2">
+                      <div className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-sheen/[0.06]" />
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <div className="h-3 w-2/5 animate-pulse rounded-full bg-sheen/[0.06]" />
+                        <div className="h-2.5 w-3/5 animate-pulse rounded-full bg-sheen/[0.06]" />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               ) : error ? (
-                <p className="px-3 py-6 text-center text-sm text-destructive">{error}</p>
+                <p className="px-3 py-6 text-center text-body text-destructive">{error}</p>
               ) : !hasContacts ? (
                 <div className="flex flex-col items-center gap-3 px-3 py-8 text-center">
-                  <ContactIcon className="h-8 w-8 text-muted-foreground/40" />
-                  <p className="text-sm text-muted-foreground">{t("contacts.empty")}</p>
+                  <ContactIcon className="h-8 w-8 text-muted-foreground" />
+                  <p className="text-body text-foreground">{t("contacts.empty")}</p>
                   <button
                     type="button"
                     onClick={() => setDialog("create")}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-body font-medium text-primary-foreground transition-opacity hover:opacity-90"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     {t("contacts.add")}
                   </button>
-                  <p className="flex items-start gap-1.5 text-xs text-muted-foreground/80">
+                  <p className="flex items-start gap-1.5 text-meta text-muted-foreground">
                     <Mic className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     {t("contacts.voiceHint")}
                   </p>
                 </div>
               ) : filtered.length === 0 ? (
-                <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                <p className="px-3 py-6 text-center text-body text-muted-foreground">
                   {t("contacts.noMatches")}
                 </p>
               ) : (
-                <div className="space-y-1">
+                <div className="space-y-stack">
                   {groups.map((group) => (
                     <div key={group.key}>
-                      <div className="flex items-center gap-1 px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                        {group.starred && <Star className="h-3 w-3 fill-current text-primary/70" />}
+                      <div className="flex items-center gap-1 px-3 pb-1 pt-2 text-meta text-muted-foreground">
+                        {group.starred && (
+                          <Star className="h-3 w-3 fill-current text-foreground" />
+                        )}
                         {group.label}
                       </div>
                       <ul className="space-y-0.5">
@@ -451,9 +466,9 @@ export function ContactsView() {
                 }}
               />
             ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-                <ContactIcon className="h-8 w-8 text-muted-foreground/40" />
-                <p className="text-sm">{t("contacts.selectHint")}</p>
+              <div className="flex h-full flex-col items-center justify-center gap-3 bg-background text-center text-muted-foreground">
+                <ContactIcon className="h-8 w-8" />
+                <p className="text-body">{t("contacts.selectHint")}</p>
               </div>
             )}
           </div>
@@ -474,27 +489,27 @@ export function ContactsView() {
           onClick={() => setConfirmingDelete(false)}
         >
           <div
-            className="w-full max-w-sm rounded-xl border border-border bg-card p-6"
+            className="w-full max-w-sm rounded-lg bg-popover shadow-float p-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="font-display text-base font-semibold">
+            <h3 className="font-display text-page font-semibold text-foreground-strong">
               {t("contacts.deleteTitle")}
             </h3>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <p className="mt-2 text-body text-foreground">
               {t("contacts.deleteConfirm")} <strong>{selected.name}</strong>?
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setConfirmingDelete(false)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+                className="rounded-md px-3 py-1.5 text-body text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
               >
                 {t("contacts.cancel")}
               </button>
               <button
                 type="button"
                 onClick={() => void handleConfirmDelete()}
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20"
+                className="rounded-md bg-destructive px-3 py-1.5 text-body font-medium text-destructive-foreground transition-opacity hover:opacity-90"
               >
                 {t("contacts.delete")}
               </button>
@@ -520,10 +535,10 @@ function FilterChip({
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors",
+        "rounded-full px-2.5 py-0.5 text-micro font-medium transition-colors",
         active
-          ? "border-primary/40 bg-primary/15 text-primary"
-          : "border-border text-muted-foreground hover:border-primary/30 hover:text-foreground",
+          ? "bg-primary text-primary-foreground"
+          : "bg-secondary text-muted-foreground hover:text-foreground",
       )}
     >
       {label}

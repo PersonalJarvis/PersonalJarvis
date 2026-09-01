@@ -121,8 +121,8 @@ function Chip({ children, on = false }: { children: React.ReactNode; on?: boolea
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center rounded border px-1.5 py-px text-[10px] tabular-nums",
-        on ? "border-border text-foreground/90" : "border-border/70 text-muted-foreground",
+        "inline-flex shrink-0 items-center rounded border px-1.5 py-px text-micro tabular-nums",
+        on ? "border-border text-foreground" : "border-border text-muted-foreground",
       )}
     >
       {children}
@@ -243,7 +243,7 @@ export function ModelCard({
   return (
     <article
       className={cn(
-        "flex flex-col rounded-2xl border bg-card/50 p-4 transition-colors",
+        "flex flex-col rounded-2xl border bg-card p-4 transition-colors",
         RING[state],
       )}
       data-testid={`model-card-${row.id}`}
@@ -253,10 +253,10 @@ export function ModelCard({
       {/* The job: an eyebrow, because the job is the category and the model
           below it is the value — not the other way round. */}
       <div className="flex items-baseline justify-between gap-2">
-        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+        <p className="text-micro font-medium text-muted-foreground">
           {t(row.label_key)}
         </p>
-        <p className="truncate text-[11px] text-muted-foreground/80">
+        <p className="truncate text-micro text-muted-foreground">
           {t(`local_models.jobs.${row.id}_purpose`)}
         </p>
       </div>
@@ -274,7 +274,7 @@ export function ModelCard({
                 {modelLabel(current, row.current)}
               </span>
               <span
-                className="truncate font-mono text-[11px] text-muted-foreground"
+                className="truncate font-mono text-micro text-muted-foreground"
                 title={row.current}
                 data-testid={`model-card-tag-${row.id}`}
               >
@@ -290,7 +290,7 @@ export function ModelCard({
                 ))}
               </p>
             ) : (
-              <p className="mt-1 text-[11px] text-muted-foreground">
+              <p className="mt-1 text-micro text-muted-foreground">
                 {state === "missing"
                   ? t("local_models.jobs.not_on_disk")
                   : t("local_models.jobs.no_facts")}
@@ -319,7 +319,7 @@ export function ModelCard({
       {state !== "blocked" && state !== "empty" && (
         <div className="mt-2.5" data-testid={`model-card-memory-${row.id}`}>
           <div
-            className="flex h-1.5 overflow-hidden rounded-full bg-sheen/[0.08]"
+            className="flex h-1.5 overflow-hidden rounded-full bg-secondary"
             role="img"
             aria-label={
               share > 0
@@ -345,14 +345,14 @@ export function ModelCard({
             />
             {reserveGb > 0 && (
               <div
-                className="h-full bg-sheen/25"
+                className="h-full bg-secondary"
                 style={{
                   width: `${Math.min(100, Math.round((reserveGb / Math.max(acceleratorGb, totalGb, 0.01)) * 100))}%`,
                 }}
               />
             )}
           </div>
-          <p className="mt-1 text-[10px] tabular-nums text-muted-foreground">{memoryText}</p>
+          <p className="mt-1 text-micro tabular-nums text-muted-foreground">{memoryText}</p>
         </div>
       )}
 
@@ -405,7 +405,7 @@ export function ModelCard({
 
       {/* The plumbing, one click away: where the pick lives, what the job
           asks for, what the recommendation would be and why. */}
-      <details className="mt-3 border-t border-dashed border-border/70 pt-2 text-[11px] text-muted-foreground">
+      <details className="mt-3 border-t border-dashed border-border pt-2 text-micro text-muted-foreground">
         <summary className="cursor-pointer select-none">{t("local_models.jobs.details")}</summary>
         <dl className="mt-1.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
           <dt>{t("local_models.jobs.details_config")}</dt>
@@ -475,7 +475,7 @@ function CardProgress({
       text = `${t("local_models.roles.progress_error")} ${progress.message ?? ""}`.trim();
   }
   return (
-    <p className={cn("mt-2.5 text-[11px] leading-snug", tone)} data-testid="role-progress">
+    <p className={cn("mt-2.5 text-micro ", tone)} data-testid="role-progress">
       {text}
     </p>
   );

@@ -1,38 +1,39 @@
-// Functional run/turn outcome — distinct from SLO latency. Disciplined colors:
-// emerald = success, amber = partial (hiccup but answered), rose = genuine failure.
-// An unknown value degrades to a neutral style (BUG-008 string contract).
+/**
+ * The functional outcome of a run or a turn — distinct from SLO latency.
+ *
+ * The ramp used to be inverted: "success" drew the same grey dot as an unknown
+ * value, "partial" was painted in --foreground and so became the loudest mark
+ * on the screen, and "failed" reached for a literal rose. Status is the only
+ * place hue is allowed in this product, and it has exactly three jobs — life,
+ * degraded, fault. So the dot carries the hue, the chip stays on the neutral
+ * lift every other small surface uses, and the unknown value is the ONE that
+ * recedes (--faint-foreground), never the successful one.
+ *
+ * An unknown value still degrades to a neutral style rather than throwing
+ * (BUG-008 string contract).
+ */
 
-type OutcomeStyle = { label: string; dot: string; badge: string };
+type OutcomeStyle = { label: string; dot: string };
 
 const OUTCOME_STYLE: Record<string, OutcomeStyle> = {
-  success: {
-    label: "Success",
-    dot: "bg-muted-foreground",
-    badge: "bg-muted-foreground/10 text-muted-foreground ring-muted-foreground/25",
-  },
-  partial: {
-    label: "Partial",
-    dot: "bg-foreground",
-    badge: "bg-foreground/10 text-foreground ring-foreground/25",
-  },
-  failed: {
-    label: "Failed",
-    dot: "bg-rose-500",
-    badge: "bg-rose-500/10 text-rose-300 ring-rose-500/25",
-  },
+  success: { label: "Success", dot: "bg-success" },
+  partial: { label: "Partial", dot: "bg-warning" },
+  failed: { label: "Failed", dot: "bg-destructive" },
 };
 
-const FALLBACK: OutcomeStyle = {
-  label: "—",
-  dot: "bg-muted-foreground/40",
-  badge: "bg-muted/40 text-muted-foreground ring-border",
-};
+const FALLBACK: OutcomeStyle = { label: "—", dot: "bg-faint-foreground" };
 
 export function outcomeStyle(outcome: string): OutcomeStyle {
   return OUTCOME_STYLE[outcome] ?? FALLBACK;
 }
 
-export function OutcomeDot({ outcome, className = "" }: { outcome: string; className?: string }) {
+export function OutcomeDot({
+  outcome,
+  className = "",
+}: {
+  outcome: string;
+  className?: string;
+}) {
   return (
     <span
       data-outcome={outcome}
@@ -46,7 +47,7 @@ export function OutcomeBadge({ outcome }: { outcome: string }) {
   return (
     <span
       data-outcome={outcome}
-      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${s.badge}`}
+      className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-0.5 text-micro font-medium text-foreground"
     >
       <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
       {s.label}

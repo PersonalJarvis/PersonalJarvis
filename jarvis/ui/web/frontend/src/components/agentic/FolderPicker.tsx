@@ -518,7 +518,7 @@ export function FolderPicker({
       className="relative flex min-h-0 flex-1 flex-col"
     >
       {dragOver && (
-        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-surface bg-background/85 ring-2 ring-inset ring-primary/60">
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-surface bg-background ring-2 ring-inset ring-primary/60">
           <span className="flex items-center gap-2 text-sm font-medium text-primary">
             <FolderOpen className="h-4 w-4" />
             Let go to use this folder
@@ -709,10 +709,10 @@ export function FolderPicker({
       )}
 
       {/* --------------------------------------------------------------- list */}
-      <div className="min-h-[16rem] flex-1 overflow-y-auto scrollbar-jarvis border-y border-border/70">
+      <div className="min-h-[16rem] flex-1 overflow-y-auto scrollbar-jarvis border-y border-border">
         {recents.length > 0 && !searchingMachine && (
           <>
-            <div className="sticky top-0 z-10 bg-card/95 px-3 py-1.5 backdrop-blur">
+            <div className="sticky top-0 z-10 bg-card px-3 py-1.5 backdrop-blur">
               <SectionLabel>Recent folders</SectionLabel>
             </div>
             <ul>
@@ -725,7 +725,7 @@ export function FolderPicker({
                       "flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors",
                       selected === recent.path
                         ? "bg-primary/10"
-                        : "hover:bg-secondary/60",
+                        : "hover:bg-secondary",
                     )}
                   >
                     <Star
@@ -736,11 +736,11 @@ export function FolderPicker({
                       <span className="block truncate text-sm">
                         {recent.name}
                       </span>
-                      <span className="block truncate font-mono text-[10px] text-muted-foreground">
+                      <span className="block truncate font-mono text-micro text-muted-foreground">
                         {recent.path}
                       </span>
                     </span>
-                    <span className="shrink-0 pr-5 font-mono text-[11px] tabular-nums text-muted-foreground">
+                    <span className="shrink-0 pr-5 font-mono text-micro tabular-nums text-muted-foreground">
                       {recent.terminals}
                     </span>
                   </button>
@@ -769,7 +769,7 @@ export function FolderPicker({
               above the list, and a label repeated twelve pixels apart reads as
               two different things being named rather than one.
             */}
-            <div className="sticky top-0 z-10 bg-card/95 px-3 py-1.5 backdrop-blur">
+            <div className="sticky top-0 z-10 bg-card px-3 py-1.5 backdrop-blur">
               <SectionLabel>Browse</SectionLabel>
             </div>
           </>
@@ -786,7 +786,7 @@ export function FolderPicker({
             data-testid="create-offer"
             onClick={() => makeFolder(createOffer.parent, createOffer.name)}
             disabled={creating}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-primary transition-colors hover:bg-secondary/60"
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-primary transition-colors hover:bg-secondary"
           >
             {creating ? (
               <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
@@ -797,7 +797,7 @@ export function FolderPicker({
               <span className="block truncate">
                 Create folder “{createOffer.name}”
               </span>
-              <span className="block truncate font-mono text-[10px] text-muted-foreground">
+              <span className="block truncate font-mono text-micro text-muted-foreground">
                 in {createOffer.parent ?? "your home folder"}
               </span>
             </span>
@@ -827,7 +827,7 @@ export function FolderPicker({
                     onClick={() => open(item)}
                     className={cn(
                       "flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm transition-colors",
-                      isSelected ? "bg-primary/10" : "hover:bg-secondary/60",
+                      isSelected ? "bg-primary/10" : "hover:bg-secondary",
                     )}
                   >
                     {item.is_repo ? (
@@ -843,7 +843,7 @@ export function FolderPicker({
                           "h-4 w-4 shrink-0",
                           isSelected
                             ? "text-primary"
-                            : "text-muted-foreground/60",
+                            : "text-muted-foreground",
                         )}
                       />
                     )}
@@ -857,13 +857,13 @@ export function FolderPicker({
                         {item.name}
                       </span>
                       {searchingMachine && (
-                        <span className="block truncate font-mono text-[10px] text-muted-foreground">
+                        <span className="block truncate font-mono text-micro text-muted-foreground">
                           {item.path}
                         </span>
                       )}
                     </span>
                     {item.is_repo && (
-                      <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                      <span className="shrink-0 font-mono text-micro text-muted-foreground">
                         git
                       </span>
                     )}
@@ -932,7 +932,7 @@ export function FolderPicker({
                           setDropChoices([]);
                           open(choice);
                         }}
-                        className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-xs hover:bg-secondary/60"
+                        className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-xs hover:bg-secondary"
                       >
                         <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <code className="min-w-0 truncate font-mono">
@@ -1188,13 +1188,13 @@ function PathInput({
                 onClick={() => complete(item)}
                 className={cn(
                   "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs",
-                  index === active ? "bg-primary/15" : "hover:bg-secondary/60",
+                  index === active ? "bg-primary/15" : "hover:bg-secondary",
                 )}
               >
                 {item.is_repo ? (
                   <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 ) : (
-                  <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+                  <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 )}
                 <span className="truncate font-mono">{item.name}</span>
               </button>

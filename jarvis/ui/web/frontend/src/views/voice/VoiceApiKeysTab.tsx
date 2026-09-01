@@ -50,16 +50,20 @@ export function VoiceApiKeysTab({ hideHeader = false }: VoiceApiKeysTabProps = {
     <div className="flex h-full min-h-0 flex-col">
       {!hideHeader && (
         <ViewHeader
-          icon={<KeyRound className="h-4 w-4 text-primary" />}
+          icon={<KeyRound className="h-4 w-4 text-foreground" />}
           title={t("voice.api_keys.title")}
           subtitle={t("voice.api_keys.description")}
         />
       )}
       <div
-        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-4 py-4"
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis p-6"
         data-testid="voice-api-keys-tab"
       >
-        <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
+        {/* Two provider groups, 32px apart, at the page measure — the named
+            width for a card stack. `max-w-4xl` was an arbitrary step off the
+            scale, and 16px between two groups is what made every settings
+            screen read as one undifferentiated mesh. */}
+        <div className="mx-auto flex w-full max-w-page flex-col gap-group">
           <ProviderCategory
             meta={categories.stt}
             tier="stt"

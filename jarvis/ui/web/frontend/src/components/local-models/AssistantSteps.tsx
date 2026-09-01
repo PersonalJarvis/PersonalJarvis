@@ -75,7 +75,7 @@ function toneOf(block: TurnBlock): Tone {
 }
 
 function Mark({ tone }: { tone: Tone }) {
-  if (tone === "run") return <Loader2 className="h-3 w-3 animate-spin text-primary" />;
+  if (tone === "run") return <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />;
   if (tone === "fail") return <X className="h-3 w-3 text-destructive" />;
   if (tone === "ask")
     return <span className="h-1.5 w-1.5 rounded-full bg-foreground" />;
@@ -106,14 +106,14 @@ function StepRow({
         </span>
         <span
           className={cn(
-            "text-[13px] leading-5",
+            "text-meta ",
             tone === "fail" ? "text-destructive" : "text-foreground/90",
           )}
         >
           {label}
         </span>
         {meta && (
-          <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground/70">
+          <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground">
             {meta}
           </span>
         )}
@@ -122,9 +122,9 @@ function StepRow({
             type="button"
             onClick={() => setOpen((v) => !v)}
             className={cn(
-              "ml-auto shrink-0 rounded px-1 text-[10.5px] uppercase tracking-[0.08em] text-muted-foreground/0",
+              "ml-auto shrink-0 rounded px-1 text-[10.5px] text-muted-foreground",
               "transition-colors group-hover/step:text-muted-foreground hover:!text-foreground",
-              "focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              "focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               open && "!text-muted-foreground",
             )}
           >
@@ -133,7 +133,7 @@ function StepRow({
         )}
       </div>
       {open && hasDetail && (
-        <pre className="ml-6 mt-1.5 max-h-56 overflow-auto rounded-md border border-border/70 bg-muted/40 p-2.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
+        <pre className="ml-6 mt-1.5 max-h-56 overflow-auto rounded-md border border-border bg-muted p-2.5 font-mono text-micro text-muted-foreground">
           {detail}
         </pre>
       )}
@@ -174,20 +174,20 @@ function ToolStep({
   return (
     <StepRow tone={tone} label={label} meta={seconds(block.durationMs)} detail={detail}>
       {tone === "ask" && block.approval && onDecide && (
-        <div className="ml-6 mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-foreground/40 bg-foreground/[0.07] px-3 py-2">
-          <span className="text-[13px] text-foreground">{block.approval.summary}</span>
+        <div className="ml-6 mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-secondary px-3 py-2">
+          <span className="text-meta text-foreground">{block.approval.summary}</span>
           <div className="ml-auto flex gap-1.5">
             <button
               type="button"
               onClick={() => onDecide(block.approval!.approvalId, "allow")}
-              className="rounded-md bg-foreground/70 px-2.5 py-1 text-[12px] font-medium text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="rounded-md bg-primary px-2.5 py-1 text-meta font-medium text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {t("local_models.assistant.steps.allow")}
             </button>
             <button
               type="button"
               onClick={() => onDecide(block.approval!.approvalId, "deny")}
-              className="rounded-md border border-border px-2.5 py-1 text-[12px] hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="rounded-md border border-border px-2.5 py-1 text-meta hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {t("local_models.assistant.steps.deny")}
             </button>
@@ -255,7 +255,7 @@ export function AssistantSteps({
         className={cn(
           "-mx-1 inline-flex items-center gap-1.5 rounded-md px-1 py-0.5",
           "text-[12.5px] text-muted-foreground",
-          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           !pinned && "hover:text-foreground",
         )}
       >
@@ -266,11 +266,11 @@ export function AssistantSteps({
             pinned && "hidden",
           )}
         />
-        {live && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />}
+        {live && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />}
         <span>{live ? t("local_models.assistant.steps.working") : summary}</span>
       </button>
       {open && (
-        <ul className="mt-2 flex flex-col gap-2 border-l border-border/70 pl-3.5">
+        <ul className="mt-2 flex flex-col gap-2 border-l border-border pl-3.5">
           {steps.map((block) =>
             block.kind === "tool" ? (
               <ToolStep key={block.callId} block={block} onDecide={onDecide} />

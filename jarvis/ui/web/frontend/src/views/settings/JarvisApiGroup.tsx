@@ -199,8 +199,8 @@ export function JarvisApiGroup() {
           {t("settings_view.jarvis_api.unlock_hint")}
         </p>
 
-        <div className="flex items-start gap-3 rounded-lg border border-border bg-card/60 p-4">
-          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <div className="flex items-start gap-3 rounded-lg border border-border bg-card p-4">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium">
               {t("settings_view.jarvis_api.browser_lock_title")}
@@ -243,7 +243,7 @@ export function JarvisApiGroup() {
 
         {formOpen && (
           <form
-            className="space-y-3 rounded-xl border border-border bg-background/60 p-4"
+            className="space-y-3 rounded-xl border border-border bg-background p-4"
             onSubmit={onSubmitCustomKey}
           >
             <p className="text-xs text-muted-foreground">
@@ -304,10 +304,10 @@ export function JarvisApiGroup() {
             if (e.target === e.currentTarget) setConfirmLock(false);
           }}
         >
-          <div className="card-outline mx-4 w-full max-w-md rounded-xl border border-border bg-card p-5">
+          <div className="mx-4 w-full max-w-md rounded-lg bg-popover shadow-float p-5">
             <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/40 bg-primary/10">
-                <Lock className="h-5 w-5 text-primary" />
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-secondary">
+                <Lock className="h-5 w-5 text-muted-foreground" />
               </div>
               <div className="min-w-0 flex-1">
                 <h3 className="text-base font-semibold">
@@ -360,9 +360,9 @@ export function JarvisApiGroup() {
             if (e.target === e.currentTarget) setConfirmRotate(false);
           }}
         >
-          <div className="card-outline mx-4 w-full max-w-md rounded-xl border border-border bg-card p-5">
+          <div className="mx-4 w-full max-w-md rounded-lg bg-popover shadow-float p-5">
             <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-destructive/40 bg-destructive/10">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-secondary">
                 <AlertTriangle className="h-5 w-5 text-destructive" />
               </div>
               <div className="min-w-0 flex-1">

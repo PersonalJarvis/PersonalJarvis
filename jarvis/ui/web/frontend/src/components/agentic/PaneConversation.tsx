@@ -105,7 +105,7 @@ export function PaneConversationBody({
     return (
       <div className={cn("flex-1 space-y-4 overflow-hidden p-6", className)}>
         {["w-3/4", "w-full", "w-5/6", "w-2/3", "w-full", "w-4/5"].map((width, row) => (
-          <div key={row} className={cn("h-3 animate-pulse rounded bg-muted/70", width)} />
+          <div key={row} className={cn("h-3 animate-pulse rounded bg-muted", width)} />
         ))}
       </div>
     );
@@ -136,7 +136,7 @@ export function PaneConversationBody({
   if (empty) {
     return (
       <div className={cn("flex flex-1 flex-col items-center justify-center px-6 text-center", className)}>
-        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-muted/30">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-muted">
           <BookOpenText className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
         </div>
         <p className="text-sm font-medium text-foreground">
@@ -175,7 +175,7 @@ function TurnBlock({ turn }: { turn: ConversationTurn }): JSX.Element {
     <div className="mb-4 last:mb-0">
       <div
         className={cn(
-          "mb-1 text-[10px] font-semibold uppercase tracking-[0.14em]",
+          "mb-1 text-micro font-semibold ",
           user ? "text-primary" : "text-muted-foreground",
         )}
       >
@@ -187,14 +187,14 @@ function TurnBlock({ turn }: { turn: ConversationTurn }): JSX.Element {
             "whitespace-pre-wrap break-words rounded-xl border px-3.5 py-2.5 text-[12.5px] leading-relaxed",
             user
               ? "border-primary/25 bg-primary/[0.07] text-foreground"
-              : "border-border/60 bg-background/35 text-foreground/90",
+              : "border-border bg-background text-foreground",
           )}
         >
           {turn.text}
         </div>
       )}
       {turn.steps.length > 0 && (
-        <div className="mt-1 truncate text-[10px] text-muted-foreground/80">
+        <div className="mt-1 truncate text-micro text-muted-foreground">
           {steps}
           {tools.length > 0 && <> · {tools.slice(0, 6).join(", ")}</>}
         </div>

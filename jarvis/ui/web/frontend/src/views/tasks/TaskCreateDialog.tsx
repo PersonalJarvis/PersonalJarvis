@@ -248,7 +248,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
       onClick={onClose}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card"
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg bg-popover shadow-float"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

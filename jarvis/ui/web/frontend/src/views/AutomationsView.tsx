@@ -9,9 +9,13 @@
  * category down an unbounded-width page.
  *
  * The layout is the section design the rest of the app converged on: the
- * section header bar, a centred content column, a row of headline numbers,
- * a chip rail of tabs, and panels holding tables — the same shapes as Spend,
- * Local models and the extensions section.
+ * section header bar, a row of headline tiles, a chip rail of tabs, and the
+ * tables themselves — the same shapes as Spend and Local models. The measure
+ * comes from the shell (MainView caps every non-bleed section at the page
+ * width), so this view sets no width of its own, and the tables sit directly
+ * on the page: a --card panel drawn around a full-width table is a surface
+ * far wider than the 720px at which lift stops being an object and starts
+ * being a wall.
  *
  * Degrades honestly against an older backend: when the catalogue route does
  * not exist yet (404 — it goes live with the next restart) the tab says so
@@ -31,9 +35,10 @@ import {
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { EmptyState } from "@/components/layout/EmptyState";
+import { PanelSkeleton } from "@/components/layout/PanelSkeleton";
 import {
   IconButton,
-  Panel,
   PanelHeader,
   SegmentedFilter,
   SoftButton,
@@ -203,7 +208,7 @@ export function AutomationsView() {
   return (
     <div className="flex h-full flex-col">
       <ViewHeader
-        icon={<Workflow className="h-4 w-4 text-primary" />}
+        icon={<Workflow className="h-4 w-4" />}
         title={t("automations_view.title")}
         subtitle={t("automations_view.subtitle")}
         right={
@@ -233,15 +238,13 @@ export function AutomationsView() {
       )}
 
       <ScrollArea className="flex-1">
-        <div className="mx-auto flex max-w-[1440px] flex-col gap-4 px-6 py-6">
+        <div className="flex flex-col gap-group py-6">
           {notice && (
             <div
               role="status"
               className={cn(
-                "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm",
-                notice.kind === "error"
-                  ? "border-destructive/50 bg-destructive/5 text-destructive"
-                  : "border-primary/40 bg-primary/5 text-primary",
+                "flex items-center gap-2 rounded-md bg-secondary px-3 py-2 text-body",
+                notice.kind === "error" ? "text-destructive" : "text-foreground",
               )}
             >
               <span className="min-w-0 flex-1 truncate">{notice.text}</span>
@@ -257,13 +260,13 @@ export function AutomationsView() {
           )}
 
           {tasksQuery.error && (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            <div className="rounded-md bg-secondary px-3 py-2 text-body text-destructive">
               {t("tasks_view.load_error")}: {(tasksQuery.error as Error).message}
             </div>
           )}
 
           {/* Headline numbers — what is armed, what happens next, what broke. */}
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-stack sm:grid-cols-2 xl:grid-cols-4">
             <StatTile
               icon={<Zap className="h-4 w-4" />}
               label={t("automations_view.stat_active")}
@@ -313,21 +316,18 @@ export function AutomationsView() {
           />
 
           {tab === "automations" && (
-            <Panel>
-              <div className="px-4 pt-4">
-                <PanelHeader
-                  title={t("automations_view.yours_heading")}
-                  subtitle={t("automations_view.yours_subtitle")}
-                  actions={
-                    <SoftButton onClick={openCatalogue}>
-                      <LayoutGrid className="h-3.5 w-3.5" />
-                      {t("automations_view.browse_catalogue")}
-                    </SoftButton>
-                  }
-                />
-              </div>
-              <div className="mt-3">
-                <AutomationsPanel
+            <section className="space-y-stack">
+              <PanelHeader
+                title={t("automations_view.yours_heading")}
+                subtitle={t("automations_view.yours_subtitle")}
+                actions={
+                  <SoftButton onClick={openCatalogue}>
+                    <LayoutGrid className="h-3.5 w-3.5" />
+                    {t("automations_view.browse_catalogue")}
+                  </SoftButton>
+                }
+              />
+              <AutomationsPanel
                   automations={automations}
                   templatesByKey={templatesByKey}
                   highlightId={highlightId}
@@ -341,28 +341,24 @@ export function AutomationsView() {
                     toggleId: setEnabled.isPending ? setEnabled.variables?.id : undefined,
                     deleteId: deleteTask.isPending ? deleteTask.variables?.id : undefined,
                   }}
-                  loading={tasksQuery.isLoading}
-                />
-              </div>
-            </Panel>
+                loading={tasksQuery.isLoading}
+              />
+            </section>
           )}
 
           {tab === "schedules" && (
-            <Panel>
-              <div className="px-4 pt-4">
-                <PanelHeader
-                  title={t("automations_view.schedules_heading")}
-                  subtitle={t("automations_view.schedules_subtitle")}
-                  actions={
-                    <SoftButton primary onClick={openScheduleCreate}>
-                      <Plus className="h-3.5 w-3.5" />
-                      {t("automations_view.new_schedule")}
-                    </SoftButton>
-                  }
-                />
-              </div>
-              <div className="mt-3">
-                <SchedulesPanel
+            <section className="space-y-stack">
+              <PanelHeader
+                title={t("automations_view.schedules_heading")}
+                subtitle={t("automations_view.schedules_subtitle")}
+                actions={
+                  <SoftButton primary onClick={openScheduleCreate}>
+                    <Plus className="h-3.5 w-3.5" />
+                    {t("automations_view.new_schedule")}
+                  </SoftButton>
+                }
+              />
+              <SchedulesPanel
                   schedules={schedules}
                   onRunNow={handleRunNow}
                   onDelete={handleDelete}
@@ -371,60 +367,60 @@ export function AutomationsView() {
                     runId: runNow.isPending ? runNow.variables : undefined,
                     deleteId: deleteTask.isPending ? deleteTask.variables?.id : undefined,
                   }}
-                  loading={tasksQuery.isLoading}
-                />
-              </div>
-            </Panel>
+                loading={tasksQuery.isLoading}
+              />
+            </section>
           )}
 
           {tab === "runs" && (
-            <Panel>
-              <div className="px-4 pt-4">
-                <PanelHeader
-                  title={t("automations_view.runs_heading")}
-                  subtitle={t("automations_view.runs_subtitle")}
-                  actions={
-                    <SegmentedFilter<RunFilter>
-                      label={t("automations_view.runs_filter_label")}
-                      value={runFilter}
-                      onChange={setRunFilter}
-                      options={RUN_FILTERS.map((f) => ({
-                        id: f,
-                        label: t(`automations_view.runs_filter.${f}`),
-                      }))}
-                    />
-                  }
-                />
-              </div>
-              <div className="mt-3">
-                <RunsPanel tasks={tasks} filter={runFilter} onNotice={showNotice} />
-              </div>
-            </Panel>
+            <section className="space-y-stack">
+              <PanelHeader
+                title={t("automations_view.runs_heading")}
+                subtitle={t("automations_view.runs_subtitle")}
+                actions={
+                  <SegmentedFilter<RunFilter>
+                    label={t("automations_view.runs_filter_label")}
+                    value={runFilter}
+                    onChange={setRunFilter}
+                    options={RUN_FILTERS.map((f) => ({
+                      id: f,
+                      label: t(`automations_view.runs_filter.${f}`),
+                    }))}
+                  />
+                }
+              />
+              <RunsPanel tasks={tasks} filter={runFilter} onNotice={showNotice} />
+            </section>
           )}
 
           {tab === "catalogue" && (
-            <div className="space-y-3">
+            <section className="space-y-stack">
               <PanelHeader
                 title={t("automations_view.catalogue_heading")}
                 subtitle={t("automations_view.catalogue_hint")}
               />
               {catalogueUnavailable ? (
-                <Panel className="p-6 text-center text-sm text-muted-foreground">
-                  {t("automations_view.catalogue_unavailable")}
-                </Panel>
+                <EmptyState body={t("automations_view.catalogue_unavailable")} />
               ) : templatesQuery.isLoading ? (
-                <p className="text-sm text-muted-foreground">
-                  {t("automations_view.catalogue_loading")}
-                </p>
+                // The catalogue is a card grid, so its wait is card-shaped —
+                // a dimmed "Loading…" line in a black rectangle is the one
+                // loading state this design system does not allow.
+                <div className="grid grid-cols-1 gap-stack sm:grid-cols-2 xl:grid-cols-3">
+                  <PanelSkeleton
+                    rows={3}
+                    rowHeight={148}
+                    label={t("automations_view.catalogue_loading")}
+                  />
+                  <PanelSkeleton rows={3} rowHeight={148} />
+                  <PanelSkeleton rows={3} rowHeight={148} />
+                </div>
               ) : templatesQuery.error ? (
-                <Panel className="p-4 text-sm text-destructive">
+                <p className="text-body text-destructive">
                   {t("automations_view.catalogue_error")}:{" "}
                   {(templatesQuery.error as Error).message}
-                </Panel>
+                </p>
               ) : templates.length === 0 ? (
-                <Panel className="p-6 text-center text-sm text-muted-foreground">
-                  {t("automations_view.catalogue_empty")}
-                </Panel>
+                <EmptyState body={t("automations_view.catalogue_empty")} />
               ) : (
                 <CataloguePanel
                   templates={templates}
@@ -434,11 +430,7 @@ export function AutomationsView() {
                   onCreateCustom={openCreate}
                 />
               )}
-            </div>
-          )}
-
-          {tasksQuery.isLoading && (
-            <p className="text-sm text-muted-foreground">{t("tasks_view.loading")}</p>
+            </section>
           )}
         </div>
       </ScrollArea>

@@ -99,7 +99,7 @@ export function ComposerTypeahead({
         maxHeight: position.maxHeight,
       }}
       onMouseDown={(ev) => ev.preventDefault()}
-      className="fixed z-[70] flex flex-col overflow-y-auto rounded-xl border border-primary/25 bg-popover/95 p-1 text-sm shadow-[0_22px_55px_-16px_rgb(var(--scrim-rgb)/0.7),inset_0_1px_0_hsl(var(--foreground)/0.05)] backdrop-blur-xl"
+      className="fixed z-[70] flex flex-col overflow-y-auto rounded-xl border border-primary/25 bg-popover p-1 text-sm shadow-[0_22px_55px_-16px_rgb(var(--scrim-rgb)/0.7),inset_0_1px_0_hsl(var(--foreground)/0.05)] backdrop-blur-xl"
     >
       {items.length === 0 ? (
         <div className="px-3 py-2 text-xs text-muted-foreground" data-testid="composer-typeahead-empty">
@@ -108,7 +108,7 @@ export function ComposerTypeahead({
       ) : (
         runs.map((run) => (
           <div key={`${run.group}-${runningIndex}`} role="group" aria-label={groupLabel(run.group, t)}>
-            <div className="px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <div className="px-2 pb-0.5 pt-1.5 text-micro font-semibold text-muted-foreground">
               {groupLabel(run.group, t)}
             </div>
             {run.items.map((item) => {
@@ -127,11 +127,11 @@ export function ComposerTypeahead({
                   onClick={() => onPick(item)}
                   className={cn(
                     "flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5",
-                    active ? "bg-primary/15 text-foreground" : "text-foreground/90",
+                    active ? "bg-primary/15 text-foreground" : "text-foreground",
                   )}
                 >
                   <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="shrink-0 font-mono text-[13px]">
+                  <span className="shrink-0 font-mono text-meta">
                     <span className="text-muted-foreground">{trigger}</span>
                     {item.value}
                   </span>

@@ -194,7 +194,7 @@ export function OverviewPanel({
                 <button
                   type="button"
                   onClick={onOpenApiKeys}
-                  className="font-medium text-primary hover:underline"
+                  className="font-medium text-foreground-strong hover:underline"
                 >
                   {t("local_models.roles.other_brain_link")}
                 </button>
@@ -295,7 +295,7 @@ export function OverviewPanel({
 function CardSkeleton() {
   return (
     <div
-      className="h-[17rem] animate-pulse rounded-2xl border border-dashed border-border bg-card/30"
+      className="h-[17rem] animate-pulse rounded-2xl border border-dashed border-border bg-card"
       data-testid="model-card-skeleton"
     />
   );
@@ -331,17 +331,17 @@ function SideJobRow({
   const current = findModel(models, row.current);
   return (
     <div
-      className="grid gap-3 rounded-xl border border-border/70 bg-card/40 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)_auto] lg:items-center"
+      className="grid gap-3 rounded-xl border border-border bg-card px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)_auto] lg:items-center"
       data-testid={`side-job-${row.id}`}
     >
       <div className="min-w-0">
-        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+        <p className="text-micro font-medium text-muted-foreground">
           {t(row.label_key)}
         </p>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {row.note || t(`local_models.jobs.${row.id}_purpose`)}
           {current && (
-            <span className="ml-2 text-foreground/80">
+            <span className="ml-2 text-foreground">
               {modelLabel(current)} · {formatGigabytes(current.size_bytes)}
             </span>
           )}
@@ -540,7 +540,7 @@ function SetupProgress({
 
   return (
     <div
-      className="mt-3 space-y-1 border-t border-border/70 pt-3 text-xs"
+      className="mt-3 space-y-1 border-t border-border pt-3 text-xs"
       data-testid="setup-progress"
     >
       <StatusDot tone={tone} pulse={tone === "busy"} label={text} />

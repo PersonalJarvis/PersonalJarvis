@@ -6,6 +6,7 @@
  * sorted forwards, with the moment written out and a countdown beside it.
  */
 import { Loader2, MoreHorizontal, Play, Trash2 } from "lucide-react";
+import { PanelSkeleton } from "@/components/layout/PanelSkeleton";
 import {
   ActionMenu,
   Cell,
@@ -50,11 +51,21 @@ export function SchedulesPanel({
     { id: "actions", label: t("automations_view.col_actions"), width: "36px", align: "right", srOnly: true },
   ];
 
-  if (!loading && schedules.length === 0) {
+  // Real rows at real height while the list is in flight — a bare table head
+  // over nothing reads as "you have no schedules".
+  if (loading) {
+    return (
+      <div className="px-3">
+        <PanelSkeleton rows={3} rowHeight={54} label={t("automations_view.tab_schedules")} />
+      </div>
+    );
+  }
+
+  if (schedules.length === 0) {
     return (
       <EmptyRow>
         <p>{t("automations_view.schedules_empty")}</p>
-        <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground/80">
+        <p className="mx-auto mt-1 max-w-md text-meta text-muted-foreground">
           {t("automations_view.schedules_empty_hint")}
         </p>
         <div className="mt-4 flex justify-center">

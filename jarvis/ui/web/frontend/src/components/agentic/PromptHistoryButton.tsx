@@ -46,12 +46,19 @@ export function PromptHistoryButton({
   terminal,
   workspaceId,
   count,
-  light,
 }: {
   terminal: string;
   workspaceId?: string;
   count: number;
-  light: boolean;
+  /**
+   * Whether the PANE this button sits on wears the light appearance.
+   *
+   * Still accepted so no caller has to change, but no longer read: the button
+   * now takes its two inks from the header's `--pane-*` variables, which
+   * already resolve per appearance. A branch here was a second copy of that
+   * decision.
+   */
+  light?: boolean;
 }): JSX.Element {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -127,10 +134,13 @@ export function PromptHistoryButton({
           onMouseDown={(event) => event.stopPropagation()}
           className={cn(
             "flex h-6 min-w-6 shrink-0 items-center justify-center gap-1 rounded-md px-1.5",
-            "text-[10px] font-medium tabular-nums transition-colors active:translate-y-px",
-            light
-              ? "text-[#6b6b73] hover:bg-scrim/10 hover:text-[#2b2b33]"
-              : "text-[#9a9aa5] hover:bg-sheen/10 hover:text-[#e8e8ec]",
+            "text-micro font-medium tabular-nums transition-colors active:translate-y-px",
+            // The header's own `--pane-*` ladder, exactly as PaneAction next
+            // door reads it. This used to be a hex per appearance, which is
+            // that ladder written a second time in a second file, free to
+            // drift from it — and two of the four values already had.
+            "text-[color:var(--pane-ink-muted)]",
+            "hover:bg-[color:var(--pane-chip)] hover:text-[color:var(--pane-ink)]",
           )}
         >
           <History className="h-3.5 w-3.5" aria-hidden="true" />
@@ -139,13 +149,13 @@ export function PromptHistoryButton({
       </Dialog.Trigger>
 
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[80] bg-[#090909]/75 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none" />
+        <Dialog.Overlay className="fixed inset-0 z-[80] bg-scrim/75 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none" />
         <Dialog.Content
           data-testid="prompt-history-dialog"
           className={cn(
             "fixed left-1/2 top-1/2 z-[90] flex max-h-[82dvh] w-[min(940px,calc(100vw-2rem))]",
-            "-translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border",
-            "bg-card outline-none",
+            "-translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg",
+            "bg-popover shadow-float outline-none",
             "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none",
           )}
         >
@@ -194,7 +204,7 @@ export function PromptHistoryButton({
             </div>
           ) : !history || history.items.length === 0 ? (
             <div className="flex min-h-64 flex-col items-center justify-center px-6 text-center">
-              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-muted/30">
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-muted">
                 <History className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
               </div>
               <p className="text-sm font-medium text-foreground">
@@ -207,8 +217,8 @@ export function PromptHistoryButton({
           ) : (
             <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(15rem,0.8fr)_minmax(0,1.4fr)]">
               <aside className="min-h-0 border-b border-border md:border-b-0 md:border-r">
-                <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+                  <span className="text-micro font-semibold text-muted-foreground">
                     {fill(
                       t(
                         history.available === 1
@@ -219,7 +229,7 @@ export function PromptHistoryButton({
                     )}
                   </span>
                   {!history.complete && (
-                    <span className="text-[10px] text-foreground">
+                    <span className="text-micro text-foreground">
                       {t("agentic_grid.history.partial")}
                     </span>
                   )}
@@ -241,12 +251,12 @@ export function PromptHistoryButton({
 
               {selected && (
                 <section className="flex min-h-0 flex-col" data-testid="prompt-history-detail">
-                  <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-2.5">
+                  <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
                     <div className="min-w-0">
                       <div className="truncate text-xs font-medium text-foreground">
                         {fill(t("agentic_grid.history.prompt_number"), selected.sequence)}
                       </div>
-                      <div className="mt-0.5 text-[10px] text-muted-foreground">
+                      <div className="mt-0.5 text-micro text-muted-foreground">
                         {whenLabel(selected.at)} · {fill(t("agentic_grid.history.characters"), selected.chars)}
                       </div>
                     </div>
@@ -278,7 +288,7 @@ export function PromptHistoryButton({
                       )}
                     </button>
                   </div>
-                  <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words bg-background/35 p-4 font-mono text-[11px] leading-relaxed text-foreground/90">
+                  <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words bg-background p-4 font-mono text-micro text-foreground">
                     {selected.text}
                   </pre>
                 </section>
@@ -313,8 +323,8 @@ function HistoryRow({
       onClick={onSelect}
       data-testid={`prompt-history-row-${item.id}`}
       className={cn(
-        "group flex w-full items-start gap-3 border-b border-border/50 px-4 py-3 text-left transition-colors",
-        selected ? "bg-primary/10" : "hover:bg-muted/40",
+        "group flex w-full items-start gap-3 border-b border-border px-4 py-3 text-left transition-colors",
+        selected ? "bg-primary/10" : "hover:bg-muted",
       )}
     >
       <span
@@ -332,7 +342,7 @@ function HistoryRow({
         <span className="block truncate text-xs font-medium text-foreground">
           {firstLine(item.text)}
         </span>
-        <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+        <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-micro text-muted-foreground">
           <span>{whenLabel(item.at)}</span>
           <span>{t(statusKey)}</span>
         </span>
@@ -346,9 +356,9 @@ function HistorySkeleton(): JSX.Element {
     <div className="grid min-h-64 grid-cols-1 md:grid-cols-[minmax(15rem,0.8fr)_minmax(0,1.4fr)]">
       <div className="border-b border-border p-4 md:border-b-0 md:border-r">
         {[0, 1, 2, 3].map((row) => (
-          <div key={row} className="border-b border-border/50 py-3">
+          <div key={row} className="border-b border-border py-3">
             <div className="h-3 w-4/5 animate-pulse rounded bg-muted" />
-            <div className="mt-2 h-2 w-1/2 animate-pulse rounded bg-muted/70" />
+            <div className="mt-2 h-2 w-1/2 animate-pulse rounded bg-muted" />
           </div>
         ))}
       </div>
@@ -356,7 +366,7 @@ function HistorySkeleton(): JSX.Element {
         <div className="h-3 w-1/3 animate-pulse rounded bg-muted" />
         <div className="mt-6 space-y-3">
           {["w-full", "w-11/12", "w-4/5", "w-5/6", "w-2/3"].map((width, row) => (
-            <div key={row} className={cn("h-2.5 animate-pulse rounded bg-muted/70", width)} />
+            <div key={row} className={cn("h-2.5 animate-pulse rounded bg-muted", width)} />
           ))}
         </div>
       </div>

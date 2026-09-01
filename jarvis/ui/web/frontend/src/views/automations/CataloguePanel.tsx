@@ -65,14 +65,14 @@ export function CataloguePanel({
   );
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-group">
       <SegmentedFilter<CategoryFilter>
         label={t("automations_view.category_label")}
         value={category}
         onChange={setCategory}
         options={options}
       />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-stack sm:grid-cols-2 xl:grid-cols-3">
         {category === "all" && <CustomTile onClick={onCreateCustom} />}
         {shown.map((tpl) => (
           <CatalogueCard
@@ -88,7 +88,14 @@ export function CataloguePanel({
   );
 }
 
-/** "Build your own" — the same size as a template card, drawn as an offer. */
+/**
+ * "Build your own" — the same size as a template card, drawn as an offer.
+ *
+ * A real card with a dashed rim (the one thing that says "not a template
+ * yet"), lifting on hover like every other row in the app. The wand used to
+ * be painted --primary inside a --primary-tinted tile, which made the ONE
+ * tile in the grid that holds no automation the brightest object in it.
+ */
 function CustomTile({ onClick }: { onClick: () => void }) {
   const t = useT();
   return (
@@ -96,18 +103,18 @@ function CustomTile({ onClick }: { onClick: () => void }) {
       type="button"
       onClick={onClick}
       data-testid="catalogue-custom"
-      className="flex min-h-[148px] flex-col items-start gap-2 rounded-2xl border border-dashed border-border p-4 text-left transition-colors hover:border-primary/50 hover:bg-sheen/[0.04]"
+      className="flex min-h-[148px] flex-col items-start gap-2 rounded-lg border border-dashed border-border-strong bg-card p-4 text-left shadow-rim transition-colors hover:bg-secondary"
     >
-      <span className="grid h-9 w-9 place-items-center rounded-lg border border-primary/30 bg-primary/10">
-        <Wand2 className="h-4 w-4 text-primary" />
+      <span className="grid h-9 w-9 place-items-center rounded-md bg-secondary">
+        <Wand2 className="h-4 w-4 text-muted-foreground" />
       </span>
-      <span className="text-sm font-semibold text-foreground">
+      <span className="text-title font-semibold text-foreground-strong">
         {t("automations_view.custom_title")}
       </span>
-      <span className="text-xs leading-relaxed text-muted-foreground">
+      <span className="text-meta text-muted-foreground">
         {t("automations_view.custom_description")}
       </span>
-      <span className="mt-auto inline-flex items-center gap-1 text-xs font-medium text-primary">
+      <span className="mt-auto inline-flex items-center gap-1 text-meta font-medium text-foreground">
         <Plus className="h-3.5 w-3.5" />
         {t("automations_view.new_button")}
       </span>

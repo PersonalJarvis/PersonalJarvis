@@ -66,7 +66,7 @@ const BASE =
 const VARIANTS: Record<NonNullable<ButtonProps["variant"]>, string> = {
   primary: "bg-foreground/70 text-primary-foreground hover:bg-primary/90",
   quiet:
-    "border border-border bg-card/60 text-foreground hover:border-border hover:bg-secondary",
+    "border border-border bg-card text-foreground hover:border-border hover:bg-secondary",
   subtle: "text-muted-foreground hover:bg-secondary hover:text-foreground",
 };
 
@@ -144,7 +144,7 @@ export const Field = forwardRef<
       ref={ref}
       className={cn(
         "h-8 min-w-0 rounded-control border border-border bg-background px-2.5 text-sm " +
-          "text-foreground placeholder:text-muted-foreground/70 " +
+          "text-foreground placeholder:text-muted-foreground " +
           "outline-none transition-colors focus:border-primary/60",
         className,
       )}
@@ -156,10 +156,19 @@ export const Field = forwardRef<
 /**
  * A panel — the one container shape this section uses.
  *
- * `title` is rendered as a small caps-tracked label rather than a heading with
- * its own font size. The launcher has one real heading; everything else is a
- * label on a region, and giving those heading-sized type is what made the old
- * screen read as four unrelated cards stacked in a column.
+ * `title` is rendered as a small label rather than a heading with its own font
+ * size. The launcher has one real heading; everything else is a label on a
+ * region, and giving those heading-sized type is what made the old screen read
+ * as four unrelated cards stacked in a column.
+ *
+ * The ground is the RAIL, never the card. This panel is the section block for
+ * Spend, Automations, the CLI hub and the launcher, where it renders at the
+ * full content measure — 1180px in Spend, 1440px in Automations. Lift scales
+ * inversely with area: a surface that wide never rises above the rail, and
+ * painting it --card is precisely what turned those three sections into grey
+ * slabs the last time this was attempted. The rim stays because call sites
+ * recolour it to carry state (failed, open), so it is a real channel here and
+ * not just a description of the fill.
  */
 export function Panel({
   title,
@@ -177,13 +186,13 @@ export function Panel({
   return (
     <section
       className={cn(
-        "flex min-h-0 min-w-0 flex-col rounded-surface border border-border/70 bg-card/30",
+        "flex min-h-0 min-w-0 flex-col rounded-lg border border-border bg-sidebar",
         className,
       )}
       {...rest}
     >
       {(title || aside) && (
-        <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-3">
+        <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border px-3">
           {title ? <SectionLabel>{title}</SectionLabel> : <span />}
           {aside && (
             <div className="flex shrink-0 items-center gap-1.5">{aside}</div>
@@ -208,7 +217,7 @@ export function SectionLabel({
   return (
     <span
       className={cn(
-        "truncate text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground",
+        "truncate text-micro font-semibold text-muted-foreground",
         className,
       )}
     >
@@ -240,7 +249,7 @@ export function Notice({
         "flex flex-wrap items-center gap-x-2 gap-y-1 border-l-2 py-1 pl-3 text-sm",
         tone === "error"
           ? "border-destructive/70 text-destructive"
-          : "border-foreground/70 text-foreground/90",
+          : "border-foreground/70 text-foreground",
       )}
     >
       {children}

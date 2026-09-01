@@ -24,7 +24,7 @@ export function StoryComposer({ onClose }: StoryComposerProps) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-xl border border-border bg-card p-5"
+        className="w-full max-w-md rounded-lg bg-popover shadow-float p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="mb-3 flex items-center gap-3">

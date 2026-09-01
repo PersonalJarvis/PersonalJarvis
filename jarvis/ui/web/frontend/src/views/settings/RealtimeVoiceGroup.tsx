@@ -47,7 +47,7 @@ export function RealtimeVoiceGroup() {
     : transitioning
       ? t("apikeys_view.runtime_switching")
       : sessionActive && activeSessionMode === "realtime"
-        ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ? ` · ${runtimeDetail}` : ""}`
+        ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ?}` · ${runtimeDetail}` : ""}`
         : sessionActive && activeSessionMode === "pipeline" && on
           ? t("apikeys_view.runtime_fallback_pipeline")
           : sessionActive
@@ -64,9 +64,9 @@ export function RealtimeVoiceGroup() {
       ? t(realtimeTransportIssueKey(transportIssue))
       : transportOfferDetail;
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
+    <div className="mt-2 rounded-lg border border-border bg-card p-4">
       <div className="flex items-start gap-3">
-        <Radio className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <Radio className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-4">
             <h4 className="font-medium">{t("settings_view.realtime_voice.title")}</h4>
@@ -82,13 +82,13 @@ export function RealtimeVoiceGroup() {
               ? t("settings_view.realtime_voice.description")
               : t("settings_view.realtime_voice.unavailable")}
           </p>
-          <p className="mt-1.5 text-[11px] text-muted-foreground" aria-live="polite">
+          <p className="mt-1.5 text-micro text-muted-foreground" aria-live="polite">
             {runtimeText}
           </p>
           {on && lastStartError && (
             <p
               data-testid="realtime-last-start-error"
-              className="mt-1 text-[11px] leading-snug text-foreground"
+              className="mt-1 text-micro text-foreground"
               aria-live="polite"
             >
               {t("voice_state.connect_failed")
@@ -99,7 +99,7 @@ export function RealtimeVoiceGroup() {
           {offerDetail && (
             <p
               data-testid="realtime-transport-offer-detail"
-              className="mt-1 text-[11px] leading-snug text-foreground"
+              className="mt-1 text-micro text-foreground"
               aria-live="polite"
             >
               {offerDetail}

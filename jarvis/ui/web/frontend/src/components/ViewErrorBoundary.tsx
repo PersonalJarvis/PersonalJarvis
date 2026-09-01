@@ -115,7 +115,10 @@ export class ViewErrorBoundary extends Component<
         <div className="flex flex-1 items-center justify-center p-6">
           <div
             className={cn(
-              "w-full max-w-xl rounded-lg border bg-card/80 p-5",
+              // A real object, sized to its content on the section's ground —
+              // so it takes the card fill outright rather than an opacity of
+              // it. The rim stays because it is the fault/stale signal.
+              "w-full max-w-xl rounded-lg border bg-card p-5",
               stale ? "border-border" : "border-destructive/30",
             )}
           >

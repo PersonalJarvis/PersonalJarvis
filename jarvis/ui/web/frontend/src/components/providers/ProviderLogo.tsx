@@ -124,9 +124,16 @@ export function ProviderLogo({
       className={cn(
         // One neutral tile for every mark, so a row of providers reads as one
         // list rather than a row of differently shaped app icons.
+        //
+        // The tile is a LIFT surface with no rim. It used to be a --background
+        // fill inside a --border outline: the room itself, which on a card is
+        // a child darker than its parent, and which the wallpaper path
+        // converges to transparent — between them, that is why a logo tile
+        // could render as an empty outline. A nested tile steps UP, and once
+        // it has a real fill the outline is what was standing in for one.
         small
-          ? "inline-flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-sm"
-          : "inline-flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-surface border border-border/80 bg-background/70",
+          ? "inline-flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-full"
+          : "inline-flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md bg-secondary",
         className,
       )}
     >
@@ -154,7 +161,12 @@ export function ProviderLogo({
       ) : local === "device" ? (
         <HardDrive className={cn("text-muted-foreground", glyphClass)} />
       ) : (
-        <span className={cn("font-display font-semibold text-muted-foreground", small ? "text-[10px]" : "text-xs")}>
+        <span
+          className={cn(
+            "font-display font-semibold text-muted-foreground",
+            small ? "text-micro" : "text-meta",
+          )}
+        >
           {monogram}
         </span>
       )}

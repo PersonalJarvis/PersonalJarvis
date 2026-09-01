@@ -134,7 +134,7 @@ export function SetupProposalCard({
                         <ProvenBadge proven={step.proven} />
                       </span>
                       {(step.model || size || step.fit) && (
-                        <span className="flex flex-wrap gap-x-3 font-mono text-[12px] text-muted-foreground">
+                        <span className="flex flex-wrap gap-x-3 font-mono text-meta text-muted-foreground">
                           {step.model && <span>{step.model}</span>}
                           {size && <span>{size}</span>}
                           {step.fit && <span>{step.fit}</span>}
@@ -160,7 +160,7 @@ export function SetupProposalCard({
             className="flex items-center gap-2 text-sm text-muted-foreground"
             data-testid="proposal-confirmed"
           >
-            <Check className="h-4 w-4 text-primary" />
+            <Check className="h-4 w-4 text-muted-foreground" />
             {fill(t("local_models.assistant.proposal_confirmed"), { hash })}
           </p>
         ) : (

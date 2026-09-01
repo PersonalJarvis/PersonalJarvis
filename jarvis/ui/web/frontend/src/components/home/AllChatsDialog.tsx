@@ -74,8 +74,8 @@ export function AllChatsDialog({
           }}
           className={cn(
             "fixed left-1/2 top-1/2 z-[90] flex max-h-[min(84dvh,44rem)] w-[min(680px,calc(100vw-2rem))]",
-            "-translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border",
-            "bg-card outline-none",
+            "-translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg",
+            "bg-popover shadow-float outline-none",
             "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none",
           )}
         >

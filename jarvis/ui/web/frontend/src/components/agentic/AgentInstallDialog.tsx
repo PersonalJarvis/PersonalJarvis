@@ -132,7 +132,9 @@ export function AgentInstallDialog({
         aria-modal="true"
         aria-label={`Install ${displayName}`}
         data-testid={`agent-install-dialog-${agent}`}
-        className="flex h-[32rem] max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-card"
+        // A dialog floats: the floating ground plus the cast edge, not a card
+        // fill with a hairline drawn around it.
+        className="flex h-[32rem] max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-popover shadow-float"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className="flex items-center gap-3 border-b border-border px-4 py-3">
@@ -149,7 +151,7 @@ export function AgentInstallDialog({
             {/* The command, before and while it runs. A user who would rather
                 run it in their own shell can read it here and close this. */}
             {command && (
-              <p className="truncate font-mono text-[11px] text-muted-foreground">
+              <p className="truncate font-mono text-micro text-muted-foreground">
                 {command}
               </p>
             )}

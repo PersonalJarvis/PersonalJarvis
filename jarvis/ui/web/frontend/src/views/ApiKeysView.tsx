@@ -135,7 +135,7 @@ export function ApiKeysView() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ViewHeader
-        icon={<KeyRound className="h-4 w-4 text-primary" />}
+        icon={<KeyRound className="h-4 w-4 text-muted-foreground" />}
         title={t("apikeys_view.title")}
         subtitle={t("apikeys_view.subtitle")}
         right={
@@ -301,7 +301,6 @@ function CategoryTabs({
             selected={active === "jarvis-key"}
             onClick={() => onSelect("jarvis-key")}
             health={health["jarvis-key"]}
-            muted
           />
         )}
         {showAdvanced && (
@@ -311,7 +310,6 @@ function CategoryTabs({
             selected={active === "advanced"}
             onClick={() => onSelect("advanced")}
             health={health.advanced}
-            muted
           />
         )}
       </div>
@@ -324,15 +322,12 @@ function TabButton({
   label,
   selected,
   onClick,
-  muted = false,
   health,
 }: {
   icon: LucideIcon;
   label: string;
   selected: boolean;
   onClick: () => void;
-  /** The de-emphasized "Advanced" tab: neutral fill instead of the gold accent. */
-  muted?: boolean;
   /** Optional health rollup driving the corner status dot. */
   health?: SectionHealth;
 }) {
@@ -366,24 +361,28 @@ function TabButton({
       onClick={onClick}
       title={title}
       className={cn(
-        "relative -mb-px inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 text-[13px] font-medium transition-colors",
+        "relative -mb-px inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 text-meta font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        // The underline is an ACTIVE INDICATOR, which is one of the four jobs
+        // --primary is a fill for; the selected label rises to the ink ceiling
+        // beside it, so "you are here" is stated twice and neither statement
+        // is a colour the eye has to decode.
         selected
-          ? "border-primary text-foreground"
-          : muted
-            ? "border-transparent text-muted-foreground/70 hover:text-foreground"
-            : "border-transparent text-muted-foreground hover:text-foreground",
+          ? "border-primary text-foreground-strong"
+          : "border-transparent text-muted-foreground hover:text-foreground",
       )}
     >
-      {/* The attention dot sits where the icon would: it is the only colour in
-          the bar besides the gold underline, so a dot always means "look here"
-          — red for "set up but broken", amber for "still to set up". */}
+      {/* The attention dot sits where the icon would, and it is the only hue
+          in the bar: fault red for "set up but broken", degraded amber for
+          "still to set up". "needs setup" used to be painted in --foreground,
+          which made a status the brightest mark on the bar and told the eye
+          nothing — a state is never ink. */}
       {indicator ? (
         <span
           aria-hidden="true"
           className={cn(
-            "h-[7px] w-[7px] shrink-0 rounded-full",
-            indicator === "error" ? "bg-destructive" : "bg-foreground",
+            "h-2 w-2 shrink-0 rounded-full",
+            indicator === "error" ? "bg-destructive" : "bg-warning",
           )}
         />
       ) : (
@@ -585,7 +584,7 @@ function AdvancedCategory() {
             belong to their owners and are shown only to identify what you connect
             to. Backs the third-party logos used on plugin cards (see
             TRADEMARK.md). */}
-        <p className="pt-2 text-[11px] leading-relaxed text-muted-foreground">
+        <p className="pt-2 text-micro text-muted-foreground">
           {t("apikeys_view.trademark_notice")}
         </p>
       </div>
@@ -606,7 +605,7 @@ function TelephonySection() {
   const t = useT();
   return (
     <section>
-      <h3 className="mb-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+      <h3 className="mb-3 inline-flex items-center gap-2 text-micro text-muted-foreground">
         <Phone className="h-3.5 w-3.5" /> {t("apikeys_view.tier_telephony")}
       </h3>
       <TelephonyPanel />

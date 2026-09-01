@@ -30,14 +30,16 @@ describe("what the badge shows", () => {
     expect(badge.getAttribute("data-icon")).toBe("spinner");
   });
 
-  it("shows an amber check mark for a pane that was given a job and has finished", () => {
+  it("shows a green check mark for a pane that was given a job and has finished", () => {
     // A check, not a still dot: beside a row of spinners a dot read as "also
     // busy, just not animated", and the maintainer asked for an indicator
     // that says working or done (2026-08-27).
     const badge = pill({ status: "live", activity: "waiting", worked: true });
     expect(badge.textContent).toBe("");
     expect(badge.getAttribute("data-icon")).toBe("check");
-    expect(badge.className).toContain("text-foreground");
+    // Life, not ink. A status painted in --foreground is the same colour as
+    // every label around it and so reads as one.
+    expect(badge.className).toContain("text-success");
   });
 
   it("hollows the dot — rather than recolouring it — for an unused pane", () => {
@@ -48,10 +50,10 @@ describe("what the badge shows", () => {
     const badge = pill({ status: "live", activity: "waiting", worked: false });
     expect(badge.textContent).toBe("");
     expect(badge.getAttribute("data-icon")).toBe("ring");
-    expect(badge.className).toContain("text-foreground/60");
+    expect(badge.className).toContain("text-success");
   });
 
-  it("keeps blue for the one state that wants something from you now", () => {
+  it("keeps a colour of its own for the one state that wants something from you now", () => {
     // The only pane in the list that is neither busy nor simply finished, so
     // it is the only one worth spending a second colour on — and the only
     // still state allowed to wave: a beacon is a still dot with a radiating
@@ -60,7 +62,7 @@ describe("what the badge shows", () => {
     const badge = pill({ status: "live", activity: "asking" });
     expect(badge.textContent).toBe("");
     expect(badge.getAttribute("data-icon")).toBe("beacon");
-    expect(badge.className).toContain("text-sky-400");
+    expect(badge.className).toContain("text-warning");
   });
 
   it("shows an alert for an agent that could not be started", () => {

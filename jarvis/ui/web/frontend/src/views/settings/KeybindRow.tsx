@@ -159,7 +159,7 @@ export function ComboChips({ combo }: { combo: string }) {
       {parts.map((p, i) => (
         <Fragment key={`${p}-${i}`}>
           {i > 0 && <span className="text-muted-foreground/50">+</span>}
-          <kbd className="rounded border border-border bg-muted/70 px-1.5 py-0.5 font-mono text-[11px] leading-none text-foreground shadow-[inset_0_-1px_0_rgba(0,0,0,0.35)]">
+          <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-micro text-foreground shadow-[inset_0_-1px_0_rgba(0,0,0,0.35)]">
             {p}
           </kbd>
         </Fragment>
@@ -695,14 +695,14 @@ export function KeybindRow({
       data-testid={`combo-field-${action}`}
       onClick={() => setCapturing((c) => !c)}
       disabled={loading}
-      className={`flex min-h-[34px] flex-wrap items-center gap-1 rounded-md border px-3 py-1.5 text-left text-sm transition-colors focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 ${
+      className={`flex min-h-[34px] flex-wrap items-center gap-1 rounded-md border px-3 py-1.5 text-left text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-border-strong disabled:opacity-50 ${
         variant === "voice" ? "" : "flex-1"
-      } ${capturing ? "border-primary bg-primary/10" : "border-input bg-background"}`}
+      } ${capturing ? "bg-secondary" : "border-input bg-background"}`}
     >
       {capturing && (
         <span className="relative mr-1 flex h-2 w-2 shrink-0">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-foreground/70 opacity-75" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/70" />
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-secondary opacity-75" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-secondary" />
         </span>
       )}
       {combo ? (
@@ -744,7 +744,7 @@ export function KeybindRow({
   const statusLine = statusText && (
     <p
       data-testid={showValidation ? `keybind-validation-${action}` : undefined}
-      className={`mt-2 text-[11px] ${
+      className={`mt-2 text-micro ${
         showValidation
           ? isError
             ? "text-destructive"
@@ -770,14 +770,14 @@ export function KeybindRow({
   );
 
   const restartHint = saved && (
-    <p className="mt-2 text-[11px] text-muted-foreground">
+    <p className="mt-2 text-micro text-muted-foreground">
       {t("settings_view.keybinds.restart_required")}
     </p>
   );
 
   if (variant === "voice") {
     return (
-      <div className="rounded-lg border border-border bg-card/60 p-4">
+      <div className="rounded-lg border border-border bg-card p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-foreground">{label}</p>
@@ -836,7 +836,7 @@ export function KeybindRow({
 
         {freeSuggestions.length > 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-micro text-muted-foreground">
               {t("voice.shortcuts.suggestions_title")}
             </span>
             {freeSuggestions.map((s) => (
@@ -845,7 +845,7 @@ export function KeybindRow({
                 type="button"
                 data-testid={`suggestion-${action}-${s}`}
                 onClick={() => assign(s)}
-                className="rounded-full border border-border bg-background px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground"
+                className="rounded-full border border-border bg-background px-2 py-0.5 font-mono text-micro text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
               >
                 {formatCombo(s)}
               </button>
@@ -861,7 +861,7 @@ export function KeybindRow({
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="text-[11px] text-muted-foreground underline hover:text-foreground"
+              className="text-micro text-muted-foreground underline hover:text-foreground"
               onClick={() => {
                 if (def) assign(def);
               }}
@@ -878,13 +878,13 @@ export function KeybindRow({
   }
 
   return (
-    <div className="rounded-md border border-border/60 bg-background/40 p-3">
+    <div className="rounded-md border border-border bg-background p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-foreground">{label}</span>
         {showReset && (
           <button
             type="button"
-            className="text-[11px] text-muted-foreground underline hover:text-foreground"
+            className="text-micro text-muted-foreground underline hover:text-foreground"
             onClick={() => {
               if (def) assign(def);
             }}

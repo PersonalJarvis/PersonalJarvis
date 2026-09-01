@@ -1,11 +1,17 @@
 /**
  * ThinkingTrace — the live reasoning card shown while the assistant works.
  *
- * Replaces the three bouncing dots with a precision-instrument look that
- * matches the app's dark/gold language: a pulsing core, a shimmering
+ * The turn's visible state while it is running — the timeline never shows a
+ * gap where an answer is being written. A pulsing core, a shimmering
  * "Thinking" wordmark, a live elapsed timer and a vertical step rail where
  * real backend events (tool calls, computer-use phases, worker dispatches)
  * appear as animated rows.
+ *
+ * It is an assistant bubble, not a special surface: same fill, same side, same
+ * radius as the reply that replaces it, so the turn does not visibly change
+ * shape when it finishes. The byline it used to carry is gone for the same
+ * reason it is gone from MessageBubble — the fill and the side already say who
+ * is speaking, and it was set in --primary, which is a fill and not an ink.
  *
  * ThoughtTraceDisclosure is the after-the-fact companion: once the reply
  * lands, the finished trace renders as a collapsed "Thought for 12.4s ·
@@ -63,31 +69,35 @@ function useElapsedMs(startedTs: number | null): number {
   return startedTs === null ? 0 : Math.max(0, now - startedTs);
 }
 
+/**
+ * A step's state, in colour and nothing else.
+ *
+ * Each of the three used to be a ring around a wash around a glyph — three
+ * nested surfaces to say one word, at 12px. The glyph alone says it, and it
+ * says it in the status palette: life for a finished step, fault for a failed
+ * one, and the spinner's leading edge in life while the step is still running.
+ * A done step must not be quieter than a pending one, so "done" is the only
+ * green on the rail.
+ */
 function StatusNode({ status }: { status: ThinkingStep["status"] }) {
   if (status === "active") {
     return (
       <span
         aria-hidden
-        className="relative z-10 h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary bg-card"
+        className="relative z-10 h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-secondary border-t-success bg-card"
       />
     );
   }
   if (status === "error") {
     return (
-      <span
-        aria-hidden
-        className="relative z-10 flex h-3 w-3 shrink-0 items-center justify-center rounded-full border border-destructive/50 bg-destructive/10"
-      >
-        <X className="h-2 w-2 text-destructive" strokeWidth={3} />
+      <span aria-hidden className="relative z-10 flex h-3 w-3 shrink-0 items-center justify-center">
+        <X className="h-3 w-3 text-destructive" strokeWidth={3} />
       </span>
     );
   }
   return (
-    <span
-      aria-hidden
-      className="relative z-10 flex h-3 w-3 shrink-0 items-center justify-center rounded-full border border-primary/50 bg-primary/15"
-    >
-      <Check className="h-2 w-2 text-primary" strokeWidth={3} />
+    <span aria-hidden className="relative z-10 flex h-3 w-3 shrink-0 items-center justify-center">
+      <Check className="h-3 w-3 text-success" strokeWidth={3} />
     </span>
   );
 }
@@ -109,27 +119,24 @@ function StepRow({ step, live }: { step: ThinkingStep; live: boolean }) {
       <StatusNode status={step.status} />
       <KindIcon
         aria-hidden
-        className={cn(
-          "h-3 w-3 shrink-0",
-          active ? "text-primary/80" : "text-muted-foreground/50",
-        )}
+        className={cn("h-3 w-3 shrink-0 text-muted-foreground")}
       />
       <span
         className={cn(
-          "shrink-0 text-xs",
-          active ? "thinking-shimmer font-medium" : "text-foreground/80",
-          step.status === "error" && "text-destructive/90",
+          "shrink-0 text-meta",
+          active ? "thinking-shimmer font-medium" : "text-foreground",
+          step.status === "error" && "text-destructive",
         )}
       >
         {t(step.labelKey)}
       </span>
       {step.detail && (
-        <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/80">
+        <span className="min-w-0 truncate font-mono text-micro text-muted-foreground">
           {step.detail}
         </span>
       )}
       {step.durationMs !== undefined && step.durationMs > 0 && (
-        <span className="ml-auto shrink-0 pl-2 font-mono text-[10px] tabular-nums text-muted-foreground/60">
+        <span className="ml-auto shrink-0 pl-2 font-mono text-micro tabular-nums text-muted-foreground">
           {formatThinkingDuration(step.durationMs)}
         </span>
       )}
@@ -152,10 +159,10 @@ function StepRail({
       {/* Vertical rail behind the status nodes — fades out downward. */}
       <span
         aria-hidden
-        className="absolute bottom-2 left-[5.5px] top-2 w-px bg-gradient-to-b from-primary/30 via-border to-transparent"
+        className="absolute bottom-2 left-[5.5px] top-2 w-px bg-border"
       />
       {hiddenCount > 0 && (
-        <li className="relative flex items-center gap-2 pl-5 font-mono text-[10px] text-muted-foreground/50">
+        <li className="relative flex items-center gap-2 pl-5 font-mono text-micro text-muted-foreground">
           +{hiddenCount} {t("thinking.earlier")}
         </li>
       )}
@@ -171,7 +178,6 @@ export function ThinkingTrace() {
   const t = useT();
   const steps = useEventStore((s) => s.thinkingSteps);
   const startedTs = useEventStore((s) => s.thinkingStartedTs);
-  const assistantName = useEventStore((s) => s.assistantName);
   const elapsed = useElapsedMs(startedTs);
 
   const visible = steps.slice(-VISIBLE_STEPS);
@@ -184,22 +190,20 @@ export function ThinkingTrace() {
       aria-live="polite"
       aria-label={t("chats_view.thinking_aria")}
     >
-      <div className="relative w-full max-w-[80%] overflow-hidden rounded-2xl rounded-bl-sm border border-primary/20 bg-card px-4 py-3 sm:max-w-[440px]">
-        {/* Atmospheric breathing glow — gives the card a quiet "alive" depth. */}
-        <span
-          aria-hidden
-          className="thinking-breathe pointer-events-none absolute -left-14 -top-14 h-36 w-36 rounded-full bg-primary/10 blur-3xl"
-        />
-
-        <div className="relative flex items-center gap-2">
+      {/*
+       * The in-progress turn is a bubble like any other: the assistant's own
+       * fill, on the assistant's own side, at the assistant's own radius. The
+       * blurred bloom behind it is gone — a glow is additive light standing in
+       * for a fill that is now actually there — and so is the rim, because a
+       * fill and a border are two answers to one question.
+       */}
+      <div className="relative w-full max-w-[85%] overflow-hidden rounded-lg bg-card px-4 py-3 sm:max-w-[440px]">
+        <div className="relative flex items-center gap-row">
           <LiveCore />
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
-            {assistantName}
-          </span>
-          <span className="thinking-shimmer text-xs font-medium">
+          <span className="thinking-shimmer text-meta font-medium">
             {t("thinking.label")}
           </span>
-          <span className="ml-auto font-mono text-[10px] tabular-nums text-primary/60">
+          <span className="ml-auto font-mono text-micro tabular-nums text-muted-foreground">
             {formatThinkingDuration(elapsed)}
           </span>
         </div>
@@ -232,7 +236,7 @@ export function ThoughtTraceDisclosure({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="group -ml-1 flex items-center gap-1.5 rounded-md px-1 py-0.5 text-[11px] text-muted-foreground transition-colors hover:text-primary"
+        className="group -ml-1 flex items-center gap-1.5 rounded-md px-1 py-0.5 text-micro text-muted-foreground transition-colors hover:text-foreground"
       >
         <ChevronRight
           aria-hidden
@@ -244,12 +248,12 @@ export function ThoughtTraceDisclosure({
         <span className="font-medium">
           {t("thinking.thought_for")} {formatThinkingDuration(trace.durationMs)}
         </span>
-        <span className="text-muted-foreground/50">
+        <span className="text-muted-foreground">
           · {trace.steps.length} {t("thinking.steps")}
         </span>
       </button>
       {open && (
-        <div className="mt-2 border-b border-border/60 pb-2">
+        <div className="mt-2 border-b border-border pb-2">
           <StepRail steps={trace.steps} live={false} hiddenCount={0} />
         </div>
       )}

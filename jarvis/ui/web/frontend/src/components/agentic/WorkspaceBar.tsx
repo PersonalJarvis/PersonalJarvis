@@ -355,8 +355,8 @@ export function WorkspaceBar({
               dropping
                 ? "border-dashed border-primary bg-primary/10"
                 : selected
-                  ? "border-border/60 bg-secondary"
-                  : "border-transparent hover:bg-secondary/50",
+                  ? "border-border bg-secondary"
+                  : "border-transparent hover:bg-secondary",
             )}
           >
             {renaming ? (
@@ -453,7 +453,7 @@ export function WorkspaceBar({
                     <span
                       data-testid={`workspace-ordinal-${workspace.id}`}
                       className={cn(
-                        "font-mono text-[11px] tabular-nums",
+                        "font-mono text-micro tabular-nums",
                         selected ? "font-semibold text-foreground" : "text-muted-foreground",
                       )}
                     >
@@ -473,7 +473,7 @@ export function WorkspaceBar({
                   onClick={() => beginRename(workspace)}
                   className={cn(
                     "flex h-5 w-5 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/tab:opacity-100 disabled:opacity-40",
-                    compact && "absolute z-20 bg-secondary/95",
+                    compact && "absolute z-20 bg-secondary",
                     compact && (ordinalOnly ? ordinalRenamePosition : "left-0"),
                   )}
                 >
@@ -500,7 +500,7 @@ export function WorkspaceBar({
                     setConfirming(null);
                     onClose(workspace.id);
                   }}
-                  className="rounded bg-destructive/20 px-2 py-0.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/30 disabled:opacity-50"
+                  className="rounded bg-destructive/20 px-2 py-0.5 text-micro font-medium text-destructive transition-colors hover:bg-destructive/30 disabled:opacity-50"
                 >
                   Close &amp; stop {workspace.live_terminals || workspace.terminals}
                 </button>
@@ -508,7 +508,7 @@ export function WorkspaceBar({
                   type="button"
                   aria-label="Keep this workspace open"
                   onClick={() => setConfirming(null)}
-                  className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+                  className="rounded px-1.5 py-0.5 text-micro text-muted-foreground hover:text-foreground"
                 >
                   Keep
                 </button>
@@ -525,7 +525,7 @@ export function WorkspaceBar({
                   "flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-destructive/20 hover:text-destructive",
                   compact
                     ? cn(
-                        "absolute z-20 bg-secondary/95 opacity-0 focus-visible:opacity-100 group-hover/tab:opacity-100",
+                        "absolute z-20 bg-secondary opacity-0 focus-visible:opacity-100 group-hover/tab:opacity-100",
                         ordinalOnly ? ordinalClosePosition : "right-0",
                       )
                     : selected
@@ -605,8 +605,8 @@ function PaneCount({
       className={cn(
         // No fill of its own: the tab it sits in is already a filled surface
         // when selected, and a badge inside it was a second box inside a box.
-        "shrink-0 font-mono text-[10px] tabular-nums",
-        selected ? "text-primary" : "text-muted-foreground/60",
+        "shrink-0 font-mono text-micro tabular-nums",
+        selected ? "text-primary" : "text-muted-foreground",
       )}
     >
       {workspace.terminals}

@@ -33,11 +33,16 @@ export function ScrollToEndButton({
       data-testid={testId}
       aria-label={label}
       title={label}
+      // This button hovers over the conversation, so it is opaque and carries
+      // the float shadow and the strong rim — not a 95%-opaque card leaning on
+      // a blur. It rests one rung below the floating layer so that hover still
+      // has somewhere to go: --card up to --secondary, rather than lighting the
+      // border with --primary, which on this ground is pure white.
       className={cn(
         "absolute -top-3 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center",
-        "rounded-full border border-border bg-card/95 text-muted-foreground backdrop-blur",
-        "transition-colors hover:border-primary/40 hover:text-foreground",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "rounded-full border border-border-strong bg-card text-muted-foreground shadow-float",
+        "transition-colors duration-150 hover:bg-secondary hover:text-foreground",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
         className,
       )}
     >

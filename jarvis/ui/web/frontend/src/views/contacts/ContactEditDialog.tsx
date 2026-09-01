@@ -184,7 +184,7 @@ export function ContactEditDialog({
       onClick={requestClose}
     >
       <div
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto scrollbar-jarvis rounded-xl border border-border bg-card p-6"
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto scrollbar-jarvis rounded-lg bg-popover shadow-float p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="mb-4 flex items-center gap-3">
@@ -368,7 +368,7 @@ export function ContactEditDialog({
               type="button"
               onClick={() => void handleSave()}
               disabled={saving || hasInvalidField}
-              className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-body font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {saving && <Loader2 className="h-3 w-3 animate-spin" />}
               {t("contacts.save")}
@@ -381,7 +381,7 @@ export function ContactEditDialog({
             className="fixed inset-0 z-[60] flex items-center justify-center bg-scrim/60 backdrop-blur-sm"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="w-full max-w-xs rounded-xl border border-border bg-card p-5">
+            <div className="w-full max-w-xs rounded-lg bg-popover shadow-float p-5">
               <h4 className="font-display text-sm font-semibold">
                 {t("contacts.discardTitle")}
               </h4>
@@ -413,12 +413,12 @@ export function ContactEditDialog({
 }
 
 const inputClass =
-  "w-full rounded-md border border-border bg-background/40 px-3 py-1.5 text-sm outline-none focus:border-primary/40";
+  "w-full rounded-md bg-input px-3 py-1.5 text-body text-foreground outline-none placeholder:text-faint-foreground focus:ring-2 focus:ring-border-strong";
 
 function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block space-y-1">
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      <span className="text-meta text-muted-foreground">
         {label}
       </span>
       {children}
@@ -454,7 +454,7 @@ function ChipsField({
   }
   return (
     <div className="space-y-1">
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      <span className="text-meta text-muted-foreground">
         {label}
       </span>
       <div
@@ -466,14 +466,14 @@ function ChipsField({
         {values.map((value) => (
           <span
             key={value}
-            className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs text-primary"
+            className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-meta text-foreground"
           >
             {value}
             <button
               type="button"
               aria-label={`${removeLabel} ${value}`}
               onClick={() => onChange(values.filter((v) => v !== value))}
-              className="text-primary/70 hover:text-primary"
+              className="text-muted-foreground hover:text-destructive"
             >
               <X className="h-3 w-3" />
             </button>
@@ -537,7 +537,7 @@ function ListField({
 }) {
   return (
     <div className="space-y-1">
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      <span className="text-meta text-muted-foreground">
         {label}
       </span>
       <div className="space-y-2">
@@ -568,9 +568,9 @@ function ListField({
               </button>
             </div>
             {errors?.[i] ? (
-              <p className="mt-0.5 text-[11px] text-destructive">{errors[i]}</p>
+              <p className="mt-0.5 text-meta text-destructive">{errors[i]}</p>
             ) : hints?.[i] ? (
-              <p className="mt-0.5 text-[11px] text-muted-foreground">{hints[i]}</p>
+              <p className="mt-0.5 text-meta text-muted-foreground">{hints[i]}</p>
             ) : null}
           </div>
         ))}

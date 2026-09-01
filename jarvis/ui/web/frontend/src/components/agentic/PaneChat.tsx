@@ -276,7 +276,7 @@ export function PaneChat({
           data-testid="pane-chat-state"
           data-state={state}
           className={cn(
-            "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-border bg-card/60 pl-2 pr-2.5 text-xs font-medium transition-colors",
+            "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-border bg-card pl-2 pr-2.5 text-xs font-medium transition-colors",
             STATE_INK[state],
           )}
         >
@@ -348,7 +348,7 @@ export function PaneChat({
           className="flex flex-1 flex-col items-center justify-center px-6 text-center"
           data-testid="pane-chat-not-readable"
         >
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-muted/30">
+          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-muted">
             <SquareTerminal className="h-5 w-5 text-muted-foreground" aria-hidden />
           </div>
           <p className="text-sm font-medium text-foreground">
@@ -372,7 +372,7 @@ export function PaneChat({
           data-testid="pane-chat-loading"
         >
           {["w-2/3", "w-full", "w-5/6", "w-1/2", "w-full", "w-4/5"].map((width, row) => (
-            <div key={row} className={cn("h-3 animate-pulse rounded bg-muted/70", width)} />
+            <div key={row} className={cn("h-3 animate-pulse rounded bg-muted", width)} />
           ))}
         </div>
       ) : (

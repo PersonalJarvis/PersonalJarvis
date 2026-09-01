@@ -1,23 +1,22 @@
+import { identityHue } from "@/lib/identityHue";
+
 /**
  * A stable colour for a folder, so the same project reads the same everywhere.
  *
  * Derived from the path rather than stored, which means it needs no setting and
- * survives a lost store. The palette is fixed rather than a free hue rotation:
- * arbitrary HSL produces colours that vanish against one of the two themes.
+ * survives a lost store. It now derives through the app's one identity helper
+ * (`lib/identityHue`) instead of a private list of eight hex values: a project,
+ * a conversation and an agent are the same kind of thing to a reader, so they
+ * should not be coloured by two unrelated tables that can drift apart — and a
+ * hard-coded palette is a literal colour by another name.
+ *
+ * This mark rides an icon rather than a filled disc, so it is lifted well above
+ * the avatar's fill lightness: a 38%-lightness stroke disappears into a
+ * near-black rail, where a filled circle at the same value reads perfectly.
  */
-const FOLDER_COLORS = [
-  "#e7c46e",
-  "#7dd3fc",
-  "#a5b4fc",
-  "#86efac",
-  "#fca5a5",
-  "#f0abfc",
-  "#fdba74",
-  "#5eead4",
-] as const;
+const STROKE_SATURATION = 58;
+const STROKE_LIGHTNESS = 62;
 
 export function folderColor(key: string): string {
-  let sum = 0;
-  for (const char of key) sum = (sum + char.charCodeAt(0)) % 4096;
-  return FOLDER_COLORS[sum % FOLDER_COLORS.length];
+  return `hsl(${identityHue(key)} ${STROKE_SATURATION}% ${STROKE_LIGHTNESS}%)`;
 }

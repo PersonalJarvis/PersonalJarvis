@@ -59,19 +59,22 @@ export function InputIsolationBanner() {
       data-testid="input-isolation-banner"
       data-reason={report.reason}
       role="alert"
-      className="border-b-2 border-foreground/50 bg-foreground/10 text-foreground"
+      // A full-width strip stays on the page's own ground: the state is said
+      // by the glyph and the hairline, not by washing the top of the window in
+      // an alpha of the ink colour.
+      className="border-b border-warning"
     >
       <div className="flex items-start gap-3 px-4 py-2.5">
-        <KeyboardOff className="mt-0.5 h-5 w-5 shrink-0 text-foreground" aria-hidden />
+        <KeyboardOff className="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold leading-tight">
+          <p className="text-body font-semibold text-foreground-strong">
             {t("input_isolation.title")}
           </p>
-          <p className="mt-0.5 text-xs leading-snug text-foreground/90">
+          <p className="mt-0.5 text-meta text-muted-foreground">
             {t("input_isolation.impact")}
           </p>
           {!report.can_restart_unelevated && (
-            <p className="mt-1 text-xs leading-snug text-foreground/70">
+            <p className="mt-1 text-meta text-muted-foreground">
               {t("input_isolation.manual_hint")}
             </p>
           )}

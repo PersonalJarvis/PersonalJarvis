@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { AppWindow } from "lucide-react";
 
+import { EmptyState } from "@/components/layout/EmptyState";
+import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import type { SectionId } from "@/store/events";
 
@@ -38,40 +40,40 @@ export function DetachedViewPlaceholder({ view }: { view: SectionId }) {
     }
   }
 
+  // The shared empty state, not a hand-rolled one: this IS the case that
+  // primitive exists for — one sentence saying where the section went, and the
+  // one action that brings it back.
   return (
     <div
-      className="flex h-full w-full flex-col items-center justify-center gap-4 text-center"
+      className="flex h-full w-full items-center justify-center p-7"
       data-testid="detached-view-placeholder"
     >
-      <AppWindow aria-hidden className="h-10 w-10 text-muted-foreground/60" />
-      <div className="max-w-sm space-y-1">
-        <div className="text-sm font-medium text-foreground">
-          {t("topbar.detached_title")}
-        </div>
-        <div className="text-xs text-muted-foreground">
-          {t("topbar.detached_body")}
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void post("/api/window/detach")}
-          data-testid="detached-focus-button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:cursor-default disabled:opacity-70"
-        >
-          {t("topbar.detach_focus")}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void post("/api/window/reattach")}
-          data-testid="detached-reattach-button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:cursor-default disabled:opacity-70"
-        >
-          {t("topbar.detach_bring_back")}
-        </button>
-      </div>
+      <EmptyState
+        icon={<AppWindow />}
+        title={t("topbar.detached_title")}
+        body={t("topbar.detached_body")}
+        action={
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => void post("/api/window/detach")}
+              data-testid="detached-focus-button"
+            >
+              {t("topbar.detach_focus")}
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => void post("/api/window/reattach")}
+              data-testid="detached-reattach-button"
+            >
+              {t("topbar.detach_bring_back")}
+            </Button>
+          </div>
+        }
+      />
     </div>
   );
 }

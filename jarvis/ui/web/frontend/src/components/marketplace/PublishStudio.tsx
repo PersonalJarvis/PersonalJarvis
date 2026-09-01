@@ -352,7 +352,7 @@ export function PublishStudio({
       aria-modal="true"
       aria-label={t("marketplace.studio_title")}
       data-testid="publish-studio"
-      className="fixed inset-0 z-[60] flex bg-background/80 backdrop-blur-md"
+      className="fixed inset-0 z-[60] flex bg-background backdrop-blur-md"
     >
       <button
         type="button"
@@ -362,12 +362,12 @@ export function PublishStudio({
       />
       <div className="relative m-auto flex h-[min(92vh,56rem)] w-[min(96vw,72rem)] overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground">
         {/* Rail */}
-        <aside className="relative isolate hidden w-60 shrink-0 flex-col border-r border-border bg-secondary/30 p-5 md:flex">
+        <aside className="relative isolate hidden w-60 shrink-0 flex-col border-r bg-secondary p-5 md:flex">
           <div
             aria-hidden
-            className="pointer-events-none absolute -z-10 -left-20 top-0 h-64 w-64 rounded-full bg-primary/10 blur-3xl"
+            className="pointer-events-none absolute -z-10 -left-20 top-0 h-64 w-64 rounded-full bg-secondary blur-3xl"
           />
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <p className="text-micro font-semibold text-muted-foreground">
             {t("marketplace.studio_eyebrow")}
           </p>
           <h2 className="mt-1 font-display text-lg font-semibold tracking-tight text-foreground">
@@ -379,7 +379,7 @@ export function PublishStudio({
             <Station n={3} active={station === 3} done={station > 3} label={t("marketplace.studio_station_check")} />
             <Station n={4} active={station === 4} done={false} label={t("marketplace.studio_station_live")} />
           </ol>
-          <div className="mt-auto space-y-2 text-[11px] leading-relaxed text-muted-foreground">
+          <div className="mt-auto space-y-2 text-micro text-muted-foreground">
             <p>{t("marketplace.studio_rail_note_public")}</p>
             <p>{t("marketplace.studio_rail_note_rules")}</p>
           </div>
@@ -404,7 +404,7 @@ export function PublishStudio({
               </p>
             </div>
             {signedIn && identity.data && (
-              <span className="hidden items-center gap-2 rounded-full border border-border bg-background/60 py-0.5 pl-0.5 pr-2.5 text-[11px] text-foreground sm:flex">
+              <span className="hidden items-center gap-2 rounded-full border border-border bg-background py-0.5 pl-0.5 pr-2.5 text-micro text-foreground sm:flex">
                 <PublisherAvatar login={identity.data.login} url={identity.data.avatar_url} size={20} />
                 @{identity.data.login}
               </span>
@@ -494,17 +494,17 @@ function Station({
     <li
       className={cn(
         "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm transition-colors",
-        active ? "bg-background/70 text-foreground" : "text-muted-foreground",
+        active ? "bg-background text-foreground" : "text-muted-foreground",
       )}
       data-active={active ? "yes" : "no"}
     >
       <span
         className={cn(
-          "grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[11px] font-bold",
+          "grid h-6 w-6 shrink-0 place-items-center rounded-full border text-micro font-bold",
           done
-            ? "border-primary bg-foreground/70 text-primary-foreground"
+            ? "border-border-strong bg-primary text-primary-foreground"
             : active
-              ? "border-primary text-primary"
+              ? "border-border-strong text-foreground-strong"
               : "border-border text-muted-foreground",
         )}
       >
@@ -564,10 +564,10 @@ function SourcePicker({
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-baseline gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+        <span className="text-xs font-semibold text-foreground">
           {t("marketplace.studio_source_label")}
         </span>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           {t("marketplace.studio_source_hint")}
         </span>
       </div>
@@ -598,15 +598,15 @@ function SourcePicker({
             "group relative isolate flex min-h-44 cursor-pointer flex-col justify-end overflow-hidden rounded-2xl border border-dashed p-5 text-left transition-colors md:row-span-2",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             dragOver
-              ? "border-primary bg-primary/10"
-              : "border-border bg-gradient-to-br from-primary/10 via-card to-card hover:border-primary/50",
+              ? "bg-secondary"
+              : "border-border bg-gradient-to-br from-primary/10 via-card to-card hover:border-border-strong",
           )}
         >
           <div
             aria-hidden
-            className="pointer-events-none absolute -z-10 -right-10 -top-10 h-40 w-40 rounded-full bg-primary/15 blur-3xl transition-transform duration-500 group-hover:scale-125"
+            className="pointer-events-none absolute -z-10 -right-10 -top-10 h-40 w-40 rounded-full bg-secondary blur-3xl transition-transform duration-500 group-hover:scale-125"
           />
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-foreground/70 text-primary-foreground">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground">
             {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <FolderUp className="h-5 w-5" />}
           </span>
           <p className="mt-4 font-display text-base font-semibold tracking-tight text-foreground">
@@ -618,7 +618,7 @@ function SourcePicker({
           <button
             type="button"
             data-testid="studio-door-skill-file"
-            className="mt-3 inline-flex w-fit items-center gap-1.5 text-xs font-medium text-primary underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="mt-3 inline-flex w-fit items-center gap-1.5 text-xs font-medium text-foreground-strong underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={(e) => {
               // The tile itself opens the folder picker — this link must not.
               e.stopPropagation();
@@ -674,7 +674,7 @@ function SourcePicker({
           testId="studio-door-github"
         />
 
-        <div className="flex flex-col rounded-2xl border border-border bg-card/50 p-4">
+        <div className="flex flex-col rounded-2xl border border-border bg-card p-4">
           <span className="grid h-9 w-9 place-items-center rounded-lg bg-secondary text-foreground">
             <PencilLine className="h-4 w-4" />
           </span>
@@ -709,7 +709,7 @@ function SourcePicker({
       </div>
 
       {dropError && (
-        <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+        <p className="flex items-start gap-2 rounded-md bg-secondary px-2 py-1.5 text-xs text-destructive">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {dropError}
         </p>
@@ -741,8 +741,8 @@ function Door({
       onClick={onClick}
       data-testid={testId}
       className={cn(
-        "flex flex-col rounded-2xl border border-border bg-card/50 p-4 text-left transition-colors",
-        "hover:border-primary/50 hover:bg-secondary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "flex flex-col rounded-2xl border border-border bg-card p-4 text-left transition-colors",
+        "hover:border-border-strong hover:bg-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
     >
@@ -760,14 +760,14 @@ function Door({
 function HowPublishingWorks({ t }: { t: Translate }) {
   const [open, setOpen] = useState(false);
   return (
-    <section className="rounded-2xl border border-border bg-card/40 p-4">
-      <p className="text-xs font-semibold uppercase tracking-wider text-foreground">
+    <section className="rounded-2xl border border-border bg-card p-4">
+      <p className="text-xs font-semibold text-foreground">
         {t("marketplace.studio_how_title")}
       </p>
       <ol className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-4">
         {[1, 2, 3, 4].map((n) => (
           <li key={n} className="flex gap-2">
-            <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-primary/50 text-[10px] font-bold text-primary">
+            <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-border-strong text-micro font-bold text-muted-foreground">
               {n}
             </span>
             {t(`marketplace.studio_how_step_${n}`)}
@@ -777,13 +777,13 @@ function HowPublishingWorks({ t }: { t: Translate }) {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="mt-3 text-[11px] font-medium text-primary hover:underline"
+        className="mt-3 text-micro font-medium text-foreground-strong hover:underline"
       >
         {open ? t("marketplace.studio_how_hide_layout") : t("marketplace.studio_how_show_layout")}
       </button>
       {open && (
         <div className="mt-2 overflow-x-auto">
-          <pre className="rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground">
+          <pre className="rounded-md border border-border bg-background p-3 font-mono text-micro text-foreground">
             {`my-plugin/
 ├── plugin.json                  ← required: name, description, version
 ├── mcp.json                     ← the server your plugin talks to (optional)
@@ -795,7 +795,7 @@ function HowPublishingWorks({ t }: { t: Translate }) {
 my-skill/
 └── SKILL.md                     ← a standalone skill: one file, YAML frontmatter first`}
           </pre>
-          <p className="mt-2 text-[11px] text-muted-foreground">
+          <p className="mt-2 text-micro text-muted-foreground">
             {t("marketplace.studio_how_layout_note")}
           </p>
         </div>
@@ -918,8 +918,8 @@ function GithubImportPanel({
   };
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border bg-card/40 p-4">
-      <p className="text-[11px] text-muted-foreground">{t("marketplace.studio_github_note")}</p>
+    <section className="space-y-4 rounded-2xl border border-border bg-card p-4">
+      <p className="text-micro text-muted-foreground">{t("marketplace.studio_github_note")}</p>
 
       <div className="flex flex-wrap items-end gap-2">
         <div className="min-w-48 flex-1">
@@ -974,7 +974,7 @@ function GithubImportPanel({
       </div>
 
       {error && (
-        <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+        <p className="flex items-start gap-2 rounded-md bg-secondary px-2 py-1.5 text-xs text-destructive">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {error}
         </p>
@@ -992,7 +992,7 @@ function GithubImportPanel({
                 }}
                 className={cn(
                   "flex w-full items-baseline gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors",
-                  "hover:border-border hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "hover:border-border hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 )}
               >
                 <span className="font-mono text-xs text-foreground">{r.full_name}</span>
@@ -1000,7 +1000,7 @@ function GithubImportPanel({
                   <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
                 )}
                 {r.description && (
-                  <span className="truncate text-[11px] text-muted-foreground">
+                  <span className="truncate text-micro text-muted-foreground">
                     {r.description}
                   </span>
                 )}
@@ -1026,7 +1026,7 @@ function GithubImportPanel({
                 setTruncated(false);
                 setError(null);
               }}
-              className="text-[11px] font-medium text-primary hover:underline"
+              className="text-micro font-medium text-foreground-strong hover:underline"
             >
               ← {t("marketplace.studio_github_all_repos")}
             </button>
@@ -1038,7 +1038,7 @@ function GithubImportPanel({
             )}
           </div>
           {truncated && candidates && candidates.length > 0 && (
-            <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+            <p className="flex items-start gap-1.5 text-micro text-muted-foreground">
               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
               {t("marketplace.studio_github_truncated")}
             </p>
@@ -1051,15 +1051,15 @@ function GithubImportPanel({
                   className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-background px-2.5 py-2"
                 >
                   {c.kind === "plugin" ? (
-                    <Plug className="h-3.5 w-3.5 text-primary" />
+                    <Plug className="h-3.5 w-3.5 text-muted-foreground" />
                   ) : (
-                    <FileText className="h-3.5 w-3.5 text-primary" />
+                    <FileText className="h-3.5 w-3.5 text-muted-foreground" />
                   )}
                   <span className="text-xs font-medium text-foreground">
                     {c.kind === "plugin" ? t("marketplace.kind_plugin") : t("marketplace.kind_skill")}
                   </span>
-                  <span className="font-mono text-[11px] text-muted-foreground">/{c.dir || ""}</span>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="font-mono text-micro text-muted-foreground">/{c.dir || ""}</span>
+                  <span className="text-micro text-muted-foreground">
                     {fill(t("marketplace.studio_github_files"), { count: c.paths.length })}
                   </span>
                   <Button
@@ -1143,11 +1143,11 @@ function WallpaperLane({
           "flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed p-4 text-left transition-colors",
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           dragOver
-            ? "border-primary bg-primary/10"
-            : "border-border bg-gradient-to-br from-primary/10 via-card to-card hover:border-primary/50",
+            ? "bg-secondary"
+            : "border-border bg-gradient-to-br from-primary/10 via-card to-card hover:border-border-strong",
         )}
       >
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-foreground/70 text-primary-foreground">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground">
           {add.isPending ? (
             <Loader2 className="h-5 w-5 animate-spin" />
           ) : (
@@ -1175,16 +1175,16 @@ function WallpaperLane({
         />
       </div>
       {add.error && (
-        <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+        <p className="flex items-start gap-2 rounded-md bg-secondary px-2 py-1.5 text-xs text-destructive">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {add.error.message}
         </p>
       )}
       <div className="flex flex-wrap items-baseline gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+        <span className="text-xs font-semibold text-foreground">
           {t("marketplace.studio_wallpapers_label")}
         </span>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           {t("marketplace.studio_wallpapers_hint")}
         </span>
       </div>
@@ -1205,7 +1205,7 @@ function WallpaperLane({
               key={entry.id}
               type="button"
               onClick={() => setShareItem(entry)}
-              className="group relative aspect-[16/10] overflow-hidden rounded-xl border border-border bg-secondary/40 text-left transition-colors hover:border-primary/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="group relative aspect-[16/10] overflow-hidden rounded-xl bg-secondary text-left transition-colors hover:border-border-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <img
                 src={thumbUrlFor(entry)}
@@ -1217,7 +1217,7 @@ function WallpaperLane({
                 <span className="min-w-0 flex-1 truncate text-xs font-medium text-white">
                   {entry.title}
                 </span>
-                <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur">
+                <span className="rounded-full bg-white/15 px-2 py-0.5 text-micro font-medium text-white backdrop-blur">
                   {t("marketplace.share_cta")}
                 </span>
               </span>
@@ -1269,7 +1269,7 @@ function DraftForm({
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
       <section className="space-y-4" data-testid="studio-form">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+          <span className="text-xs font-semibold text-foreground">
             {t("marketplace.studio_form_label")}
           </span>
           <div className="ml-auto flex items-center gap-1">
@@ -1289,18 +1289,18 @@ function DraftForm({
         </div>
 
         {prefill && (
-          <div className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2">
+          <div className="rounded-xl bg-secondary px-3 py-2">
             <p className="text-xs text-foreground">
-              <Check className="mr-1 inline h-3.5 w-3.5 text-primary" />
+              <Check className="mr-1 inline h-3.5 w-3.5 text-muted-foreground" />
               {fill(t("marketplace.studio_prefilled_from"), { origin: prefill.origin })}
             </p>
             {prefill.files.length > 0 && (
-              <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+              <p className="mt-1 font-mono text-micro text-muted-foreground">
                 {prefill.files.join(" · ")}
               </p>
             )}
             {prefill.warnings.map((w, i) => (
-              <p key={i} className="mt-1 flex items-start gap-1.5 text-[11px] text-muted-foreground">
+              <p key={i} className="mt-1 flex items-start gap-1.5 text-micro text-muted-foreground">
                 <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
                 {w}
               </p>
@@ -1384,7 +1384,7 @@ function DraftForm({
                   <button
                     type="button"
                     onClick={() => set({ skill_md: SKILL_TEMPLATE })}
-                    className="text-[11px] font-medium text-primary hover:underline"
+                    className="text-micro font-medium text-foreground-strong hover:underline"
                   >
                     {t("marketplace.studio_insert_template")}
                   </button>
@@ -1437,7 +1437,7 @@ function DraftForm({
               errors={errorFor("skills")}
             >
               {draft.skills.length === 0 ? (
-                <p className="rounded-md border border-dashed border-border px-2.5 py-2 text-[11px] text-muted-foreground">
+                <p className="rounded-md border border-dashed border-border px-2.5 py-2 text-micro text-muted-foreground">
                   {t("marketplace.studio_f_skills_none")}
                 </p>
               ) : (
@@ -1447,9 +1447,9 @@ function DraftForm({
                       key={s.name}
                       className="flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1"
                     >
-                      <FileText className="h-3 w-3 text-primary" />
-                      <span className="font-mono text-[11px] text-foreground">{s.name}</span>
-                      <span className="text-[10px] text-muted-foreground">
+                      <FileText className="h-3 w-3 text-muted-foreground" />
+                      <span className="font-mono text-micro text-foreground">{s.name}</span>
+                      <span className="text-micro text-muted-foreground">
                         {Math.max(1, Math.round(s.skill_md.length / 1024))} KB
                       </span>
                       <button
@@ -1487,7 +1487,7 @@ function DraftForm({
         {generalErrors.map((e, i) => (
           <p
             key={i}
-            className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive"
+            className="flex items-start gap-2 rounded-md bg-secondary px-2 py-1.5 text-xs text-destructive"
           >
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             {e.error}
@@ -1495,15 +1495,15 @@ function DraftForm({
         ))}
         {checked && errors.length === 0 && (
           <p
-            className="flex items-center gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2 text-xs text-foreground"
+            className="flex items-center gap-2 rounded-md bg-secondary px-3 py-2 text-xs text-foreground"
             data-testid="studio-check-ok"
           >
-            <Check className="h-3.5 w-3.5 text-primary" />
+            <Check className="h-3.5 w-3.5 text-muted-foreground" />
             {t("marketplace.studio_check_ok")}
           </p>
         )}
 
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border/50 pt-3">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
           <Button size="sm" variant="ghost" onClick={onStartOver}>
             <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
             {t("marketplace.studio_start_over")}
@@ -1593,10 +1593,10 @@ function CardPreview({ draft, t }: { draft: Draft; t: Translate }) {
 
   return (
     <div data-testid="studio-card-preview">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <p className="mb-2 text-micro font-semibold text-muted-foreground">
         {t("marketplace.studio_preview_label")}
       </p>
-      <div className="overflow-hidden rounded-2xl border border-border bg-card/70">
+      <div className="overflow-hidden rounded-2xl border border-border bg-card">
         <div className="flex items-center gap-3 px-3.5 py-3">
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-primary/70 to-primary/30 text-sm font-semibold text-primary-foreground">
             {draft.kind === "skill" ? <Sparkles className="h-4 w-4" /> : preview.initial}
@@ -1604,19 +1604,19 @@ function CardPreview({ draft, t }: { draft: Draft; t: Translate }) {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="truncate text-sm font-semibold text-foreground">{preview.title}</span>
-              <span className="shrink-0 rounded-full border border-border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <span className="shrink-0 rounded-full border border-border px-1.5 py-px text-micro font-semibold text-muted-foreground">
                 {draft.kind === "skill" ? t("marketplace.kind_skill") : t("marketplace.kind_plugin")}
               </span>
             </div>
             <p className="truncate text-xs text-muted-foreground">{preview.description}</p>
           </div>
         </div>
-        <div className="flex items-center justify-between border-t border-border/70 px-3.5 py-2 text-[10px] text-muted-foreground">
+        <div className="flex items-center justify-between border-t border-border px-3.5 py-2 text-micro text-muted-foreground">
           <span className="truncate">{preview.detail || "—"}</span>
           <span className="ml-2 shrink-0 tabular-nums">v{draft.version.trim() || "?"}</span>
         </div>
       </div>
-      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+      <p className="mt-2 text-micro text-muted-foreground">
         {t("marketplace.studio_preview_note")}
       </p>
     </div>
@@ -1626,7 +1626,7 @@ function CardPreview({ draft, t }: { draft: Draft; t: Translate }) {
 function inputCls(hasError: boolean): string {
   return cn(
     "w-full rounded-lg border bg-background px-2.5 py-1.5 text-sm text-foreground",
-    "placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring",
+    "placeholder:text-faint-foreground focus:outline-none focus:ring-2 focus:ring-ring",
     hasError ? "border-destructive/60" : "border-border",
   );
 }
@@ -1652,10 +1652,10 @@ function Field({
       </div>
       {children}
       {hint && errors.length === 0 && (
-        <p className="mt-1 text-[11px] text-muted-foreground">{hint}</p>
+        <p className="mt-1 text-micro text-muted-foreground">{hint}</p>
       )}
       {errors.map((e, i) => (
-        <p key={i} className="mt-1 text-[11px] text-destructive">
+        <p key={i} className="mt-1 text-micro text-destructive">
           {e.error}
         </p>
       ))}
@@ -1682,8 +1682,8 @@ function KindButton({
       className={cn(
         "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
         active
-          ? "border-primary/50 bg-primary/10 text-foreground"
-          : "border-border text-muted-foreground hover:border-primary/30 hover:text-foreground",
+          ? "bg-secondary text-foreground"
+          : "border-border text-muted-foreground hover:border-border-strong hover:text-foreground",
       )}
     >
       {icon}
@@ -1752,16 +1752,16 @@ function PublishedCard({
 
   return (
     <div className="space-y-4" data-testid="studio-published">
-      <section className="relative isolate overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/15 via-card to-card p-5">
+      <section className="relative isolate overflow-hidden rounded-2xl border border-border-strong bg-gradient-to-br from-primary/15 via-card to-card p-5">
         <div
           aria-hidden
-          className="pointer-events-none absolute -z-10 -right-16 -top-16 h-56 w-56 rounded-full bg-primary/20 blur-3xl"
+          className="pointer-events-none absolute -z-10 -right-16 -top-16 h-56 w-56 rounded-full bg-secondary blur-3xl"
         />
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        <p className="text-micro font-semibold text-muted-foreground">
           {t("marketplace.studio_done_eyebrow")}
         </p>
         <p className="mt-1 flex items-center gap-2 font-display text-lg font-semibold tracking-tight text-foreground">
-          <Check className="h-5 w-5 text-primary" />
+          <Check className="h-5 w-5 text-muted-foreground" />
           {result.name} <span className="text-muted-foreground">v{result.version}</span>
         </p>
         <p className="mt-2 max-w-xl text-xs leading-relaxed text-muted-foreground">
@@ -1784,10 +1784,10 @@ function PublishedCard({
         </div>
       </section>
 
-      <section className="space-y-4 rounded-2xl border border-border bg-card/40 p-4">
+      <section className="space-y-4 rounded-2xl border border-border bg-card p-4">
         {live ? (
           <p className="flex items-center gap-2 text-sm text-foreground">
-            <Check className="h-4 w-4 text-primary" />
+            <Check className="h-4 w-4 text-muted-foreground" />
             {fill(t("marketplace.studio_done_live"), { name: result.name, version: result.version })}
           </p>
         ) : waitedOut ? (
@@ -1795,8 +1795,8 @@ function PublishedCard({
         ) : (
           <p className="flex items-center gap-2 text-xs text-muted-foreground">
             <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/70" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-secondary" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-secondary" />
             </span>
             {t("marketplace.studio_done_watching")}
           </p>

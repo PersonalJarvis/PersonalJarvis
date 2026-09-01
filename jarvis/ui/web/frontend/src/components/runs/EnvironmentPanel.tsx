@@ -14,10 +14,8 @@ import type { RunEnvironment } from "./types";
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex min-w-0 items-baseline gap-2">
-      <span className="w-24 shrink-0 text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-        {label}
-      </span>
-      <span className="min-w-0 flex-1 break-words font-mono text-[11px] text-foreground/90 [overflow-wrap:anywhere]">
+      <span className="w-24 shrink-0 text-meta text-muted-foreground">{label}</span>
+      <span className="min-w-0 flex-1 break-words font-mono text-meta text-foreground [overflow-wrap:anywhere]">
         {value}
       </span>
     </div>
@@ -49,11 +47,15 @@ export function EnvironmentPanel({ env }: { env: RunEnvironment }) {
   }
 
   if (rows.length === 0) {
-    return <span className="text-muted-foreground/60">{t("run_inspector.env.empty")}</span>;
+    return (
+      <span className="text-body text-muted-foreground">
+        {t("run_inspector.env.empty")}
+      </span>
+    );
   }
 
   return (
-    <div className="grid gap-1.5 sm:grid-cols-2" data-testid="environment-panel">
+    <div className="grid gap-stack sm:grid-cols-2" data-testid="environment-panel">
       {rows.map(([label, value]) => (
         <Row key={label} label={label} value={value} />
       ))}

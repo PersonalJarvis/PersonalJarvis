@@ -85,13 +85,13 @@ function Chip({
       className={cn(
         "inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs tabular-nums transition-colors",
         active
-          ? "border-primary/50 bg-primary/10 font-medium text-foreground"
+          ? "bg-secondary font-medium text-foreground"
           : "border-border text-muted-foreground hover:border-border hover:text-foreground",
       )}
     >
       {children}
       {hint ? (
-        <span className="text-[10px] text-muted-foreground">{hint}</span>
+        <span className="text-micro text-muted-foreground">{hint}</span>
       ) : null}
     </button>
   );
@@ -99,7 +99,7 @@ function Chip({
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
-    <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="text-micro text-muted-foreground">
       {children}
     </div>
   );
@@ -158,7 +158,7 @@ function NumberField({
         const n = Number(raw);
         onChange(Number.isFinite(n) ? n : null);
       }}
-      className="h-7 w-28 rounded-md border border-border bg-background/60 px-2 text-xs tabular-nums placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+      className="h-7 w-28 rounded-md border border-border bg-background px-2 text-xs tabular-nums placeholder:text-faint-foreground focus:outline-none focus:ring-2 focus:ring-border-strong"
     />
   );
 }
@@ -288,7 +288,7 @@ export function TuneSheet({ providerId, model, onClose }: TuneSheetProps) {
     <section
       data-testid={`tune-sheet-${model.name}`}
       aria-label={fill(k("aria"), { model: model.name })}
-      className="space-y-5 rounded-xl border border-border bg-card/60 p-4"
+      className="space-y-5 rounded-xl border border-border bg-card p-4"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
@@ -311,10 +311,10 @@ export function TuneSheet({ providerId, model, onClose }: TuneSheetProps) {
       </div>
 
       {/* Suggested for this machine */}
-      <div className="rounded-lg border border-border/70 bg-background/40 p-3">
+      <div className="rounded-lg border border-border bg-background p-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-            <Sparkles className="h-4 w-4 text-primary" />
+            <Sparkles className="h-4 w-4 text-muted-foreground" />
             {k("suggested_title")}
           </div>
           <SoftButton
@@ -478,7 +478,7 @@ export function TuneSheet({ providerId, model, onClose }: TuneSheetProps) {
           type="button"
           onClick={() => setSamplingOpen((v) => !v)}
           aria-expanded={samplingOpen}
-          className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em] text-muted-foreground hover:text-foreground"
+          className="flex items-center gap-1.5 text-micro text-muted-foreground hover:text-foreground"
         >
           {k("group_sampling")}
           <ChevronDown
@@ -572,7 +572,7 @@ export function TuneSheet({ providerId, model, onClose }: TuneSheetProps) {
                     .filter((l) => l.length > 0);
                   set("stop", lines.length ? lines : null);
                 }}
-                className="w-full rounded-md border border-border bg-background/60 px-2 py-1 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs placeholder:text-faint-foreground focus:outline-none focus:ring-2 focus:ring-border-strong"
               />
             </Knob>
           </div>
@@ -580,7 +580,7 @@ export function TuneSheet({ providerId, model, onClose }: TuneSheetProps) {
       </div>
 
       {/* Footer */}
-      <div className="space-y-2 border-t border-border/70 pt-3">
+      <div className="space-y-2 border-t border-border pt-3">
         <div className="flex flex-wrap items-center gap-2">
           <SoftButton
             primary

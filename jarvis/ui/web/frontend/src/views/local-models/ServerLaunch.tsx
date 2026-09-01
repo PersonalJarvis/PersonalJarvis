@@ -103,13 +103,13 @@ export function ServerLaunch({
 
   return (
     <section
-      className="rounded-2xl border border-border bg-card/50 p-4"
+      className="rounded-2xl border border-border bg-card p-4"
       data-testid="server-launch"
       aria-label={k("aria")}
     >
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
-          <p className="font-display text-[15px] font-semibold tracking-tight text-foreground">
+          <p className="font-display text-title font-semibold tracking-tight text-foreground">
             {headline}
           </p>
           {facts.length > 0 && (

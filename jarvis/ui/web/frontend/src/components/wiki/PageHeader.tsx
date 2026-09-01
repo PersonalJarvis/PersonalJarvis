@@ -39,13 +39,6 @@ const FRIENDLY_LABELS: Record<string, string> = {
   last_activity: "last activity",
 };
 
-const TYPE_COLOR: Record<WikiKind, string> = {
-  entity: "text-[#6aa9ff]",
-  concept: "text-[#b48cf2]",
-  project: "text-[#ffb84d]",
-  session: "text-[#5bd4a4]",
-};
-
 const MAX_PILLS = 6;
 
 export function PageHeader({
@@ -58,7 +51,6 @@ export function PageHeader({
 }: PageHeaderProps) {
   const pills = buildPills(frontmatter);
   const breadcrumb = breadcrumbFromPath(vaultRelPath);
-  const typeColor = TYPE_COLOR[kind] ?? "text-foreground";
 
   return (
     <header
@@ -67,27 +59,34 @@ export function PageHeader({
       data-slug={slug}
     >
       <div className="min-w-0 flex-1">
-        <div className="mb-1.5 text-xs text-muted-foreground" data-testid="wiki-page-crumb">
+        <div className="mb-1.5 text-meta text-muted-foreground" data-testid="wiki-page-crumb">
           {breadcrumb.map((part, idx) => (
             <span key={idx}>
-              {idx > 0 && <span className="mx-1.5 text-border">/</span>}
+              {idx > 0 && <span className="mx-1.5">/</span>}
               {part}
             </span>
           ))}
         </div>
-        <h1 className="text-[22px] font-semibold tracking-tight" data-testid="wiki-page-title">
+        <h1
+          className="text-display font-semibold text-foreground-strong"
+          data-testid="wiki-page-title"
+        >
           {title}
         </h1>
-        {pills.length > 0 && (
-          <div className="mt-2.5 flex flex-wrap gap-2 text-xs" data-testid="wiki-page-pills">
+        {/* The page kind used to be painted in one of four hardcoded hues.
+            Hue belongs to life, fault and identity only — a page's kind is
+            none of those, so it is now simply the first neutral chip. */}
+        {(pills.length > 0 || kind) && (
+          <div className="mt-2.5 flex flex-wrap gap-2 text-meta" data-testid="wiki-page-pills">
+            <span className="rounded-full bg-secondary px-2.5 py-0.5 text-foreground">{kind}</span>
             {pills.map((p) => (
               <span
                 key={p.key}
-                className="rounded-md border border-border bg-secondary/50 px-2.5 py-0.5 text-muted-foreground"
+                className="rounded-full bg-secondary px-2.5 py-0.5 text-muted-foreground"
                 data-pill-key={p.key}
               >
-                <span className="mr-1.5 text-foreground">{p.label}:</span>
-                <span className={cn(p.key === "type" && typeColor)}>{p.value}</span>
+                <span className="mr-1.5">{p.label}:</span>
+                <span className="text-foreground">{p.value}</span>
               </span>
             ))}
           </div>
@@ -137,13 +136,13 @@ function ObsidianButtonPlaceholder({ vaultRelPath: _vaultRelPath }: { vaultRelPa
       type="button"
       disabled
       className={cn(
-        "inline-flex shrink-0 items-center gap-2 rounded-md border border-border bg-secondary/40",
-        "px-3.5 py-2 text-sm text-muted-foreground opacity-60",
+        "inline-flex shrink-0 items-center gap-2 rounded-md bg-secondary",
+        "px-3.5 py-2 text-body text-faint-foreground",
       )}
       data-testid="obsidian-button-placeholder"
       title={t("page_header.placeholder_title")}
     >
-      <span className="grid h-4 w-4 place-items-center rounded-sm bg-[#b48cf2] text-[10px] font-bold text-background">
+      <span className="grid h-4 w-4 place-items-center rounded-sm bg-faint-foreground text-micro font-semibold text-background">
         O
       </span>
       {t("page_header.open_in_obsidian")}

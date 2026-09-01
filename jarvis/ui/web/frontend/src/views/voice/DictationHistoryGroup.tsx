@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Check, Copy, RotateCcw, Trash2, Volume2 } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import {
   cleanupReasonLabel,
   DICTATION_OUTCOMES,
@@ -11,7 +12,7 @@ import {
 import { useT } from "@/i18n";
 
 /**
- * One day's worth of dictations — a sticky date header plus its rows.
+ * One day's worth of dictations — a date header plus its rows.
  *
  * Grouping by day is what turns a flat list into something you can actually
  * read back: "what did I dictate this morning" is a question about a day, not
@@ -42,14 +43,21 @@ export function DictationHistoryGroup({
   copiedId,
 }: DictationHistoryGroupProps) {
   return (
-    <section className="mt-4 first:mt-0" data-testid="dictation-history-group">
+    <section className="mt-group first:mt-0" data-testid="dictation-history-group">
+      {/* A quiet date divider, not a heading. It used to be an 11px uppercase
+          label with letter-spacing — the one construction that makes a screen
+          read as an admin panel, and it competed with the card title two lines
+          above it for no reason. */}
       <h5
-        className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+        className="text-meta text-muted-foreground"
         data-testid="dictation-history-group-label"
       >
         {label}
       </h5>
-      <ul className="mt-1 divide-y divide-border/60">
+      {/* No dividers. Separation between rows is the hover fill and the
+          padding, the way both reference apps do it; a rule under every row
+          drew a table over what is meant to read as a transcript. */}
+      <ul className="mt-1">
         {entries.map((entry) => (
           <HistoryRow
             key={entry.id}
@@ -65,6 +73,24 @@ export function DictationHistoryGroup({
       </ul>
     </section>
   );
+}
+
+/**
+ * Which status hue an outcome earns.
+ *
+ * Only two outcomes carry colour at all. A failure is a fault; the three that
+ * mean "some of this did not arrive" are degraded. Everything that worked
+ * stays neutral — a green chip on every successful row would put hue on 90 %
+ * of the list and leave the two rows that need looking at with nowhere louder
+ * to go. "Cancelled" in particular stays quiet: a bright chip on the one
+ * outcome the user caused themselves inverts the whole ramp.
+ */
+function outcomeVariant(outcome: string): "fault" | "degraded" | "secondary" {
+  if (outcome === "failed") return "fault";
+  if (outcome === "unavailable" || outcome === "partial" || outcome === "empty") {
+    return "degraded";
+  }
+  return "secondary";
 }
 
 function HistoryRow({
@@ -120,66 +146,58 @@ function HistoryRow({
 
   return (
     <li
-      className="group flex items-start gap-2 py-2.5"
+      // The hover fill is drawn on the WHOLE row, inset from the card's own
+      // padding rather than on any one control inside it.
+      className="group -mx-2 flex items-start gap-2 rounded-md px-3 py-3 transition-colors hover:bg-secondary"
       data-testid="dictation-history-row"
       data-entry-id={entry.id}
     >
       <div className="min-w-0 flex-1">
+        {/* The transcript is the reason this screen exists, so it is set as
+            prose — 15/1.6 in body ink — instead of as another 14px interface
+            label. Its measure is bounded by the column, not by the window. */}
         <p
-          className={`break-words text-sm ${
-            entry.discarded ? "text-muted-foreground line-through" : ""
+          className={`break-words text-reading ${
+            entry.discarded
+              ? "text-muted-foreground line-through"
+              : "text-foreground"
           }`}
         >
           {entry.text || entry.raw_text}
         </p>
         {cleaned && (
-          <p className="mt-0.5 break-words text-[11px] text-muted-foreground">
+          <p className="mt-1 break-words text-meta text-muted-foreground">
             {t("dictation.raw_prefix")} {entry.raw_text}
           </p>
         )}
         {entry.error && (
           <p
-            className="mt-0.5 break-words text-[11px] text-destructive"
+            className="mt-1 break-words text-meta text-destructive"
             data-testid="dictation-failure-reason"
           >
             {failureLabel(t, entry.error)}
           </p>
         )}
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
           <span>{new Date(entry.created_at).toLocaleTimeString()}</span>
           {entry.outcome && (
-            <span
-              className={`rounded-full border px-1.5 py-0.5 ${
-                entry.outcome === "failed"
-                  ? "border-destructive/40 bg-destructive/10 text-destructive"
-                  : "border-border bg-muted/60"
-              }`}
+            <Badge
+              variant={outcomeVariant(entry.outcome)}
               data-testid="dictation-outcome-badge"
             >
               {outcomeLabel(t, entry.outcome)}
-            </span>
+            </Badge>
           )}
           {entry.discarded && (
-            <span
-              className="rounded-full border border-border bg-muted/60 px-1.5 py-0.5"
-              data-testid="dictation-discarded-badge"
-            >
+            <Badge variant="secondary" data-testid="dictation-discarded-badge">
               {t("dictation.discarded_badge")}
-            </span>
+            </Badge>
           )}
           {entry.audio_available && (
-            <span className="flex items-center gap-1">
-              <Volume2 className="h-3 w-3" />
+            <Badge variant="secondary" className="gap-1">
+              <Volume2 aria-hidden="true" className="h-3 w-3" />
               {t("dictation.audio_kept")}
-            </span>
-          )}
-          {entry.removed_words > 0 && (
-            <span>
-              {t("dictation.removed_words").replace(
-                "{0}",
-                String(entry.removed_words),
-              )}
-            </span>
+            </Badge>
           )}
           {/* What the wording pass did to this row. "off" is the one value
               worth hiding — the feature being switched off is not an event,
@@ -188,13 +206,13 @@ function HistoryRow({
               why", and both are things the person who spoke deserves to see
               next to their own words. */}
           {polishBadge && (
-            <span
-              className="rounded-full border border-border bg-muted/60 px-1.5 py-0.5"
+            <Badge
+              variant="secondary"
               data-testid="dictation-polish-badge"
               title={polishTitle || undefined}
             >
               {polishStatusLabel(t, polishBadge)}
-            </span>
+            </Badge>
           )}
           {/* The filler cleanup's own verdict, and the reason this badge
               exists at all: outside its three rule languages the cleanup is a
@@ -202,16 +220,16 @@ function HistoryRow({
               switch sitting ON while nothing ever happened. "disabled" is
               skipped — that one the user did themselves. */}
           {cleanupBadge && (
-            <span
-              className="rounded-full border border-border bg-muted/60 px-1.5 py-0.5"
+            <Badge
+              variant="secondary"
               data-testid="dictation-cleanup-reason-badge"
             >
               {cleanupReasonLabel(t, cleanupBadge)}
-            </span>
+            </Badge>
           )}
         </div>
         {entry.discarded && (
-          <div className="mt-1.5">
+          <div className="mt-2">
             <button
               type="button"
               disabled={busy}
@@ -223,7 +241,7 @@ function HistoryRow({
                 onDelete();
               }}
               data-testid="dictation-delete-permanently"
-              className="rounded px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition hover:text-destructive disabled:opacity-50"
+              className="rounded-md text-meta text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:opacity-50"
             >
               {confirmDelete
                 ? `${t("dictation.delete_permanently")} ?`
@@ -232,49 +250,87 @@ function HistoryRow({
           </div>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-0.5">
-        <button
-          type="button"
+      {/* Row actions appear when the row does. They are still in the document
+          and still reachable by keyboard — focus inside the row reveals them
+          the same way the pointer does. */}
+      <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <RowAction
           onClick={onCopy}
-          aria-label={copied ? t("dictation.copied") : t("dictation.copy")}
-          title={copied ? t("dictation.copied") : t("dictation.copy")}
-          data-testid="dictation-copy-entry"
-          className="rounded p-1 text-muted-foreground transition hover:text-foreground"
+          label={copied ? t("dictation.copied") : t("dictation.copy")}
+          testId="dictation-copy-entry"
         >
           {copied ? (
-            <Check className="h-3.5 w-3.5 text-muted-foreground" />
+            <Check aria-hidden="true" className="h-3.5 w-3.5" />
           ) : (
-            <Copy className="h-3.5 w-3.5" />
+            <Copy aria-hidden="true" className="h-3.5 w-3.5" />
           )}
-        </button>
+        </RowAction>
         {canRestore && (
-          <button
-            type="button"
+          <RowAction
             disabled={busy}
             onClick={onRestore}
-            aria-label={t("dictation.restore")}
+            label={t("dictation.restore")}
             title={t("dictation.restore_hint")}
-            data-testid="dictation-restore-entry"
-            className="rounded p-1 text-muted-foreground transition hover:text-primary disabled:opacity-50"
+            testId="dictation-restore-entry"
           >
-            <RotateCcw className="h-3.5 w-3.5" />
-          </button>
+            <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
+          </RowAction>
         )}
         {!entry.discarded && (
-          <button
-            type="button"
+          <RowAction
             disabled={busy}
             onClick={onDiscard}
-            aria-label={t("dictation.discard")}
-            title={t("dictation.discard")}
-            data-testid="dictation-discard-entry"
-            className="rounded p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive disabled:opacity-50"
+            label={t("dictation.discard")}
+            testId="dictation-discard-entry"
+            destructive
           >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+            <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+          </RowAction>
         )}
       </div>
     </li>
+  );
+}
+
+/**
+ * One icon button in a row's action strip.
+ *
+ * The three used to hover to three different inks — foreground, --primary and
+ * --destructive — which made the same gesture mean three things. Now they all
+ * answer the pointer the way every other control in the app does: one step up
+ * the surface ladder. Only discarding, which changes something, keeps a hue.
+ */
+function RowAction({
+  children,
+  label,
+  title,
+  testId,
+  onClick,
+  disabled,
+  destructive,
+}: {
+  children: ReactNode;
+  label: string;
+  title?: string;
+  testId: string;
+  onClick: () => void;
+  disabled?: boolean;
+  destructive?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      aria-label={label}
+      title={title ?? label}
+      data-testid={testId}
+      className={`rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-popover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:opacity-50 ${
+        destructive ? "hover:text-destructive" : "hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 

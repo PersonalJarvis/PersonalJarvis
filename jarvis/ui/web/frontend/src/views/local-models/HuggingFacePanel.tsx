@@ -53,7 +53,7 @@ const HF_REPO_URL = "https://huggingface.co/";
 const SEARCH_DEBOUNCE_MS = 350;
 const PULL_POLL_MS = 2500;
 
-const EYEBROW = "text-[11px] uppercase tracking-[0.18em] text-muted-foreground";
+const EYEBROW = "text-micro text-muted-foreground";
 
 /** "8.03B" / "27B" / "540M" — the way Hugging Face itself abbreviates. */
 export function formatParams(total: number | null): string {
@@ -226,7 +226,7 @@ export function HuggingFacePanel({ providerId }: { providerId: string }) {
   return (
     <div className="space-y-4" data-testid="huggingface-panel">
       {/* Enable row */}
-      <div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card/60 px-4 py-3">
+      <div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card px-4 py-3">
         <div className="min-w-0">
           <div className={EYEBROW}>
             {t("local_models.huggingface.toggle_label")}
@@ -284,7 +284,7 @@ export function HuggingFacePanel({ providerId }: { providerId: string }) {
             <EmptyRow>{t("local_models.huggingface.no_results")}</EmptyRow>
           ) : (
             <div
-              className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card/60"
+              className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card"
               data-testid="hf-repo-list"
             >
               {repos.map((repo) => (
@@ -306,7 +306,7 @@ export function HuggingFacePanel({ providerId }: { providerId: string }) {
           )}
 
           {/* Token note + private-repo hint */}
-          <div className="space-y-2 rounded-xl border border-border bg-card/60 px-4 py-3">
+          <div className="space-y-2 rounded-xl border border-border bg-card px-4 py-3">
             <div className={EYEBROW}>
               {t("local_models.huggingface.notes_label")}
             </div>
@@ -315,7 +315,7 @@ export function HuggingFacePanel({ providerId }: { providerId: string }) {
               <button
                 type="button"
                 onClick={() => setActiveSection("apikeys")}
-                className="inline-flex items-center gap-1 text-foreground/90 underline-offset-2 hover:underline"
+                className="inline-flex items-center gap-1 text-foreground underline-offset-2 hover:underline"
               >
                 <KeyRound className="h-3 w-3" />
                 {t("local_models.huggingface.token_link")}
@@ -326,7 +326,7 @@ export function HuggingFacePanel({ providerId }: { providerId: string }) {
               <button
                 type="button"
                 onClick={() => void openExternalUrl(HF_KEYS_URL)}
-                className="inline-flex items-center gap-1 text-foreground/90 underline-offset-2 hover:underline"
+                className="inline-flex items-center gap-1 text-foreground underline-offset-2 hover:underline"
               >
                 <ExternalLink className="h-3 w-3" />
                 hf.co/settings/keys
@@ -365,7 +365,7 @@ function RepoRow({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors hover:bg-sheen/[0.05]"
+        className="flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors hover:bg-secondary"
       >
         <ChevronDown
           className={cn(
@@ -440,7 +440,7 @@ function FileList({
 
   return (
     <div
-      className="border-t border-border/70 bg-background/40 px-3.5 py-2"
+      className="border-t border-border bg-background px-3.5 py-2"
       data-testid="hf-file-list"
     >
       {files.isLoading ? (
@@ -468,7 +468,7 @@ function FileList({
           ))}
         </div>
       )}
-      <p className="pt-2 text-[11px] text-muted-foreground">
+      <p className="pt-2 text-micro text-muted-foreground">
         <button
           type="button"
           onClick={() => void openExternalUrl(`${HF_REPO_URL}${user}/${repo}`)}
@@ -530,11 +530,11 @@ function FileRow({
             {t(`local_models.huggingface.fit_${file.fit}`)}
           </span>
         </div>
-        <div className="truncate text-[11px] text-muted-foreground">
+        <div className="truncate text-micro text-muted-foreground">
           {file.filename}
         </div>
         {file.fit === "tight" && file.fit_note && (
-          <div className="text-[11px] text-foreground">
+          <div className="text-micro text-foreground">
             {file.fit_note}
           </div>
         )}
@@ -542,11 +542,11 @@ function FileRow({
           <div className="mt-1 flex items-center gap-2">
             <div className="h-1 w-40 overflow-hidden rounded-full bg-muted-foreground/20">
               <div
-                className="h-full bg-foreground/70 transition-[width]"
+                className="h-full bg-secondary transition-[width]"
                 style={{ width: `${percent ?? 5}%` }}
               />
             </div>
-            <span className="text-[11px] text-muted-foreground tabular-nums">
+            <span className="text-micro text-muted-foreground tabular-nums">
               {percent !== null
                 ? `${percent}%`
                 : t("local_models.huggingface.pull_starting")}
@@ -565,7 +565,7 @@ function FileRow({
           </div>
         )}
         {failed && (
-          <div className="mt-1 text-[11px] text-destructive" role="alert">
+          <div className="mt-1 text-micro text-destructive" role="alert">
             {state?.error ??
               progress?.message ??
               t("local_models.huggingface.pull_failed")}

@@ -29,7 +29,7 @@ export function BacklinksPanel({ slug, onSelect }: BacklinksPanelProps) {
 
   return (
     <aside
-      className="flex h-full w-[380px] shrink-0 flex-col overflow-y-auto border-l border-border p-4"
+      className="flex h-full w-[380px] shrink-0 flex-col overflow-y-auto bg-sidebar p-4"
       data-testid="wiki-backlinks-panel"
     >
       <BacklinksCard title="Backlinks">
@@ -37,13 +37,13 @@ export function BacklinksPanel({ slug, onSelect }: BacklinksPanelProps) {
         {isError && (
           <div
             role="alert"
-            className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            className="text-meta text-destructive"
           >
             {t("backlinks_panel.load_error")}
           </div>
         )}
         {!isLoading && !isError && backlinks.length === 0 && (
-          <p className="text-xs text-muted-foreground" data-testid="wiki-backlinks-empty">
+          <p className="text-body text-muted-foreground" data-testid="wiki-backlinks-empty">
             {t("backlinks_panel.empty")}
           </p>
         )}
@@ -53,7 +53,7 @@ export function BacklinksPanel({ slug, onSelect }: BacklinksPanelProps) {
               type="button"
               key={bl.slug}
               onClick={() => onSelect(bl.slug)}
-              className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+              className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-body text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
               data-testid="wiki-backlink-item"
               data-target-slug={bl.slug}
             >
@@ -61,7 +61,7 @@ export function BacklinksPanel({ slug, onSelect }: BacklinksPanelProps) {
               <div className="min-w-0 flex-1">
                 <div className="truncate text-foreground">{bl.title || bl.slug}</div>
                 {bl.snippet && (
-                  <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                  <div className="mt-0.5 text-meta text-muted-foreground">
                     {bl.snippet}
                   </div>
                 )}
@@ -81,10 +81,11 @@ function BacklinksCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="mb-3 rounded-lg border border-border bg-secondary/30 p-4">
-      <h3 className="mb-3 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-        {title}
-      </h3>
+    // Not a card: a panel the full height of the section is far too wide to
+    // earn --card, so it takes the rail ground and the heading does the work a
+    // box used to do badly.
+    <section className="mb-stack">
+      <h3 className="mb-3 text-title font-semibold text-foreground-strong">{title}</h3>
       <div className="space-y-1">{children}</div>
     </section>
   );
@@ -93,8 +94,8 @@ function BacklinksCard({
 function BacklinksSkeleton() {
   return (
     <div className="space-y-2" data-testid="wiki-backlinks-skeleton">
-      <div className="h-4 w-3/4 animate-pulse rounded bg-muted" />
-      <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />
+      <div className="h-4 w-3/4 animate-pulse rounded-full bg-sheen/[0.06]" />
+      <div className="h-3 w-1/2 animate-pulse rounded-full bg-sheen/[0.06]" />
     </div>
   );
 }

@@ -4,8 +4,8 @@
  * The native tooltip is the wrong tool for a truncated label: it waits a
  * second and a half before appearing, and it is drawn by the OS in whatever
  * grey box the platform ships — a foreign artifact on top of the app's own
- * surfaces. This one appears quickly, wears the same card surface as every
- * other floating panel here, and is rendered in a portal so a clipping
+ * surfaces. This one appears quickly, wears the same float surface as every
+ * other layer that leaves the plane, and is rendered in a portal so a clipping
  * ancestor (a scrolling rail, an `overflow: hidden` pane) cannot cut it off.
  *
  * Deliberately NOT interactive, unlike the recap card: a tooltip repeats text
@@ -137,8 +137,11 @@ export function QuickTooltip({
               visibility: position ? "visible" : "hidden",
             }}
             className={cn(
-              "pointer-events-none z-[70] rounded-lg border border-border/90 bg-card px-2.5 py-1.5",
-              "text-[11.5px] leading-snug text-foreground",
+              // A tooltip leaves the plane, so it wears the float surface —
+              // --popover with the strong rim and the only shadow the system
+              // allows — not the card surface it used to borrow.
+              "pointer-events-none z-[70] rounded-lg border border-border-strong bg-popover px-2.5 py-1.5 shadow-float",
+              "text-[13px] text-popover-foreground",
               position && "animate-in fade-in-0 zoom-in-95 duration-100",
             )}
           >

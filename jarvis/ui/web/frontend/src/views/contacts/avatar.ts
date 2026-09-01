@@ -1,32 +1,13 @@
 /**
- * Deterministic identity color + initials for contact avatars.
+ * Contacts' view of the shared identity mark.
  *
- * Same name → same hue, every session: the color carries recognition, not
- * meaning. A solid mid-lightness background with a white glyph stays readable
- * on both themes, so no per-theme variant is needed.
+ * The implementation moved to `@/lib/identityAvatar` when the coloured avatar
+ * became the app-wide rule (Design.md: colour has three jobs — life, fault,
+ * identity) rather than a Contacts-only flourish. These aliases stay so the
+ * Contacts call sites keep reading in their own vocabulary; there is exactly
+ * one hash, so a person is the same colour everywhere.
  */
-import type { CSSProperties } from "react";
-
-/** Stable djb2-xor string hash — platform-independent, no Math.random. */
-function hashString(value: string): number {
-  let hash = 5381;
-  for (let i = 0; i < value.length; i++) {
-    hash = (Math.imul(hash, 33) ^ value.charCodeAt(i)) >>> 0;
-  }
-  return hash;
-}
-
-/** Up to two initials: first letter of the first and of the last word. */
-export function contactInitials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return "?";
-  const first = words[0]![0]!;
-  const last = words.length > 1 ? words[words.length - 1]![0]! : "";
-  return (first + last).toUpperCase();
-}
-
-/** Inline style for the avatar circle: hue from the name, fixed S/L. */
-export function contactAvatarStyle(name: string): CSSProperties {
-  const hue = hashString(name.trim().toLowerCase()) % 360;
-  return { backgroundColor: `hsl(${hue} 42% 46%)`, color: "#fff" };
-}
+export {
+  identityAvatarStyle as contactAvatarStyle,
+  identityInitials as contactInitials,
+} from "@/lib/identityAvatar";

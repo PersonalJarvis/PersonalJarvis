@@ -59,10 +59,10 @@ function Chip({
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-micro font-medium",
         tone === "primary"
-          ? "bg-primary/10 text-primary"
-          : "bg-sheen/[0.08] text-muted-foreground",
+          ? "bg-secondary text-foreground-strong"
+          : "bg-secondary text-muted-foreground",
       )}
     >
       {children}
@@ -158,7 +158,7 @@ export function InstalledPanel({
         {sorted.length > 0 && (
           <ul
             aria-label={k("list_label")}
-            className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card/60"
+            className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card"
           >
             {sorted.map((row) => {
               const caps = row.probed
@@ -182,8 +182,8 @@ export function InstalledPanel({
                         </span>
                       }
                     />
-                    <div className="ml-4 mt-0.5 text-[11px] text-muted-foreground">
-                      <span className="font-mono text-foreground/70">{row.name}</span>
+                    <div className="ml-4 mt-0.5 text-micro text-muted-foreground">
+                      <span className="font-mono text-foreground">{row.name}</span>
                       {[
                         row.quant_label || row.quantization_level,
                         formatGb(row.size_bytes),
@@ -210,7 +210,7 @@ export function InstalledPanel({
                     ))}
                     {picks.length > 0 && (
                       <span
-                        className="text-[11px] text-muted-foreground"
+                        className="text-micro text-muted-foreground"
                         data-testid={`installed-recommended-${row.name}`}
                       >
                         {fill(k("recommended_for"), {

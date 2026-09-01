@@ -260,7 +260,7 @@ function TerminalTile({
       aria-label={description}
       title={description}
       className={cn(
-        "group relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2.5 border border-border/60 bg-background/35 p-2.5 transition-colors hover:border-border hover:bg-background/70",
+        "group relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2.5 border border-border bg-background p-2.5 transition-colors hover:border-border hover:bg-secondary",
         pane.resumable && pane.available && "border-primary/25",
         !pane.available && "border-foreground/45 dark:border-foreground/25",
       )}
@@ -278,12 +278,12 @@ function TerminalTile({
       <AgentMark agent={pane.agent} label={pane.display_name} size="sm" />
       <div className="min-w-0">
         <div className="flex min-w-0 items-center justify-between gap-2">
-          <span className="truncate font-mono text-[11px] font-semibold text-foreground">
+          <span className="truncate font-mono text-micro font-semibold text-foreground">
             {pane.name}
           </span>
           <span
             className={cn(
-              "shrink-0 text-[9px] font-medium uppercase tracking-[0.12em]",
+              "shrink-0 text-micro font-medium ",
               !pane.available
                 ? "text-foreground"
                 : pane.resumable
@@ -294,10 +294,10 @@ function TerminalTile({
             {status}
           </span>
         </div>
-        <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+        <p className="mt-0.5 truncate text-micro text-muted-foreground">
           {pane.display_name}
         </p>
-        <div className="mt-1.5 flex items-center justify-between gap-2 font-mono text-[9px] text-muted-foreground/75">
+        <div className="mt-1.5 flex items-center justify-between gap-2 font-mono text-micro text-muted-foreground">
           <PromptCount count={pane.prompts_sent} t={t} />
           <span>{position}</span>
         </div>
@@ -330,13 +330,13 @@ function WorkspaceRow({
     <li
       data-testid={`resume-workspace-${space.folder_name}`}
       className={cn(
-        "border-t border-border/70 py-5",
+        "border-t border-border py-5",
         space.in_last_session === false && "opacity-70",
       )}
     >
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-border bg-background/60 text-muted-foreground">
+          <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-border bg-background text-muted-foreground">
             <FolderOpen className="h-4 w-4" />
           </span>
           <div className="min-w-0">
@@ -345,20 +345,20 @@ function WorkspaceRow({
                 {space.name || space.folder_name}
               </h4>
               {when && (
-                <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                <span className="inline-flex items-center gap-1 text-micro text-muted-foreground">
                   <Clock3 className="h-3 w-3" />
                   {when}
                 </span>
               )}
             </div>
-            <code className="mt-1 block truncate font-mono text-[10px] text-muted-foreground">
+            <code className="mt-1 block truncate font-mono text-micro text-muted-foreground">
               {space.folder}
             </code>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {fleet.map((item) => (
                 <span
                   key={item.agent}
-                  className="inline-flex items-center gap-1.5 border border-border/60 bg-background/45 px-2 py-1 text-[10px] text-muted-foreground"
+                  className="inline-flex items-center gap-1.5 border border-border bg-background px-2 py-1 text-micro text-muted-foreground"
                 >
                   <AgentMark
                     agent={item.agent}
@@ -383,7 +383,7 @@ function WorkspaceRow({
         </div>
 
         <div className="min-w-[220px] lg:text-right">
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[10px] text-muted-foreground lg:justify-end">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-micro text-muted-foreground lg:justify-end">
             <strong className="font-mono text-xs font-semibold tabular-nums text-foreground">
               {fill(t("workspace_launcher.resume.terminal_count"), {
                 count: space.terminals.length,
@@ -412,7 +412,7 @@ function WorkspaceRow({
             )}
           </div>
           <div
-            className="mt-2 flex h-1.5 overflow-hidden bg-muted/70"
+            className="mt-2 flex h-1.5 overflow-hidden bg-muted"
             aria-label={fill(t("workspace_launcher.resume.recovery_bar"), {
               continuing: space.resumable_count,
               fresh,
@@ -477,12 +477,12 @@ function FleetManifest({
   t: Translator;
 }) {
   return (
-    <aside className="border-t border-border/70 pt-5 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
+    <aside className="border-t border-border pt-5 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
       <SectionLabel>{t("workspace_launcher.resume.agent_fleet")}</SectionLabel>
       <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
         {t("workspace_launcher.resume.agent_fleet_hint")}
       </p>
-      <ul className="mt-4 divide-y divide-border/60 border-y border-border/60">
+      <ul className="mt-4 divide-y divide-border border-y border-border">
         {fleet.map((item) => {
           const total = Math.max(1, item.total);
           return (
@@ -498,7 +498,7 @@ function FleetManifest({
                       {item.total}
                     </span>
                   </div>
-                  <p className="mt-0.5 text-[10px] text-muted-foreground">
+                  <p className="mt-0.5 text-micro text-muted-foreground">
                     {fill(t("workspace_launcher.resume.fleet_detail"), {
                       continuing: item.resumable,
                       fresh: item.fresh,
@@ -515,7 +515,7 @@ function FleetManifest({
                   </p>
                 </div>
               </div>
-              <div className="mt-2 flex h-1 overflow-hidden bg-muted/70">
+              <div className="mt-2 flex h-1 overflow-hidden bg-muted">
                 <span
                   className="bg-primary/80"
                   style={{ width: `${(item.resumable / total) * 100}%` }}
@@ -565,7 +565,7 @@ function EarlierWorkspaces({
   if (spaces.length === 0) return null;
   return (
     <details
-      className="border-t border-border/70 py-4"
+      className="border-t border-border py-4"
       data-testid="resume-earlier"
     >
       <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
@@ -576,7 +576,7 @@ function EarlierWorkspaces({
       <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
         {t("workspace_launcher.resume.earlier_hint")}
       </p>
-      <ul className="mt-3 divide-y divide-border/50 border-y border-border/50">
+      <ul className="mt-3 divide-y divide-border border-y border-border">
         {spaces.map((space, index) => (
           <li
             key={space.session_id || `${space.folder}#${index}`}
@@ -586,11 +586,11 @@ function EarlierWorkspaces({
               <strong className="block truncate text-xs font-semibold text-foreground">
                 {space.name || space.folder_name}
               </strong>
-              <code className="mt-0.5 block truncate font-mono text-[9px] text-muted-foreground">
+              <code className="mt-0.5 block truncate font-mono text-micro text-muted-foreground">
                 {space.folder}
               </code>
             </div>
-            <span className="font-mono text-[10px] text-muted-foreground">
+            <span className="font-mono text-micro text-muted-foreground">
               {fill(t("workspace_launcher.resume.terminal_count"), {
                 count: space.terminals.length,
               })}
@@ -646,7 +646,7 @@ export function ResumeCard({
               {t("workspace_launcher.resume.eyebrow")}
             </SectionLabel>
             {when && (
-              <span className="inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
+              <span className="inline-flex items-center gap-1 font-mono text-micro text-muted-foreground">
                 <Clock3 className="h-3 w-3" />
                 {fill(t("workspace_launcher.resume.last_saved"), {
                   time: when,
@@ -663,7 +663,7 @@ export function ResumeCard({
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
             {resumeSummary(offer, t)}
           </p>
-          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-muted-foreground">
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-micro text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 bg-foreground/70" />
               {t("workspace_launcher.resume.legend_continues")}
@@ -679,12 +679,12 @@ export function ResumeCard({
           </div>
         </div>
 
-        <div className="flex flex-col justify-between border-t border-border/70 pt-5 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+        <div className="flex flex-col justify-between border-t border-border pt-5 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
           <div className="flex items-end gap-3">
             <span className="font-mono text-5xl font-semibold leading-none tracking-[-0.08em] text-foreground">
               {offer.terminal_count}
             </span>
-            <span className="max-w-28 pb-1 text-[10px] uppercase leading-snug tracking-[0.14em] text-muted-foreground">
+            <span className="max-w-28 pb-1 text-micro tracking-[0.14em] text-muted-foreground">
               {t("workspace_launcher.resume.saved_terminal_fleet")}
             </span>
           </div>
@@ -725,7 +725,7 @@ export function ResumeCard({
         </div>
       </div>
 
-      <dl className="mt-6 grid grid-cols-2 border-y border-border/70 sm:grid-cols-4 sm:divide-x sm:divide-border/70">
+      <dl className="mt-6 grid grid-cols-2 border-y border-border sm:grid-cols-4 sm:divide-x sm:divide-border">
         {[
           [
             offer.workspace_count,
@@ -746,14 +746,14 @@ export function ResumeCard({
             className={cn(
               "py-3 sm:px-4",
               index % 2 === 1 && "pl-4 sm:pl-4",
-              index >= 2 && "border-t border-border/70 sm:border-t-0",
+              index >= 2 && "border-t border-border sm:border-t-0",
               index === 0 && "sm:pl-0",
             )}
           >
             <dd className="font-mono text-lg font-semibold tabular-nums text-foreground">
               {value}
             </dd>
-            <dt className="mt-0.5 text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
+            <dt className="mt-0.5 text-micro text-muted-foreground">
               {label}
             </dt>
           </div>
@@ -780,14 +780,14 @@ export function ResumeCard({
                 {t("workspace_launcher.resume.workspace_manifest_hint")}
               </p>
             </div>
-            <span className="hidden font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground sm:block">
+            <span className="hidden font-mono text-micro text-muted-foreground sm:block">
               {fill(t("workspace_launcher.resume.available_workspaces"), {
                 available: restorableWorkspaces,
                 total: coming.length,
               })}
             </span>
           </div>
-          <ul className="mt-3 border-b border-border/70">
+          <ul className="mt-3 border-b border-border">
             {coming.map((space, index) => (
               <WorkspaceRow
                 key={space.session_id || `${space.folder}#${index}`}

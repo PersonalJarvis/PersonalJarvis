@@ -76,12 +76,12 @@ function matchesFilter(m: BrainModel, f: ModelFilter): boolean {
 const STATUS_TONE: Record<ProviderTestStatus, string> = {
   ok: "border-muted-foreground/30 bg-muted-foreground/10 text-muted-foreground",
   not_configured: "border-border bg-muted text-muted-foreground",
-  bad_key: "border-foreground/30 bg-foreground/10 text-foreground",
-  no_credits: "border-foreground/30 bg-foreground/10 text-foreground",
-  rate_limited: "border-foreground/30 bg-foreground/10 text-foreground",
-  model_unavailable: "border-foreground/30 bg-foreground/10 text-foreground",
-  unreachable: "border-destructive/30 bg-destructive/10 text-destructive",
-  error: "border-destructive/30 bg-destructive/10 text-destructive",
+  bad_key: "bg-secondary text-foreground",
+  no_credits: "bg-secondary text-foreground",
+  rate_limited: "bg-secondary text-foreground",
+  model_unavailable: "bg-secondary text-foreground",
+  unreachable: "bg-secondary text-destructive",
+  error: "bg-secondary text-destructive",
 };
 
 /**
@@ -394,7 +394,7 @@ export function BrainModelSelector({
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
       >
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           {headingLabel ??
             (selects === "voice" ? t("apikeys_model.heading_voice") : t("apikeys_model.heading"))}
         </span>
@@ -413,7 +413,7 @@ export function BrainModelSelector({
       onDoubleClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           {headingLabel ??
             (selects === "voice" ? t("apikeys_model.heading_voice") : t("apikeys_model.heading"))}
         </span>
@@ -421,7 +421,7 @@ export function BrainModelSelector({
           type="button"
           onClick={() => void load(true)}
           disabled={loading}
-          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-1 text-micro text-muted-foreground hover:text-foreground"
           title={t("apikeys_model.refresh")}
         >
           {loading ? (
@@ -442,7 +442,7 @@ export function BrainModelSelector({
         disabled={saving}
         className={cn(
           "flex w-full items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-left transition-colors",
-          open ? "border-primary/50 ring-1 ring-primary/20" : "border-input hover:border-primary/40",
+          open ? "border-border-strong ring-1 ring-primary/20" : "border-input hover:border-border-strong",
         )}
       >
         <span className={cn("truncate text-xs", !pinned && "text-muted-foreground")}>
@@ -506,9 +506,9 @@ export function BrainModelSelector({
                       aria-label={t(`apikeys_model.filter_${f}`)}
                       title={t(`apikeys_model.filter_hint_${f}`)}
                       className={cn(
-                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-micro transition-colors",
                         isActive
-                          ? "border-primary/40 bg-primary/20 text-primary"
+                          ? "bg-secondary text-foreground-strong"
                           : "border-border bg-muted text-muted-foreground hover:text-foreground",
                         disabled && "cursor-not-allowed opacity-40 hover:text-muted-foreground",
                       )}
@@ -521,7 +521,7 @@ export function BrainModelSelector({
                 })}
               </div>
               {filter !== "all" && (
-                <p className="px-2.5 pb-1.5 text-[11px] leading-snug text-muted-foreground">
+                <p className="px-2.5 pb-1.5 text-micro text-muted-foreground">
                   {t(`apikeys_model.filter_hint_${filter}`)}
                 </p>
               )}
@@ -541,7 +541,7 @@ export function BrainModelSelector({
                       readable — the maintainer's "too bright" complaint. */}
                   <div
                     className={cn(
-                      "flex items-center rounded hover:bg-primary/10",
+                      "flex items-center rounded hover:bg-secondary",
                       isPinned && "bg-primary/20",
                     )}
                   >
@@ -553,23 +553,23 @@ export function BrainModelSelector({
                       <span
                         className={cn(
                           "flex min-w-0 items-center gap-1.5 truncate text-xs",
-                          isPinned && "font-medium text-primary",
+                          isPinned && "font-medium text-foreground-strong",
                         )}
                       >
                         {m.starred && (
                           <Star
                             aria-label={t("apikeys_model.starred_label")}
-                            className="h-3 w-3 shrink-0 fill-primary text-primary"
+                            className="h-3 w-3 shrink-0 fill-primary text-muted-foreground"
                           />
                         )}
                         {m.label}
                         {recommendedModel && m.id === recommendedModel && (
-                          <span className="shrink-0 rounded-full bg-foreground/70 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-primary-foreground">
+                          <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-micro font-medium text-primary-foreground">
                             {t("apikeys_model.recommended_tag")}
                           </span>
                         )}
                       </span>
-                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                      <span className="shrink-0 font-mono text-micro text-muted-foreground">
                         {m.id}
                       </span>
                     </button>
@@ -579,7 +579,7 @@ export function BrainModelSelector({
                         onClick={() => void openExternalUrl(link)}
                         aria-label={t("apikeys_model.open_on_provider")}
                         title={t("apikeys_model.open_on_provider")}
-                        className="mr-1 shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-primary"
+                        className="mr-1 shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-foreground-strong"
                       >
                         <ExternalLink className="h-3 w-3" />
                       </button>
@@ -599,23 +599,23 @@ export function BrainModelSelector({
                   type="button"
                   data-testid="use-custom-row"
                   onClick={() => void save(trimmed)}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-primary/10"
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-secondary"
                 >
-                  <Check className="h-3 w-3 shrink-0 text-primary" />
+                  <Check className="h-3 w-3 shrink-0 text-muted-foreground" />
                   {t("apikeys_model.use_custom").replace("{0}", trimmed)}
                 </button>
               </li>
             )}
 
             {!visible.length && !trimmed && (
-              <li className="px-2 py-2 text-[11px] text-muted-foreground">
+              <li className="px-2 py-2 text-micro text-muted-foreground">
                 {loading ? t("apikeys_model.loading") : t("apikeys_model.no_models")}
               </li>
             )}
           </ul>
 
           {matched.length > 0 && (
-            <div className="border-t border-border px-2.5 py-1 text-[11px] text-muted-foreground">
+            <div className="border-t border-border px-2.5 py-1 text-micro text-muted-foreground">
               {t("apikeys_model.count_hint").replace("{0}", String(matched.length))}
             </div>
           )}
@@ -624,18 +624,18 @@ export function BrainModelSelector({
 
       <div className="flex flex-wrap items-center gap-2">
         {source === "static" && (
-          <span className="text-[11px] text-foreground" title={t("apikeys_model.source_static_note")}>
+          <span className="text-micro text-foreground" title={t("apikeys_model.source_static_note")}>
             {t("apikeys_model.source_static")}
           </span>
         )}
         {sourceNote && (
-          <span className="text-[11px] text-muted-foreground">{sourceNote}</span>
+          <span className="text-micro text-muted-foreground">{sourceNote}</span>
         )}
         {probe && <ProbeChip probe={probe} />}
         {slowProbe && (
           <span
             data-testid="brain-model-probe-slow"
-            className="text-[11px] text-muted-foreground"
+            className="text-micro text-muted-foreground"
           >
             {t("apikeys_model.probe_slow_note")}
           </span>
@@ -652,7 +652,7 @@ function ProbeChip({ probe }: { probe: BrainModelProbe }) {
     <span
       data-testid="brain-model-probe"
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-micro",
         tone,
       )}
       title={[probe.detail, probe.latency_ms ? `${Math.round(probe.latency_ms)} ms` : ""]

@@ -1,17 +1,25 @@
 /**
  * Shared vocabulary of the Spend & Tokens section: colours, formatters, tone.
  *
- * Colours are picked mid-luminance on purpose. They sit on the dark app
- * background and on the light one without a second table, which is the rule
- * every chart in this app follows (see `board/WordsTrendChart`): a hue that
- * only works in one appearance is a bug in the other.
+ * A stacked chart is the one place in this product where hue carries data:
+ * eight bands with no glyph between them cannot be told apart by anything
+ * else. So the role palette stays categorical, and it obeys two rules the rest
+ * of the system imposes on it.
+ *
+ * 1. No band is a THEME token. `tool` used to be `hsl(var(--primary))`, which
+ *    was signal yellow when this file was written and is now pure white in
+ *    dark and near-black in light — one series silently became the loudest
+ *    (or the invisible) band in the chart. A data series owns its own hue.
+ * 2. Every hue is mid-luminance, so it sits on the near-black room and on warm
+ *    paper without a second table — a hue that only works in one appearance is
+ *    a bug in the other.
  */
 import type { CostRole, CostSurface, PriceSource } from "@/hooks/useCosts";
 
 /** One hue per role — the chart stack, the legend and the tables share it. */
 export const ROLE_COLORS: Record<CostRole, string> = {
   realtime: "hsl(199 90% 62%)", // sky — the voice you talk to
-  tool: "hsl(var(--primary))", // signal yellow — the app's primary
+  tool: "hsl(228 72% 68%)", // indigo — one call, one answer
   pipeline: "hsl(268 72% 68%)", // violet — the classic brain path
   agent: "hsl(152 58% 52%)", // green — coding agents
   worker: "hsl(18 88% 62%)", // orange — autonomous missions
@@ -31,8 +39,12 @@ export const ROLE_ORDER: CostRole[] = [
   "background",
 ];
 
-/** Fallback for a bucket key that is not a role (provider, model, day). */
-export const NEUTRAL_COLOR = "hsl(0 0% 62%)";
+/**
+ * Fallback for a bucket key that is not a role (provider, model, day).
+ * The theme's secondary ink, so an uncategorised band recedes to the same
+ * grey the labels around it use instead of inventing a ninth value.
+ */
+export const NEUTRAL_COLOR = "hsl(var(--muted-foreground))";
 
 export function roleColor(key: string): string {
   return ROLE_COLORS[key as CostRole] ?? NEUTRAL_COLOR;

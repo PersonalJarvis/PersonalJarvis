@@ -242,12 +242,25 @@ export function zoomedFontSize(from: number, intent: ZoomIntent): number {
  */
 const TOOLBAR_BTN =
   "flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-muted-foreground " +
-  "transition-colors hover:bg-secondary hover:text-foreground " +
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 " +
+  // The interaction ladder, and it only ever goes UP. The toolbar is chrome,
+  // so it rests on --sidebar; one step up from the rail is the object step,
+  // which leaves the lift step free to mean "this is ON" below.
+  "transition-colors hover:bg-card hover:text-foreground " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong " +
   "disabled:cursor-not-allowed disabled:opacity-40";
 
-/** The same button, switched ON — the only yellow the toolbar spends. */
-const TOOLBAR_BTN_ON = "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary";
+/**
+ * The same button, switched ON.
+ *
+ * A selected control is `--secondary` with the heading ink on it — the app-wide
+ * recipe, the same one the workspace tabs and every list row use. It used to be
+ * `--primary` at 15 % with `--primary` as the glyph colour: an opacity standing
+ * in for a surface, and a fill used as an ink. With the brand hue retired
+ * `--primary` is pure white, so that spelling now paints the loudest mark on
+ * the screen onto a 28 px toggle.
+ */
+const TOOLBAR_BTN_ON =
+  "bg-secondary text-foreground-strong hover:bg-secondary hover:text-foreground-strong";
 
 /**
  * The reading-mode switch, one entry per view.
@@ -2118,12 +2131,23 @@ export function AgenticGrid({
       */}
       <div
         data-testid="agentic-toolbar"
-        className="flex shrink-0 flex-nowrap items-center gap-2 border-b border-border px-2 py-1"
+        // Standing chrome, so it takes the rail token — the one surface in this
+        // view that is allowed to differ from the room, because it stays put
+        // while everything below it changes. The panes underneath sit at the
+        // room value, so the bar reads as a shelf without a fill loud enough to
+        // compete with them. It had no ground at all before and inherited
+        // whatever was behind it, which is how a wallpaper ended up needing a
+        // stack of text-shadows in index.css to keep these controls legible.
+        className="flex shrink-0 flex-nowrap items-center gap-2 border-b border-border bg-sidebar px-2 py-1"
       >
         {workspaceBar ?? (
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <FolderGit2 className="h-4 w-4 shrink-0 text-primary" />
-            <span className="truncate font-display text-sm font-semibold">{project.name}</span>
+            {/* Meta ink, not the fill: a folder glyph labels the project name
+                beside it and must not out-shout it. */}
+            <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate font-display text-sm font-semibold text-foreground-strong">
+              {project.name}
+            </span>
           </div>
         )}
 
@@ -2134,7 +2158,7 @@ export function AgenticGrid({
             a chip: it is a fact to glance at, not a control to weigh. */}
         {branchLabel && (
           <span
-            className="hidden shrink-0 font-mono text-[11px] text-muted-foreground xl:inline"
+            className="hidden shrink-0 font-mono text-micro text-muted-foreground xl:inline"
             title={session.folder}
           >
             {branchLabel}
@@ -2289,12 +2313,17 @@ export function AgenticGrid({
         {selectionMode && (
           <div
             data-testid="terminal-selection-actions"
-            className="flex shrink-0 items-center gap-1 rounded-lg border border-primary/35 bg-primary/5 p-1"
+            // A content-sized cluster, so it may lift: the object step, with no
+            // rim, because a surface with a real fill does not also need one.
+            // It used to be `--primary` at 5 % behind a `--primary`/35 rim —
+            // two opacities describing a box that a single named surface says
+            // better, and both of them nearly invisible on near-black.
+            className="flex shrink-0 items-center gap-1 rounded-lg bg-card p-1"
           >
             <span
               role="status"
               aria-live="polite"
-              className="px-2 text-xs font-semibold text-primary"
+              className="px-2 text-xs font-semibold text-foreground-strong"
             >
               {t("agentic_grid.selection.selected_count").replace(
                 "{0}",
@@ -2611,7 +2640,10 @@ export function AgenticGrid({
                               ZONE_BOX[arrange.hover.zone],
                             )}
                           />
-                      <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-foreground/70 px-2 py-1 text-[11px] font-semibold text-primary-foreground">
+                      {/* A solid fill, not ink at 70 %: this label lands on a
+                          live terminal, and a translucent plate over moving
+                          text is the one place a real fill is not optional. */}
+                      <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-primary px-2 py-1 text-micro font-semibold text-primary-foreground">
                         {t(`agentic_grid.arrange.${arrange.hover.zone}`).replace(
                           "{0}",
                           term.name,
@@ -2650,10 +2682,13 @@ export function AgenticGrid({
                 >
                   <span
                     className={cn(
-                      "absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border transition-colors",
+                      "absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg transition-colors",
+                      // Ticked is a real fill and needs no rim; empty is a
+                      // card with one, because a box with nothing in it is
+                      // the one shape a rim has to describe on its own.
                       selectedTerminals.has(term.name)
-                        ? "border-primary bg-foreground/70 text-primary-foreground"
-                        : "border-border bg-card/90 text-transparent",
+                        ? "bg-primary text-primary-foreground"
+                        : "border border-border bg-card text-transparent",
                     )}
                     aria-hidden="true"
                   >
@@ -2851,7 +2886,12 @@ export function AgenticGrid({
               <MoveHorizontal
                 aria-hidden
                 className={cn(
-                  "pointer-events-none absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/35 bg-background/90 p-0.5 text-primary backdrop-blur transition-opacity",
+                  // The seam grip is structure, not an object: a lift fill on
+                  // the room, no rim, and the glyph in body ink. It used to
+                  // wear a `--primary` outline and a `--primary` glyph, which
+                  // with the brand hue retired made a 20 px handle the
+                  // brightest thing between the explorer and the panes.
+                  "pointer-events-none absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-secondary p-0.5 text-foreground transition-opacity",
                   explorerPane.isResizing
                     ? "opacity-100"
                     : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
@@ -2907,7 +2947,10 @@ export function AgenticGrid({
       {arrange.held !== null && arrange.point !== null && (
         <div
           data-testid="agentic-arrange-ghost"
-          className="pointer-events-none fixed z-50 flex items-center gap-1.5 rounded-lg border border-primary/60 bg-card px-2.5 py-1.5 text-xs font-semibold"
+          // A floating layer: the float surface plus the float shadow, which
+          // already carries a `--border-strong` ring. The extra `--primary`/60
+          // rim was a third separation device on something that has two.
+          className="pointer-events-none fixed z-50 flex items-center gap-1.5 rounded-md bg-popover px-2.5 py-1.5 text-xs font-semibold text-foreground-strong shadow-float"
           style={{ left: arrange.point.x + 14, top: arrange.point.y + 14 }}
         >
           <GripVertical className="h-3.5 w-3.5 text-primary" />
@@ -2926,7 +2969,7 @@ export function AgenticGrid({
           {arrange.hover !== null && !arrange.swapping && (
             <span
               data-testid="agentic-arrange-swap-hint"
-              className="font-normal text-muted-foreground/70"
+              className="font-normal text-muted-foreground"
             >
               {t("agentic_grid.arrange.swap_hint")}
             </span>
@@ -2961,7 +3004,7 @@ function ViewMenu({
         data-testid="agentic-view-menu"
         title={t("agentic_grid.display.appearance")}
         onClick={() => setOpen((value) => !value)}
-        className={cn(TOOLBAR_BTN, open && "bg-secondary text-foreground")}
+        className={cn(TOOLBAR_BTN, open && TOOLBAR_BTN_ON)}
       >
         <SlidersHorizontal className="h-4 w-4" />
       </button>
@@ -2971,7 +3014,7 @@ function ViewMenu({
           <div className="fixed inset-0 z-40" onMouseDown={() => setOpen(false)} />
           <div
             data-testid="agentic-view-menu-panel"
-            className="absolute right-0 top-full z-50 mt-1 w-60 rounded-xl border border-border bg-card p-3"
+            className="absolute right-0 top-full z-50 mt-1 w-60 rounded-lg bg-popover p-3 shadow-float"
           >
             <div className="flex items-center justify-between gap-3">
               <span className="text-xs text-muted-foreground">
@@ -2984,10 +3027,14 @@ function ViewMenu({
                   aria-pressed={appearance === "light"}
                   onClick={() => onAppearance("light")}
                   className={cn(
-                    "flex h-6 w-6 items-center justify-center rounded transition-colors",
+                    "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                    // The app-wide selected recipe: the lift surface with the
+                    // heading ink on it. `--primary` at 20 % was an opacity
+                    // doing a surface's job, and `--primary` as the glyph
+                    // colour is a fill used as an ink.
                     appearance === "light"
-                      ? "bg-primary/20 text-primary"
-                      : "text-muted-foreground hover:text-foreground",
+                      ? "bg-secondary text-foreground-strong"
+                      : "text-muted-foreground hover:bg-card hover:text-foreground",
                   )}
                 >
                   <Sun className="h-3.5 w-3.5" />
@@ -2998,10 +3045,10 @@ function ViewMenu({
                   aria-pressed={appearance === "dark"}
                   onClick={() => onAppearance("dark")}
                   className={cn(
-                    "flex h-6 w-6 items-center justify-center rounded transition-colors",
+                    "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
                     appearance === "dark"
-                      ? "bg-primary/20 text-primary"
-                      : "text-muted-foreground hover:text-foreground",
+                      ? "bg-secondary text-foreground-strong"
+                      : "text-muted-foreground hover:bg-card hover:text-foreground",
                   )}
                 >
                   <Moon className="h-3.5 w-3.5" />
@@ -3066,7 +3113,7 @@ function ToolbarOverflow({ children }: { children: React.ReactNode }) {
         className={cn(
           "contents",
           open
-            ? "max-[900px]:absolute max-[900px]:right-0 max-[900px]:top-full max-[900px]:z-50 max-[900px]:mt-1 max-[900px]:flex max-[900px]:w-[min(22rem,calc(100vw-1rem))] max-[900px]:flex-wrap max-[900px]:items-center max-[900px]:justify-end max-[900px]:gap-1 max-[900px]:rounded-xl max-[900px]:border max-[900px]:border-border max-[900px]:bg-card max-[900px]:p-2"
+            ? "max-[900px]:absolute max-[900px]:right-0 max-[900px]:top-full max-[900px]:z-50 max-[900px]:mt-1 max-[900px]:flex max-[900px]:w-[min(22rem,calc(100vw-1rem))] max-[900px]:flex-wrap max-[900px]:items-center max-[900px]:justify-end max-[900px]:gap-1 max-[900px]:rounded-lg max-[900px]:bg-popover max-[900px]:p-2 max-[900px]:shadow-float"
             : "max-[900px]:hidden",
         )}
       >
@@ -3146,7 +3193,7 @@ function TerminalFontSizeControl({
         isMac ? "Meta+Plus Meta+Minus Meta+0" : "Control+Plus Control+Minus Control+0"
       }
       title={`${t("agentic_grid.display.text_size")} — ${chordHint}`}
-      className="flex h-7 shrink-0 items-center rounded-md border border-border/70 bg-background/30"
+      className="flex h-7 shrink-0 items-center rounded-md border border-border bg-background"
     >
       <Type aria-hidden="true" className="mx-1 h-3.5 w-3.5 text-muted-foreground" />
       <button
@@ -3161,7 +3208,7 @@ function TerminalFontSizeControl({
       <span
         aria-live="polite"
         data-testid="agentic-font-size-value"
-        className="w-7 text-center font-mono text-[11px] tabular-nums text-foreground"
+        className="w-7 text-center font-mono text-micro tabular-nums text-foreground"
       >
         {fontSize}
       </span>
@@ -3194,10 +3241,10 @@ function ConfirmSelectionClose({
   const t = useT();
   return (
     <Dialog.Portal>
-      <Dialog.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm" />
+      <Dialog.Overlay className="fixed inset-0 z-50 bg-background backdrop-blur-sm" />
       <Dialog.Content
         data-testid="confirm-close-selection"
-        className="fixed left-1/2 top-1/2 z-50 w-[min(26rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5"
+        className="fixed left-1/2 top-1/2 z-50 w-[min(26rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-popover p-5 shadow-float"
         onEscapeKeyDown={(event) => {
           if (busy) event.preventDefault();
         }}
@@ -3274,10 +3321,10 @@ function ConfirmWorkspaceClose({
 
   return (
     <Dialog.Portal>
-      <Dialog.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm" />
+      <Dialog.Overlay className="fixed inset-0 z-50 bg-background backdrop-blur-sm" />
       <Dialog.Content
         data-testid="confirm-close-workspace"
-        className="fixed left-1/2 top-1/2 z-50 w-[min(24rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5"
+        className="fixed left-1/2 top-1/2 z-50 w-[min(24rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-popover p-5 shadow-float"
         onEscapeKeyDown={(event) => {
           if (busy) event.preventDefault();
         }}
@@ -3337,12 +3384,12 @@ function ConfirmClose({
       aria-modal="true"
       aria-label={`Close ${name}`}
       data-testid="confirm-close-terminal"
-      className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm"
+      className="absolute inset-0 z-30 flex items-center justify-center bg-background p-6 backdrop-blur-sm"
       onKeyDown={(e) => {
         if (e.key === "Escape") onCancel();
       }}
     >
-      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5">
+      <div className="w-full max-w-sm rounded-lg bg-popover shadow-float p-5">
         <h3 className="font-display text-base font-semibold">Close {name}?</h3>
         <p className="mt-2 text-sm text-muted-foreground">
           The coding agent running in this terminal is stopped and its session is gone. Anything it

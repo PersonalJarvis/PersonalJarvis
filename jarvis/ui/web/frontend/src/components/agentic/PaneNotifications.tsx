@@ -327,7 +327,7 @@ export function PaneNotifications({ onJump, onScreen = true }: PaneNotifications
         {unread > 0 && (
           <span
             data-testid="pane-notifications-count"
-            className="absolute -right-1.5 -top-1.5 min-w-[1rem] rounded-full bg-foreground/70 px-1 text-center font-mono text-[10px] font-semibold leading-4 text-primary-foreground"
+            className="absolute -right-1.5 -top-1.5 min-w-[1rem] rounded-full bg-foreground/70 px-1 text-center font-mono text-micro font-semibold leading-4 text-primary-foreground"
           >
             {unread > 99 ? "99+" : unread}
           </span>
@@ -389,7 +389,7 @@ export function PaneNotifications({ onJump, onScreen = true }: PaneNotifications
                     : t("agentic_grid.notifications.disabled")}
                 </p>
               ) : (
-                <ul className="divide-y divide-border/60">
+                <ul className="divide-y divide-border">
                   {entries.map((entry) => (
                     <Row
                       key={entry.id}
@@ -407,7 +407,7 @@ export function PaneNotifications({ onJump, onScreen = true }: PaneNotifications
             </div>
 
             {!state.enabled && entries.length > 0 && (
-              <p className="shrink-0 border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
+              <p className="shrink-0 border-t border-border px-4 py-2 text-micro text-muted-foreground">
                 {t("agentic_grid.notifications.disabled")}
               </p>
             )}
@@ -444,10 +444,10 @@ function Row({
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             <span className="truncate font-semibold text-foreground">{entry.pane}</span>
-            <span className="truncate text-[11px] uppercase tracking-wide text-muted-foreground">
+            <span className="truncate text-micro text-muted-foreground">
               {t(kind.key)}
             </span>
-            <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">
+            <span className="ml-auto shrink-0 text-micro tabular-nums text-muted-foreground">
               {ago(entry.created_at, now)}
             </span>
           </div>
@@ -458,9 +458,9 @@ function Row({
             {entry.display_name}
             {entry.workspace ? ` · ${entry.workspace}` : ""}
           </p>
-          <p className="mt-1 text-xs leading-relaxed text-foreground/80">{entry.title}</p>
+          <p className="mt-1 text-xs leading-relaxed text-foreground">{entry.title}</p>
           {entry.detail && (
-            <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
+            <p className="mt-1 line-clamp-2 text-micro text-muted-foreground">
               {t("agentic_grid.notifications.last_task").replace("{0}", entry.detail)}
             </p>
           )}
@@ -469,7 +469,7 @@ function Row({
               type="button"
               data-testid="pane-notification-jump"
               onClick={onJump}
-              className="rounded-md border border-primary/50 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
+              className="rounded-md border border-primary/50 bg-primary/10 px-2 py-1 text-micro font-medium text-primary transition-colors hover:bg-primary/20"
             >
               {t("agentic_grid.notifications.jump")}
             </button>
