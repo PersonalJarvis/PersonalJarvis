@@ -301,7 +301,14 @@ def build_create_script(link: Path, spec: LaunchSpec, *, icon: str | None = None
 
 
 def build_read_script(link: Path) -> str:
-    """Pure: PowerShell that prints TargetPath/Arguments/WorkingDirectory.
+    """Pure: PowerShell printing TargetPath/Arguments/WorkingDirectory/Icon.
+
+    IconLocation is read for the same reason ``icon_utils`` reads it on the
+    Start-Menu shortcut: it is the field that goes stale on its own. A shortcut
+    written from one checkout keeps pointing its icon at that checkout even
+    after target, arguments and working directory have all moved to another —
+    and since Windows renders the taskbar button from this shortcut, the app
+    shows an icon from a directory nobody uses any more.
 
     Base64-encoded for the same reason as the task query — see
     :func:`_ps_emit_field`.
@@ -314,6 +321,7 @@ def build_read_script(link: Path) -> str:
         f"{_ps_emit_field(_READBACK_SENTINEL, '$sc.TargetPath')}"
         f"{_ps_emit_field(_READBACK_SENTINEL, '$sc.Arguments')}"
         f"{_ps_emit_field(_READBACK_SENTINEL, '$sc.WorkingDirectory')}"
+        f"{_ps_emit_field(_READBACK_SENTINEL, '$sc.IconLocation')}"
     )
 
 
@@ -337,6 +345,20 @@ def _resolve_app_icon() -> str | None:
     except Exception as exc:  # noqa: BLE001 — a missing icon must never block autostart
         log.debug("autostart shortcut icon could not be resolved: %s", exc)
         return None
+
+
+def _icon_matches(actual: str, expected: str | None) -> bool:
+    """Does a shortcut's ``IconLocation`` still name this installation's icon?
+
+    ``IconLocation`` is ``"<path>,<index>"``. An empty path means "inherit the
+    target's icon", which for ``pythonw.exe`` is the Python logo — never a
+    match. When the icon cannot be resolved at all there is nothing to write, so
+    whatever is there is left alone rather than churning the shortcut.
+    """
+    if expected is None:
+        return True
+    path = (actual or "").rsplit(",", 1)[0].strip().strip('"')
+    return bool(path) and _norm(path) == _norm(expected)
 
 
 def _tag_shortcut_aumid(link: Path) -> bool:
@@ -677,21 +699,22 @@ class WindowsAutostart:
             log.debug("shortcut read failed: %s", exc)
             return False
         fields = _sentinel_fields(result.stdout, _READBACK_SENTINEL)
-        if len(fields) < 3:
+        if len(fields) < 4:
             # A truncated read-back is "unknown", not "matches". Padding the
             # missing fields with "" made a half-failed COM read compare equal
             # to any spec with no args — reporting a stale shortcut as current
             # and suppressing the refresh that would have fixed it.
             log.debug(
-                "shortcut read-back returned %d of 3 fields — treating as drift",
+                "shortcut read-back returned %d of 4 fields — treating as drift",
                 len(fields),
             )
             return False
-        target, args, workdir = fields[:3]
+        target, args, workdir, icon = fields[:4]
         return (
             _norm(target) == _norm(spec.program)
             and args.strip() == " ".join(spec.args).strip()
             and _norm(workdir) == _norm(spec.working_dir)
+            and _icon_matches(icon, _resolve_app_icon())
         )
 
     def _remove_legacy(self) -> None:

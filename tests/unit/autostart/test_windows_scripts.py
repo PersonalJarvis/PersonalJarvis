@@ -8,8 +8,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from jarvis.autostart.protocol import LaunchSpec
-from jarvis.autostart.windows import build_create_script, build_read_script
+from jarvis.autostart.windows import (
+    _icon_matches,
+    build_create_script,
+    build_read_script,
+)
 
 
 def _spec(minimized: bool = True) -> LaunchSpec:
@@ -37,12 +43,39 @@ def test_non_minimized_maps_to_windowstyle_1() -> None:
     assert "$sc.WindowStyle = 1" in build_create_script(Path("x.lnk"), _spec(minimized=False))
 
 
-def test_read_script_emits_three_sentinel_lines() -> None:
+def test_read_script_emits_four_sentinel_lines() -> None:
     script = build_read_script(Path(r"C:\startup\Personal Jarvis.lnk"))
-    assert script.count("Write-Output") == 3
+    assert script.count("Write-Output") == 4
     assert "$sc.TargetPath" in script
     assert "$sc.Arguments" in script
     assert "$sc.WorkingDirectory" in script
+    assert "$sc.IconLocation" in script
+
+
+def test_read_script_reads_the_icon_back() -> None:
+    """The icon is the field that goes stale on its own.
+
+    A shortcut written from one checkout keeps pointing its icon there long
+    after target, arguments and working directory have moved elsewhere. Windows
+    draws the taskbar button from this shortcut, so without reading the icon
+    back the app shows artwork from a directory nobody uses any more, forever.
+    """
+    assert "$sc.IconLocation" in build_read_script(Path(r"C:\s\a.lnk"))
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected", "matches"),
+    [
+        (r"C:\app\jarvis.ico,0", r"C:\app\jarvis.ico", True),
+        (r"c:\APP\jarvis.ico,0", r"C:\app\jarvis.ico", True),  # Windows is case-blind
+        (r"C:\old-worktree\jarvis.ico,0", r"C:\app\jarvis.ico", False),
+        (",0", r"C:\app\jarvis.ico", False),  # empty == inherit pythonw's logo
+        ("", r"C:\app\jarvis.ico", False),
+        (r"C:\anything\jarvis.ico,0", None, True),  # unresolvable → leave it alone
+    ],
+)
+def test_icon_matches(actual: str, expected: str | None, matches: bool) -> None:
+    assert _icon_matches(actual, expected) is matches
 
 
 def test_create_script_embeds_icon_when_given() -> None:
