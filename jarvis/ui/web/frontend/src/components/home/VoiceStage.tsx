@@ -168,7 +168,7 @@ function TranscriptLine({
       data-testid={live ? (user ? "transcript-live" : "transcript-live-answer") : "transcript-line"}
       data-who={user ? "user" : "assistant"}
     >
-      <span className="truncate text-right font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+      <span className="truncate text-right font-mono text-micro uppercase tracking-[0.12em] text-muted-foreground">
         {who}
       </span>
       <span

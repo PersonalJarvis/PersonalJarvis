@@ -20,17 +20,17 @@ paper's warmth — that was the muddy look.
 |---|---|---|
 | Ink (light primary, light text) | `#26251E` | ![](https://img.shields.io/badge/_-26251E?style=flat-square&labelColor=26251E) |
 | Canvas / paper (light ground, dark text) | `#F7F7F4` | ![](https://img.shields.io/badge/_-F7F7F4?style=flat-square&labelColor=F7F7F4) |
-| Ground (dark canvas) | `#050505` | ![](https://img.shields.io/badge/_-050505?style=flat-square&labelColor=050505) |
+| Ground (dark canvas) | `#121212` | ![](https://img.shields.io/badge/_-121212?style=flat-square&labelColor=121212) |
 | White (dark primary, actions only) | `#FFFFFF` | ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
-| Foreground, dark | `#F7F7F7` | ![](https://img.shields.io/badge/_-F7F7F7?style=flat-square&labelColor=F7F7F7) |
+| Foreground, dark | `#F0F0F0` | ![](https://img.shields.io/badge/_-F0F0F0?style=flat-square&labelColor=F0F0F0) |
 | Card, light | `#FFFFFF` | ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
-| Card, dark | `#242424` | ![](https://img.shields.io/badge/_-242424?style=flat-square&labelColor=242424) |
-| Sidebar, dark | `#1A1A1A` | ![](https://img.shields.io/badge/_-1A1A1A?style=flat-square&labelColor=1A1A1A) |
-| Hover / composer, dark | `#2E2E2E` | ![](https://img.shields.io/badge/_-2E2E2E?style=flat-square&labelColor=2E2E2E) |
-| User bubble, dark | `#575757` | ![](https://img.shields.io/badge/_-575757?style=flat-square&labelColor=575757) |
-| Hairline, light | `#E6E5E0` | ![](https://img.shields.io/badge/_-E6E5E0?style=flat-square&labelColor=E6E5E0) |
-| Hairline, dark | `#292929` | ![](https://img.shields.io/badge/_-292929?style=flat-square&labelColor=292929) |
-| Muted text, light | `#747167` | ![](https://img.shields.io/badge/_-747167?style=flat-square&labelColor=747167) |
+| Card, dark | `#1F1F1F` | ![](https://img.shields.io/badge/_-1F1F1F?style=flat-square&labelColor=1F1F1F) |
+| Sidebar, dark | `#171717` | ![](https://img.shields.io/badge/_-171717?style=flat-square&labelColor=171717) |
+| Hover / selected, dark | `#292929` | ![](https://img.shields.io/badge/_-292929?style=flat-square&labelColor=292929) |
+| User bubble, dark | `#2E2E2E` | ![](https://img.shields.io/badge/_-2E2E2E?style=flat-square&labelColor=2E2E2E) |
+| Hairline, light | `#DFDDD5` | ![](https://img.shields.io/badge/_-DFDDD5?style=flat-square&labelColor=DFDDD5) |
+| Hairline, dark | `#2B2B2B` | ![](https://img.shields.io/badge/_-2B2B2B?style=flat-square&labelColor=2B2B2B) |
+| Muted text, light | `#66635A` | ![](https://img.shields.io/badge/_-66635A?style=flat-square&labelColor=66635A) |
 | Muted text, dark | `#A3A3A3` | ![](https://img.shields.io/badge/_-A3A3A3?style=flat-square&labelColor=A3A3A3) |
 | Destructive, light | `#C0392B` | ![](https://img.shields.io/badge/_-C0392B?style=flat-square&labelColor=C0392B) |
 
@@ -46,10 +46,11 @@ must stay on the same values so nothing drifts.
 
 - **Full white is for actions.** On the dark ground, white is the primary. Spend it on
   something the reader can press, not on an indicator that is merely reporting a fact.
-- **Dark is charcoal, not inverted cream.** Light mode is the Design.md paper (`#F7F7F4`
-  canvas, warm ink). Dark mode does not flip that page: greys are `r = g = b`, body text
-  is `#F7F7F7` not cream, muted is `#A3A3A3` not taupe, and chat bubbles are fills
-  (`#242424` in, `#575757` out) rather than a 70 % cream wash.
+- **Dark is graphite, not a void and not inverted cream.** Light mode is the Design.md
+  paper (`#F7F7F4` canvas, warm ink). Dark mode does not flip that page: greys are
+  `r = g = b`, the room is `#121212` (never `#0A0A0A` — that read as a skeleton), body
+  text is `#F0F0F0` not cream, muted is `#A3A3A3` not taupe, every card has a visible
+  hairline, and chat bubbles are quiet fills (`#1F1F1F` in, `#2E2E2E` out).
 - **Both modes, always.** A colour comes from a theme token or from the per-appearance
   tables in `terminalThemes.ts`. Never hardcode one mode's value.
 - **No second accent.** There is no brand hue to reintroduce. The cyan and magenta in the
@@ -63,8 +64,11 @@ must stay on the same values so nothing drifts.
 | Use | Typeface | Notes |
 |---|---|---|
 | Display / wordmark | **Space Grotesk** (700) | Uppercase, tight tracking (`-4 to -5px` at hero size) |
-| Body / UI | **Inter** | The product UI font |
+| Body / UI | **Inter Variable** | The product UI font, −0.01 em tracking at interface sizes |
 | Code / mono / tagline | **JetBrains Mono** (500) | Letter-spaced caps for taglines and labels |
+
+All three ship inside the app bundle (`@fontsource` packages, SIL OFL 1.1); nothing is
+fetched from a remote host.
 
 ## The wordmark
 

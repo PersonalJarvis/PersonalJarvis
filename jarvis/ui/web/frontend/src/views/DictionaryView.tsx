@@ -81,7 +81,7 @@ export function DictionaryView({ hideHeader = false }: DictionaryViewProps = {})
           icon={<BookA className="h-4 w-4 text-primary" />}
           title={t("dictionary.title")}
           titleBadge={
-            <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+            <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-micro font-medium uppercase tracking-wide text-primary">
               {t("dictionary.research_preview")}
             </span>
           }
@@ -102,7 +102,7 @@ export function DictionaryView({ hideHeader = false }: DictionaryViewProps = {})
               />
             </div>
             {entries.length > 0 && (
-              <span className="rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              <span className="rounded-full border border-border bg-muted/60 px-2 py-0.5 text-micro font-medium text-muted-foreground">
                 {entries.length}
               </span>
             )}

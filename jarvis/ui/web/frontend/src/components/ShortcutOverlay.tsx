@@ -45,7 +45,7 @@ function Chord({ keys, isMac }: { keys: string[]; isMac: boolean }) {
     <span className="inline-flex items-center gap-1">
       {keys.map((token, i) => (
         <span key={i} className="inline-flex items-center gap-1">
-          {i > 0 && <span className="text-[10px] text-muted-foreground">+</span>}
+          {i > 0 && <span className="text-micro text-muted-foreground">+</span>}
           <Cap>{keyLabel(token, isMac)}</Cap>
         </span>
       ))}
@@ -78,7 +78,7 @@ function ShortcutRow({ shortcut, isMac }: { shortcut: Shortcut; isMac: boolean }
         <Chord keys={shortcut.keys} isMac={isMac} />
         {shortcut.alternateKeys?.map((alt, i) => (
           <div key={i} className="flex items-center gap-1.5 opacity-60">
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-micro text-muted-foreground">
               {t("shortcut_overlay.or")}
             </span>
             <Chord keys={alt} isMac={isMac} />

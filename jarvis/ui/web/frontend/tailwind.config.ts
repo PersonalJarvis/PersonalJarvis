@@ -110,6 +110,7 @@ const config: Config = {
        */
       fontFamily: {
         sans: [
+          "Inter Variable",
           "Inter",
           "ui-sans-serif",
           "system-ui",
@@ -119,6 +120,7 @@ const config: Config = {
         ],
         display: [
           "Space Grotesk",
+          "Inter Variable",
           "Inter",
           "ui-sans-serif",
           "system-ui",
@@ -188,13 +190,13 @@ const config: Config = {
        * to `rim`, the large ones to `float`.
        */
       boxShadow: {
-        rim: "inset 0 1px 0 rgb(var(--sheen-rgb) / 0.05)",
+        rim: "inset 0 1px 0 rgb(var(--sheen-rgb) / 0.07)",
         float:
           "0 12px 32px -8px rgb(var(--scrim-rgb) / 0.55), 0 0 0 1px hsl(var(--border-strong))",
         none: "none",
-        sm: "inset 0 1px 0 rgb(var(--sheen-rgb) / 0.05)",
-        DEFAULT: "inset 0 1px 0 rgb(var(--sheen-rgb) / 0.05)",
-        inner: "inset 0 1px 0 rgb(var(--sheen-rgb) / 0.05)",
+        sm: "inset 0 1px 0 rgb(var(--sheen-rgb) / 0.07)",
+        DEFAULT: "inset 0 1px 0 rgb(var(--sheen-rgb) / 0.07)",
+        inner: "inset 0 1px 0 rgb(var(--sheen-rgb) / 0.07)",
         md: "0 12px 32px -8px rgb(var(--scrim-rgb) / 0.55), 0 0 0 1px hsl(var(--border-strong))",
         lg: "0 12px 32px -8px rgb(var(--scrim-rgb) / 0.55), 0 0 0 1px hsl(var(--border-strong))",
         xl: "0 12px 32px -8px rgb(var(--scrim-rgb) / 0.55), 0 0 0 1px hsl(var(--border-strong))",

@@ -594,20 +594,20 @@ function StatusBadge({ ok, configured }: { ok: boolean; configured: boolean }) {
   const t = useT();
   if (!configured) {
     return (
-      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-micro uppercase tracking-wider text-muted-foreground">
         {t("telephony_view.status.badge_setup")}
       </span>
     );
   }
   if (ok) {
     return (
-      <span className="shrink-0 rounded-full bg-muted-foreground/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+      <span className="shrink-0 rounded-full bg-muted-foreground/10 px-2 py-0.5 text-micro uppercase tracking-wider text-muted-foreground">
         {t("telephony_view.status.badge_live")}
       </span>
     );
   }
   return (
-    <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">
+    <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-micro uppercase tracking-wider text-destructive">
       {t("telephony_view.status.badge_error")}
     </span>
   );
@@ -918,7 +918,7 @@ function CredentialsCard({
                   {selfTestResult.response_text || "—"}
                 </span>
               </div>
-              <div className="font-mono text-[10px] text-muted-foreground">
+              <div className="font-mono text-micro text-muted-foreground">
                 {t("telephony_view.creds.audio_bytes")}: {selfTestResult.audio_bytes}
               </div>
             </>
@@ -983,7 +983,7 @@ function ScriptRow({ script }: { script: TelephonyScript }) {
           <p className="mt-0.5 text-[11px] text-muted-foreground break-words">
             {script.description}
           </p>
-          <p className="mt-0.5 font-mono text-[10px] text-muted-foreground/70 break-all">
+          <p className="mt-0.5 font-mono text-micro text-muted-foreground/70 break-all">
             {script.path}
           </p>
         </div>
@@ -1080,7 +1080,7 @@ function CallStatusBadge({ status }: { status: string }) {
   return (
     <span
       className={cn(
-        "inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wider",
+        "inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-micro uppercase tracking-wider",
         style,
       )}
     >

@@ -1,67 +1,83 @@
 ---
-version: 2.0
+version: 3.0
 name: Personal Jarvis
 description: >-
   The design system for the Personal Jarvis DESKTOP APP — not a marketing site.
-  A black room where surfaces are objects, not walls: the page stays near-black
-  and untouched across most of its area, and lift is spent only on things sized
-  to their content — a bubble, a row, a tile, a composer. Ink stops before pure
-  white; white is a fill, never running text. Colour has exactly three jobs —
-  life, identity, fault — and appears nowhere else. Derived by measuring two
-  reference applications pixel by pixel (Grok Bot and Cursor, 2026-09-01) and
-  reconciling them against the app's own two prior failures: opaque grey cards
-  ("grey slabs") and near-invisible whisper cards ("dead"). Light mode is the
-  same system with the value scale inverted, never an afterthought.
+  Graphite, not void: a near-black room whose surfaces have edges you can see,
+  whose ink is bright enough to read at a glance, and whose type ships with the
+  app. Black-and-white by conviction — colour has exactly three jobs (life,
+  identity, fault) and appears nowhere else — but never grey-on-black. Version
+  2.0 (the "black room", 2026-09-01 afternoon) was rejected by the maintainer
+  the same evening as "dead, like a skeleton", "a funeral", "you cannot
+  recognise the type". This version keeps its structure and replaces its
+  values, re-measured against the live references that evening. Light mode is
+  the same system with the value scale inverted, never an afterthought.
 sources:
-  measured-2026-09-01:
-    grok-bot: >-
-      Ground #070707 (40.3% of all pixels), rail #111111, assistant bubble
-      #262626, composer #2F2F2F, selected row / search field #313131, user
-      bubble #5A5A5A. Ink: placeholder #6E6E6E, meta #8A8A8A, body #E8E8E8,
-      pure white ONLY on the identity mark. Rows ~72px, two-line. Chat text
-      16px/1.55. Zero dividers in the conversation list. Colour: four saturated
-      avatars, four green live rings, one violet app mark. Nothing else.
-    cursor: >-
-      Stage #141414 (70.5% of pixels), rail #181818 (19.9%), composer #212121,
-      active row #252525, borders #313131–#333333. Ink ceiling #F0F0F0 — never
-      white. 90.4% of the window sits in two values. 0.19% bright pixels, 0.06%
-      saturated. Nav rows 32px, uniform. Hierarchy by indentation, not boxes.
+  maintainer-verdict-2026-09-01: >-
+    On the 2.0 build: black-and-white is wanted, but this one looks dead — a
+    skeleton, a funeral. Other black-and-white products (Cursor, Grok, Bolt,
+    the frontier labs) look like the top of the field. The type is not
+    recognisable. Not sloppy — professional.
+  measured-2026-09-01-evening:
+    grok-web: >-
+      Stage #181716 (WARM neutral, r>g>b by one step), rail #131211, composer
+      #201F1D, hairlines white at 6–10 % alpha, radius 12 px and pill, composer
+      24 px. Ink: #FCFCFC primary, #9E9E9E meta, #858585 faint. universalSans
+      14/21, weights 400 / 500 / 550 — nav labels at 500. Smallest type 13 px.
+    chatgpt-web: >-
+      Page #000000, rail #131313, selected row and composer #212121, hairlines
+      white at 15–20 % alpha, radius 8–10 px, composer 28 px. Ink: #FFFFFF
+      primary, #AFAFAF meta. 14/20 throughout, weight 400; 12 px only on one
+      plan label.
+    cursor-app: >-
+      Stage #141414 (70.5 % of pixels), rail #181818, composer #212121, active
+      row #252525, borders #313131–#333333. Ink ceiling #F0F0F0. 90.4 % of the
+      window in two values, 0.19 % bright pixels, 0.06 % saturated.
     what-we-took: >-
-      Grok's object language (generous rows, fill-based separation, coloured
-      identity, green liveness) inside Cursor's restraint (emptiness as
-      composition, rims lighter than the fills they enclose, ink capped below
-      white, one uniform row height).
+      From all three: hairlines you can actually see, meta ink at #9E–#AF
+      rather than #94, body ink at #F0–#FC rather than #E6, and a room that is
+      dark without being a hole. From Grok: nav labels at 500 and a composer
+      with both a fill AND a rim. From Cursor: the ink ceiling below pure
+      white, emptiness as composition. From ChatGPT: one type size for almost
+      everything.
+  why-2-0-failed: >-
+    Every 2.0 value was individually defensible and the result was dead
+    anyway, because three of them compounded: a 4 % room, a 14 % hairline
+    (invisible on it) and 58 % meta ink (dim on it). Grey text on invisible
+    boxes on black IS a skeleton. Add a remote font that a WebView often fails
+    to load, and the type is "not recognisable" in the literal sense: a
+    different face, width and rhythm on every cold start.
 
 colors:
-  # --- Dark: the product default. A black room with lit objects in it. -------
-  dark-room: "#0A0A0A"
-  dark-rail: "#121212"
-  dark-object: "#212121"
-  dark-lift: "#333333"
-  dark-float: "#3D3D3D"
-  dark-speaker: "#4D4D4D"
-  dark-rim: "#242424"
-  dark-rim-strong: "#424242"
-  dark-ink-strong: "#F5F5F5"
-  dark-ink: "#E6E6E6"
-  dark-ink-meta: "#949494"
-  dark-ink-faint: "#707070"
+  # --- Dark: the product default. Graphite, edged, brightly inked. -----------
+  dark-room: "#121212"
+  dark-rail: "#171717"
+  dark-object: "#1F1F1F"
+  dark-lift: "#292929"
+  dark-speaker: "#2E2E2E"
+  dark-float: "#303030"
+  dark-rim: "#2B2B2B"
+  dark-rim-strong: "#404040"
+  dark-ink-strong: "#FAFAFA"
+  dark-ink: "#F0F0F0"
+  dark-ink-meta: "#A3A3A3"
+  dark-ink-faint: "#7A7A7A"
   dark-fill: "#FFFFFF"
-  dark-on-fill: "#0A0A0A"
+  dark-on-fill: "#121212"
 
   # --- Light: the same roles, scale inverted. Warm paper, warm ink. ---------
   light-room: "#F7F7F4"
-  light-rail: "#EFEEE8"
+  light-rail: "#F1F0EA"
   light-object: "#FFFFFF"
   light-lift: "#E6E5E0"
+  light-speaker: "#E6E5E0"
   light-float: "#FFFFFF"
-  light-speaker: "#26251E"
-  light-rim: "#E2E1DA"
-  light-rim-strong: "#C4C2B8"
-  light-ink-strong: "#1A1914"
+  light-rim: "#DFDDD5"
+  light-rim-strong: "#BDBAB0"
+  light-ink-strong: "#171610"
   light-ink: "#26251E"
-  light-ink-meta: "#6E6B61"
-  light-ink-faint: "#918D82"
+  light-ink-meta: "#66635A"
+  light-ink-faint: "#8B877C"
   light-fill: "#26251E"
   light-on-fill: "#F7F7F4"
 
@@ -72,49 +88,55 @@ colors:
 
 typography:
   display:
-    fontFamily: "'Space Grotesk', 'Archivo', system-ui, sans-serif"
+    fontFamily: "'Space Grotesk', 'Inter Variable', system-ui, sans-serif"
     fontSize: 24px
     fontWeight: 600
     lineHeight: 1.2
     letterSpacing: -0.02em
   page:
-    fontFamily: "'Inter', system-ui, 'Segoe UI', sans-serif"
+    fontFamily: "'Inter Variable', 'Inter', system-ui, sans-serif"
     fontSize: 20px
     fontWeight: 600
     lineHeight: 1.3
     letterSpacing: -0.015em
   title:
-    fontFamily: "'Inter', system-ui, sans-serif"
+    fontFamily: "'Inter Variable', 'Inter', system-ui, sans-serif"
     fontSize: 15px
     fontWeight: 600
     lineHeight: 1.4
-    letterSpacing: -0.005em
+    letterSpacing: -0.01em
   reading:
-    fontFamily: "'Inter', system-ui, sans-serif"
+    fontFamily: "'Inter Variable', 'Inter', system-ui, sans-serif"
     fontSize: 15px
     fontWeight: 400
     lineHeight: 1.6
     letterSpacing: 0
   body:
-    fontFamily: "'Inter', system-ui, sans-serif"
+    fontFamily: "'Inter Variable', 'Inter', system-ui, sans-serif"
     fontSize: 14px
     fontWeight: 400
     lineHeight: 1.5
-    letterSpacing: 0
+    letterSpacing: -0.01em
+  label:
+    fontFamily: "'Inter Variable', 'Inter', system-ui, sans-serif"
+    fontSize: 14px
+    fontWeight: 500
+    lineHeight: 1.5
+    letterSpacing: -0.01em
   meta:
-    fontFamily: "'Inter', system-ui, sans-serif"
+    fontFamily: "'Inter Variable', 'Inter', system-ui, sans-serif"
     fontSize: 13px
     fontWeight: 400
     lineHeight: 1.45
-    letterSpacing: 0
+    letterSpacing: -0.01em
   micro:
-    fontFamily: "'Inter', system-ui, sans-serif"
+    fontFamily: "'Inter Variable', 'Inter', system-ui, sans-serif"
     fontSize: 11px
     fontWeight: 500
     lineHeight: 1.4
     letterSpacing: 0.01em
   numeral:
-    fontFamily: "'Space Grotesk', 'Inter', sans-serif"
+    fontFamily: "'Space Grotesk', 'Inter Variable', sans-serif"
     fontSize: 24px
     fontWeight: 600
     lineHeight: 1.1
@@ -148,7 +170,7 @@ measure:
 
 elevation:
   flat: none
-  rim: "inset 0 1px 0 rgb(var(--sheen-rgb) / 0.05)"
+  rim: "inset 0 1px 0 rgb(var(--sheen-rgb) / 0.07)"
   float: "0 12px 32px -8px rgb(var(--scrim-rgb) / 0.55), 0 0 0 1px hsl(var(--border-strong))"
 
 components:
@@ -160,12 +182,13 @@ components:
   nav-rail:
     backgroundColor: "{colors.dark-rail}"
     textColor: "{colors.dark-ink}"
-    typography: "{typography.body}"
+    typography: "{typography.label}"
     padding: "{spacing.row}"
+    border-right: "1px solid {colors.dark-rim}"
   nav-row:
     backgroundColor: transparent
     textColor: "{colors.dark-ink}"
-    typography: "{typography.body}"
+    typography: "{typography.label}"
     rounded: "{rounded.control}"
     padding: "10px 12px"
     height: 40px
@@ -183,6 +206,7 @@ components:
     typography: "{typography.body}"
     rounded: "{rounded.surface}"
     padding: "{spacing.block}"
+    border: "1px solid {colors.dark-rim}"
     elevation: "{elevation.rim}"
   list-row:
     backgroundColor: transparent
@@ -219,9 +243,10 @@ components:
     backgroundColor: "{colors.dark-object}"
     textColor: "{colors.dark-ink}"
     typography: "{typography.reading}"
-    rounded: "{rounded.surface}"
+    rounded: "{rounded.feature}"
     padding: "14px 16px"
     border: "1px solid {colors.dark-rim-strong}"
+    elevation: "{elevation.rim}"
   input:
     backgroundColor: "{colors.dark-lift}"
     textColor: "{colors.dark-ink}"
@@ -232,21 +257,21 @@ components:
   button-primary:
     backgroundColor: "{colors.dark-fill}"
     textColor: "{colors.dark-on-fill}"
-    typography: "{typography.body}"
+    typography: "{typography.label}"
     rounded: "{rounded.control}"
     padding: "8px 16px"
     height: 36px
   button-secondary:
     backgroundColor: "{colors.dark-lift}"
     textColor: "{colors.dark-ink}"
-    typography: "{typography.body}"
+    typography: "{typography.label}"
     rounded: "{rounded.control}"
     padding: "8px 16px"
     height: 36px
   button-ghost:
     backgroundColor: transparent
     textColor: "{colors.dark-ink-meta}"
-    typography: "{typography.body}"
+    typography: "{typography.label}"
     rounded: "{rounded.control}"
     padding: "8px 12px"
     height: 36px
@@ -297,111 +322,121 @@ components:
     typography: "{typography.body}"
     rounded: "{rounded.surface}"
     padding: "40px {spacing.block}"
+    border: "1px solid {colors.dark-rim}"
   skeleton:
-    backgroundColor: "rgb(var(--sheen-rgb) / 0.06)"
+    backgroundColor: "rgb(var(--sheen-rgb) / 0.07)"
     rounded: "{rounded.control}"
+  selection:
+    backgroundColor: "rgb(var(--sheen-rgb) / 0.22)"
+    textColor: "{colors.dark-ink-strong}"
 ---
 
 ## Overview
 
-This document describes the **Personal Jarvis desktop application**. It replaces
-a previous version that described Cursor's marketing website — warm cream canvas,
-orange CTA, 80px editorial rhythm. None of that survived contact with a
-near-black desktop tool, and following it is what produced the current defects.
+This document describes the **Personal Jarvis desktop application**. It is the
+third version in one day, and the reason is worth keeping on record.
 
-The app is a **black room with lit objects in it**. Most of the window is
-untouched near-black and stays that way. Lift — the act of making a surface
-lighter than the room — is spent exclusively on things sized to their content: a
-bubble, a row, a tile, a composer, a menu. A full-width region never rises.
+Version 2.0 measured two reference products and derived a "black room": a 4 %
+ground, surfaces lifted only when content-sized, rims kept almost invisible,
+ink capped at 90 %. Every number was defensible. The maintainer's verdict on
+the built result was immediate: *dead, like a skeleton; a funeral; the type is
+not recognisable*. The verdict was correct. Three quiet values compounded into
+one loud failure: a near-black page, hairlines the eye cannot find on it, and
+meta ink too dim to read on it. Grey text on invisible boxes on black **is** a
+skeleton — an outline where an object should be.
 
-This single rule is the resolution of two failed attempts on record. Lifting
-everything produced opaque grey furniture on a black page ("grey slabs",
-reverted). Refusing to lift anything produced surfaces three byte-values above
-their ground, below the threshold at which an eye perceives an edge ("dead").
-Both were attempts to find one correct value for a variable that should never
-have been global.
+Version 3.0 keeps 2.0's structure (the surface ladder, the four inks, the three
+status hues, the seven-step scale) and changes what it was wrong about:
 
-**Key characteristics**
+- **Graphite, not void.** The room is `#121212`, not `#0A0A0A`. Cursor's stage
+  is `#141414`, Grok's `#181716`; neither product is a hole.
+- **Edges exist.** Every rim is tuned to be visible on the surface it encloses.
+  A card has a fill *and* a hairline. A composer has a fill *and* a strong rim.
+  The 2.0 rule "no border on something that already has a fill" is withdrawn —
+  it was the single largest contributor to the skeleton.
+- **Ink is bright.** Body at `#F0F0F0` (Cursor's ceiling), meta at `#A3A3A3`
+  (between Grok's `#9E` and ChatGPT's `#AF`). Nothing informational sits
+  below 64 %.
+- **Type ships with the app.** Inter Variable, JetBrains Mono and Space
+  Grotesk are bundled. A WebView that starts offline used to render the whole
+  product in Segoe UI — a different face, width and rhythm on every cold
+  start, which is what "not recognisable" meant in the literal sense.
+- **Nothing below 11 px.** The 271 remaining `text-[7–10px]` sites were swept
+  to the `micro` step in the same change.
 
-- Separation is **fill first**. A row exists because it is a lighter rectangle,
-  not because a line was drawn around it. Grok Bot's conversation list contains
-  zero dividers.
-- A rim is **lighter** than the fill it encloses. On near-black, a dark border
-  around a dark fill reads as a wireframe with nothing inside it.
-- **Ink stops before white.** Body runs at 90%, headings at 96%. Cursor's
-  brightest text measures #F0F0F0 and never exceeds it. Pure white is a *fill* —
-  buttons, marks, focus rings — never running text.
-- **Colour has three jobs**: life, fault, identity. Nothing else in the product
-  carries hue. Both references are >99% neutral and still read as alive, because
-  the fraction of a percent that is coloured is spent on exactly the right
-  things.
-- **Emptiness is composition.** Cursor holds 90.4% of its window in two values.
-  A screen is finished when there is nothing left to remove, not when the space
-  is filled.
-- Light mode is the same system with the scale inverted. Every token has a role,
-  not a brightness, and the role holds in both themes.
+Still black-and-white. Still neutral greys (`r = g = b` in dark, warm paper in
+light). Still exactly three hues. The conviction was never the problem; the
+values were.
 
 ## Colors
 
 ### The surface ladder
 
-Six roles. Their brightness inverts between themes; their **role never changes**.
-Nothing in the product invents a seventh surface, and no surface is produced by
-multiplying a token by an opacity.
+Six roles. Their brightness inverts between themes; their **role never
+changes**. Nothing in the product invents a seventh surface, and no surface is
+produced by multiplying a token by an opacity.
 
 | Role | Job | Dark | Light |
 |---|---|---|---|
-| `room` | The page and every full-bleed region. Most of the window. | `#0A0A0A` | `#F7F7F4` |
-| `rail` | The navigation column and other standing chrome. | `#121212` | `#EFEEE8` |
-| `object` | A card, bubble, panel or hovered row. **Content-sized only.** | `#212121` | `#FFFFFF` |
-| `lift` | The answer to a pointer: hover on an object, a selected row, a field, a tile. | `#333333` | `#E6E5E0` |
-| `float` | Menus, dialogs, tooltips — surfaces that leave the plane. | `#3D3D3D` | `#FFFFFF` + float shadow |
-| `speaker` | The user's own turn in a conversation. The one deliberately loud surface. | `#4D4D4D` | `#26251E` |
+| `room` | The page and every full-bleed region. Most of the window. | `#121212` | `#F7F7F4` |
+| `rail` | The navigation column and other standing chrome. Edged with `rim`. | `#171717` | `#F1F0EA` |
+| `object` | A card, bubble, composer, panel or hovered row. **Content-sized only.** | `#1F1F1F` | `#FFFFFF` |
+| `lift` | The answer to a pointer: hover on an object, a selected row, a field, a tile. | `#292929` | `#E6E5E0` |
+| `speaker` | The user's own turn in a conversation. A quiet fill with strong ink — not a slab. | `#2E2E2E` | `#E6E5E0` |
+| `float` | Menus, dialogs, tooltips — surfaces that leave the plane. | `#303030` | `#FFFFFF` + float shadow |
 
-The dark ladder is calibrated against both references: Grok Bot's assistant
-bubble sits at `#262626` and its selected row at `#313131`; Cursor's composer at
-`#212121` and its active row at `#252525`. Our `object` at `#212121` and `lift`
-at `#333333` sit inside that measured band with steps large enough to survive an
-uncalibrated monitor.
+Steps are 5–7 byte-values apart at the bottom of the ladder, which is the
+smallest distance that survives an uncalibrated monitor. Lift still scales
+inversely with area: a surface wider than ~720 px stays at `room` or `rail`.
 
-In light mode the direction reverses and that is correct: an object rises toward
-white, and interaction answers by going *down* into warm grey. The role is
-"the surface that responds", not "the lighter surface".
+The 2.0 `speaker` at `#4D4D4D` read as a tombstone — the loudest rectangle on
+the screen carrying the one thing the reader already knows. ChatGPT's user
+bubble sits a single step above its page. So does ours now; the ink carries
+the emphasis.
 
 ### Rims
 
-Two values, because one border cannot do two jobs on near-black.
+Two values, and both must be **visible on the surface they enclose**. A rim
+the eye cannot find is not restraint; it is a missing edge.
 
-| Token | Job | Dark | Light |
-|---|---|---|---|
-| `rim` | Structural hairlines, dividers, table rules. Barely noticeable. | `#242424` | `#E2E1DA` |
-| `rim-strong` | Composer outline, floating layers, focus rings. | `#424242` | `#C4C2B8` |
+| Token | Job | Dark | Light | Visible on |
+|---|---|---|---|---|
+| `rim` | Card edges, dividers, table rules, the rail's edge. | `#2B2B2B` | `#DFDDD5` | room, rail and object |
+| `rim-strong` | Composer outline, floating layers, focus rings, scrollbar thumbs. | `#404040` | `#BDBAB0` | everything up to `float` |
 
-**A rim is never the only thing describing an object.** If an element has a real
-fill it usually needs no border at all. Cursor's `#313131` rims cover 0.2% of its
-window — a composer outline and a few dividers, not every card.
+The references draw hairlines as white at 8–20 % alpha over their ground.
+`#2B2B2B` on `#121212` is white at 10 %; `#404040` is white at 19 %. That is
+the measured band, not a taste.
+
+**A fill and a rim together are the normal case.** Grok's composer is
+`#201F1D` inside a 10 % white hairline; ChatGPT's is `#212121` inside 15 %.
+An object with a fill and no edge sinks; an outline with no fill is a
+wireframe. Both are what "skeleton" looks like.
 
 ### Ink
 
-Four steps, each with one job. The split is what fixes "the white looks
-artificial": one 97% slab across an entire app has no hierarchy to justify its
-brightness, so the eye reads it as harsh rather than as important.
+Four steps, each with one job.
 
 | Token | Job | Dark | Light | On `object` |
 |---|---|---|---|---|
-| `ink-strong` | Headings, headline numbers, the selected row's label. | `#F5F5F5` | `#1A1914` | 15.1 : 1 |
-| `ink` | Body, labels, running text, list titles. | `#E6E6E6` | `#26251E` | 13.2 : 1 |
-| `ink-meta` | Timestamps, secondary lines, table heads, captions. | `#949494` | `#6E6B61` | 5.2 : 1 |
-| `ink-faint` | Placeholders and disabled text only. Never information. | `#707070` | `#918D82` | 3.0 : 1 |
+| `ink-strong` | Headings, headline numbers, the selected row's label. | `#FAFAFA` | `#171610` | 15.9 : 1 |
+| `ink` | Body, labels, running text, list titles. | `#F0F0F0` | `#26251E` | 14.5 : 1 |
+| `ink-meta` | Timestamps, secondary lines, table heads, captions. | `#A3A3A3` | `#66635A` | 6.6 : 1 |
+| `ink-faint` | Placeholders and disabled text only. Never information. | `#7A7A7A` | `#8B877C` | 3.7 : 1 |
 
-`fill` (`#FFFFFF` dark, `#26251E` light) is the accent. It paints buttons, marks,
-active indicators and focus rings. **It never paints text, a byline, or a
-decorative icon.** An icon that is brighter than the heading it labels is a bug.
+`fill` (`#FFFFFF` dark, `#26251E` light) is the accent. It paints buttons,
+marks, active indicators and focus rings. **It never paints text, a byline, or
+a decorative icon.**
+
+The ceiling stays below white: `#F0F0F0` is what Cursor's brightest text
+measures. But the floor for anything a person is meant to read is now 64 %,
+up from 58 %, and the placeholder step is 48 %, up from 44 %. Small numbers;
+the difference between "meta" and "faded".
 
 ### Status — the only hue in the product
 
-Three colours, identical in both themes because a status must not change meaning
-with the theme. Everything else in the interface is neutral.
+Three colours, identical in both themes because a status must not change
+meaning with the theme. Everything else in the interface is neutral.
 
 | Token | Meaning | Value |
 |---|---|---|
@@ -409,42 +444,49 @@ with the theme. Everything else in the interface is neutral.
 | `fault` | Failed, blocked, disconnected, error. | `#E8574C` |
 | `degraded` | Stale, partial, needs attention. | `#D6A94A` |
 
-Three binding rules. A status may **never** be encoded as `ink` or `fill` — a
-white "cancelled" chip becomes the loudest mark on a screen and inverts the
-ramp. A status ramp may **never** render "ok" dimmer than "unknown". And a
-success state must actually use `life`: it is the mechanism that makes Grok Bot
-feel alive, and four green rings carry that window's entire "this is running"
-message.
+A status may **never** be encoded as `ink` or `fill`. A status ramp may
+**never** render "ok" dimmer than "unknown". A success state must actually
+use `life` — four green rings are most of what makes Grok's window read as
+running.
 
 ### Identity
 
-The second thing that makes a black app feel alive, and the one this product
-currently lacks entirely.
-
 Every conversation, agent, provider and person carries a **coloured identity
-mark**: a real vendor logo where one exists (kept in full colour — this is the
-documented exception to the neutral rule), otherwise a 36px round avatar whose
-hue is derived deterministically from the name. Never a grey placeholder, never a
-monogram on a neutral disc.
+mark**: a real vendor logo where one exists (kept in full colour — the
+documented exception to the neutral rule), otherwise a round avatar whose hue
+is derived deterministically from the name. Never a grey placeholder, never a
+monogram on a neutral disc. Identity hues sit outside the status palette and
+are never read as state.
 
-Identity hues sit outside the status palette and are never read as state.
+### Selection
+
+Dragging across text answers in the theme's own material — `sheen` at 22 % —
+never the engine's default blue. It was the one saturated slab a
+black-and-white product showed every time someone selected a sentence.
 
 ## Typography
 
 ### Families
 
-| Role | Family | Notes |
+| Role | Family | Ships as |
 |---|---|---|
-| Interface | **Inter** | Everything. Loaded locally, never from a remote host. |
-| Display | **Space Grotesk** | Section titles and headline numbers only. Used with restraint. |
-| Code | **JetBrains Mono** | Every code, terminal, path and transcript surface. |
+| Interface | **Inter Variable** | `@fontsource-variable/inter`, one woff2 per script subset, every weight |
+| Display | **Space Grotesk** | 500 / 600 / 700 static cuts. Section titles and headline numbers only. |
+| Code | **JetBrains Mono** | 400 / 500 / 600 / 700 static cuts. Every code, terminal, path and transcript surface. |
 
-All three ship with the application. A remote font import means an offline
-launch renders the entire product in a system fallback.
+All three are bundled by Vite and fingerprinted into `dist/assets`. There is
+no remote font request anywhere in the product. Licences are SIL OFL 1.1 and
+are listed in `public/THIRD_PARTY_NOTICES.txt`.
+
+Inter is set with `cv02 cv03 cv04 cv11` (open shapes, single-storey a) and
+**−0.01 em tracking at interface sizes** — Inter's own recommendation, and
+what both Grok (−0.2 px at 14 px) and Cursor set. `reading` and `code` reset
+tracking to 0 through their own declarations.
 
 ### The scale
 
-Seven steps. There is nothing between them and nothing below them.
+Seven steps plus one weight variant. There is nothing between them and
+nothing below them.
 
 | Token | Size / Weight | Line height | Use |
 |---|---|---|---|
@@ -452,89 +494,56 @@ Seven steps. There is nothing between them and nothing below them.
 | `page` | 20 / 600 | 1.3 | Page heading |
 | `title` | 15 / 600 | 1.4 | Card title, list-row title, group label |
 | `reading` | 15 / 400 | 1.6 | Chat, transcripts, documents, prose |
-| `body` | 14 / 400 | 1.5 | Default interface text, nav rows, controls |
+| `body` | 14 / 400 | 1.5 | Default interface text, controls |
+| `label` | 14 / 500 | 1.5 | **Navigation rows and buttons.** The weight every reference sets its nav in. |
 | `meta` | 13 / 400 | 1.45 | Timestamps, captions, secondary lines |
 | `micro` | 11 / 500 | 1.4 | Badges and dense table cells. **Hard floor.** |
 
-**11px is the floor.** No `text-[10px]`, `text-[9px]`, `text-[8px]`. Near-black
-amplifies small type: a 10px grey glyph on `#0A0A0A` reads as a scratch, not as
-a word.
-
-`reading` exists as its own step because a reading surface and a navigation
-surface are different registers. Grok Bot sets chat at 16px/1.55 against 14–15px
-list text, and that difference is a large part of why its conversation feels
-like a document rather than a table.
+**11 px is the floor and it is now enforced by the tree, not the document.**
+No `text-[10px]`, `text-[9px]`, `text-[8px]` survives in `src/`. ChatGPT's
+smallest type is 12 px; Grok's is 13 px.
 
 ### Principles
 
-- **Two weights in static content.** 400 for body, meta and labels; 600 for
-  titles. Weight 500 is reserved for interactive affordances. When almost
-  everything is 500, nothing recedes.
-- **No tiny all-caps labels.** `uppercase` is banned in body and label
-  typography. It is the specific construction that makes an interface read as an
-  admin panel, and neither reference screenshot contains a single one. It
-  survives only inside a badge.
-- **Line height comes from the scale**, never from a `leading-*` class at the
-  call site.
-- **Tabular numerals wherever digits align** — tables, meters, stat tiles,
-  timestamps.
+- **Weight is hierarchy.** 400 for reading and meta, 500 for anything a
+  person navigates or presses, 600 for titles. A navigation column set
+  entirely in 400 grey is a list of ghosts.
+- **No tiny all-caps labels** outside a badge.
+- **Line height comes from the scale**, never from a `leading-*` class.
+- **Tabular numerals wherever digits align.**
 
 ## Layout
 
-### Spacing
-
-Four named steps and nothing else.
+Four named spacing steps and three measures, unchanged from 2.0:
 
 | Token | Value | Use |
 |---|---|---|
 | `row` | 8px | Inside a row: icon to label, chip to chip |
 | `stack` | 12px | Between siblings in a list or form |
 | `block` | 20px | Card padding, between related blocks |
-| `group` | 32px | **Between groups in a section** |
+| `group` | 32px | Between groups in a section |
 | `page` | 28px | Section outer padding |
 
-The `group` step is the one currently missing from the product, which is why
-sections read as a single undifferentiated mesh. **Every section separates its
-groups by 32px.**
-
-### Measure
-
-Content is bounded. A card holding two words does not span 1170 pixels, and an
-explanatory sentence does not run the full width of the window.
-
-| Token | Value | Use |
+| Measure | Value | Use |
 |---|---|---|
-| `reading` | 720px | Chat, transcripts, prose, documentation |
-| `form` | 640px | Settings groups, option lists, single-column forms |
+| `reading` | 720px | Chat, transcripts, prose |
+| `form` | 640px | Settings groups, single-column forms |
 | `page` | 1080px | Dashboards, tables, card grids |
 
-The measure is applied by the shell, not by each view.
-
-### Density
-
-The measured difference between this app and both references is not colour.
-Cursor holds 90.4% of its window in two values with 0.19% bright pixels. This
-product runs 74% of its type at 12px or smaller across 357 uppercase labels.
-
-**A section is designed by subtraction.** Before styling a screen, remove: every
-wrapper that only holds one other thing, every label that repeats what the value
-already says, every count nobody acts on, every chrome element around a list
-that is already legible. The target is ≥60% of a section's pixels at `room` or
-`rail`.
+**A section is designed by subtraction.** Remove every wrapper that only
+holds one other thing, every label that repeats its value, every count nobody
+acts on. The target is ≥ 60 % of a section's pixels at `room` or `rail` —
+but what remains must have edges.
 
 ## Elevation
 
-Three levels. Depth is carried by fill, not by shadow.
+Three levels. Depth is carried by fill and rim; shadow only when floating.
 
 | Level | Treatment | Use |
 |---|---|---|
 | Flat | No shadow. Its own surface token. | Rows, tiles, chips — everything in the plane |
-| Rim | `inset 0 1px 0` sheen at 5% | Cards and bubbles. A top edge catching light, not a drop shadow |
+| Rim | `inset 0 1px 0` sheen at 7 % **plus a `rim` hairline** | Cards, bubbles, composers. A top edge catching light and a drawn edge. |
 | Float | Real shadow + `rim-strong` ring | Menus, dialogs, tooltips only |
-
-A black shadow on a near-black ground is mathematically invisible, which is why
-the product currently has no working depth device at all. On this ground the
-working device is **a lighter fill and a lighter top edge**.
 
 No decorative glows. A bloom is additive light standing in for a fill that
 should have been there.
@@ -544,19 +553,19 @@ should have been there.
 | Token | Value | Use |
 |---|---|---|
 | `control` | 8px | Rows, buttons, inputs, tiles, menu items |
-| `surface` | 12px | Cards, bubbles, panes, composer, popovers |
-| `feature` | 16px | Large feature cards. Rare. |
+| `surface` | 12px | Cards, bubbles, panes, popovers |
+| `feature` | 16px | Composers and large feature cards |
 | `pill` | 9999px | Chips, badges, avatars, status dots |
 
-Two families: soft rectangles and pills. Grok Bot uses 12px and pill; Cursor uses
-6–10px and pill. Nothing in this product uses 4px.
+The composer moves up to `feature`: both references round their composer
+more than anything else on screen (Grok 24 px, ChatGPT 28 px), and a 16 px
+radius inside a 720 px measure is the restrained version of that.
 
-**The theme never changes an element's shape** — only its value. A card that
-loses its radius in dark mode is a bug, not a style.
+**The theme never changes an element's shape** — only its value.
 
 ## Interaction
 
-One ladder, one recipe, app-wide. It only ever goes up.
+One ladder, one recipe. It only ever goes up.
 
 | State | Treatment |
 |---|---|
@@ -566,39 +575,34 @@ One ladder, one recipe, app-wide. It only ever goes up.
 | Focus | 2px `rim-strong` ring. Never a third fill. |
 | Pressed | `scale(0.98)`, 120ms |
 
-**A hover that darkens is a bug.** So is a selection drawn on a 24×24 icon box
-while the 200px row it belongs to stays at ground — selection is a full-width
-rounded fill, inset from the column edge, on the whole row. Both references do
-exactly this, and it is the loudest missing "you are here" cue in the product.
-
-Transitions are 120ms on fills and 160ms on transforms. Everything respects
-`prefers-reduced-motion`.
+Selection is a full-width rounded fill on the whole row, inset from the
+column edge. Scrollbar thumbs are `rim-strong`; a thumb at `rim` was a thumb
+nobody could find. Transitions are 120 ms on fills and 160 ms on transforms.
+Everything respects `prefers-reduced-motion`.
 
 ## Nesting
 
-A child surface **steps up, never down**. It is a hard error for an element to
-render darker than its parent in dark mode.
+A child surface **steps up, never down**. It is a hard error for an element
+to render darker than its parent in dark mode.
 
 | Parent | A nested well, tile, field or table head takes |
 |---|---|
-| `room` | `object` or `rail` |
+| `room` | `rail` or `object` |
 | `rail` | `object` |
 | `object` | `lift` |
 | `lift` | `float`, or no surface at all |
 
-When the ladder runs out, stop nesting. Grok Bot's search field sits on the rail
-at +32 values *inside nothing* — the correct answer to a deep hierarchy is
-usually a flatter one.
+When the ladder runs out, stop nesting.
 
 ## States
 
 Every section owns four states, and all four are designed.
 
-- **Loading** renders the real container at its real height with skeleton bars.
-  Never a centred grey word in a void, and never invented zeros — a section
-  showing `0` while data is in flight reads as broken data, not as loading.
-- **Empty** is a designed surface with one sentence saying what will appear here
-  and one action that makes it appear. Not a dimmed label.
+- **Loading** renders the real container at its real height with skeleton
+  bars at `sheen` 7 %. Never a centred grey word in a void, never invented
+  zeros.
+- **Empty** is a designed surface — `object` with a `rim` — with one sentence
+  saying what will appear here and one action that makes it appear.
 - **Error** says what failed and what to do. It uses `fault` on a normal
   surface, never a red-washed panel.
 - **Populated** is the state everything else in this document describes.
@@ -607,40 +611,50 @@ Every section owns four states, and all four are designed.
 
 ### Do
 
-- Lift only what is sized to its content. A surface wider than 720px stays at
-  `room` or `rail`.
-- Separate with fill first, rim second, shadow only when floating.
-- Give every conversation, agent, provider and person a coloured identity mark.
+- Give every object a fill **and** an edge. Fill first, rim second, shadow
+  only when floating.
+- Keep the room at `room`. Lift only what is sized to its content.
+- Set navigation and buttons in `label` (500), not `body` (400).
 - Spend `life` green on anything that is actually running.
 - Cap ink below white and reserve `fill` for fills.
 - Bound the measure. Every screen, every time.
-- Remove before you restyle.
+- Remove before you restyle — and check what is left still has edges.
 
 ### Don't
 
 - Don't express depth with opacity. `bg-card/40` as a resting ground is a
   defect; depth is a named token.
-- Don't write a literal colour anywhere — not in a component, not in a `.ts`
-  module, not in the stylesheet itself.
-- Don't put a border on something that already has a fill.
+- Don't write a literal colour anywhere except `terminalThemes.ts`, the one
+  sanctioned exception (xterm needs resolved strings).
+- Don't tune a rim until it disappears. If it cannot be seen on the surface
+  it encloses, it is not a rim.
 - Don't set a status in `ink` or `fill`, and never let "ok" be quieter than
   "unknown".
-- Don't use tiny uppercase labels.
-- Don't go below 11px.
+- Don't use tiny uppercase labels. Don't go below 11 px.
 - Don't add a shadow to anything that is not floating.
-- Don't let a view hand-roll a surface, a section header, or a loading state.
+- Don't fetch a font from a remote host. Ever.
 
 ## Light mode
 
-Light is not a regression check. It is the same system read the other way.
+Light is the same system read the other way: warm paper (`#F7F7F4`) and warm
+near-black ink (`#26251E`). Objects rise toward white, interaction answers
+downward into warm grey, rims darken instead of lightening, and `fill`
+becomes ink on paper. The 3.0 changes on paper are the same changes as on
+graphite: `rim` down to `#DFDDD5` so it reads on white cards, `ink-meta`
+down to `#66635A` (6.6 : 1 on paper), and the user bubble becomes a quiet
+`lift` fill with strong ink rather than a black slab.
 
-Warm paper (`#F7F7F4`) and warm near-black ink (`#26251E`) — the previous
-document's one durable contribution, kept. Every rule above holds with the
-values swapped: objects rise toward white, interaction answers downward into
-warm grey, rims darken instead of lightening, and `fill` becomes ink on paper.
+The three status hues do **not** change between themes.
 
-The three status hues do **not** change between themes. `life` green must be
-legible on both grounds, and it is.
+## The Agentic IDE panes
+
+The pane family (terminal shells, chat stage, rail, toolbar) reads the same
+ladder re-derived per appearance in `terminalThemes.ts`, because a light pane
+inside a dark app is a supported combination and xterm cannot read a CSS
+token. The values there are this document's values: dark shell over `#121212`,
+rims at white 12 %, float `#303030`, ink `#F0F0F0` / `#A3A3A3` / `#7A7A7A`.
+The 16 ANSI slots keep their hues — a terminal's palette is one of the few
+places colour legitimately survives.
 
 ## Enforcement
 
@@ -649,20 +663,21 @@ alongside the existing German and private-key gates.
 
 | Gate | Fails on |
 |---|---|
-| No literal colour | A hex, `rgb()`, or Tailwind palette class in `.tsx`, `.ts` or `.css` |
+| No literal colour | A hex, `rgb()`, or Tailwind palette class in `.tsx`, `.ts` or `.css` outside `terminalThemes.ts` |
 | No opacity hierarchy | `bg-(card\|background\|muted)/[0-9]` or `bg-sheen/` used as a resting fill |
 | No negative hover | `hover:bg-background/` |
 | Type floor | `text-[10px]` or smaller |
 | No admin caps | `uppercase` in `views/` outside a badge |
+| No remote fonts | `fonts.googleapis.com` or any `@import url(http` in `.css` |
 
 ## Known gaps
 
-- Motion is specified only as durations. A typing indicator, a streaming cursor
-  and a run-in-progress pulse are named as needed but not yet designed — "dead"
-  for an interactive app is partly that nothing moves.
+- Motion is specified only as durations. A typing indicator, a streaming
+  cursor and a run-in-progress pulse are still not designed; "dead" for an
+  interactive app is partly that nothing moves.
+- The navigation column lists ~20 sections at one weight and one indent.
+  This version makes them legible; grouping them is a product decision the
+  theme cannot make.
 - Icon size and stroke weight are not yet audited across the view tree.
-  Mismatched icon weights read as amateur faster than any grey value.
-- The wallpaper feature's relationship to this system is undecided. Every value
-  here was derived on a flat ground.
-- The Agentic IDE's pane family (terminal shells, splits, chat rail, toolbar)
-  needs its own section; it is one of the largest surfaces in the product.
+- The wallpaper feature's readability floors were derived on the 2.0 ladder
+  and have not been re-tuned.

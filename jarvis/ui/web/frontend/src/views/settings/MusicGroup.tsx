@@ -45,7 +45,7 @@ export function MusicGroup() {
     const state = connected.has(service)
       ? t("settings_view.music.connected")
       : t("settings_view.music.not_connected");
-    return `${t}`settings_view.music.service_options.${service}`)} — ${state}`;
+    return `${t(`settings_view.music.service_options.${service}`)} — ${state}`;
   };
 
   const playbackDescription = (mode: MusicPlaybackMode): string => {

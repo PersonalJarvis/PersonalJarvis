@@ -240,7 +240,7 @@ function FileRail({
                   title={f.path}
                 >
                   {dir && (
-                    <span className="truncate text-[10px] text-muted-foreground/60">{dir}</span>
+                    <span className="truncate text-micro text-muted-foreground/60">{dir}</span>
                   )}
                   <span className="truncate">{name}</span>
                 </span>
@@ -592,7 +592,7 @@ function ArtifactBody({
     <>
       {content}
       {truncated && (
-        <div className="border-t border-border/60 px-4 py-2 text-[10px] text-muted-foreground">
+        <div className="border-t border-border/60 px-4 py-2 text-micro text-muted-foreground">
           {t("outputs_view.file_truncated")}
         </div>
       )}
@@ -715,7 +715,7 @@ export function CsvTable({ text, tab }: { text: string; tab: boolean }) {
         </table>
       </div>
       {rest.length > shown.length && (
-        <p className="mt-2 text-[10px] text-muted-foreground">
+        <p className="mt-2 text-micro text-muted-foreground">
           {t("outputs_view.csv_more_rows").replace("{n}", String(rest.length - shown.length))}
         </p>
       )}

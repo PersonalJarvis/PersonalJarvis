@@ -179,7 +179,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
             <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
               <Mic2 className="h-3 w-3" />
               User
-              <Badge variant="secondary" className="ml-1 text-[9px]">
+              <Badge variant="secondary" className="ml-1 text-micro">
                 {turn.user_lang}
               </Badge>
               {/* Shown only when the two actually differ, so the badge means
@@ -187,7 +187,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
               {polished && (
                 <Badge
                   variant="outline"
-                  className="ml-1 text-[9px]"
+                  className="ml-1 text-micro"
                   data-testid="turn-polished-badge"
                 >
                   {t("session_turn.polished")}
@@ -231,17 +231,17 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
           <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
             <Brain className="h-3 w-3 text-primary" />
             {turn.tier && (
-              <Badge variant="outline" className="text-[10px]">
+              <Badge variant="outline" className="text-micro">
                 {turn.tier}
               </Badge>
             )}
             {turn.provider && (
-              <Badge variant="outline" className="text-[10px]">
+              <Badge variant="outline" className="text-micro">
                 {turn.provider}
               </Badge>
             )}
             {turn.model && (
-              <Badge variant="outline" className="font-mono text-[10px]">
+              <Badge variant="outline" className="font-mono text-micro">
                 {turn.model}
               </Badge>
             )}
@@ -267,7 +267,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
               <Badge
                 key={tc}
                 variant="secondary"
-                className="font-mono text-[10px]"
+                className="font-mono text-micro"
               >
                 {tc}
               </Badge>
@@ -281,13 +281,13 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
             <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-primary">
               <Volume2 className="h-3 w-3" />
               {assistantName}
-              <Badge variant="secondary" className="ml-1 text-[9px]">
+              <Badge variant="secondary" className="ml-1 text-micro">
                 {turn.jarvis_lang}
               </Badge>
               {turn.voice_name && (
                 <Badge
                   variant="outline"
-                  className="ml-1 font-mono text-[9px] normal-case text-muted-foreground"
+                  className="ml-1 font-mono text-micro normal-case text-muted-foreground"
                   title={
                     turn.voice_verified === false
                       ? `Requested voice (native audio is not a verified speaker): ${
@@ -308,7 +308,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
               {turn.awaiting_confirmation && (
                 <Badge
                   variant="outline"
-                  className="ml-1 border-foreground/40 text-[9px] text-foreground"
+                  className="ml-1 border-foreground/40 text-micro text-foreground"
                 >
                   Awaiting confirmation
                 </Badge>
@@ -349,8 +349,8 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
                       variant="secondary"
                       className={
                         isSubagent
-                          ? "mt-0.5 shrink-0 border-violet-400/40 text-[9px] uppercase tracking-wide text-violet-200"
-                          : "mt-0.5 shrink-0 text-[9px] uppercase tracking-wide"
+                          ? "mt-0.5 shrink-0 border-violet-400/40 text-micro uppercase tracking-wide text-violet-200"
+                          : "mt-0.5 shrink-0 text-micro uppercase tracking-wide"
                       }
                     >
                       {kindLabel[s.spoken_kind] ?? s.spoken_kind}

@@ -109,7 +109,7 @@ export function CaptureCard({ className }: { className?: string }) {
               className="h-full w-full object-contain"
             />
             <div className="absolute bottom-0 left-0 right-0 flex flex-col bg-background/75">
-              <div className="flex items-center gap-2 px-2 py-0.5 font-mono text-[9px] text-muted-foreground">
+              <div className="flex items-center gap-2 px-2 py-0.5 font-mono text-micro text-muted-foreground">
                 <span className="min-w-0 flex-1 truncate">{capture?.targetLabel || capture?.targetKind}</span>
                 {capture && capture.redactions > 0 && (
                   <span className="shrink-0 text-primary">
@@ -151,12 +151,12 @@ export function CaptureCard({ className }: { className?: string }) {
 function CaptureLedger({ captures, t }: { captures: CaptureState[]; t: (key: string) => string }) {
   return (
     <div className="flex h-full flex-col px-2.5 py-1.5">
-      <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
+      <span className="font-mono text-micro uppercase tracking-[0.16em] text-muted-foreground">
         {t("deck.shot_earlier")}
       </span>
       <ul className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto">
         {captures.map((c) => (
-          <li key={c.seq} className="flex items-center gap-2 font-mono text-[10px]">
+          <li key={c.seq} className="flex items-center gap-2 font-mono text-micro">
             <span className="shrink-0 tabular-nums text-muted-foreground">{fmtClock(c.ts)}</span>
             <span className="min-w-0 flex-1 truncate text-foreground">{c.targetLabel || c.targetKind || "—"}</span>
             {c.width > 0 && c.height > 0 && (
@@ -233,7 +233,7 @@ export function ApiStatsCard({ className }: { className?: string }) {
             {models.length > 0 && (
               <ul className="space-y-0.5 border-t border-border/60 pt-1">
                 {models.map(([name, m]) => (
-                  <li key={name} className="flex items-center gap-2 font-mono text-[9.5px]">
+                  <li key={name} className="flex items-center gap-2 font-mono text-micro">
                     <HudLamp on={name === usage.lastModel} />
                     <span className="min-w-0 flex-1 truncate text-foreground">{name}</span>
                     <span className="shrink-0 tabular-nums text-muted-foreground">{m.turns}×</span>
@@ -243,7 +243,7 @@ export function ApiStatsCard({ className }: { className?: string }) {
               </ul>
             )}
             {usage.lastCacheHit && (
-              <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+              <span className="font-mono text-micro uppercase tracking-wider text-muted-foreground">
                 {t("deck.api_cache_hit")}
               </span>
             )}
@@ -257,7 +257,7 @@ export function ApiStatsCard({ className }: { className?: string }) {
 function Stat({ label, value, hot }: { label: string; value: string; hot?: boolean }) {
   return (
     <div className="flex flex-col">
-      <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">{label}</span>
+      <span className="font-mono text-micro uppercase tracking-[0.14em] text-muted-foreground">{label}</span>
       <span className={cn("font-mono text-sm tabular-nums", hot ? "text-primary" : "text-foreground")}>{value}</span>
     </div>
   );
@@ -320,11 +320,11 @@ export function LiveCounter({ className }: { className?: string }) {
       >
         {listening ? live : wordsSession}
       </span>
-      <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
+      <span className="font-mono text-micro uppercase tracking-[0.16em] text-muted-foreground">
         {listening ? t("deck.words_live") : t("deck.words_session")}
       </span>
       {today !== null && (
-        <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+        <span className="font-mono text-micro tabular-nums text-muted-foreground">
           · {t("deck.words_today").replace("{0}", String(today))}
         </span>
       )}

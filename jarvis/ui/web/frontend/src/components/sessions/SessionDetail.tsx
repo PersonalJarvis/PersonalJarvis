@@ -271,7 +271,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
                 <Badge variant="outline">{session.hangup_reason}</Badge>
               )}
               {session.providers_used.map((p) => (
-                <Badge key={p} variant="outline" className="font-mono text-[10px]">
+                <Badge key={p} variant="outline" className="font-mono text-micro">
                   {p}
                 </Badge>
               ))}
@@ -281,7 +281,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
                 </Badge>
               )}
               {(session.total_tokens_in > 0 || session.total_tokens_out > 0) && (
-                <Badge variant="outline" className="text-[10px]">
+                <Badge variant="outline" className="text-micro">
                   {session.total_tokens_in}+{session.total_tokens_out} tok
                 </Badge>
               )}
@@ -290,7 +290,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
 
           {/* Export actions: one row per format with copy + download */}
           <div className="flex shrink-0 flex-col gap-1.5">
-            <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            <div className="text-micro font-medium uppercase tracking-wider text-muted-foreground">
               Export
             </div>
             <ExportRow

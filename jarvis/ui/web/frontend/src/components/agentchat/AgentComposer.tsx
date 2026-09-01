@@ -421,7 +421,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       // the thing it looks like is a target people miss.
       {...files.dragHandlers}
       className={cn(
-        "relative flex flex-col gap-2 rounded-2xl border border-border bg-card p-3 transition-[border-color,box-shadow] dark:border-transparent",
+        "relative flex flex-col gap-2 rounded-2xl border border-border-strong bg-card p-3 shadow-rim transition-[border-color,box-shadow]",
         "focus-within:border-primary/40",
         files.dragging && "border-primary/60",
       )}

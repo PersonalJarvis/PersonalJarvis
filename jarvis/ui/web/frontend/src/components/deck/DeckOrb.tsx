@@ -326,7 +326,7 @@ function Readout({
     <span
       data-testid={testId}
       className={cn(
-        "pointer-events-none absolute max-w-[42%] truncate px-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-primary/90",
+        "pointer-events-none absolute max-w-[42%] truncate px-1.5 font-mono text-micro uppercase tracking-[0.16em] text-primary/90",
         className,
       )}
     >

@@ -64,7 +64,7 @@ export function CategoryUsage({ data }: { data: BoardCategories }) {
                   <span className="font-display text-sm font-semibold tabular-nums">
                     {count.toLocaleString()}
                   </span>
-                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                  <span className="text-micro text-muted-foreground tabular-nums">
                     {pct}%
                   </span>
                 </span>

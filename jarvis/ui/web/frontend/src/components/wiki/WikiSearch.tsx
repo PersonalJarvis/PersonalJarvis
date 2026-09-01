@@ -263,7 +263,7 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
           className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           autoFocus
         />
-        <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+        <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 text-micro text-muted-foreground">
           Esc
         </kbd>
       </div>

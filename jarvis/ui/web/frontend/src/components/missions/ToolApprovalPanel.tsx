@@ -209,7 +209,7 @@ export function ToolApprovalPanel({
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-foreground">
+                  <div className="flex items-center gap-1.5 text-micro font-semibold uppercase tracking-wider text-foreground">
                     <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
                     {t("mission_tool_approvals.pending_title")}
                   </div>
@@ -220,7 +220,7 @@ export function ToolApprovalPanel({
                 <Badge
                   variant="outline"
                   className={cn(
-                    "shrink-0 font-mono text-[9px] uppercase",
+                    "shrink-0 font-mono text-micro uppercase",
                     riskClassName(approval.risk_tier),
                   )}
                 >
@@ -241,21 +241,21 @@ export function ToolApprovalPanel({
                   />
                 ) : null}
                 <div>
-                  <dt className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
+                  <dt className="text-micro font-medium uppercase tracking-wider text-muted-foreground">
                     {t("mission_tool_approvals.arguments")}
                   </dt>
-                  <dd className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-all rounded border border-border/60 bg-background/60 p-2 font-mono text-[10px] text-foreground/80">
+                  <dd className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-all rounded border border-border/60 bg-background/60 p-2 font-mono text-micro text-foreground/80">
                     {approval.args_preview || t("mission_tool_approvals.no_arguments")}
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                  <dt className="flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
+                  <dt className="flex items-center gap-1 text-micro font-medium uppercase tracking-wider text-muted-foreground">
                     <Clock3 className="h-3 w-3" />
                     {t("mission_tool_approvals.expires")}
                   </dt>
                   <dd
                     className={cn(
-                      "text-right font-mono text-[10px]",
+                      "text-right font-mono text-micro",
                       expired ? "text-destructive" : "text-foreground",
                     )}
                     title={new Date(expiresAtMs).toLocaleString(language)}
@@ -270,14 +270,14 @@ export function ToolApprovalPanel({
               {decisionError ? (
                 <p
                   role="alert"
-                  className="mt-3 rounded border border-destructive/40 bg-destructive/10 p-2 text-[10px] text-destructive"
+                  className="mt-3 rounded border border-destructive/40 bg-destructive/10 p-2 text-micro text-destructive"
                 >
                   {t("mission_tool_approvals.decision_failed")}: {decisionError}
                 </p>
               ) : null}
 
               {expired ? (
-                <p className="mt-3 text-[10px] text-muted-foreground">
+                <p className="mt-3 text-micro text-muted-foreground">
                   {t("mission_tool_approvals.expired_body")}
                 </p>
               ) : isConfirming ? (
@@ -288,7 +288,7 @@ export function ToolApprovalPanel({
                   <p className="text-xs font-semibold text-destructive">
                     {t("mission_tool_approvals.confirm_title")}
                   </p>
-                  <p className="mt-1 text-[10px] text-foreground/80">
+                  <p className="mt-1 text-micro text-foreground/80">
                     {t("mission_tool_approvals.confirm_body")}
                   </p>
                   <div className="mt-2 flex justify-end gap-2">
@@ -386,13 +386,13 @@ function DetailRow({
 }) {
   return (
     <div className="flex items-start justify-between gap-3">
-      <dt className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
+      <dt className="shrink-0 text-micro font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </dt>
       <dd
         className={cn(
           "min-w-0 break-words text-right text-foreground/80",
-          mono && "break-all font-mono text-[10px]",
+          mono && "break-all font-mono text-micro",
         )}
       >
         {value}

@@ -129,7 +129,7 @@ export function JarvisBar({ phase, hint }: { phase: WaveformPhase; hint: string 
       <div className="flex items-center gap-2">
         <span
           className={cn(
-            "flex min-w-0 items-center gap-2 px-1 font-mono text-[10px] uppercase tracking-[0.16em]",
+            "flex min-w-0 items-center gap-2 px-1 font-mono text-micro uppercase tracking-[0.16em]",
             callActive ? "text-primary" : "text-muted-foreground",
           )}
           data-testid="jarvis-bar-state"
@@ -193,7 +193,7 @@ export function JarvisBar({ phase, hint }: { phase: WaveformPhase; hint: string 
         >
           <span className="truncate font-medium text-foreground">{engine.providerLabel}</span>
           {engine.model && (
-            <span className="hidden truncate font-mono text-[10px] text-muted-foreground sm:inline">
+            <span className="hidden truncate font-mono text-micro text-muted-foreground sm:inline">
               {engine.model}
             </span>
           )}

@@ -83,7 +83,7 @@ export function RunsCard({ className }: { className?: string }) {
               <span className="min-w-0 flex-1 truncate text-foreground">
                 {r.preview || r.outcome || r.session_id.slice(0, 8)}
               </span>
-              <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+              <span className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground">
                 {r.turn_count > 0 ? `${r.turn_count}t · ` : ""}
                 {fmtClock(r.started_ms)}
               </span>
@@ -144,7 +144,7 @@ export function OutputsCard({ className }: { className?: string }) {
                 {o.utterance || o.summary || o.slug}
               </span>
               {typeof o.artifact_count === "number" && o.artifact_count > 0 && (
-                <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+                <span className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground">
                   {o.artifact_count}
                 </span>
               )}
@@ -298,7 +298,7 @@ export function IdeGridCard({ className }: { className?: string }) {
       ) : (
         <div ref={bodyRef} className="flex h-full min-h-0 flex-col gap-1.5">
           {project && (
-            <div className="flex items-center gap-2 truncate font-mono text-[10px] text-muted-foreground">
+            <div className="flex items-center gap-2 truncate font-mono text-micro text-muted-foreground">
               <span className="truncate text-foreground/80">{project.name}</span>
               {branch && <span className="shrink-0 truncate">⎇ {branch}</span>}
             </div>
@@ -337,7 +337,7 @@ function CrewColumn({
     <div className={cn("flex flex-col", scroll && "min-h-0")}>
       <div
         className={cn(
-          "flex items-center gap-1.5 border-b pb-1 font-mono text-[9px] uppercase tracking-[0.2em]",
+          "flex items-center gap-1.5 border-b pb-1 font-mono text-micro uppercase tracking-[0.2em]",
           hot ? "border-primary/50 text-primary" : "border-border text-muted-foreground",
         )}
       >
@@ -345,7 +345,7 @@ function CrewColumn({
         <span className="ml-auto tabular-nums">{rows.length}</span>
       </div>
       <ul className={cn("space-y-1 pt-1", scroll && "min-h-0 flex-1 overflow-y-auto")}>
-        {rows.length === 0 && <li className="text-[10px] text-muted-foreground/70">—</li>}
+        {rows.length === 0 && <li className="text-micro text-muted-foreground/70">—</li>}
         {rows.map((r) => (
           <li key={r.key}>
             <button
@@ -371,24 +371,24 @@ function CrewColumn({
                 <span className="min-w-0 flex-1 truncate text-[11px] text-foreground group-hover/row:text-primary">
                   {r.title}
                 </span>
-                <span className={cn("shrink-0 font-mono text-[9px] uppercase tracking-wider", CREW_TONE[r.state])}>
+                <span className={cn("shrink-0 font-mono text-micro uppercase tracking-wider", CREW_TONE[r.state])}>
                   {t(`deck.ide_state_${r.state}`)}
                 </span>
                 {r.since && (
-                  <span className="shrink-0 font-mono text-[9px] tabular-nums text-muted-foreground">
+                  <span className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground">
                     · {r.since}
                   </span>
                 )}
               </span>
               <span className="flex items-center gap-1.5 pl-3">
-                <span className="shrink-0 font-mono text-[9px] text-muted-foreground">{r.agent}</span>
+                <span className="shrink-0 font-mono text-micro text-muted-foreground">{r.agent}</span>
                 {r.prompt && (
-                  <span className="min-w-0 flex-1 truncate font-mono text-[9.5px] text-muted-foreground/90">
+                  <span className="min-w-0 flex-1 truncate font-mono text-micro text-muted-foreground/90">
                     &ldquo;{r.prompt}&rdquo;
                   </span>
                 )}
                 {r.prompts > 0 && !r.prompt && (
-                  <span className="font-mono text-[9px] tabular-nums text-muted-foreground">{r.prompts}×</span>
+                  <span className="font-mono text-micro tabular-nums text-muted-foreground">{r.prompts}×</span>
                 )}
               </span>
             </button>
@@ -447,7 +447,7 @@ export function TerminalsCard({ className }: { className?: string }) {
       {shown.length === 0 ? (
         <p className="text-[11px] text-muted-foreground">{t("deck.terminals_empty")}</p>
       ) : (
-        <div className="font-mono text-[10.5px] leading-relaxed">
+        <div className="font-mono text-micro leading-relaxed">
           {shown.map((l) => (
             <div key={l.id} className={cn("truncate", LINE_TONE[l.kind] ?? LINE_TONE.out)}>
               {l.text}

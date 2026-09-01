@@ -109,7 +109,7 @@ export function ChoiceRow({
         <span className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
           <span className="text-base font-medium text-foreground">{title}</span>
           {badge ? (
-            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+            <span className="text-micro font-semibold uppercase tracking-[0.14em] text-primary">
               {badge}
             </span>
           ) : null}
@@ -118,7 +118,7 @@ export function ChoiceRow({
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1.5 pt-0.5">
         {selected ? (
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+          <span className="text-micro font-semibold uppercase tracking-[0.14em] text-primary">
             {t("onboarding.wake_word.selected")}
           </span>
         ) : null}

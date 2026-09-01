@@ -250,7 +250,7 @@ export function WorkspaceTerminal({
           <TerminalIcon className="h-3.5 w-3.5 text-primary" />
           <span className="font-mono">{title}</span>
         </div>
-        <span className="text-[10px] uppercase tracking-wider">
+        <span className="text-micro uppercase tracking-wider">
           {status === "live" ? (
             <span className="text-muted-foreground">live</span>
           ) : status === "error" ? (

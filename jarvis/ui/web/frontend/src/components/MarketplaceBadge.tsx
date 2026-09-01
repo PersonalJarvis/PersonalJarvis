@@ -36,7 +36,7 @@ export function MarketplaceBadge({
         "inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/30",
         "bg-primary/10 text-primary",
         compact ? "px-1.5 py-0.5" : "px-2 py-0.5",
-        "text-[10px] font-medium uppercase tracking-wide",
+        "text-micro font-medium uppercase tracking-wide",
         className,
       )}
     >

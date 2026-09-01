@@ -122,7 +122,7 @@ export function FrontierSwitchModal() {
                     key={`${s.provider}-${s.tier}`}
                     className="flex items-center gap-2 text-xs"
                   >
-                    <span className="rounded border border-border bg-secondary/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <span className="rounded border border-border bg-secondary/40 px-1.5 py-0.5 text-micro uppercase tracking-wide text-muted-foreground">
                       {s.tier}
                     </span>
                     <span className="font-mono text-muted-foreground line-through">

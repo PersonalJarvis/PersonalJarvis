@@ -113,7 +113,7 @@ function StepRow({
           {label}
         </span>
         {meta && (
-          <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground">
+          <span className="font-mono text-micro tabular-nums text-muted-foreground">
             {meta}
           </span>
         )}
@@ -122,7 +122,7 @@ function StepRow({
             type="button"
             onClick={() => setOpen((v) => !v)}
             className={cn(
-              "ml-auto shrink-0 rounded px-1 text-[10.5px] text-muted-foreground",
+              "ml-auto shrink-0 rounded px-1 text-micro text-muted-foreground",
               "transition-colors group-hover/step:text-muted-foreground hover:!text-foreground",
               "focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               open && "!text-muted-foreground",

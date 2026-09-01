@@ -237,7 +237,7 @@ function MenuItem({
     >
       <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
       <span className="flex-1">{label}</span>
-      <span className="text-[10px] tracking-wider text-muted-foreground">
+      <span className="text-micro tracking-wider text-muted-foreground">
         {shortcut}
       </span>
     </button>

@@ -320,7 +320,7 @@ function Metric({
 }) {
   return (
     <div className={cn("flex flex-col gap-2.5 px-5 py-5 lg:px-6", className)}>
-      <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+      <div className="flex items-center gap-2 text-micro font-medium uppercase tracking-[0.14em] text-muted-foreground">
         {dot && (
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: dot }} />
         )}

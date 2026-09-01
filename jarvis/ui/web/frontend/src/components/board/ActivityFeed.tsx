@@ -87,14 +87,14 @@ function SortToggle({
       <button
         onClick={() => onChange("interesting")}
         className={cn(
-          "rounded px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors",
+          "rounded px-2 py-0.5 text-micro uppercase tracking-wider transition-colors",
           value === "interesting" ? "bg-primary/15 text-primary" : "text-muted-foreground",
         )}
       >Interesting</button>
       <button
         onClick={() => onChange("latest")}
         className={cn(
-          "rounded px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors",
+          "rounded px-2 py-0.5 text-micro uppercase tracking-wider transition-colors",
           value === "latest" ? "bg-primary/15 text-primary" : "text-muted-foreground",
         )}
       >Latest</button>
@@ -112,7 +112,7 @@ function FeedRow({
   const author = friendName ?? item.author_display_name ?? `${item.author_pubkey.slice(0, 8)}…`;
   return (
     <li className="rounded-lg border border-border bg-background/40 p-3">
-      <header className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+      <header className="mb-2 flex items-center gap-2 text-micro uppercase tracking-wider text-muted-foreground">
         <Sparkles className="h-3 w-3 text-primary" />
         <span>{author}</span>
         <span>·</span>

@@ -151,7 +151,7 @@ export function CodeBlock({ language, code, chrome = true }: CodeBlockProps) {
       {/* Header-Bar */}
       {chrome && (
       <div className="flex items-center justify-between border-b border-border/40 bg-muted/20 px-3 py-1">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        <span className="text-micro uppercase tracking-wider text-muted-foreground">
           {language || "text"}
         </span>
         <button

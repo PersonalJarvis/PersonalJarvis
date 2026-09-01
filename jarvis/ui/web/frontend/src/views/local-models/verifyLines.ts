@@ -49,7 +49,7 @@ export function verifyLines(verify: VerifyResponse | undefined, t: T): string[] 
       step.ok === true ? "" : step.detail,
     ].filter(Boolean);
     return `${stepLabel(step, t)} — ${verdict}${
-      parts.length > 0 ?}` · ${parts.join(" · ")}` : ""
+      parts.length > 0 ? ` · ${parts.join(" · ")}` : ""
     }`;
   });
 }

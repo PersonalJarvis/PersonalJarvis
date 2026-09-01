@@ -1329,7 +1329,7 @@ function RatesTable({
                 <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <span className="truncate text-foreground">{rate.model}</span>
                 {!rate.known ? (
-                  <span className="shrink-0 rounded border border-foreground/40 px-1.5 py-0.5 text-[10px] text-foreground">
+                  <span className="shrink-0 rounded border border-foreground/40 px-1.5 py-0.5 text-micro text-foreground">
                     {t("costs_view.rate_unknown")}
                   </span>
                 ) : null}

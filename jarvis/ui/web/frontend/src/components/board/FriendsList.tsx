@@ -64,11 +64,11 @@ function FriendRow({
           <div className="flex items-center justify-between gap-2">
             <div>
               <div className="font-medium">{item.display_name}</div>
-              <code className="font-mono text-[10px] text-muted-foreground">
+              <code className="font-mono text-micro text-muted-foreground">
                 {item.pubkey.slice(0, 16)}…
               </code>
             </div>
-            <div className="text-right text-[10px] text-muted-foreground">
+            <div className="text-right text-micro text-muted-foreground">
               <div>{`${t("friends_list.since")} ${new Date(item.paired_at).toLocaleDateString("de-DE")}`}</div>
               {item.last_pull_at && (
                 <div>{`${t("friends_list.last_pull")} ${timeSince(item.last_pull_at)}`}</div>
@@ -77,7 +77,7 @@ function FriendRow({
           </div>
 
           <div className="mt-2 flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <span className="text-micro uppercase tracking-wider text-muted-foreground">
               {t("friends_list.pull_every")}
             </span>
             <div className="flex gap-1">
@@ -88,7 +88,7 @@ function FriendRow({
                   disabled={isPending}
                   onClick={() => onUpdateInterval(s)}
                   className={cn(
-                    "rounded-md border px-2 py-0.5 text-[10px] transition-colors",
+                    "rounded-md border px-2 py-0.5 text-micro transition-colors",
                     item.pull_interval_s === s
                       ? "border-primary/40 bg-primary/10 text-primary"
                       : "border-border/60 bg-background/40 text-muted-foreground hover:bg-background/60",

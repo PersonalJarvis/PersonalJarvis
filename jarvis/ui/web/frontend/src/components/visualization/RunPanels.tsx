@@ -78,7 +78,7 @@ export function RunStatusBadge({
       data-testid="run-status-badge"
       className={cn(
         "inline-flex shrink-0 items-center gap-1 rounded border font-semibold uppercase tracking-wide",
-        size === "sm" ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[10px]",
+        size === "sm" ? "px-1.5 py-0.5 text-micro" : "px-2 py-0.5 text-micro",
         badgeClass,
       )}
     >
@@ -110,7 +110,7 @@ function ContinuationChip({ onJump }: { onJump: () => void }) {
         onJump();
       }}
       className={cn(
-        "inline-flex shrink-0 select-none items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition-colors",
+        "inline-flex shrink-0 select-none items-center gap-1 rounded border px-1.5 py-0.5 text-micro font-semibold uppercase tracking-wide transition-colors",
         "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20",
       )}
     >
@@ -177,7 +177,7 @@ export function RunActions({
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
           title="GitHub"
-          className="inline-flex items-center gap-1 rounded border border-border bg-secondary/40 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-primary"
+          className="inline-flex items-center gap-1 rounded border border-border bg-secondary/40 px-1.5 py-0.5 text-micro text-muted-foreground hover:text-primary"
         >
           <Github className="h-3 w-3" aria-hidden />
           GitHub
@@ -266,7 +266,7 @@ export function RunNotes({ run, className }: { run: OutputSummary; className?: s
               : "border-destructive/30 bg-destructive/5",
           )}
         >
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="mb-1 text-micro font-semibold uppercase tracking-wide text-muted-foreground">
             {needsReview
               ? t("outputs_view.needs_review")
               : isCancelled
@@ -293,7 +293,7 @@ export function RunNotes({ run, className }: { run: OutputSummary; className?: s
 
       {run.summary && (
         <section className="rounded-xl border border-border bg-card/40 p-3">
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="mb-1 text-micro font-semibold uppercase tracking-wide text-muted-foreground">
             Summary
           </div>
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
@@ -304,7 +304,7 @@ export function RunNotes({ run, className }: { run: OutputSummary; className?: s
 
       {run.error && !run.terminal_reason && (
         <section className="rounded-xl border border-destructive/30 bg-destructive/5 p-3">
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+          <div className="mb-1 text-micro font-semibold uppercase tracking-wide text-destructive">
             {t("common.error")}
           </div>
           <pre className="whitespace-pre-wrap text-xs text-destructive/90">{run.error}</pre>

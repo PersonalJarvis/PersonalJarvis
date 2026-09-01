@@ -57,7 +57,7 @@ export function ChatThread({ friend }: { friend: FriendDetail }) {
           </span>
           <SourceBadge channels={friend.channels} />
         </div>
-        <span className="rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+        <span className="rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 text-micro uppercase tracking-wider text-muted-foreground">
           {t("chat_thread.profile")}: {friend.permission_profile}
         </span>
       </header>
@@ -131,7 +131,7 @@ function FriendMessageBubble({ message }: { message: FriendMessage }) {
         <div className="whitespace-pre-wrap">{message.text}</div>
         <div
           className={cn(
-            "mt-1 text-[10px]",
+            "mt-1 text-micro",
             isOutbound ? "opacity-70" : "text-muted-foreground"
           )}
         >

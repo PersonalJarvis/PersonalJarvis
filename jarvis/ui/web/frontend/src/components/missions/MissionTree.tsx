@@ -204,7 +204,7 @@ function NodeRenderer({ node, style, dragHandle }: NodeRendererProps<TreeNode>) 
       {isMission && meta && (
         <span
           className={cn(
-            "rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider",
+            "rounded px-1.5 py-0.5 text-micro font-mono uppercase tracking-wider",
             meta.className,
           )}
         >

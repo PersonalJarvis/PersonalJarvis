@@ -84,7 +84,7 @@ export function TurnCard({ className }: { className?: string }) {
                 <span
                   key={ph}
                   className={cn(
-                    "flex flex-1 flex-col items-center gap-0.5 font-mono text-[8px] uppercase tracking-wider",
+                    "flex flex-1 flex-col items-center gap-0.5 font-mono text-micro uppercase tracking-wider",
                     on ? "text-primary" : "text-muted-foreground/70",
                   )}
                 >
@@ -117,11 +117,11 @@ export function TurnCard({ className }: { className?: string }) {
               >
                 {elapsed === null ? "—" : fmtMs(elapsed)}
               </span>
-              <span className="mt-1 max-w-[12ch] truncate font-mono text-[8px] uppercase leading-tight tracking-[0.14em] text-muted-foreground">
+              <span className="mt-1 max-w-[12ch] truncate font-mono text-micro uppercase leading-tight tracking-[0.14em] text-muted-foreground">
                 {turn.anchorTs === null ? t("deck.turn_phase_hear") : t("deck.turn_since_anchor")}
               </span>
             </div>
-            <ul className="flex min-w-0 flex-1 flex-col gap-px font-mono text-[9.5px]">
+            <ul className="flex min-w-0 flex-1 flex-col gap-px font-mono text-micro">
               <Mark label={t("deck.turn_stt")} ms={turn.sttMs} />
               {turn.ackMs !== null && <Mark label={t("deck.turn_ack")} ms={turn.ackMs} hot />}
               <Mark label={t("deck.turn_first_token")} ms={turn.ttftMs} />
@@ -130,7 +130,7 @@ export function TurnCard({ className }: { className?: string }) {
           </div>
 
           {/* The bottom line: who answered, and with what. */}
-          <div className="flex items-center gap-2 overflow-hidden border-t border-border/60 px-2.5 py-1 font-mono text-[9.5px] text-muted-foreground">
+          <div className="flex items-center gap-2 overflow-hidden border-t border-border/60 px-2.5 py-1 font-mono text-micro text-muted-foreground">
             <HudLamp on={live && !quiet} />
             <span className="min-w-0 flex-1 truncate">
               {[

@@ -111,7 +111,7 @@ export function ConductorView() {
       <div className="flex flex-1 overflow-hidden">
         {/* Links: Job-Katalog */}
         <div className="flex w-[46%] flex-col border-r border-border">
-          <div className="px-5 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="px-5 py-2 text-micro uppercase tracking-wider text-muted-foreground">
             Jobs
           </div>
           <ScrollArea className="flex-1">
@@ -134,7 +134,7 @@ export function ConductorView() {
 
         {/* Rechts: Timeline */}
         <div className="flex flex-1 flex-col">
-          <div className="px-5 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="px-5 py-2 text-micro uppercase tracking-wider text-muted-foreground">
             Timeline
           </div>
           <ScrollArea className="flex-1">
@@ -220,7 +220,7 @@ function StatChip({
   return (
     <div className="flex items-center gap-1.5 rounded-md border border-border bg-card/40 px-2 py-1">
       {icon}
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      <span className="text-micro uppercase tracking-wider text-muted-foreground">
         {label}
       </span>
       <span className="font-mono text-sm">{value}</span>
@@ -250,12 +250,12 @@ function JobCard({ job }: { job: JobSummary }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-sm font-semibold">{job.name}</h3>
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-micro">
               {TYPE_LABEL[job.type] ?? job.type}
             </Badge>
             <Badge
               variant={job.schedule_type === "cron" ? "default" : "secondary"}
-              className="text-[10px]"
+              className="text-micro"
             >
               <SchedIcon className="mr-1 h-3 w-3" />
               {job.schedule_expr ?? job.schedule_type}
@@ -275,7 +275,7 @@ function JobCard({ job }: { job: JobSummary }) {
               {job.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="rounded-full border border-border bg-background/60 px-2 py-0.5 text-[10px] text-muted-foreground"
+                  className="rounded-full border border-border bg-background/60 px-2 py-0.5 text-micro text-muted-foreground"
                 >
                   #{tag}
                 </span>
@@ -338,7 +338,7 @@ function LastRunChip({
   return (
     <Badge
       variant={ok ? "outline" : "destructive"}
-      className="text-[10px]"
+      className="text-micro"
       title={at ? new Date(at / 1e6).toLocaleString() : ""}
     >
       {ok ? (
@@ -408,7 +408,7 @@ function TimelineRow({
         <span className="truncate font-medium text-foreground">
           {job?.name ?? run.job_id.slice(0, 8)}
         </span>
-        <Badge variant="outline" className="text-[10px]">
+        <Badge variant="outline" className="text-micro">
           {run.trigger}
         </Badge>
         {duration !== undefined && (
@@ -431,7 +431,7 @@ function TimelineRow({
         <div className="space-y-2 border-t border-border/60 p-3 text-[11px]">
           {run.output && (
             <div>
-              <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+              <div className="mb-1 text-micro uppercase tracking-wider text-muted-foreground">
                 Output
               </div>
               <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-background/40 p-2 font-mono text-[11px] leading-snug">
@@ -441,7 +441,7 @@ function TimelineRow({
           )}
           {Object.keys(metrics).length > 0 && (
             <div>
-              <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+              <div className="mb-1 text-micro uppercase tracking-wider text-muted-foreground">
                 Metrics
               </div>
               <div className="flex flex-wrap gap-2">
@@ -521,7 +521,7 @@ function JobEditorModal({ onClose }: { onClose: () => void }) {
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold">{t("conductor_view.new_job")}</h2>
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-micro">
               JSON
             </Badge>
           </div>

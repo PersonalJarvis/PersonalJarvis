@@ -76,11 +76,11 @@ function ToolCard({ data }: NodeProps<Node<ToolNodeData>>) {
         <div className="text-xs font-semibold text-zinc-100 truncate">
           {appearance.label}
         </div>
-        <div className="text-[10px] text-zinc-400 truncate">
+        <div className="text-micro text-zinc-400 truncate">
           {entry.tool_name}
         </div>
         {entry.duration_ms !== undefined && entry.duration_ms > 0 && (
-          <div className="text-[10px] text-zinc-500 mt-0.5">
+          <div className="text-micro text-zinc-500 mt-0.5">
             {(entry.duration_ms / 1000).toFixed(1)}s
           </div>
         )}
@@ -314,7 +314,7 @@ function ToolDetailSheet({
           </div>
 
           <div>
-            <div className="text-[10px] uppercase text-zinc-500 mb-1">
+            <div className="text-micro uppercase text-zinc-500 mb-1">
               Arguments
             </div>
             <pre className="rounded bg-zinc-800/60 p-2 text-[11px] whitespace-pre-wrap text-zinc-200 break-all">
@@ -324,7 +324,7 @@ function ToolDetailSheet({
 
           {tool.output_preview && (
             <div>
-              <div className="text-[10px] uppercase text-zinc-500 mb-1">
+              <div className="text-micro uppercase text-zinc-500 mb-1">
                 Output
               </div>
               <pre className="rounded bg-zinc-800/60 p-2 text-[11px] whitespace-pre-wrap text-zinc-200 break-all">
@@ -347,7 +347,7 @@ function ToolDetailSheet({
 function KV({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="text-zinc-500 text-[10px] uppercase">{label}</span>
+      <span className="text-zinc-500 text-micro uppercase">{label}</span>
       <span className="text-zinc-200 font-mono">{value}</span>
     </div>
   );

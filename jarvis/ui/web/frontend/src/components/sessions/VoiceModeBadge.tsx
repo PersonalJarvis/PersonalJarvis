@@ -49,12 +49,12 @@ export function VoiceModeBadge({
         MODE_STYLES[knownMode],
         prominence === "prominent"
           ? "gap-2 px-2.5 py-1.5 text-xs"
-          : "gap-1 px-1.5 py-0.5 text-[10px]",
+          : "gap-1 px-1.5 py-0.5 text-micro",
         className,
       )}
     >
       {prominence === "prominent" && (
-        <span className="text-[9px] font-bold uppercase tracking-[0.14em] opacity-75">
+        <span className="text-micro font-bold uppercase tracking-[0.14em] opacity-75">
           {t("voice_mode.label")}
         </span>
       )}

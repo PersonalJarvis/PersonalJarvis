@@ -2244,7 +2244,7 @@ describe("terminal text size across a rebuild", () => {
     ).toBe("rgba(18, 20, 26, 0)");
     expect(newest().options.minimumContrastRatio).toBe(4.5);
     expect(screen.getByTestId("agentic-pane-Dana").style.background).toBe(
-      "rgba(10, 10, 10, 0.58)",
+      "rgba(18, 18, 18, 0.58)",
     );
   });
 

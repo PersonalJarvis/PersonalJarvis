@@ -111,12 +111,12 @@ function FriendPermissionRow({ friend }: { friend: FriendItem }) {
               {friend.display_name}
             </span>
             {update.isPending && (
-              <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="flex items-center gap-1 text-micro text-muted-foreground">
                 <Loader2 className="h-3 w-3 animate-spin" /> {t("common.saving")}
               </span>
             )}
             {update.isError && (
-              <span className="text-[10px] text-destructive">
+              <span className="text-micro text-destructive">
                 {t("status_tab.error_prefix")}: {(update.error as Error).message}
               </span>
             )}
@@ -190,7 +190,7 @@ function ProfileCard({
           {name}
         </span>
         {isDefault && (
-          <span className="rounded-full border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-primary">
+          <span className="rounded-full border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-micro uppercase tracking-wider text-primary">
             default
           </span>
         )}

@@ -337,7 +337,7 @@ function DropdownPicker({
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-muted-foreground">{icon}</span>
           <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="text-micro uppercase tracking-wider text-muted-foreground">
               {label}
             </div>
             <div className="truncate font-medium">{current?.label}</div>
@@ -374,7 +374,7 @@ function DropdownPicker({
             <div className="min-w-0">
               <div className="font-medium">{opt.label}</div>
               {opt.hint && (
-                <div className="mt-0.5 text-[10px] text-muted-foreground">
+                <div className="mt-0.5 text-micro text-muted-foreground">
                   {opt.hint}
                 </div>
               )}
@@ -429,14 +429,14 @@ function CandidateCard({
             <Badge
               variant="outline"
               className={cn(
-                "flex-shrink-0 text-[10px]",
+                "flex-shrink-0 text-micro",
                 TRUST_COLORS[candidate.trust],
               )}
             >
               {TRUST_LABEL[candidate.trust] ?? candidate.trust}
             </Badge>
             {candidate.stars !== null && candidate.stars > 0 && (
-              <span className="flex-shrink-0 text-[10px] text-muted-foreground">
+              <span className="flex-shrink-0 text-micro text-muted-foreground">
                 <Star className="inline h-3 w-3" />{" "}
                 {formatStars(candidate.stars)}
               </span>
@@ -449,7 +449,7 @@ function CandidateCard({
             {candidate.categories.map((c) => (
               <span
                 key={c}
-                className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                className="rounded-sm bg-muted px-1.5 py-0.5 text-micro text-muted-foreground"
               >
                 {c}
               </span>
@@ -457,14 +457,14 @@ function CandidateCard({
             {candidate.tags.slice(0, 3).map((t) => (
               <span
                 key={t}
-                className="text-[10px] text-muted-foreground/70"
+                className="text-micro text-muted-foreground/70"
               >
                 #{t}
               </span>
             ))}
           </div>
           {candidate.reason && (
-            <div className="mt-2 text-[10px] italic text-muted-foreground">
+            <div className="mt-2 text-micro italic text-muted-foreground">
               {candidate.reason} · Score {candidate.score.toFixed(2)}
             </div>
           )}
@@ -502,7 +502,7 @@ function CandidateCard({
               href={candidate.source_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
+              className="flex items-center gap-1 text-micro text-muted-foreground hover:text-primary"
             >
               <ExternalLink className="h-3 w-3" />
               {t("skill_finder_dialog.source")}

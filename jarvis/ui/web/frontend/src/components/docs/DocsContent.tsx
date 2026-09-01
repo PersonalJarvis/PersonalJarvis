@@ -226,7 +226,7 @@ function NavCard({
       onClick={() => onSelect(doc.slug)}
       className={`flex flex-col gap-1 rounded-md border border-border bg-card/40 p-3 text-left transition hover:bg-muted/40 ${align}`}
     >
-      <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+      <span className="flex items-center gap-1 text-micro uppercase tracking-wider text-muted-foreground">
         {direction === "prev" ? <Icon className="h-3 w-3" aria-hidden="true" /> : null}
         {direction === "prev" ? t("docs_content.prev") : t("docs_content.next")}
         {direction === "next" ? <Icon className="h-3 w-3" aria-hidden="true" /> : null}

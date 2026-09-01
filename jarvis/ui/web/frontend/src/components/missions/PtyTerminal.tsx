@@ -253,7 +253,7 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
           <TerminalIcon className="h-3.5 w-3.5 text-primary" />
           <span className="font-mono">worker {workerId.slice(0, 12)}</span>
         </div>
-        <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider">
+        <div className="flex items-center gap-2 text-micro uppercase tracking-wider">
           {streamError ? (
             <span className="flex items-center gap-1 text-destructive">
               <AlertCircle className="h-3 w-3" />

@@ -93,7 +93,7 @@ export function ActivityHeatmap({
         {monthLabels.map((label, ci) => (
           <div
             key={ci}
-            className="w-3.5 text-[9px] capitalize leading-none text-muted-foreground/70"
+            className="w-3.5 text-micro capitalize leading-none text-muted-foreground/70"
           >
             {label}
           </div>
@@ -134,7 +134,7 @@ export function ActivityHeatmap({
 export function HeatmapScale() {
   const t = useT();
   return (
-    <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+    <div className="flex items-center gap-1.5 text-micro uppercase tracking-wider text-muted-foreground">
       <span>{t("board_view.heatmap_less")}</span>
       {[0, 1, 2, 3, 4].map((lvl) => (
         <span key={lvl} className={cn("h-2.5 w-2.5 rounded-[2px]", LEVEL[lvl])} />

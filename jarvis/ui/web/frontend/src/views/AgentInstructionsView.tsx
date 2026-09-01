@@ -65,7 +65,7 @@ export function AgentInstructionsView() {
           <div className="flex items-center gap-2">
             <h1 className="font-display text-xl font-semibold">{filename}</h1>
             <span
-              className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+              className={`rounded-full px-2 py-0.5 text-micro font-medium uppercase tracking-wide ${
                 exists
                   ? "border border-primary/40 bg-primary/10 text-primary"
                   : "border border-border bg-muted/60 text-muted-foreground"

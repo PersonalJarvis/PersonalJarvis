@@ -263,7 +263,7 @@ function RealtimeModelRow({
             <span className="min-w-0 flex-1 truncate font-medium">
               {options[0].label}
             </span>
-            <span className="rounded-[4px] border border-border px-1.5 text-[10.5px] font-semibold uppercase leading-[18px] tracking-[0.06em] text-muted-foreground">
+            <span className="rounded-[4px] border border-border px-1.5 text-micro font-semibold uppercase leading-[18px] tracking-[0.06em] text-muted-foreground">
               {t("apikeys_view.realtime_model_managed")}
             </span>
           </div>

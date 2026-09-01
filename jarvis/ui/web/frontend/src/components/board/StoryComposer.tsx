@@ -44,7 +44,7 @@ export function StoryComposer({ onClose }: StoryComposerProps) {
           placeholder={t("story_composer.placeholder")}
           className="w-full resize-none rounded-md border border-border bg-background/40 px-3 py-2 text-sm"
         />
-        <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
+        <div className="mt-1 flex items-center justify-between text-micro text-muted-foreground">
           <span>{t("story_composer.expiry_hint")}</span>
           <span className={cn(remaining < 30 && "text-foreground")}>
             {`${remaining} ${t("story_composer.characters")}`}
@@ -115,7 +115,7 @@ export function VisibilityRadios({
             className="sr-only"
           />
           <span className="font-medium">{o.label}</span>
-          <span className="text-[9px] opacity-70">{o.hint}</span>
+          <span className="text-micro opacity-70">{o.hint}</span>
         </label>
       ))}
     </div>

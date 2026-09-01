@@ -345,12 +345,12 @@ function ToolRow({ step, compact }: { step: ThinkingStep; compact: boolean }) {
       </span>
       {active && <Spinner className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />}
       {error && (
-        <span className="shrink-0 text-[10px] uppercase tracking-[0.08em] text-destructive/80">
+        <span className="shrink-0 text-micro uppercase tracking-[0.08em] text-destructive/80">
           {t("turn_steps.failed")}
         </span>
       )}
       {!active && step.durationMs !== undefined && step.durationMs > 0 && (
-        <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60">
+        <span className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground/60">
           {formatStepDuration(step.durationMs)}
         </span>
       )}
@@ -437,12 +437,12 @@ function StepRow({ step, compact }: { step: ThinkingStep; compact: boolean }) {
         )}
       </span>
       {error && (
-        <span className="shrink-0 text-[10px] uppercase tracking-[0.08em] text-destructive/80">
+        <span className="shrink-0 text-micro uppercase tracking-[0.08em] text-destructive/80">
           {t("turn_steps.failed")}
         </span>
       )}
       {!active && step.durationMs !== undefined && step.durationMs > 0 && (
-        <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60">
+        <span className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground/60">
           {formatStepDuration(step.durationMs)}
         </span>
       )}
@@ -528,7 +528,7 @@ export function TurnSteps({
         {modelLine && (
           <span
             data-testid="turn-steps-model"
-            className="truncate font-mono text-[10px] text-muted-foreground/60"
+            className="truncate font-mono text-micro text-muted-foreground/60"
           >
             · {modelLine}
           </span>

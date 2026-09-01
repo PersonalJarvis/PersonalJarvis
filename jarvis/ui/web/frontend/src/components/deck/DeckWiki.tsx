@@ -121,7 +121,7 @@ function DeckWikiScene({
       {ready && (
         <Suspense
           fallback={
-            <div className="flex h-full items-center justify-center font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            <div className="flex h-full items-center justify-center font-mono text-micro uppercase tracking-[0.2em] text-muted-foreground">
               {t("wiki_graph.loading_3d")}
             </div>
           }
@@ -228,7 +228,7 @@ export function WikiCard({ className }: { className?: string }) {
             {graph.isLoading ? t("wiki_graph.loading_3d") : t("deck.unavailable")}
           </p>
         ) : expanded ? (
-          <div className="flex h-full items-center justify-center font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+          <div className="flex h-full items-center justify-center font-mono text-micro uppercase tracking-[0.2em] text-muted-foreground">
             {t("deck.wiki_expanded_note")}
           </div>
         ) : (
@@ -241,7 +241,7 @@ export function WikiCard({ className }: { className?: string }) {
           />
         )}
         {changes.length > 0 && !expanded && (
-          <div className="pointer-events-none absolute bottom-1.5 left-2.5 right-2.5 flex items-center gap-1.5 truncate font-mono text-[9px] text-primary">
+          <div className="pointer-events-none absolute bottom-1.5 left-2.5 right-2.5 flex items-center gap-1.5 truncate font-mono text-micro text-primary">
             <HudLamp on />
             <span className="truncate">{changes.slice(0, 3).map((c) => c.slug).join(" · ")}</span>
           </div>
@@ -314,11 +314,11 @@ function WikiExpanded({
         <span className="font-mono text-[11px] uppercase tracking-[0.22em] text-primary">
           {t("deck.card_wiki")}
         </span>
-        <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+        <span className="font-mono text-micro tabular-nums text-muted-foreground">
           {pages} {t("deck.wiki_pages")} · {links} {t("deck.wiki_links")}
         </span>
         {recent.length > 0 && (
-          <span className="ml-2 truncate font-mono text-[10px] text-primary">
+          <span className="ml-2 truncate font-mono text-micro text-primary">
             {t("deck.wiki_recent")}: {recent.slice(0, 4).join(" · ")}
           </span>
         )}
@@ -327,7 +327,7 @@ function WikiExpanded({
           <button
             type="button"
             onClick={onOpenSection}
-            className="border border-border/70 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:border-primary/60 hover:text-primary"
+            className="border border-border/70 px-2 py-0.5 font-mono text-micro uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:border-primary/60 hover:text-primary"
           >
             {t("deck.open_section")}
           </button>

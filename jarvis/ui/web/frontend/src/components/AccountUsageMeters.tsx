@@ -120,7 +120,7 @@ function Meter({ window: usageWindow, now }: { window: UsageWindow; now: number 
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="min-w-0 truncate text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <span className="min-w-0 truncate text-micro font-medium uppercase tracking-wide text-muted-foreground">
           {label}
           {countdown && (
             <span className="ml-1.5 normal-case tracking-normal opacity-80">
@@ -170,7 +170,7 @@ export function AccountUsageMeters({
 
   if (usage.status !== "ok" || usage.windows.length === 0) {
     return (
-      <p className="pl-6 text-[10px] leading-relaxed text-muted-foreground">
+      <p className="pl-6 text-micro leading-relaxed text-muted-foreground">
         {usage.status === "unsupported"
           ? t("agent_accounts.usage.state.unsupported")
           : t("agent_accounts.usage.state.unavailable")}
@@ -185,16 +185,16 @@ export function AccountUsageMeters({
     <div className="ml-6 space-y-2 rounded-xl border border-border/60 bg-background/40 px-3 py-2.5">
       <div className="flex items-center gap-1.5">
         <Gauge className="h-3 w-3 shrink-0 text-muted-foreground" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span className="text-micro font-semibold uppercase tracking-wider text-muted-foreground">
           {t("agent_accounts.usage.title")}
         </span>
         {usage.plan && (
-          <span className="shrink-0 rounded-full border border-border bg-secondary/60 px-1.5 py-px text-[9px] font-medium text-muted-foreground">
+          <span className="shrink-0 rounded-full border border-border bg-secondary/60 px-1.5 py-px text-micro font-medium text-muted-foreground">
             {usage.plan}
           </span>
         )}
         <span
-          className="ml-auto flex shrink-0 items-center gap-1 text-[9px] text-muted-foreground"
+          className="ml-auto flex shrink-0 items-center gap-1 text-micro text-muted-foreground"
           // The whole point of this line: a cached weekly figure for an idle
           // seat can be days old, and it is the number a subscription is picked
           // on. The exact timestamp is one hover away.

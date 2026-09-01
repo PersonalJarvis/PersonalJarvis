@@ -277,7 +277,7 @@ export function HudGauge({
           {readout}
         </text>
       </svg>
-      <span className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
+      <span className="mt-0.5 font-mono text-micro uppercase tracking-[0.16em] text-muted-foreground">
         {label}
       </span>
     </div>

@@ -171,7 +171,7 @@ export function RenderedFence({ language, code }: { language: FenceLanguage; cod
       aria-pressed={mode === value}
       onClick={() => setMode(value)}
       className={cn(
-        "rounded-sm px-2 py-0.5 text-[10px] font-medium transition-colors",
+        "rounded-sm px-2 py-0.5 text-micro font-medium transition-colors",
         mode === value
           ? "bg-background text-foreground"
           : "text-muted-foreground hover:text-foreground",
@@ -189,7 +189,7 @@ export function RenderedFence({ language, code }: { language: FenceLanguage; cod
       data-mode={mode}
     >
       <div className="flex items-center justify-between gap-2 border-b border-border/40 bg-muted/20 px-3 py-1">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{language}</span>
+        <span className="text-micro uppercase tracking-wider text-muted-foreground">{language}</span>
         <div className="flex items-center gap-1.5">
           <div role="group" className="inline-flex rounded border border-border/60 bg-muted/40 p-0.5">
             {segment("rendered", t("outputs_view.fence_rendered"))}

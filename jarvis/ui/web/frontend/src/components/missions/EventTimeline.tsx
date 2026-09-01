@@ -76,23 +76,23 @@ export function EventTimeline() {
                 ) : (
                   <ChevronRight className="mt-0.5 h-3 w-3 text-muted-foreground" />
                 )}
-                <span className="w-16 shrink-0 font-mono text-[10px] text-muted-foreground">
+                <span className="w-16 shrink-0 font-mono text-micro text-muted-foreground">
                   {formatTime(env.ts_ms)}
                 </span>
                 <span className="flex-1 truncate font-mono text-[11px] text-foreground/90">
                   {env.payload.event_type}
                 </span>
-                <span className={cn("text-[10px] uppercase tracking-wider", actorClass)}>
+                <span className={cn("text-micro uppercase tracking-wider", actorClass)}>
                   {env.source_actor}
                 </span>
                 {env.worker_id && (
-                  <span className="font-mono text-[10px] text-muted-foreground/70">
+                  <span className="font-mono text-micro text-muted-foreground/70">
                     w{env.worker_id.slice(0, 6)}
                   </span>
                 )}
               </button>
               {isOpen && (
-                <pre className="mx-2 mb-2 max-h-40 overflow-auto rounded border border-border bg-background/60 p-2 text-[10px] leading-relaxed">
+                <pre className="mx-2 mb-2 max-h-40 overflow-auto rounded border border-border bg-background/60 p-2 text-micro leading-relaxed">
                   {JSON.stringify(env.payload, null, 2)}
                 </pre>
               )}

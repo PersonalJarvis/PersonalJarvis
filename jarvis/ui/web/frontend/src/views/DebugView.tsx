@@ -22,7 +22,7 @@ export function DebugView() {
       <div className="grid flex-1 min-h-0 grid-cols-[1fr_320px] gap-0">
         <div className="flex min-h-0 flex-col border-r border-border">
           <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <span className="text-micro uppercase tracking-wider text-muted-foreground">
               Event-Timeline
             </span>
             <div className="ml-auto flex gap-1">
@@ -55,13 +55,13 @@ export function DebugView() {
 
         <aside className="flex flex-col overflow-y-auto scrollbar-jarvis">
           <div className="border-b border-border p-4">
-            <h3 className="mb-3 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <h3 className="mb-3 text-micro uppercase tracking-wider text-muted-foreground">
               Brain-Provider wechseln
             </h3>
             <ProviderSwitcher />
           </div>
           <div className="border-b border-border p-4">
-            <h3 className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <h3 className="mb-2 text-micro uppercase tracking-wider text-muted-foreground">
               Flight-Recorder
             </h3>
             <p className="text-xs text-muted-foreground">
@@ -71,7 +71,7 @@ export function DebugView() {
             </p>
           </div>
           <div className="p-4">
-            <h3 className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <h3 className="mb-2 text-micro uppercase tracking-wider text-muted-foreground">
               Metrics
             </h3>
             <p className="text-xs text-muted-foreground">

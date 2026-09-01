@@ -52,10 +52,10 @@ export function CliConnectCoach({ coach }: { coach: CoachState }) {
       </header>
       <div className="space-y-3 p-4 text-xs">
         <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
+          <div className="mb-1 text-micro uppercase tracking-wider text-muted-foreground/70">
             {t("cli_connect_coach.login_command")}
           </div>
-          <code className="block break-all rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10px]">
+          <code className="block break-all rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-micro">
             {coach.loginCommand}
           </code>
         </div>

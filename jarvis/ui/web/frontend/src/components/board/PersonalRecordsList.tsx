@@ -57,7 +57,7 @@ export function PersonalRecordsList({ records }: PersonalRecordsListProps) {
                   </span>
                 )}
               </div>
-              <div className="text-[10px] text-muted-foreground">
+              <div className="text-micro text-muted-foreground">
                 {rec.achieved_on}
               </div>
             </div>

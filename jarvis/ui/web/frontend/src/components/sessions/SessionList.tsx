@@ -74,7 +74,7 @@ export function SessionList({ sessions, selectedId, onSelect, loading }: Props) 
                       {t("sessions.running")}
                     </Badge>
                   ) : (
-                    <Badge variant="secondary" className="text-[10px]">
+                    <Badge variant="secondary" className="text-micro">
                       {hangupLabel(s.hangup_reason)}
                     </Badge>
                   )}
@@ -87,7 +87,7 @@ export function SessionList({ sessions, selectedId, onSelect, loading }: Props) 
                   </span>
                 )}
               </div>
-              <div className="mt-1.5 flex items-center gap-3 text-[10px] text-muted-foreground">
+              <div className="mt-1.5 flex items-center gap-3 text-micro text-muted-foreground">
                 <span className="flex items-center gap-1">
                   <Clock className="h-3 w-3" />
                   {formatDuration(s.duration_s)}

@@ -307,7 +307,7 @@ function WallpaperTile({
           <span className="block truncate text-[11px] font-medium text-white">
             {item.title}
           </span>
-          <span className="block truncate text-[10px] text-white/65">
+          <span className="block truncate text-micro text-white/65">
             {item.styleLabel}
           </span>
         </span>
@@ -316,7 +316,7 @@ function WallpaperTile({
             it is an arbitrary picture in either mode. */}
         {item.fromMarketplace && (
           <span
-            className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-white backdrop-blur-sm"
+            className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/60 px-1.5 py-0.5 text-micro font-medium uppercase tracking-wide text-white backdrop-blur-sm"
             title={`${translate("marketplace_origin.tooltip")}${item.publisher ? ` · ${item.publisher}` : ""}`}
           >
             <Store className="h-2.5 w-2.5" aria-hidden />
@@ -867,7 +867,7 @@ export function WallpaperView() {
             />
             Favorites
             {favoriteCount > 0 && (
-              <span className="text-[10px] tabular-nums opacity-70">
+              <span className="text-micro tabular-nums opacity-70">
                 {favoriteCount}
               </span>
             )}

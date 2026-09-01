@@ -50,7 +50,7 @@ export function AchievementGrid() {
 
       {mastery.length > 0 && (
         <div className="space-y-2">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="text-micro uppercase tracking-wider text-muted-foreground">
             Mastery
           </div>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -61,7 +61,7 @@ export function AchievementGrid() {
 
       {reflection.length > 0 && (
         <div className="space-y-2">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="text-micro uppercase tracking-wider text-muted-foreground">
             Reflection
           </div>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -107,7 +107,7 @@ function AchievementCard({ item }: { item: AchievementItem }) {
           {item.description}
         </div>
         {unlocked && item.unlocked_at && (
-          <div className="mt-1 text-[10px] text-muted-foreground">
+          <div className="mt-1 text-micro text-muted-foreground">
             {formatUnlockDate(item.unlocked_at)}
           </div>
         )}

@@ -78,7 +78,7 @@ export function DocsToc({ headings, contentRef }: Props) {
     >
       <ScrollArea className="h-full">
         <div className="px-4 py-6">
-          <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <h3 className="mb-3 text-micro font-semibold uppercase tracking-wider text-muted-foreground">
             {t("docs_content.on_this_page")}
           </h3>
           <ul className="space-y-1 text-xs">

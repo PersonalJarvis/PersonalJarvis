@@ -145,14 +145,14 @@ export function LogCard({ className }: { className?: string }) {
       <div
         ref={bodyRef}
         onScroll={onScroll}
-        className="h-full overflow-y-auto px-2.5 pb-2 font-mono text-[10.5px] leading-[1.5]"
+        className="h-full overflow-y-auto px-2.5 pb-2 font-mono text-micro leading-[1.5]"
       >
         {shown.map((line) => (
           <LogRow key={line.id} line={line} t={t} />
         ))}
         {/* The cursor: never empty. Wraps rather than truncates — this is the
             one line that must always be readable whole. */}
-        <div className="mt-1 flex items-baseline gap-2 text-[10.5px]">
+        <div className="mt-1 flex items-baseline gap-2 text-micro">
           <span className="shrink-0 tabular-nums text-muted-foreground/70">{fmtClock(now)}</span>
           <span
             className={cn(

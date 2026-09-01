@@ -794,7 +794,7 @@ function NavRow({
         onClick={onClick}
         title={hint}
         className={clsx(
-          "group relative flex h-10 w-full items-center gap-2 rounded-md px-3 text-body transition-colors",
+          "group relative flex h-10 w-full items-center gap-2 rounded-md px-3 text-body font-medium transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
           // Leave the chevron its own column so the two buttons never overlap.
           expand && "pr-9",

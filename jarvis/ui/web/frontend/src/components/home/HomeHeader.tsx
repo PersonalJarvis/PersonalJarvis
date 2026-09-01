@@ -51,7 +51,7 @@ export function HomeHeader() {
         <span
           data-testid="home-voice-state"
           className={cn(
-            "truncate font-mono text-[10px] uppercase tracking-[0.14em]",
+            "truncate font-mono text-micro uppercase tracking-[0.14em]",
             live ? "text-primary" : "text-muted-foreground",
           )}
         >
@@ -102,7 +102,7 @@ function HeaderPill({
       data-testid={testId}
       className="inline-flex h-7 max-w-[260px] items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2 text-xs transition-colors hover:border-primary/50"
     >
-      <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
+      <span className="font-mono text-micro uppercase tracking-[0.14em] text-muted-foreground">
         {label}
       </span>
       <span className={cn("truncate font-medium", hot ? "text-primary" : "text-foreground")}>

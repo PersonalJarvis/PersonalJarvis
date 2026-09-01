@@ -101,7 +101,7 @@ export function CommandActivityLayer() {
       className="pointer-events-none fixed bottom-16 right-4 z-50 flex w-[360px] flex-col items-end gap-2"
     >
       {overflow > 0 && (
-        <span className="rounded-full border border-border bg-card/95 px-2 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground backdrop-blur">
+        <span className="rounded-full border border-border bg-card/95 px-2 py-0.5 text-micro font-medium tabular-nums text-muted-foreground backdrop-blur">
           +{overflow}
         </span>
       )}
@@ -171,7 +171,7 @@ function CommandCard({
           )}
 
           {entry.detail && entry.status !== "done" && (
-            <div className="mt-1 break-words text-[10px] leading-relaxed text-muted-foreground">
+            <div className="mt-1 break-words text-micro leading-relaxed text-muted-foreground">
               {entry.detail}
             </div>
           )}
@@ -212,28 +212,28 @@ function StatusBadge({
     case "running": {
       const elapsed = Math.max(0, Math.round((now - entry.startedTs) / 1000));
       return (
-        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+        <span className="shrink-0 text-micro tabular-nums text-muted-foreground">
           {elapsed > 0 ? `${elapsed} s` : t("command_activity.running")}
         </span>
       );
     }
     case "done":
       return (
-        <span className="flex shrink-0 items-center gap-1 text-[10px] tabular-nums text-primary">
+        <span className="flex shrink-0 items-center gap-1 text-micro tabular-nums text-primary">
           <CheckCircle2 className="h-3 w-3" />
           {entry.durationMs ? formatDuration(entry.durationMs) : t("command_activity.done")}
         </span>
       );
     case "failed":
       return (
-        <span className="flex shrink-0 items-center gap-1 text-[10px] text-destructive">
+        <span className="flex shrink-0 items-center gap-1 text-micro text-destructive">
           <XCircle className="h-3 w-3" />
           {t("command_activity.failed")}
         </span>
       );
     case "blocked":
       return (
-        <span className="flex shrink-0 items-center gap-1 text-[10px] text-destructive">
+        <span className="flex shrink-0 items-center gap-1 text-micro text-destructive">
           <ShieldAlert className="h-3 w-3" />
           {t("command_activity.blocked")}
         </span>

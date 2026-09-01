@@ -618,7 +618,7 @@ export function ObsidianSetupDialog({
                 className="rounded-md border border-border bg-background/40 px-3 py-2 text-xs text-muted-foreground"
                 data-testid="obsidian-setup-vault-path"
               >
-                <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                <span className="block text-micro uppercase tracking-wide text-muted-foreground/70">
                   {t("obsidian_setup_dialog.vault_path_label")}
                 </span>
                 <span className="font-mono text-foreground">{vaultPath}</span>

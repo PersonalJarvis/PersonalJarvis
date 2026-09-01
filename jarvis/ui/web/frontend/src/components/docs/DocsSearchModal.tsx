@@ -64,7 +64,7 @@ export function DocsSearchModal({ open, onOpenChange, onSelect }: Props) {
                 autoFocus
                 className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               />
-              <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 text-micro font-medium text-muted-foreground">
                 Esc
               </kbd>
             </div>
@@ -121,7 +121,7 @@ export function DocsSearchModal({ open, onOpenChange, onSelect }: Props) {
                       <span className="flex-1 truncate font-medium">
                         {r.title}
                       </span>
-                      <span className="shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground">
+                      <span className="shrink-0 text-micro uppercase tracking-wider text-muted-foreground">
                         {r.section}
                       </span>
                     </div>
@@ -134,7 +134,7 @@ export function DocsSearchModal({ open, onOpenChange, onSelect }: Props) {
             </Command.List>
 
             {/* Footer */}
-            <div className="flex items-center justify-between border-t border-border bg-muted/20 px-3 py-1.5 text-[10px] text-muted-foreground">
+            <div className="flex items-center justify-between border-t border-border bg-muted/20 px-3 py-1.5 text-micro text-muted-foreground">
               <span>
                 <kbd className="rounded border border-border px-1 font-medium">↑↓</kbd>{" "}
                 {t("docs_search_modal.navigate")}

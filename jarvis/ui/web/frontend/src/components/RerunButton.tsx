@@ -55,7 +55,7 @@ export function RerunButton({
       ? "border-foreground/40 bg-foreground/10 text-foreground hover:bg-foreground/20"
       : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20";
   const sizing =
-    size === "sm" ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-[11px]";
+    size === "sm" ? "px-1.5 py-0.5 text-micro" : "px-2 py-1 text-[11px]";
   const iconSize = size === "sm" ? "h-2.5 w-2.5" : "h-3 w-3";
   const Icon = action === "continue" ? Play : RotateCcw;
 

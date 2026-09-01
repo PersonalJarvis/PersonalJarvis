@@ -1,17 +1,21 @@
-/* KNOWN GAP — the three interface families are fetched from a remote host.
-   The design system says they ship with the application ("Loaded locally,
-   never from a remote host"), and it is right: the desktop app is a WebView
-   that regularly starts with no network, and when this request fails the
-   whole product renders in Segoe UI / system fallbacks — a different typeface
-   at a different width on every surface at once.
+/* The three interface families ship WITH the application. The desktop app is
+   a WebView that regularly starts with no network; a remote font import meant
+   every such launch rendered the whole product in Segoe UI / system fallbacks
+   — a different typeface at a different width on every surface at once, which
+   is one of the two things behind "you cannot recognise the type".
 
-   Nothing is vendored under public/ or src/assets/ yet and no font may be
-   downloaded here, so the import stays for now. Closing the gap is a separate
-   change: add the three families as local files (or an @fontsource dependency),
-   replace this line with @font-face rules pointing at them, and delete this
-   comment. The family declarations themselves live at the bottom of this file,
-   outside the layers — see the note there. */
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700;800&display=swap");
+   Inter is the variable build (one file per script subset, every weight);
+   the two others are static cuts of the weights the scale actually uses.
+   Vite resolves these bare specifiers and fingerprints the woff2 files into
+   the bundle. Licences: SIL OFL 1.1 — see public/THIRD_PARTY_NOTICES.txt. */
+@import "@fontsource-variable/inter/index.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/600.css";
+@import "@fontsource/jetbrains-mono/700.css";
+@import "@fontsource/space-grotesk/500.css";
+@import "@fontsource/space-grotesk/600.css";
+@import "@fontsource/space-grotesk/700.css";
 
 @tailwind base;
 @tailwind components;
@@ -27,7 +31,7 @@
    content, no track, no buttons. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: hsl(var(--border)) transparent;
+  scrollbar-color: hsl(var(--border-strong)) transparent;
 }
 
 /* Selecting text is the app's decision, not the window frame's.
@@ -333,8 +337,10 @@ label,
 }
 ::-webkit-scrollbar-thumb {
   /* The transparent border + content-box clip is what makes the thumb read as
-     a floating pill rather than a filled gutter. */
-  background-color: hsl(var(--border));
+     a floating pill rather than a filled gutter. --border-strong, not
+     --border: a hairline tuned to be barely there makes a thumb nobody can
+     find. */
+  background-color: hsl(var(--border-strong));
   background-clip: content-box;
   border: 3px solid transparent;
   border-radius: 999px;
@@ -380,7 +386,7 @@ label,
   background: transparent;
 }
 .xterm-viewport::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
+  background: hsl(var(--border-strong));
   border-radius: 4px;
 }
 .xterm-viewport::-webkit-scrollbar-thumb:hover {
@@ -484,30 +490,30 @@ label,
 
     /* --- The surface ladder ---------------------------------------------- */
     --background: 60 16% 96%; /* #F7F7F4 — the room, every full-bleed region */
-    --sidebar: 51 18% 92%; /* #EFEEE8 — the rail, standing chrome */
+    --sidebar: 50 17% 93%; /* #F1F0EA — the rail, standing chrome */
     --card: 0 0% 100%; /* #FFFFFF — an OBJECT: card, bubble, panel */
     --card-foreground: 53 12% 13%;
     --secondary: 50 11% 89%; /* #E6E5E0 — the LIFT: hover, selected, tile */
-    --secondary-foreground: 50 13% 9%; /* a selected label is ink-strong */
+    --secondary-foreground: 50 13% 8%; /* a selected label is ink-strong */
     --muted: 50 11% 89%; /* = --secondary: the ~65 hover:bg-muted sites read this */
     --input: 50 11% 89%; /* a field is a lift surface */
     --popover: 0 0% 100%; /* #FFFFFF — the floating layer, plus .shadow-float */
     --popover-foreground: 53 12% 13%;
-    --user-bubble: 53 12% 13%; /* #26251E — the user's own turn */
-    --user-bubble-foreground: 60 16% 96%;
+    --user-bubble: 50 11% 89%; /* #E6E5E0 — the speaker: quiet lift, strong ink */
+    --user-bubble-foreground: 50 13% 8%;
 
     /* --- Rims. Two values, because one border cannot do two jobs ---------- */
-    --border: 53 12% 87%; /* #E2E1DA — structural hairlines, dividers, rules */
-    --border-strong: 50 9% 75%; /* #C4C2B8 — composer outline, float rim, focus */
+    --border: 45 10% 86%; /* #DFDDD5 — a hairline that can actually be seen */
+    --border-strong: 45 8% 72%; /* #BDBAB0 — composer outline, float rim, focus */
 
     /* --- Ink. Four steps, one job each ------------------------------------
        The split is what stops a single ink slab from reading as harsh: with
        no hierarchy behind it, one maximum-contrast value across a whole app
        has nothing to justify its weight. */
-    --foreground-strong: 50 13% 9%; /* #1A1914 — headings, headline numbers */
+    --foreground-strong: 50 13% 8%; /* #171610 — headings, headline numbers */
     --foreground: 53 12% 13%; /* #26251E — body, labels, running text */
-    --muted-foreground: 46 6% 41%; /* #6E6B61 — meta, timestamps, table heads */
-    --faint-foreground: 44 6% 54%; /* #918D82 — placeholder + disabled ONLY */
+    --muted-foreground: 46 6% 38%; /* #66635A — meta, timestamps, table heads */
+    --faint-foreground: 44 6% 52%; /* #8B877C — placeholder + disabled ONLY */
 
     /* --primary is a FILL, not an ink: buttons, marks, active indicators,
        focus rings. It never paints running text, a byline or a decorative
@@ -537,9 +543,9 @@ label,
        says it more directly — an added line comes FORWARD (strong ink on a
        lifted ground) and a deleted one RECEDES (meta ink, struck through,
        see .diff-line-del). Strike-through is the move colour cannot make. */
-    --diff-add: 50 13% 9%;
+    --diff-add: 50 13% 8%;
     --diff-add-bg: 50 11% 89%;
-    --diff-del: 46 6% 41%;
+    --diff-del: 46 6% 38%;
     --diff-del-bg: 51 18% 94%;
 
     --radius: 0.75rem;
@@ -636,7 +642,7 @@ label,
        commit hides both. */
     --jarvis-yellow: 38 37 30;
     --jarvis-yellow-dim: 128 125 114;
-    --jarvis-grid: 50 11% 89%;
+    --jarvis-grid: 45 10% 86%;
   }
 
   .dark {
@@ -654,96 +660,94 @@ label,
        tile, a composer, a menu. A surface wider than ~720px never rises above
        --sidebar, whatever class it carries.
 
-       The steps are measured, not invented (Grok Bot and Cursor, 2026-09-01).
-       Grok's assistant bubble sits at #262626 and its selected row at
-       #313131; Cursor's composer at #212121 and its active row at #252525,
-       with 90.4 % of that window held in just two values. --card #212121 and
-       --secondary #333333 sit inside that measured band, with steps large
-       enough to survive an uncalibrated monitor.
+       GRAPHITE, NOT VOID (v3, 2026-09-01). The 4 % room of the previous
+       ladder was rejected by the maintainer as "dead, like a skeleton",
+       "a funeral", "the type is illegible". Re-measured against the live
+       references that evening: Grok's stage sits at #181716 with its rail
+       at #131211, ChatGPT's rail at #131313 on a #000 page, Cursor's stage
+       at #141414 — none of them a void with grey floating in it. What all
+       three share is what the old ladder lacked: hairlines you can see
+       (white at 8–20 % alpha), muted ink at #9E–#AF rather than #94, and
+       body ink at #F0–#FC rather than #E6. So the room rises to 7 %, every
+       rim rises until it is visible on the surface it encloses, and ink
+       moves up two steps. Still neutral, still r = g = b, still no hue.
 
-       INK STOPS BELOW WHITE. Cursor's brightest text measures #F0F0F0 and
-       never exceeds it. One maximum-contrast slab across a whole app has no
-       hierarchy behind it to justify its brightness, so the eye reads it as
-       harsh rather than as important — that is the "the white looks
-       artificial" report. Body runs at 90 %, headings at 96 %. Pure white is
-       a FILL — buttons, marks, focus rings — and never running text.
-
-          4 %  background         the room, every full-bleed region
-          7 %  sidebar            the rail, standing chrome
-         13 %  card               an OBJECT: card, bubble, panel
-         14 %  border             structural hairline
-         20 %  secondary / input  the LIFT: hover, selected, field, tile
-         24 %  popover            the floating layer
-         26 %  border-strong      composer outline, floating rim, focus
-         30 %  user bubble        the one deliberately loud surface
-         44 %  faint ink          placeholder and disabled only
-         58 %  muted ink          meta, timestamps, table heads
-         90 %  foreground         body, labels, running text
-         96 %  foreground-strong  headings, headline numbers
+          7 %  background         the room, every full-bleed region
+          9 %  sidebar            the rail, standing chrome (edged)
+         12 %  card               an OBJECT: card, bubble, composer, panel
+         16 %  secondary / input  the LIFT: hover, selected, field, tile
+         17 %  border             hairline — visible on room, rail AND card
+         18 %  user bubble        the speaker: quiet fill, strong ink
+         19 %  popover            the floating layer
+         25 %  border-strong      composer outline, floating rim, focus
+         48 %  faint ink          placeholder and disabled only
+         64 %  muted ink          meta, timestamps, table heads
+         94 %  foreground         body, labels, running text
+         98 %  foreground-strong  headings, headline numbers
         100 %  primary            white — a fill, never an ink */
 
     /* --- The surface ladder ---------------------------------------------- */
-    --background: 0 0% 4%; /* #0A0A0A */
-    --sidebar: 0 0% 7%; /* #121212 — the same night, one step up */
-    --card: 0 0% 13%; /* #212121 — content-sized ONLY */
-    --card-foreground: 0 0% 90%;
-    --secondary: 0 0% 20%; /* #333333 — hover, selected, tile */
-    --secondary-foreground: 0 0% 96%; /* a selected label is ink-strong */
-    --muted: 0 0% 20%; /* = --secondary: the ~65 hover:bg-muted sites read this */
-    --input: 0 0% 20%; /* a field is a lift surface */
-    --popover: 0 0% 24%; /* #3D3D3D — plus .shadow-float */
-    --popover-foreground: 0 0% 90%;
-    --user-bubble: 0 0% 30%; /* #4D4D4D */
-    --user-bubble-foreground: 0 0% 96%;
+    --background: 0 0% 7%; /* #121212 — the room. One notch above the void */
+    --sidebar: 0 0% 9%; /* #171717 — the rail, one step up, with a visible edge */
+    --card: 0 0% 12%; /* #1F1F1F — an OBJECT: card, bubble, composer, panel */
+    --card-foreground: 0 0% 94%;
+    --secondary: 0 0% 16%; /* #292929 — the LIFT: hover, selected, tile, field */
+    --secondary-foreground: 0 0% 98%; /* a selected label is ink-strong */
+    --muted: 0 0% 16%; /* = --secondary: the ~65 hover:bg-muted sites read this */
+    --input: 0 0% 16%; /* a field is a lift surface */
+    --popover: 0 0% 19%; /* #303030 — the floating layer, plus .shadow-float */
+    --popover-foreground: 0 0% 94%;
+    --user-bubble: 0 0% 18%; /* #2E2E2E — the speaker: quiet fill, strong ink */
+    --user-bubble-foreground: 0 0% 98%;
 
     /* --- Rims. A rim is LIGHTER than the fill it encloses ------------------
        On near-black a dark border around a dark fill reads as a wireframe
        with nothing inside it. Cursor's rims cover 0.2 % of its window — a
        composer outline and a few dividers, not an edge around every card. */
-    --border: 0 0% 14%; /* #242424 */
-    --border-strong: 0 0% 26%; /* #424242 */
+    --border: 0 0% 17%; /* #2B2B2B — a hairline that can actually be seen */
+    --border-strong: 0 0% 25%; /* #404040 — composer outline, float rim, focus */
 
     /* --- Ink -------------------------------------------------------------- */
-    --foreground-strong: 0 0% 96%; /* #F5F5F5 */
-    --foreground: 0 0% 90%; /* #E6E6E6 */
-    --muted-foreground: 0 0% 58%; /* #949494 */
-    --faint-foreground: 0 0% 44%; /* #707070 */
+    --foreground-strong: 0 0% 98%; /* #FAFAFA — headings, headline numbers */
+    --foreground: 0 0% 94%; /* #F0F0F0 — body, labels, running text */
+    --muted-foreground: 0 0% 64%; /* #A3A3A3 — meta, timestamps, table heads */
+    --faint-foreground: 0 0% 48%; /* #7A7A7A — placeholder + disabled ONLY */
 
     /* #FFFFFF, and a FILL. It sits one step past --foreground because a
        near-black ground has headroom above the ink ceiling; the light theme
        has none above `ink` and keeps the two equal. 19.8:1. */
     --primary: 0 0% 100%;
-    --primary-foreground: 0 0% 4%; /* the room */
+    --primary-foreground: 0 0% 7%; /* the room */
     --accent: 0 0% 100%;
-    --accent-foreground: 0 0% 4%;
+    --accent-foreground: 0 0% 7%;
     --ring: 0 0% 100%;
 
     /* --- Status. Same three meanings as light, lifted for a black ground -- */
     --success: 153 62% 46%; /* #2DBE7E — life */
     --destructive: 4 77% 60%; /* #E8574C — fault */
-    --destructive-foreground: 0 0% 96%;
+    --destructive-foreground: 0 0% 98%;
     --warning: 41 63% 57%; /* #D6A94A — degraded */
 
     /* Added / removed code — see :root. The added line takes the lift so it
        comes forward off the card it sits on; the deleted line takes the card
        itself, i.e. no ground of its own, and recedes through meta ink and the
        strike-through. It must never be DARKER than the surface under it. */
-    --diff-add: 0 0% 96%;
-    --diff-add-bg: 0 0% 20%;
-    --diff-del: 0 0% 58%;
-    --diff-del-bg: 0 0% 13%;
+    --diff-add: 0 0% 98%;
+    --diff-add-bg: 0 0% 16%;
+    --diff-del: 0 0% 64%;
+    --diff-del-bg: 0 0% 12%;
 
     --accent-rgb: 255 255 255;
     --scrim-rgb: 0 0 0;
     --sheen-rgb: 255 255 255;
-    --shell-rgb: 10 10 10; /* the room, as channels */
+    --shell-rgb: 18 18 18; /* the room, as channels */
 
     /* Wallpaper path only — see the note in :root. */
     --surface-card-alpha: 0.6;
     --surface-panel-alpha: 0.58;
     --surface-control-alpha: 0.72;
 
-    --stage-bg: 0 0% 4%;
+    --stage-bg: 0 0% 7%;
     --stage-dot-rgb: 255 255 255;
     --stage-dot-strong: 0.5;
     --stage-dot-soft: 0.35;
@@ -756,16 +760,16 @@ label,
        full accent; every step between them is neutral and leaves the telling
        to its glyph. */
     --viz-trigger: 0 0% 100%;
-    --viz-reasoning: 0 0% 58%;
-    --viz-terminal: 0 0% 58%;
-    --viz-file: 0 0% 58%;
-    --viz-search: 0 0% 58%;
-    --viz-web: 0 0% 58%;
-    --viz-integration: 0 0% 58%;
-    --viz-agent: 0 0% 58%;
-    --viz-tool: 0 0% 58%;
+    --viz-reasoning: 0 0% 64%;
+    --viz-terminal: 0 0% 64%;
+    --viz-file: 0 0% 64%;
+    --viz-search: 0 0% 64%;
+    --viz-web: 0 0% 64%;
+    --viz-integration: 0 0% 64%;
+    --viz-agent: 0 0% 64%;
+    --viz-tool: 0 0% 64%;
     --viz-result: 0 0% 100%;
-    --viz-deliverable: 0 0% 58%;
+    --viz-deliverable: 0 0% 64%;
 
     /* Black-and-white Gigi: white eyes and a white outline on charcoal. */
     --gigi-on-body: 0 0% 100%;
@@ -773,8 +777,8 @@ label,
 
     /* Legacy aliases — see :root. Declared, read by nothing. */
     --jarvis-yellow: 255 255 255;
-    --jarvis-yellow-dim: 148 148 148;
-    --jarvis-grid: 0 0% 14%;
+    --jarvis-yellow-dim: 163 163 163;
+    --jarvis-grid: 0 0% 17%;
   }
 }
 
@@ -819,23 +823,39 @@ label,
    ---------------------------------------------------------------------- */
 body {
   font-family:
+    "Inter Variable",
     "Inter",
     ui-sans-serif,
     system-ui,
     -apple-system,
     "Segoe UI",
     sans-serif;
+  /* cv11 = single-storey a, cv02-04 = open shapes: the reading cut of Inter.
+     The tracking is Inter's own recommendation for interface sizes (about
+     -1 % at 13-14 px); running prose (`text-reading`) and code reset it to 0
+     through their own declarations. */
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  letter-spacing: -0.01em;
+  text-rendering: optimizeLegibility;
 }
 
 .font-display {
-  font-family: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-family: "Space Grotesk", "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
   font-feature-settings: "ss01", "ss02";
   letter-spacing: -0.02em;
 }
 
 .font-mono {
   font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0;
+}
+
+/* Selecting text answers in the theme's own material, not the engine's
+   default blue — the one saturated slab a black-and-white product used to
+   show every time someone dragged across a sentence. */
+::selection {
+  background: rgb(var(--sheen-rgb) / 0.22);
+  color: hsl(var(--foreground-strong));
 }
 
 @layer components {

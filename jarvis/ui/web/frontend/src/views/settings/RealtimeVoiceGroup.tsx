@@ -47,7 +47,7 @@ export function RealtimeVoiceGroup() {
     : transitioning
       ? t("apikeys_view.runtime_switching")
       : sessionActive && activeSessionMode === "realtime"
-        ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ?}` · ${runtimeDetail}` : ""}`
+        ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ? ` · ${runtimeDetail}` : ""}`
         : sessionActive && activeSessionMode === "pipeline" && on
           ? t("apikeys_view.runtime_fallback_pipeline")
           : sessionActive

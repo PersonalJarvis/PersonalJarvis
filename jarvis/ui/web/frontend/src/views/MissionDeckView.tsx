@@ -261,7 +261,7 @@ export function MissionDeckView({
           />
           <span
             className={cn(
-              "font-mono text-[10px] uppercase tracking-[0.18em]",
+              "font-mono text-micro uppercase tracking-[0.18em]",
               mood === "fail" ? "text-destructive" : "text-primary",
             )}
           >
@@ -270,7 +270,7 @@ export function MissionDeckView({
         </div>
 
         {/* Lamp row: the things that have to be true for a voice turn. */}
-        <div className="flex items-center gap-3 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
+        <div className="flex items-center gap-3 font-mono text-micro uppercase tracking-[0.14em] text-muted-foreground">
           <Lamp on={connected} label={t("deck.lamp_link")} />
           <Lamp on={voiceReady} label={t("deck.lamp_voice")} />
           <Lamp
@@ -637,7 +637,7 @@ function HeaderStat({
 }) {
   const body = (
     <>
-      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+      <span className="font-mono text-micro uppercase tracking-[0.14em] text-muted-foreground">
         {label}
       </span>
       <span className={cn("font-mono text-xs tabular-nums", hot ? "text-primary" : "text-foreground")}>
@@ -688,7 +688,7 @@ export function SurfaceSwitch({
         onChange(next);
       }}
       title={label}
-      className="flex items-center gap-1.5 border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+      className="flex items-center gap-1.5 border border-border px-2 py-1 font-mono text-micro uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
       style={{ clipPath: "polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px)" }}
     >
       {label}

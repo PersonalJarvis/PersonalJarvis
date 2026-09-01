@@ -53,14 +53,14 @@ export function DeckCard({
       <Icon className={cn("h-3 w-3 shrink-0", live ? "text-primary" : "text-muted-foreground")} />
       <span
         className={cn(
-          "truncate font-mono text-[10px] uppercase tracking-[0.2em]",
+          "truncate font-mono text-micro uppercase tracking-[0.2em]",
           live ? "text-primary" : "text-foreground/80",
         )}
       >
         {title}
       </span>
       {meta !== undefined && (
-        <span className="ml-1 shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+        <span className="ml-1 shrink-0 font-mono text-micro tabular-nums text-muted-foreground">
           {meta}
         </span>
       )}

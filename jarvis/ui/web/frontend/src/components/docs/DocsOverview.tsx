@@ -36,7 +36,7 @@ export function DocsOverview({ onSelect }: Props) {
   return (
     <section className="mx-auto min-h-full w-full max-w-5xl px-8 py-10 lg:px-12">
       <div className="border-b border-border pb-8">
-        <div className="mb-4 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-primary">
+        <div className="mb-4 flex items-center gap-2 text-micro font-semibold uppercase tracking-[0.24em] text-primary">
           <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
           {t("docs_overview.eyebrow")}
         </div>
@@ -112,7 +112,7 @@ export function DocsOverview({ onSelect }: Props) {
                 {t("docs_overview.local_library_description")}
               </p>
             </div>
-            <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+            <span className="shrink-0 font-mono text-micro uppercase tracking-wider text-muted-foreground">
               {allDocs.length} {t("docs_sidebar.documents")}
             </span>
           </div>
@@ -155,7 +155,7 @@ function DocCard({
       onClick={() => onSelect(doc.slug)}
       className="group flex min-h-36 flex-col rounded-xl border border-border bg-card/30 p-5 text-left transition hover:border-primary/30 hover:bg-card/70 motion-safe:hover:-translate-y-0.5"
     >
-      <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+      <span className="font-mono text-micro uppercase tracking-wider text-muted-foreground">
         {doc.section}
       </span>
       <span className="mt-2 flex items-center gap-2 text-sm font-semibold text-foreground group-hover:text-primary">
@@ -191,7 +191,7 @@ function SectionCard({
       <span className="mt-2 block text-xs leading-5 text-muted-foreground">
         {first.summary}
       </span>
-      <span className="mt-3 block text-[10px] uppercase tracking-wider text-muted-foreground/70">
+      <span className="mt-3 block text-micro uppercase tracking-wider text-muted-foreground/70">
         {section.docs.length}{" "}
         {section.docs.length === 1
           ? t("docs_overview.guide")

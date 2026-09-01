@@ -64,7 +64,7 @@ export function WikiProviderCard() {
       pushToast(
         "success",
         next.provider
-          ? `Wiki → ${next.provider}${next.model ?}` · ${next.model}` : ""}`
+          ? `Wiki → ${next.provider}${next.model ? ` · ${next.model}` : ""}`
           : t("wiki_provider.follow_primary"),
       );
     } catch (e) {

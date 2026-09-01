@@ -100,7 +100,7 @@ export function AIProfileCard() {
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
             {data.text}
           </p>
-          <div className="flex items-center gap-3 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="flex items-center gap-3 text-micro uppercase tracking-wider text-muted-foreground">
             {stalenessLabel && <span>{stalenessLabel}</span>}
             {data.triggered_by && <span>· {data.triggered_by}</span>}
             {data.model_used && <span>· {data.model_used}</span>}

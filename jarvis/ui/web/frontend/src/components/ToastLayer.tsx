@@ -93,7 +93,7 @@ export function ToastLayer() {
                     data-testid={`toast-repeat-${toast.count}`}
                     aria-label={`Repeated ${toast.count} times`}
                     className={cn(
-                      "mt-px shrink-0 rounded-full border border-current/30 px-1.5 py-px text-[10px] font-semibold tabular-nums",
+                      "mt-px shrink-0 rounded-full border border-current/30 px-1.5 py-px text-micro font-semibold tabular-nums",
                       ACCENT_FOR_KIND[toast.kind],
                     )}
                   >

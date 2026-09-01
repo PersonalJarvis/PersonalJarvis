@@ -2298,7 +2298,7 @@ export function PkceConnectDialog({
                       </code>
                       <p className="mt-1 text-micro text-muted-foreground">
                         It must be the numeric address, not{" "}
-                        <code className="text-[10px]">localhost</code>, and
+                        <code className="text-micro">localhost</code>, and
                         carry no trailing slash.
                       </p>
                     </div>

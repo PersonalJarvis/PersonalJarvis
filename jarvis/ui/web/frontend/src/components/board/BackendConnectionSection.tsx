@@ -64,7 +64,7 @@ export function BackendConnectionSection() {
             <code className="font-mono text-[11px]">
               {status.data.backend_url || t("board_view.backend_url_unset")}
             </code>
-            <p className="mt-1 text-[10px] text-muted-foreground">
+            <p className="mt-1 text-micro text-muted-foreground">
               {t("board_view.backend_url_hint")}
             </p>
           </Row>
@@ -85,7 +85,7 @@ export function BackendConnectionSection() {
                       console.warn("Clipboard write failed:", err);
                     });
                 }}
-                className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+                className="inline-flex items-center gap-1 font-mono text-micro text-muted-foreground hover:text-foreground"
                 title={t("board_view.backend_pubkey_copy_tooltip")}
               >
                 <code>{status.data.pubkey.slice(0, 20)}…{status.data.pubkey.slice(-8)}</code>
@@ -103,7 +103,7 @@ export function BackendConnectionSection() {
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
-      <div className="w-32 shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground">
+      <div className="w-32 shrink-0 text-micro uppercase tracking-wider text-muted-foreground">
         {label}
       </div>
       <div className="flex-1 min-w-0">{children}</div>

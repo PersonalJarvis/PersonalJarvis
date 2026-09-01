@@ -149,7 +149,7 @@ export function AllChatsDialog({
             ) : (
               groups.map(({ bucket, rows: group }) => (
                 <section key={bucket} className="mb-3 last:mb-0">
-                  <h3 className="px-2 pb-1 font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                  <h3 className="px-2 pb-1 font-mono text-micro font-medium uppercase tracking-[0.12em] text-muted-foreground">
                     {t(`all_chats.group_${bucket}`)}
                   </h3>
                   <ul className="space-y-px">
@@ -248,7 +248,7 @@ function ArchiveRow({
             <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{preview}</span>
           )}
         </span>
-        <span className="mt-0.5 shrink-0 pr-6 font-mono text-[10px] tabular-nums text-muted-foreground">
+        <span className="mt-0.5 shrink-0 pr-6 font-mono text-micro tabular-nums text-muted-foreground">
           {formatChatWhen(row.updatedMs)}
         </span>
       </button>

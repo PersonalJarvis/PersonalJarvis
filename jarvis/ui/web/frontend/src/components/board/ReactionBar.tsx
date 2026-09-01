@@ -47,7 +47,7 @@ export function ReactionBar({ counts, hasReactions, onReact, disabled }: Reactio
         );
       })}
       {!isOwner && hasReactions && (
-        <span className="text-[10px] text-muted-foreground" title="Others reacted">
+        <span className="text-micro text-muted-foreground" title="Others reacted">
           &middot;
         </span>
       )}

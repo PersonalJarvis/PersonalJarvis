@@ -121,7 +121,7 @@ export function PromptWriterCard() {
 
       {clis.length > 0 && (
         <div className="space-y-2">
-          <p className="px-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <p className="px-1 text-micro uppercase tracking-wider text-muted-foreground">
             {t("prompt_writer.connected_clis")}
           </p>
           {clis.map((option) => (
@@ -193,7 +193,7 @@ function WriterRow({
       <span className="min-w-0 flex-1 text-[11px] leading-snug">
         <span className="block truncate">{option.label}</span>
         {blocked && (
-          <span className="block text-[10px] text-muted-foreground">
+          <span className="block text-micro text-muted-foreground">
             {option.id === "tool_model"
               ? t("prompt_writer.tool_model_unset")
               : t("prompt_writer.not_connected")}

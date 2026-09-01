@@ -322,7 +322,7 @@ export function DeckStandby({
           variants={{ exit: { opacity: 0, x: -36, transition: { duration: HANDOFF.cornerS, ease: "easeIn" } } }}
           className="flex flex-col gap-0.5"
         >
-          <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          <span className="font-mono text-micro uppercase tracking-[0.22em] text-muted-foreground">
             {t("deck.boot_phase")}
             <span className="deck-boot-caret ml-1 inline-block h-[1em] w-[0.5em] translate-y-[2px] bg-current" aria-hidden />
           </span>
@@ -330,7 +330,7 @@ export function DeckStandby({
             {fmtClock(now)}
           </span>
           {readyAt !== null && (
-            <span className="font-mono text-[10px] tabular-nums tracking-[0.12em] text-muted-foreground">
+            <span className="font-mono text-micro tabular-nums tracking-[0.12em] text-muted-foreground">
               {t("deck.standby_since").replace("{0}", fmtClock(readyAt))}
             </span>
           )}
@@ -342,7 +342,7 @@ export function DeckStandby({
         wide ? "bottom-4 left-5 max-w-[320px]" : "inset-x-4 bottom-14",
         <motion.div
           variants={{ exit: { opacity: 0, x: -36, transition: { duration: HANDOFF.cornerS, ease: "easeIn" } } }}
-          className="font-mono text-[10.5px] leading-[1.6]"
+          className="font-mono text-micro leading-[1.6]"
           data-testid="deck-boot-console"
         >
           {shownGates.map((g) => {
@@ -400,7 +400,7 @@ export function DeckStandby({
           <button
             type="button"
             onClick={onOpenBoard}
-            className="border border-border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+            className="border border-border px-2.5 py-1 font-mono text-micro uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
             style={{ clipPath: "polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px)" }}
           >
             {t("deck.open_board")}

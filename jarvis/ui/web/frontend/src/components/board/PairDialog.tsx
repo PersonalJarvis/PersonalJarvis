@@ -89,7 +89,7 @@ export function PairDialog({ onClose }: PairDialogProps) {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 rounded-md border border-border bg-card/50 px-2 py-1.5">
-                  <code className="flex-1 truncate font-mono text-[10px] text-muted-foreground">
+                  <code className="flex-1 truncate font-mono text-micro text-muted-foreground">
                     {initiate.data.url}
                   </code>
                   <button
@@ -106,12 +106,12 @@ export function PairDialog({ onClose }: PairDialogProps) {
                           console.warn("Clipboard write failed:", err);
                         });
                     }}
-                    className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+                    className="inline-flex items-center gap-1 text-micro text-muted-foreground hover:text-foreground"
                   >
                     <Copy className="h-3 w-3" />{copied ? t("pair_dialog.copied") : t("pair_dialog.copy")}
                   </button>
                 </div>
-                <div className="text-[10px] text-muted-foreground">
+                <div className="text-micro text-muted-foreground">
                   {`${t("pair_dialog.valid_until")} ${new Date(initiate.data.expires_at).toLocaleString("de-DE")}`}
                 </div>
               </div>

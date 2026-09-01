@@ -137,7 +137,7 @@ const TAIL_ROW = cn(
 
 function Count({ n }: { n: number }) {
   return (
-    <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
+    <span className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground/70">
       +{n}
     </span>
   );
@@ -181,7 +181,7 @@ function ChatRowItem({
           className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground")}
         />
         <span className="min-w-0 flex-1 truncate text-xs text-foreground">{title}</span>
-        <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+        <span className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground">
           {formatChatWhen(row.updatedMs)}
         </span>
       </button>

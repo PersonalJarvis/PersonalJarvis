@@ -133,7 +133,7 @@ export function HeatmapLegend({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground",
+        "flex items-center gap-2 text-micro uppercase tracking-wider text-muted-foreground",
         className,
       )}
     >

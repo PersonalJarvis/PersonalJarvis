@@ -291,7 +291,7 @@ function StatBadge({
     <div className="flex items-center gap-2 rounded-md border border-border bg-background/40 px-2.5 py-1.5">
       {icon}
       <div className="flex flex-col">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        <span className="text-micro uppercase tracking-wider text-muted-foreground">
           {label}
         </span>
         <span className="font-mono text-sm">{value}</span>
@@ -371,7 +371,7 @@ function WorkflowCard({
             <TriggerBadge workflow={workflow} />
             <LastRunBadge workflow={workflow} />
             {workflow.created_by === "seed" && (
-              <Badge variant="outline" className="text-[10px]">
+              <Badge variant="outline" className="text-micro">
                 Seed
               </Badge>
             )}
@@ -476,7 +476,7 @@ function WorkflowDetailBody({ workflowId }: { workflowId: string }) {
   return (
     <div className="space-y-4 border-t border-border bg-background/30 px-5 py-4">
       <div>
-        <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+        <div className="mb-2 text-micro uppercase tracking-wider text-muted-foreground">
           Steps ({steps.length})
         </div>
         <ol className="space-y-1.5">
@@ -508,7 +508,7 @@ function WorkflowDetailBody({ workflowId }: { workflowId: string }) {
       </div>
 
       <div>
-        <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+        <div className="mb-2 text-micro uppercase tracking-wider text-muted-foreground">
           {t("workflows_view.recent_runs")} ({data.recent_runs.length})
         </div>
         {data.recent_runs.length === 0 ? (
@@ -548,7 +548,7 @@ function RunRow({ run }: { run: WorkflowRun }) {
         <span className="font-mono text-muted-foreground">
           {formatShortTime(run.started_at_ns)}
         </span>
-        <Badge variant="outline" className="text-[10px]">
+        <Badge variant="outline" className="text-micro">
           {run.state}
         </Badge>
         <span className="text-muted-foreground">{run.trigger}</span>
@@ -609,7 +609,7 @@ function TriggerBadge({ workflow }: { workflow: WorkflowSummary }) {
     return (
       <Badge
         variant={workflow.enabled ? "default" : "outline"}
-        className="text-[10px]"
+        className="text-micro"
       >
         <Calendar className="mr-1 h-3 w-3" />
         {workflow.cron_expression || "cron"}
@@ -617,7 +617,7 @@ function TriggerBadge({ workflow }: { workflow: WorkflowSummary }) {
     );
   }
   return (
-    <Badge variant="secondary" className="text-[10px]">
+    <Badge variant="secondary" className="text-micro">
       Manual
     </Badge>
   );
@@ -629,7 +629,7 @@ function LastRunBadge({ workflow }: { workflow: WorkflowSummary }) {
   return (
     <Badge
       variant={ok ? "outline" : "destructive"}
-      className="text-[10px]"
+      className="text-micro"
       title={formatAbsolute(workflow.last_run_at_ns)}
     >
       {ok ? (

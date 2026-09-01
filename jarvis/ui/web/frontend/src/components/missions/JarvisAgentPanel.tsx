@@ -106,7 +106,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="flex items-center gap-2 text-micro uppercase tracking-wider text-muted-foreground">
             <span>w{worker.worker_id.slice(0, 8)}</span>
             {worker.session_id && (
               <span className="font-mono text-muted-foreground/70">
@@ -131,7 +131,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
           data-testid="jarvis-agent-reattach-badge"
           data-reattach-status={worker.reattach_status}
           className={cn(
-            "rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider",
+            "rounded border px-1.5 py-0.5 font-mono text-micro uppercase tracking-wider",
             reattachClass,
           )}
         >
@@ -139,7 +139,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
         </span>
       </div>
 
-      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[10px]">
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-micro">
         <dt className="text-muted-foreground">Cost</dt>
         <dd
           data-testid="jarvis-agent-cost"

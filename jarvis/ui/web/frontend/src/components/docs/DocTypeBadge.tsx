@@ -37,7 +37,7 @@ export function DocTypeBadge({ diataxis, className }: Props) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+        "inline-flex items-center rounded-md border px-1.5 py-0.5 text-micro font-medium uppercase tracking-wide",
         DIATAXIS_VARIANTS[diataxis],
         className,
       )}

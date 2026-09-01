@@ -457,18 +457,18 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
                       FOCUS_RING,
                     )}
                   >
-                    <span className="font-mono text-[10px] tabular-nums text-muted-foreground/70">
+                    <span className="font-mono text-micro tabular-nums text-muted-foreground/70">
                       {(index + 1).toString().padStart(2, "0")}
                     </span>
                     <span className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
                       <span className="text-sm font-medium text-foreground">{p.label}</span>
                       {p.recommended && (
-                        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+                        <span className="text-micro font-semibold uppercase tracking-[0.14em] text-primary">
                           {t("onboarding.api_keys.recommended")}
                         </span>
                       )}
                     </span>
-                    <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                    <span className="flex items-center gap-2 font-mono text-micro uppercase tracking-[0.12em] text-muted-foreground">
                       <span
                         aria-hidden
                         className={cn(

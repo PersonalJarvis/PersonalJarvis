@@ -535,7 +535,7 @@ export function VoiceEngineContext({
     : transitioning
       ? t("apikeys_view.runtime_switching")
       : sessionActive && activeSessionMode === "realtime"
-        ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ?}` · ${runtimeDetail}` : ""}`
+        ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ? ` · ${runtimeDetail}` : ""}`
         : sessionActive && activeSessionMode === "pipeline" && liveMode === "realtime"
           ? t("apikeys_view.runtime_fallback_pipeline")
           : sessionActive && activeSessionMode === "pipeline"
@@ -2603,12 +2603,12 @@ function ManagedServerPanel({
                   value: choice.id,
                   label: `${choice.label} · ~${choice.size_gb} GB${
                     choice.recommended
-                      ?}` · ${t("apikeys_view.managed_brain_recommended")}`
+                      ? ` · ${t("apikeys_view.managed_brain_recommended")}`
                       : ""
                   }${
                     choice.fits
                       ? ""
-                      :}` · ${t("apikeys_view.managed_brain_no_fit")}`
+                      : ` · ${t("apikeys_view.managed_brain_no_fit")}`
                   }`,
                   disabled: !choice.fits,
                 }))}
@@ -2630,11 +2630,11 @@ function ManagedServerPanel({
                   value: choice.id,
                   label: `${choice.label}${
                     choice.recommended
-                      ?}` · ${t("apikeys_view.managed_brain_recommended")}`
+                      ? ` · ${t("apikeys_view.managed_brain_recommended")}`
                       : ""
                   }${
                     !choice.selectable
-                      ?}` · ${t("apikeys_view.managed_voice_unavailable")}`
+                      ? ` · ${t("apikeys_view.managed_voice_unavailable")}`
                       : choice.runtime_ready === false
                         ? ` · ${t("apikeys_view.managed_voice_install_required")}`
                         : ""
@@ -4191,7 +4191,7 @@ function AntigravityAuthWidget({
  */
 const STATE_CHIP_TONE = {
   active: {
-    wrap: "rounded-[4px] border border-border-strong px-1.5 text-[10.5px] font-semibold text-foreground-strong",
+    wrap: "rounded-[4px] border border-border-strong px-1.5 text-micro font-semibold text-foreground-strong",
     dot: null,
   },
   ready: { wrap: "text-muted-foreground", dot: "bg-muted-foreground" },
@@ -4246,7 +4246,7 @@ export function Tag({
       {...rest}
       title={title}
       className={cn(
-        "inline-flex shrink-0 items-center rounded-[4px] border px-1.5 text-[10.5px] font-semibold leading-[18px] tracking-[0.06em]",
+        "inline-flex shrink-0 items-center rounded-[4px] border px-1.5 text-micro font-semibold leading-[18px] tracking-[0.06em]",
         tone === "accent" && "border-border-strong text-foreground-strong",
         tone === "neutral" && "border-border text-muted-foreground",
         tone === "warn" && "border-border-strong text-foreground",

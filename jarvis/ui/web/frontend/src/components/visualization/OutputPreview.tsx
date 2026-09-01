@@ -441,7 +441,7 @@ function FileSection({
         )}
       </header>
       {full.data?.truncated && (
-        <p className="border-b border-border/60 px-4 py-1.5 text-[10px] text-muted-foreground">
+        <p className="border-b border-border/60 px-4 py-1.5 text-micro text-muted-foreground">
           {t("outputs_view.file_truncated")}
         </p>
       )}

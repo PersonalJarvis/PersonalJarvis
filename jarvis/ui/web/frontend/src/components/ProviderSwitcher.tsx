@@ -59,7 +59,7 @@ export function ProviderSwitcher() {
           label: `${provider.label}${
             provider.configured
               ? ""
-              :}` — ${t("provider_switcher.no_credential")}`
+              : ` — ${t("provider_switcher.no_credential")}`
           }`,
           disabled: !provider.configured,
         }))}

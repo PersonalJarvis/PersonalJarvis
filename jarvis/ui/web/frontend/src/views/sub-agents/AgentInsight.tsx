@@ -346,7 +346,7 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
             <dl className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-px border-t border-border/70 bg-border/70">
               {facts.map((f) => (
                 <div key={f.label} className="bg-card px-5 py-3">
-                  <dt className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  <dt className="text-micro font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                     {f.label}
                   </dt>
                   <dd className="mt-1 font-display text-[15px] font-semibold tabular-nums text-foreground">
@@ -666,7 +666,7 @@ function Line({
   return (
     <li className="grid grid-cols-[60px_76px_minmax(0,1fr)] items-baseline gap-x-4 px-5 py-3">
       <span className="font-mono text-[11px] tabular-nums text-muted-foreground/70">{offset}</span>
-      <span className={cn("text-[10.5px] font-semibold uppercase tracking-[0.16em]", TONE_TEXT[tone])}>{kind}</span>
+      <span className={cn("text-micro font-semibold uppercase tracking-[0.16em]", TONE_TEXT[tone])}>{kind}</span>
       <div className="min-w-0">{children}</div>
     </li>
   );
@@ -866,7 +866,7 @@ function TranscriptFold({
               return (
                 <li key={step.step_id} className="grid grid-cols-[60px_76px_minmax(0,1fr)_100px] items-baseline gap-x-4 px-5 py-2.5">
                   <span className="font-mono text-[11px] tabular-nums text-muted-foreground/60">{pad2(idx + 1)}</span>
-                  <span className={cn("text-[10.5px] font-semibold uppercase tracking-[0.16em]", kind === "reasoning" ? "text-primary" : "text-muted-foreground")}>
+                  <span className={cn("text-micro font-semibold uppercase tracking-[0.16em]", kind === "reasoning" ? "text-primary" : "text-muted-foreground")}>
                     {t(`subagents_view.kind.${kind === "reasoning" ? "thought" : kind === "spawn" ? "worker" : "ran"}`)}
                   </span>
                   <div className="min-w-0">
@@ -964,7 +964,7 @@ function FilesLedger({
             >
               <span
                 title={r.title}
-                className={cn("grid h-5 w-5 place-items-center rounded border font-mono text-[10.5px] font-bold", STAMP[r.tone])}
+                className={cn("grid h-5 w-5 place-items-center rounded border font-mono text-micro font-bold", STAMP[r.tone])}
               >
                 {r.glyph}
               </span>

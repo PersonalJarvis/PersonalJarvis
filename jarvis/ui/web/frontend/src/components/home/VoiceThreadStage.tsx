@@ -135,7 +135,7 @@ function SpokenTurn({ message }: { message: ChatMessage }) {
         )}
       >
         {!isUser && (
-          <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
+          <div className="flex items-center gap-1.5 font-mono text-micro uppercase tracking-[0.14em] text-primary">
             <span aria-hidden className="h-1 w-1 rounded-full bg-foreground/70" />
             {assistantName}
           </div>

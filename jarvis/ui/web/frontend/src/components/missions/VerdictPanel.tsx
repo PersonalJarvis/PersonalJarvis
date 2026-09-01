@@ -88,16 +88,16 @@ function VerdictCard({ verdict }: { verdict: CriticVerdictReady }) {
           <div className="flex items-center gap-2">
             <span
               className={cn(
-                "rounded px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider",
+                "rounded px-1.5 py-0.5 text-micro font-mono uppercase tracking-wider",
                 style.className,
               )}
             >
               {style.label}
             </span>
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <span className="text-micro uppercase tracking-wider text-muted-foreground">
               iter #{verdict.iteration}
             </span>
-            <span className="font-mono text-[10px] text-muted-foreground">
+            <span className="font-mono text-micro text-muted-foreground">
               w{verdict.worker_id.slice(0, 8)}
             </span>
           </div>
@@ -143,7 +143,7 @@ function VerdictCard({ verdict }: { verdict: CriticVerdictReady }) {
                 )}
                 <Icon className={cn("h-3.5 w-3.5", tone)} />
                 <span className="flex-1 font-mono text-[11px]">{name}</span>
-                <span className={cn("text-[10px] uppercase tracking-wider", tone)}>
+                <span className={cn("text-micro uppercase tracking-wider", tone)}>
                   {axis.pass === true
                     ? "pass"
                     : axis.pass === false
@@ -156,13 +156,13 @@ function VerdictCard({ verdict }: { verdict: CriticVerdictReady }) {
                   {evidence.map((e, i) => (
                     <li
                       key={i}
-                      className="text-[10px] font-mono text-muted-foreground break-all"
+                      className="text-micro font-mono text-muted-foreground break-all"
                     >
                       • {String(e)}
                     </li>
                   ))}
                   {axis.notes && (
-                    <li className="text-[10px] text-muted-foreground italic">
+                    <li className="text-micro text-muted-foreground italic">
                       {axis.notes}
                     </li>
                   )}
@@ -180,7 +180,7 @@ function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.max(0, Math.min(1, value)) * 100;
   return (
     <div className="space-y-1">
-      <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center justify-between text-micro uppercase tracking-wider text-muted-foreground">
         <span>Confidence</span>
         <span className="font-mono">{pct.toFixed(0)}%</span>
       </div>

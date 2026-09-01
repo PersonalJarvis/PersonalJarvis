@@ -142,7 +142,7 @@ export function DocsSidebar({
               <div className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 <Clock className="h-3 w-3" aria-hidden="true" />
                 <span>{t("docs.recent")}</span>
-                <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">
+                <span className="ml-auto text-micro font-normal text-muted-foreground/70">
                   {recent.length}
                 </span>
               </div>
@@ -191,7 +191,7 @@ export function DocsSidebar({
                       <ChevronDown className="h-3 w-3" aria-hidden="true" />
                     )}
                     <span>{section.name}</span>
-                    <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">
+                    <span className="ml-auto text-micro font-normal text-muted-foreground/70">
                       {section.docs.length}
                     </span>
                   </button>

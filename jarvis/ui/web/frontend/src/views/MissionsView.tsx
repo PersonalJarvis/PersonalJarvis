@@ -117,12 +117,12 @@ export function MissionsView() {
         right={
           <div className="flex items-center gap-3">
             <ConnectionBadge connected={connected} />
-            <Badge variant="outline" className="font-mono text-[10px]">
+            <Badge variant="outline" className="font-mono text-micro">
               {totalCount} total
             </Badge>
             <Badge
               variant={activeCount > 0 ? "default" : "outline"}
-              className="font-mono text-[10px]"
+              className="font-mono text-micro"
             >
               {activeCount} {t("missions_view.active")}
             </Badge>
@@ -138,7 +138,7 @@ export function MissionsView() {
       <div className="grid flex-1 grid-cols-[280px_1fr_320px] overflow-hidden">
         {/* Left pane */}
         <div className="flex h-full flex-col overflow-hidden bg-sidebar">
-          <div className="border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="border-b border-border px-3 py-2 text-micro uppercase tracking-wider text-muted-foreground">
             {t("missions_view.tree_label")}
           </div>
           <div className="flex-1 overflow-hidden">
@@ -161,7 +161,7 @@ export function MissionsView() {
             )}
           </div>
           <div className="overflow-hidden bg-sidebar">
-            <div className="border-b border-border px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="border-b border-border px-3 py-1.5 text-micro uppercase tracking-wider text-muted-foreground">
               {t("missions_view.timeline_label")}
             </div>
             <div className="h-[calc(100%-28px)]">
@@ -203,7 +203,7 @@ export function MissionsView() {
                   <ShieldAlert className="h-3.5 w-3.5" />
                   {t("mission_tool_approvals.tab_label")}
                   {pendingApprovalCount > 0 ? (
-                    <span className="absolute -right-1 -top-1 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 font-mono text-[9px] leading-none text-destructive-foreground">
+                    <span className="absolute -right-1 -top-1 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 font-mono text-micro leading-none text-destructive-foreground">
                       {pendingApprovalCount}
                     </span>
                   ) : null}
@@ -239,7 +239,7 @@ function ConnectionBadge({ connected }: { connected: boolean }) {
   return (
     <span
       className={cn(
-        "flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[10px] uppercase tracking-wider",
+        "flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-micro uppercase tracking-wider",
         connected
           ? "border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground"
           : "border-foreground/40 bg-foreground/10 text-foreground",
@@ -319,7 +319,7 @@ function ReasoningPanel() {
                 key={`${env.event_id}-${idx}`}
                 className="rounded border border-border/60 bg-card/30 p-2 text-xs"
               >
-                <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
+                <div className="flex items-center justify-between text-micro uppercase tracking-wider text-muted-foreground">
                   <span>w{p.worker_id.slice(0, 8)}</span>
                   {p.pct !== null && (
                     <span className="font-mono">{Math.round(p.pct * 100)}%</span>
@@ -336,7 +336,7 @@ function ReasoningPanel() {
                 key={`${env.event_id}-${idx}`}
                 className="rounded border border-foreground/40 bg-foreground/10 p-2 text-xs"
               >
-                <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-foreground">
+                <div className="flex items-center justify-between text-micro uppercase tracking-wider text-foreground">
                   <span>iter #{p.iteration} → {p.next_model}</span>
                   <span className="font-mono">w{p.worker_id.slice(0, 8)}</span>
                 </div>
@@ -379,14 +379,14 @@ function PlanPanel() {
     <ScrollArea className="h-full">
       <div className="space-y-3 p-3">
         <div className="rounded border border-border/60 bg-card/30 p-2 text-xs">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="text-micro uppercase tracking-wider text-muted-foreground">
             {t("missions_view.expected_output")}
           </div>
           <p className="mt-1 text-foreground/90">
             {planEnv.expected_output || t("missions_view.not_specified")}
           </p>
         </div>
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        <div className="text-micro uppercase tracking-wider text-muted-foreground">
           {t("missions_view.steps")} ({planEnv.n_workers} {t("missions_view.workers")})
         </div>
         <ol className="space-y-2">
@@ -395,10 +395,10 @@ function PlanPanel() {
               key={idx}
               className="rounded border border-border/60 bg-card/30 p-2 text-xs"
             >
-              <div className="text-[10px] uppercase tracking-wider text-primary">
+              <div className="text-micro uppercase tracking-wider text-primary">
                 Step {idx + 1}
               </div>
-              <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] text-foreground/80">
+              <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-micro text-foreground/80">
                 {JSON.stringify(step, null, 2)}
               </pre>
             </li>
