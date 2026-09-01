@@ -1,0 +1,100 @@
+{
+  "$comment": "KayKit Character Pack: Adventurers 1.0 by Kay Lousberg — CC0 (LICENSE.txt in the repo). Used as the biped skeleton + clip base (character-pipeline.md §8 route A, §11). Every file is fetched by URL into scripts/figures/cache/ and verified by sha256 before the build touches it.",
+  "name": "KayKit Character Pack: Adventurers 1.0",
+  "author": "Kay Lousberg (kaylousberg.com)",
+  "license": "CC0-1.0",
+  "license_url": "https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0/blob/main/LICENSE.txt",
+  "base_url": "https://raw.githubusercontent.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0/main/addons/kaykit_character_pack_adventures/Characters/gltf/",
+  "files": {
+    "Rogue.glb": "e825437cd4d2ee9c1960b517a74a69101e33eb409ae7fa8cedc7134a998fbb7d",
+    "Knight.glb": "60428e3abc09ba83e595d256e3af8c5c976b46cdae599f0802fc82b4a3445168",
+    "Mage.glb": "cf898585da33fab50c724d31605fb931eb2912e6d2280092141e98ca81ad507d"
+  },
+  "atlas_grid": { "columns": 8, "rows": 4 },
+  "fps": 30,
+  "bone_map": {
+    "root": "root",
+    "hips": "hips",
+    "spine": "spine",
+    "chest": "chest",
+    "head": "head",
+    "upperarm.l": "upper_arm_l",
+    "lowerarm.l": "lower_arm_l",
+    "wrist.l": "wrist_l",
+    "hand.l": "hand_l",
+    "handslot.l": "handslot_l",
+    "upperarm.r": "upper_arm_r",
+    "lowerarm.r": "lower_arm_r",
+    "wrist.r": "wrist_r",
+    "hand.r": "hand_r",
+    "handslot.r": "handslot_r",
+    "upperleg.l": "upper_leg_l",
+    "lowerleg.l": "lower_leg_l",
+    "foot.l": "foot_l",
+    "toes.l": "toes_l",
+    "upperleg.r": "upper_leg_r",
+    "lowerleg.r": "lower_leg_r",
+    "foot.r": "foot_r",
+    "toes.r": "toes_r"
+  },
+  "drop_bone_patterns": ["IK", "control-"],
+  "clip_map": {
+    "idle": "Idle",
+    "walk": "Walking_A",
+    "run": "Running_A",
+    "work": "Spellcasting",
+    "talk": "Use_Item",
+    "sit": "Sit_Chair_Idle",
+    "sleep": "Lie_Idle",
+    "celebrate": "Cheer",
+    "wave": "Interact"
+  },
+  "characters": {
+    "Rogue": {
+      "body_meshes": [
+        "Rogue_Body",
+        "Rogue_Head",
+        "Rogue_ArmLeft",
+        "Rogue_ArmRight",
+        "Rogue_LegLeft",
+        "Rogue_LegRight"
+      ],
+      "cell_map": {
+        "*": {
+          "c0r0": "skin",
+          "c1r0": "hair",
+          "c2r0": "eyes",
+          "c3r0": "metal",
+          "c0r1": "primary",
+          "c1r1": "secondary_shade",
+          "c5r0": "secondary",
+          "c6r0": "leather",
+          "c7r1": "leather",
+          "c5r2": "primary",
+          "c3r2": "primary_shade"
+        },
+        "Rogue_Head": { "c3r0": "eye_white" },
+        "Rogue_LegLeft": { "c7r1": "shoes" },
+        "Rogue_LegRight": { "c7r1": "shoes" }
+      },
+      "default_palette": {
+        "skin": "#f4b68f",
+        "skin_shade": "#d99a75",
+        "hair": "#9e5d47",
+        "eyes": "#1b2427",
+        "primary": "#096153",
+        "primary_shade": "#07483d",
+        "secondary": "#b16f51",
+        "secondary_shade": "#008c55",
+        "accent": "#e8c46b",
+        "metal": "#919da2",
+        "leather": "#9a5944",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#4a2e22",
+        "eye_white": "#e6ecef",
+        "emissive": "#ffd166"
+      }
+    }
+  }
+}

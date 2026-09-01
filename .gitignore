@@ -464,3 +464,6 @@ scripts/ci/privacy_gate/references/secret-allowlist.tsv
 # the machine that ran the tests into its header, so it is a personal-data leak
 # as much as it is a cache. Regenerated on demand; never committed.
 .hypothesis/
+
+# Figure build: fetched CC0 sources and generated sheets (scripts/figures/README.md)
+scripts/figures/cache/

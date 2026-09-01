@@ -1,0 +1,147 @@
+{
+  "$comment": "Figure asset contract v1 — docs/agent-society/character-pipeline.md §4/§5. The build (build_figures.py) and the CI gate (scripts/ci/check_society_figures.py) both read this file; the runtime reads the extras the build writes from it.",
+  "contract": 1,
+  "sheet": {
+    "size": 128,
+    "cell_width": 8,
+    "cell_height": 16,
+    "cells": [
+      "skin",
+      "skin_shade",
+      "hair",
+      "eyes",
+      "primary",
+      "primary_shade",
+      "secondary",
+      "secondary_shade",
+      "accent",
+      "metal",
+      "leather",
+      "fur",
+      "fur_shade",
+      "shoes",
+      "eye_white",
+      "emissive"
+    ]
+  },
+  "archetypes": {
+    "biped": {
+      "bones": [
+        "root",
+        "hips",
+        "spine",
+        "chest",
+        "head",
+        "upper_arm_l",
+        "lower_arm_l",
+        "wrist_l",
+        "hand_l",
+        "handslot_l",
+        "upper_arm_r",
+        "lower_arm_r",
+        "wrist_r",
+        "hand_r",
+        "handslot_r",
+        "upper_leg_l",
+        "lower_leg_l",
+        "foot_l",
+        "toes_l",
+        "upper_leg_r",
+        "lower_leg_r",
+        "foot_r",
+        "toes_r"
+      ],
+      "feet": ["toes_l", "toes_r"],
+      "clips": {
+        "idle": { "loop": true, "duration": [0.8, 6.0] },
+        "walk": { "loop": true, "duration": [0.8, 1.2], "stride": true },
+        "run": { "loop": true, "duration": [0.5, 0.9], "stride": true },
+        "work": { "loop": true, "duration": [0.5, 4.0] },
+        "talk": { "loop": true, "duration": [0.8, 3.0] },
+        "sit": { "loop": true, "duration": [1.0, 6.0] },
+        "sleep": { "loop": true, "duration": [1.0, 6.0] },
+        "celebrate": { "loop": false, "duration": [0.5, 4.0] },
+        "wave": { "loop": false, "duration": [0.5, 3.0] }
+      },
+      "variants": {
+        "small": { "height_m": 1.15 },
+        "medium": { "height_m": 1.75 },
+        "large": { "height_m": 2.3 }
+      },
+      "budget": { "triangles": 4500, "materials": 1, "primitives": 1 }
+    },
+    "quadruped": {
+      "bones": [
+        "root",
+        "hips",
+        "spine",
+        "chest",
+        "neck",
+        "head",
+        "jaw",
+        "tail_1",
+        "tail_2",
+        "upper_leg_fl",
+        "lower_leg_fl",
+        "foot_fl",
+        "upper_leg_fr",
+        "lower_leg_fr",
+        "foot_fr",
+        "upper_leg_bl",
+        "lower_leg_bl",
+        "foot_bl",
+        "upper_leg_br",
+        "lower_leg_br",
+        "foot_br"
+      ],
+      "optional_bones": ["ear_l", "ear_r", "wing_l", "wing_r"],
+      "feet": ["foot_fl", "foot_fr", "foot_bl", "foot_br"],
+      "clips": {
+        "idle": { "loop": true, "duration": [0.8, 6.0] },
+        "walk": { "loop": true, "duration": [0.6, 1.4], "stride": true },
+        "run": { "loop": true, "duration": [0.4, 0.9], "stride": true },
+        "talk": { "loop": true, "duration": [0.8, 3.0] },
+        "sit": { "loop": true, "duration": [1.0, 6.0] },
+        "sleep": { "loop": true, "duration": [1.0, 6.0] },
+        "celebrate": { "loop": false, "duration": [0.5, 4.0] }
+      },
+      "variants": { "default": { "height_m": 0.9 } },
+      "budget": { "triangles": 4500, "materials": 1, "primitives": 1 }
+    },
+    "spirit": {
+      "bones": ["root", "body", "face"],
+      "feet": [],
+      "clips": {
+        "idle": { "loop": true, "duration": [0.8, 6.0] },
+        "walk": { "loop": true, "duration": [0.6, 2.0], "stride": false },
+        "talk": { "loop": true, "duration": [0.8, 3.0] },
+        "sleep": { "loop": true, "duration": [1.0, 6.0] },
+        "celebrate": { "loop": false, "duration": [0.5, 4.0] },
+        "wave": { "loop": false, "duration": [0.5, 3.0] }
+      },
+      "variants": { "default": { "height_m": 1.9 } },
+      "budget": { "triangles": 1200, "materials": 3, "primitives": 3 }
+    }
+  },
+  "limits": {
+    "part_triangles": 600,
+    "base_file_kb": 512,
+    "part_file_kb": 120,
+    "max_texture": 256,
+    "max_influences": 4,
+    "loop_epsilon": 0.002,
+    "loop_epsilon_deg": 1.0,
+    "origin_epsilon": 0.01,
+    "center_epsilon": 0.1,
+    "scale_epsilon": 0.0001
+  },
+  "targets": [
+    {
+      "id": "biped-medium",
+      "archetype": "biped",
+      "variant": "medium",
+      "source": "kaykit-adventurers",
+      "character": "Rogue"
+    }
+  ]
+}
