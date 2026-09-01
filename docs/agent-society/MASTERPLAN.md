@@ -145,10 +145,28 @@ now" face strip. A **Ledger tab** keeps the current DepartureBoard as the data-d
 — and is the *declared* fallback wherever WebGL is absent, reduced motion is requested, or the
 box is headless.
 
+**Section layout (maintainer sketches, 2026-09-01):** left = the app's existing section sidebar
+(unchanged); center = the world viewport (the main stage; a simple live board until M3 lands);
+right = a **fixed agents roster rail** — one row per agent (avatar, name, last-message preview,
+timestamp, active dot), a "+" to create, search; a thin top strip above the stage whose content is
+still open (candidates: active count, today's cost, kill-switch chip). Clicking a figure in the
+world and clicking a row in the rail open the SAME model card (§4.2).
+
 ### 4.2 Agent model card
 
-Left: rotating figure — the agent's **low-poly character with pixel-art textures** (maintainer
+The card is a large **overlay window above the world** (maintainer sketch 2026-09-01): almost
+full-screen, the world stays visible behind it through a dimmed, blurred scrim; Esc / ✕ close it.
+Three columns, in this order: **Specs | 3D figure | Chat.**
+
+- **Specs (left):** the spec sheet described below.
+- **3D figure (center):** rotating figure — the agent's **low-poly character with pixel-art textures** (maintainer
 decision 2026-09-01; GLB asset, nearest-filtered texture sheet), drag-to-orbit, idle animation.
+- **Chat (right):** the agent's canonical chat rendered as the app's ordinary agent chat — the same
+  timeline, reasoning trail ("Thought", tool-step groups) and composer the coding panes use for
+  Claude Code / Codex sessions. Only ONE agent chat is open at a time (it lives inside the card),
+  so the world stays the star. (Earlier "chat overlay over the stage" idea: superseded by this.)
+
+Figure details:
 Pipeline: ONE shared low-poly base rig (built once, e.g. in Blender), customization through
 swappable part meshes (hair/headgear/outfit) plus palette/texture-sheet variants; AI generation
 targets the flat texture sheet and runs through a validate-and-repair step. Right: the spec sheet — provider/model pill,
@@ -243,8 +261,13 @@ add the four controls it lacked: authenticated writes (chokepoint), bounded non-
   = Ledger + model cards (declared equivalent); no strobe/flash effects.
 - **Notifications:** finished/blocked agents surface via the existing Jarvis bar + badge counts +
   voice announcements; an expired approval re-asks on next focus (§2.9).
-- **Licensing:** Hermes is MIT (attribution NOTICE when copying substantial code; repo keeps
-  provenance headers). skinview3d MIT. Asset/skin uploads follow the existing report-then-delist
+- **Own implementation, no Hermes code (maintainer decision 2026-09-01, supersedes the earlier
+  "port Hermes" idea):** Hermes Bot Mode and Grok Bot are REFERENCES for behavior and product
+  shape only. No Hermes source is copied or adapted, no Hermes UI (JSX/CSS/components) is
+  transcribed, no `third_party/hermes-agent` attribution tree is needed because nothing is taken.
+  Rules and constants we adopted as ideas (bounded rooms 2–6 / ≤3 rounds / ≤10 messages, the
+  one-canonical-chat invariant, three-field creation, avatar-as-status) are re-implemented from
+  their described behavior in our own code. skinview3d MIT (dropped anyway, see below). Asset/skin uploads follow the existing report-then-delist
   precedent; the character pipeline is first-party (own base rig + textures — the earlier
   skinview3d/Minecraft-skin route was dropped with the avatar decision); no third-party game
   trademarks in product copy — "pixel retro" language only.
@@ -312,9 +335,19 @@ Decided 2026-09-01:
 3. **Avatar style:** **low-poly figures with pixel-art textures** (not Minecraft-skin voxels) —
    one shared base rig, swappable parts, texture/palette variants (§4.2).
 4. **World branding:** its own bright video-game identity (§4.3).
+5. **Section layout:** sidebar | world stage | fixed agents rail; thin top strip (content open)
+   (§4.1).
+6. **Model card:** near-full-screen overlay above the world, three columns Specs | 3D | Chat;
+   the chat is the ordinary agent chat (Claude Code / Codex-style timeline); one open chat at a
+   time (§4.2).
+7. **No Hermes code or UI is copied.** Hermes and Grok Bot are orientation only; the whole
+   society — backend and UI — is built in-house (§7).
+8. **Build start:** frontend card work may proceed on clearly-labeled sample data while M1 lands
+   (`components/society/data.ts` is the single swap point).
 
 Still open:
 
 5. Confirm the DeepMind paper: *From AGI to ASI* (arXiv 2606.12683, Hutter & Legg et al.) — the
    research identified it as the one meant; it is an inference, not a certainty.
 6. First-run seed agents: ship a starter coordinator + one specialist, or start empty?
+7. Content of the thin top strip above the world stage (§4.1).
