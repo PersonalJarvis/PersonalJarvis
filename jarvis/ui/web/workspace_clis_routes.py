@@ -122,7 +122,7 @@ def _bad_request(exc: custom_clis.CustomCliError) -> HTTPException:
 
 
 @router.get("", response_model=CustomCliListResponse, summary="List your own CLIs")
-async def list_clis() -> CustomCliListResponse:
+def list_clis() -> CustomCliListResponse:
     """Every CLI the user added, plus the limits the form has to respect."""
     return CustomCliListResponse(
         clis=[_model(entry) for entry in custom_clis.list_custom_clis()]
@@ -135,7 +135,7 @@ async def list_clis() -> CustomCliListResponse:
     summary="Add a CLI of your own",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def create_cli(req: CreateCustomCliRequest) -> CustomCliModel:
+def create_cli(req: CreateCustomCliRequest) -> CustomCliModel:
     """Store a new CLI and offer it everywhere a terminal can be opened."""
     try:
         entry = custom_clis.create_custom_cli(
@@ -156,7 +156,7 @@ async def create_cli(req: CreateCustomCliRequest) -> CustomCliModel:
     summary="Change one of your CLIs",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def update_cli(cli_id: str, req: UpdateCustomCliRequest) -> CustomCliModel:
+def update_cli(cli_id: str, req: UpdateCustomCliRequest) -> CustomCliModel:
     """Edit a stored CLI. Panes already running it keep the command they started
     with — a live process cannot be re-launched under it."""
     try:
@@ -177,7 +177,7 @@ async def update_cli(cli_id: str, req: UpdateCustomCliRequest) -> CustomCliModel
     summary="Remove one of your CLIs",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def delete_cli(cli_id: str) -> dict[str, Any]:
+def delete_cli(cli_id: str) -> dict[str, Any]:
     """Forget a CLI and its logo. Open panes running it are left alone."""
     try:
         entry = custom_clis.delete_custom_cli(cli_id)
@@ -219,7 +219,7 @@ async def upload_logo(
     summary="Remove a CLI's logo",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def remove_logo(cli_id: str) -> CustomCliModel:
+def remove_logo(cli_id: str) -> CustomCliModel:
     """Drop the logo; the picker falls back to the monogram it draws without one."""
     try:
         entry = custom_clis.clear_logo(cli_id)
@@ -229,7 +229,7 @@ async def remove_logo(cli_id: str) -> CustomCliModel:
 
 
 @router.get("/{cli_id}/logo", summary="A CLI's logo")
-async def get_logo(cli_id: str) -> FileResponse:
+def get_logo(cli_id: str) -> FileResponse:
     """Serve the stored image.
 
     Two headers earn their place. ``Content-Security-Policy: sandbox`` because

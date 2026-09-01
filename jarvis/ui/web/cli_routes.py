@@ -368,7 +368,7 @@ def _publish_safe(bus: Any, event: Any) -> None:
 
 
 @router.get("", response_model=ListClisResponse)
-async def list_clis(request: Request) -> ListClisResponse:
+def list_clis(request: Request) -> ListClisResponse:
     import time
 
     reg = _require_registry(request)
@@ -401,7 +401,7 @@ async def list_clis(request: Request) -> ListClisResponse:
 
 
 @router.get("/{name}", response_model=CliDetail)
-async def get_cli(name: str, request: Request) -> CliDetail:
+def get_cli(name: str, request: Request) -> CliDetail:
     import time
 
     reg = _require_registry(request)
@@ -464,7 +464,7 @@ async def check_cli(name: str, request: Request) -> CheckResponse:
 
 
 @router.get("/{name}/usage", response_model=UsageListResponse)
-async def list_usage(
+def list_usage(
     name: str,
     request: Request,
     page: int = Query(1, ge=1, le=10_000),
@@ -513,7 +513,7 @@ async def list_usage(
 
 
 @router.get("/{name}/usage/stats", response_model=UsageStatsResponse)
-async def usage_stats(
+def usage_stats(
     name: str, request: Request, since_ms: int | None = Query(None, ge=0)
 ) -> UsageStatsResponse:
     reg = _require_registry(request)
@@ -533,7 +533,7 @@ async def usage_stats(
 
 
 @router.post("/{name}/spawn-external", response_model=SpawnExternalResponse)
-async def spawn_external(
+def spawn_external(
     name: str,
     request: Request,
     body: SpawnExternalRequest,
@@ -667,7 +667,7 @@ def _start_install_job(reg: Any, spec: CliSpec, name: str, method: str) -> Any:
 
 
 @router.post("/{name}/install", response_model=InstallStartResponse)
-async def install_cli(
+def install_cli(
     name: str,
     request: Request,
     body: InstallRequest,
@@ -693,7 +693,7 @@ async def install_cli(
 
 
 @router.delete("/{name}/install/{job_id}")
-async def cancel_install(name: str, job_id: str, request: Request) -> dict[str, bool]:
+def cancel_install(name: str, job_id: str, request: Request) -> dict[str, bool]:
     reg = _require_registry(request)
     ok = reg.installer().cancel(job_id)
     return {"ok": ok}
@@ -872,7 +872,7 @@ async def register_custom(payload: CustomCliPayload, request: Request) -> CliDet
 
 
 @router.delete("/custom/{name}")
-async def unregister_custom(name: str, request: Request) -> dict[str, Any]:
+def unregister_custom(name: str, request: Request) -> dict[str, Any]:
     reg = _require_registry(request)
     ok = reg.catalog().remove_custom(name)
     if not ok:
@@ -881,7 +881,7 @@ async def unregister_custom(name: str, request: Request) -> dict[str, Any]:
 
 
 @router.delete("/{name}/usage")
-async def clear_usage(name: str, request: Request) -> dict[str, int]:
+def clear_usage(name: str, request: Request) -> dict[str, int]:
     reg = _require_registry(request)
     if reg.catalog().get(name) is None:
         raise HTTPException(status_code=404, detail=f"CLI '{name}' not in catalog")

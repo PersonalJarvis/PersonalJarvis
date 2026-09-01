@@ -490,7 +490,7 @@ async def get_roles(provider_id: str, request: Request) -> RolesResponse:
 
 
 @router.put("/roles/{role}", response_model=RoleSetResponse)
-async def set_role(
+def set_role(
     provider_id: str, role: str, body: RoleSetBody, request: Request
 ) -> RoleSetResponse:
     """Assign ``model`` to a role through the config writers; ``""`` = discovery."""
@@ -595,7 +595,7 @@ def _options_response(name: str, opts: OllamaModelOptions | None) -> ModelOption
 
 
 @router.get("/models/{name:path}/options", response_model=ModelOptionsResponse)
-async def get_model_options(provider_id: str, name: str, request: Request) -> ModelOptionsResponse:
+def get_model_options(provider_id: str, name: str, request: Request) -> ModelOptionsResponse:
     """The per-model profile as configured (empty when none)."""
     _require_pull_capable(provider_id)
     _key, opts = _options_for(_resolve_cfg(request), name)
@@ -603,7 +603,7 @@ async def get_model_options(provider_id: str, name: str, request: Request) -> Mo
 
 
 @router.put("/models/{name:path}/options", response_model=ModelOptionsResponse)
-async def put_model_options(
+def put_model_options(
     provider_id: str, name: str, body: OllamaModelOptionsBody, request: Request
 ) -> ModelOptionsResponse:
     """Replace the profile of ``name`` with ``body`` (whole set; nothing set = clear)."""
@@ -635,7 +635,7 @@ async def put_model_options(
 
 
 @router.delete("/models/{name:path}/options", response_model=ModelOptionsResponse)
-async def delete_model_options(
+def delete_model_options(
     provider_id: str, name: str, request: Request
 ) -> ModelOptionsResponse:
     """Reset: drop the profile so Ollama's defaults apply again."""
@@ -752,13 +752,13 @@ def _require_hf(request: Request) -> None:
 
 
 @router.get("/hf/enabled", response_model=HfEnabledResponse)
-async def get_hf_enabled(provider_id: str, request: Request) -> HfEnabledResponse:
+def get_hf_enabled(provider_id: str, request: Request) -> HfEnabledResponse:
     _require_pull_capable(provider_id)
     return HfEnabledResponse(enabled=cfg_mod.ollama_hf_enabled(_resolve_cfg(request)))
 
 
 @router.put("/hf/enabled", response_model=HfEnabledResponse)
-async def put_hf_enabled(
+def put_hf_enabled(
     provider_id: str, body: HfEnabledBody, request: Request
 ) -> HfEnabledResponse:
     """Switch Hugging Face browsing on or off (``[brain.providers.ollama].hf_enabled``)."""
@@ -903,7 +903,7 @@ class IdleReleaseResponse(BaseModel):
 
 
 @router.get("/runtime/idle-release", response_model=IdleReleaseResponse)
-async def get_idle_release(provider_id: str, request: Request) -> IdleReleaseResponse:
+def get_idle_release(provider_id: str, request: Request) -> IdleReleaseResponse:
     """How long the local voice stack may sit idle before it releases memory."""
     _require_pull_capable(provider_id)
     voice = getattr(_resolve_cfg(request), "voice", None)
@@ -911,7 +911,7 @@ async def get_idle_release(provider_id: str, request: Request) -> IdleReleaseRes
 
 
 @router.put("/runtime/idle-release", response_model=IdleReleaseResponse)
-async def put_idle_release(
+def put_idle_release(
     provider_id: str, body: IdleReleaseBody, request: Request
 ) -> IdleReleaseResponse:
     """Persist the idle window; the supervisor reads it on its next tick."""
@@ -942,7 +942,7 @@ class AutostartBody(BaseModel):
 
 
 @router.get("/runtime/autostart", response_model=AutostartResponse)
-async def get_autostart(provider_id: str, request: Request) -> AutostartResponse:
+def get_autostart(provider_id: str, request: Request) -> AutostartResponse:
     """Whether the local server starts with Jarvis, and whether that would fire."""
     _require_pull_capable(provider_id)
     from jarvis.core.config import ollama_autostart
@@ -955,7 +955,7 @@ async def get_autostart(provider_id: str, request: Request) -> AutostartResponse
 
 
 @router.put("/runtime/autostart", response_model=AutostartResponse)
-async def put_autostart(
+def put_autostart(
     provider_id: str, body: AutostartBody, request: Request
 ) -> AutostartResponse:
     """Switch local models on or off — persisted AND applied to what runs now.
@@ -1083,7 +1083,7 @@ async def get_overview(
 
 
 @router.get("/server/env-guide", response_model=EnvGuideResponse)
-async def get_server_env_guide(
+def get_server_env_guide(
     provider_id: str,
     os: str = Query(default="", description="windows | macos | linux; empty = this OS"),
 ) -> EnvGuideResponse:

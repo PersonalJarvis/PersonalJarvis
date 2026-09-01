@@ -130,7 +130,7 @@ def _require_brain(request: Request):
 
 
 @router.get("/reply-language")
-async def get_reply_language(request: Request) -> dict[str, object]:
+def get_reply_language(request: Request) -> dict[str, object]:
     brain = _require_brain(request)
     return {
         "language": getattr(brain, "reply_language", "auto"),
@@ -139,7 +139,7 @@ async def get_reply_language(request: Request) -> dict[str, object]:
 
 
 @router.put("/reply-language")
-async def put_reply_language(body: ReplyLanguageBody, request: Request) -> dict[str, object]:
+def put_reply_language(body: ReplyLanguageBody, request: Request) -> dict[str, object]:
     brain = _require_brain(request)
 
     # The BrainManager owns validation (single source of truth). An unknown
@@ -456,7 +456,7 @@ def _resolve_cfg(request: Request):
 
 
 @router.get("/team-proxy")
-async def get_team_proxy(request: Request) -> dict[str, object]:
+def get_team_proxy(request: Request) -> dict[str, object]:
     from jarvis.core import config as cfg_mod
 
     conf = _resolve_cfg(request) or cfg_mod.load_config()
@@ -471,7 +471,7 @@ async def get_team_proxy(request: Request) -> dict[str, object]:
 
 
 @router.put("/team-proxy")
-async def put_team_proxy(body: TeamProxyBody, request: Request) -> dict[str, object]:
+def put_team_proxy(body: TeamProxyBody, request: Request) -> dict[str, object]:
     url = (body.url or "").strip()
     if body.enabled and not url:
         raise HTTPException(status_code=400, detail="Team mode requires a proxy url.")
@@ -536,7 +536,7 @@ def _current_ui_language(request: Request) -> str:
 
 
 @router.get("/ui-language")
-async def get_ui_language(request: Request) -> dict[str, object]:
+def get_ui_language(request: Request) -> dict[str, object]:
     return {"language": _current_ui_language(request), "options": list(_UI_LANGUAGES)}
 
 
@@ -618,7 +618,7 @@ def _current_ui_theme(request: Request) -> str:
 
 
 @router.get("/appearance")
-async def get_appearance(request: Request) -> dict[str, object]:
+def get_appearance(request: Request) -> dict[str, object]:
     """The app's colour theme, plus the values this build accepts."""
     return {"theme": _current_ui_theme(request), "options": list(_UI_THEMES)}
 
@@ -738,7 +738,7 @@ def _background_player_available() -> bool:
 
 
 @router.get("/music")
-async def get_music_settings(request: Request) -> dict[str, object]:
+def get_music_settings(request: Request) -> dict[str, object]:
     """Preferred music service + where YouTube Music plays, with the accepted
     values, which connectors are connected, and whether the background player
     can run on this host."""
@@ -754,7 +754,7 @@ async def get_music_settings(request: Request) -> dict[str, object]:
 
 
 @router.put("/music")
-async def put_music_settings(body: MusicSettingsBody, request: Request) -> dict[str, object]:
+def put_music_settings(body: MusicSettingsBody, request: Request) -> dict[str, object]:
     """Change the preferred music service and/or where YouTube Music plays."""
     preferred_now, playback_now = _current_music(request)
     preferred = preferred_now
@@ -857,12 +857,12 @@ def _current_stt_language(request: Request) -> str:
 
 
 @router.get("/stt-language")
-async def get_stt_language(request: Request) -> dict[str, object]:
+def get_stt_language(request: Request) -> dict[str, object]:
     return {"language": _current_stt_language(request), "options": list(_STT_LANGUAGES)}
 
 
 @router.put("/stt-language")
-async def put_stt_language(body: SttLanguageBody, request: Request) -> dict[str, object]:
+def put_stt_language(body: SttLanguageBody, request: Request) -> dict[str, object]:
     lang = (body.language or "").strip().lower()
     if lang not in _STT_LANGUAGES:
         raise HTTPException(
@@ -1000,7 +1000,7 @@ class WakeLanguageBody(BaseModel):
 
 
 @router.get("/wake-language")
-async def get_wake_language(request: Request) -> dict[str, object]:
+def get_wake_language(request: Request) -> dict[str, object]:
     from jarvis.speech.wake_model_fetch import resolve_wake_language
 
     cfg = _config(request)
@@ -1018,7 +1018,7 @@ async def get_wake_language(request: Request) -> dict[str, object]:
 
 
 @router.put("/wake-language")
-async def put_wake_language(body: WakeLanguageBody, request: Request) -> dict[str, object]:
+def put_wake_language(body: WakeLanguageBody, request: Request) -> dict[str, object]:
     lang = (body.language or "").strip().lower()
     if lang not in _WAKE_LANGUAGES:
         raise HTTPException(
@@ -1213,7 +1213,7 @@ def _run_local_speech_install() -> None:
 
 
 @router.post("/wake-word/enable-local-speech")
-async def enable_local_speech(request: Request) -> dict[str, object]:
+def enable_local_speech(request: Request) -> dict[str, object]:
     """Install faster-whisper plus its wake model so any wake word works.
 
     Idempotent and non-blocking: returns immediately with a ``state`` the UI
@@ -1245,7 +1245,7 @@ async def enable_local_speech(request: Request) -> dict[str, object]:
 
 
 @router.get("/wake-word/enable-local-speech/status")
-async def enable_local_speech_status(request: Request) -> dict[str, object]:
+def enable_local_speech_status(request: Request) -> dict[str, object]:
     """Report the local-speech install progress + whether the pack is present."""
     available = _local_speech_ready()
     with _local_speech_install_lock:
@@ -1293,7 +1293,7 @@ async def enable_local_speech_status(request: Request) -> dict[str, object]:
 
 
 @router.get("/wake-word")
-async def get_wake_word(request: Request) -> dict[str, object]:
+def get_wake_word(request: Request) -> dict[str, object]:
     from jarvis.core.config import WakeWordConfig
     from jarvis.speech.wake_constants import INSTANT_WAKE_PHRASES, WAKE_ENGINES
 
@@ -1469,7 +1469,7 @@ class WakeActivationBody(BaseModel):
 
 
 @router.post("/wake-word/activation")
-async def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str, object]:
+def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str, object]:
     """Turn the always-on wake word ON/OFF — the "how do you activate Jarvis"
     master switch (product rule 2026-07-04).
 
@@ -1782,7 +1782,7 @@ class KeybindBody(BaseModel):
 
 
 @router.get("/keybinds")
-async def get_keybinds(request: Request) -> dict[str, object]:
+def get_keybinds(request: Request) -> dict[str, object]:
     from jarvis.core.config import TriggerConfig
     from jarvis.core.config_writer import KEYBIND_TOML_KEY
     from jarvis.trigger.hotkey import mouse_hotkeys_available
@@ -1818,7 +1818,7 @@ async def get_keybinds(request: Request) -> dict[str, object]:
 
 
 @router.put("/keybinds")
-async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
+def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
     from jarvis.core.config_writer import KEYBIND_ACTIONS, KEYBIND_TOML_KEY
     from jarvis.trigger.hotkey import (
         MOUSE_BUTTON_TOKENS,
@@ -1968,7 +1968,7 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
 
 
 @router.get("/assistant-name")
-async def get_assistant_name(request: Request) -> dict[str, object]:
+def get_assistant_name(request: Request) -> dict[str, object]:
     """The assistant's resolved name. Read-only: the name derives from the wake
     phrase (set via PUT /api/settings/wake-word), there is no separate control."""
     from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
@@ -2116,7 +2116,7 @@ class OverlayStyleBody(BaseModel):
 
 
 @router.get("/overlay-style")
-async def get_overlay_style(request: Request) -> dict[str, object]:
+def get_overlay_style(request: Request) -> dict[str, object]:
     """Current on-screen overlay style + the selectable options."""
     cfg = _config(request)
     ui = getattr(cfg, "ui", None)
@@ -2233,13 +2233,13 @@ def _system_prompt_payload() -> dict[str, object]:
 
 
 @router.get("/system-prompt")
-async def get_system_prompt() -> dict[str, object]:
+def get_system_prompt() -> dict[str, object]:
     """Current effective system prompt + the packaged default (for reset)."""
     return _system_prompt_payload()
 
 
 @router.put("/system-prompt")
-async def put_system_prompt(body: SystemPromptBody) -> dict[str, object]:
+def put_system_prompt(body: SystemPromptBody) -> dict[str, object]:
     """Save a custom system prompt. Applies on the next turn (no restart)."""
     from jarvis.brain import persona_loader
 
@@ -2257,7 +2257,7 @@ async def put_system_prompt(body: SystemPromptBody) -> dict[str, object]:
 
 
 @router.delete("/system-prompt")
-async def delete_system_prompt() -> dict[str, object]:
+def delete_system_prompt() -> dict[str, object]:
     """Reset to the packaged default by removing the custom override."""
     from jarvis.brain import persona_loader
 
@@ -2296,13 +2296,13 @@ def _agent_instructions_payload(request: Request) -> dict[str, object]:
 
 
 @router.get("/agent-instructions")
-async def get_agent_instructions(request: Request) -> dict[str, object]:
+def get_agent_instructions(request: Request) -> dict[str, object]:
     """Current agent instructions + the dynamic filename + a starter template."""
     return _agent_instructions_payload(request)
 
 
 @router.put("/agent-instructions")
-async def put_agent_instructions(
+def put_agent_instructions(
     body: AgentInstructionsBody, request: Request
 ) -> dict[str, object]:
     """Save the user's standing instructions. Applies on the next turn (no restart)."""
@@ -2322,7 +2322,7 @@ async def put_agent_instructions(
 
 
 @router.delete("/agent-instructions")
-async def delete_agent_instructions(request: Request) -> dict[str, object]:
+def delete_agent_instructions(request: Request) -> dict[str, object]:
     """Clear the user's standing instructions by deleting the file."""
     from jarvis.brain import agent_instructions
 
@@ -2459,7 +2459,7 @@ async def restart_app(request: Request, force: bool = False) -> dict[str, object
 
 
 @router.get("/input-isolation", summary="Can other apps type into this window?")
-async def get_input_isolation() -> dict[str, object]:
+def get_input_isolation() -> dict[str, object]:
     """Report whether outside input software can reach this app's window.
 
     Third-party dictation and speech-to-text tools, text expanders, clipboard
@@ -2592,7 +2592,7 @@ class BoolToggleBody(BaseModel):
 
 
 @router.get("/bar-persistent")
-async def get_bar_persistent(request: Request) -> dict[str, object]:
+def get_bar_persistent(request: Request) -> dict[str, object]:
     cfg = _config(request)
     ui = getattr(cfg, "ui", None)
     return {"enabled": bool(getattr(ui, "bar_persistent", True))}
@@ -2644,7 +2644,7 @@ async def put_bar_persistent(body: BoolToggleBody, request: Request) -> dict[str
 
 
 @router.get("/bar-follow-cursor")
-async def get_bar_follow_cursor(request: Request) -> dict[str, object]:
+def get_bar_follow_cursor(request: Request) -> dict[str, object]:
     cfg = _config(request)
     ui = getattr(cfg, "ui", None)
     return {"enabled": bool(getattr(ui, "bar_follow_cursor_monitor", True))}
@@ -2711,7 +2711,7 @@ class BarSizeBody(BaseModel):
 
 
 @router.get("/bar-size")
-async def get_bar_size(request: Request) -> dict[str, object]:
+def get_bar_size(request: Request) -> dict[str, object]:
     cfg = _config(request)
     ui = getattr(cfg, "ui", None)
     return {
@@ -2768,7 +2768,7 @@ async def put_bar_size(body: BarSizeBody, request: Request) -> dict[str, object]
 
 
 @router.get("/mute-music")
-async def get_mute_music(request: Request) -> dict[str, object]:
+def get_mute_music(request: Request) -> dict[str, object]:
     cfg = _config(request)
     duck = getattr(cfg, "ducking", None)
     return {"enabled": bool(getattr(duck, "enabled", False))}
@@ -2806,14 +2806,14 @@ async def put_mute_music(body: BoolToggleBody, request: Request) -> dict[str, ob
 
 
 @router.get("/sound-effects")
-async def get_sound_effects(request: Request) -> dict[str, object]:
+def get_sound_effects(request: Request) -> dict[str, object]:
     cfg = _config(request)
     ui = getattr(cfg, "ui", None)
     return {"enabled": bool(getattr(ui, "sound_effects", True))}
 
 
 @router.put("/sound-effects")
-async def put_sound_effects(body: BoolToggleBody, request: Request) -> dict[str, object]:
+def put_sound_effects(body: BoolToggleBody, request: Request) -> dict[str, object]:
     """Global earcon master switch. Persists to [ui] sound_effects and applies
     live: the in-memory UI config is the same object the speech pipeline reads
     before every earcon, so the next tone honors the new value with no restart.
@@ -2854,14 +2854,14 @@ async def put_sound_effects(body: BoolToggleBody, request: Request) -> dict[str,
 
 
 @router.get("/browser-login")
-async def get_browser_login(request: Request) -> dict[str, object]:
+def get_browser_login(request: Request) -> dict[str, object]:
     cfg = _config(request)
     ui = getattr(cfg, "ui", None)
     return {"enabled": bool(getattr(ui, "require_browser_login", False))}
 
 
 @router.put("/browser-login")
-async def put_browser_login(
+def put_browser_login(
     body: BoolToggleBody, request: Request, response: Response
 ) -> dict[str, object]:
     """Toggle the browser lock live and persist it to ``[ui]``.
@@ -3208,7 +3208,7 @@ def _current_silence_window_ms(request: Request) -> int:
 
 
 @router.get("/silence-window")
-async def get_silence_window(request: Request) -> dict[str, object]:
+def get_silence_window(request: Request) -> dict[str, object]:
     ms = _current_silence_window_ms(request)
     return {
         "ms": ms,
@@ -3223,7 +3223,7 @@ async def get_silence_window(request: Request) -> dict[str, object]:
 
 
 @router.put("/silence-window")
-async def put_silence_window(body: SilenceWindowBody, request: Request) -> dict[str, object]:
+def put_silence_window(body: SilenceWindowBody, request: Request) -> dict[str, object]:
     ms = _normalise_silence_window_ms(body.ms)
 
     # Best-effort in-memory cfg update so a later cfg read agrees pre-restart.
@@ -3302,7 +3302,7 @@ def _current_tts_volume(request: Request) -> float:
 
 
 @router.get("/tts-volume")
-async def get_tts_volume(request: Request) -> dict[str, object]:
+def get_tts_volume(request: Request) -> dict[str, object]:
     return {
         "volume": _current_tts_volume(request),
         "default": _TTS_VOLUME_DEFAULT,
@@ -3312,7 +3312,7 @@ async def get_tts_volume(request: Request) -> dict[str, object]:
 
 
 @router.put("/tts-volume")
-async def put_tts_volume(body: TtsVolumeBody, request: Request) -> dict[str, object]:
+def put_tts_volume(body: TtsVolumeBody, request: Request) -> dict[str, object]:
     volume = float(body.volume)  # already range-validated by the Pydantic Field
 
     # Best-effort in-memory cfg update so a later cfg read agrees pre-restart.

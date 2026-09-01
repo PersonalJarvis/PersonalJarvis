@@ -48,7 +48,7 @@ def _safe_state_payload() -> dict:
 
 
 @router.get("/state")
-async def get_state(response: Response) -> dict:
+def get_state(response: Response) -> dict:
     # Same no-cache guarantee the fast-boot handler gives: the gate must never
     # act on a cached completed/incomplete verdict.
     response.headers["cache-control"] = "no-store, max-age=0"
@@ -56,18 +56,18 @@ async def get_state(response: Response) -> dict:
 
 
 @router.get("/terms")
-async def get_terms() -> dict:
+def get_terms() -> dict:
     return {"version": CURRENT_TERMS_VERSION, "text": read_terms_text()}
 
 
 @router.post("/step")
-async def post_step(body: StepBody) -> dict:
+def post_step(body: StepBody) -> dict:
     st.set_onboarding_step(body.step, skipped=body.skipped, path=_path())
     return {"ok": True}
 
 
 @router.post("/accept-terms")
-async def post_accept_terms() -> dict:
+def post_accept_terms() -> dict:
     st.accept_terms(CURRENT_TERMS_VERSION, path=_path())
     return {"ok": True, "version": CURRENT_TERMS_VERSION}
 
@@ -93,7 +93,7 @@ def _schedule_app_shutdown(request: Request) -> None:
 
 
 @router.post("/decline-terms")
-async def post_decline_terms(request: Request) -> dict:
+def post_decline_terms(request: Request) -> dict:
     """Declining the Terms quits the app (design 2026-07-09).
 
     The install one-liner never asks anything, so the Terms gate on first
@@ -112,7 +112,7 @@ async def post_decline_terms(request: Request) -> dict:
 
 
 @router.post("/acknowledge-wake-word")
-async def post_ack_wake_word() -> dict:
+def post_ack_wake_word() -> dict:
     st.acknowledge_wake_word(_path())
     return {"ok": True}
 
@@ -144,7 +144,7 @@ def _schedule_fresh_restart(request: Request) -> bool:
 
 
 @router.post("/complete")
-async def post_complete(request: Request) -> dict:
+def post_complete(request: Request) -> dict:
     require_interactive_desktop_action(
         request, action="restart", require_origin=True
     )

@@ -346,7 +346,7 @@ class SkillQueryBody(BaseModel):
 # ----------------------------------------------------------------------
 
 @router.get("")
-async def list_skills(request: Request) -> dict[str, Any]:
+def list_skills(request: Request) -> dict[str, Any]:
     from jarvis.skills import prefs
 
     reg = _require_registry(request)
@@ -358,7 +358,7 @@ async def list_skills(request: Request) -> dict[str, Any]:
 
 
 @router.get("/brief")
-async def list_skills_brief(request: Request) -> dict[str, Any]:
+def list_skills_brief(request: Request) -> dict[str, Any]:
     """The lean listing the brain reads by voice ("which skills do I have").
 
     ``GET /api/skills`` serialises triggers, resources, origin receipts and
@@ -585,7 +585,7 @@ async def refine_skill_draft(
 
 
 @router.post("/creator/validate")
-async def validate_skill_draft(
+def validate_skill_draft(
     body: SkillCreatorValidateBody,
     request: Request,
 ) -> dict[str, Any]:
@@ -1106,7 +1106,7 @@ async def upload_skill(
 # NB: registered BEFORE ``/{name}`` so a ``PUT /order`` is not captured by the
 # ``PUT /{name}`` path-param route (which would treat "order" as a skill name).
 @router.put("/order")
-async def reorder_skills(body: SkillOrderBody, request: Request) -> dict[str, Any]:
+def reorder_skills(body: SkillOrderBody, request: Request) -> dict[str, Any]:
     """Persist the user's custom skill order (list view only)."""
     from jarvis.skills import prefs
 
@@ -1133,7 +1133,7 @@ class MatchTestRequest(BaseModel):
 
 
 @router.post("/match-test", openapi_extra={"x-jarvis-readonly": True})
-async def match_test(request: Request, body: MatchTestRequest) -> dict[str, Any]:
+def match_test(request: Request, body: MatchTestRequest) -> dict[str, Any]:
     """Dry-run the skill matcher against an utterance and explain the verdict.
 
     This is the affordance whose absence made the whole problem invisible: the
@@ -1289,7 +1289,7 @@ async def match_test(request: Request, body: MatchTestRequest) -> dict[str, Any]
 
 
 @router.get("/lint", openapi_extra={"x-jarvis-readonly": True})
-async def lint_skills(request: Request) -> dict[str, Any]:
+def lint_skills(request: Request) -> dict[str, Any]:
     """Report which installed skills can never be FOUND.
 
     Different question from ``validate``: that one asks whether a SKILL.md
@@ -1321,7 +1321,7 @@ async def lint_skills(request: Request) -> dict[str, Any]:
 
 
 @router.get("/match-log", openapi_extra={"x-jarvis-readonly": True})
-async def match_log_recent(
+def match_log_recent(
     request: Request,
     limit: int = 50,
     skill: str = "",
@@ -1370,7 +1370,7 @@ async def match_log_recent(
 
 
 @router.get("/{name}")
-async def get_skill(name: str, request: Request) -> dict[str, Any]:
+def get_skill(name: str, request: Request) -> dict[str, Any]:
     reg = _require_registry(request)
     try:
         skill = reg.get(name)
@@ -1429,7 +1429,7 @@ def _delete_user_skill(reg: Any, name: str) -> None:
 # NB: registered BEFORE ``/{name}`` so a ``POST /bulk-delete`` is never captured
 # by a path-param route that would treat "bulk-delete" as a skill name.
 @router.post("/bulk-delete")
-async def bulk_delete_skills(
+def bulk_delete_skills(
     body: SkillBulkDeleteBody, request: Request
 ) -> dict[str, Any]:
     """Delete several user skills in one batch.
@@ -1457,7 +1457,7 @@ async def bulk_delete_skills(
 
 
 @router.delete("/{name}")
-async def delete_skill(name: str, request: Request) -> dict[str, Any]:
+def delete_skill(name: str, request: Request) -> dict[str, Any]:
     """Delete a user skill (folder) and prune its prefs.
 
     Built-ins are refused (409) — they would be re-copied on the next start.
@@ -1469,7 +1469,7 @@ async def delete_skill(name: str, request: Request) -> dict[str, Any]:
 
 
 @router.put("/{name}")
-async def update_skill(
+def update_skill(
     name: str,
     body: SkillUpdateBody,
     request: Request,
@@ -1508,12 +1508,12 @@ async def update_skill(
 
 
 @router.post("/{name}/enable")
-async def enable_skill(name: str, request: Request) -> dict[str, Any]:
+def enable_skill(name: str, request: Request) -> dict[str, Any]:
     return _flip_state(request, name, SkillLifecycleState.ACTIVE)
 
 
 @router.post("/{name}/disable")
-async def disable_skill(name: str, request: Request) -> dict[str, Any]:
+def disable_skill(name: str, request: Request) -> dict[str, Any]:
     return _flip_state(request, name, SkillLifecycleState.DISABLED)
 
 
@@ -1582,7 +1582,7 @@ async def get_skill_link_health(name: str, request: Request) -> dict[str, Any]:
 
 
 @router.get("/{name}/resources/{kind}/{filename:path}")
-async def get_skill_resource(
+def get_skill_resource(
     name: str, kind: str, filename: str, request: Request
 ) -> PlainTextResponse:
     """Returns the content of a bundled resource file (text-only, UTF-8).
@@ -1913,7 +1913,7 @@ async def install_from_catalog(
 
 
 @router.get("/catalog/meta")
-async def catalog_meta(request: Request) -> dict[str, Any]:
+def catalog_meta(request: Request) -> dict[str, Any]:
     """Meta info for the frontend: which categories, languages, and trust levels
     exist in the current catalog. Fills the dropdowns in the SkillFinder dialog
     dynamically, so they don't drift out of sync with the JSON.

@@ -1332,13 +1332,13 @@ class RecapEdit(BaseModel):
 # REST                                                                        #
 # --------------------------------------------------------------------------- #
 @router.get("/state", summary="Agentic-IDE workspace state")
-async def get_state() -> dict:
+def get_state() -> dict:
     """The open workspace, its terminals, and whether focus mode is on."""
     return get_registry().state()
 
 
 @router.get("/panes", summary="Every coding session running in any open workspace")
-async def get_panes() -> dict:
+def get_panes() -> dict:
     """One row per pane, across ALL open workspaces — not just the front one.
 
     ``/state`` describes the workspace being drawn. This answers the other
@@ -1364,7 +1364,7 @@ async def get_panes() -> dict:
 
 
 @router.get("/state/brief", summary="Agentic-IDE workspace state, briefly")
-async def get_state_brief() -> dict:
+def get_state_brief() -> dict:
     """The workspace as a language model needs it to steer the panes.
 
     Pane names, agents, status, idleness, and one recap line each — never
@@ -1878,7 +1878,7 @@ def _unwrap_file_uri(value: str) -> str:
     response_model=WorkspacesResponse,
     summary="Open Agentic-IDE workspaces",
 )
-async def get_workspaces() -> WorkspacesResponse:
+def get_workspaces() -> WorkspacesResponse:
     """Every open workspace, in tab order, with the front one marked.
 
     Several can be open at once — a workspace is a folder plus its running
@@ -2155,7 +2155,7 @@ async def resume_workspace(request: Request) -> dict:
     response_model=InterruptedResponse,
     summary="Coding sessions that were interrupted and never restarted",
 )
-async def get_interrupted() -> InterruptedResponse:
+def get_interrupted() -> InterruptedResponse:
     """Which panes came back holding a conversation and have been told nothing since.
 
     The state a restart leaves behind. Resuming reconnects each pane to the
@@ -2217,7 +2217,7 @@ async def continue_interrupted(req: ContinueInterruptedRequest) -> ContinueInter
     response_model=PaneNotificationsResponse,
     summary="Terminals that finished, asked something, or stopped",
 )
-async def get_notifications() -> PaneNotificationsResponse:
+def get_notifications() -> PaneNotificationsResponse:
     """What the bell in the Agentic-IDE header is showing.
 
     Newest first, across EVERY open workspace — a pane in a background tab is
@@ -2241,7 +2241,7 @@ async def get_notifications() -> PaneNotificationsResponse:
     response_model=NotificationsChangedResponse,
     summary="Mark terminal notifications as read",
 )
-async def read_notifications(req: ReadNotificationsRequest) -> NotificationsChangedResponse:
+def read_notifications(req: ReadNotificationsRequest) -> NotificationsChangedResponse:
     """Clear the unread count, for the given entries or for all of them.
 
     The entries stay in the list — this only stops the bell from counting them.
@@ -2258,7 +2258,7 @@ async def read_notifications(req: ReadNotificationsRequest) -> NotificationsChan
     response_model=NotificationsChangedResponse,
     summary="Discard every terminal notification",
 )
-async def clear_notifications() -> NotificationsChangedResponse:
+def clear_notifications() -> NotificationsChangedResponse:
     """Throw the whole list away.
 
     Nothing about a pane changes: an entry is a note that something happened,
@@ -2275,7 +2275,7 @@ async def clear_notifications() -> NotificationsChangedResponse:
     response_model=NotificationsChangedResponse,
     summary="Discard one terminal notification",
 )
-async def clear_notification(notification_id: str) -> NotificationsChangedResponse:
+def clear_notification(notification_id: str) -> NotificationsChangedResponse:
     """Throw one entry away. An id that is not in the list is a quiet no-op.
 
     Not a 404: the entry may have gone with its workspace between the client
@@ -2369,7 +2369,7 @@ async def set_mode(request: Request, req: ModeRequest) -> dict:
 
 
 @router.put("/surface-context", summary="Report the visible Agentic-IDE terminal")
-async def set_surface_context(req: SurfaceContextRequest) -> dict:
+def set_surface_context(req: SurfaceContextRequest) -> dict:
     """Keep deictic voice/chat references aligned with the visible pane.
 
     The state is ephemeral and active-workspace scoped. Grid view clears it,
@@ -2767,7 +2767,7 @@ async def close_terminal(request: Request, name: str, workspace_id: str | None =
 
 
 @router.get("/recaps", response_model=RecapsResponse, summary="What every terminal is doing")
-async def get_recaps(workspace_id: str | None = None) -> RecapsResponse:
+def get_recaps(workspace_id: str | None = None) -> RecapsResponse:
     """A short recap per pane — the header line and its hover tooltip.
 
     Separate from ``/state`` because the two change at completely different
@@ -2804,7 +2804,7 @@ async def get_recaps(workspace_id: str | None = None) -> RecapsResponse:
     response_model=ActivityResponse,
     summary="Whether each pane's agent is still working",
 )
-async def get_activity(workspace_id: str | None = None) -> ActivityResponse:
+def get_activity(workspace_id: str | None = None) -> ActivityResponse:
     """The status badge's own read — every pane's activity, and nothing else.
 
     Split from ``/recaps`` for the same reason ``/recaps`` is split from
@@ -2895,7 +2895,7 @@ def _pane_for_recap(name: str, workspace_id: str | None) -> tuple[Terminal, Sess
     response_model=TerminalRecap,
     summary="Write a terminal's recap yourself",
 )
-async def set_terminal_recap(
+def set_terminal_recap(
     name: str, payload: RecapEdit, workspace_id: str | None = None
 ) -> TerminalRecap:
     """Replace what the header of terminal ``name`` says with your own words.
@@ -2922,7 +2922,7 @@ async def set_terminal_recap(
     response_model=TerminalRecap,
     summary="Drop a hand-written recap",
 )
-async def clear_terminal_recap(name: str, workspace_id: str | None = None) -> TerminalRecap:
+def clear_terminal_recap(name: str, workspace_id: str | None = None) -> TerminalRecap:
     """Hand terminal ``name`` back to the automatic recap.
 
     Also clears the back-off, so a pane whose summaries were failing an hour ago
@@ -2964,7 +2964,7 @@ async def refresh_terminal_recap(name: str, workspace_id: str | None = None) -> 
     response_model=LastPrompt,
     summary="The exact prompt a terminal was last sent",
 )
-async def get_last_prompt(name: str, workspace_id: str | None = None) -> LastPrompt:
+def get_last_prompt(name: str, workspace_id: str | None = None) -> LastPrompt:
     """What terminal ``name`` was last told to do, word for word.
 
     This is the proof half of a delivery. Jarvis composes a brief, types it
@@ -3039,7 +3039,7 @@ def _terminal_or_http_error(name: str) -> tuple[Session, Terminal]:
 
 
 @router.get("/terminals/{name}/report", summary="What one terminal is doing")
-async def terminal_report(name: str, lines: int = 40) -> dict:
+def terminal_report(name: str, lines: int = 40) -> dict:
     """Status plus the recent readable output of the terminal called ``name``."""
     try:
         return get_registry().report(name, lines)
@@ -3239,7 +3239,7 @@ def _picks_now(term: Any, read_result: Any) -> dict[str, str]:
     summary="Interrupt what one terminal's agent is doing (Escape)",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def terminal_interrupt(name: str, workspace: str | None = None) -> dict:
+def terminal_interrupt(name: str, workspace: str | None = None) -> dict:
     """Press Escape in the pane — the chat stage's Stop button.
 
     The coding CLIs stop their current turn on Escape (Claude Code says so in
@@ -4580,7 +4580,7 @@ def _writer_options() -> list[PromptWriterOption]:
     response_model=PromptWriterState,
     summary="Who writes Agentic-IDE task briefs",
 )
-async def prompt_writer_state() -> PromptWriterState:
+def prompt_writer_state() -> PromptWriterState:
     """Report the configured brief writer and every option, with live state."""
     return PromptWriterState(prompt_writer=_current_prompt_writer(), options=_writer_options())
 
@@ -4590,7 +4590,7 @@ async def prompt_writer_state() -> PromptWriterState:
     response_model=PromptWriterState,
     summary="Choose who writes Agentic-IDE task briefs",
 )
-async def set_prompt_writer(payload: PromptWriterRequest) -> PromptWriterState:
+def set_prompt_writer(payload: PromptWriterRequest) -> PromptWriterState:
     """Persist the brief writer.
 
     Refuses a provider this install does not offer, and refuses one whose CLI is

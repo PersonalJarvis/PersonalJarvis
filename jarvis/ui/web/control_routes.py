@@ -175,13 +175,13 @@ class SetKeyBody(BaseModel):
 
 
 @router.get("/auth/probe", dependencies=[Depends(require_control_key)])
-async def auth_probe() -> dict[str, Any]:
+def auth_probe() -> dict[str, Any]:
     """200 iff the Bearer key is valid (cheap check for CLIs / agents)."""
     return {"ok": True}
 
 
 @router.get("/allowlist", dependencies=[Depends(require_control_key)])
-async def get_allowlist() -> dict[str, Any]:
+def get_allowlist() -> dict[str, Any]:
     """Machine-readable list of mutable settings so an agent can validate a
     request before sending it (instead of parsing Python source)."""
     return {"specs": [spec.model_dump() for spec in SelfModRegistry.list_all()]}
@@ -193,7 +193,7 @@ async def get_allowlist() -> dict[str, Any]:
 
 
 @router.get("/config", dependencies=[Depends(require_control_key)])
-async def get_config(path: str, request: Request) -> dict[str, Any]:
+def get_config(path: str, request: Request) -> dict[str, Any]:
     if SelfModRegistry.is_forbidden(path):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -239,13 +239,13 @@ def _apply_config_write(
 
 
 @router.put("/config", dependencies=[Depends(require_control_key)], openapi_extra={"x-jarvis-dangerous": True})
-async def put_config(body: ConfigWriteBody, request: Request) -> dict[str, Any]:
+def put_config(body: ConfigWriteBody, request: Request) -> dict[str, Any]:
     store = _pending_store(request)
     return _apply_config_write(store, body.path, body.value, body.reason)
 
 
 @router.post("/config/confirm", dependencies=[Depends(require_control_key)])
-async def confirm_config(body: PendingIdBody, request: Request) -> dict[str, Any]:
+def confirm_config(body: PendingIdBody, request: Request) -> dict[str, Any]:
     store = _pending_store(request)
     try:
         mutation_id = UUID(body.pending_id)
@@ -267,7 +267,7 @@ async def confirm_config(body: PendingIdBody, request: Request) -> dict[str, Any
 
 
 @router.post("/config/reject", dependencies=[Depends(require_control_key)])
-async def reject_config(body: PendingIdBody, request: Request) -> dict[str, Any]:
+def reject_config(body: PendingIdBody, request: Request) -> dict[str, Any]:
     store = _pending_store(request)
     try:
         mutation_id = UUID(body.pending_id)
@@ -283,7 +283,7 @@ async def reject_config(body: PendingIdBody, request: Request) -> dict[str, Any]
 
 
 @router.put("/language", dependencies=[Depends(require_control_key)])
-async def put_language(body: LanguageBody, request: Request) -> dict[str, Any]:
+def put_language(body: LanguageBody, request: Request) -> dict[str, Any]:
     """Switch the language. A concrete code (de/en/es) sets BOTH the reply
     language (what Jarvis speaks) AND the interface language (what the user
     sees) so the whole experience switches; "auto" only affects replies (it
@@ -307,7 +307,7 @@ async def put_language(body: LanguageBody, request: Request) -> dict[str, Any]:
 
 
 @router.get("/providers", dependencies=[Depends(require_control_key)])
-async def get_providers() -> dict[str, Any]:
+def get_providers() -> dict[str, Any]:
     from jarvis.brain.app_control import build_settings_snapshot
 
     return build_settings_snapshot(_running_cfg())
@@ -341,7 +341,7 @@ def _secret_preview(value: str | None) -> str | None:
 
 
 @router.get("/secrets", dependencies=[Depends(require_control_key)])
-async def list_secrets() -> dict[str, Any]:
+def list_secrets() -> dict[str, Any]:
     items = []
     for key in sorted(ALLOWED_SECRET_KEYS):
         value = cfg_mod.get_secret(key)
@@ -380,7 +380,7 @@ async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
 
 
 @router.get("/api-key", dependencies=[Depends(require_control_key_or_session)])
-async def get_api_key(request: Request) -> dict[str, Any]:
+def get_api_key(request: Request) -> dict[str, Any]:
     key = control_key.get_control_key()
     # Audit every reveal without logging either credential.
     client = getattr(request, "client", None)
@@ -393,7 +393,7 @@ async def get_api_key(request: Request) -> dict[str, Any]:
     dependencies=[Depends(require_control_key_or_session)],
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def rotate_api_key(body: RotateBody) -> dict[str, Any]:
+def rotate_api_key(body: RotateBody) -> dict[str, Any]:
     if not body.confirm:
         raise HTTPException(
             status_code=400,
@@ -412,7 +412,7 @@ async def rotate_api_key(body: RotateBody) -> dict[str, Any]:
     dependencies=[Depends(require_control_key_or_session)],
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def set_api_key(body: SetKeyBody, request: Request) -> dict[str, Any]:
+def set_api_key(body: SetKeyBody, request: Request) -> dict[str, Any]:
     """Replace the control key with a user-chosen value.
 
     The caller already typed the value, so the response returns only the
