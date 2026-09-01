@@ -203,7 +203,21 @@ async def warm_anyio_worker_pool(workers: int = ANYIO_WARM_WORKERS) -> int:
             loop.call_soon_threadsafe(all_up.set)
         gate.wait(_PREWARM_TIMEOUT_S)
 
-    tasks = [asyncio.ensure_future(anyio.to_thread.run_sync(_park)) for _ in range(workers)]
+    # Submitted in small batches with a loop yield in between, never all at
+    # once: each submission that finds no idle worker performs a
+    # ``Thread.start()`` ON the loop, and 32 of those back-to-back on a
+    # starved cold-boot box added up to one 15 s block (the BUG-189 stall
+    # shape, just moved to voice-ready+5 s). Between batches the loop runs
+    # its other callbacks; the already-parked workers keep waiting on the
+    # shared gate, so the all-up contract is unchanged.
+    tasks: list[asyncio.Future[None]] = []
+    batch = 4
+    for offset in range(0, workers, batch):
+        tasks.extend(
+            asyncio.ensure_future(anyio.to_thread.run_sync(_park))
+            for _ in range(min(batch, workers - offset))
+        )
+        await asyncio.sleep(0)
     try:
         await asyncio.wait_for(all_up.wait(), timeout=_PREWARM_TIMEOUT_S)
     except TimeoutError:

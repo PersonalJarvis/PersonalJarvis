@@ -1372,6 +1372,18 @@ async def _open_realtime_session(
     return session
 
 
+def _import_async_openai() -> Any:
+    """Import the SDK and return ``AsyncOpenAI`` (worker-thread helper).
+
+    lazy (AP-26); called via ``asyncio.to_thread`` so the FIRST import in the
+    process — hundreds of modules off a possibly cold disk — never runs on the
+    event loop (BUG-189 class).
+    """
+    from openai import AsyncOpenAI
+
+    return AsyncOpenAI
+
+
 class OpenAIRealtimeProvider:
     """Structural provider entry point for the OpenAI Realtime family."""
 
@@ -1405,9 +1417,13 @@ class OpenAIRealtimeProvider:
         if not self._api_key:
             raise RuntimeError("OpenAI Realtime API key is not configured")
 
-        from openai import AsyncOpenAI  # lazy (AP-26)
+        # lazy (AP-26), and imported OFF the loop: the first `import openai` in
+        # the process reads hundreds of modules from a possibly cold disk —
+        # done inline it is a BUG-189-class loop stall. Later calls hit
+        # sys.modules and pay nothing.
+        client_cls = await asyncio.to_thread(_import_async_openai)
 
-        client = AsyncOpenAI(api_key=self._api_key)
+        client = client_cls(api_key=self._api_key)
         connect_model = str(getattr(cfg, "model", "") or _MODEL)
         return await _open_realtime_session(client, cfg, model=connect_model)
 
@@ -2215,6 +2231,10 @@ class LocalRealtimeProvider:
                 "No server URL configured for the self-hosted realtime provider "
                 "— set it on the provider card first (e.g. http://127.0.0.1:8080)."
             )
+        # Warm the SDK import off the loop before _shared_client (sync, on the
+        # loop) touches it — the first `import openai` on a cold disk is a
+        # BUG-189-class stall; afterwards it is a sys.modules hit.
+        await asyncio.to_thread(_import_async_openai)
         managed_interactive = self._managed_interactive_preflight
         self._managed_interactive_preflight = False
         retry_window_s = (

@@ -8,6 +8,7 @@ mono PCM at 16 kHz and emits the same format at 24 kHz.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -39,6 +40,17 @@ _OUTPUT_RATE = 24_000
 # keeps ~100k of the newest context verbatim.
 _COMPRESSION_TRIGGER_TOKENS = 120_000
 _COMPRESSION_TARGET_TOKENS = 100_000
+
+
+def _import_genai_types() -> Any:
+    """Import google.genai and return its ``types`` module (worker helper).
+
+    lazy (AP-26); called via ``asyncio.to_thread`` so the FIRST import of the
+    SDK tree never runs on the event loop (BUG-189 class).
+    """
+    from google.genai import types
+
+    return types
 
 
 def _compression_kwargs(types: Any) -> dict[str, Any]:
@@ -1258,7 +1270,11 @@ class GeminiLiveProvider:
         if not await self.can_open_duplex_session():
             raise RuntimeError(self._unconfigured_message())
 
-        from google.genai import types  # lazy (AP-26)
+        # lazy (AP-26), imported OFF the loop: the first google.genai import in
+        # the process reads a large SDK tree from a possibly cold disk — inline
+        # it is a BUG-189-class loop stall. Every later `from google.genai
+        # import types` in the session methods is then a sys.modules hit.
+        types = await asyncio.to_thread(_import_genai_types)
 
         client = await self._build_client()
         voice = str(getattr(cfg, "voice", "") or "").strip() or str(

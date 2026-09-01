@@ -17,9 +17,50 @@ wrapped.
 from __future__ import annotations
 
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 _LOCK = threading.Lock()
+
+# One worker that does nothing but let recognizers die. ``vosk_recognizer_free``
+# (KaldiRecognizer.__del__) is a native call measured at 15 s on a cold, paging
+# box (2026-08-30 "Event loop STALLED" stack) — and it runs on WHICHEVER thread
+# drops the last reference, which was the asyncio loop during wake teardown.
+_RELEASE_POOL: ThreadPoolExecutor | None = None
+_RELEASE_POOL_LOCK = threading.Lock()
+
+
+def _release_pool() -> ThreadPoolExecutor:
+    global _RELEASE_POOL
+    with _RELEASE_POOL_LOCK:
+        if _RELEASE_POOL is None:
+            _RELEASE_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vosk-release")
+        return _RELEASE_POOL
+
+
+def release_recognizer(rec: Any) -> None:
+    """Let *rec*'s native free run on the release worker, never on the caller.
+
+    The last reference is moved into a box and cleared on the worker under the
+    same process-wide lock every other native call holds (BUG-151 — the free is
+    a native call too). Never raises: during interpreter shutdown the executor
+    refuses new work, and the box is then cleared inline — exactly the pre-fix
+    behaviour, which is acceptable on the one path where no loop is left to
+    stall.
+    """
+    if rec is None:
+        return
+    box = [rec]
+    del rec
+
+    def _drop() -> None:
+        with _LOCK:
+            box.clear()
+
+    try:
+        _release_pool().submit(_drop)
+    except Exception:  # noqa: BLE001 — shutdown fallback, see docstring
+        _drop()
 
 
 def native_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
@@ -77,6 +118,21 @@ class LockedRecognizer:
         # precision rests on can never fall through to it by accident.
         with _LOCK:
             return self._rec.SetGrammar(grammar)
+
+    def __del__(self) -> None:
+        # The proxy is the ONLY holder of the native recognizer (wrap_recognizer
+        # hands out the proxy, never the inner object), so this is the one
+        # chokepoint where every recognizer death passes — a one-shot verify
+        # discarded mid-loop, stage-1 recognizers replaced by _fresh_recs, a
+        # cancelled wake task's closure. Hand the corpse to the release worker
+        # so the 15 s native free never runs on the thread that dropped it.
+        try:
+            rec = self.__dict__.pop("_rec", None)
+            if rec is not None and is_native_recognizer(rec):
+                release_recognizer(rec)
+        except Exception:  # noqa: BLE001, S110 — __del__ must never raise; the
+            # worst case is the pre-fix behaviour (free on this thread).
+            pass
 
     def __getattr__(self, name: str) -> Any:
         """Every OTHER native method stays reachable — and locked.

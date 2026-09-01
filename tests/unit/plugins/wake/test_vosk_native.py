@@ -161,3 +161,61 @@ def test_locked_recognizer_reports_a_missing_optional_method_honestly() -> None:
     through the proxy — the provider's static-grammar degrade depends on it."""
     rec = LockedRecognizer(_Contended())
     assert getattr(rec, "SetMaxAlternatives", None) is None
+
+
+# --- the release worker (cold-boot loop stall, 2026-08-30) -------------------
+
+
+def test_release_recognizer_frees_on_the_worker_thread() -> None:
+    """vosk_recognizer_free runs wherever the last reference dies — measured at
+    15 s on the asyncio loop during a cold boot. The release helper must move
+    that death onto its own worker."""
+    from jarvis.plugins.wake.vosk_native import release_recognizer
+
+    died_on: list[str] = []
+    done = threading.Event()
+
+    class _Corpse:
+        def __del__(self) -> None:
+            died_on.append(threading.current_thread().name)
+            done.set()
+
+    release_recognizer(_Corpse())
+    assert done.wait(2.0)
+    assert died_on and died_on[0].startswith("vosk-release")
+
+
+def test_dropping_the_proxy_hands_the_native_recognizer_to_the_worker() -> None:
+    """The proxy is the one chokepoint every recognizer death passes: deleting
+    it anywhere (a cancelled wake task, a replaced stage-1 list) must free the
+    native object on the release worker, not on the deleting thread."""
+    died_on: list[str] = []
+    done = threading.Event()
+
+    class KaldiRecognizer:
+        def __del__(self) -> None:
+            died_on.append(threading.current_thread().name)
+            done.set()
+
+    KaldiRecognizer.__module__ = "vosk"
+    wrapped = wrap_recognizer(KaldiRecognizer())
+    assert isinstance(wrapped, LockedRecognizer)
+    del wrapped
+    assert done.wait(2.0)
+    assert died_on and died_on[0].startswith("vosk-release")
+
+
+def test_test_doubles_are_not_routed_through_the_release_worker() -> None:
+    """A fake recognizer in a unit test dies inline, exactly as before."""
+    died_on: list[str] = []
+
+    class _Fake:
+        def __del__(self) -> None:
+            died_on.append(threading.current_thread().name)
+
+    proxy = LockedRecognizer(_Fake())
+    del proxy
+    import gc
+
+    gc.collect()
+    assert died_on == [threading.current_thread().name]
