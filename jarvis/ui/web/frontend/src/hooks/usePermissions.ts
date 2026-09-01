@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { bootSettled } from "@/lib/bootStagger";
+
 export type PermissionId =
   | "microphone"
   | "screen_recording"
@@ -146,7 +148,9 @@ export function usePermissions() {
   );
 
   useEffect(() => {
-    void refetch();
+    // Non-critical: the banner can appear a few seconds late; the first-mount
+    // burst must not spend a connection on it (see bootStagger).
+    void bootSettled().then(refetch);
   }, [refetch]);
 
   useEffect(() => {

@@ -56,12 +56,14 @@ def _obs(
     page: str = "blank",
     alive: bool = True,
     healthy: bool = True,
+    warming: bool = False,
 ) -> Observation:
     return Observation(
         page=page,  # type: ignore[arg-type]
         backend_alive=alive,
         server_healthy=healthy,
         now=now,
+        server_warming=warming,
     )
 
 
@@ -198,7 +200,9 @@ def test_reloads_are_budgeted_then_the_window_explains_itself() -> None:
     p.decide(_obs(t))
     actions = []
     for _ in range(3):
-        t += GRACE + 1
+        # The settle escalates per used reload (1x, 2x, ...), so the clock
+        # jumps far enough to clear every deadline on the way.
+        t += GRACE + SETTLE * 4
         v = p.decide(_obs(t))
         actions.append(v)
         t += 0.1
@@ -214,6 +218,45 @@ def test_a_reload_is_given_time_to_settle_before_the_next_one() -> None:
     assert p.decide(_obs(GRACE + 1)).action is Action.RELOAD
     assert p.decide(_obs(GRACE + 2)).action is Action.WAIT
     assert p.decide(_obs(GRACE + SETTLE + 2)).action is Action.RELOAD
+
+
+def test_each_further_reload_waits_twice_as_long() -> None:
+    """A window that did not come back after one reload is loading slowly, not
+    broken — hammering it at a fixed cadence piled cold WebView starts onto a
+    machine already too busy to paint (the 2026-08-30 cold-boot thrash)."""
+    p = _policy()
+    p.decide(_obs(0.0))
+    t1 = GRACE + 1
+    assert p.decide(_obs(t1)).action is Action.RELOAD  # settle 1x from here
+    assert p.decide(_obs(t1 + SETTLE + 1)).action is Action.RELOAD  # settle 2x
+    assert p.decide(_obs(t1 + SETTLE + 1 + SETTLE + 2)).action is Action.WAIT
+    assert p.decide(_obs(t1 + SETTLE + 1 + SETTLE * 2 + 2)).action is Action.RELOAD
+
+
+# --- the warming boot --------------------------------------------------------
+
+
+def test_a_warming_backend_is_never_reloaded_no_matter_how_long() -> None:
+    """The bootstrap answers health with warming: a blank window is the
+    EXPECTED picture then, and every reload only restarts a cold WebView."""
+    p = _policy()
+    for t in (0.0, GRACE + 1, GRACE * 10, GRACE * 100):
+        assert p.decide(_obs(t, warming=True)).action is Action.WAIT
+
+
+def test_grace_starts_fresh_when_warming_ends() -> None:
+    p = _policy()
+    p.decide(_obs(0.0, warming=True))
+    p.decide(_obs(60.0, warming=True))
+    # Warming ended at t=60; the window still gets its full grace from there.
+    assert p.decide(_obs(60.0 + GRACE - 1)).action is Action.WAIT
+    assert p.decide(_obs(60.0 + GRACE + 2)).action is Action.RELOAD
+
+
+def test_a_dead_backend_wins_over_a_stale_warming_flag() -> None:
+    v = _policy().decide(_obs(GRACE + 1, alive=False, warming=True))
+    assert v.action is Action.EXPLAIN
+    assert v.reason is BlankReason.BACKEND_DEAD
 
 
 # --- the explanation page ---------------------------------------------------

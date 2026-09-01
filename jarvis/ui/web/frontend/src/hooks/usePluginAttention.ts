@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { bootSettled } from "@/lib/bootStagger";
+
 /** What the sidebar needs to surface a plugin problem: how many connected
  *  plugins need attention and their display names (for a concrete tooltip). */
 export interface PluginAttention {
@@ -48,7 +50,8 @@ export function usePluginAttention(): PluginAttention {
       }
     };
 
-    void check();
+    // Non-critical: the first check waits out the boot burst (see bootStagger).
+    void bootSettled().then(check);
     const id = setInterval(check, 60_000);
     return () => {
       alive = false;

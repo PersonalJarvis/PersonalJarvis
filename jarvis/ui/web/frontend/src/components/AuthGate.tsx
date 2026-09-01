@@ -90,20 +90,34 @@ export function AuthGate({ children }: AuthGateProps) {
     started.current = true;
 
     void (async () => {
-      let response: Response;
-      try {
-        response = await fetch("/api/config", {
-          cache: "no-store",
-          credentials: "same-origin",
-        });
-      } catch {
-        // Authentication is required only when the backend explicitly returns
-        // 401. Let the existing application surfaces handle warmup/offline
-        // failures instead of trapping the user behind an unrelated gate.
-        setState("authorized");
-        return;
+      // During a cold boot the serve-first bootstrap holds this request for up
+      // to 120 s. One untimed fetch pinned a connection for that whole window;
+      // short timed attempts hold at most one connection at a time and pick up
+      // the real answer within seconds of the app becoming ready.
+      const ATTEMPT_TIMEOUT_MS = 10_000;
+      const MAX_ATTEMPTS = 15;
+      let response: Response | null = null;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        try {
+          response = await fetch("/api/config", {
+            cache: "no-store",
+            credentials: "same-origin",
+            signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+          });
+          break;
+        } catch (exc) {
+          if (exc instanceof DOMException && exc.name === "TimeoutError") {
+            continue; // still warming — ask again with a fresh connection
+          }
+          // Authentication is required only when the backend explicitly
+          // returns 401. Let the existing application surfaces handle
+          // warmup/offline failures instead of trapping the user behind an
+          // unrelated gate.
+          setState("authorized");
+          return;
+        }
       }
-      if (response.status !== 401) {
+      if (response === null || response.status !== 401) {
         setState("authorized");
         return;
       }

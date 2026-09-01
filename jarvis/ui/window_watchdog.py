@@ -124,6 +124,11 @@ class Observation:
     backend_alive: bool
     server_healthy: bool
     now: float
+    #: The serve-first bootstrap answers ``/api/health`` 200 with
+    #: ``warming: true`` while the real app is still initializing. A blank
+    #: window is the EXPECTED picture then — the page is deliberately not
+    #: served yet — so it must not be judged, and above all not reloaded.
+    server_warming: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +193,15 @@ class BlankWindowPolicy:
         if not obs.backend_alive:
             return self._explain_once(BlankReason.BACKEND_DEAD)
 
+        # A warming backend is not a silent one: health answers, and the blank
+        # window is expected until warm-up ends. Judging it now turned a slow
+        # cold boot into a reload loop — each reload restarted a cold WebView
+        # (BelowNormal + paging, 2026-08-30) and made the boot slower still. The
+        # grace starts counting once warming ends.
+        if obs.server_warming:
+            self._deadline = max(self._deadline, obs.now + self._grace_s)
+            return Verdict(Action.WAIT)
+
         # An outage that just ended is a new event, not a repeat of the one the
         # budget was spent on — so it always buys one more attempt. Without
         # this, a window whose reloads were used up during a long freeze would
@@ -223,7 +237,12 @@ class BlankWindowPolicy:
     # ---- internals ---------------------------------------------------------
 
     def _arm_after_reload(self, now: float) -> None:
-        self._deadline = now + self._settle_s
+        # Escalating settle: 1x, 2x, 4x the base. A window that did not come
+        # back after one reload is loading slowly, not broken — burning the
+        # remaining budget at the same fixed cadence just piled cold WebView
+        # starts onto the machine that was already too busy to paint.
+        used = max(0, self._budget - self._reloads_left - 1)
+        self._deadline = now + self._settle_s * (2**used)
         self._blank_since = now
         self._explained = None
 
@@ -494,6 +513,7 @@ class BlankWindowWatchdog:
         url: str,
         health_probe: Callable[[], bool],
         backend_alive: Callable[[], bool],
+        warming_probe: Callable[[], bool] | None = None,
         failure_detail: Callable[[], str] | None = None,
         theme: Callable[[], str] | None = None,
         policy: BlankWindowPolicy | None = None,
@@ -505,6 +525,7 @@ class BlankWindowWatchdog:
         self._url = url
         self._health_probe = health_probe
         self._backend_alive = backend_alive
+        self._warming_probe = warming_probe or (lambda: False)
         self._failure_detail = failure_detail or (lambda: "")
         self._theme = theme or (lambda: "dark")
         self._policy = policy or BlankWindowPolicy()
@@ -563,6 +584,7 @@ class BlankWindowWatchdog:
                         backend_alive=self._safe(self._backend_alive, default=True),
                         server_healthy=self._safe(self._health_probe, default=False),
                         now=time.monotonic(),
+                        server_warming=self._safe(self._warming_probe, default=False),
                     )
                 )
                 self._apply(window, verdict)

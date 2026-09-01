@@ -477,6 +477,22 @@ def _new_whisper_model(
     if cpu_threads and cpu_threads > 0:
         kwargs["cpu_threads"] = int(cpu_threads)
         kwargs["num_workers"] = 1
+    # Cache-first: without local_files_only, faster_whisper asks huggingface.co
+    # for the model revision on EVERY build — a network round-trip on the boot
+    # path (observed in the 2026-09-01 cold-boot log), and a hang/timeout when
+    # the machine boots faster than its network comes up. Only a genuine cache
+    # miss goes online.
+    try:
+        return WhisperModel(model_name, local_files_only=True, **kwargs)
+    except OSError as exc:
+        # huggingface_hub raises LocalEntryNotFoundError (a FileNotFoundError)
+        # on a cache miss; engine/CUDA build failures are RuntimeError and
+        # propagate unchanged so they are never retried as a download.
+        log.info(
+            "Whisper model %s not in the local cache (%s) — fetching online.",
+            model_name,
+            exc.__class__.__name__,
+        )
     return WhisperModel(model_name, **kwargs)
 
 

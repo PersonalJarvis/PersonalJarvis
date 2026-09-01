@@ -4778,7 +4778,7 @@ class DesktopApp:
             return f"{WINDOW_TITLE} cannot start: {type(exc).__name__}: {exc}\n\nPython: {python}"
         return f"{WINDOW_TITLE} cannot start: the backend did not become ready.\n\nPython: {python}"
 
-    def _wait_for_backend(self, timeout_s: float = 45.0) -> bool:
+    def _wait_for_backend(self, timeout_s: float = 45.0, hard_timeout_s: float = 180.0) -> bool:
         """Polls ``/api/health`` until it returns 200 or the timeout expires.
 
         45s default — Whisper/VAD models are loaded on first initialization
@@ -4787,17 +4787,37 @@ class DesktopApp:
         If the backend thread has already died (missing import, bind error),
         return immediately — waiting out the timeout just hides the reason
         under pythonw for 45 seconds.
+
+        A LIVE backend thread that merely has not bound yet is a different
+        case: on a cold boot the whole tree competes with every other
+        autostart for a paging disk, and quitting with a failure dialog at
+        45 s turned a slow boot into a dead one. As long as the thread is
+        alive the wait continues past ``timeout_s`` (with one log line) up to
+        ``hard_timeout_s``; only a dead thread or the hard cap gives up.
         """
         import httpx
 
         url = f"http://127.0.0.1:{self.cfg.ui.admin_api_port}/api/health"
         start = time.monotonic()
+        slow_boot_logged = False
         # 100 ms startup buffer so the thread can set up the loop.
         time.sleep(0.05)
-        while time.monotonic() - start < timeout_s:
+        while time.monotonic() - start < hard_timeout_s:
             thread = self._backend_thread
             if thread is not None and not thread.is_alive():
                 return False
+            elapsed = time.monotonic() - start
+            if elapsed >= timeout_s and not slow_boot_logged:
+                slow_boot_logged = True
+                from loguru import logger
+
+                logger.warning(
+                    "Backend still binding after {:.0f} s — the thread is alive, "
+                    "so this looks like a starved cold boot; waiting up to "
+                    "{:.0f} s instead of failing.",
+                    elapsed,
+                    hard_timeout_s,
+                )
             try:
                 r = httpx.get(url, timeout=0.5)
                 if r.status_code == 200:
@@ -4858,9 +4878,26 @@ class DesktopApp:
             r = client.get(
                 f"http://127.0.0.1:{self.cfg.ui.admin_api_port}/api/health",
             )
+            warming = False
+            if r.status_code == 200:
+                try:
+                    warming = bool(r.json().get("warming"))
+                except Exception:  # noqa: BLE001 — a non-JSON health body means the real app
+                    warming = False
+            self._backend_warming_flag = warming
             return bool(r.status_code == 200)
         except Exception:  # noqa: BLE001 — an unreachable server is the answer
+            self._backend_warming_flag = False
             return False
+
+    def _backend_warming(self) -> bool:
+        """Was the last health answer the bootstrap's ``warming: true``?
+
+        Piggybacks on ``_backend_healthy``'s response instead of probing again —
+        the blank-window watchdog calls both within one tick, and a second HTTP
+        request per tick would double the probe cost for the same byte.
+        """
+        return bool(getattr(self, "_backend_warming_flag", False))
 
     def _backend_thread_alive(self) -> bool:
         """Is the thread that serves this window still running?
@@ -4890,6 +4927,7 @@ class DesktopApp:
                 url=self._url(),
                 health_probe=self._backend_healthy,
                 backend_alive=self._backend_thread_alive,
+                warming_probe=self._backend_warming,
                 failure_detail=self._blank_window_detail,
                 theme=self._resolved_theme,
             )

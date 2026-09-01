@@ -15,6 +15,8 @@
  */
 import { useEffect, useState } from "react";
 
+import { bootSettled } from "@/lib/bootStagger";
+
 export interface Capabilities {
   native_file_actions: boolean;
   platform: "win32" | "darwin" | "linux";
@@ -28,7 +30,9 @@ function loadCapabilities(): Promise<Capabilities> {
   if (_inflight) return _inflight;
   // Promise.resolve().then(...) so a missing/relative-URL fetch (e.g. in a unit
   // test with no server) becomes a rejected promise, never a synchronous throw.
-  _inflight = Promise.resolve()
+  // Non-critical: awaits the boot stagger so the first-mount burst keeps
+  // Chromium's small per-origin connection pool for the essential requests.
+  _inflight = bootSettled()
     .then(() => fetch("/api/downloads/capabilities"))
     .then((r) => {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);

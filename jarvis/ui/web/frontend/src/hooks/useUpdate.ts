@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { bootSettled } from "@/lib/bootStagger";
+
 /**
  * Result of GET /api/update/status. ``managed`` is false on any checkout that is
  * not an installer-managed install (a dev tree, a manual clone) — the update
@@ -111,7 +113,8 @@ export function useUpdate() {
   }, []);
 
   useEffect(() => {
-    void refresh();
+    // Non-critical: the first status check waits out the boot burst.
+    void bootSettled().then(() => refresh());
     const id = window.setInterval(() => void refresh(), POLL_INTERVAL_MS);
     const onFocus = () => void refresh();
     window.addEventListener("focus", onFocus);
