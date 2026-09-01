@@ -1649,6 +1649,23 @@ def _main(argv: list[str] | None = None) -> int:
 
         _ilog.getLogger(__name__).warning("instance data dir could not be prepared: %s", exc)
 
+    # A launch inherited from the old autostart Scheduled Task (registered
+    # without -Priority) runs the whole tree at BelowNormal — on a paging cold
+    # boot that meant 15-30 s whole-app freezes (BUG-204 amplifier). Repair it
+    # before anything is spawned so every descendant inherits Normal. Raises
+    # only, quiet no-op off Windows (two syscalls, AP-26-safe).
+    from jarvis.core.process_utils import ensure_normal_process_priority
+
+    _priority_repair = ensure_normal_process_priority()
+    if _priority_repair:
+        from loguru import logger as _plog
+
+        _plog.info(
+            "Process priority repaired: {} (inherited from the autostart task; "
+            "new registrations pass -Priority 5).",
+            _priority_repair,
+        )
+
     # GUI/desktop launches carry a minimal PATH (macOS launchd, Windows tray
     # relaunch) — append the well-known CLI install dirs before any provider
     # probe or worker spawn resolves binaries (stat-only, AP-26-safe).

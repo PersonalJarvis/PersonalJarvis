@@ -46,18 +46,29 @@ class TestTokenCreationFlags:
         detached_process = 0x00000008
         create_unicode_environment = 0x00000400
         create_no_window = 0x08000000
+        normal_priority_class = 0x00000020
 
         flags = token_creationflags(detached_process | create_no_window)
 
-        assert flags == create_no_window | create_unicode_environment
+        assert flags == create_no_window | create_unicode_environment | normal_priority_class
 
     def test_preserves_unrelated_creation_flags(self):
         create_new_process_group = 0x00000200
         create_unicode_environment = 0x00000400
+        normal_priority_class = 0x00000020
 
         flags = token_creationflags(create_new_process_group)
 
-        assert flags == create_new_process_group | create_unicode_environment
+        assert flags == (
+            create_new_process_group | create_unicode_environment | normal_priority_class
+        )
+
+    def test_relaunch_never_inherits_a_demoted_priority_class(self):
+        # Without an explicit class the child inherits the creator's — and an
+        # elevated launcher started by the old autostart task ran BelowNormal
+        # (BUG-204 amplifier). The relaunch must pin Normal explicitly.
+        normal_priority_class = 0x00000020
+        assert token_creationflags(0) & normal_priority_class
 
 
 class TestPlatformGating:

@@ -142,7 +142,12 @@ def build_register_task_script(
 
     ``RunLevel=Limited`` → the launched Jarvis is NOT elevated (mic access);
     ``AtLogOn`` + ``Delay`` → fires a few seconds after login, off the Explorer
-    startup throttle.
+    startup throttle. ``-Priority 5`` → Normal process priority: Task Scheduler's
+    default (7) starts the whole tree BelowNormal, which turned a paging cold
+    boot into 15-30 s whole-app freezes (BUG-204 amplifier). Existing tasks keep
+    their stored priority until re-registered; the launcher self-corrects at
+    runtime (``process_utils.ensure_normal_process_priority``) so old installs
+    are covered without a UAC prompt.
     """
     args = " ".join(spec.args)
     return (
@@ -156,7 +161,7 @@ def build_register_task_script(
         "-LogonType Interactive -RunLevel Limited\n"
         "  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries "
         "-DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) "
-        "-MultipleInstances IgnoreNew\n"
+        "-MultipleInstances IgnoreNew -Priority 5\n"
         f"  Register-ScheduledTask -TaskName '{_ps_lit(task_name)}' -Action $action "
         "-Trigger $trigger -Principal $principal -Settings $settings "
         f"-Description '{_ps_lit(WINDOWS_AUTOSTART_DESCRIPTION)}' -Force | Out-Null\n"

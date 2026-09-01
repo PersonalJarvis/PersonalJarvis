@@ -41,6 +41,7 @@ log = logging.getLogger(__name__)
 _LOGON_WITH_PROFILE = 0x00000001
 _CREATE_UNICODE_ENVIRONMENT = 0x00000400
 _DETACHED_PROCESS = 0x00000008
+_NORMAL_PRIORITY_CLASS = 0x00000020
 _TOKEN_QUERY = 0x0008
 _TOKEN_DUPLICATE = 0x0002
 _TOKEN_ASSIGN_PRIMARY = 0x0001
@@ -83,8 +84,17 @@ def token_creationflags(creationflags: int) -> int:
     through produced ``ERROR_INVALID_PARAMETER`` (87). ``CREATE_NO_WINDOW`` is
     sufficient for this helper, and Windows does not tie a child process's
     lifetime to its parent merely because this flag is absent.
+
+    ``NORMAL_PRIORITY_CLASS`` is added explicitly: without it the child inherits
+    the creator's priority class, and an elevated launcher started by the old
+    autostart task (no ``-Priority``) ran BelowNormal — the de-elevated relaunch
+    then carried that demotion into the whole app tree (BUG-204 amplifier).
     """
-    return (creationflags & ~_DETACHED_PROCESS) | _CREATE_UNICODE_ENVIRONMENT
+    return (
+        (creationflags & ~_DETACHED_PROCESS)
+        | _CREATE_UNICODE_ENVIRONMENT
+        | _NORMAL_PRIORITY_CLASS
+    )
 
 
 def _spawn_unelevated_windows(

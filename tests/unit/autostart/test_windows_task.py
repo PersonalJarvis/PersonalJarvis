@@ -72,6 +72,13 @@ def test_register_script_bakes_logon_delay() -> None:
     assert "PT20S" in script
 
 
+def test_register_script_pins_normal_priority() -> None:
+    # Task Scheduler's default (7) starts the whole tree BelowNormal — on a
+    # paging cold boot that meant 15-30 s whole-app freezes (BUG-204 amplifier).
+    script = build_register_task_script(TASK_NAME, _SPEC, user_id="u")
+    assert "-Priority 5" in script
+
+
 def test_unregister_script_is_idempotent() -> None:
     script = build_unregister_task_script(TASK_NAME)
     assert "Unregister-ScheduledTask" in script

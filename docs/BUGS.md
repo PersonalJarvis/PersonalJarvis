@@ -14777,3 +14777,51 @@ invisible until someone else's config file was unreadable. Note the remaining
 sharp edge this exposed, not fixed here: an unwritable `jarvis.toml` silently
 discards *every* in-app setting, because best-effort persistence is what all
 these routes do. Only the onboarding dead end is closed.
+
+## BUG-210: the autostart task started the whole app tree at BelowNormal priority (HIGH, FIXED 2026-09-01)
+
+**Symptom.** The first start after a cold Windows boot felt broken across the
+board: multi-second freezes, clicks that landed late or seemingly misfired, the
+bar and window stalling together. BUG-204's forensics already named the
+amplifier — three of seven event-loop stalls that afternoon sat in
+`GetQueuedCompletionStatus`, i.e. the loop was idle and simply **not
+scheduled** — and recorded it as unfixed.
+
+**Root cause.** The logon Scheduled Task ("Personal Jarvis Autostart") was
+registered without `-Priority`, so Task Scheduler applied its default (7):
+the launched process runs at `BELOW_NORMAL_PRIORITY_CLASS`, and every
+descendant — launcher, backend, WebView2 browser processes, PTY panes,
+Ollama — inherits it. On a cold boot the machine is paging and every other
+autostart competes for the disk; a BelowNormal tree loses every one of those
+races, which stretched the wake warm-up to 17-44 s and turned 1-2 s hiccups
+into 15-30 s freezes. Two side doors kept the demotion alive even after a
+restart: the de-elevated relaunch (`CreateProcessWithTokenW` passes no
+priority class, so the child inherits the creator's) and restarts spawned
+from an already-demoted pane.
+
+**Fix.** Three lanes, all raise-only:
+
+* `build_register_task_script` passes `-Priority 5` (Normal) — new and
+  re-registered tasks start the tree at Normal
+  (`jarvis/autostart/windows.py`).
+* `process_utils.ensure_normal_process_priority()` runs first thing in the
+  launcher: if the process inherited BelowNormal/Idle it raises itself to
+  Normal before anything is spawned. Never demotes, quiet no-op off Windows
+  (macOS launchd already runs LaunchAgents with `ProcessType=Interactive`;
+  Linux desktop autostart is not niced).
+* `token_creationflags` adds `NORMAL_PRIORITY_CLASS` so the de-elevated
+  relaunch pins Normal instead of inheriting.
+
+Existing installs need no UAC prompt: the stored task keeps priority 7 until
+it is ever re-registered, but the launcher self-correction covers the gap at
+every start.
+
+**Guard.** `tests/unit/autostart/test_windows_task.py`
+(`test_register_script_pins_normal_priority`),
+`tests/unit/core/test_process_utils_priority.py` (raise-only contract,
+off-Windows no-op), `tests/unit/platform/test_deescalate.py`
+(`test_relaunch_never_inherits_a_demoted_priority_class`).
+
+**Related.** BUG-204 (the VRAM holder this amplified), BUG-189 (the cold-boot
+start storm the priority made fatal), AP-17 (the task stays `RunLevel
+Limited` — priority is orthogonal to elevation).

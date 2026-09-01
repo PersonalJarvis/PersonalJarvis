@@ -224,9 +224,52 @@ def wake_thread_message_loop(native_thread_id: int) -> bool:
         return False
 
 
+_BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+_IDLE_PRIORITY_CLASS = 0x00000040
+_NORMAL_PRIORITY_CLASS = 0x00000020
+
+
+def ensure_normal_process_priority() -> str | None:
+    """Raise this process to Normal priority if it inherited a lower class.
+
+    The autostart Scheduled Task historically registered without ``-Priority``,
+    so Task Scheduler's default (7) started the entire tree — launcher, backend,
+    WebView2, PTY panes, Ollama — at BelowNormal, which turned a paging cold
+    boot into 15-30 s whole-app freezes (BUG-204 amplifier). New registrations
+    pass ``-Priority 5``; this call covers every other lane: an old task that
+    was never re-registered, the de-elevated relaunch, and a restart spawned
+    from an already-demoted pane.
+
+    Only ever RAISES BelowNormal/Idle to Normal — a deliberately niced process
+    (or one already Normal or above) is left alone. Quiet no-op off Windows:
+    login-launched GUI apps start at normal priority on macOS (launchd
+    ``ProcessType=Interactive``) and Linux, so there is nothing to repair.
+
+    Returns a short human-readable detail when the class was changed, ``None``
+    when nothing needed doing or the probe failed. Never raises.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes  # noqa: PLC0415 — Windows-only, keep it off the import floor
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetCurrentProcess()
+        current = int(kernel32.GetPriorityClass(handle))
+        if current not in (_BELOW_NORMAL_PRIORITY_CLASS, _IDLE_PRIORITY_CLASS):
+            return None
+        if not kernel32.SetPriorityClass(handle, _NORMAL_PRIORITY_CLASS):
+            return None
+        was = "Idle" if current == _IDLE_PRIORITY_CLASS else "BelowNormal"
+        return f"{was} -> Normal"
+    except Exception:  # noqa: BLE001 — priority repair is best-effort, never fatal
+        return None
+
+
 __all__ = [
     "NO_WINDOW_CREATIONFLAGS",
     "disable_windows_app_ghosting",
+    "ensure_normal_process_priority",
     "ensure_standard_streams",
     "resolve_executable",
     "thread_message_loop_wake_supported",
