@@ -4,12 +4,16 @@ import { cn } from "@/lib/utils";
 
 const LOGO_RETRY_MAX = 5;
 const LOGO_RETRY_BASE_MS = 1500;
+const MARK_SRC = "/jarvis-gigi-256.png";
 
 /**
- * The Gigi app mark: original black-and-white ghost on a white rounded tile.
+ * The Gigi app mark: the desktop app icon itself, at any size.
  *
- * Same treatment as the desktop app icon — original PNG, uninverted, sitting
- * on a white squircle. Do not swap this for the live SVG mascot in chrome.
+ * The tile — ink squircle, paper ghost, hairline edge — is baked into the PNG
+ * by `scripts/make_gigi_app_icon.py`, so this renders no background, no radius
+ * and no shadow of its own. Anything drawn here would sit behind an already
+ * masked shape and show as a square. Do not swap this for the live SVG mascot
+ * in chrome; that one moves, this one identifies the app.
  */
 export function GigiMark({
   size,
@@ -22,27 +26,19 @@ export function GigiMark({
 }) {
   const [retry, setRetry] = useState(0);
   return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center overflow-hidden bg-white",
-        "shadow-[0_1px_2px_rgba(0,0,0,0.22)]",
-        className,
-      )}
-      style={{ width: size, height: size, borderRadius: "22%" }}
-    >
-      <img
-        src={retry === 0 ? "/jarvis-logo.png" : `/jarvis-logo.png?retry=${retry}`}
-        width={Math.round(size * 0.78)}
-        height={Math.round(size * 0.78)}
-        alt={alt}
-        className="h-[78%] w-[78%] select-none"
-        draggable={false}
-        onError={() => {
-          if (retry < LOGO_RETRY_MAX) {
-            window.setTimeout(() => setRetry((n) => n + 1), (retry + 1) * LOGO_RETRY_BASE_MS);
-          }
-        }}
-      />
-    </span>
+    <img
+      src={retry === 0 ? MARK_SRC : `${MARK_SRC}?retry=${retry}`}
+      width={size}
+      height={size}
+      alt={alt}
+      className={cn("shrink-0 select-none", className)}
+      style={{ width: size, height: size }}
+      draggable={false}
+      onError={() => {
+        if (retry < LOGO_RETRY_MAX) {
+          window.setTimeout(() => setRetry((n) => n + 1), (retry + 1) * LOGO_RETRY_BASE_MS);
+        }
+      }}
+    />
   );
 }

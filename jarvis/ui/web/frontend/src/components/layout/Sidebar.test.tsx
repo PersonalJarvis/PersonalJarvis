@@ -233,13 +233,13 @@ describe("Sidebar header avatar", () => {
     overlayMock.style = "jarvis_bar";
   });
 
-  test("renders the original Gigi logo on a white tile", () => {
+  test("renders the Gigi app mark", () => {
     const { container } = renderSidebar();
     const avatar = container.querySelector('[data-testid="sidebar-style-avatar"]');
     expect(avatar).not.toBeNull();
     expect(avatar?.getAttribute("data-variant")).toBe("logo");
     const logo = avatar?.querySelector("img") as HTMLImageElement;
-    expect(logo.getAttribute("src")).toBe("/jarvis-logo.png");
+    expect(logo.getAttribute("src")).toBe("/jarvis-gigi-256.png");
   });
 
   test("retries a failed logo load with a cache-busted URL (self-healing)", () => {
@@ -249,14 +249,14 @@ describe("Sidebar header avatar", () => {
       const logo = container.querySelector(
         '[data-testid="sidebar-style-avatar"] img',
       ) as HTMLImageElement;
-      expect(logo.getAttribute("src")).toBe("/jarvis-logo.png");
+      expect(logo.getAttribute("src")).toBe("/jarvis-gigi-256.png");
 
       act(() => {
         logo.dispatchEvent(new Event("error"));
         vi.advanceTimersByTime(2_000);
       });
 
-      expect(logo.getAttribute("src")).toBe("/jarvis-logo.png?retry=1");
+      expect(logo.getAttribute("src")).toBe("/jarvis-gigi-256.png?retry=1");
     } finally {
       vi.useRealTimers();
     }
