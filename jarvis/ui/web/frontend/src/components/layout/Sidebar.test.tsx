@@ -233,33 +233,18 @@ describe("Sidebar header avatar", () => {
     overlayMock.style = "jarvis_bar";
   });
 
-  test("renders the Gigi app mark", () => {
+  // The mark is a bundled import, so its URL carries a build hash and there is
+  // nothing stable to assert. What matters is that the avatar shows the mark
+  // and not a stale public/ path a browser would serve from cache.
+  test("renders the Gigi app mark from the bundle, not a public path", () => {
     const { container } = renderSidebar();
     const avatar = container.querySelector('[data-testid="sidebar-style-avatar"]');
     expect(avatar).not.toBeNull();
     expect(avatar?.getAttribute("data-variant")).toBe("logo");
     const logo = avatar?.querySelector("img") as HTMLImageElement;
-    expect(logo.getAttribute("src")).toBe("/jarvis-gigi-256.png");
-  });
-
-  test("retries a failed logo load with a cache-busted URL (self-healing)", () => {
-    vi.useFakeTimers();
-    try {
-      const { container } = renderSidebar();
-      const logo = container.querySelector(
-        '[data-testid="sidebar-style-avatar"] img',
-      ) as HTMLImageElement;
-      expect(logo.getAttribute("src")).toBe("/jarvis-gigi-256.png");
-
-      act(() => {
-        logo.dispatchEvent(new Event("error"));
-        vi.advanceTimersByTime(2_000);
-      });
-
-      expect(logo.getAttribute("src")).toBe("/jarvis-gigi-256.png?retry=1");
-    } finally {
-      vi.useRealTimers();
-    }
+    const src = logo.getAttribute("src") ?? "";
+    expect(src).toContain("jarvis-mark");
+    expect(src.startsWith("/jarvis-")).toBe(false);
   });
 });
 

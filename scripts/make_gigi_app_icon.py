@@ -321,6 +321,10 @@ def main() -> None:
         ROOT / "jarvis" / "assets" / "icons" / "jarvis.png",
         ROOT / "assets" / "icons" / "jarvis-gigi-256.png",
         ROOT / "jarvis" / "ui" / "web" / "frontend" / "public" / "jarvis-gigi-256.png",
+        # Bundled copy: imported by GigiMark so Vite gives it a content hash.
+        # A public/ file keeps its name forever, and browsers keep serving the
+        # cached one — the reason a redrawn icon does not show up in the app.
+        ROOT / "jarvis" / "ui" / "web" / "frontend" / "src" / "assets" / "jarvis-mark.png",
     ):
         write_png(path, tile_256)
     write_png(
