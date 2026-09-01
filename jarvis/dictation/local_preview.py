@@ -29,17 +29,37 @@ Degrades honestly (CLAUDE.md §3): on a host without ``faster_whisper`` — a ba
 or headless install — this reports unavailable and the caller falls back to the
 budgeted cloud preview. No GPU is required either; the engine picks CPU and the
 caller simply sees a slower preview.
+
+In the desktop app the engine is hosted OUT OF PROCESS
+(``jarvis/dictation/preview_worker.py``): building it in-process loaded the
+CUDA DLLs (~600 MB of cublas) while holding the Windows loader lock, freezing
+the whole window for 15-30 s on the first dictation after a cold boot. The
+worker runs this same class; the parent talks to it through a faster-whisper-
+shaped proxy (``_WorkerModel``), so every timeout/failure/recovery path below
+applies to both hostings. ``JARVIS_DICTATION_PREVIEW_IN_PROCESS=1`` is the
+debug escape back to the in-process build.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+#: How long the out-of-process engine may take to build + warm before the
+#: spawn attempt is abandoned. Generous on purpose: the first CUDA decode on a
+#: cold driver cache pays a one-off kernel compile measured at 19 s, and a
+#: cold-boot disk multiplies everything — the parent loses nothing by waiting,
+#: the preview simply stays on its cloud fallback meanwhile.
+_WORKER_BOOT_TIMEOUT_S = 180.0
 
 #: Model for the preview. Small enough to answer in tens of milliseconds, good
 #: enough that the line on screen reads as what was said. Never used for the
@@ -79,6 +99,132 @@ def faster_whisper_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
+def _child_python() -> str:
+    """The interpreter for the preview worker, beside the running executable.
+
+    ``sys.executable`` in the desktop app is the venv's GUI entry point
+    (``PersonalJarvis.exe``), which cannot take ``-m`` — the real
+    ``python(.exe)`` lives in the same Scripts/bin directory.
+    """
+    exe = Path(sys.executable)
+    if exe.stem.lower().startswith("python"):
+        return str(exe)
+    for name in ("python.exe", "python"):
+        candidate = exe.parent / name
+        if candidate.exists():
+            return str(candidate)
+    raise RuntimeError(f"no python interpreter beside {exe}")
+
+
+class _WorkerModel:
+    """faster-whisper-shaped proxy whose decodes run in the preview worker.
+
+    Presents the same ``transcribe(...)`` surface ``_transcribe_sync`` uses,
+    so every failure/timeout/recovery path of the parent class applies
+    unchanged — with one upgrade: dropping this "model" (``close``) KILLS the
+    worker process, which is the recovery an in-process wedged native engine
+    never had (AP-24).
+    """
+
+    def __init__(self, proc: subprocess.Popen[bytes], device: str, compute: str) -> None:
+        self._proc = proc
+        self.device = device
+        self.compute = compute
+
+    def transcribe(
+        self, samples: Any, language: str | None = None, **_ignored: Any
+    ) -> tuple[list[Any], Any]:
+        import numpy as np
+
+        from jarvis.dictation.preview_worker import read_message, write_message
+
+        pcm = (np.clip(samples, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+        stdin, stdout = self._proc.stdin, self._proc.stdout
+        if stdin is None or stdout is None:  # pragma: no cover — Popen(PIPE) guarantees both
+            raise RuntimeError("preview worker pipes are gone")
+        write_message(stdin, {"n": len(pcm), "language": language})
+        stdin.write(pcm)
+        stdin.flush()
+        response = read_message(stdout)
+        if response is None:
+            raise RuntimeError("preview worker exited")
+        if "error" in response:
+            raise RuntimeError(str(response["error"]))
+        segments = [SimpleNamespace(text=str(response.get("text", "")))]
+        info = SimpleNamespace(
+            language=str(response.get("language", "") or ""),
+            language_probability=float(response.get("probability", 0.0) or 0.0),
+        )
+        return segments, info
+
+    def close(self) -> None:
+        """Kill the worker. Never raises — this runs on drop/replace paths."""
+        try:
+            self._proc.kill()
+        except Exception as exc:  # noqa: BLE001 — an already-dead worker is the goal state
+            log.debug("Preview worker kill skipped: %s", exc)
+
+
+def _spawn_worker_model(model_name: str) -> _WorkerModel | None:
+    """Start the out-of-process engine; ``None`` when this host cannot.
+
+    A refused spawn is not an error — the caller falls back to the in-process
+    CPU floor, which never touches the CUDA DLLs and therefore never holds
+    the loader lock.
+    """
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+    from jarvis.dictation.preview_worker import read_message
+
+    try:
+        proc = subprocess.Popen(  # noqa: S603 — our own interpreter + module, no user input
+            [_child_python(), "-X", "utf8", "-m", "jarvis.dictation.preview_worker", model_name],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except Exception as exc:  # noqa: BLE001 — no interpreter / spawn refused: use the floor
+        log.info(
+            "Dictation preview worker could not start (%s: %s) — staying in-process.",
+            type(exc).__name__,
+            exc,
+        )
+        return None
+    result: dict[str, Any] = {}
+    done = threading.Event()
+
+    def _handshake() -> None:
+        try:
+            result["msg"] = read_message(proc.stdout)  # type: ignore[arg-type]
+        except Exception as exc:  # noqa: BLE001 — reported via the empty result
+            result["exc"] = exc
+        done.set()
+
+    threading.Thread(target=_handshake, name="dictation-preview-handshake", daemon=True).start()
+    if not done.wait(_WORKER_BOOT_TIMEOUT_S):
+        log.info(
+            "Dictation preview worker did not become ready within %.0f s — killed.",
+            _WORKER_BOOT_TIMEOUT_S,
+        )
+        proc.kill()
+        return None
+    message = result.get("msg")
+    if not isinstance(message, dict) or not message.get("ready"):
+        detail = (
+            message.get("error")
+            if isinstance(message, dict)
+            else result.get("exc") or "worker exited during startup"
+        )
+        log.info("Dictation preview worker reported no engine (%s).", detail)
+        proc.kill()
+        return None
+    return _WorkerModel(
+        proc,
+        str(message.get("device", "?") or "?"),
+        str(message.get("compute", "?") or "?"),
+    )
+
+
 class LocalPreviewTranscriber:
     """Lazily-built local engine for preview text. Never raises to the caller.
 
@@ -89,8 +235,13 @@ class LocalPreviewTranscriber:
     preview away is free; the next tick asks again.
     """
 
-    def __init__(self, model_name: str = PREVIEW_MODEL) -> None:
+    def __init__(self, model_name: str = PREVIEW_MODEL, *, prefer_worker: bool = False) -> None:
         self._model_name = model_name
+        #: True in the DESKTOP process (set by the ``local_preview`` factory):
+        #: the engine is hosted out of process so the CUDA DLL load never
+        #: holds this process's loader lock. False inside the worker itself
+        #: and in tests, where the in-process ladder below runs unchanged.
+        self._prefer_worker = prefer_worker
         self._model: Any = None
         self._lock = threading.Lock()
         self._busy = threading.Lock()
@@ -129,7 +280,27 @@ class LocalPreviewTranscriber:
         try:
             from jarvis.plugins.stt.fwhisper import _new_whisper_model
 
-            preferred = self._pick_device()
+            if self._prefer_worker:
+                worker = _spawn_worker_model(self._model_name)
+                if worker is not None:
+                    with self._lock:
+                        self._model = worker
+                        self._engine_device = worker.device
+                        self._engine_compute = worker.compute
+                    log.info(
+                        "Dictation preview engine ready: %s on %s (%s), out of process.",
+                        self._model_name,
+                        worker.device,
+                        worker.compute,
+                    )
+                    return
+                # No worker on this host: stay on the CPU floor IN process.
+                # Deliberately never CUDA here — the in-process cublas load
+                # holds the Windows loader lock for 15-30 s on a cold boot,
+                # which is the freeze this worker exists to remove.
+                preferred = ("cpu", "int8")
+            else:
+                preferred = self._pick_device()
             attempts = [preferred]
             if preferred == ("cuda", "float16"):
                 # The quantized pair is the old GPU default and still the
@@ -404,6 +575,7 @@ class LocalPreviewTranscriber:
             # The old native worker keeps its captured model and guard. Rotate
             # both references atomically so the next tick builds a genuinely
             # fresh session rather than re-polling a wedged engine (AP-24).
+            dropped = self._model
             self._model = None
             self._busy = threading.Lock()
             # Not the same engine again: the next build takes the next entry
@@ -412,6 +584,13 @@ class LocalPreviewTranscriber:
             # wedged on THIS device/compute pair; the floor below it is not.
             self._attempt_index += 1
         self._failures = 0
+        # An out-of-process engine can be recovered for REAL: killing the
+        # worker unwedges whatever its native session was stuck in, and the
+        # detached transcribe thread's blocking read ends with the pipe. An
+        # in-process model has no close() and is left to the GC as before.
+        close = getattr(dropped, "close", None)
+        if callable(close):
+            close()
         log.info(
             "Dictation preview engine dropped (%s on %s/%s); rebuilding on the "
             "next tick with the next engine.",
@@ -437,7 +616,13 @@ def local_preview() -> LocalPreviewTranscriber | None:
         return None
     with _INSTANCE_LOCK:
         if _INSTANCE is None:
-            _INSTANCE = LocalPreviewTranscriber()
+            import os
+
+            # Out of process by default (the CUDA DLL load must never hold
+            # this process's loader lock); the env switch is the debug escape
+            # back to the old in-process build.
+            in_process = os.environ.get("JARVIS_DICTATION_PREVIEW_IN_PROCESS") == "1"
+            _INSTANCE = LocalPreviewTranscriber(prefer_worker=not in_process)
         return _INSTANCE if _INSTANCE.available else None
 
 
