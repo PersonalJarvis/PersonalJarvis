@@ -177,9 +177,9 @@ def build_memory_house(k) -> bpy.types.Object:
 
     # --- inside: the memory core and the floating shards
     core_mat = k.material("mem_core_hot", 4.0)
-    _icosphere(k, "core_orb", 1.55, (0, 0.4, z0 + 6.4), core_mat, root, subdivisions=2)
+    _icosphere(k, "core_orb", 2.0, (0, 0.4, z0 + 6.4), core_mat, root, subdivisions=2)
     inner_mat = k.material("mem_core", 2.4)
-    _icosphere(k, "core_halo", 2.05, (0, 0.4, z0 + 6.4), _glass(k, "mem_core", 0.28, 1.2), root, subdivisions=1)
+    _icosphere(k, "core_halo", 2.6, (0, 0.4, z0 + 6.4), _glass(k, "mem_core", 0.28, 1.2), root, subdivisions=1)
     k.cylinder("core_spine", 0.22, MONO_H - 0.8, (0, 0.4, z0 + MONO_H / 2), "mem_frame", root, verts=10, bevel=0.0, emissive=0.6)
     shard_specs = [
         (-2.6, -1.4, 2.4, 0.35, 1.3, 0.28),
@@ -193,7 +193,7 @@ def build_memory_house(k) -> bpy.types.Object:
     for i, (x, y, z, rz, size, rx) in enumerate(shard_specs):
         k.box(
             f"shard_{i}",
-            (size, 0.08, size * 0.62),
+            (size * 1.4, 0.1, size * 0.9),
             (x, 0.4 + y, z0 + z),
             "mem_violet",
             root,

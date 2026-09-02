@@ -52,8 +52,9 @@ __all__ = [
 MEMORY_SHARE_CAPABILITY: Final[str] = "core:memory:share"
 #: The frontmatter ``type`` that makes an agent page schema-valid for the vault index.
 PAGE_TYPE: Final[str] = "society"
-#: Seconds a memory touch keeps a figure at the Memory House (the walk must be visible).
-MEMORY_HOLD_S: Final[float] = 20.0
+#: Seconds a memory touch keeps a figure at the Memory House. The house stands at the
+#: island's north end, ~50 tiles from the square: the walk alone takes most of a minute.
+MEMORY_HOLD_S: Final[float] = 60.0
 
 _MAX_TEXT: Final[int] = 40_000
 _HEAD_CHARS: Final[int] = 1_200

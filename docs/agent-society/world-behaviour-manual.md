@@ -29,7 +29,7 @@ gesture becomes a typed event, and the figure follows because the truth changed.
 | `hub:cli` | Terminal Cantina | working through a CLI seat (Claude Code, Codex, …) |
 | `hub:workshop` | Workshop | core file/shell work, no dominant family |
 | `hub:models` | Model Foundry | its brain is a local model that is currently inferring |
-| `archive` | **Memory House** | touching the shared memory: a recall, a memory line, a note, a share proposal (20 s hold — `memory-house.md` §3.4) |
+| `archive` | **Memory House** | touching the shared memory: a recall, a memory line, a note, a share proposal (60 s hold — `memory-house.md` §3.4) |
 | `gallery` | Gallery | delivering a `RESULT` (carries the crate) |
 | `gate` | Harbor Gate | waiting for an `ask`-tier approval |
 | `foundry` | Agent Foundry | being created (3 s), or changing its avatar |
@@ -53,7 +53,7 @@ sees. Rules, in priority order; the first that matches wins:
    capability catalog of `agent-definition.md` §3.1). The place changes only when a different
    family has dominated for **≥ 20 s** — hysteresis, so a figure never ping-pongs between shops.
    A local-brain agent whose model is inferring right now → `hub:models` outranks the family.
-6. A memory touch in the last 20 s → `archive` (the Memory House). **Built:** `jarvis/society/checkpoints.py` derives `paused → idle`, `gate`, `meeting`, `archive`, `desk`, `idle` over today's vocabulary and publishes `SocietyCheckpointChanged`; the `hub:*` rules join with the five-layer change.
+6. A memory touch in the last 60 s → `archive` (the Memory House). **Built:** `jarvis/society/checkpoints.py` derives `paused → idle`, `gate`, `meeting`, `archive`, `desk`, `idle` over today's vocabulary and publishes `SocietyCheckpointChanged`; the `hub:*` rules join with the five-layer change.
 7. Being created / avatar change → `foundry`.
 8. Otherwise → `wander`.
 

@@ -88,6 +88,7 @@ class SocietyRuntime:
         # Only Jarvis is on the roster by default (maintainer, 2026-09-02); the
         # starter team is offered as seed proposals instead.
         seed_starter_team: bool = False,
+        event_publish: Callable[[Any], Any] | None = None,
     ) -> None:
         self._data_dir = Path(data_dir)
         self._get_manager = mission_manager or (lambda: None)
@@ -117,7 +118,9 @@ class SocietyRuntime:
         )
         self._owners: dict[str, str] = {}
         #: Where an agent is on the island, derived from the board (memory-house.md §3.4).
-        self.checkpoints = CheckpointEngine(self)
+        # ``event_publish`` is the app bus the WebSocket forwards (server.py hands
+        # it in); without it the engine falls back to the process default bus.
+        self.checkpoints = CheckpointEngine(self, publish=event_publish)
         #: The society's one memory service; every touch moves the figure to the Memory House.
         self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
         #: The Quest Board: the person's jobs, routed to one taker, read back off the board.

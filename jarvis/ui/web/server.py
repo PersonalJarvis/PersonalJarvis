@@ -3581,6 +3581,9 @@ class WebServer:
             deliver=deliver,
             chat_service=lambda: _service_from_state(state),
             cfg=lambda: self.cfg,
+            # The island learns of a figure's new place through the app bus the
+            # WebSocket forwards (SocietyCheckpointChanged).
+            event_publish=self.bus.publish,
         )
 
     def _build_agent_chat_service(self) -> Any:

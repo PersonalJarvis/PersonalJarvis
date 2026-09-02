@@ -8,7 +8,7 @@ gate | idle``). The first rule that matches wins:
 1. paused                                  -> idle   (home, until the superset lands)
 2. an open approval for the agent          -> gate
 3. member of a running room                -> meeting
-4. memory activity within the hold window  -> archive (the Memory House)
+4. memory activity within the hold window  -> archive (the Memory House, 60 s)
 5. a run in flight under its identity      -> desk   (the workshop)
 6. otherwise                               -> idle
 

@@ -117,7 +117,7 @@ available and are skipped quietly when it is not. Every call emits a `DIGEST` en
 1. `state == paused` → `idle`
 2. an open approval for the agent → `gate`
 3. member of a running room → `meeting`
-4. memory activity within the last **20 s** (hold, so a walk of ~10 s is visible) → `archive`
+4. memory activity within the last **60 s** (hold: the house stands at the north end, the walk from the square takes most of a minute) → `archive`
 5. a run is in flight for the agent → `desk`
 6. otherwise → `idle`
 

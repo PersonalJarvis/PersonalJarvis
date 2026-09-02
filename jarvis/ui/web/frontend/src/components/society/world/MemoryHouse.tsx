@@ -62,13 +62,16 @@ function restyle(root: Object3D, ramp: ReturnType<typeof createToonRamp>): Rig {
         rig.glow.push(mat);
       }
     } else {
+      // Glass reads as glass only when it is clearer than Blender's preview
+      // needs it: a pale tint, a fifth of the opacity, and the core behind it.
+      const color = translucent ? src.color.clone().lerp(new Color("#ffffff"), 0.45) : src.color.clone();
       o.material = new MeshToonMaterial({
-        color: src.color.clone(),
+        color,
         gradientMap: ramp,
-        emissive: emissiveStrength > 0 ? src.emissive.clone() : new Color(0, 0, 0),
-        emissiveIntensity: emissiveStrength > 0 ? Math.min(0.6, src.emissiveIntensity) : 0,
+        emissive: emissiveStrength > 0 && !translucent ? src.emissive.clone() : new Color(0, 0, 0),
+        emissiveIntensity: emissiveStrength > 0 && !translucent ? Math.min(0.6, src.emissiveIntensity) : 0,
         transparent: translucent,
-        opacity: translucent ? src.opacity : 1,
+        opacity: translucent ? Math.min(src.opacity, 0.2) : 1,
         depthWrite: !translucent,
       });
       if (translucent) o.renderOrder = 10; // the glass draws after what it contains
