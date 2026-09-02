@@ -209,7 +209,15 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
       else playClip(figure, clip, clip, 0);
       if (paused) figure.mixer.update(0.001);
     }
+    // The first frames after the figure lands: the pixel pass and the size
+    // sync may still be settling, so ask for a few draws, not one.
     invalidate();
+    let frames = 0;
+    const kick = () => {
+      invalidate();
+      if (++frames < 6) requestAnimationFrame(kick);
+    };
+    requestAnimationFrame(kick);
     return () => {
       if (figure && group) group.remove(figure.root);
       figure?.dispose();
@@ -273,18 +281,23 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
 function HostSizeSync() {
   const gl = useThree((s) => s.gl);
   const setSize = useThree((s) => s.setSize);
+  const invalidate = useThree((s) => s.invalidate);
   useEffect(() => {
     const wrapper = gl.domElement.parentElement;
     if (!wrapper || typeof ResizeObserver === "undefined") return;
     const sync = () => {
       const rect = wrapper.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) setSize(rect.width, rect.height);
+      if (rect.width > 0 && rect.height > 0) {
+        setSize(rect.width, rect.height);
+        // A demand-driven loop draws nothing on its own after a resize.
+        invalidate();
+      }
     };
     sync();
     const observer = new ResizeObserver(sync);
     observer.observe(wrapper);
     return () => observer.disconnect();
-  }, [gl, setSize]);
+  }, [gl, setSize, invalidate]);
   return null;
 }
 
