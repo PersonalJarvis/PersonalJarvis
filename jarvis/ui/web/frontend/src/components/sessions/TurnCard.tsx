@@ -1,39 +1,17 @@
-/**
- * A single voice turn — user block + brain meta + tools + Jarvis block.
- *
- * The click-to-copy button lets the user copy just the turn text
- * (without the session frame).
- */
-import {
-  Brain,
-  Clock,
-  Copy,
-  Download,
-  Hourglass,
-  MessageSquareWarning,
-  Mic2,
-  Volume2,
-  Wrench,
-} from "lucide-react";
+import { Copy, Download, Mic, Volume2, Wrench } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { agentBrand } from "@/lib/agentBrand";
 import { robustCopy, saveOrDownload } from "@/lib/clipboard";
 import { useCapabilities } from "@/hooks/useCapabilities";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 
 import type { VoiceSpokenLine, VoiceTurnRow } from "./types";
 
-// Human-readable label per SpeechSpoken spoken_kind. Mirror of
-// jarvis/sessions/constants.py SPOKEN_KINDS — every kind needs an entry
-// (parity: tests/unit/sessions/test_spoken_kind_parity.py). An unknown kind
-// falls back to the kind string itself so it still renders. The `subagent`
-// entry here is the name-free fallback; the display path overlays the
-// wake-word-derived agent brand via spokenKindLabels(assistantName).
 export const SPOKEN_KIND_LABEL: Record<string, string> = {
   reply: "Reply",
   clarify: "Clarifying question",
@@ -52,8 +30,6 @@ export const SPOKEN_KIND_LABEL: Record<string, string> = {
   other: "Spoken",
 };
 
-// The agent brand follows the wake-word-derived assistant name (2026-07-17
-// rebrand): "Ruben" -> "Ruben-Agent / Output", for ANY configured wake word.
 export function spokenKindLabels(assistantName: string): Record<string, string> {
   return {
     ...SPOKEN_KIND_LABEL,
@@ -67,12 +43,18 @@ interface Props {
   spoken?: VoiceSpokenLine[];
 }
 
+const PROSE = "min-w-0 whitespace-pre-wrap break-words text-base leading-7 [overflow-wrap:anywhere]";
+
+/**
+ * One turn of a voice session, drawn like a chat: a quiet turn line (number,
+ * time, latency, copy), the user's words as a bubble on the lift surface, the
+ * assistant's reply on the card surface, and the facts of the exchange —
+ * brain, tokens, cost, tools, how long it thought and spoke — as ONE muted
+ * line underneath. No box inside a box.
+ */
 export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
   const t = useT();
   const [showRaw, setShowRaw] = useState(false);
-  // `null` unless a polished reading exists AND differs from what was said.
-  // A stored value equal to the raw text is not a rewrite, and showing a badge
-  // for it would claim a change that never happened.
   const rawUserText = turn.user_text ?? "";
   const polishedUserText = (turn.user_text_polished ?? "").trim();
   const polished =
@@ -81,7 +63,6 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
       : null;
   const pushToast = useEventStore((s) => s.pushToast);
   const assistantName = useEventStore((s) => s.assistantName);
-  // Desktop shell → save to ~/Downloads via the backend; browser → blob download.
   const caps = useCapabilities();
   const native = caps.data?.native_file_actions ?? false;
   const visibleTurnNumber = displayNumber ?? turn.idx + 1;
@@ -129,82 +110,78 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
     second: "2-digit",
   });
 
-  return (
-    <Card className="min-w-0 max-w-full bg-background/40">
-      <CardContent className="min-w-0 space-y-3 p-4">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="font-mono">Turn {visibleTurnNumber}</span>
-            <span>·</span>
-            <span>{startedAt}</span>
-            {turn.latency_total_ms > 0 && (
-              <>
-                <span>·</span>
-                <span className="flex items-center gap-1">
-                  <Clock className="h-3 w-3" />
-                  {formatMs(turn.latency_total_ms)}
-                </span>
-              </>
-            )}
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={copyTurn}
-              className="h-7 px-2 text-xs"
-              title={t("turn_card.copy_turn")}
-            >
-              <Copy className="mr-1 h-3 w-3" />
-              {t("turn_card.copy")}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={downloadTurn}
-              className="h-7 w-7 p-0"
-              title={t("turn_card.download_turn")}
-            >
-              <Download className="h-3 w-3" />
-            </Button>
-          </div>
-        </div>
+  const facts: string[] = [];
+  if (turn.provider) facts.push(turn.provider);
+  if (turn.model) facts.push(turn.model);
+  if (turn.tier) facts.push(turn.tier);
+  if (turn.tokens_in > 0 || turn.tokens_out > 0)
+    facts.push(`${turn.tokens_in}+${turn.tokens_out} tok`);
+  if (turn.cost_usd > 0) facts.push(`$${turn.cost_usd.toFixed(4)}`);
+  if (turn.think_ms > 0) facts.push(`${t("turn_card.thought")} ${formatMs(turn.think_ms)}`);
+  if (turn.speak_ms > 0) facts.push(`${t("turn_card.spoke")} ${formatMs(turn.speak_ms)}`);
 
-        {/* User */}
+  return (
+    <article className="group/turn min-w-0 max-w-full" data-testid="turn-card">
+      {/* The turn line: quiet, with the actions appearing on hover. */}
+      <div className="flex h-8 items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm text-foreground-faint">
+          <span className="font-medium text-muted-foreground">Turn {visibleTurnNumber}</span>
+          <span>·</span>
+          <span className="tabular-nums">{startedAt}</span>
+          {turn.latency_total_ms > 0 && (
+            <>
+              <span>·</span>
+              <span className="tabular-nums">{formatMs(turn.latency_total_ms)}</span>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/turn:opacity-100">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={copyTurn}
+            title={t("turn_card.copy_turn")}
+          >
+            <Copy />
+            {t("turn_card.copy")}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={downloadTurn}
+            title={t("turn_card.download_turn")}
+            aria-label={t("turn_card.download_turn")}
+          >
+            <Download />
+          </Button>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {/* The user: a bubble on the lift surface, right-aligned like a chat. */}
         {turn.user_text && (
-          <div className="space-y-1">
-            <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground">
-              <Mic2 className="h-3 w-3" />
-              User
-              <Badge variant="secondary" className="ml-1 text-micro">
-                {turn.user_lang}
-              </Badge>
-              {/* Shown only when the two actually differ, so the badge means
-                  "this was rewritten" rather than "the feature is on". */}
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Mic aria-hidden className="h-3.5 w-3.5" />
+              <span>User</span>
+              <span className="text-foreground-faint">{turn.user_lang}</span>
               {polished && (
-                <Badge
-                  variant="outline"
-                  className="ml-1 text-micro"
-                  data-testid="turn-polished-badge"
-                >
+                <Badge variant="secondary" data-testid="turn-polished-badge">
                   {t("session_turn.polished")}
                 </Badge>
               )}
             </div>
-            <div className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-muted-foreground/20 bg-muted-foreground/5 p-2 text-sm [overflow-wrap:anywhere]">
+            <div className={cn(PROSE, "max-w-[85%] rounded-lg bg-secondary px-4 py-3 text-foreground")}>
               {polished ?? turn.user_text}
             </div>
-            {/* The original is never more than one click away. A transcript is
-                a RECORD of what was said, and a view that shows only a model's
-                reading of it — with no way back — is no longer a record. */}
             {polished && (
               <button
                 type="button"
                 onClick={() => setShowRaw((v) => !v)}
-                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                className="rounded-sm text-sm text-muted-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 data-testid="turn-polished-toggle"
               >
                 {showRaw
@@ -214,7 +191,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
             )}
             {polished && showRaw && (
               <div
-                className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-border/60 bg-background/40 p-2 text-sm text-muted-foreground [overflow-wrap:anywhere]"
+                className={cn(PROSE, "max-w-[85%] rounded-lg border border-dashed border-border px-4 py-3 text-muted-foreground")}
                 data-testid="turn-raw-text"
               >
                 {turn.user_text}
@@ -223,71 +200,29 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
           </div>
         )}
 
-        {/* Brain-Meta */}
-        {(turn.tier ||
-          turn.provider ||
-          turn.tokens_in > 0 ||
-          turn.cost_usd > 0) && (
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <Brain className="h-3 w-3 text-primary" />
-            {turn.tier && (
-              <Badge variant="outline" className="text-micro">
-                {turn.tier}
-              </Badge>
-            )}
-            {turn.provider && (
-              <Badge variant="outline" className="text-micro">
-                {turn.provider}
-              </Badge>
-            )}
-            {turn.model && (
-              <Badge variant="outline" className="font-mono text-micro">
-                {turn.model}
-              </Badge>
-            )}
-            {(turn.tokens_in > 0 || turn.tokens_out > 0) && (
-              <span className="text-muted-foreground">
-                {turn.tokens_in}+{turn.tokens_out} tok
-              </span>
-            )}
-            {turn.cost_usd > 0 && (
-              <span className="text-muted-foreground">
-                · ${turn.cost_usd.toFixed(4)}
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Tools */}
+        {/* Tools the turn reached for. */}
         {turn.tool_calls.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <Wrench className="h-3 w-3 text-foreground" />
-            <span className="text-muted-foreground">Tools:</span>
+          <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+            <Wrench aria-hidden className="h-3.5 w-3.5" />
+            <span>Tools:</span>
             {turn.tool_calls.map((tc) => (
-              <Badge
-                key={tc}
-                variant="secondary"
-                className="font-mono text-micro"
-              >
+              <Badge key={tc} variant="secondary" className="font-mono">
                 {tc}
               </Badge>
             ))}
           </div>
         )}
 
-        {/* Jarvis */}
+        {/* The assistant: on the card surface, with its voice named beside it. */}
         {audibleReply && (
-          <div className="space-y-1">
-            <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-primary">
-              <Volume2 className="h-3 w-3" />
-              {assistantName}
-              <Badge variant="secondary" className="ml-1 text-micro">
-                {turn.jarvis_lang}
-              </Badge>
+          <div className="flex flex-col items-start gap-1">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              <Volume2 aria-hidden className="h-3.5 w-3.5" />
+              <span className="font-medium text-foreground">{assistantName}</span>
+              <span className="text-foreground-faint">{turn.jarvis_lang}</span>
               {turn.voice_name && (
-                <Badge
-                  variant="outline"
-                  className="ml-1 font-mono text-micro normal-case text-muted-foreground"
+                <span
+                  className="text-foreground-faint"
                   title={
                     turn.voice_verified === false
                       ? `Requested voice (native audio is not a verified speaker): ${
@@ -300,103 +235,64 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
                         : `Voice: ${turn.voice_name}`
                   }
                 >
-                  {turn.voice_name}
-                  {turn.voice_provider ? ` · ${turn.voice_provider}` : ""}
-                  {turn.voice_verified === false ? " · requested" : ""}
-                </Badge>
+                  {[
+                    turn.voice_name,
+                    turn.voice_provider,
+                    turn.voice_verified === false ? "requested" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
               )}
               {turn.awaiting_confirmation && (
-                <Badge
-                  variant="outline"
-                  className="ml-1 border-foreground/40 text-micro text-foreground"
-                >
-                  Awaiting confirmation
-                </Badge>
+                <Badge variant="warning">Awaiting confirmation</Badge>
               )}
             </div>
-            <div className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-primary/20 bg-primary/5 p-2 text-sm [overflow-wrap:anywhere]">
+            <div className={cn(PROSE, "w-full rounded-lg border border-border bg-card p-4 text-foreground")}>
               {audibleReply}
             </div>
           </div>
         )}
 
-        {/* Supplemental spoken output. Playback-confirmed normal replies render
-            in the main assistant block above; status phrases and readbacks stay
-            distinct here while preserving their audible order. */}
+        {/* Supplemental spoken output: status phrases and readbacks, in the
+            order they were heard, each with its kind as a small badge. */}
         {auxiliarySpoken.length > 0 && (
-          <div className="space-y-1.5 border-t border-border/50 pt-2">
-            <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-sky-300">
-              <MessageSquareWarning className="h-3 w-3" />
-              Spoken output
-            </div>
-            <div className="space-y-1">
-              {auxiliarySpoken.map((s, i) => {
-                // A spawned sub-agent / mission result gets its own colour so it
-                // reads distinctly from a generic background completion and from
-                // a normal reply: violet ("agent") vs. the sky tint of the rest.
-                const isSubagent = s.spoken_kind === "subagent";
-                return (
-                  <div
-                    key={`${s.ts_ms}-${i}`}
-                    data-spoken-kind={s.spoken_kind}
-                    className={
-                      isSubagent
-                        ? "flex items-start gap-2 rounded-md border border-violet-400/30 bg-violet-400/10 p-2 text-sm"
-                        : "flex items-start gap-2 rounded-md border border-sky-400/20 bg-sky-400/5 p-2 text-sm"
-                    }
-                  >
-                    <Badge
-                      variant="secondary"
-                      className={
-                        isSubagent
-                          ? "mt-0.5 shrink-0 border-violet-400/40 text-micro uppercase tracking-wide text-violet-200"
-                          : "mt-0.5 shrink-0 text-micro uppercase tracking-wide"
-                      }
-                    >
-                      {kindLabel[s.spoken_kind] ?? s.spoken_kind}
-                    </Badge>
-                    <div className="min-w-0 flex-1">
-                      {/* Only the spoken phrase belongs in the transcript. The
-                          technical diagnostic (exit code + raw harness reason)
-                          stays on the recorded SpeechSpoken event and is shown
-                          in the Run Inspector — never here (user request
-                          2026-06-22, reversing the 2026-06-16 ask). */}
-                      <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                        {s.text}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          <div className="space-y-2" data-testid="turn-spoken-output">
+            <div className="text-sm text-muted-foreground">Spoken output</div>
+            {auxiliarySpoken.map((s, i) => (
+              <div
+                key={`${s.ts_ms}-${i}`}
+                data-spoken-kind={s.spoken_kind}
+                data-spoken-tone={s.spoken_kind === "subagent" ? "agent" : "status"}
+                className={cn(
+                  "flex items-start gap-3 rounded-lg border p-3",
+                  s.spoken_kind === "subagent"
+                    ? "border-accent/20 bg-accent-soft"
+                    : "border-border bg-card",
+                )}
+              >
+                <Badge
+                  variant={s.spoken_kind === "subagent" ? "accent" : "secondary"}
+                  className="mt-0.5 shrink-0"
+                >
+                  {kindLabel[s.spoken_kind] ?? s.spoken_kind}
+                </Badge>
+                <span className={cn(PROSE, "flex-1 text-foreground")}>{s.text}</span>
+              </div>
+            ))}
           </div>
         )}
 
-        {/* Latency breakdown — how long Jarvis thought / spoke */}
-        {(turn.think_ms > 0 || turn.speak_ms > 0) && (
-          <div className="grid grid-cols-2 gap-2 border-t border-border/50 pt-2 text-xs">
-            <div className="flex items-center gap-1.5">
-              <Hourglass className="h-3 w-3 text-foreground" />
-              <span className="text-muted-foreground">{t("turn_card.thought")}</span>
-              <span className="font-mono text-foreground/90">
-                {turn.think_ms > 0 ? formatMs(turn.think_ms) : "—"}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Volume2 className="h-3 w-3 text-primary" />
-              <span className="text-muted-foreground">{t("turn_card.spoke")}</span>
-              <span className="font-mono text-foreground/90">
-                {turn.speak_ms > 0 ? formatMs(turn.speak_ms) : "—"}
-              </span>
-            </div>
-          </div>
+        {/* The facts of the exchange, in one muted line. */}
+        {facts.length > 0 && (
+          <p className="text-sm text-foreground-faint" data-testid="turn-facts">
+            {facts.join(" · ")}
+          </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </article>
   );
 }
-
-// --- Helpers ---------------------------------------------------------
 
 function formatMs(ms: number): string {
   if (ms < 1000) return `${ms} ms`;
@@ -407,8 +303,6 @@ export function formatTurnPlain(
   turn: VoiceTurnRow,
   spoken: VoiceSpokenLine[] = [],
   displayNumber: number = turn.idx + 1,
-  // Callers with store access pass spokenKindLabels(assistantName); the
-  // default keeps the export usable without a React context (neutral name).
   kindLabel: Record<string, string> = spokenKindLabels(""),
 ): string {
   const lines: string[] = [];
@@ -446,8 +340,6 @@ export function formatTurnPlain(
       continue;
     }
     const label = (kindLabel[s.spoken_kind] ?? s.spoken_kind).toUpperCase();
-    // The technical detail is deliberately excluded from the transcript copy —
-    // it lives in the Run Inspector, not in what was said (user request 2026-06-22).
     jarvisLines.push({ ts_ms: s.ts_ms, lines: [`[SPOKEN: ${label}] ${s.text}`] });
   }
   jarvisLines

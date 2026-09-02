@@ -49,8 +49,8 @@ export function LanguagesGroup() {
   }, []);
 
   return (
-    <div className="mb-8 space-y-4">
-      <h3 className="font-display text-xs font-semibold text-muted-foreground">
+    <div className="space-y-5">
+      <h3 className="text-lg font-semibold text-foreground-strong">
         {t("settings_view.languages_group_title")}
       </h3>
 
@@ -90,7 +90,7 @@ export function LanguagesGroup() {
               testId="stt-language"
             />
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">
+          <p className="mt-2 text-sm text-muted-foreground">
             {t("languages_view.stt_options.auto")}
           </p>
         </li>
@@ -124,12 +124,12 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div>
-      <div className="mb-1 text-micro text-muted-foreground">
-        {title}
+    <div className="rounded-lg border border-border bg-card">
+      <div className="border-b border-border px-5 py-4">
+        <div className="text-base font-medium text-foreground-strong">{title}</div>
+        <div className="mt-1 text-sm text-muted-foreground">{hint}</div>
       </div>
-      <div className="mb-3 text-xs text-muted-foreground">{hint}</div>
-      <ul className="space-y-2">{children}</ul>
+      <ul className="divide-y divide-border px-2 py-1">{children}</ul>
     </div>
   );
 }
@@ -152,17 +152,16 @@ function LanguageRow({
         onClick={onClick}
         aria-pressed={active}
         className={cn(
-          "flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors",
-          active
-            ? "bg-secondary"
-            : "border-border bg-card hover:border-border-strong hover:bg-secondary",
+          "my-1 flex min-h-11 w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          active ? "bg-secondary" : "hover:bg-secondary",
         )}
       >
         <div className="flex-1">
-          <div className="font-medium">{label}</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">{description}</div>
+          <div className="text-base font-medium text-foreground">{label}</div>
+          <div className="text-sm text-muted-foreground">{description}</div>
         </div>
-        {active && <Check className="h-4 w-4 shrink-0 text-muted-foreground" />}
+        {active && <Check className="h-4 w-4 shrink-0 text-accent" />}
       </button>
     </li>
   );

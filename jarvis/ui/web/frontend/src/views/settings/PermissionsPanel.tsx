@@ -260,7 +260,7 @@ export function PermissionsPanel() {
   const t = useT();
   return (
     <div className="mt-8 space-y-4">
-      <h3 className="font-display text-xs font-semibold text-muted-foreground">
+      <h3 className="text-lg font-semibold text-foreground-strong">
         {t("permissions.group_title")}
       </h3>
       <SettingsBlock

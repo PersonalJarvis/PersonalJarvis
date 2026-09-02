@@ -34,16 +34,16 @@ export function DocsOverview({ onSelect }: Props) {
   const featured = allDocs.slice(0, 4);
 
   return (
-    <section className="mx-auto min-h-full w-full max-w-5xl px-8 py-10 lg:px-12">
+    <section className="mx-auto min-h-full w-full max-w-5xl px-8 py-8 lg:px-12">
       <div className="border-b border-border pb-8">
-        <div className="mb-4 flex items-center gap-2 text-micro font-semibold uppercase tracking-[0.24em] text-primary">
-          <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
+        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <BookOpen className="h-4 w-4" aria-hidden="true" />
           {t("docs_overview.eyebrow")}
         </div>
-        <h1 className="text-3xl tracking-tight text-foreground lg:text-4xl">
+        <h1 className="text-2xl font-semibold text-foreground-strong">
           {t("docs_overview.title")}
         </h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+        <p className="mt-2 max-w-2xl text-base text-muted-foreground">
           {t("docs_overview.description")}
         </p>
         <a
@@ -53,7 +53,7 @@ export function DocsOverview({ onSelect }: Props) {
             void openExternalUrl(ONLINE_DOCS_URL);
           }}
           rel="noopener noreferrer"
-          className="mt-5 inline-flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-medium text-primary transition hover:border-primary/60 hover:bg-primary/15"
+          className="mt-5 inline-flex h-9 items-center gap-2 rounded-md border border-border-strong px-4 text-base font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
           {t("docs_overview.online_docs")}
           <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
@@ -63,14 +63,14 @@ export function DocsOverview({ onSelect }: Props) {
       {isLoading ? (
         <OverviewSkeleton />
       ) : error ? (
-        <div className="mt-8 rounded-xl border border-destructive/30 bg-destructive/5 p-6">
+        <div className="mt-8 rounded-lg border border-destructive/20 bg-destructive/[0.08] p-5">
           <div className="flex items-start gap-3">
             <FileWarning className="mt-0.5 h-5 w-5 text-destructive" aria-hidden="true" />
             <div>
-              <h2 className="text-sm font-semibold">
+              <h2 className="text-lg font-semibold text-foreground-strong">
                 {t("docs_overview.load_failed_title")}
               </h2>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              <p className="mt-1 text-base text-muted-foreground">
                 {t("docs_overview.load_failed_description")}
               </p>
               <button
@@ -92,12 +92,12 @@ export function DocsOverview({ onSelect }: Props) {
           </div>
         </div>
       ) : featured.length === 0 ? (
-        <div className="mt-8 rounded-xl border border-border bg-card/40 p-8 text-center">
+        <div className="mt-8 rounded-lg border border-border bg-card p-8 text-center">
           <BookOpen className="mx-auto h-8 w-8 text-muted-foreground/50" aria-hidden="true" />
-          <h2 className="mt-3 text-sm font-semibold">
+          <h2 className="mt-3 text-lg font-semibold text-foreground-strong">
             {t("docs_overview.empty_title")}
           </h2>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 text-base text-muted-foreground">
             {t("docs_overview.empty_description")}
           </p>
         </div>
@@ -105,32 +105,32 @@ export function DocsOverview({ onSelect }: Props) {
         <div className="mt-10">
           <div className="mb-5 flex items-end justify-between gap-4">
             <div>
-              <h2 className="text-lg font-semibold">
+              <h2 className="text-lg font-semibold text-foreground-strong">
                 {t("docs_overview.local_library")}
               </h2>
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="mt-1 text-base text-muted-foreground">
                 {t("docs_overview.local_library_description")}
               </p>
             </div>
-            <span className="shrink-0 font-mono text-micro uppercase tracking-wider text-muted-foreground">
+            <span className="shrink-0 text-sm text-foreground-faint">
               {allDocs.length} {t("docs_sidebar.documents")}
             </span>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             {featured.map((doc) => (
               <DocCard key={doc.slug} doc={doc} onSelect={onSelect} />
             ))}
           </div>
 
           <div className="mt-12 border-t border-border pt-8">
-            <h2 className="text-lg font-semibold">
+            <h2 className="text-lg font-semibold text-foreground-strong">
               {t("docs_overview.browse_by_topic")}
             </h2>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="mt-1 text-base text-muted-foreground">
               {t("docs_overview.browse_description")}
             </p>
-            <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {sections.map((section) => (
                 <SectionCard key={section.name} section={section} onSelect={onSelect} />
               ))}
@@ -153,16 +153,16 @@ function DocCard({
     <button
       type="button"
       onClick={() => onSelect(doc.slug)}
-      className="group flex min-h-36 flex-col rounded-xl border border-border bg-card/30 p-5 text-left transition hover:border-primary/30 hover:bg-card/70 motion-safe:hover:-translate-y-0.5"
+      className="group flex min-h-36 flex-col rounded-lg border border-border bg-card p-5 text-left transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
-      <span className="font-mono text-micro uppercase tracking-wider text-muted-foreground">
+      <span className="text-xs font-medium uppercase tracking-wide text-foreground-faint">
         {doc.section}
       </span>
-      <span className="mt-2 flex items-center gap-2 text-sm font-semibold text-foreground group-hover:text-primary">
+      <span className="mt-2 flex items-center gap-2 text-lg font-semibold text-foreground-strong">
         {doc.title}
-        <ArrowRight className="h-3.5 w-3.5 transition motion-safe:group-hover:translate-x-0.5" aria-hidden="true" />
+        <ArrowRight className="h-4 w-4 text-muted-foreground transition motion-safe:group-hover:translate-x-0.5" aria-hidden="true" />
       </span>
-      <span className="mt-3 text-xs leading-5 text-muted-foreground">
+      <span className="mt-2 text-base text-muted-foreground">
         {doc.summary}
       </span>
     </button>
@@ -182,16 +182,16 @@ function SectionCard({
     <button
       type="button"
       onClick={() => onSelect(first.slug)}
-      className="group rounded-lg border border-border bg-card/20 p-4 text-left transition-colors hover:border-primary/30 hover:bg-card/60"
+      className="group rounded-lg border border-border bg-card p-5 text-left transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
-      <span className="flex items-center justify-between gap-3 text-sm font-semibold">
+      <span className="flex items-center justify-between gap-3 text-lg font-semibold text-foreground-strong">
         {section.name}
-        <ArrowRight className="h-3.5 w-3.5 text-muted-foreground transition-transform motion-safe:group-hover:translate-x-0.5" aria-hidden="true" />
+        <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform motion-safe:group-hover:translate-x-0.5" aria-hidden="true" />
       </span>
-      <span className="mt-2 block text-xs leading-5 text-muted-foreground">
+      <span className="mt-2 block text-base text-muted-foreground">
         {first.summary}
       </span>
-      <span className="mt-3 block text-micro uppercase tracking-wider text-muted-foreground/70">
+      <span className="mt-3 block text-sm text-foreground-faint">
         {section.docs.length}{" "}
         {section.docs.length === 1
           ? t("docs_overview.guide")
@@ -205,14 +205,14 @@ function OverviewSkeleton() {
   const t = useT();
   return (
     <div className="mt-8" role="status" aria-live="polite">
-      <div className="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
+      <div className="flex items-start gap-3 rounded-lg border border-accent/20 bg-accent-soft p-4">
         <Loader2
           className="mt-0.5 h-4 w-4 animate-spin text-primary motion-reduce:animate-none"
           aria-hidden="true"
         />
         <div>
-          <p className="text-sm font-medium">{t("docs_overview.indexing_title")}</p>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          <p className="text-base font-medium">{t("docs_overview.indexing_title")}</p>
+          <p className="mt-1 text-base text-muted-foreground">
             {t("docs_overview.indexing_description")}
           </p>
         </div>

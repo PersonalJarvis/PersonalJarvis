@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Settings,
   Mic,
@@ -6,7 +6,8 @@ import {
   Loader2,
   Languages,
 } from "lucide-react";
-import { SectionHeader } from "@/components/layout/SectionHeader";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
@@ -73,11 +74,142 @@ interface SettingRow {
 
 export function SettingsView() {
   const t = useT();
-  // The "{name} opened X" note after a spoken navigation. This switch used to
-  // be `<Switch defaultChecked />` with no handler — it toggled nothing.
-  const [autopilotToasts, setAutopilotToasts] = useState(isAutopilotToastsEnabled);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
 
-  const rows: SettingRow[] = [
+  // The nav follows the scroll: the topmost group intersecting the upper
+  // third of the column is the active one.
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root || typeof IntersectionObserver === "undefined") return;
+    const visible = new Map<string, number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const id = (entry.target as HTMLElement).dataset.settingsSection ?? "";
+          if (entry.isIntersecting) visible.set(id, entry.boundingClientRect.top);
+          else visible.delete(id);
+        }
+        if (visible.size === 0) return;
+        const [top] = [...visible.entries()].sort((a, b) => a[1] - b[1]);
+        setActiveSection(top[0]);
+      },
+      { root, rootMargin: "0px 0px -66% 0px", threshold: 0 },
+    );
+    root.querySelectorAll<HTMLElement>("[data-settings-section]").forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, []);
+
+  const jumpTo = useCallback((id: string) => {
+    setActiveSection(id);
+    document.getElementById(`settings-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, []);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="px-8">
+        <PageHeader
+          icon={<Settings />}
+          title={t("settings_view.title")}
+          description={t("settings_view.subtitle")}
+          className="pb-2"
+        />
+      </div>
+      {/* Two columns (v4): a sticky section nav on the left, the groups as
+          cards in a bounded column on the right. Each group is fault-isolated:
+          one panel throwing costs that one panel, never the whole page. */}
+      <div
+        data-testid="settings-scroll"
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis"
+        ref={scrollRef}
+      >
+        <div className="flex gap-10 px-8 pb-12 pt-4">
+          <SettingsSectionNav sections={SECTIONS} active={activeSection} onPick={jumpTo} />
+          <div className="min-w-0 max-w-[880px] flex-1 space-y-10">
+            {SECTIONS.map((section) => (
+              <section
+                key={section.id}
+                id={`settings-${section.id}`}
+                data-settings-section={section.id}
+                className="scroll-mt-4"
+              >
+                <SettingsGroupBoundary group={section.id}>
+                  {section.render()}
+                </SettingsGroupBoundary>
+              </section>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The groups in page order; the nav on the left reads the same list. */
+const SECTIONS: readonly { id: string; labelKey: string; render: () => React.ReactNode }[] = [
+  { id: "languages", labelKey: "settings_view.nav.languages", render: () => <LanguagesGroup /> },
+  { id: "app", labelKey: "settings_view.nav.app", render: () => <AppSettingsGroup /> },
+  { id: "permissions", labelKey: "settings_view.nav.permissions", render: () => <PermissionsPanel /> },
+  { id: "screen-context", labelKey: "settings_view.nav.screen_context", render: () => <ScreenContextGroup /> },
+  { id: "realtime-voice", labelKey: "settings_view.nav.realtime_voice", render: () => <RealtimeVoiceGroup /> },
+  { id: "system-prompt", labelKey: "settings_view.nav.system_prompt", render: () => <SystemPromptGroup /> },
+  { id: "wake-word", labelKey: "settings_view.nav.wake_word", render: () => <WakeWordPanel /> },
+  { id: "silence-window", labelKey: "settings_view.nav.silence_window", render: () => <SilenceWindowGroup /> },
+  { id: "volume", labelKey: "settings_view.nav.volume", render: () => <VolumeGroup /> },
+  { id: "audio-devices", labelKey: "settings_view.nav.audio_devices", render: () => <AudioDevicesGroup /> },
+  { id: "music", labelKey: "settings_view.nav.music", render: () => <MusicGroup /> },
+  { id: "keybinds", labelKey: "settings_view.nav.keybinds", render: () => <KeybindsPanel /> },
+  { id: "more", labelKey: "settings_view.nav.more", render: () => <MoreSettings /> },
+  { id: "overlay-taskbar", labelKey: "settings_view.nav.overlay_taskbar", render: () => <OverlayTaskbarGroup /> },
+];
+
+function SettingsSectionNav({
+  sections,
+  active,
+  onPick,
+}: {
+  sections: readonly { id: string; labelKey: string }[];
+  active: string;
+  onPick: (id: string) => void;
+}) {
+  const t = useT();
+  return (
+    <nav
+      aria-label={t("settings_view.title")}
+      data-testid="settings-section-nav"
+      className="sticky top-0 hidden w-52 shrink-0 self-start lg:block"
+    >
+      <ul className="space-y-0.5">
+        {sections.map((s) => {
+          const isActive = s.id === active;
+          return (
+            <li key={s.id}>
+              <button
+                type="button"
+                onClick={() => onPick(s.id)}
+                aria-current={isActive ? "true" : undefined}
+                className={cn(
+                  "flex h-8 w-full items-center rounded-md px-3 text-left text-base transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  isActive
+                    ? "jarvis-nav-active bg-secondary font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                )}
+              >
+                {t(s.labelKey)}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}
+
+function useMoreSettingRows(): SettingRow[] {
+  const t = useT();
+  const [autopilotToasts, setAutopilotToasts] = useState(isAutopilotToastsEnabled);
+  return [
     {
       icon: Settings,
       title: t("settings_view.rows.toasts_title"),
@@ -94,75 +226,16 @@ export function SettingsView() {
       ),
     },
   ];
+}
 
+function MoreSettings() {
+  const rows = useMoreSettingRows();
   return (
-    <div className="flex h-full min-h-0 flex-col px-6">
-      <SectionHeader
-        icon={<Settings />}
-        title={t("settings_view.title")}
-        subtitle={t("settings_view.subtitle")}
-      />
-      {/* Each group is fault-isolated. The panels are independent, each backed
-          by its own route, so one of them throwing must cost the user that one
-          panel — not the ability to change any setting at all.
-
-          Cards run the full section width (the 640px form measure left a
-          column of cards in a sea of black — the same verdict that retired
-          the shell-level page measure). Groups sit 32px apart so the section
-          does not read as one mesh. Horizontal padding lives here: the shell
-          does not supply it. */}
-      <div
-        data-testid="settings-scroll"
-        className="min-h-0 flex-1 space-y-group overflow-y-auto scrollbar-jarvis pb-group"
-      >
-        <SettingsGroupBoundary group="languages">
-          <LanguagesGroup />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="app">
-          <AppSettingsGroup />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="permissions">
-          <PermissionsPanel />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="screen-context">
-          <ScreenContextGroup />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="realtime-voice">
-          <RealtimeVoiceGroup />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="system-prompt">
-          <SystemPromptGroup />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="wake-word">
-          <WakeWordPanel />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="silence-window">
-          <SilenceWindowGroup />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="volume">
-          <VolumeGroup />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="audio-devices">
-          <AudioDevicesGroup />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="music">
-          <MusicGroup />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="keybinds">
-          <KeybindsPanel />
-        </SettingsGroupBoundary>
-
-        <ul className="space-y-stack">
-          {rows.map((r) => (
-            <SettingRow key={r.title} row={r} />
-          ))}
-        </ul>
-
-        <SettingsGroupBoundary group="overlay-taskbar">
-          <OverlayTaskbarGroup />
-        </SettingsGroupBoundary>
-      </div>
-    </div>
+    <ul className="space-y-3">
+      {rows.map((r) => (
+        <SettingRow key={r.title} row={r} />
+      ))}
+    </ul>
   );
 }
 

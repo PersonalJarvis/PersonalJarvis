@@ -1,9 +1,11 @@
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Contact as ContactIcon,
   Download,
   Loader2,
-  Mic,
   Plus,
   Search,
   Star,
@@ -273,7 +275,7 @@ export function ContactsView() {
   return (
     <div ref={rootRef} className="flex h-full flex-col">
       <ViewHeader
-        icon={<ContactIcon className="h-4 w-4" />}
+        icon={<ContactIcon />}
         title={t("nav.contacts")}
         subtitle={t("contacts.subtitle")}
         right={
@@ -289,41 +291,30 @@ export function ContactsView() {
                 if (file) void handleImportFile(file);
               }}
             />
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="icon"
               onClick={() => fileInputRef.current?.click()}
               disabled={importing}
               aria-label={t("contacts.import")}
               title={t("contacts.import")}
-              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
             >
-              {importing ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Upload className="h-3.5 w-3.5" />
-              )}
-            </button>
-            <button
-              type="button"
+              {importing ? <Loader2 className="animate-spin" /> : <Upload />}
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
               onClick={() => void handleExport()}
               disabled={!hasContacts}
               aria-label={t("contacts.export")}
               title={t("contacts.export")}
-              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
             >
-              <Download className="h-3.5 w-3.5" />
-            </button>
-            {/* --primary is a fill, so the one affirmative action on this
-                screen is a filled button rather than primary-coloured text on
-                a primary-coloured wash. */}
-            <button
-              type="button"
-              onClick={() => setDialog("create")}
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-body font-medium text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              <Plus className="h-3.5 w-3.5" />
+              <Download />
+            </Button>
+            <Button onClick={() => setDialog("create")}>
+              <Plus />
               {t("contacts.add")}
-            </button>
+            </Button>
           </div>
         }
       />
@@ -336,16 +327,22 @@ export function ContactsView() {
           // rail's own ground. The hairline it used to rely on was the "three
           // columns separated by nothing" complaint.
           <div
-            className={cn("flex shrink-0 flex-col bg-sidebar", narrow ? "w-full" : "w-[320px]")}
+            className={cn(
+              "flex shrink-0 flex-col border-r border-border bg-sidebar",
+              narrow ? "w-full" : "w-[320px]",
+            )}
           >
-            <div className="space-y-stack border-b border-border p-3">
-              <div className="flex items-center gap-2 rounded-md bg-secondary px-2.5 py-1.5">
-                <Search className="h-3.5 w-3.5 text-muted-foreground" />
-                <input
+            <div className="space-y-3 p-3">
+              <div className="relative">
+                <Search
+                  aria-hidden
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder={t("contacts.search")}
-                  className="w-full bg-transparent text-body text-foreground outline-none placeholder:text-faint-foreground"
+                  className="pl-9 ring-offset-sidebar"
                 />
               </div>
               {hasContacts && (
@@ -403,24 +400,10 @@ export function ContactsView() {
               ) : error ? (
                 <p className="px-3 py-6 text-center text-body text-destructive">{error}</p>
               ) : !hasContacts ? (
-                <div className="flex flex-col items-center gap-3 px-3 py-8 text-center">
-                  <ContactIcon className="h-8 w-8 text-muted-foreground" />
-                  <p className="text-body text-foreground">{t("contacts.empty")}</p>
-                  <button
-                    type="button"
-                    onClick={() => setDialog("create")}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-body font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    {t("contacts.add")}
-                  </button>
-                  <p className="flex items-start gap-1.5 text-meta text-muted-foreground">
-                    <Mic className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    {t("contacts.voiceHint")}
-                  </p>
-                </div>
+                // The stage carries the empty state; the rail says nothing twice.
+                null
               ) : filtered.length === 0 ? (
-                <p className="px-3 py-6 text-center text-body text-muted-foreground">
+                <p className="px-3 py-6 text-center text-base text-muted-foreground">
                   {t("contacts.noMatches")}
                 </p>
               ) : (
@@ -465,10 +448,29 @@ export function ContactsView() {
                   void loadList();
                 }}
               />
+            ) : !hasContacts && !loading ? (
+              <div className="flex h-full items-center justify-center p-8">
+                <EmptyState
+                  icon={<ContactIcon />}
+                  title={t("contacts.empty")}
+                  description={t("contacts.voiceHint")}
+                  actions={
+                    <>
+                      <Button onClick={() => setDialog("create")}>
+                        <Plus />
+                        {t("contacts.add")}
+                      </Button>
+                      <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+                        <Upload />
+                        {t("contacts.import")}
+                      </Button>
+                    </>
+                  }
+                />
+              </div>
             ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-3 bg-background text-center text-muted-foreground">
-                <ContactIcon className="h-8 w-8" />
-                <p className="text-body">{t("contacts.selectHint")}</p>
+              <div className="flex h-full items-center justify-center p-8">
+                <EmptyState icon={<ContactIcon />} title={t("contacts.selectHint")} />
               </div>
             )}
           </div>
@@ -492,7 +494,7 @@ export function ContactsView() {
             className="w-full max-w-sm rounded-lg bg-popover shadow-float p-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="font-display text-page font-semibold text-foreground-strong">
+            <h3 className="text-xl font-semibold text-foreground-strong">
               {t("contacts.deleteTitle")}
             </h3>
             <p className="mt-2 text-body text-foreground">

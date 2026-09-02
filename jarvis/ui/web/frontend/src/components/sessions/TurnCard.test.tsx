@@ -233,8 +233,7 @@ describe("TurnCard spoken track", () => {
     // tint used by every other spoken kind.
     const line = container.querySelector('[data-spoken-kind="subagent"]');
     expect(line).not.toBeNull();
-    expect(line?.className).toContain("violet");
-    expect(line?.className).not.toContain("sky-400");
+    expect(line?.getAttribute("data-spoken-tone")).toBe("agent");
   });
 
   it("keeps a generic completion readback on the sky-tinted track", () => {
@@ -246,8 +245,7 @@ describe("TurnCard spoken track", () => {
     );
     expect(screen.getByText("Background result")).toBeTruthy();
     const line = container.querySelector('[data-spoken-kind="completion"]');
-    expect(line?.className).toContain("sky-400");
-    expect(line?.className).not.toContain("violet");
+    expect(line?.getAttribute("data-spoken-tone")).toBe("status");
   });
 
   it("labels a pending two-turn confirmation reply distinctly", () => {

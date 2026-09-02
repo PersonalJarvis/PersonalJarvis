@@ -1,22 +1,16 @@
-/**
- * Detail pane for a single voice session: header (aggregates) +
- * turn timeline + a global click-to-copy for the whole session.
- *
- * Loading/empty/error states are rendered inline — no modal.
- */
 import {
+  ChevronDown,
   Code2,
   Copy,
   Download,
-  FileCode2,
-  FileJson,
-  FileText,
   Loader2,
+  MessagesSquare,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
+import { ActionMenu, type MenuAction } from "@/components/extensions/primitives";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { OpenWithDialog } from "@/components/OpenWithDialog";
 import { useEventStore } from "@/store/events";
@@ -35,6 +29,7 @@ import {
 import { useT, useUiLanguage } from "@/i18n";
 
 import { fetchSessionExport, openSessionWith, sessionExportUrl } from "./api";
+import { hangupLabel } from "./SessionList";
 import { TurnCard } from "./TurnCard";
 import { VoiceModeBadge } from "./VoiceModeBadge";
 import type {
@@ -50,44 +45,41 @@ const FORMAT_LABEL: Record<ExportFormat, string> = {
   json: "JSON",
 };
 
+const FORMATS: ExportFormat[] = ["plain", "markdown", "json"];
+
 interface Props {
   detail: SessionDetailModel | undefined;
   loading: boolean;
   error: Error | null;
 }
 
+/**
+ * One session, read like a conversation.
+ *
+ * The header is a title row (name, mode badge, when) with one muted line of
+ * facts and a single Export menu — nine icon buttons in a column were a
+ * toolbar nobody asked for. The turns below are a chat timeline capped at
+ * the reading measure: no card around each turn, no box around each line.
+ */
 export function SessionDetail({ detail, loading, error }: Props) {
   const t = useT();
   const uiLanguage = useUiLanguage();
   const locale =
     uiLanguage === "de" ? "de-DE" : uiLanguage === "es" ? "es-ES" : "en-US";
   const pushToast = useEventStore((s) => s.pushToast);
-  // Desktop shell? Then save straight to ~/Downloads (browser downloads are
-  // silently dropped by pywebview); otherwise use the normal browser download.
   const caps = useCapabilities();
   const native = caps.data?.native_file_actions ?? false;
-  // "Open in editor" — reuses the Outputs view's opener list + remembered
-  // default (shared `[ui] preferred_opener`), so the chosen editor is the same
-  // everywhere. The chooser tracks which format row triggered it.
   const openers = useOpeners();
   const preferred = usePreferredOpener();
   const setPreferred = useSetPreferredOpener();
   const [editorFormat, setEditorFormat] = useState<ExportFormat | null>(null);
 
-  // Group the SpeechSpoken raw events under their turn so each TurnCard can
-  // render the playback-confirmed track. Reply entries replace generated model
-  // text; all other kinds appear in the separate Spoken-output section. Hook
-  // runs unconditionally (before the early returns) per the rules of hooks.
   const spokenByTurn = useMemo(() => {
     const map = new Map<string, VoiceSpokenLine[]>();
     for (const e of detail?.events ?? []) {
       if (e.kind !== "SpeechSpoken") continue;
       const text = String((e.payload as { text?: unknown })?.text ?? "");
       if (!text.trim()) continue;
-      // The technical diagnostic rides on the recorded event; it is carried on
-      // the projection for parity with the payload but deliberately NOT rendered
-      // in the transcript (TurnCard) — it is surfaced in the Run Inspector
-      // instead (user request 2026-06-22, reversing the 2026-06-16 ask).
       const rawDetail = (e.payload as { detail?: unknown })?.detail;
       const detail =
         typeof rawDetail === "string" && rawDetail.trim()
@@ -128,7 +120,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
         );
       }
     },
-    [detail, pushToast],
+    [detail, pushToast, t],
   );
 
   const downloadAsFormat = useCallback(
@@ -136,7 +128,6 @@ export function SessionDetail({ detail, loading, error }: Props) {
       if (!detail) return;
       try {
         const text = await fetchSessionExport(detail.session.id, format);
-        // First user utterance as the filename slug — falls back to session_id.
         const preview =
           detail.turns.find((t) => t.user_text)?.user_text ?? "";
         const filename = buildSessionFilename(detail.session, preview, format);
@@ -160,10 +151,9 @@ export function SessionDetail({ detail, loading, error }: Props) {
         );
       }
     },
-    [detail, pushToast, native],
+    [detail, pushToast, native, t],
   );
 
-  // Launch the transcript in a local app (editor / default / browser).
   const launchInEditor = useCallback(
     async (format: ExportFormat, opener: string) => {
       if (!detail) return;
@@ -189,7 +179,6 @@ export function SessionDetail({ detail, loading, error }: Props) {
     (format: ExportFormat) => {
       if (!detail) return;
       if (!native) {
-        // Headless VPS / browser: no local apps — open the export in a new tab.
         window.open(
           sessionExportUrl(detail.session.id, format),
           "_blank",
@@ -216,10 +205,37 @@ export function SessionDetail({ detail, loading, error }: Props) {
     [editorFormat, launchInEditor, setPreferred],
   );
 
+  const exportActions = useMemo<MenuAction[]>(() => {
+    const actions: MenuAction[] = [];
+    for (const format of FORMATS) {
+      const label = FORMAT_LABEL[format];
+      actions.push({
+        id: `copy-${format}`,
+        label: `${t("session_detail.copy_action")} ${label}`,
+        icon: <Copy className="h-4 w-4" />,
+        onSelect: () => void copyAs(format),
+        separatorAbove: format !== "plain",
+      });
+      actions.push({
+        id: `download-${format}`,
+        label: `${t("session_detail.download_file_action")} ${label}`,
+        icon: <Download className="h-4 w-4" />,
+        onSelect: () => void downloadAsFormat(format),
+      });
+      actions.push({
+        id: `open-${format}`,
+        label: `${t("session_detail.open_editor_action")} ${label}`,
+        icon: <Code2 className="h-4 w-4" />,
+        onSelect: () => openInEditor(format),
+      });
+    }
+    return actions;
+  }, [t, copyAs, downloadAsFormat, openInEditor]);
+
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      <div className="flex h-full items-center justify-center gap-2 text-base text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
         {t("session_detail.loading")}
       </div>
     );
@@ -228,8 +244,8 @@ export function SessionDetail({ detail, loading, error }: Props) {
   if (error) {
     return (
       <div className="flex h-full items-center justify-center p-6">
-        <div className="max-w-md rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
-          <div className="font-semibold text-destructive">{t("session_detail.load_error")}</div>
+        <div className="max-w-md rounded-lg border border-destructive/20 bg-destructive/[0.08] p-4 text-base">
+          <div className="font-medium text-destructive">{t("session_detail.load_error")}</div>
           <div className="mt-1 text-muted-foreground">{error.message}</div>
         </div>
       </div>
@@ -238,8 +254,8 @@ export function SessionDetail({ detail, loading, error }: Props) {
 
   if (!detail) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
-        {t("sessions.select_one")}
+      <div className="flex h-full items-center justify-center p-6">
+        <EmptyState icon={<MessagesSquare />} title={t("sessions.select_one")} />
       </div>
     );
   }
@@ -247,77 +263,51 @@ export function SessionDetail({ detail, loading, error }: Props) {
   const { session, turns } = detail;
   const startedDt = new Date(session.started_ms);
   const endedDt = session.ended_ms ? new Date(session.ended_ms) : null;
+  const facts = [
+    `${session.turn_count} ${t("session_detail.turns")}`,
+    session.language,
+    session.hangup_reason ? hangupLabel(session.hangup_reason) : null,
+    ...session.providers_used,
+    session.total_cost_usd > 0 ? `$${session.total_cost_usd.toFixed(4)}` : null,
+    session.total_tokens_in > 0 || session.total_tokens_out > 0
+      ? `${formatTokens(session.total_tokens_in + session.total_tokens_out)} tok`
+      : null,
+  ].filter(Boolean) as string[];
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header */}
-      <div className="shrink-0 border-b border-border px-5 py-4">
-        <div className="flex items-start justify-between gap-3">
+      <div className="shrink-0 border-b border-border px-8 pb-4 pt-5">
+        <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <div className="font-display text-lg font-semibold">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="text-xl font-semibold text-foreground-strong">
                 {t("session_detail.title")}
-              </div>
+              </h2>
               <VoiceModeBadge mode={session.voice_mode} prominence="prominent" />
             </div>
-            <div className="font-mono text-xs text-muted-foreground">
+            <p className="mt-1 text-base text-muted-foreground">
               {startedDt.toLocaleString(locale)}
-              {endedDt && ` — ${endedDt.toLocaleTimeString(locale)}`}
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <Badge variant="secondary">{session.turn_count} {t("session_detail.turns")}</Badge>
-              <Badge variant="secondary">{session.language}</Badge>
-              {session.hangup_reason && (
-                <Badge variant="outline">{session.hangup_reason}</Badge>
-              )}
-              {session.providers_used.map((p) => (
-                <Badge key={p} variant="outline" className="font-mono text-micro">
-                  {p}
-                </Badge>
-              ))}
-              {session.total_cost_usd > 0 && (
-                <Badge variant="outline">
-                  ${session.total_cost_usd.toFixed(4)}
-                </Badge>
-              )}
-              {(session.total_tokens_in > 0 || session.total_tokens_out > 0) && (
-                <Badge variant="outline" className="text-micro">
-                  {session.total_tokens_in}+{session.total_tokens_out} tok
-                </Badge>
-              )}
-            </div>
+              {endedDt && ` – ${endedDt.toLocaleTimeString(locale)}`}
+            </p>
+            <p className="mt-2 text-sm text-foreground-faint">{facts.join(" · ")}</p>
           </div>
 
-          {/* Export actions: one row per format with copy + download */}
-          <div className="flex shrink-0 flex-col gap-1.5">
-            <div className="text-micro font-medium uppercase tracking-wider text-muted-foreground">
-              Export
-            </div>
-            <ExportRow
-              icon={<FileText className="h-3.5 w-3.5" />}
-              label="Text"
-              onCopy={() => copyAs("plain")}
-              onDownload={() => downloadAsFormat("plain")}
-              onOpenEditor={() => openInEditor("plain")}
-              variant="primary"
-            />
-            <ExportRow
-              icon={<FileCode2 className="h-3.5 w-3.5" />}
-              label="Markdown"
-              onCopy={() => copyAs("markdown")}
-              onDownload={() => downloadAsFormat("markdown")}
-              onOpenEditor={() => openInEditor("markdown")}
-              variant="outline"
-            />
-            <ExportRow
-              icon={<FileJson className="h-3.5 w-3.5" />}
-              label="JSON"
-              onCopy={() => copyAs("json")}
-              onDownload={() => downloadAsFormat("json")}
-              onOpenEditor={() => openInEditor("json")}
-              variant="outline"
-            />
-          </div>
+          <ActionMenu
+            label={t("session_detail.export_label")}
+            actions={exportActions}
+            trigger={({ open, toggle }) => (
+              <Button
+                variant="outline"
+                onClick={toggle}
+                aria-expanded={open}
+                aria-haspopup="menu"
+              >
+                <Download />
+                {t("session_detail.export_label")}
+                <ChevronDown className={open ? "rotate-180" : undefined} />
+              </Button>
+            )}
+          />
         </div>
       </div>
 
@@ -332,14 +322,14 @@ export function SessionDetail({ detail, loading, error }: Props) {
         />
       )}
 
-      {/* Turns */}
       <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-3 p-5">
+        <div className="mx-auto w-full max-w-3xl space-y-8 px-8 py-6">
           {turns.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-              {t("sessions.no_turns")}
-              {t("session_detail.no_turns_suffix")}
-            </div>
+            <EmptyState
+              icon={<MessagesSquare />}
+              title={t("sessions.no_turns")}
+              description={t("session_detail.no_turns_suffix")}
+            />
           ) : (
             turns.map((t, index) => (
               <TurnCard
@@ -356,70 +346,8 @@ export function SessionDetail({ detail, loading, error }: Props) {
   );
 }
 
-
-interface ExportRowProps {
-  icon: React.ReactNode;
-  label: string;
-  onCopy: () => void;
-  onDownload: () => void;
-  onOpenEditor: () => void;
-  variant: "primary" | "outline";
-}
-
-/**
- * One row per export format: the format label (with icon) on the left,
- * three compact action buttons (copy / download / open in editor) on the right.
- */
-function ExportRow({
-  icon,
-  label,
-  onCopy,
-  onDownload,
-  onOpenEditor,
-  variant,
-}: ExportRowProps) {
-  const t = useT();
-  const labelClass =
-    variant === "primary"
-      ? "rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-xs font-medium text-primary"
-      : "rounded-md border border-border bg-background/40 px-2 py-1 text-xs font-medium text-foreground/90";
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <div className={`${labelClass} flex flex-1 items-center gap-1.5`}>
-        {icon}
-        {label}
-      </div>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        onClick={onCopy}
-        className="h-7 w-7 shrink-0 p-0"
-        title={`${t("session_detail.copy_action")} ${label}`}
-      >
-        <Copy className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        onClick={onDownload}
-        className="h-7 w-7 shrink-0 p-0"
-        title={`${t("session_detail.download_file_action")} ${label}`}
-      >
-        <Download className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        onClick={onOpenEditor}
-        className="h-7 w-7 shrink-0 p-0"
-        title={`${t("session_detail.open_editor_action")} ${label}`}
-      >
-        <Code2 className="h-3.5 w-3.5" />
-      </Button>
-    </div>
-  );
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
 }

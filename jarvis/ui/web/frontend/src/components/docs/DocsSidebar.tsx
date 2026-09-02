@@ -65,14 +65,14 @@ export function DocsSidebar({
   // takes the rail ground and separates from the page by fill alone — a
   // content-sized surface is what earns --card, and this is not one.
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col bg-sidebar">
+    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border bg-sidebar">
       {/* Header */}
       <div className="border-b border-border px-3 py-3">
         <div className="mb-2 flex items-center justify-between">
           <button
             type="button"
             onClick={onShowOverview}
-            className="rounded-sm text-sm font-semibold tracking-tight transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-sm text-base font-semibold text-foreground-strong transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {t("docs_sidebar.title")}
           </button>
@@ -81,7 +81,7 @@ export function DocsSidebar({
             onClick={onOpenSearch}
             title={t("docs.fulltext_search")}
             aria-label={t("docs.fulltext_search")}
-            className="rounded-md p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            className="rounded-md p-1.5 text-muted-foreground transition hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Search className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -99,7 +99,7 @@ export function DocsSidebar({
           onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
             setQuery(e.target.value)
           }
-          className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-xs ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          className="flex h-9 w-full rounded-md border border-border-strong bg-input px-3 text-base ring-offset-sidebar placeholder:text-foreground-faint transition-colors focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         />
         {isLoading ? (
           <div
@@ -125,7 +125,7 @@ export function DocsSidebar({
             {t("docs_sidebar.retry")}
           </button>
         ) : (
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-2 text-sm text-foreground-faint">
             {totalCount} {t("docs_sidebar.documents")}
           </p>
         )}
@@ -139,10 +139,10 @@ export function DocsSidebar({
           {/* Recent docs — only when not filtered + at least 1 entry */}
           {!isLoading && !query && recent.length > 0 && (
             <div className="mb-2">
-              <div className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <div className="mb-1 flex h-6 w-full items-center gap-1 rounded-sm px-3 text-xs font-medium uppercase tracking-wide text-foreground-faint">
                 <Clock className="h-3 w-3" aria-hidden="true" />
                 <span>{t("docs.recent")}</span>
-                <span className="ml-auto text-micro font-normal text-muted-foreground/70">
+                <span className="ml-auto text-xs font-normal normal-case tracking-normal">
                   {recent.length}
                 </span>
               </div>
@@ -153,15 +153,14 @@ export function DocsSidebar({
                   onClick={() => onSelect(doc.slug)}
                   data-active={doc.slug === selectedSlug || undefined}
                   className={cn(
-                    "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs transition",
-                    "hover:bg-muted/60",
-                    doc.slug === selectedSlug &&
-                      "bg-muted font-medium border-l-2 border-primary -ml-px pl-[7px]",
+                    "flex min-h-8 w-full items-start gap-2 rounded-md px-3 py-1.5 text-left text-base text-muted-foreground transition-colors",
+                    "hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    doc.slug === selectedSlug && "jarvis-nav-active bg-secondary font-medium text-foreground",
                   )}
                   title={doc.title}
                 >
-                  <FileText className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  <span className="flex-1 break-words leading-snug line-clamp-2">
+                  <FileText className="mt-1 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span className="flex-1 break-words line-clamp-2">
                     {doc.title}
                   </span>
                 </button>
@@ -183,7 +182,7 @@ export function DocsSidebar({
                       setCollapsed(next);
                     }}
                     aria-expanded={!isCollapsed}
-                    className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted/50"
+                    className="group mb-1 mt-4 flex h-6 w-full items-center gap-1 rounded-sm px-3 text-xs font-medium uppercase tracking-wide text-foreground-faint transition-colors hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {isCollapsed ? (
                       <ChevronRight className="h-3 w-3" aria-hidden="true" />
@@ -191,7 +190,7 @@ export function DocsSidebar({
                       <ChevronDown className="h-3 w-3" aria-hidden="true" />
                     )}
                     <span>{section.name}</span>
-                    <span className="ml-auto text-micro font-normal text-muted-foreground/70">
+                    <span className="ml-auto text-xs font-normal normal-case tracking-normal">
                       {section.docs.length}
                     </span>
                   </button>
@@ -209,7 +208,7 @@ export function DocsSidebar({
             })}
 
           {!isLoading && !error && totalCount === 0 && (
-            <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+            <div className="px-3 py-8 text-center text-base text-muted-foreground">
               {t("docs_sidebar.no_results")}
             </div>
           )}
@@ -263,15 +262,14 @@ function SidebarItem({ doc, active, onClick }: ItemProps) {
       data-active={active || undefined}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs transition",
-        "hover:bg-muted/60",
-        active &&
-          "bg-muted font-medium border-l-2 border-primary -ml-px pl-[7px]",
+        "flex min-h-8 w-full items-start gap-2 rounded-md px-3 py-1.5 text-left text-base text-muted-foreground transition-colors",
+        "hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        active && "jarvis-nav-active bg-secondary font-medium text-foreground",
       )}
       title={doc.title}
     >
-      <FileText className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="flex-1 break-words leading-snug line-clamp-2">
+      <FileText className="mt-1 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <span className="flex-1 break-words line-clamp-2">
         {doc.title}
       </span>
     </button>

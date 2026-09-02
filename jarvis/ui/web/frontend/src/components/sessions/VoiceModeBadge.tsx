@@ -11,12 +11,15 @@ interface VoiceModeBadgeProps {
   className?: string;
 }
 
+/**
+ * The one badge recipe (24 px, 8 px radius, xs step). Realtime wears the
+ * accent wash — it is the state worth noticing — pipeline and unknown stay
+ * neutral. `prominent` adds the word "Mode" before the value.
+ */
 const MODE_STYLES: Record<KnownVoiceMode, string> = {
-  realtime:
-    "border-primary/70 bg-primary/20 text-primary",
-  pipeline:
-    "border-sky-500/50 bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  unknown: "border-border bg-muted/70 text-muted-foreground",
+  realtime: "border-accent/20 bg-accent-soft text-accent",
+  pipeline: "border-border bg-secondary text-foreground",
+  unknown: "border-border bg-secondary text-muted-foreground",
 };
 
 export function VoiceModeBadge({
@@ -44,25 +47,20 @@ export function VoiceModeBadge({
       role="group"
       aria-label={`${t("voice_mode.label")}: ${modeLabel}`}
       data-voice-mode={knownMode}
+      title={modeLabel}
       className={cn(
-        "inline-flex shrink-0 items-center rounded-md border font-semibold",
+        "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border text-xs font-medium",
+        prominence === "prominent" ? "px-2" : "w-6 justify-center",
         MODE_STYLES[knownMode],
-        prominence === "prominent"
-          ? "gap-2 px-2.5 py-1.5 text-xs"
-          : "gap-1 px-1.5 py-0.5 text-micro",
         className,
       )}
     >
+      <ModeIcon aria-hidden="true" className="h-3.5 w-3.5" />
       {prominence === "prominent" && (
-        <span className="text-micro font-bold uppercase tracking-[0.14em] opacity-75">
-          {t("voice_mode.label")}
-        </span>
+        <span className="opacity-70">{t("voice_mode.label")}</span>
       )}
-      <ModeIcon
-        aria-hidden="true"
-        className={prominence === "prominent" ? "h-4 w-4" : "h-3 w-3"}
-      />
-      <span>{modeLabel}</span>
+      {/* Compact rows show the glyph alone; the word stays for readers. */}
+      <span className={prominence === "prominent" ? undefined : "sr-only"}>{modeLabel}</span>
     </span>
   );
 }

@@ -305,19 +305,19 @@ function IdentityStrip({
       : t("profile_view.people_known").replace("{0}", String(data.people.length));
 
   return (
-    <div className="profile-rise flex items-center gap-row border-b border-border px-8 py-3">
+    <div className="profile-rise mx-8 mb-5 flex items-center gap-4 rounded-lg border border-border bg-card p-5">
       <AvatarButton name={name} hasAvatar={!!data.has_avatar} />
 
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-        <h1 className="text-lg font-semibold text-foreground-strong">{headline}</h1>
-        <span className="text-sm text-muted-foreground">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <h1 className="truncate text-xl font-semibold text-foreground-strong">{headline}</h1>
+        <span className="text-base text-muted-foreground">
           {t(`profile_view.stages.${stage.key}`)}
         </span>
       </div>
 
       <div className="ml-auto flex shrink-0 items-center text-sm text-muted-foreground">
         <span
-          className="mr-2 hidden h-1 w-24 overflow-hidden rounded-full bg-secondary sm:block"
+          className="mr-3 hidden h-1.5 w-40 overflow-hidden rounded-full bg-secondary sm:block"
           role="progressbar"
           aria-valuemin={0}
           aria-valuemax={TOTAL_FIELDS}
@@ -426,7 +426,7 @@ function AvatarButton({ name, hasAvatar }: { name: string | null; hasAvatar: boo
         disabled={busy}
         title={hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload")}
         aria-label={hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload")}
-        className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-secondary outline-none transition-colors focus-visible:ring-2 focus-visible:ring-border-strong"
+        className="relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-secondary outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
       >
         {/* The person's own coloured mark, not a grey disc: identity is one of
             the three jobs colour has, and this is the app's own owner. */}
@@ -444,7 +444,7 @@ function AvatarButton({ name, hasAvatar }: { name: string | null; hasAvatar: boo
             draggable={false}
           />
         ) : (
-          <UserCircle2 className="h-5 w-5 text-muted-foreground" />
+          <UserCircle2 className="h-6 w-6 text-muted-foreground" />
         )}
 
         <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-scrim/70 opacity-0 transition-opacity duration-200 group-hover/avatar:opacity-100 group-focus-visible/avatar:opacity-100">
@@ -487,7 +487,7 @@ function LedgerRail({ meta }: { meta: Record<string, unknown> }) {
   const t = useT();
 
   return (
-    <section className="flex min-w-0 flex-col border-r border-border px-8 py-6 lg:min-h-0 lg:overflow-y-auto scrollbar-jarvis">
+    <section className="flex min-w-0 flex-col border-r border-border px-8 pb-6 pt-1 lg:min-h-0 lg:overflow-y-auto scrollbar-jarvis">
       <div className="profile-rise" style={{ animationDelay: "60ms" }}>
         <h2 className="text-lg font-semibold text-foreground-strong">
           {t("profile_view.section_knowledge")}

@@ -28,12 +28,12 @@ export function OverlayTaskbarGroup() {
 
   return (
     <div className="mt-8 space-y-4">
-      <h3 className="font-display text-xs font-semibold text-muted-foreground">
+      <h3 className="text-lg font-semibold text-foreground-strong">
         {t("settings_view.overlay_taskbar_group_title")}
       </h3>
 
       <section>
-        <h4 className="mb-2 font-display text-xs font-semibold text-muted-foreground">
+        <h4 className="mb-2 text-base font-medium text-foreground-strong">
           {t("taskbar_view.appearance_title")}
         </h4>
         <OverlayStylePanel />
@@ -41,7 +41,7 @@ export function OverlayTaskbarGroup() {
       </section>
 
       <section>
-        <h4 className="mb-2 font-display text-xs font-semibold text-muted-foreground">
+        <h4 className="mb-2 text-base font-medium text-foreground-strong">
           {t("taskbar_view.behavior_title")}
         </h4>
         <div className="overflow-hidden rounded-lg border border-border bg-card">

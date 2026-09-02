@@ -1,15 +1,6 @@
-/**
- * Sidebar list of voice sessions, newest first.
- *
- * One row = one session card with:
- *  - Date + time (relative to now)
- *  - Duration / turn count
- *  - First user utterance as a preview
- *  - Hangup reason as a badge
- */
-import { Clock, Loader2, Mic, MicOff } from "lucide-react";
+import { Loader2, Mic, MicOff } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { translate, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -24,12 +15,18 @@ interface Props {
   loading: boolean;
 }
 
+/**
+ * The session rail: one row per voice session — the first thing said as the
+ * title, one muted meta line under it (when · how long · turns · cost), a
+ * status dot for a live session. No pills: the mode and the hang-up reason
+ * belong to the detail header, where there is room to read them.
+ */
 export function SessionList({ sessions, selectedId, onSelect, loading }: Props) {
   const t = useT();
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      <div className="flex h-full items-center justify-center gap-2 text-base text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
         {t("session_list.loading")}
       </div>
     );
@@ -37,80 +34,73 @@ export function SessionList({ sessions, selectedId, onSelect, loading }: Props) 
 
   if (sessions.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
-        <MicOff className="h-8 w-8 opacity-40" />
-        <div className="font-medium">{t("session_list.empty_title")}</div>
-        <div className="text-xs">
-          {t("session_list.empty_hint")}
-        </div>
+      <div className="flex h-full items-center justify-center p-6">
+        <EmptyState
+          icon={<MicOff />}
+          title={t("session_list.empty_title")}
+          description={t("session_list.empty_hint")}
+        />
       </div>
     );
   }
 
   return (
     <ScrollArea className="h-full">
-      <ul className="space-y-1 p-2">
-        {sessions.map((s) => (
-          <li key={s.id}>
-            <button
-              type="button"
-              onClick={() => onSelect(s.id)}
-              className={cn(
-                "group w-full rounded-lg border border-transparent p-3 text-left text-sm transition-all",
-                "hover:border-border hover:bg-background/60",
-                s.id === selectedId &&
-                  "border-primary/40 bg-background shadow-[inset_2px_0_0_hsl(var(--primary))]",
-              )}
-            >
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Mic className="h-3 w-3" />
-                  {formatRelative(s.started_ms)}
-                </span>
-                <span className="flex shrink-0 items-center gap-1">
-                  <VoiceModeBadge mode={s.voice_mode} />
-                  {s.ended_ms === null ? (
-                    <Badge variant="default" className="animate-pulse">
-                      {t("sessions.running")}
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="text-micro">
-                      {hangupLabel(s.hangup_reason)}
-                    </Badge>
+      <ul className="space-y-0.5 p-2">
+        {sessions.map((s) => {
+          const active = s.id === selectedId;
+          const live = s.ended_ms === null;
+          const meta = [
+            formatRelative(s.started_ms),
+            formatDuration(s.duration_s),
+            `${s.turn_count} ${t("session_list.turns")}`,
+            s.total_cost_usd > 0 ? `$${s.total_cost_usd.toFixed(2)}` : null,
+          ].filter(Boolean);
+          return (
+            <li key={s.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(s.id)}
+                aria-current={active ? "true" : undefined}
+                className={cn(
+                  "flex w-full items-start gap-3 rounded-md px-3 py-3 text-left transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  active
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                )}
+              >
+                <span className="relative mt-1 shrink-0">
+                  <Mic aria-hidden className="h-4 w-4" />
+                  {live && (
+                    <span
+                      aria-label={t("sessions.running")}
+                      className="absolute -right-0.5 -top-0.5 h-2 w-2 animate-pulse rounded-full bg-success ring-2 ring-sidebar"
+                    />
                   )}
                 </span>
-              </div>
-              <div className="line-clamp-2 text-foreground/90">
-                {s.preview || (
-                  <span className="italic text-muted-foreground/70">
-                    {t("session_list.no_user_text")}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-base font-medium text-foreground">
+                    {s.preview || (
+                      <span className="font-normal italic text-muted-foreground">
+                        {t("session_list.no_user_text")}
+                      </span>
+                    )}
                   </span>
-                )}
-              </div>
-              <div className="mt-1.5 flex items-center gap-3 text-micro text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <Clock className="h-3 w-3" />
-                  {formatDuration(s.duration_s)}
+                  <span className="mt-0.5 block truncate text-sm text-muted-foreground">
+                    {meta.join(" · ")}
+                  </span>
                 </span>
-                <span>· {s.turn_count} {t("session_list.turns")}</span>
-                {s.total_cost_usd > 0 && (
-                  <span>· ${s.total_cost_usd.toFixed(4)}</span>
-                )}
-              </div>
-            </button>
-          </li>
-        ))}
+                <VoiceModeBadge mode={s.voice_mode} className="mt-0.5" />
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </ScrollArea>
   );
 }
 
-// --- Helpers ---------------------------------------------------------
-
-// Compose "vor 5 min" / "5 min ago" / "hace 5 min" from a localized prefix and
-// suffix so the word order stays correct in every language. One side is empty
-// per locale (de/es use a prefix, en uses the "ago" suffix). Joined with a
-// single space and trimmed so the empty side leaves no double gap.
 function ago(value: string): string {
   const prefix = translate("session_list.ago_prefix");
   const suffix = translate("session_list.ago_suffix");
@@ -139,7 +129,7 @@ function formatDuration(secs: number | null): string {
   )}`;
 }
 
-function hangupLabel(reason: string): string {
+export function hangupLabel(reason: string): string {
   switch (reason) {
     case "voice_pattern":
       return translate("session_list.hangup_voice_pattern");

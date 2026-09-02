@@ -2317,6 +2317,22 @@
     "title": "Settings",
     "subtitle": "Wake-word, hotkeys, safety policies, autostart.",
     "overlay_taskbar_group_title": "Bar & Overlay",
+    "nav": {
+      "languages": "Languages",
+      "app": "App",
+      "permissions": "Privacy permissions",
+      "screen_context": "Screen context",
+      "realtime_voice": "Realtime voice",
+      "system_prompt": "System prompt",
+      "wake_word": "Wake word",
+      "silence_window": "Silence window",
+      "volume": "Volume",
+      "audio_devices": "Audio devices",
+      "music": "Music",
+      "keybinds": "Keyboard shortcuts",
+      "more": "More",
+      "overlay_taskbar": "Overlay & taskbar"
+    },
     "languages_group_title": "Languages",
     "music_group_title": "Music",
     "music": {

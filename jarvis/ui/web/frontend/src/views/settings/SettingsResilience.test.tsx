@@ -135,9 +135,9 @@ describe("SettingsView against an empty backend", () => {
     });
     expect(screen.getByTestId("combo-field-call")).toBeTruthy();
     // A 640px form cap left the groups as a left-hand column in a sea of
-    // black. The section fills the window; page padding is on the column.
+    // black. The section fills the window; the page gutter sits on the row inside.
     const scroll = screen.getByTestId("settings-scroll");
     expect(scroll.className).not.toMatch(/max-w-form/);
-    expect(scroll.parentElement?.className).toMatch(/px-6/);
+    expect(scroll.firstElementChild?.className).toMatch(/px-8/);
   });
 });

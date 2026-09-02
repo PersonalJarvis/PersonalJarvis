@@ -1,10 +1,3 @@
-/**
- * Transcription view — master-detail layout for voice sessions.
- *
- * Left pane: SessionList (chronological). Right pane: detail with header
- * + turn timeline + click-to-copy. Live updates via the useSessions hook,
- * which reacts to VoiceSessionStarted/Ended bus events.
- */
 import { AlertTriangle, Mic } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useEventStore } from "@/store/events";
@@ -16,17 +9,16 @@ import { resolveSelectedSessionId } from "@/components/sessions/sessionSelection
 import { useSessionDetail, useSessions } from "@/hooks/useSessions";
 import { useT } from "@/i18n";
 
+/**
+ * Transcription: a 320 px rail of sessions on the sidebar ground, and the
+ * chosen session read as a conversation on the page ground.
+ */
 export function SessionsView() {
   const assistantName = useEventStore((s) => s.assistantName);
   const t = useT();
   const sessionsQuery = useSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Keep selection aligned with the visible list. A running attempt can be
-  // selected and then disappear after hangup when the API confirms that it
-  // contains no transcript. In that case, move to the newest finished
-  // transcript instead of leaving an invisible row selected in the detail
-  // pane. Initial selection follows the same rule.
   useEffect(() => {
     const list = sessionsQuery.data;
     if (!list) return;
@@ -43,29 +35,23 @@ export function SessionsView() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* --primary is a fill, never a decorative glyph. */}
       <ViewHeader
-        icon={<Mic className="h-4 w-4 text-foreground" />}
+        icon={<Mic />}
         title={t("sessions_view.title")}
         subtitle={t("sessions_view.subtitle")}
       />
 
       {/* The recorder being switched off is a degraded state, not a failure:
-          everything else on this screen still works. So it is a --warning
-          glyph on the room's own ground, and NOT the near-white band this
-          used to be — a full-bleed region never rises above its room, and a
-          status painted in --foreground outshouts every real heading. */}
+          everything else on this screen still works, so it is a warning
+          callout on the room's own ground. */}
       {errorMessage && /HTTP 503/.test(errorMessage) && (
-        <div className="flex items-start gap-3 border-b border-border px-6 py-4">
-          <AlertTriangle
-            aria-hidden="true"
-            className="mt-0.5 h-4 w-4 shrink-0 text-warning"
-          />
+        <div className="mx-8 mb-4 flex items-start gap-3 rounded-lg border border-warning/20 bg-warning/[0.08] px-4 py-3">
+          <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
           <div className="min-w-0">
-            <div className="text-title font-semibold text-foreground-strong">
+            <div className="text-base font-medium text-foreground-strong">
               {t("sessions_view.recorder_disabled")}
             </div>
-            <div className="mt-1 text-meta text-muted-foreground">
+            <div className="mt-1 text-sm text-muted-foreground">
               {t("sessions_view.recorder_hint_a")}{" "}
               <code className="font-mono">[sessions]</code>{" "}
               {t("sessions_view.recorder_hint_b")}{" "}
@@ -77,8 +63,8 @@ export function SessionsView() {
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-[320px_1fr]">
-        <div className="min-h-0 overflow-hidden border-r border-border">
+      <div className="grid min-h-0 flex-1 grid-cols-[320px_1fr] border-t border-border">
+        <div className="min-h-0 overflow-hidden border-r border-border bg-sidebar">
           <SessionList
             sessions={sessionsQuery.data ?? []}
             selectedId={selectedId}

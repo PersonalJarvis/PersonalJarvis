@@ -132,7 +132,7 @@ export function ContactDetail({
 
   return (
     <div className="flex h-full flex-col overflow-y-auto bg-background scrollbar-jarvis">
-      <div className="border-b border-border p-6">
+      <div className="border-b border-border px-8 py-6">
         <div className="flex items-start gap-4">
           {onBack && (
             <button
@@ -146,7 +146,7 @@ export function ContactDetail({
           )}
           <IdentityAvatar name={contact.name} size="lg" />
           <div className="min-w-0 flex-1">
-            <h3 className="font-display text-page font-semibold text-foreground-strong">
+            <h3 className="text-xl font-semibold text-foreground-strong">
               {contact.name}
             </h3>
             {orgLine && <p className="truncate text-meta text-muted-foreground">{orgLine}</p>}
@@ -157,7 +157,7 @@ export function ContactDetail({
             )}
             <div className="mt-1 flex flex-wrap items-center gap-2">
               {rel && (
-                <span className="inline-block rounded-full bg-secondary px-2 py-0.5 text-micro text-muted-foreground">
+                <span className="inline-flex h-6 items-center rounded-md border border-border bg-secondary px-2 text-xs font-medium text-muted-foreground">
                   {rel}
                 </span>
               )}
@@ -211,7 +211,7 @@ export function ContactDetail({
             <button
               type="button"
               onClick={() => setConfirmCall(callPhone)}
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-body font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-base font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               <PhoneCall className="h-3.5 w-3.5" />
               {t("contacts.call")}
@@ -220,7 +220,7 @@ export function ContactDetail({
           <button
             type="button"
             onClick={() => requestWikiPage(contact.slug)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-body text-foreground transition-colors hover:bg-popover"
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-border-strong px-4 text-base font-medium text-foreground transition-colors hover:bg-secondary"
           >
             <BookOpen className="h-3.5 w-3.5" />
             {t("contacts.openWiki")}
@@ -228,7 +228,7 @@ export function ContactDetail({
         </div>
       </div>
 
-      <div className="max-w-reading space-y-group p-6">
+      <div className="max-w-3xl space-y-8 px-8 py-6">
         {contact.emails.length > 0 && (
           <Field icon={<Mail className="h-4 w-4" />} label={t("contacts.emails")}>
             <ul className="space-y-1">
@@ -334,7 +334,7 @@ export function ContactDetail({
             className="w-full max-w-sm rounded-lg bg-popover p-6 shadow-float"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="font-display text-page font-semibold text-foreground-strong">
+            <h3 className="text-xl font-semibold text-foreground-strong">
               {t("contacts.callTitle")}
             </h3>
             <p className="mt-2 text-body text-foreground">

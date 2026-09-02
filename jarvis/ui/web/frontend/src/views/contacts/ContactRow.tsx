@@ -28,29 +28,30 @@ export function ContactRow({
         type="button"
         onClick={onClick}
         className={cn(
-          "group flex w-full items-center gap-row rounded-md px-3 py-2 text-left transition-colors",
-          active ? "bg-secondary" : "hover:bg-secondary",
+          "group flex min-h-12 w-full items-center gap-3 rounded-md px-3 py-1.5 text-left transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          active ? "jarvis-nav-active bg-secondary" : "hover:bg-secondary",
         )}
       >
         <IdentityAvatar name={contact.name} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span
             className={cn(
-              "truncate text-body",
+              "truncate text-base font-medium",
               active ? "text-foreground-strong" : "text-foreground",
             )}
           >
             {contact.name}
           </span>
           {subtitle && (
-            <span className="truncate text-meta text-muted-foreground">{subtitle}</span>
+            <span className="truncate text-sm text-muted-foreground">{subtitle}</span>
           )}
         </span>
         {contact.favorite && (
           <Star aria-hidden className="h-3.5 w-3.5 shrink-0 fill-current text-foreground" />
         )}
         {rel && (
-          <span className="rounded-full bg-popover px-2 py-0.5 text-micro text-muted-foreground">
+          <span className="inline-flex h-6 items-center rounded-md border border-border bg-secondary px-2 text-xs font-medium text-muted-foreground">
             {rel}
           </span>
         )}

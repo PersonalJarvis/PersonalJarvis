@@ -2317,6 +2317,22 @@
     "title": "Ajustes",
     "subtitle": "Palabra de activación, atajos, políticas de seguridad, inicio automático.",
     "overlay_taskbar_group_title": "Barra y superposición",
+    "nav": {
+      "languages": "Idiomas",
+      "app": "Aplicación",
+      "permissions": "Permisos de privacidad",
+      "screen_context": "Contexto de pantalla",
+      "realtime_voice": "Voz en tiempo real",
+      "system_prompt": "Prompt del sistema",
+      "wake_word": "Palabra de activación",
+      "silence_window": "Ventana de silencio",
+      "volume": "Volumen",
+      "audio_devices": "Dispositivos de audio",
+      "music": "Música",
+      "keybinds": "Atajos de teclado",
+      "more": "Más",
+      "overlay_taskbar": "Overlay y barra de tareas"
+    },
     "languages_group_title": "Idiomas",
     "music_group_title": "Música",
     "music": {
