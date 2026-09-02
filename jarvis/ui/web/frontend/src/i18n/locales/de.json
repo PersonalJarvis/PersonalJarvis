@@ -5087,5 +5087,127 @@
     "go": "Los geht's",
     "mode_realtime": "Live-Stimme",
     "mode_pipeline": "Stimme rein und raus"
+  },
+  "society": {
+    "sample_badge": "Beispieldaten",
+    "roster": {
+      "title": "Agenten",
+      "create": "Neu",
+      "search": "Agenten suchen",
+      "loading": "Agenten werden geladen…",
+      "empty": "Kein Agent passt."
+    },
+    "tier": {
+      "lead": "Leitung",
+      "orchestrator": "Orchestrator",
+      "specialist": "Spezialist"
+    },
+    "state": {
+      "idle": "Untätig",
+      "working": "Arbeitet",
+      "waiting": "Wartet",
+      "paused": "Pausiert"
+    },
+    "ceiling": {
+      "safe": "Sicher",
+      "monitor": "Beobachten",
+      "ask": "Erst fragen"
+    },
+    "grant": {
+      "all": "Alle verbundenen Werkzeuge",
+      "allowlist": "Nur Erlaubnisliste"
+    },
+    "checkpoint": {
+      "desk": "Werkstatt-Tisch",
+      "meeting": "Besprechungspavillon",
+      "archive": "Archiv",
+      "gate": "Hafentor",
+      "idle": "Unterwegs"
+    },
+    "card": {
+      "specs": "Daten",
+      "figure": "Figur",
+      "chat": "Chat",
+      "close": "Schließen",
+      "brain": "Gehirn",
+      "description": "Ständige Anweisungen",
+      "permission": "Berechtigungsgrenze",
+      "budget": "Tagesbudget",
+      "grant_mode": "Werkzeuge",
+      "place": "In der Welt",
+      "tools": "Freigegebene Werkzeuge",
+      "no_tools": "Noch keine Werkzeuge freigegeben.",
+      "routines": "Routinen",
+      "no_routines": "Noch keine Routinen.",
+      "runs": "Läufe",
+      "cost": "Ausgegeben",
+      "last_active": "Zuletzt aktiv",
+      "never": "nie",
+      "chat_empty_title": "Noch kein Gespräch",
+      "chat_empty_hint": "Der Chat des Agenten öffnet sich hier, sobald das Society-Backend seine Sitzung anbindet."
+    },
+    "figure": {
+      "drag_hint": "Ziehen zum Drehen und Kippen · Rad zum Zoomen · Doppelklick setzt zurück",
+      "reduced_motion": "Reduzierte Bewegung: Die Figur hält ihre Pose. Ziehen dreht sie weiterhin.",
+      "unavailable": "3D ist hier nicht verfügbar — die Farben des Agenten stehen ein.",
+      "no_figure": "Dieser Agent hat noch keine Figur."
+    },
+    "strip": {
+      "title": "Gesellschaft",
+      "active": "{0} aktiv",
+      "world_pending": "Die Insel kommt mit dem nächsten Meilenstein; bis dahin bleibt die Tafel."
+    },
+    "presets": {
+      "executive": "Vorstand",
+      "ranger": "Waldläufer",
+      "archivist": "Archivar",
+      "scout": "Späher",
+      "mage": "Magier"
+    },
+    "base": {
+      "small": "Klein",
+      "medium": "Mittel",
+      "large": "Groß"
+    },
+    "cell": {
+      "skin": "Haut",
+      "hair": "Haar",
+      "primary": "Kleidung",
+      "secondary": "Besatz",
+      "accent": "Akzent",
+      "shoes": "Schuhe"
+    },
+    "create": {
+      "title": "Agent erstellen",
+      "subtitle": "Name, Aufgabe und Regelwerk — die Figur rechts ist, wie das Team ihn sehen wird.",
+      "name": "Name",
+      "name_placeholder": "Späher",
+      "title_field": "Titel",
+      "title_placeholder": "Recherche-Späher",
+      "title_fallback": "Spezialist",
+      "description": "Beschreibung",
+      "description_placeholder": "Was dieser Agent verantwortet, wie er arbeitet und wo er zuerst fragen muss.",
+      "description_hint": "Ständige Anweisungen — das eigene Regelwerk des Agenten. Einzelaufgaben gehören in den Chat.",
+      "advanced": "Erweitert",
+      "provider": "Anbieter",
+      "provider_unknown": "Kein Anbieterkatalog erreichbar — der Agent behält das Standardgehirn von Jarvis.",
+      "catalog_loading": "Anbieterkatalog wird geladen…",
+      "model": "Modell",
+      "model_placeholder": "Anbieter-Standard",
+      "ceiling": "Berechtigungsgrenze",
+      "grant_mode": "Werkzeuge",
+      "budget": "Tagesbudget (USD)",
+      "look": "Aussehen",
+      "base": "Statur",
+      "base_soon": "Kommt mit dem nächsten Figurenbau",
+      "presets": "Vorlagen",
+      "colours": "Farben",
+      "shuffle": "Mischen",
+      "height": "Größe",
+      "cancel": "Abbrechen",
+      "submit": "Agent erstellen",
+      "name_required": "Gib dem Agenten zuerst einen Namen.",
+      "error": "Der Agent konnte nicht erstellt werden."
+    }
   }
 }

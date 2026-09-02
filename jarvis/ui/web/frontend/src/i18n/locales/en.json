@@ -5087,5 +5087,127 @@
     "go": "Let's go",
     "mode_realtime": "live voice",
     "mode_pipeline": "voice in and out"
+  },
+  "society": {
+    "sample_badge": "Sample data",
+    "roster": {
+      "title": "Agents",
+      "create": "New",
+      "search": "Search agents",
+      "loading": "Loading agents…",
+      "empty": "No agent matches."
+    },
+    "tier": {
+      "lead": "Lead",
+      "orchestrator": "Orchestrator",
+      "specialist": "Specialist"
+    },
+    "state": {
+      "idle": "Idle",
+      "working": "Working",
+      "waiting": "Waiting",
+      "paused": "Paused"
+    },
+    "ceiling": {
+      "safe": "Safe",
+      "monitor": "Monitor",
+      "ask": "Ask first"
+    },
+    "grant": {
+      "all": "All connected tools",
+      "allowlist": "Allow-list only"
+    },
+    "checkpoint": {
+      "desk": "Workshop desk",
+      "meeting": "Meeting pavilion",
+      "archive": "Archive",
+      "gate": "Harbor gate",
+      "idle": "Wandering"
+    },
+    "card": {
+      "specs": "Specs",
+      "figure": "Figure",
+      "chat": "Chat",
+      "close": "Close",
+      "brain": "Brain",
+      "description": "Standing instructions",
+      "permission": "Permission ceiling",
+      "budget": "Daily budget",
+      "grant_mode": "Tools",
+      "place": "In the world",
+      "tools": "Granted tools",
+      "no_tools": "No tools granted yet.",
+      "routines": "Routines",
+      "no_routines": "No routines yet.",
+      "runs": "Runs",
+      "cost": "Spent",
+      "last_active": "Last active",
+      "never": "never",
+      "chat_empty_title": "No conversation yet",
+      "chat_empty_hint": "The agent's chat opens here once the society backend binds its session."
+    },
+    "figure": {
+      "drag_hint": "Drag to turn and tilt · wheel to zoom · double-click to reset",
+      "reduced_motion": "Motion reduced: the figure holds its pose. Drag still turns it.",
+      "unavailable": "3D is unavailable here — the agent's colours stand in.",
+      "no_figure": "This agent has no figure yet."
+    },
+    "strip": {
+      "title": "Society",
+      "active": "{0} active",
+      "world_pending": "The island arrives with the next milestone; the board stays until then."
+    },
+    "presets": {
+      "executive": "Executive",
+      "ranger": "Ranger",
+      "archivist": "Archivist",
+      "scout": "Scout",
+      "mage": "Mage"
+    },
+    "base": {
+      "small": "Small",
+      "medium": "Medium",
+      "large": "Large"
+    },
+    "cell": {
+      "skin": "Skin",
+      "hair": "Hair",
+      "primary": "Outfit",
+      "secondary": "Trim",
+      "accent": "Accent",
+      "shoes": "Shoes"
+    },
+    "create": {
+      "title": "Create an agent",
+      "subtitle": "Name, job and rulebook — the character on the right is how the team will see it.",
+      "name": "Name",
+      "name_placeholder": "Scout",
+      "title_field": "Title",
+      "title_placeholder": "Research scout",
+      "title_fallback": "Specialist",
+      "description": "Description",
+      "description_placeholder": "What this agent owns, how it works, and where it must ask first.",
+      "description_hint": "Standing instructions — the agent's own rulebook. One-off tasks go in the chat.",
+      "advanced": "Advanced",
+      "provider": "Provider",
+      "provider_unknown": "No provider catalog reachable — the agent keeps Jarvis' default brain.",
+      "catalog_loading": "Loading the provider catalog…",
+      "model": "Model",
+      "model_placeholder": "provider default",
+      "ceiling": "Permission ceiling",
+      "grant_mode": "Tools",
+      "budget": "Daily budget (USD)",
+      "look": "Look",
+      "base": "Build",
+      "base_soon": "Arrives with the next figure build",
+      "presets": "Presets",
+      "colours": "Colours",
+      "shuffle": "Shuffle",
+      "height": "Height",
+      "cancel": "Cancel",
+      "submit": "Create agent",
+      "name_required": "Give the agent a name first.",
+      "error": "The agent could not be created."
+    }
   }
 }

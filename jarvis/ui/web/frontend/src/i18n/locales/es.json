@@ -5087,5 +5087,127 @@
     "go": "Vamos",
     "mode_realtime": "voz en vivo",
     "mode_pipeline": "voz de entrada y salida"
+  },
+  "society": {
+    "sample_badge": "Datos de ejemplo",
+    "roster": {
+      "title": "Agentes",
+      "create": "Nuevo",
+      "search": "Buscar agentes",
+      "loading": "Cargando agentes…",
+      "empty": "Ningún agente coincide."
+    },
+    "tier": {
+      "lead": "Líder",
+      "orchestrator": "Orquestador",
+      "specialist": "Especialista"
+    },
+    "state": {
+      "idle": "Inactivo",
+      "working": "Trabajando",
+      "waiting": "Esperando",
+      "paused": "En pausa"
+    },
+    "ceiling": {
+      "safe": "Seguro",
+      "monitor": "Supervisar",
+      "ask": "Preguntar primero"
+    },
+    "grant": {
+      "all": "Todas las herramientas conectadas",
+      "allowlist": "Solo lista permitida"
+    },
+    "checkpoint": {
+      "desk": "Mesa del taller",
+      "meeting": "Pabellón de reuniones",
+      "archive": "Archivo",
+      "gate": "Puerta del puerto",
+      "idle": "Paseando"
+    },
+    "card": {
+      "specs": "Ficha",
+      "figure": "Figura",
+      "chat": "Chat",
+      "close": "Cerrar",
+      "brain": "Cerebro",
+      "description": "Instrucciones permanentes",
+      "permission": "Límite de permisos",
+      "budget": "Presupuesto diario",
+      "grant_mode": "Herramientas",
+      "place": "En el mundo",
+      "tools": "Herramientas concedidas",
+      "no_tools": "Aún no hay herramientas concedidas.",
+      "routines": "Rutinas",
+      "no_routines": "Aún no hay rutinas.",
+      "runs": "Ejecuciones",
+      "cost": "Gastado",
+      "last_active": "Última actividad",
+      "never": "nunca",
+      "chat_empty_title": "Aún no hay conversación",
+      "chat_empty_hint": "El chat del agente se abre aquí cuando el backend de la sociedad vincule su sesión."
+    },
+    "figure": {
+      "drag_hint": "Arrastra para girar e inclinar · rueda para acercar · doble clic restablece",
+      "reduced_motion": "Movimiento reducido: la figura mantiene su pose. Arrastrar sigue girándola.",
+      "unavailable": "El 3D no está disponible aquí — los colores del agente lo sustituyen.",
+      "no_figure": "Este agente aún no tiene figura."
+    },
+    "strip": {
+      "title": "Sociedad",
+      "active": "{0} activos",
+      "world_pending": "La isla llega con el próximo hito; hasta entonces queda el tablero."
+    },
+    "presets": {
+      "executive": "Ejecutivo",
+      "ranger": "Guardabosques",
+      "archivist": "Archivista",
+      "scout": "Explorador",
+      "mage": "Mago"
+    },
+    "base": {
+      "small": "Pequeño",
+      "medium": "Mediano",
+      "large": "Grande"
+    },
+    "cell": {
+      "skin": "Piel",
+      "hair": "Pelo",
+      "primary": "Ropa",
+      "secondary": "Ribete",
+      "accent": "Acento",
+      "shoes": "Zapatos"
+    },
+    "create": {
+      "title": "Crear un agente",
+      "subtitle": "Nombre, cargo y reglas — la figura de la derecha es como lo verá el equipo.",
+      "name": "Nombre",
+      "name_placeholder": "Explorador",
+      "title_field": "Cargo",
+      "title_placeholder": "Explorador de investigación",
+      "title_fallback": "Especialista",
+      "description": "Descripción",
+      "description_placeholder": "Qué posee este agente, cómo trabaja y dónde debe preguntar primero.",
+      "description_hint": "Instrucciones permanentes — el reglamento propio del agente. Las tareas puntuales van al chat.",
+      "advanced": "Avanzado",
+      "provider": "Proveedor",
+      "provider_unknown": "No hay catálogo de proveedores — el agente conserva el cerebro predeterminado de Jarvis.",
+      "catalog_loading": "Cargando el catálogo de proveedores…",
+      "model": "Modelo",
+      "model_placeholder": "predeterminado del proveedor",
+      "ceiling": "Límite de permisos",
+      "grant_mode": "Herramientas",
+      "budget": "Presupuesto diario (USD)",
+      "look": "Aspecto",
+      "base": "Complexión",
+      "base_soon": "Llega con la próxima construcción de figuras",
+      "presets": "Plantillas",
+      "colours": "Colores",
+      "shuffle": "Mezclar",
+      "height": "Altura",
+      "cancel": "Cancelar",
+      "submit": "Crear agente",
+      "name_required": "Primero dale un nombre al agente.",
+      "error": "No se pudo crear el agente."
+    }
   }
 }

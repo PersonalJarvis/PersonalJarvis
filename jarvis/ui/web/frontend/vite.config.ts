@@ -68,6 +68,9 @@ function materialIconAssets(): Plugin {
 
 export default defineConfig({
   plugins: [react(), materialIconAssets(), missingNameGate(__dirname)],
+  // The society's figures are binary glTF; Vite serves them as fingerprinted
+  // assets (docs/agent-society/character-pipeline.md §4.2).
+  assetsInclude: ["**/*.glb"],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

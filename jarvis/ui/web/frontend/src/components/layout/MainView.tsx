@@ -83,9 +83,12 @@ function lazyPropView<P>(
 const SettingsView = lazyView(() =>
   import("@/views/SettingsView").then((m) => ({ default: m.SettingsView })),
 );
-const JarvisAgentsView = lazyView(() =>
-  import("@/views/JarvisAgentsView").then((m) => ({
-    default: m.JarvisAgentsView,
+// The Agents section is the society (MASTERPLAN §4.1): stage + agents rail +
+// model cards. The board it replaced is the society's stage until the island
+// lands, loaded by SocietyView itself.
+const SocietyView = lazyView(() =>
+  import("@/views/society/SocietyView").then((m) => ({
+    default: m.SocietyView,
   })),
 );
 const WikiView = lazyView(() =>
@@ -489,7 +492,7 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "chats":
       return <ChatsSurface />;
     case "agents":
-      return <JarvisAgentsView />;
+      return <SocietyView />;
     // Skills + Plugins + MCPs are merged behind the "Skills & Tools" entry with
     // an in-view tab switcher; the active id doubles as the tab state.
     case "skills":
