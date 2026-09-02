@@ -1,7 +1,9 @@
 # Character Pipeline — the 3D figure standard
 
-Status: **proposed standard for M3 (figures), written 2026-09-01; binding once the maintainer
-signs off on the three decisions in §12.** Subordinate to [`MASTERPLAN.md`](MASTERPLAN.md)
+Status: **binding since 2026-09-02 — the maintainer took the three §12 decisions as recommended,
+and the first figure (`biped-medium.glb`, KayKit Rogue base) ships through the gate.** Amended
+the same day with what the build taught (§4.3 bone set, §4.4 budgets, §4.6 cells, §5 rules).
+Subordinate to [`MASTERPLAN.md`](MASTERPLAN.md)
 (§4.2 figure decisions, §4.3 world branding, §8 M3). Where the two disagree, the master plan
 wins — but every figure-related rule that the master plan only names lives HERE in full.
 
@@ -88,10 +90,12 @@ cannot check does not belong in this section; it belongs in §8 (workflow guidan
 
 ### 4.1 Units, axes, origin
 
-- **Units:** metres. 1 world unit = 1 m (matches `deckRoom.ts`). Standing height: `biped-small`
-  1.0–1.3 m, `biped-medium` 1.6–1.9 m, `biped-large` 2.0–2.6 m, `quadruped` 0.4–1.8 m at the
-  withers, `spirit` 0.8–3.1 m (Gigi is 3.1 m in the deck; in the world he is scaled to 1.9 m by
-  the recipe, §9 — the lead is the tallest, not a giant).
+- **Units:** metres in the world (1 unit = 1 m, matches `deckRoom.ts`). A GLB ships in its
+  source's native units and records its measured `height_m` in the extras; the runtime scales the
+  figure to the recipe's height (`heightM`) or the variant default (`biped-medium` 1.75 m,
+  `small` 1.15 m, `large` 2.3 m, `quadruped` 0.9 m, `spirit` 1.9 m — Gigi is 3.1 m in the deck,
+  the lead is the tallest on the island, not a giant). Stride and speed scale with it (§6.3).
+  Rescaling in Blender was rejected on purpose: "apply scale" does not touch action keys.
 - **Up axis:** +Y (glTF). **Forward axis: +Z** — the glTF specification's front. The figure's
   face, nose, chest and toes point toward +Z in rest pose.
 - **In Blender** that means: the character looks INTO the front view (numpad 1), i.e. its face
@@ -157,9 +161,11 @@ Bone names are the contract between base, parts, clips, retargeting scripts and 
 Lower-case, underscore, `_l`/`_r` suffixes, no numbering, no prefixes (`mixamorig:` and
 `Rig_Medium/…` prefixes are stripped at build time).
 
-`biped` (19): `root` · `hips` · `spine` · `chest` · `neck` · `head` · `shoulder_l` `upper_arm_l`
-`lower_arm_l` `hand_l` · `shoulder_r` `upper_arm_r` `lower_arm_r` `hand_r` · `upper_leg_l`
-`lower_leg_l` `foot_l` · `upper_leg_r` `lower_leg_r` `foot_r`.
+`biped` (23 — the CC0 base's deform set, renamed): `root` · `hips` · `spine` · `chest` · `head` ·
+`upper_arm_l` `lower_arm_l` `wrist_l` `hand_l` `handslot_l` · `upper_arm_r` `lower_arm_r` `wrist_r`
+`hand_r` `handslot_r` · `upper_leg_l` `lower_leg_l` `foot_l` `toes_l` · `upper_leg_r` `lower_leg_r`
+`foot_r` `toes_r`. `handslot_*` is the prop attachment point (§4.5 `hand_l`/`hand_r` slots);
+`toes_*` are the ground-contact joints the stride is measured on.
 
 `quadruped` (22): `root` · `hips` · `spine` · `chest` · `neck` · `head` · `jaw` · `tail_1` `tail_2`
 · `upper_leg_fl` `lower_leg_fl` `foot_fl` · `upper_leg_fr` `lower_leg_fr` `foot_fr` ·
@@ -174,14 +180,16 @@ optional (allowed extras: `ear_l`, `ear_r`, `wing_l`, `wing_r`).
 
 | | triangles | materials | draw calls after assembly |
 |---|---|---|---|
-| biped base | ≤ 1 200 | 1 | 1 |
-| quadruped base | ≤ 1 500 | 1 | 1 |
-| spirit | ≤ 600 | ≤ 3 (the mascot has a lit body and unlit marks) | ≤ 3 |
-| any part | ≤ 300 | 1 | 1 |
-| assembled figure | ≤ 2 400 | — | ≤ 6 |
+| biped base | ≤ 4 500 | 1 | 1 (the six source meshes are joined at build) |
+| quadruped base | ≤ 4 500 | 1 | 1 |
+| spirit | ≤ 1 200 | ≤ 3 (the mascot has a lit body and unlit marks) | ≤ 3 |
+| any part | ≤ 600 | 1 | 1 |
+| assembled figure | ≤ 7 000 | — | ≤ 6 |
 
-Budgets are generous for the 320×180 target and tight for WebView2: 30 walkers × 6 draw calls
-= 180 calls, ~60 k triangles — comfortable on integrated graphics behind the pixel pass.
+The first build measured the CC0 base at 4 263 triangles with its face modelled in geometry
+(eyes, brows, nose — which is why no detail sheet is needed for it), so the budgets sit there.
+Fragment cost is what the 320×180 target caps; vertex cost stays trivial: 30 walkers × 6 draw
+calls = 180 calls, ~130 k triangles — comfortable on integrated graphics behind the pixel pass.
 Vertex attributes: position, normal, uv, joints, weights — no tangents, no second UV, no vertex
 colors (flat colors come from the sheet's palette strip, §4.6, so palette swaps stay one code path).
 Max 4 influences per vertex (glTF default), weights normalized.
@@ -222,7 +230,8 @@ out of a low-poly stack.
 - **Cell semantics are fixed per archetype** so palettes are portable across characters:
   `0 skin · 1 skin shade · 2 hair · 3 eyes · 4 primary garment · 5 primary shade · 6 secondary
   garment · 7 secondary shade · 8 accent · 9 metal · 10 leather · 11 fur/feather main · 12 fur
-  shade · 13 prop · 14 outline · 15 emissive` (unused cells stay whatever the source has).
+  shade · 13 shoes · 14 eye white · 15 emissive` (`scripts/figures/contract.json` is the list the
+  build and the runtime read; unused cells keep the source's default colour).
   The existing `AgentPalette { primary, secondary, accent }` in `data.ts` maps onto cells 4/6/8
   and the build derives the shade cells (−18 % lightness) — the model card keeps working the day
   the first real sheet lands.
@@ -248,15 +257,19 @@ out of a low-poly stack.
 Rules (validated):
 
 1. **In place.** No root XZ translation in any clip: `root` position keys vary only in Y, and
-   `hips` is not the root (a rig that uses `hips` as root fails). Locomotion is the runtime's job.
-2. **Loops close.** For every looping clip the first and last keyframe of every channel are equal
-   within 1e-3 — no hitch every 0.8 s.
-3. **Fixed durations:** `walk` 0.8–1.2 s, `run` 0.5–0.8 s, `idle` 2–6 s, `talk` 1–3 s, others free.
-   `walk` starts on the left heel strike (documented, not validated).
-4. **`stride_m` measured at build** for `walk` and `run` (§4.2). Runtime nominal speeds are
+   `hips` is not the root (a rig that uses `hips` as root fails). Other bones MAY translate
+   (a hips bob, a shrug) — rule 2 is what stops a baked drift. Locomotion is the runtime's job.
+2. **Loops close.** For every looping clip the first and last key of every channel agree —
+   translations within 2 mm, rotations within 1° — no hitch every second.
+3. **Durations in band** (`contract.json`): `walk` 0.8–1.2 s, `run` 0.5–0.9 s, `idle` 0.8–6 s,
+   `talk` 0.8–3 s, the rest 0.5–6 s. `walk` starts on the left heel strike (documented, not
+   validated).
+4. **`stride_m` measured at the finish step** for `walk` and `run` (§4.2) by forward kinematics
+   over the exported clip — the same code the gate re-measures with. Runtime nominal speeds are
    derived from it (§6.3), never typed into a constant.
 5. Clips live only in base GLBs. A part GLB with an animation fails the gate.
-6. Sample rate 24 fps, keys quantized to that; no scale keys anywhere.
+6. Sampled at the source's own frame rate (30 fps for the CC0 base — the import lands keys on
+   integer frames, so the export samples every key exactly); no scale channels survive the finish.
 
 ---
 
@@ -531,7 +544,7 @@ Exit 0 pass, 1 fail, 78 skipped (no assets yet), like the bundle gate.
 | 11 | Looping clips: first and last key equal within 1e-3 per channel | §5.2 |
 | 12 | `stride_m` present for `walk`/`run` and consistent with the heel travel the gate re-measures (±10 %) | §4.2 / §6.3 |
 | 13 | Part: zero animations, `slot` valid for the archetype, skin joint names ⊆ archetype bones | §4.5 |
-| 14 | File ≤ 400 KB (base) / ≤ 120 KB (part); no Draco/meshopt/basisu extension required | §4.2 |
+| 14 | File ≤ 512 KB (base; nine 30-fps clips on 23 bones weigh ~230 KB) / ≤ 120 KB (part); no Draco/meshopt/basisu extension required | §4.2 |
 | 15 | `SOURCES.md` has a row for every file (path, origin, license, sha256 of the source) | §11 |
 
 ### 10.2 Frontend tests
@@ -585,7 +598,13 @@ never reaches the island. No production code path imports it.
 
 ---
 
-## 12. Decisions the maintainer owns (answer before M3 starts figure work)
+## 12. Decisions the maintainer owns (taken 2026-09-02: all three as recommended)
+
+Taken: (1) KayKit Character Pack: Adventurers (CC0) is the biped skeleton + clip base — MASTERPLAN
+§7 now reads "own meshes and textures on a CC0 skeleton with CC0 clips"; (2) the roster row
+carries the recipe as JSON (`avatar` in `/api/society/agents`, `figure` in `data.ts`); (3) the
+Tripo likeness route ships behind the keyring flow, off by default (F7). The original
+recommendations follow for the record.
 
 1. **Skeleton + clip base for `biped` — Recommended: CC0 library (KayKit or Quaternius UAL2),
    normalized by the build; own meshes and sheets on top.** It beats "author every clip
@@ -615,9 +634,9 @@ steps or plain Lambert; whether `run` exists in V1 or every purposeful move walk
 
 | Step | Delivers | Proof |
 |---|---|---|
-| F1 | `contract.json`, `proportions.json`, `check_society_figures.py` + its unit test on a fixture GLB, `SOURCES.md` | gate runs, exits 78 (no assets) then 0/1 on fixtures |
-| F2 | `build_figures.py` on the chosen `biped` source → `biped-medium.glb` with `idle walk work talk sit sleep celebrate wave`, default sheet with palette strip | gate green; the Figure Lab shows the walk on a treadmill with the arrow pointing where it walks |
-| F3 | `walkerKinematics.ts` + tests; `figureRegistry`, `useFigureAsset`, `assembleFigure` + tests; `<Figure>`; `AgentFigureViewer` swaps `PlaceholderFigure` when a recipe exists | card shows the real figure; palette from `AgentPalette` |
+| F1 ✅ 2026-09-02 | `contract.json`, `check_society_figures.py` + its unit test (mutation-based: turned, mirrored, blurred, clip-less, root-moving), `SOURCES.md` | gate exits 78 with no assets, 0/1 on real ones |
+| F2 ✅ 2026-09-02 | `build_figures.py` on the KayKit Rogue → `biped-medium.glb` (404 KB, 23 bones, `idle walk run work talk sit sleep celebrate wave`, palette-strip sheet) — `proportions.json` and the small/large variants are still open | gate green; the card shows the figure turning |
+| F3 ✅ 2026-09-02 (partly) | `figureRecipe`, `figureRegistry`, `assembleFigure`, `AgentFigureViewer` (pixel pass, orbit from above and below, wave on open), the creator's live look editor; the walker maths live in `world/walkerKinematics.ts` (world session). Open: unit tests for `assembleFigure`, the Figure Lab | card and creator render the real figure; palette from the recipe |
 | F4 | `biped-small`/`-large` variants, first 8 parts (hair ×2, hood, cloak, robe, pack, staff, book), 3 palette presets | a hobbit ranger and an orc smith from recipes alone |
 | F5 | `quadruped.glb` (one animal, fox) with its clip set; `spirit.glb` (Gigi from the SVG extrusion, `walk` = glide) | both walk on the treadmill; the lead figure has a face that leads |
 | F6 | World integration: A* + smoothing, ground snap, choreography retarget, lateral offset, mixer culling; headless screenshot check | a real mission plays out; the "not backwards" CI check is green |

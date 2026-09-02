@@ -89,7 +89,7 @@ Branch B's verified finding: ~80 % of the substrate exists. We add a durable lay
 
 - **`data/society.db`** (WAL, mirrors `missions_schema.sql` conventions):
   - `society_agents` — the roster / model-card data: `agent_id, name, role, tier, provider, model,
-    avatar_uri (skin PNG), tool_grants JSON, permission_ceiling (safe|monitor|ask — never a
+    avatar JSON (the figure recipe, character-pipeline.md §9.1), tool_grants JSON, permission_ceiling (safe|monitor|ask — never a
     block-bypass), daily_budget_usd, parent_agent_id, checkpoint, state, created_ms`.
   - `society_events` — append-only typed log (the blackboard): `seq, event_id, msg_type,
     from_agent, to_agent (NULL = broadcast), trace_id, parent_event_id, ts_ms, cost_usd,
@@ -280,9 +280,11 @@ add the four controls it lacked: authenticated writes (chokepoint), bounded non-
   Rules and constants we adopted as ideas (bounded rooms 2–6 / ≤3 rounds / ≤10 messages, the
   one-canonical-chat invariant, three-field creation, avatar-as-status) are re-implemented from
   their described behavior in our own code. skinview3d MIT (dropped anyway, see below). Asset/skin uploads follow the existing report-then-delist
-  precedent; the character pipeline is first-party (own base rig + textures — the earlier
-  skinview3d/Minecraft-skin route was dropped with the avatar decision); no third-party game
-  trademarks in product copy — "pixel retro" language only.
+  precedent; the character pipeline is first-party in meshes, textures and runtime, on a CC0
+  skeleton with CC0 clips (KayKit Character Pack: Adventurers, recorded with sha256 and license
+  in `scripts/figures/sources/` and `src/assets/society/figures/SOURCES.md` — decision 2026-09-02;
+  the earlier skinview3d/Minecraft-skin route was dropped with the avatar decision); no
+  third-party game trademarks in product copy — "pixel retro" language only.
   World visual identity: see §4.3 — the world carries its own bright game branding and is exempt
   from both Ink & Paper and the Cursor-derived design doc.
 
@@ -370,7 +372,8 @@ Still open:
    research identified it as the one meant; it is an inference, not a certainty.
 6. First-run seed agents: ship a starter coordinator + one specialist, or start empty?
 7. Content of the thin top strip above the world stage (§4.1).
-8. The three figure-pipeline decisions in [`character-pipeline.md`](character-pipeline.md) §12:
-   CC0 skeleton + clip base for the biped (widens the "first-party rig" wording in §7 to "own
-   meshes and textures on a CC0 skeleton"), `figure_json` instead of `avatar_uri` in the M1
-   schema, and whether the Tripo likeness route ships behind the keyring flow.
+8. ~~The three figure-pipeline decisions~~ — taken 2026-09-02, all as recommended
+   ([`character-pipeline.md`](character-pipeline.md) §12): CC0 skeleton + clips as the biped
+   base, the figure recipe as JSON on the roster row, the Tripo likeness route behind the keyring
+   flow, off by default. The first figure ships (`biped-medium.glb`) and the Agents section
+   renders the rail, the model card with the turnable figure and the creator on sample data.
