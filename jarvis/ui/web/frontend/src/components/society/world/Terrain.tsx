@@ -51,6 +51,8 @@ export function Terrain() {
 
 /** The sea plane — far larger than the island so its edge is never in view. */
 const SEA_SIZE_M = 1400;
+/** The plane's rest height: below the water line, so a raised wave stays under the beach. */
+const SEA_REST_Y = -0.1;
 /** Vertices per side: 5 m cells, fine enough for 9 m breakers. */
 const SEA_SEGMENTS = 280;
 /** How many tiles out from the coast the shore texture measures distance. */
@@ -196,7 +198,7 @@ const WATER_VERTEX = /* glsl */ `
     vec2 d2 = normalize(vec2(-0.5, 0.87));
     vec2 d3 = normalize(vec2(0.3, -0.95));
     float k1 = 6.2832 / 34.0, k2 = 6.2832 / 19.0, k3 = 6.2832 / 9.5;
-    float a1 = 0.26, a2 = 0.16, a3 = 0.08;
+    float a1 = 0.1, a2 = 0.06, a3 = 0.035;
     float p1 = dot(p, d1) * k1 - time * 0.9;
     float p2 = dot(p, d2) * k2 - time * 1.25;
     float p3 = dot(p, d3) * k3 - time * 1.9;
@@ -211,14 +213,16 @@ const WATER_VERTEX = /* glsl */ `
     float crest = sin(phase);
     // Sharpen the front face: a wave that is about to break leans forward.
     float steep = crest + 0.35 * sin(2.0 * phase + 1.2);
-    float ab = 0.42 * shoal;
+    float ab = 0.13 * shoal;
     h += ab * steep;
     // Its slope points along the shore gradient (toward the coast).
     slope += ab * 0.72 * cos(phase) * grad;
 
+    // The surface itself barely rises (it must never break through the sand, which
+    // sits 0.35 m up); the LIGHT does the work: normals are steepened for shading.
     vec3 displaced = world + vec3(0.0, h, 0.0);
     vWorld = displaced;
-    vNormal = normalize(vec3(-slope.x, 1.0, -slope.y));
+    vNormal = normalize(vec3(-slope.x * 2.6, 1.0, -slope.y * 2.6));
     vDist = dist;
     vCrest = steep * shoal;
     gl_Position = projectionMatrix * viewMatrix * vec4(displaced, 1.0);
@@ -399,7 +403,7 @@ export function Water({ paused }: { paused: boolean }) {
 
   return (
     <group>
-      <mesh geometry={geometry} material={material} rotation={[-Math.PI / 2, 0, 0]} />
+      <mesh geometry={geometry} material={material} rotation={[-Math.PI / 2, 0, 0]} position={[0, SEA_REST_Y, 0]} />
       {/* the wash: a sheet just above the beach's sand */}
       <mesh
         geometry={washGeometry}

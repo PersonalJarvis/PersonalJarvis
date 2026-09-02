@@ -36,10 +36,11 @@ export const TILE_COLORS: Record<TileKind, TileShades> = {
   [TileKind.snow]: { top: ["#f6f9fc", "#e9eff6"], side: "#8f92a3" },
   [TileKind.heath]: { top: ["#b48ec6", "#a583b8"], side: "#7c6a4c" },
   [TileKind.dry]: { top: ["#dcd07e", "#cfc370"], side: "#a08a55" },
-  [TileKind.farm]: { top: ["#c9a35a", "#8fbf55"], side: "#8e6a44" },
-  [TileKind.marsh]: { top: ["#5f9e70", "#4f8c62"], side: "#4c5e3c" },
+  [TileKind.farm]: { top: ["#bfb06a", "#9ac45e"], side: "#8e6a44" },
+  [TileKind.marsh]: { top: ["#74b07e", "#67a271"], side: "#4c5e3c" },
   [TileKind.scree]: { top: ["#918e88", "#85827b"], side: "#6f6e7c" },
   [TileKind.quarry]: { top: ["#a2988a", "#948a7c"], side: "#6f6e7c" },
+  [TileKind.pool]: { top: ["#4fa2c6", "#4a9bbf"], side: "#2c6fa8" },
 };
 
 /** Water: the animated surface, from the turquoise shallows to the open sea. */

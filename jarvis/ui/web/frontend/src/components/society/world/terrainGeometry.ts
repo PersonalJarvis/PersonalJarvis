@@ -148,7 +148,7 @@ export function buildTerrainGeometry(map: IslandMap): BufferGeometry {
       // of a stylised village is shaded.
       let factor = tileAo(map, tx, tz, y);
       // Aerial tint: the high ground is a touch lighter, the low ground a touch deeper.
-      if (kind !== TileKind.dock) factor *= 1 + (level - PLATEAU_LEVEL) * LEVEL_TINT;
+      if (kind !== TileKind.dock && kind !== TileKind.pool) factor *= 1 + (level - PLATEAU_LEVEL) * LEVEL_TINT;
       // The wet line: sand with the sea beside it.
       if (kind === TileKind.sand && touchesWater(map, tx, tz)) factor *= WET_SAND;
       const base = color(shades.top[topIdx]);

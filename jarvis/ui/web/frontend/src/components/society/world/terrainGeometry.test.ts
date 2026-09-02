@@ -28,7 +28,7 @@ describe("terrainGeometry", () => {
       if (nor.getY(v) === 1) heights.add(Math.round(pos.getY(v) * 100) / 100);
     }
     // Levels 1..9 plus the dock: never a stray height.
-    expect(heights.size).toBeLessThanOrEqual(LEVEL_Y.length);
+    expect(heights.size).toBeLessThanOrEqual(LEVEL_Y.length + 1); // levels 0..9 (the pools sit at 0) plus the dock
     const i = tileIndex(map, CENTER_TILE, CENTER_TILE);
     expect(map.kind[i]).toBe(TileKind.plaza);
   });

@@ -393,6 +393,10 @@ describe("islandLayout", () => {
     expect(content.festoonPoles.length).toBe(8);
     expect(content.lamps.length).toBeGreaterThan(50);
     expect(content.reeds.length).toBeGreaterThan(40);
+    // Marsh pools are still water, their own kind: the sea's surf never reaches them.
+    let pools = 0;
+    for (let i = 0; i < map.kind.length; i++) if (map.kind[i] === TileKind.pool) pools++;
+    expect(pools).toBeGreaterThan(10);
     const [cx, cz] = worldToTile(content.campfire.x, content.campfire.z);
     expect(map.kind[tileIndex(map, cx, cz)]).toBe(TileKind.sand);
   });

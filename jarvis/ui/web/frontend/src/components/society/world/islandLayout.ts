@@ -101,6 +101,8 @@ export const TileKind = {
   scree: 16,
   /** The quarry floor around the mine. */
   quarry: 17,
+  /** Still water in the marsh: a pool at sea level, no surf, no foam. */
+  pool: 18,
 } as const;
 export type TileKind = (typeof TileKind)[keyof typeof TileKind];
 
@@ -871,7 +873,11 @@ function buildTerrain(map: IslandMap): void {
       if (map.kind[i] !== TileKind.marsh) continue;
       const nx = (tx + 0.5 - C) / C;
       const nz = (tz + 0.5 - C) / C;
-      if (fbm(nx * 16 + 2, nz * 16 + 6, ISLAND_SEED + 21) > 0.64) paintWater(map, i);
+      if (fbm(nx * 16 + 2, nz * 16 + 6, ISLAND_SEED + 21) > 0.64) {
+        map.kind[i] = TileKind.pool;
+        map.level[i] = 0;
+        map.blocked[i] = 1;
+      }
     }
   }
 
@@ -1268,7 +1274,7 @@ function placeReeds(map: IslandMap): Post[] {
         [0, 1],
         [0, -1],
       ] as const) {
-        if (map.kind[tileIndex(map, tx + dx, tz + dz)] === TileKind.water) pool = true;
+        if (map.kind[tileIndex(map, tx + dx, tz + dz)] === TileKind.pool) pool = true;
       }
       const density = pool ? 0.8 : 0.28;
       if (hash2(tx, tz, ISLAND_SEED + 61) > density) continue;
@@ -1396,7 +1402,7 @@ function placeBoulders(map: IslandMap): Boulder[] {
     for (let tx = 1; tx < map.size - 1; tx++) {
       const i = tileIndex(map, tx, tz);
       const k = map.kind[i];
-      if (k === TileKind.water || k === TileKind.path || k === TileKind.plaza || k === TileKind.dock) continue;
+      if (k === TileKind.water || k === TileKind.pool || k === TileKind.path || k === TileKind.plaza || k === TileKind.dock) continue;
       if (Math.hypot(tx + 0.5 - C, tz + 0.5 - C) < HEDGE_RING_TILES + 4) continue;
       let density: number;
       if (k === TileKind.rock || k === TileKind.snow) density = 0.05;
