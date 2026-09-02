@@ -121,6 +121,8 @@ export const PODIUM_LEVEL = PLATEAU_LEVEL + 1;
 export const DOCK_Y = 0.55;
 /** Level from which a rock tile becomes snow. */
 export const SNOW_LEVEL = 8;
+/** The terrace the Agent Foundry stands on: the mountain's top step. */
+export const SUMMIT_LEVEL = 9;
 
 export interface IslandMap {
   /** Tiles along one edge. */
@@ -131,6 +133,12 @@ export interface IslandMap {
   level: Uint8Array;
   /** 1 where a walker may not stand: water, rock, buildings, tree trunks. */
   blocked: Uint8Array;
+  /**
+   * `blocked` without the buildings a viewer may turn (houses, ring hubs, the
+   * foundry's belt). `applyBuildingYaws` stamps those back in at their current
+   * heading, so a turned house blocks the tiles it actually covers.
+   */
+  blockedStatic: Uint8Array;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,14 +174,18 @@ export interface Place {
 export type HouseVariant = "solar-barrel" | "garden-roof" | "glass-loft";
 
 export interface HousePlot {
+  /** Ring slot (0..15, clockwise from north) — the house's stable identity. */
+  slot: number;
   /** Centre of the footprint, world metres. */
   x: number;
   z: number;
   /** Footprint in tiles (w along the house's local x, d along local z). */
   w: number;
   d: number;
-  /** Rotation about y; the door faces local +z. */
+  /** Rotation about y; the door faces local +z. The viewer may turn it (`applyBuildingYaws`). */
   rotation: number;
+  /** The heading the house rests at — what "reset" returns to. */
+  defaultRotation: number;
   variant: HouseVariant;
   /** Deterministic 0..1 for per-house variation. */
   seed: number;
@@ -336,6 +348,32 @@ export function isWalkable(map: IslandMap, tx: number, tz: number): boolean {
   return map.blocked[tileIndex(map, tx, tz)] === 0;
 }
 
+/**
+ * The walkable tile closest to (tx, tz) within `maxRadius` rings, the tile
+ * itself included; null when everything around is blocked. A figure that
+ * finds a building turned over its head steps to this tile first.
+ */
+export function nearestWalkable(map: IslandMap, tx: number, tz: number, maxRadius = 8): [number, number] | null {
+  if (isWalkable(map, tx, tz)) return [tx, tz];
+  for (let r = 1; r <= maxRadius; r++) {
+    let best: [number, number] | null = null;
+    let bestD = Infinity;
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+        if (!isWalkable(map, tx + dx, tz + dz)) continue;
+        const d = dx * dx + dz * dz;
+        if (d < bestD) {
+          bestD = d;
+          best = [tx + dx, tz + dz];
+        }
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Design: where things stand (tile units, from the island centre)
 // ---------------------------------------------------------------------------
@@ -359,13 +397,12 @@ export const GATE_GAP_TILES = 3;
  * side, and the foundry's ramp runs down onto the plaza in full view of the
  * island camera (which looks from the south-east).
  */
-export const RING_KIT_SLOTS: Record<KitPlace, readonly number[]> = {
+export const RING_KIT_SLOTS: Partial<Record<KitPlace, readonly number[]>> = {
   plugins: [13, 14],
-  foundry: [2, 3],
   // Hubs sit on the north and west of the ring so their fronts face the camera
   // (it looks from the south-east); houses take the slots whose backs it sees.
   skills: [15], // north, beside the docks: the Skill Forge
-  mcp: [1], // north, beside the foundry: the Relay Tower
+  mcp: [1], // north-east: the Relay Tower
   cli: [11], // west: the Terminal Cantina
 };
 
@@ -393,10 +430,71 @@ export const KIT_FOOTPRINT_TILES: Record<KitPlace, { w: number; d: number }> = {
  */
 export const KIT_FACING: Partial<Record<KitPlace, number>> = { foundry: Math.PI / 4 };
 
+/**
+ * The mountain's summit, flattened for the Agent Foundry (maintainer, 2026-09-02:
+ * "the factory sits up there on the mountain, connected by the road"). The
+ * highest tile of the snow cap; `PLOT_HALF.foundry` planes a terrace around it
+ * and `SUMMIT_ROAD` climbs to it, so the works crown the island's backdrop and
+ * a new agent walks the whole mountain road down into the village.
+ */
+export const SUMMIT_TILE: readonly [number, number] = [CENTER_TILE - 65, CENTER_TILE - 70];
+
+/** Kit buildings that stand on a plot of their own instead of in the house ring. */
+const KIT_ANCHOR: Partial<Record<KitPlace, readonly [number, number]>> = {
+  foundry: SUMMIT_TILE,
+};
+
+/** Every kit place, ring-bound or not — the world's hub roster. */
+export const KIT_PLACES: readonly KitPlace[] = ["plugins", "foundry", "skills", "mcp", "cli"];
+
+/** Whether a place id names a World Kit hub (the ones a click opens). */
+export function isKitPlace(id: string): id is KitPlace {
+  return (KIT_PLACES as readonly string[]).includes(id);
+}
+
+/**
+ * Where the island camera stands, as a unit vector on the ground: it looks
+ * from the south-east (`worldCamera.ts`, CAMERA_YAW_DEG = 45). A front that
+ * points along this vector faces the viewer; one that points against it
+ * shows its back. `worldCamera.test.ts` pins the two files to each other.
+ */
+export const CAMERA_FROM: readonly [number, number] = [Math.SQRT1_2, Math.SQRT1_2];
+
+/** Wrap an angle into (−π, π]. */
+export function normalizeAngle(a: number): number {
+  let d = a % (2 * Math.PI);
+  if (d > Math.PI) d -= 2 * Math.PI;
+  if (d <= -Math.PI) d += 2 * Math.PI;
+  return d;
+}
+
+/** Whether a front heading (rotation about y, front = local +z) faces the camera at all. */
+export function facesCamera(rotation: number): boolean {
+  return Math.sin(rotation) * CAMERA_FROM[0] + Math.cos(rotation) * CAMERA_FROM[1] > -1e-9;
+}
+
+/**
+ * A house's resting heading. Houses face the square — unless that turns their
+ * back on the viewer, in which case they face the ring road instead: a door
+ * the camera never sees is a house with its back turned (maintainer,
+ * 2026-09-02). A house seen exactly in profile keeps the square.
+ */
+export function houseDefaultRotation(x: number, z: number): number {
+  const toSquare = Math.atan2(-x, -z);
+  return facesCamera(toSquare) ? toSquare : normalizeAngle(toSquare + Math.PI);
+}
+
 /** Where a kit building stands and which way it turns — the one source. */
 export function kitPose(place: KitPlace): KitPose {
-  const pose = ringPose(RING_KIT_SLOTS[place]);
   const facing = KIT_FACING[place];
+  const anchor = KIT_ANCHOR[place];
+  if (anchor) {
+    const [x, z] = tileToWorld(anchor[0], anchor[1]);
+    return { x, z, rotation: facing ?? houseDefaultRotation(x, z) };
+  }
+  const slots = RING_KIT_SLOTS[place];
+  if (!slots) throw new Error(`kit place ${place} has neither ring slots nor an anchor`);
+  const pose = ringPose(slots);
   return facing === undefined ? pose : { ...pose, rotation: facing };
 }
 
@@ -438,7 +536,7 @@ const PLACE_TILES: Record<PlaceId, [number, number]> = {
   mine: [CENTER_TILE - 32, CENTER_TILE - 60],
   // Kit buildings stand in the house ring (RING_KIT_SLOTS); the tile is the ring pose's.
   plugins: ringTile("plugins"),
-  foundry: ringTile("foundry"),
+  foundry: [SUMMIT_TILE[0], SUMMIT_TILE[1]],
   skills: ringTile("skills"),
   mcp: ringTile("mcp"),
   cli: ringTile("cli"),
@@ -463,7 +561,8 @@ export function foundryWalkOut(): {
   to: [number, number];
   heading: number;
 } {
-  const p = kitPose("foundry");
+  // The built island's pose, so a turned foundry delivers out of its turned portal.
+  const p = cached?.content.kitPoses.foundry ?? kitPose("foundry");
   const fx = Math.sin(p.rotation);
   const fz = Math.cos(p.rotation);
   return {
@@ -491,7 +590,9 @@ const PLOT_HALF: Record<PlaceId, [number, number]> = {
   solar: [8, 7],
   mine: [5, 4],
   plugins: [0, 0], // no flat plot of its own: it sits on the village plateau
-  foundry: [0, 0],
+  // The foundry's terrace: the summit planed flat, wide enough for the hall,
+  // its conveyor and a rim of snow around the lot.
+  foundry: [10, 8],
   skills: [0, 0],
   mcp: [0, 0],
   cli: [0, 0],
@@ -509,7 +610,7 @@ const PLOT_LEVEL: Record<PlaceId, number> = {
   solar: 4,
   mine: 4,
   plugins: PLATEAU_LEVEL,
-  foundry: PLATEAU_LEVEL,
+  foundry: SUMMIT_LEVEL,
   skills: PLATEAU_LEVEL,
   mcp: PLATEAU_LEVEL,
   cli: PLATEAU_LEVEL,
@@ -527,6 +628,22 @@ const BUILDING_HALF: Partial<Record<PlaceId, [number, number]>> = {
 const MINE_CLIFF = { dz: -8, hw: 8, hd: 3, level: 7 } as const;
 /** The mine's branch road leaves the north spoke here and runs west to the forecourt. */
 const MINE_ROAD = { fromX: CENTER_TILE - 1, z: CENTER_TILE - 60, length: 27 } as const;
+
+/**
+ * The mountain road to the Agent Foundry: three graded legs off the western
+ * end of the mine's branch, up the flank and onto the summit terrace, arriving
+ * at the foot of the works' conveyor. Straight legs only — `gradeRoad` widens
+ * across its own axis, so a diagonal would lay its shoulders lengthwise.
+ */
+const SUMMIT_ROAD: ReadonlyArray<{
+  from: [number, number];
+  dir: [number, number];
+  length: number;
+}> = [
+  { from: [CENTER_TILE - 37, CENTER_TILE - 60], dir: [-1, 0], length: 17 },
+  { from: [CENTER_TILE - 54, CENTER_TILE - 60], dir: [0, -1], length: 5 },
+  { from: [CENTER_TILE - 54, CENTER_TILE - 65], dir: [-1, 0], length: 6 },
+];
 
 /** Where the dock reaches into the bay: from the harbor plot southward. */
 export const DOCK_TILES = { from: CENTER_TILE + 66, to: CENTER_TILE + 80, halfWidth: 1 } as const;
@@ -821,7 +938,10 @@ function buildPlots(map: IslandMap): void {
             ? TileKind.rock
             : id === "mine"
               ? TileKind.quarry
-              : TileKind.plaza;
+              : // The foundry's terrace is planed mountain, not village paving.
+                id === "foundry"
+                ? TileKind.scree
+                : TileKind.plaza;
     fillRect(map, px, pz, hw, hd, (i) => {
       if (map.kind[i] === TileKind.water) return;
       paintLand(map, i, kind, PLOT_LEVEL[id]);
@@ -895,6 +1015,17 @@ function buildVillage(map: IslandMap): void {
   // The mine's branch: off the north spoke, west to the quarry, at the spoke's level there.
   const junction = map.level[tileIndex(map, MINE_ROAD.fromX + 1, MINE_ROAD.z)];
   gradeRoad(map, [MINE_ROAD.fromX, MINE_ROAD.z], [-1, 0], MINE_ROAD.length, junction);
+  // On up the mountain to the foundry: each leg starts at the level the last
+  // one reached, so the climb never breaks a walker's one-level step rule.
+  let climb = map.level[tileIndex(map, SUMMIT_ROAD[0].from[0] + 1, SUMMIT_ROAD[0].from[1])];
+  for (const leg of SUMMIT_ROAD) {
+    gradeRoad(map, leg.from, leg.dir, leg.length, climb);
+    const end: [number, number] = [
+      leg.from[0] + leg.dir[0] * leg.length,
+      leg.from[1] + leg.dir[1] * leg.length,
+    ];
+    if (inBounds(map, end[0], end[1])) climb = map.level[tileIndex(map, end[0], end[1])];
+  }
 
   // Buildings block walking; their tiles keep the plot level.
   for (const id of Object.keys(BUILDING_HALF) as PlaceId[]) {
@@ -945,18 +1076,17 @@ function placeHouses(): HousePlot[] {
   for (let k = 0; k < slots; k++) {
     if (k % 4 === 0) continue; // N, E, S, W are gates (N also holds the hub)
     if (taken.has(k)) continue; // a kit building stands here
-    const angle = (k / slots) * Math.PI * 2; // clockwise from north
-    const r = HOUSE_RING_TILES * TILE_M;
-    const x = Math.sin(angle) * r;
-    const z = -Math.cos(angle) * r;
+    const [x, z] = ringSlotWorld(k);
     const seed = hash2(k, 7, ISLAND_SEED);
+    const rotation = houseDefaultRotation(x, z);
     houses.push({
+      slot: k,
       x,
       z,
       w: 3,
       d: 2,
-      // The door (local +z) faces the square: rotate so local +z points to the centre.
-      rotation: Math.atan2(-x, -z),
+      rotation,
+      defaultRotation: rotation,
       variant: variants[k % variants.length],
       seed,
     });
@@ -964,23 +1094,61 @@ function placeHouses(): HousePlot[] {
   return houses;
 }
 
-/** Block the tiles under every house so walkers route around them. */
-function blockHouses(map: IslandMap, houses: HousePlot[]): void {
-  for (const h of houses) {
-    // Rasterise the rotated footprint by sampling its four quadrants.
-    const hw = (h.w * TILE_M) / 2;
-    const hd = (h.d * TILE_M) / 2;
-    const cos = Math.cos(h.rotation);
-    const sin = Math.sin(h.rotation);
-    for (let lx = -hw + 0.5; lx <= hw; lx += 1) {
-      for (let lz = -hd + 0.5; lz <= hd; lz += 1) {
-        const wx = h.x + lx * cos + lz * sin;
-        const wz = h.z - lx * sin + lz * cos;
-        const [tx, tz] = worldToTile(wx, wz);
-        if (inBounds(map, tx, tz)) map.blocked[tileIndex(map, tx, tz)] = 1;
-      }
+/**
+ * Clearance a walker keeps from a wall, in metres: the footprint is stamped
+ * this much wider so a figure's shoulder never clips a house corner.
+ */
+export const WALL_MARGIN_M = 0.5;
+
+/**
+ * Stamp `value` over every tile a rotated rectangle covers — `w` × `d` metres
+ * at (x, z), turned by `rotation` about y (three.js convention: local +z is
+ * the front), grown by `margin` on every side. Sampled every half metre so no
+ * tile inside the footprint is skipped.
+ */
+export function stampFootprint(
+  layer: Uint8Array,
+  map: IslandMap,
+  x: number,
+  z: number,
+  w: number,
+  d: number,
+  rotation: number,
+  margin: number,
+  value: 0 | 1,
+): void {
+  const hw = w / 2 + margin;
+  const hd = d / 2 + margin;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  for (let lx = -hw; lx <= hw + 1e-9; lx += 0.5) {
+    for (let lz = -hd; lz <= hd + 1e-9; lz += 0.5) {
+      const wx = x + lx * cos + lz * sin;
+      const wz = z - lx * sin + lz * cos;
+      const [tx, tz] = worldToTile(wx, wz);
+      if (inBounds(map, tx, tz)) layer[tileIndex(map, tx, tz)] = value;
     }
   }
+}
+
+/** Block an axis-aligned rectangle given in world metres (x0..x1, z0..z1). */
+function blockRectM(map: IslandMap, x0: number, z0: number, x1: number, z1: number): void {
+  const [tx0, tz0] = worldToTile(Math.min(x0, x1), Math.min(z0, z1));
+  const [tx1, tz1] = worldToTile(Math.max(x0, x1) - 1e-6, Math.max(z0, z1) - 1e-6);
+  for (let tz = tz0; tz <= tz1; tz++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      if (inBounds(map, tx, tz)) map.blocked[tileIndex(map, tx, tz)] = 1;
+    }
+  }
+}
+
+/** Block the single tile under a post (a lamp, a pillar, a mast) — never a dock plank. */
+function blockPost(map: IslandMap, x: number, z: number): void {
+  const [tx, tz] = worldToTile(x, z);
+  if (!inBounds(map, tx, tz)) return;
+  const i = tileIndex(map, tx, tz);
+  if (map.kind[i] === TileKind.dock) return;
+  map.blocked[i] = 1;
 }
 
 /** The hedge ring with its four gates, and the lamps along ring and spokes. */
@@ -1265,11 +1433,24 @@ function placeBoulders(map: IslandMap): Boulder[] {
   return boulders;
 }
 
-/** A stand point `ahead` metres in front of a kit building, facing it. */
-function kitPlace(id: KitPlace, ahead: number): Place {
-  const p = kitPose(id);
-  const tile = worldToTile(p.x + Math.sin(p.rotation) * ahead, p.z + Math.cos(p.rotation) * ahead);
-  return { id, tile: PLACE_TILES[id], standTile: tile, facing: p.rotation + Math.PI };
+/**
+ * How far in front of each kit building a visitor stands, in metres: in front
+ * of the docks' bays, at the foot of the foundry's conveyor ramp, at the
+ * others' doors.
+ */
+export const KIT_STAND_AHEAD_M: Record<KitPlace, number> = {
+  plugins: 7.5,
+  foundry: 13.5,
+  skills: 7.5,
+  mcp: 7.0,
+  cli: 7.5,
+};
+
+/** A stand point in front of a kit building at `pose`, facing it. */
+function kitPlace(id: KitPlace, pose: KitPose = kitPose(id)): Place {
+  const ahead = KIT_STAND_AHEAD_M[id];
+  const tile = worldToTile(pose.x + Math.sin(pose.rotation) * ahead, pose.z + Math.cos(pose.rotation) * ahead);
+  return { id, tile: PLACE_TILES[id], standTile: tile, facing: normalizeAngle(pose.rotation + Math.PI) };
 }
 
 function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
@@ -1293,13 +1474,12 @@ function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
     solar: place("solar", [PLACE_TILES.solar[0] + 1, PLACE_TILES.solar[1] + 9], Math.PI),
     // On the mine's road at the edge of the forecourt, facing the portal (west).
     mine: place("mine", [PLACE_TILES.mine[0] + 7, PLACE_TILES.mine[1]], -Math.PI / 2),
-    // In front of the docks' bays (7.5 m toward the square), facing the building.
-    plugins: kitPlace("plugins", 7.5),
-    // At the foot of the foundry's conveyor ramp, facing the portal.
-    foundry: kitPlace("foundry", 13.5),
-    skills: kitPlace("skills", 7.5),
-    mcp: kitPlace("mcp", 7.0),
-    cli: kitPlace("cli", 7.5),
+    // In front of the kit buildings (KIT_STAND_AHEAD_M), facing them.
+    plugins: kitPlace("plugins"),
+    foundry: kitPlace("foundry"),
+    skills: kitPlace("skills"),
+    mcp: kitPlace("mcp"),
+    cli: kitPlace("cli"),
   };
   // Make sure every stand tile is walkable — a place nobody can reach is a bug.
   for (const p of Object.values(places)) {
@@ -1313,10 +1493,45 @@ function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
   return places;
 }
 
-/** The central tree and the round table block the middle of the square. */
+/**
+ * Radius (metres) of the Quest Board's plinth and ring bench in the middle of
+ * the square, plus the walker's clearance: nobody walks through a bench.
+ */
+export const SQUARE_CENTRE_BLOCK_M = 6.0;
+/** The long table with its two benches on the square's south side, world metres. */
+export const LONG_TABLE_RECT_M = { x0: -5.2, z0: 6.6, x1: 5.2, z1: 10.4 } as const;
+
+/** The Quest Board with its ring bench and the long table block the middle of the square. */
 function blockSquareFurniture(map: IslandMap): void {
   const C = CENTER_TILE;
-  fillRect(map, C, C, 1, 1, (i) => (map.blocked[i] = 1)); // trunk
+  paintDisc(map, C, C, 0, SQUARE_CENTRE_BLOCK_M / TILE_M, (i) => (map.blocked[i] = 1));
+  const t = LONG_TABLE_RECT_M;
+  blockRectM(map, t.x0, t.z0, t.x1, t.z1);
+}
+
+/**
+ * What the landmark components put on the ground beside their blocked
+ * building footprints — the hub's wings, colonnade, planters, pool and flag
+ * masts, the harbor's kiosk and gate pillars, the lighthouse keeper's hut.
+ * The numbers are the components' own (Village.tsx `Hub`, Landmarks.tsx
+ * `Harbor` / `Lighthouse`), in each building's local metres.
+ */
+function blockLandmarkFurniture(map: IslandMap): void {
+  const [hx, hz] = tileToWorld(...PLACE_TILES.hub);
+  // Wings, 7 × 8 m at ±15.5 m, one metre back.
+  for (const ox of [-15.5, 15.5]) blockRectM(map, hx + ox - 3.5, hz - 3, hx + ox + 3.5, hz + 5);
+  for (const px of [-10, -6, -2, 2, 6, 10]) blockPost(map, hx + px, hz + 7.4); // colonnade
+  for (const px of [-13, 13]) blockRectM(map, hx + px - 1.2, hz + 6.3, hx + px + 1.2, hz + 8.7); // planters
+  blockRectM(map, hx - 4.2, hz + 12.1, hx + 4.2, hz + 14.3); // the reflecting pool
+  for (const px of [-6.2, 6.2]) blockPost(map, hx + px, hz + 13.2); // flag masts
+
+  const [bx, bz] = tileToWorld(...PLACE_TILES.harbor);
+  blockRectM(map, bx - 9, bz + 0.25, bx - 5, bz + 3.75); // harbor master's kiosk
+  for (const px of [-3, 3]) blockPost(map, bx + px, bz + 8); // gate pillars
+
+  const [lx, lz] = tileToWorld(...PLACE_TILES.lighthouse);
+  const s = 1.3; // the lighthouse group's scale
+  blockRectM(map, lx + (-5 - 2) * s, lz + (3 - 1.7) * s, lx + (-5 + 2) * s, lz + (3 + 1.7) * s); // keeper's hut
 }
 
 export interface Island {
@@ -1335,12 +1550,12 @@ export function buildIsland(): Island {
     kind: new Uint8Array(size * size),
     level: new Uint8Array(size * size),
     blocked: new Uint8Array(size * size),
+    blockedStatic: new Uint8Array(0), // filled once everything stands
   };
   buildTerrain(map);
   buildPlots(map);
   buildVillage(map);
   const houses = placeHouses();
-  blockHouses(map, houses);
   const kitPoses: Record<KitPlace, KitPose> = {
     plugins: kitPose("plugins"),
     foundry: kitPose("foundry"),
@@ -1348,33 +1563,16 @@ export function buildIsland(): Island {
     mcp: kitPose("mcp"),
     cli: kitPose("cli"),
   };
-  // Every kit footprint blocks walking the way a house does.
-  blockHouses(
-    map,
-    (Object.keys(kitPoses) as KitPlace[]).map((id) => ({
-      ...kitPoses[id],
-      ...KIT_FOOTPRINT_TILES[id],
-      variant: "glass-loft" as HouseVariant,
-      seed: 0,
-    })),
-  );
-  // The foundry's conveyor deck is furniture, not floor: it keeps trees off
-  // and keeps strollers beside it. A newborn rides it on fixed waypoints, so
-  // the block costs the entrance nothing.
-  const belt = kitPose("foundry");
-  blockHouses(map, [
-    {
-      x: belt.x + Math.sin(belt.rotation) * FOUNDRY_RAMP_MID_M,
-      z: belt.z + Math.cos(belt.rotation) * FOUNDRY_RAMP_MID_M,
-      rotation: belt.rotation,
-      w: 3,
-      d: 3,
-      variant: "glass-loft" as HouseVariant,
-      seed: 0,
-    },
-  ]);
+  // Houses, kit halls and the foundry's belt block walking at their resting
+  // headings for now, so trees and furniture keep clear of them; the final
+  // headings are stamped again by `applyBuildingYaws` below.
+  stampTurnables(map, map.blocked, houses, kitPoses, 1);
   blockSquareFurniture(map);
+  blockLandmarkFurniture(map);
   const { hedges, lamps } = placeRingFurniture(map);
+  // A hedge is a wall to a walker; a lamp post is a post.
+  for (const h of hedges) stampFootprint(map.blocked, map, h.x, h.z, HEDGE_SEGMENT_M[0], HEDGE_SEGMENT_M[1], h.rotation, 0.3, 1);
+  for (const l of lamps) blockPost(map, l.x, l.z);
   const { panels, greenhouses } = placeQuarterFurniture(map);
   const festoonPoles = placeFestoonPoles(map);
   const campfire = placeCampfire(map);
@@ -1382,6 +1580,9 @@ export function buildIsland(): Island {
   const boulders = placeBoulders(map);
   const reeds = placeReeds(map);
   const places = buildPlaces(map);
+  // Everything that never turns: the turnable buildings lifted out again.
+  map.blockedStatic = map.blocked.slice();
+  stampTurnables(map, map.blockedStatic, houses, kitPoses, 0);
   cached = {
     map,
     content: {
@@ -1399,12 +1600,103 @@ export function buildIsland(): Island {
       kitPoses,
     },
   };
+  applyBuildingYaws(cached, {});
   return cached;
 }
 
 /** Tests that need a fresh build. */
 export function resetIslandCache(): void {
   cached = null;
+}
+
+// ---------------------------------------------------------------------------
+// Turning buildings — the viewer's own headings over the designed ones
+// ---------------------------------------------------------------------------
+
+/** Stable id of a building a viewer may turn: a ring house by slot, a ring hub by place. */
+export type BuildingId = `house:${number}` | `kit:${KitPlace}`;
+
+export function houseId(slot: number): BuildingId {
+  return `house:${slot}`;
+}
+
+export function kitId(place: KitPlace): BuildingId {
+  return `kit:${place}`;
+}
+
+/** Centre of ring slot `slot` (0..15, clockwise from north), world metres. */
+export function ringSlotWorld(slot: number, radiusTiles = HOUSE_RING_TILES): [number, number] {
+  const angle = (slot / 16) * Math.PI * 2;
+  const r = radiusTiles * TILE_M;
+  return [Math.sin(angle) * r, -Math.cos(angle) * r];
+}
+
+/** The heading a building rests at — what "reset" returns to. */
+export function defaultBuildingYaw(id: BuildingId): number {
+  if (id.startsWith("kit:")) return kitPose(id.slice(4) as KitPlace).rotation;
+  const [x, z] = ringSlotWorld(Number(id.slice(6)));
+  return houseDefaultRotation(x, z);
+}
+
+/** Size of one hedge segment (along the ring × across), metres — `Village.tsx` draws it so. */
+export const HEDGE_SEGMENT_M: readonly [number, number] = [2.3, 0.8];
+
+/** Stamp the turnable buildings' footprints at their current headings into `layer`. */
+function stampTurnables(
+  map: IslandMap,
+  layer: Uint8Array,
+  houses: HousePlot[],
+  kitPoses: Record<KitPlace, KitPose>,
+  value: 0 | 1,
+): void {
+  for (const h of houses) {
+    stampFootprint(layer, map, h.x, h.z, h.w * TILE_M, h.d * TILE_M, h.rotation, WALL_MARGIN_M, value);
+  }
+  for (const id of Object.keys(kitPoses) as KitPlace[]) {
+    const p = kitPoses[id];
+    const f = KIT_FOOTPRINT_TILES[id];
+    stampFootprint(layer, map, p.x, p.z, f.w * TILE_M, f.d * TILE_M, p.rotation, WALL_MARGIN_M, value);
+  }
+  // The foundry's conveyor deck is furniture, not floor: it keeps trees off
+  // and keeps strollers beside it. A newborn rides it on fixed waypoints, so
+  // the block costs the entrance nothing.
+  const belt = kitPoses.foundry;
+  stampFootprint(
+    layer,
+    map,
+    belt.x + Math.sin(belt.rotation) * FOUNDRY_RAMP_MID_M,
+    belt.z + Math.cos(belt.rotation) * FOUNDRY_RAMP_MID_M,
+    3 * TILE_M,
+    3 * TILE_M,
+    belt.rotation,
+    WALL_MARGIN_M,
+    value,
+  );
+}
+
+/**
+ * Turn the buildings a viewer has turned: `yaws` maps a BuildingId to a
+ * heading (radians about y); anything absent rests at its default. Rewrites,
+ * in place, every number that depends on a heading — the house and kit poses,
+ * the blocked layer (from `blockedStatic`), the kit places' stand tiles and
+ * facings — so the renderer, the walkers and the pathfinder all see the same
+ * turned building. Pure over the island it is given; `buildingPoses.ts` is
+ * the only caller besides `buildIsland` itself.
+ */
+export function applyBuildingYaws(island: Island, yaws: Readonly<Partial<Record<BuildingId, number>>>): void {
+  const { map, content } = island;
+  for (const h of content.houses) h.rotation = yaws[houseId(h.slot)] ?? h.defaultRotation;
+  for (const id of Object.keys(content.kitPoses) as KitPlace[]) {
+    content.kitPoses[id].rotation = yaws[kitId(id)] ?? kitPose(id).rotation;
+    content.places[id] = kitPlace(id, content.kitPoses[id]);
+  }
+  map.blocked.set(map.blockedStatic);
+  stampTurnables(map, map.blocked, content.houses, content.kitPoses, 1);
+  // A stand tile stays reachable whatever turned over it — a place nobody can reach is a bug.
+  for (const p of Object.values(content.places)) {
+    const [tx, tz] = p.standTile;
+    if (inBounds(map, tx, tz)) map.blocked[tileIndex(map, tx, tz)] = 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1578,7 +1870,8 @@ function lineIsWalkable(map: IslandMap, a: [number, number], b: [number, number]
 export function randomPlazaTile(map: IslandMap, rng: () => number): [number, number] {
   for (let attempt = 0; attempt < 32; attempt++) {
     const angle = rng() * Math.PI * 2;
-    const r = 3 + rng() * (PLAZA_RADIUS_TILES - 4);
+    // From just outside the ring bench to just inside the garden beds.
+    const r = 4 + rng() * (PLAZA_RADIUS_TILES - 5);
     const tx = Math.floor(CENTER_TILE + Math.cos(angle) * r);
     const tz = Math.floor(CENTER_TILE + Math.sin(angle) * r);
     if (isWalkable(map, tx, tz)) return [tx, tz];
