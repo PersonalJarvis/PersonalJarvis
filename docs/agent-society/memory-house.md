@@ -129,11 +129,12 @@ unchanged and lands with the five-layer change it needs.
 
 ### 3.5 The Memory House on the island
 
-- Replaces the primitive Archive tower and takes two house slots on the north-east of the ring
-  (mirror of the Plugin Docks in the north-west); the `archive` place keeps its id, so the
-  walkers, the labels and the checkpoint enum need no new value.
-- Built by `scripts/world/build_world_kit.py --target memory-house` (the Blender MCP drives the
-  inner loop; the committed script is the truth): a dark plinth with a glowing reflecting ring,
+- Replaces the primitive Archive tower on the archive plot at the island's north end (behind
+  the Jarvis Hub, on the axis — the ring's slots are taken by the hubs and the Agent Foundry);
+  the `archive` place keeps its id, so the walkers, the labels and the checkpoint enum need no
+  new value.
+- Built by `scripts/world/kit_memory_house.py` on the helpers of `build_world_kit.py` (the Blender
+  MCP drives the inner loop; the committed script is the truth; ~4 600 triangles, 8 × 6 tiles): a dark plinth with a glowing reflecting ring,
   a translucent glass monolith with a luminous core sphere and stacked "memory layers" inside, a
   cantilevered roof slab with a light edge, a tilted halo ring with light nodes, two data pylons
   and a floating MEMORY sign.
@@ -154,14 +155,14 @@ the service refuses a `remember`/`note` body that matches the secret guard patte
 
 | # | Item | Where | Done when |
 |---|---|---|---|
-| 1 | `SocietyMemory` service: head, recall, remember, note, propose_shared, promote, dismiss, overview; `DIGEST kind=memory` per op; `type: society` frontmatter; secret guard | `jarvis/society/memory.py` | `tests/unit/society/test_memory.py` green |
-| 2 | Tools: `society_memory_recall`; `society_wiki_note` delegates to the service and accepts `kind: shared` | `agent_tools.py`, `surface.py` | tool tests green, briefing shows `## Your memory` |
-| 3 | Checkpoint engine + `SocietyCheckpointChanged` + runtime hooks (run start/end, memory activity, approval enqueue/resolve, room open/settle) | `checkpoints.py`, `runtime.py`, `jarvis/core/events.py` | `test_checkpoints.py` green; the roster row flips to `archive` after a memory op |
-| 4 | REST: `GET /api/society/memory`, `POST /api/society/memory/recall`, `POST /api/society/memory/{id}/promote`, `POST …/dismiss`; approvals resolve promotes `core:memory:share` items | `society_routes.py` | route tests green; CLI coverage gate green |
-| 5 | Blender: `build_memory_house()`; GLB exported; preview checked through the MCP | `scripts/world/build_world_kit.py`, `assets/society/world/kit/memory-house.glb` | GLB in the tree, ≤ 3 000 triangles |
-| 6 | Island: `archive` becomes a ring kit place (slots 2–3), old tower removed, stand tile in front, labels renamed, house count test updated | `islandLayout.ts`, `KitBuilding.tsx`, `Landmarks.tsx`, `PlaceLabels.tsx`, locales | `islandLayout.test.ts` green |
-| 7 | Memory drawer + live core signal + WS invalidation on `SocietyCheckpointChanged` | `MemoryHouseDrawer.tsx`, `KitBuilding.tsx`, `WorldStage.tsx`, `useWebSocket.ts` | drawer opens on click; core glows when an agent is at the house |
-| 8 | Docs: this file, `jarvis/society/README.md`, `world-behaviour-manual.md` §3 note, `agent-definition.md` §5 pointer | docs | privacy review of touched docs |
+| 1 ✅ | `SocietyMemory` service: head, recall, remember, note, propose_shared, promote, dismiss, overview; `DIGEST kind=memory` per op; `type: society` frontmatter; secret guard | `jarvis/society/memory.py` | `tests/unit/society/test_memory.py` green |
+| 2 ✅ | Tools: `society_memory_recall`; `society_wiki_note` delegates to the service and accepts `kind: shared` | `agent_tools.py`, `surface.py` | tool tests green, briefing shows `## Your memory` |
+| 3 ✅ | Checkpoint engine + `SocietyCheckpointChanged` + runtime hooks (run start/end, memory activity, approval enqueue/resolve, room open/settle) | `checkpoints.py`, `runtime.py`, `jarvis/core/events.py` | `test_checkpoints.py` green; the roster row flips to `archive` after a memory op |
+| 4 ✅ | REST: `GET /api/society/memory`, `POST /api/society/memory/recall`, `POST /api/society/memory/{id}/promote`, `POST …/dismiss`; approvals resolve promotes `core:memory:share` items | `society_routes.py` | route tests green; CLI coverage gate green |
+| 5 ✅ | Blender: `build_memory_house()`; GLB exported; preview checked through the MCP | `scripts/world/kit_memory_house.py`, `assets/society/world/kit/memory-house.glb` | GLB in the tree (4 584 triangles: the glass, the core and the halo cost more than a hall; trimmed bevels keep it near the other hubs) |
+| 6 ✅ | Island: the Memory House stands on the archive plot, old tower removed, footprint blocks walking, label renamed in three locales | `MemoryHouse.tsx`, `Landmarks.tsx`, `islandLayout.ts`, `PlaceLabels.tsx`, locales | `islandLayout.test.ts` green |
+| 7 ✅ | Memory drawer + live core signal + WS invalidation on `SocietyCheckpointChanged` | `MemoryDrawer.tsx`, `MemoryHouse.tsx`, `WorldStage.tsx`, `useWebSocket.ts` | drawer opens on click; core glows when an agent is at the house |
+| 8 ✅ | Docs: this file, `jarvis/society/README.md`, `world-behaviour-manual.md` §3 note, `agent-definition.md` §5 pointer | docs | privacy review of touched docs |
 | 9 | Bundle rebuilt (`npm run build`), commits per wave by pathspec, no push | — | the running app shows the house after its self-reload |
 
 ## 5. Tests

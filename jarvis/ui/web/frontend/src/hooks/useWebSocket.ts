@@ -315,6 +315,13 @@ export function useWebSocket(): void {
           }
         }
 
+        // A society agent's derived place changed (trusted rules in the
+        // backend): the island re-reads its roster so the figure walks now,
+        // not on the next 30 s poll.
+        if (env.event_name === "SocietyCheckpointChanged") {
+          void queryClient.invalidateQueries({ queryKey: ["society", "roster"] });
+        }
+
         if (env.event_name === "TranscriptionUpdate") {
           const p = env.payload as { text?: string; is_final?: boolean };
           if (typeof p.text === "string") {

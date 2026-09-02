@@ -264,6 +264,10 @@ the archive" on it; the ledger shows the five fields.
 
 ## 5. Memory: the Obsidian wiki is the society's shared store
 
+> Built 2026-09-02 as the **Memory House** — service, hands, prompt section, review gate, REST and
+> the island building: [`memory-house.md`](memory-house.md) is the binding description; this
+> section keeps the original direction.
+
 Maintainer direction (2026-09-01): the agents continue and use the wiki we built as their
 common memory. This refines MASTERPLAN §3.1 / §6.6 — the `knowledge` table becomes a staging
 and provenance layer; the vault is where knowledge lives.

@@ -20,7 +20,9 @@ live under the scheduler and the voice router tool (M4) are not.
 | `approvals.py` | the unattended ask-queue: require > always-allow > tier vs ceiling; expiry parks, never drops |
 | `routines.py` | per-agent routines as tagged Automations tasks |
 | `surface.py` | the `society` chat surface: per-session hands (grant/focus/deny), the briefing, the ecosystem card |
-| `agent_tools.py` | `society_message_agent` (one typed envelope to ONE teammate), `society_wiki_note` (writes only under `society/<agent>/`), `society_shell` (the agent's own contained shell) |
+| `memory.py` | the society's ONE memory service (`docs/agent-society/memory-house.md`): head, recall (own > shared > user > others' unreviewed, every hit labelled), remember, note, propose_shared → approval `core:memory:share`, promote into `society/shared/`, dismiss, overview; every touch is a `DIGEST kind=memory` on the board |
+| `checkpoints.py` | where an agent IS on the island, derived from the board by trusted rules (paused, gate, meeting, archive after a memory touch with a 20 s hold, desk, idle); persists the roster row and publishes `SocietyCheckpointChanged` for the island |
+| `agent_tools.py` | `society_message_agent` (one typed envelope to ONE teammate), `society_wiki_note` (kind memory / note / shared, through `memory.py`), `society_memory_recall` (the labelled lookup), `society_shell` (the agent's own contained shell) |
 | `shell.py` | the shell backend seam: `LocalBackend` now (local by decision), path containment, caps |
 | `browser/` | the agent's browser: one-click venv install of browser-use, the in-venv runner, per-agent persistent profiles + login sessions, `society_browser` |
 | `learning.py` | automatic learning: turn digest → skill in the agent's own namespace, `society_run_skill`, promotion to the global registry as a draft |
