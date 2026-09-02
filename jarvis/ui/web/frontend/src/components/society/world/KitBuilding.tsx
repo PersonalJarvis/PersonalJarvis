@@ -18,8 +18,10 @@ import pluginDocksUrl from "@/assets/society/world/kit/plugin-docks.glb";
 import relayTowerUrl from "@/assets/society/world/kit/relay-tower.glb";
 import skillForgeUrl from "@/assets/society/world/kit/skill-forge.glb";
 import terminalCantinaUrl from "@/assets/society/world/kit/terminal-cantina.glb";
+import { useBuildingPoses, useBuildingYaw } from "./buildingPoses";
 import { useCameraStore } from "./cameraStore";
-import { buildIsland, groundY, type KitPlace } from "./islandLayout";
+import { buildIsland, groundY, kitId, type KitPlace } from "./islandLayout";
+import { RotateHandle } from "./RotateHandle";
 import { createToonRamp } from "./worldMaterials";
 
 /** Every kit file the registry knows. Adding a building = adding a row. */
@@ -121,13 +123,15 @@ export function KitBuilding({
   }, [hover, gl, onClick]);
 
   const { map, content } = buildIsland();
-  const { x, z, rotation } = content.kitPoses[place];
+  const { x, z } = content.kitPoses[place];
+  // The heading: the designed one unless the viewer turned the building.
+  const rotation = useBuildingYaw(kitId(place));
   const y = groundY(map, x, z);
 
   const click = (e: ThreeEvent<MouseEvent>) => {
     if (!onClick) return;
     e.stopPropagation();
-    if (useCameraStore.getState().dragging) return;
+    if (useCameraStore.getState().dragging || useBuildingPoses.getState().rotating) return;
     onClick(place);
   };
 
@@ -149,6 +153,7 @@ export function KitBuilding({
           <meshBasicMaterial color={selected ? "#ffd166" : "#fffaf0"} transparent opacity={0.85} />
         </mesh>
       )}
+      {selected && <RotateHandle id={kitId(place)} x={x} y={y} z={z} radius={KIT_RING_R[kit]} />}
     </group>
   );
 }

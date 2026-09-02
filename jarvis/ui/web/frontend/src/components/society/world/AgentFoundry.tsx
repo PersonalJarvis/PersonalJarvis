@@ -25,7 +25,8 @@ import {
   Object3D,
 } from "three";
 
-import { buildIsland, groundY, type KitPlace } from "./islandLayout";
+import { useBuildingYaw } from "./buildingPoses";
+import { buildIsland, groundY, kitId, type KitPlace } from "./islandLayout";
 import { KitBuilding } from "./KitBuilding";
 import { PORTAL_FLARE_MS, useSpawnStore } from "./spawnStore";
 
@@ -180,7 +181,9 @@ export function AgentFoundry({
   selected?: boolean;
 }) {
   const { map, content } = buildIsland();
-  const { x, z, rotation } = content.kitPoses.foundry;
+  const { x, z } = content.kitPoses.foundry;
+  // The portal effects turn with the hall when the viewer turns it.
+  const rotation = useBuildingYaw(kitId("foundry"));
   const y = groundY(map, x, z);
   const spinners = useRef<Array<{ obj: Object3D; rate: number }>>([]);
   const orb = useRef<Object3D | null>(null);

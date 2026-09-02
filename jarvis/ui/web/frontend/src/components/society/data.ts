@@ -25,7 +25,16 @@ import { announceSpawn } from "./world/spawnStore";
 export type AgentTier = "lead" | "orchestrator" | "specialist";
 
 /** Semantic place in the world (§2.7) — the backend owns this, never pixels. */
-export type AgentCheckpoint = "desk" | "meeting" | "archive" | "gate" | "idle";
+export type AgentCheckpoint =
+  | "desk"
+  | "meeting"
+  | "archive"
+  | "gate"
+  | "idle"
+  | "hub:plugins"
+  | "hub:skills"
+  | "hub:mcp"
+  | "hub:cli";
 
 /** Coarse run state for rows and badges; the event log holds the detail. */
 export type AgentRunState = "idle" | "working" | "waiting" | "paused";

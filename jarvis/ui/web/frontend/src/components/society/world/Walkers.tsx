@@ -13,6 +13,7 @@ import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import type { Group } from "three";
 
 import type { AgentCheckpoint, AgentRunState, SocietyAgent } from "../data";
+import { useBuildingPoses } from "./buildingPoses";
 import { useCameraStore } from "./cameraStore";
 import {
   FOUNDRY_BELT_LIFT_M,
@@ -20,6 +21,8 @@ import {
   findPath,
   foundryWalkOut,
   groundY,
+  isWalkable,
+  nearestWalkable,
   randomPlazaTile,
   smoothPath,
   tileToWorld,
@@ -48,6 +51,10 @@ export const CHECKPOINT_PLACE: Record<AgentCheckpoint, PlaceId | null> = {
   archive: "archive",
   gate: "harbor",
   idle: null,
+  "hub:plugins": "plugins",
+  "hub:skills": "skills",
+  "hub:mcp": "mcp",
+  "hub:cli": "cli",
 };
 
 interface Sim {
@@ -79,15 +86,45 @@ function stateMode(state: AgentRunState, atPurpose: boolean): WalkerMode {
 
 function pathTo(sim: Sim, target: [number, number]): boolean {
   const { map } = buildIsland();
-  const from = worldToTile(sim.x, sim.z);
+  let from = worldToTile(sim.x, sim.z);
+  // Caught inside a building the viewer just turned over it: step out first.
+  const escape = isWalkable(map, from[0], from[1]) ? null : nearestWalkable(map, from[0], from[1]);
+  if (escape) from = escape;
   const raw = findPath(map, from, target);
   if (!raw) return false;
-  const smooth = smoothPath(map, raw).slice(1);
+  const smooth = smoothPath(map, raw).slice(escape ? 0 : 1);
   sim.waypoints = smooth.map(([tx, tz]) => tileToWorld(tx, tz));
   if (sim.waypoints.length === 0) return false;
   sim.index = 0;
   sim.mode = "walk";
   return true;
+}
+
+/**
+ * A building was turned: a route may now cross it, a stand tile may have
+ * moved, a figure may even stand inside it. Re-plan from where the figure is.
+ */
+function replanAfterTurn(sim: Sim, state: AgentRunState): void {
+  if (sim.exiting) return;
+  const { map, content } = buildIsland();
+  const here = worldToTile(sim.x, sim.z);
+  const inside = !isWalkable(map, here[0], here[1]);
+  if (sim.mode === "walk") {
+    const end = sim.waypoints[sim.waypoints.length - 1];
+    if (end && pathTo(sim, worldToTile(end[0], end[1]))) return;
+  } else if (sim.purpose && sim.atPurpose) {
+    const stand = content.places[sim.purpose].standTile;
+    if (!inside && stand[0] === here[0] && stand[1] === here[1]) return;
+    sim.atPurpose = false;
+    sim.speed = NOMINAL_WALK_MPS;
+    if (pathTo(sim, stand)) return;
+  } else if (!inside) {
+    return;
+  } else if (pathTo(sim, randomPlazaTile(map, sim.rng))) {
+    return;
+  }
+  sim.mode = stateMode(state, sim.atPurpose);
+  sim.timer = 1;
 }
 
 function Walker({
@@ -106,6 +143,8 @@ function Walker({
   const gl = useThree((s) => s.gl);
   const [hover, setHover] = useState(false);
   const offset = useMemo(() => lateralOffset(agent.agentId), [agent.agentId]);
+  /** The building-pose generation this walker last planned against. */
+  const poseGen = useRef(useBuildingPoses.getState().generation);
 
   const sim = useRef<Sim | null>(null);
   if (sim.current === null) {
@@ -193,6 +232,11 @@ function Walker({
     const step = Math.min(dt, 0.1);
 
     if (!paused) {
+      const gen = useBuildingPoses.getState().generation;
+      if (gen !== poseGen.current) {
+        poseGen.current = gen;
+        replanAfterTurn(s, agent.state);
+      }
       if (s.mode === "walk") {
         const r = stepAlong(s.x, s.z, s.waypoints, s.index, s.speed, step);
         s.x = r.x;
@@ -267,7 +311,7 @@ function Walker({
 
   const onClick = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
-    if (useCameraStore.getState().dragging) return;
+    if (useCameraStore.getState().dragging || useBuildingPoses.getState().rotating) return;
     onSelect(agent.agentId);
   };
 

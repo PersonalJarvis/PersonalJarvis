@@ -96,6 +96,7 @@
 .sw-hud {
   position: absolute;
   inset: 0;
+  z-index: 22; /* above the place labels (drei Html zIndexRange tops at 20), below the drawers (30) */
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -152,6 +153,24 @@
 .sw-chip-btn[aria-pressed="true"] {
   background: #ffd166;
 }
+/* The running quest's bar breathes so "in progress" reads without a number. */
+.sw-quest-shimmer {
+  animation: sw-quest-breathe 1.6s ease-in-out infinite;
+}
+@keyframes sw-quest-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sw-quest-shimmer {
+    animation: none;
+  }
+}
 .sw-chip-sep {
   width: 1px;
   height: 12px;
@@ -162,12 +181,75 @@
   color: #4a5568;
   background: rgba(255, 248, 220, 0.9);
 }
+.sw-hint-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
 .sw-hint {
   font-size: 12px;
   color: #1f2a3a;
   background: rgba(255, 252, 245, 0.7);
   padding: 4px 8px;
   border-radius: 4px;
+}
+.sw-hint-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid rgba(31, 42, 58, 0.2);
+  background: rgba(255, 252, 245, 0.9);
+  cursor: pointer;
+}
+.sw-hint-btn:hover {
+  background: #fff8dc;
+}
+
+/* The rotate handle's badge beside a selected building: the heading and the way back. */
+.sw-rotate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
+  font-family: "Pixelify Sans", "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1;
+  color: #1f2a3a;
+  background: rgba(255, 252, 245, 0.92);
+  border: 1px solid rgba(31, 42, 58, 0.25);
+  border-radius: 4px;
+  box-shadow: 0 2px 0 rgba(31, 42, 58, 0.25);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.sw-rotate[data-turned] {
+  background: #fff8dc;
+  border-color: #1f2a3a;
+}
+.sw-rotate-deg {
+  min-width: 30px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.sw-rotate-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: #1f2a3a;
+  background: #ffd166;
+  border: 1px solid rgba(31, 42, 58, 0.35);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.sw-rotate-reset:hover {
+  background: #ffe9a8;
 }
 .sw-corner {
   display: flex;

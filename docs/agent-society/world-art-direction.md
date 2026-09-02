@@ -70,12 +70,31 @@ harbor and the gardens low at 2, the solar field on the mountain's foot terrace 
 
 **Market district (a round plateau of radius 39 tiles, level 3):**
 - open square, radius 13 tiles, paved; garden beds alternate around its rim;
-- the big tree in the exact centre, a ring bench around it, the long table on the south side —
-  this is the `meeting` checkpoint (MASTERPLAN §2.7);
-- the house ring at radius 19 tiles, doors facing the square; the four cardinal directions stay
-  open as gates; the Plugin Docks take two north-west slots, the hub's podium the two slots
-  flanking the north gate — eight houses remain, three variants cycling: solar-barrel roof,
-  garden roof, glass loft;
+- the Quest Board monument in the exact centre, a ring bench around it, the long table on the
+  south side — this is the `meeting` checkpoint (MASTERPLAN §2.7);
+- the house ring at radius 19 tiles; the four cardinal directions stay open as gates; the ring
+  hubs take their slots (`RING_KIT_SLOTS`), the hub's podium the two slots flanking the north
+  gate — the remaining slots hold houses, three variants cycling: solar-barrel roof, garden
+  roof, glass loft;
+- **which way a house faces** (`houseDefaultRotation`, maintainer 2026-09-02): the door faces
+  the square — unless that turns the house's back on the camera, which looks from the south-east
+  (`CAMERA_FROM`); then the door faces the ring road instead. A door the viewer never sees is a
+  house with its back turned. The houses stand in the south-east half of the ring (the hubs took
+  the north and west), so nearly all of them face the road; a house on the far side would keep
+  its door on the square;
+- **the viewer may turn any house or ring hub** (`buildingPoses.ts`, `RotateHandle.tsx`): click a
+  house (or open a hub's drawer) and a knob appears on the front of its selection ring; drag the
+  knob around the building and it follows, Shift snaps to 15° steps, and close to the designed
+  heading it snaps back. The badge beside the knob shows the heading and, once turned, a Reset;
+  the HUD offers "reset all". Headings are per viewer (localStorage), never synced, and go
+  straight into the island model (`applyBuildingYaws`): the blocked tiles, a hub's stand tile
+  and facing all move with the building, and walkers mid-route re-plan;
+- **nothing walks through furniture:** houses and hubs block their footprints plus a 0.5 m wall
+  margin; the monument's plinth and ring bench block 6 m around the centre and the long table
+  its rectangle; the hub's wings, colonnade, planters, pool and flag masts, the harbor kiosk and
+  gate pillars, the keeper's hut, every lamp post and every hedge segment block their tiles
+  (`blockSquareFurniture`, `blockLandmarkFurniture`, `buildIsland`). A figure that finds a
+  building turned over its head steps to the nearest free tile first (`nearestWalkable`);
 - the **hub** (lead agent) at the head of the square, north, on a **podium one level up**
   (18 × 10 tiles): a 24 × 12 m hall with a glass band and garden roofs, a set-back upper floor,
   the glass atrium under the dome, the beacon spire with its halo, two solar-roofed wings, a

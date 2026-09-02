@@ -7,25 +7,82 @@
  * building language (docs/agent-society/world-art-direction.md §4): white
  * walls, glass, solar barrels, garden roofs, wood accents, rounded shapes.
  */
-import { useMemo, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Color, InstancedMesh, Mesh, Object3D, Vector3 } from "three";
 
-import { LEVEL_Y, PLATEAU_LEVEL, buildIsland, groundY, type HousePlot, type Post } from "./islandLayout";
+import { useBuildingPoses, useBuildingYaw } from "./buildingPoses";
+import { useCameraStore } from "./cameraStore";
+import {
+  HEDGE_SEGMENT_M,
+  LEVEL_Y,
+  PLATEAU_LEVEL,
+  buildIsland,
+  groundY,
+  houseId,
+  type HousePlot,
+  type Post,
+} from "./islandLayout";
 import { QuestMonument } from "./QuestMonument";
+import { RotateHandle } from "./RotateHandle";
 import { Block, useKit, type Kit } from "./WorldKit";
 import { PAL } from "./worldMaterials";
 
-/** One house. Local +z is the front (door side); the plot rotation points it at the square. */
+/** Radius of the hover/selection ring under a house, in metres. */
+const HOUSE_RING_R = 4.6;
+
+/**
+ * One house. Local +z is the front (door side); the heading comes from the
+ * pose store — the designed one (toward the square, or toward the road when
+ * the square side is the camera's blind side) unless the viewer turned it.
+ * A click selects the house and shows its rotate handle.
+ */
 function House({ kit, plot }: { kit: Kit; plot: HousePlot }) {
   const { map } = buildIsland();
+  const id = houseId(plot.slot);
+  const rotation = useBuildingYaw(id);
+  const selected = useBuildingPoses((s) => s.selected === id);
+  const gl = useThree((s) => s.gl);
+  const [hover, setHover] = useState(false);
   const y = groundY(map, plot.x, plot.z);
   const w = plot.w * 2; // footprint in metres
   const d = plot.d * 2;
   const h = plot.variant === "glass-loft" ? 3.0 : 3.4;
   const shade = plot.seed > 0.5 ? PAL.wall : PAL.wallShade;
+
+  useEffect(() => {
+    if (!hover) return;
+    gl.domElement.style.cursor = "pointer";
+    return () => {
+      gl.domElement.style.cursor = "";
+    };
+  }, [hover, gl]);
+
+  const click = (e: ThreeEvent<MouseEvent>) => {
+    e.stopPropagation();
+    const poses = useBuildingPoses.getState();
+    if (useCameraStore.getState().dragging || poses.rotating) return;
+    poses.select(selected ? null : id);
+  };
+
   return (
-    <group position={[plot.x, y, plot.z]} rotation={[0, plot.rotation, 0]}>
+    <group
+      position={[plot.x, y, plot.z]}
+      rotation={[0, rotation, 0]}
+      onClick={click}
+      onPointerOver={(e) => {
+        e.stopPropagation();
+        setHover(true);
+      }}
+      onPointerOut={() => setHover(false)}
+    >
+      {(hover || selected) && (
+        <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[HOUSE_RING_R - 0.25, HOUSE_RING_R + 0.25, 40]} />
+          <meshBasicMaterial color={selected ? "#ffd166" : "#fffaf0"} transparent opacity={0.85} />
+        </mesh>
+      )}
+      {selected && <RotateHandle id={id} x={plot.x} y={y} z={plot.z} radius={HOUSE_RING_R} />}
       {/* body */}
       <Block kit={kit} at={[0, h / 2, 0]} size={[w, h, d]} color={shade} />
       {/* plinth */}
@@ -220,7 +277,7 @@ function Hedges({ kit, posts }: { kit: Kit; posts: Post[] }) {
     posts.forEach((p, i) => {
       dummy.position.set(p.x, p.y + 0.55, p.z);
       dummy.rotation.set(0, p.rotation, 0);
-      dummy.scale.set(2.3, 1.1, 0.8);
+      dummy.scale.set(HEDGE_SEGMENT_M[0], 1.1, HEDGE_SEGMENT_M[1]);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
       mesh.setColorAt(i, i % 3 === 0 ? colorB : colorA);
@@ -358,8 +415,8 @@ export function Village({
   const { content } = buildIsland();
   return (
     <group>
-      {content.houses.map((plot, i) => (
-        <House key={i} kit={kit} plot={plot} />
+      {content.houses.map((plot) => (
+        <House key={plot.slot} kit={kit} plot={plot} />
       ))}
       <Hub kit={kit} paused={paused} />
       <SquareCentre kit={kit} paused={paused} onQuestClick={onQuestClick} questOpen={questOpen} />

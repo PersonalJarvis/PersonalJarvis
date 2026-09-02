@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { focusFromSearch } from "./cameraStore";
-import { ISLAND_HALF_M } from "./islandLayout";
+import { CAMERA_FROM, ISLAND_HALF_M, facesCamera } from "./islandLayout";
 import {
   CAMERA_PITCH_DEG,
   CAMERA_YAW_DEG,
@@ -27,6 +27,17 @@ describe("worldCamera", () => {
     expect(x).toBeCloseTo(z, 3);
     // Steeper than 45°: more height than ground distance.
     expect(y).toBeGreaterThan(Math.hypot(x, z));
+  });
+
+  it("agrees with the island layout about where it stands", () => {
+    // The layout turns houses so no door faces away from THIS camera: the
+    // ground vector toward the camera is the opposite of screen-up on the ground.
+    const { forward } = groundBasis();
+    expect(-forward[0]).toBeCloseTo(CAMERA_FROM[0], 5);
+    expect(-forward[1]).toBeCloseTo(CAMERA_FROM[1], 5);
+    // A front pointing at the camera is seen; one pointing away is a back.
+    expect(facesCamera(Math.atan2(CAMERA_FROM[0], CAMERA_FROM[1]))).toBe(true);
+    expect(facesCamera(Math.atan2(-CAMERA_FROM[0], -CAMERA_FROM[1]))).toBe(false);
   });
 
   it("zooms in five fixed steps, up to the whole island, and clamps at both ends", () => {
