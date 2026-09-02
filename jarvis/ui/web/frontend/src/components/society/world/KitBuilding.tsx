@@ -15,7 +15,7 @@ import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 
 import pluginDocksUrl from "@/assets/society/world/kit/plugin-docks.glb";
 import { useCameraStore } from "./cameraStore";
-import { buildIsland, groundY, tileToWorld, type PlaceId } from "./islandLayout";
+import { buildIsland, groundY, type KitPlace } from "./islandLayout";
 import { createToonRamp } from "./worldMaterials";
 
 /** Every kit file the registry knows. Adding a building = adding a row. */
@@ -24,9 +24,9 @@ export const KIT_URLS = {
 } as const;
 export type KitId = keyof typeof KIT_URLS;
 
-/** Where each kit building stands and which place it is. */
-export const KIT_PLACEMENTS: ReadonlyArray<{ kit: KitId; place: PlaceId; rotation: number }> = [
-  { kit: "plugin-docks", place: "plugins", rotation: 0 },
+/** Which kit file stands at which kit place; the pose comes from the island layout. */
+export const KIT_PLACEMENTS: ReadonlyArray<{ kit: KitId; place: KitPlace }> = [
+  { kit: "plugin-docks", place: "plugins" },
 ];
 
 /** Emission above this strength renders unlit (a lamp, a neon tube), below it stays a lit toon. */
@@ -56,14 +56,12 @@ function restyle(root: Object3D, ramp: ReturnType<typeof createToonRamp>): void 
 export function KitBuilding({
   kit,
   place,
-  rotation,
   onClick,
   selected,
 }: {
   kit: KitId;
-  place: PlaceId;
-  rotation: number;
-  onClick?: (place: PlaceId) => void;
+  place: KitPlace;
+  onClick?: (place: KitPlace) => void;
   selected?: boolean;
 }) {
   const { scene } = useGLTF(KIT_URLS[kit]);
@@ -95,8 +93,7 @@ export function KitBuilding({
   }, [hover, gl, onClick]);
 
   const { map, content } = buildIsland();
-  const [tx, tz] = content.places[place].tile;
-  const [x, z] = tileToWorld(tx, tz);
+  const { x, z, rotation } = content.kitPoses[place];
   const y = groundY(map, x, z);
 
   const click = (e: ThreeEvent<MouseEvent>) => {

@@ -27,8 +27,9 @@ export function PlaceLabels() {
   return (
     <group>
       {(Object.keys(content.places) as PlaceId[]).map((id) => {
+        const pose = id in content.kitPoses ? content.kitPoses[id as keyof typeof content.kitPoses] : null;
         const [tx, tz] = content.places[id].tile;
-        const [x, z] = tileToWorld(tx, tz);
+        const [x, z] = pose ? [pose.x, pose.z] : tileToWorld(tx, tz);
         const y = groundY(map, x, z) + LABEL_Y[id];
         return (
           <Html key={id} position={[x, y, z]} center zIndexRange={[20, 5]} style={{ pointerEvents: "none" }}>

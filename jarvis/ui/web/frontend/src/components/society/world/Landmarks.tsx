@@ -181,7 +181,7 @@ export function Landmarks({
   return (
     <group>
       {KIT_PLACEMENTS.map((k) => (
-        <KitBuilding key={k.kit} kit={k.kit} place={k.place} rotation={k.rotation} onClick={onHubClick} selected={openHub === k.place} />
+        <KitBuilding key={k.kit} kit={k.kit} place={k.place} onClick={onHubClick} selected={openHub === k.place} />
       ))}
       <Workshop kit={kit} />
       <Archive kit={kit} />
