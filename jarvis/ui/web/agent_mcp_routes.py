@@ -122,4 +122,103 @@ def agent_mcp_connect(body: ConnectBody) -> dict[str, Any]:
     return result
 
 
+# --------------------------------------------------------------- pairing
+
+
+class PairBody(BaseModel):
+    name: str = Field(
+        description="What to call this client later, e.g. 'Claude Desktop - MacBook'.",
+        min_length=1,
+        max_length=120,
+    )
+    scope: str = Field(
+        default="work",
+        description=(
+            "read = look but do not spend; work = talk to agents and post quests; "
+            "full = also governance (approvals, kill switch)."
+        ),
+    )
+    client: str = Field(
+        default="",
+        description="Which client this is for. Shapes the snippet; blank gives the generic one.",
+    )
+    transport: str = Field(default="stdio", description="stdio (preferred) or http")
+    base_url: str = Field(
+        default="",
+        description=(
+            "The URL this client will reach Jarvis at. Set it when pairing a client "
+            "on ANOTHER machine; blank means this box's own address."
+        ),
+    )
+    install: bool = Field(
+        default=False,
+        description="Also write the entry into the client's config file on this machine.",
+    )
+
+
+@router.post("/pair", openapi_extra={"x-jarvis-dangerous": True})
+def agent_mcp_pair(body: PairBody) -> dict[str, Any]:
+    """Issue a client its OWN credential and hand back the finished config.
+
+    This is the one-click path: a named, scoped, individually revocable token
+    plus the exact JSON to paste. The secret appears in this response and never
+    again — it is stored only as a hash — so whatever reads this must show it
+    to the person or write it straight into the client's config.
+    """
+    from jarvis.mcp.agents import export, tokens
+
+    if body.transport not in ("stdio", "http"):
+        raise HTTPException(422, "transport must be 'stdio' or 'http'")
+    base_url = body.base_url.strip().rstrip("/") or None
+    try:
+        token, secret = tokens.store().issue(name=body.name, scope=body.scope, client=body.client)
+    except tokens.TokenError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    client_key = body.client.strip() or "claude-desktop"
+    known = {t.key for t in export.targets()}
+    if client_key not in known:
+        client_key = "claude-desktop"
+
+    entry = export.entry_for(transport=body.transport, token=secret, base_url=base_url)
+    result: dict[str, Any] = {
+        "token": token.to_public(),
+        "secret": secret,
+        "secret_shown_once": True,
+        "transport": body.transport,
+        "client": client_key,
+        "config": {"mcpServers": {export.ENTRY_NAME: entry}},
+        "config_text": export.snippet(
+            client_key, transport=body.transport, token=secret, base_url=base_url
+        ),
+        "installed": None,
+    }
+    if body.install:
+        result["installed"] = export.install(
+            client_key, transport=body.transport, token=secret, base_url=base_url
+        )
+    return result
+
+
+@router.get("/tokens", openapi_extra={"x-jarvis-readonly": True})
+def agent_mcp_tokens(include_revoked: bool = False) -> dict[str, Any]:
+    """Every client that has been paired — never the secrets, only who and when."""
+    from jarvis.mcp.agents import tokens
+
+    rows = [t.to_public() for t in tokens.store().list(include_revoked=include_revoked)]
+    return {"tokens": rows, "total": len(rows), "scopes": list(tokens.SCOPES)}
+
+
+@router.delete("/tokens/{token_id}", openapi_extra={"x-jarvis-dangerous": True})
+def agent_mcp_revoke(token_id: str) -> dict[str, Any]:
+    """Cut off one client. Every other paired client keeps working."""
+    from jarvis.mcp.agents import tokens
+
+    try:
+        token = tokens.store().revoke(token_id)
+    except tokens.TokenError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"token": token.to_public(), "revoked": True}
+
+
 __all__ = ["router"]

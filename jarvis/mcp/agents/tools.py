@@ -367,6 +367,121 @@ async def _agent_assign(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------- quests
+
+
+async def _quest_post(args: dict[str, Any]) -> dict[str, Any]:
+    """Post a job without naming who does it — the ecosystem picks, or forges.
+
+    The highest-value verb on this surface for a caller who knows what they
+    want but not who on the team should do it. Routing is deterministic Python
+    (focus overlap, names mentioned, load), never a model, and the answer says
+    WHY the taker was chosen — including when a new teammate was forged for it.
+    """
+    from jarvis.society.roster import RosterError
+
+    rt = await society()
+    text = str(args["text"]).strip()
+    if not text:
+        raise ValueError("text must not be empty — a quest is a job in one sentence")
+    try:
+        quest = await rt.quests.create(
+            text,
+            title=str(args.get("title") or "") or None,
+            lang=str(args.get("lang") or "") or None,
+        )
+    except RosterError as exc:
+        raise _refuse_typed(exc) from exc
+    row = quest.to_dict()
+    return {
+        "quest": row,
+        "taker": row.get("agent_id"),
+        "why": (row.get("routing") or {}).get("reason"),
+        "forged_a_new_agent": bool((row.get("routing") or {}).get("forged")),
+    }
+
+
+async def _quests_list(args: dict[str, Any]) -> dict[str, Any]:
+    rt = await society()
+    limit = max(1, min(int(args.get("limit") or 100), 1000))
+    state = str(args.get("state") or "").strip() or None
+    quests = await rt.quests.list(state=state, limit=limit)
+    return {"quests": [q.to_dict() for q in quests], "total": len(quests)}
+
+
+async def _quest_get(args: dict[str, Any]) -> dict[str, Any]:
+    rt = await society()
+    quest_id = str(args["quest_id"])
+    quest = await rt.quests.get(quest_id)
+    if quest is None:
+        raise EcosystemUnavailable(
+            f"quest {quest_id!r}", "no quest by that id. List them with quests_list."
+        )
+    events = await rt.store.events_for_trace(quest.trace_id)
+    return {
+        "quest": quest.to_dict(),
+        "events": [e.model_dump(mode="json") for e in events],
+    }
+
+
+async def _quest_cancel(args: dict[str, Any]) -> dict[str, Any]:
+    rt = await society()
+    quest_id = str(args["quest_id"])
+    try:
+        quest = await rt.quests.cancel(quest_id)
+    except KeyError as exc:
+        raise EcosystemUnavailable(f"quest {quest_id!r}", "no quest by that id.") from exc
+    return {"quest": quest.to_dict()}
+
+
+async def _quest_retry(args: dict[str, Any]) -> dict[str, Any]:
+    from jarvis.society.roster import RosterError
+
+    rt = await society()
+    quest_id = str(args["quest_id"])
+    try:
+        quest = await rt.quests.retry(quest_id)
+    except KeyError as exc:
+        raise EcosystemUnavailable(f"quest {quest_id!r}", "no quest by that id.") from exc
+    except RosterError as exc:
+        raise _refuse_typed(exc) from exc
+    row = quest.to_dict()
+    return {"quest": row, "taker": row.get("agent_id")}
+
+
+# ------------------------------------------------------------- portability
+
+
+async def _ecosystem_export(args: dict[str, Any]) -> dict[str, Any]:
+    """This ecosystem's design as a portable bundle — no secrets, no history."""
+    from .portable import export_bundle
+
+    rt = await society()
+    return await export_bundle(rt, include_archived=bool(args.get("include_archived")))
+
+
+async def _ecosystem_import(args: dict[str, Any]) -> dict[str, Any]:
+    """Apply a bundle from another machine. Adopts by name, mints what is new."""
+    from .portable import BundleError, import_bundle
+
+    rt = await society()
+    bundle = args.get("bundle")
+    if isinstance(bundle, str):
+        try:
+            bundle = json.loads(bundle)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"bundle is not valid JSON: {exc}") from exc
+    try:
+        return await import_bundle(
+            rt,
+            bundle,
+            overwrite=bool(args.get("overwrite", True)),
+            dry_run=bool(args.get("dry_run", False)),
+        )
+    except BundleError as exc:
+        raise EcosystemUnavailable("that bundle", str(exc)) from exc
+
+
 # -------------------------------------------------------------- the board
 
 
@@ -636,6 +751,132 @@ TOOLS: Final[tuple[AgentTool, ...]] = (
         tags=("work",),
     ),
     AgentTool(
+        name="quest_post",
+        description=(
+            "Post a job on the Quest Board WITHOUT choosing who does it. The "
+            "ecosystem routes it: deterministic Python scores every agent on focus "
+            "overlap, whether the quest names them, and current load — and if "
+            "nobody fits, it forges a new teammate for the job. The answer names "
+            "the taker and why. This is the tool to reach for when you know what "
+            "you want done but not who should do it. Costs money."
+        ),
+        input_schema=_obj(
+            {
+                "text": {
+                    "type": "string",
+                    "description": "The job, in one or two sentences.",
+                },
+                "title": {"type": "string", "description": "Short label. Derived if omitted."},
+                "lang": {
+                    "type": "string",
+                    "description": "Language for the agent's answer, e.g. 'de'.",
+                },
+            },
+            ["text"],
+        ),
+        handler=_quest_post,
+        dangerous=True,
+        tags=("quests", "work"),
+    ),
+    AgentTool(
+        name="quests_list",
+        description=(
+            "The Quest Board: every posted job, newest first, with who took it, "
+            "why, and where it stands. Filter by state to see only what is open."
+        ),
+        input_schema=_obj(
+            {
+                "state": {
+                    "type": "string",
+                    "description": "Only this state (e.g. open, running, done, failed).",
+                },
+                "limit": {"type": "integer", "description": "1-1000, default 100."},
+            }
+        ),
+        handler=_quests_list,
+        tags=("quests",),
+    ),
+    AgentTool(
+        name="quest_get",
+        description=(
+            "One quest in full: its state, its taker and the routing reason, plus "
+            "every board event on its trace — the whole story of one job."
+        ),
+        input_schema=_obj({"quest_id": {"type": "string"}}, ["quest_id"]),
+        handler=_quest_get,
+        tags=("quests",),
+    ),
+    AgentTool(
+        name="quest_cancel",
+        description="Stop a quest. Work already running for it is dropped.",
+        input_schema=_obj({"quest_id": {"type": "string"}}, ["quest_id"]),
+        handler=_quest_cancel,
+        dangerous=True,
+        tags=("quests",),
+    ),
+    AgentTool(
+        name="quest_retry",
+        description=(
+            "Route a failed or open quest again. The taker may come out different "
+            "the second time — the roster or the load has changed. Costs money."
+        ),
+        input_schema=_obj({"quest_id": {"type": "string"}}, ["quest_id"]),
+        handler=_quest_retry,
+        dangerous=True,
+        tags=("quests",),
+    ),
+    AgentTool(
+        name="ecosystem_export",
+        description=(
+            "This ecosystem's design as a portable bundle: every agent with its "
+            "role, focus, model, permissions and budget. Carries NO secrets, no "
+            "chat history and no board — only the team you built. Save the JSON "
+            "and hand it to ecosystem_import on another machine."
+        ),
+        input_schema=_obj(
+            {
+                "include_archived": {
+                    "type": "boolean",
+                    "description": "Include retired agents. Default false.",
+                }
+            }
+        ),
+        handler=_ecosystem_export,
+        tags=("portability",),
+    ),
+    AgentTool(
+        name="ecosystem_import",
+        description=(
+            "Bring a team over from another machine. Agents already here are "
+            "matched BY NAME and updated; the rest are created. Run it with "
+            "dry_run first to see exactly what it would do — importing twice "
+            "changes nothing the second time."
+        ),
+        input_schema=_obj(
+            {
+                "bundle": {
+                    "type": "object",
+                    "description": "The bundle from ecosystem_export.",
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "Report the plan and change nothing. Default false.",
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": (
+                        "Update agents that already exist here. Default true; "
+                        "false leaves them untouched and reports them as skipped."
+                    ),
+                },
+            },
+            ["bundle"],
+        ),
+        handler=_ecosystem_import,
+        dangerous=True,
+        tags=("portability",),
+    ),
+    AgentTool(
         name="agent_inbox",
         description=(
             "Everything addressed to one agent, oldest first. Pass after_seq with the "
@@ -695,6 +936,26 @@ TOOLS: Final[tuple[AgentTool, ...]] = (
         ),
         handler=_agent_create,
         tags=("roster",),
+    ),
+    AgentTool(
+        name="capabilities_list",
+        description=(
+            "Everything the agents can actually use on this machine: connected "
+            "plugins, coding CLIs, MCP servers, active skills and core tools. This "
+            "is what makes an agent able to do a thing rather than only talk about "
+            "it — check here before assigning work that needs a capability."
+        ),
+        input_schema=_obj(
+            {
+                "kind": {
+                    "type": "string",
+                    "enum": ["plugin", "cli", "mcp", "skill", "core"],
+                    "description": "Only this kind. Omit for everything.",
+                }
+            }
+        ),
+        handler=_capabilities_list,
+        tags=("discovery",),
     ),
     AgentTool(
         name="rooms_list",

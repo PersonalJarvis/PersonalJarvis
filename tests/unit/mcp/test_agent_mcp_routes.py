@@ -170,3 +170,152 @@ def test_connect_writes_into_a_clients_config(
     assert body["restart_required"] is True
     written = json.loads((tmp_path / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
     assert "jarvis-agents" in written["mcpServers"]
+
+
+# ------------------------------------------------------- per-client tokens
+
+
+@pytest.fixture
+def token_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A token store of our own — never the real one on this machine."""
+    from jarvis.mcp.agents import tokens
+
+    store = tokens.TokenStore(tmp_path / "mcp_tokens.json")
+    monkeypatch.setattr(tokens, "_store", store)
+    return store
+
+
+def test_a_scoped_token_opens_the_agent_surface(token_store, keyed: str) -> None:
+    """A paired client authenticates as ITSELF, not with the master key."""
+    _token, secret = token_store.issue(name="Cursor - laptop", scope="work")
+
+    with TestClient(_mounted_app()) as client:
+        names = _tool_names(client, "/api/control/mcp/agents", secret)
+
+    assert "agent_chat" in names
+    assert "quest_post" in names
+
+
+def test_a_read_token_is_never_offered_a_spending_tool(token_store, keyed: str) -> None:
+    """Scope is enforced by NOT LISTING. A tool a model can see, it will call."""
+    _token, secret = token_store.issue(name="Dashboard", scope="read")
+
+    with TestClient(_mounted_app()) as client:
+        names = _tool_names(client, "/api/control/mcp/agents", secret)
+
+    assert "agents_list" in names and "ecosystem_status" in names
+    for spender in ("agent_chat", "agent_assign", "quest_post", "kill_switch"):
+        assert spender not in names, f"a read token must not even see {spender}"
+
+
+def test_a_work_token_may_spend_but_not_govern(token_store, keyed: str) -> None:
+    _token, secret = token_store.issue(name="Phone", scope="work")
+
+    with TestClient(_mounted_app()) as client:
+        names = _tool_names(client, "/api/control/mcp/agents", secret)
+
+    assert {"agent_chat", "quest_post", "agent_assign"} <= names
+    assert "kill_switch" not in names, "stopping the house is the owner's call"
+    assert "approval_resolve" not in names
+
+
+def test_the_control_key_still_sees_everything(token_store, keyed: str) -> None:
+    with TestClient(_mounted_app()) as client:
+        names = _tool_names(client, "/api/control/mcp/agents", keyed)
+
+    assert {"kill_switch", "approval_resolve", "agent_chat"} <= names
+
+
+def test_a_revoked_token_is_dead_at_once(token_store, keyed: str) -> None:
+    token, secret = token_store.issue(name="Stolen laptop", scope="full")
+    token_store.revoke(token.token_id)
+
+    with TestClient(_mounted_app()) as client:
+        answer = client.post(
+            "/api/control/mcp/agents",
+            headers={**_MCP_HEADERS, "Authorization": f"Bearer {secret}"},
+            json={},
+        )
+
+    assert answer.status_code == 401
+
+
+def test_a_token_does_not_open_the_tools_surface(token_store, keyed: str) -> None:
+    """A scoped token is for the ecosystem; Jarvis' own hands need the key."""
+    _token, secret = token_store.issue(name="Anything", scope="full")
+
+    with TestClient(_mounted_app()) as client:
+        answer = client.post(
+            "/api/control/mcp/",
+            headers={**_MCP_HEADERS, "Authorization": f"Bearer {secret}"},
+            json={},
+        )
+
+    assert answer.status_code == 401
+
+
+# --------------------------------------------------------- the pairing flow
+
+
+def test_pair_returns_a_finished_config_with_its_own_credential(
+    connect_app: FastAPI, token_store
+) -> None:
+    with TestClient(connect_app) as client:
+        body = client.post(
+            "/api/agent-mcp/pair",
+            json={"name": "Claude Desktop - MacBook", "scope": "work", "client": "claude-desktop"},
+        ).json()
+
+    assert body["secret_shown_once"] is True
+    secret = body["secret"]
+    assert secret.startswith("jarvis_mcp_")
+
+    # The config is finished: paste it, restart the client, done.
+    entry = body["config"]["mcpServers"]["jarvis-agents"]
+    assert entry["args"] == ["-m", "jarvis.mcp.agents.bridge"]
+    assert entry["env"]["JARVIS_MCP_TOKEN"] == secret
+    assert "JARVIS_CONTROL_KEY" not in entry["env"], "pairing must not hand out the master key"
+    assert json.loads(body["config_text"])["mcpServers"]["jarvis-agents"] == entry
+
+    # And it really works as a credential.
+    assert token_store.verify(secret) is not None
+
+
+def test_pair_for_another_machine_uses_that_address(connect_app: FastAPI, token_store) -> None:
+    with TestClient(connect_app) as client:
+        body = client.post(
+            "/api/agent-mcp/pair",
+            json={
+                "name": "Work laptop",
+                "transport": "http",
+                "base_url": "http://192.168.1.50:47821",
+            },
+        ).json()
+
+    entry = body["config"]["mcpServers"]["jarvis-agents"]
+    assert entry["url"] == "http://192.168.1.50:47821/api/control/mcp/agents"
+    assert entry["headers"]["Authorization"] == f"Bearer {body['secret']}"
+
+
+def test_paired_clients_are_listed_and_revocable(connect_app: FastAPI, token_store) -> None:
+    with TestClient(connect_app) as client:
+        first = client.post("/api/agent-mcp/pair", json={"name": "One"}).json()
+        client.post("/api/agent-mcp/pair", json={"name": "Two"}).json()
+
+        listed = client.get("/api/agent-mcp/tokens").json()
+        assert {t["name"] for t in listed["tokens"]} == {"One", "Two"}
+        assert all("secret" not in t for t in listed["tokens"])
+        assert listed["scopes"] == ["read", "work", "full"]
+
+        token_id = first["token"]["token_id"]
+        gone = client.request("DELETE", f"/api/agent-mcp/tokens/{token_id}").json()
+        assert gone["revoked"] is True
+
+        left = client.get("/api/agent-mcp/tokens").json()
+        assert {t["name"] for t in left["tokens"]} == {"Two"}
+
+
+def test_pair_refuses_a_nameless_client(connect_app: FastAPI, token_store) -> None:
+    with TestClient(connect_app) as client:
+        answer = client.post("/api/agent-mcp/pair", json={"name": "   "})
+    assert answer.status_code == 422

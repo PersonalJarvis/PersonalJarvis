@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import os
 import re
 import secrets
@@ -23,10 +24,12 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Iterable, MutableMapping
 from http.cookies import CookieError, SimpleCookie
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 from urllib.parse import parse_qs, urlsplit
 
 from jarvis.core.branding import CONFIG_FILE_NAME, SESSION_COOKIE_NAME
+
+log = logging.getLogger(__name__)
 
 COOKIE_NAME = SESSION_COOKIE_NAME
 
@@ -40,7 +43,7 @@ Receive = Callable[[], Awaitable[dict[str, Any]]]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 CredentialValidator = Callable[[str], bool]
-AuthKind = Literal["control", "session", "open"]
+AuthKind = Literal["control", "session", "open", "mcp"]
 Origin = tuple[str, str, int | None]
 
 _BOOTSTRAP_TOKEN_LOCK = threading.Lock()
@@ -664,9 +667,7 @@ async def _reject(
     await send({"type": "http.response.body", "body": body})
 
 
-async def reject_host(
-    scope: Scope, send: Send, receive: Receive | None = None
-) -> None:
+async def reject_host(scope: Scope, send: Send, receive: Receive | None = None) -> None:
     """Reject an untrusted Host for HTTP or WebSocket before downstream code."""
     await _reject(
         scope,
@@ -678,9 +679,7 @@ async def reject_host(
     )
 
 
-async def reject_origin(
-    scope: Scope, send: Send, receive: Receive | None = None
-) -> None:
+async def reject_origin(scope: Scope, send: Send, receive: Receive | None = None) -> None:
     """Reject a foreign, null, malformed, or required-but-missing Origin."""
     await _reject(
         scope,
@@ -692,9 +691,7 @@ async def reject_origin(
     )
 
 
-async def reject_unauthorized(
-    scope: Scope, send: Send, receive: Receive | None = None
-) -> None:
+async def reject_unauthorized(scope: Scope, send: Send, receive: Receive | None = None) -> None:
     """Reject a request that lacks a valid Jarvis credential."""
     await _reject(
         scope,
@@ -824,6 +821,31 @@ class SurfaceSecurity:
             return False
         return origin == _scope_origin(scope) or origin in self._trusted_origins
 
+    #: The only path where a per-client MCP token counts as a credential.
+    #: Deliberately exact: the desktop UI routes are NOT key-gated — they rely
+    #: on this guard — so a token accepted app-wide would open them too.
+    _MCP_AGENT_SURFACE_PATH: ClassVar[str] = "/api/control/mcp/agents"
+
+    def _mcp_token_accepted(self, scope: Scope, bearer: str) -> bool:
+        """Whether ``bearer`` is a live MCP token AND this is the MCP path.
+
+        An MCP token is a Bearer credential like the control key, so a request
+        carrying one is not browser-shaped and needs no Origin (see the CSRF
+        rule below). It is scoped to one path because it grants less: the agent
+        ecosystem, never the rest of the Control API or the UI routes.
+        """
+        if str(scope.get("path", "") or "").rstrip("/") != self._MCP_AGENT_SURFACE_PATH:
+            return False
+        try:
+            from jarvis.mcp.agents import tokens
+        except Exception:  # noqa: BLE001 — no MCP package → no such credential
+            return False
+        try:
+            return tokens.store().verify(bearer) is not None
+        except Exception:  # noqa: BLE001 — an unreadable token store denies, never crashes
+            log.debug("surface security: MCP token check failed", exc_info=True)
+            return False
+
     def _authenticate(self, scope: Scope) -> AuthKind | None:
         bearer_present, bearer = _presented_bearer(scope)
         if bearer_present:
@@ -836,6 +858,8 @@ class SurfaceSecurity:
                     return "control"
             except Exception:
                 return None
+            if self._mcp_token_accepted(scope, bearer):
+                return "mcp"
             try:
                 return "session" if self._session_validator(bearer) else None
             except Exception:
@@ -914,9 +938,7 @@ class SurfaceSecurity:
             return None
         return payload if isinstance(payload, dict) else None
 
-    async def _handle_session_request(
-        self, scope: Scope, receive: Receive, send: Send
-    ) -> None:
+    async def _handle_session_request(self, scope: Scope, receive: Receive, send: Send) -> None:
         if not is_secure_or_loopback(scope):
             await _reject(
                 scope,
@@ -990,9 +1012,7 @@ class SurfaceSecurity:
         )
         await send({"type": "http.response.body", "body": b""})
 
-    async def _handle_ws_ticket_request(
-        self, scope: Scope, receive: Receive, send: Send
-    ) -> None:
+    async def _handle_ws_ticket_request(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Mint a one-time WebSocket ticket for an already-authenticated caller.
 
         The ticket exists because WebKit engines drop the HttpOnly session
@@ -1160,9 +1180,7 @@ class SurfaceSecurity:
         if auth_kind is None:
             await reject_unauthorized(scope, send, receive)
             return
-        if auth_kind in ("session", "open") and not self.origin_is_trusted(
-            scope, required=True
-        ):
+        if auth_kind in ("session", "open") and not self.origin_is_trusted(scope, required=True):
             await reject_origin(scope, send, receive)
             return
         await self.app(scope, receive, send)

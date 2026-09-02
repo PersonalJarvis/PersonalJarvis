@@ -62,11 +62,27 @@ class _Surface:
         self._manager: Any | None = None
         self._ready: asyncio.Event | None = None
         self._task: asyncio.Task[None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def manager(self) -> Any | None:
-        if self._manager is not None and self._ready is not None:
+        """The session manager for the CURRENT event loop, built on first use.
+
+        The loop identity check is not paranoia. The transport's task group is
+        anyio's, and anyio task groups belong to the loop that created them: a
+        manager cached across a loop restart answers every request with
+        ``RuntimeError: Task group is not initialized`` and never recovers on
+        its own. Rebuilding when the loop changed costs one construction and
+        turns a permanently dead surface into a self-healing one.
+        """
+        loop = asyncio.get_running_loop()
+        if self._manager is not None and self._ready is not None and self._loop is loop:
             await self._ready.wait()
             return self._manager
+        if self._loop is not None and self._loop is not loop:
+            log.debug("jarvis MCP: %s surface rebuilding on a new event loop", self.name)
+            self._manager = None
+            self._ready = None
+            self._task = None
         try:
             from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
@@ -78,6 +94,7 @@ class _Surface:
         ready = asyncio.Event()
         self._manager = manager
         self._ready = ready
+        self._loop = loop
         self._task = asyncio.create_task(_run_manager(manager, ready))
         await ready.wait()
         return manager
@@ -189,6 +206,48 @@ def _surface_for(scope: dict[str, Any]) -> _Surface | None:
     return _SUFFIX_SURFACES.get(surface_suffix(scope))
 
 
+def _authorized(scope: dict[str, Any], surface: _Surface | None) -> bool:
+    """Whether this request may proceed.
+
+    Two credentials open the agent surface: the Control API key (the owner at
+    their own machine, full scope) and a per-client MCP token (named, scoped,
+    individually revocable). Everything else, including the tools surface,
+    takes the control key alone — a scoped token has no meaning for a catalog
+    that is Jarvis' own hands.
+    """
+    from jarvis.core import control_key as ck
+
+    presented = _bearer(scope)
+    if ck.verify_control_key(presented):
+        return True
+    if surface is not _AGENTS_SURFACE:
+        return False
+    from jarvis.mcp.agents import tokens
+
+    return tokens.store().verify(presented) is not None
+
+
+def _agent_identity(scope: dict[str, Any]) -> tuple[str, str]:
+    """``(scope_name, client_name)`` for the credential this request carries.
+
+    The control key is the owner, so it is ``full`` with no client name. A
+    token carries whatever scope it was issued with — verified a second time
+    here rather than threaded through, because the check is a dict lookup and
+    one compare, and a single source of truth beats a faster hand-off.
+    """
+    from jarvis.core import control_key as ck
+
+    presented = _bearer(scope)
+    if ck.verify_control_key(presented):
+        return "full", ""
+    from jarvis.mcp.agents import tokens
+
+    token = tokens.store().verify(presented)
+    if token is None:  # pragma: no cover — _authorized already rejected it
+        return "read", ""
+    return token.scope, token.name
+
+
 def build_mcp_asgi_app() -> Any:
     """The ASGI app to mount at ``/api/control/mcp`` — both surfaces.
 
@@ -204,14 +263,15 @@ def build_mcp_asgi_app() -> Any:
     async def app(scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope.get("type") != "http":
             return
-        from jarvis.core import control_key as ck
-
-        if not ck.verify_control_key(_bearer(scope)):
-            await _reject(send, 401, _UNAUTHORIZED_BODY)
-            return
+        # The surface is resolved BEFORE authentication because which
+        # credentials are accepted depends on it: scoped MCP tokens open the
+        # agent surface, the control key opens both.
         surface = _surface_for(scope)
         if surface is None:
             await _reject(send, 404, _NOT_A_SURFACE_BODY)
+            return
+        if not _authorized(scope, surface):
+            await _reject(send, 401, _UNAUTHORIZED_BODY)
             return
         manager = await surface.manager()
         if manager is None:
@@ -221,7 +281,21 @@ def build_mcp_asgi_app() -> Any:
             # A remote client is not one of Jarvis' own spawned sessions, so
             # there is no chat card to route an approval to; parked actions
             # surface through the approvals_list tool instead.
-            await manager.handle_request(scope, receive, send)
+            #
+            # The scope travels in ContextVars the same way the chat session
+            # does on the other surface: the stateless transport runs the tool
+            # call in a task started from this request, which inherits the
+            # context, and the server reads it when it lists and dispatches.
+            from jarvis.mcp.agents.server import REQUEST_CLIENT, REQUEST_SCOPE
+
+            scope_name, client_name = _agent_identity(scope)
+            scope_token = REQUEST_SCOPE.set(scope_name)
+            client_token = REQUEST_CLIENT.set(client_name)
+            try:
+                await manager.handle_request(scope, receive, send)
+            finally:
+                REQUEST_SCOPE.reset(scope_token)
+                REQUEST_CLIENT.reset(client_token)
             return
         # The session travels in a ContextVar: the stateless transport runs
         # the tool call in a task started from this request, which inherits

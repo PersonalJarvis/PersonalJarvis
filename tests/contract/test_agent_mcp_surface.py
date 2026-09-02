@@ -29,11 +29,17 @@ EXPECTED_TOOLS = {
     "ecosystem_status",
     "agents_list",
     "agent_get",
+    "capabilities_list",
     "agent_chat",
     "agent_message",
     "agent_assign",
     "agent_inbox",
     "board_events",
+    "quest_post",
+    "quests_list",
+    "quest_get",
+    "quest_cancel",
+    "quest_retry",
     "agent_create",
     "rooms_list",
     "room_open",
@@ -42,18 +48,24 @@ EXPECTED_TOOLS = {
     "approvals_list",
     "approval_resolve",
     "kill_switch",
+    "ecosystem_export",
+    "ecosystem_import",
 }
 
 #: Everything that starts spend, work, or stops the house. A tool that becomes
 #: dangerous without being listed here is a client that stopped asking first.
 EXPECTED_DANGEROUS = {
     "agent_chat",
+    "quest_post",
+    "quest_cancel",
+    "quest_retry",
     "agent_message",
     "agent_assign",
     "room_say",
     "room_settle",
     "approval_resolve",
     "kill_switch",
+    "ecosystem_import",
 }
 
 #: MCP's own rule for a tool name.

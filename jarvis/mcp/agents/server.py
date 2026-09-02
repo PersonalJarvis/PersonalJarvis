@@ -22,12 +22,22 @@ from __future__ import annotations
 
 import json
 import logging
+from contextvars import ContextVar
 from typing import Any, Final
 
 from . import tools as agent_tools
 from .context import EcosystemUnavailable, society
 
 log = logging.getLogger(__name__)
+
+#: The scope the current request authenticated with, set per HTTP request by
+#: ``jarvis.ui.web.mcp_server_routes``. ``"full"`` is what the control key
+#: carries — the owner at their own machine — so an unset value is never a
+#: privilege escalation, only the pre-token behaviour.
+REQUEST_SCOPE: ContextVar[str] = ContextVar("jarvis.mcp.agents.scope", default="full")
+
+#: The token name behind the current request, for log lines and refusals.
+REQUEST_CLIENT: ContextVar[str] = ContextVar("jarvis.mcp.agents.client", default="")
 
 #: The name clients show in their connector list. Kept distinct from the tools
 #: surface's plain "jarvis" so both can be connected at once.
@@ -137,6 +147,13 @@ def _prompt_text(name: str, args: dict[str, str]) -> str:
     return f"Unknown prompt: {name}"
 
 
+def _permitted(scope: str, spec: dict[str, Any]) -> bool:
+    """Whether the current scope may see and call one tool."""
+    from .tokens import allows
+
+    return allows(scope, str(spec["name"]), dangerous=bool(spec.get("dangerous")))
+
+
 def build_server() -> Any:
     """A low-level MCP server bound to the live agent ecosystem."""
     import mcp.types as types
@@ -146,6 +163,10 @@ def build_server() -> Any:
 
     @server.list_tools()  # type: ignore[misc, no-untyped-call]
     async def _list_tools() -> list[Any]:
+        # Filtered by scope rather than listed-then-refused: a model shown a
+        # tool it may not call will call it, read the refusal, and try again.
+        # Not offering it is the only honest way to say no.
+        scope = REQUEST_SCOPE.get()
         return [
             types.Tool(
                 name=spec["name"],
@@ -153,30 +174,50 @@ def build_server() -> Any:
                 inputSchema=spec["inputSchema"],
             )
             for spec in agent_tools.tool_specs()
+            if _permitted(scope, spec)
         ]
 
     @server.call_tool()  # type: ignore[misc, no-untyped-call]
     async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[Any]:
+        scope = REQUEST_SCOPE.get()
+        tool = agent_tools.get(name)
+        if tool is not None and not _permitted(
+            scope, {"name": tool.name, "dangerous": tool.dangerous}
+        ):
+            client = REQUEST_CLIENT.get() or "this token"
+            return [
+                types.TextContent(
+                    type="text",
+                    text=(
+                        f"{name} needs a wider scope than {client} has ({scope}). "
+                        "Ask the owner of this Jarvis for a token with a higher "
+                        "scope, or use a read-only tool instead."
+                    ),
+                )
+            ]
         text = await agent_tools.call(name, arguments)
         return [types.TextContent(type="text", text=text)]
 
     @server.list_resources()  # type: ignore[misc, no-untyped-call]
     async def _list_resources() -> list[Any]:
+        # ``Resource.uri`` is a pydantic ``AnyUrl``; pydantic coerces the string
+        # at construction, so the values below are correct at runtime and the
+        # annotations are simply narrower than the constructor accepts.
         fixed = [
             types.Resource(
-                uri=_ECOSYSTEM_URI,
+                uri=_ECOSYSTEM_URI,  # type: ignore[arg-type]
                 name="Ecosystem status",
                 description="The whole agent house at a glance: agents, runs, rooms, approvals.",
                 mimeType="application/json",
             ),
             types.Resource(
-                uri=_ROSTER_URI,
+                uri=_ROSTER_URI,  # type: ignore[arg-type]
                 name="Agent roster",
                 description="Every agent with its role, model, focus and current run state.",
                 mimeType="application/json",
             ),
             types.Resource(
-                uri=_CAPABILITIES_URI,
+                uri=_CAPABILITIES_URI,  # type: ignore[arg-type]
                 name="Connected capabilities",
                 description="Plugins, CLIs, MCP servers and skills the agents can actually use.",
                 mimeType="application/json",
@@ -185,7 +226,10 @@ def build_server() -> Any:
         for uri, name, description in await _agent_resources():
             fixed.append(
                 types.Resource(
-                    uri=uri, name=name, description=description, mimeType="application/json"
+                    uri=uri,  # type: ignore[arg-type]
+                    name=name,
+                    description=description,
+                    mimeType="application/json",
                 )
             )
         return fixed

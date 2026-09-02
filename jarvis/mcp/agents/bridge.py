@@ -15,8 +15,10 @@ machine or a container:
 
 * ``JARVIS_API_URL``     — base URL of the Jarvis to drive. Default: the local
   instance's admin API from this box's config.
-* ``JARVIS_CONTROL_KEY`` — the control key. Default: read the same way the app
-  does (keyring → env → file), which needs no configuration at all locally.
+* ``JARVIS_MCP_TOKEN``   — a per-client token (what a paired config carries).
+  Preferred: it is scoped and can be revoked without touching other clients.
+* ``JARVIS_CONTROL_KEY`` — the master control key. Default: read the same way
+  the app does (keyring → env → file), which needs no configuration locally.
 
 **A dead Jarvis is not a dead bridge.** When the app is not running, the client
 still connects and gets a tool list with one honest sentence explaining what to
@@ -39,28 +41,59 @@ log = logging.getLogger(__name__)
 #: Path of the agent surface under the Control API.
 SURFACE_PATH: Final[str] = "/api/control/mcp/agents"
 
+#: The shipped admin API port, used only when nothing else answers.
+_DEFAULT_PORT: Final[int] = 47821
+
 #: How long a forwarded call may take. Generous, because ``agent_chat`` waits
 #: for a model turn on purpose; the tool caps its own wait at 600 s.
 CALL_TIMEOUT_S: Final[float] = 660.0
 
 
 def api_base_url() -> str:
-    """Where Jarvis listens. Env wins, then this box's config, then the default."""
+    """Where Jarvis actually listens.
+
+    ``JARVIS_API_URL`` wins, for a bridge pointed at another machine. Otherwise
+    ask ``cli_ctl.discovery``, which reads the running instance's own session
+    file: that is authoritative even when the app bound a non-default port or
+    is running as a second instance, and it verifies the process is still
+    alive rather than pointing at a recycled port. Only if nothing is running
+    do we fall back to the configured port, and then to the shipped default.
+    """
     from_env = os.environ.get("JARVIS_API_URL", "").strip().rstrip("/")
     if from_env:
         return from_env
-    port = 47821
     try:
-        from jarvis.core import config as cfg
+        from jarvis.cli_ctl.discovery import discover
 
-        port = int(cfg.load().ui.admin_api_port)
+        found = discover()
+        if found is not None and found.base_url:
+            return str(found.base_url).rstrip("/")
+    except Exception:  # noqa: BLE001 — nothing discovered is normal, not an error
+        log.debug("agent MCP bridge: no running instance discovered", exc_info=True)
+    port = _DEFAULT_PORT
+    try:
+        from jarvis.core.config import load_config
+
+        port = int(load_config().ui.admin_api_port)
     except Exception:  # noqa: BLE001 — an unreadable config falls back to the shipped port
         log.debug("agent MCP bridge: config unreadable, using the default port", exc_info=True)
     return f"http://127.0.0.1:{port}"
 
 
 def control_key() -> str | None:
-    """The control key: env first (works off-box), else the app's own lookup."""
+    """The credential to present, best first.
+
+    1. ``JARVIS_MCP_TOKEN`` — a per-client token. What a paired config carries,
+       and the only one of the three that can be revoked on its own.
+    2. ``JARVIS_CONTROL_KEY`` — the master key, for a bridge run by hand.
+    3. the app's own lookup (keyring → env → file), so a bridge on the owner's
+       machine needs no configuration at all.
+
+    The name is historical; it returns whatever bearer value to send.
+    """
+    token = os.environ.get("JARVIS_MCP_TOKEN", "").strip()
+    if token:
+        return token
     from_env = os.environ.get("JARVIS_CONTROL_KEY", "").strip()
     if from_env:
         return from_env
@@ -88,8 +121,8 @@ async def _upstream() -> AsyncIterator[Any]:
     key = control_key()
     if not key:
         raise RuntimeError(
-            "No Jarvis control key found. Open Jarvis once to create one, or set "
-            "JARVIS_CONTROL_KEY."
+            "No Jarvis credential found. Pair this client from the Jarvis app to "
+            "get its own token, or set JARVIS_MCP_TOKEN / JARVIS_CONTROL_KEY."
         )
     url = f"{api_base_url()}{SURFACE_PATH}"
     headers = {"Authorization": f"Bearer {key}"}

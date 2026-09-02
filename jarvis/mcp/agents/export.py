@@ -118,20 +118,31 @@ def targets() -> list[ClientTarget]:
     return rows
 
 
-def stdio_entry(*, python: str | None = None, include_key: bool = False) -> dict[str, Any]:
+def stdio_entry(
+    *,
+    python: str | None = None,
+    include_key: bool = False,
+    token: str | None = None,
+    base_url: str | None = None,
+) -> dict[str, Any]:
     """The stdio shape: the client launches the bridge and speaks to it.
 
-    This is the form to prefer. It needs no URL, survives Jarvis changing port,
-    and works from a client that has no way to send an Authorization header.
+    This is the form to prefer. It needs no URL in the client, survives Jarvis
+    changing port, and works from a client that has no way to send an
+    Authorization header.
 
-    ``include_key`` writes the control key into the entry as an env var. Off by
-    default — the bridge finds the key itself from the credential store, and a
-    key in a config file is a key in a backup (AP-12).
+    ``token`` embeds a per-client MCP token, which is what makes a config
+    paste-and-go: the client authenticates as itself, and that one credential
+    can be revoked without touching any other client. Prefer it over
+    ``include_key``, which embeds the master control key — a key in a config
+    file is a key in every backup (AP-12), and revoking it logs out everything.
     """
     from .bridge import api_base_url, control_key
 
-    env: dict[str, str] = {"JARVIS_API_URL": api_base_url()}
-    if include_key:
+    env: dict[str, str] = {"JARVIS_API_URL": base_url or api_base_url()}
+    if token:
+        env["JARVIS_MCP_TOKEN"] = token
+    elif include_key:
         key = control_key()
         if key:
             env["JARVIS_CONTROL_KEY"] = key
@@ -142,26 +153,45 @@ def stdio_entry(*, python: str | None = None, include_key: bool = False) -> dict
     }
 
 
-def http_entry() -> dict[str, Any]:
+def http_entry(*, token: str | None = None, base_url: str | None = None) -> dict[str, Any]:
     """The direct shape: the client calls the surface over HTTP with a header.
 
-    Fewer moving parts, but the key is IN the config file, and the client must
-    support custom headers. Use it for a remote Jarvis or a client that cannot
-    launch a process.
+    Fewer moving parts, but the credential is IN the config file and the client
+    must support custom headers. With a ``token`` that is an acceptable trade —
+    it is scoped and revocable on its own; with the control key it is not.
     """
     from .bridge import SURFACE_PATH, api_base_url, control_key
 
-    key = control_key() or "<your Jarvis control key>"
+    credential = token or control_key() or "<your Jarvis control key>"
     return {
         "type": "http",
-        "url": f"{api_base_url()}{SURFACE_PATH}",
-        "headers": {"Authorization": f"Bearer {key}"},
+        "url": f"{base_url or api_base_url()}{SURFACE_PATH}",
+        "headers": {"Authorization": f"Bearer {credential}"},
     }
 
 
-def snippet(client: str = "claude-desktop", *, transport: str = "stdio") -> str:
+def entry_for(
+    *,
+    transport: str = "stdio",
+    token: str | None = None,
+    base_url: str | None = None,
+    include_key: bool = False,
+) -> dict[str, Any]:
+    """The config entry for one transport — the single place that chooses."""
+    if transport == "http":
+        return http_entry(token=token, base_url=base_url)
+    return stdio_entry(token=token, base_url=base_url, include_key=include_key)
+
+
+def snippet(
+    client: str = "claude-desktop",
+    *,
+    transport: str = "stdio",
+    token: str | None = None,
+    base_url: str | None = None,
+) -> str:
     """A ready-to-paste config block for one client."""
-    entry = stdio_entry() if transport == "stdio" else http_entry()
+    entry = entry_for(transport=transport, token=token, base_url=base_url)
     target = next((t for t in targets() if t.key == client), None)
     if target is not None and target.shape == "toml":
         lines = [f"[mcp_servers.{ENTRY_NAME}]"]
@@ -177,7 +207,14 @@ def snippet(client: str = "claude-desktop", *, transport: str = "stdio") -> str:
     return json.dumps({"mcpServers": {ENTRY_NAME: entry}}, indent=2)
 
 
-def install(client: str, *, transport: str = "stdio", include_key: bool = False) -> dict[str, Any]:
+def install(
+    client: str,
+    *,
+    transport: str = "stdio",
+    include_key: bool = False,
+    token: str | None = None,
+    base_url: str | None = None,
+) -> dict[str, Any]:
     """Write the entry into the client's own config file.
 
     Merges rather than replaces: an existing ``mcpServers`` object keeps every
@@ -193,13 +230,13 @@ def install(client: str, *, transport: str = "stdio", include_key: bool = False)
         return {
             "ok": False,
             "error": f"{target.label} keeps a hand-formatted config — paste this instead.",
-            "snippet": snippet(client, transport=transport),
+            "snippet": snippet(client, transport=transport, token=token, base_url=base_url),
             "path": str(target.config_path),
         }
     path = target.config_path
     if path is None:
         return {"ok": False, "error": f"{target.label} has no config location on this OS."}
-    entry = stdio_entry(include_key=include_key) if transport == "stdio" else http_entry()
+    entry = entry_for(transport=transport, token=token, base_url=base_url, include_key=include_key)
     existing: dict[str, Any] = {}
     if path.exists():
         try:
@@ -232,6 +269,7 @@ def install(client: str, *, transport: str = "stdio", include_key: bool = False)
 __all__ = [
     "ENTRY_NAME",
     "ClientTarget",
+    "entry_for",
     "http_entry",
     "install",
     "snippet",
