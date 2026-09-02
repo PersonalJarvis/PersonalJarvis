@@ -6,24 +6,35 @@
  * Nothing in this file touches three.js or React; `islandLayout.test.ts` pins
  * the geometry the way `deckRoom.test.ts` pins the mission deck.
  *
- * Layout decisions (maintainer, 2026-09-01 — recorded in
+ * Layout decisions (maintainer, 2026-09-01/02 — recorded in
  * docs/agent-society/world-art-direction.md):
  *
- *  - The island is a 10 × 10 grid of "fields". One field is what the viewer
+ *  - The island is a 16 × 16 grid of "fields". One field is what the viewer
  *    sees at the closest zoom without scrolling. Fields are the navigation
  *    unit, not a visible grid.
- *  - The central 4 × 4 fields are the MARKET DISTRICT: a village laid out like
- *    a ring — houses around one open square, the way a classic comic village
- *    stands around its meeting place — but built in a bright solarpunk
- *    language. The lead agent's hub stands at the head of the square.
- *  - Four quarters around the market carry the places the master plan names
- *    (§4.1): the workshop (west), the archive (north), the harbor gate on the
- *    southern bay, the lighthouse on the eastern cape; gardens and a solar
- *    field fill the corners.
+ *  - The central 4 × 4 fields are the MARKET DISTRICT: a round plateau with a
+ *    village laid out like a ring — houses around one open square, the way a
+ *    classic comic village stands around its meeting place — but built in a
+ *    bright solarpunk language. The lead agent's hub stands on its own podium
+ *    at the head of the village, behind the ring road, astride the hedge ring —
+ *    the palace at the north gate — with the ring hubs (docks, forge, relay,
+ *    cantina) in the house ring below it.
+ *  - Around the plateau the island is a composed landscape of BIOMES at
+ *    different heights, arranged for the camera (which looks toward the
+ *    north-west): the mountain with its snow cap is the backdrop in the
+ *    north-west, the archive tower crowns a terraced hill in the north, the
+ *    alpine meadows roll over the north-east, the lighthouse stands on a
+ *    rocky cape in the east, the tropical cove with its lagoon and palms fills
+ *    the low south-east foreground, the harbor bay bites into the south, the
+ *    orchard meadows cover the south-west and the dark forest the west.
+ *  - The terrain is a continuous height field quantised into steps: every
+ *    slope becomes a terrace, every steep place a cliff. Roads are GRADED —
+ *    never more than one step per tile — so every place stays reachable on
+ *    foot; cliffs of two or more steps are real barriers.
  *
  * Units: 1 world unit = 1 m (matches `lib/deckRoom.ts`). One tile is 2 m.
  * World origin is the island's centre; +x is east, +z is south, so the tile
- * with index (tx, tz) has its centre at ((tx + 0.5 − 80) · 2, (tz + 0.5 − 80) · 2).
+ * with index (tx, tz) has its centre at ((tx + 0.5 − 128) · 2, (tz + 0.5 − 128) · 2).
  */
 
 // ---------------------------------------------------------------------------
@@ -35,8 +46,8 @@ export const TILE_M = 2;
 /** Tiles along one edge of a "field" — the closest zoom shows about one field. */
 export const FIELD_TILES = 16;
 /** Fields along one island edge. */
-export const ISLAND_FIELDS = 10;
-/** Tiles along one island edge (160). */
+export const ISLAND_FIELDS = 16;
+/** Tiles along one island edge (256). */
 export const ISLAND_TILES = FIELD_TILES * ISLAND_FIELDS;
 /** Half the island edge in metres — the pan clamp. */
 export const ISLAND_HALF_M = (ISLAND_TILES * TILE_M) / 2;
@@ -46,6 +57,8 @@ export const MARKET_FIELDS = 4;
 export const MARKET_TILES = MARKET_FIELDS * FIELD_TILES;
 /** Half the market edge in tiles, from the centre. */
 export const MARKET_HALF_TILES = MARKET_TILES / 2;
+/** Radius (tiles) of the round plateau the market district stands on. */
+export const PLATEAU_RADIUS_TILES = MARKET_HALF_TILES + 7;
 /** The island centre in tile units — also the market's centre. */
 export const CENTER_TILE = ISLAND_TILES / 2;
 
@@ -66,19 +79,32 @@ export const TileKind = {
   path: 6,
   garden: 7,
   dock: 8,
+  /** Dark forest floor under the dense western woods. */
+  forest: 9,
+  /** High, sun-bleached alpine meadow. */
+  alpine: 10,
+  /** The mountain's snow cap. */
+  snow: 11,
 } as const;
 export type TileKind = (typeof TileKind)[keyof typeof TileKind];
 
 /**
  * Ground height per terrain level, in metres. Level 0 is the water surface;
- * the steps are small enough that a walker crossing one reads as a step, not
- * a jump, and large enough that the cliff faces show under the pixel pass.
+ * the low steps are small enough that a walker crossing one reads as a step,
+ * not a jump; the high steps belong to the mountain and the cliffs, where
+ * nobody walks and the faces should tower.
  */
-export const LEVEL_Y: readonly number[] = [0, 0.35, 1.0, 1.7, 2.6];
-/** The level every road and plot sits on — the walkable plateau. */
-export const PLATEAU_LEVEL = 2;
+export const LEVEL_Y: readonly number[] = [0, 0.35, 1.0, 1.8, 2.8, 4.0, 5.5, 7.4, 9.8, 12.6];
+/** The highest level index. */
+export const MAX_LEVEL = LEVEL_Y.length - 1;
+/** The level every road and plot of the village sits on — the walkable plateau. */
+export const PLATEAU_LEVEL = 3;
+/** The hub stands one step above the village. */
+export const PODIUM_LEVEL = PLATEAU_LEVEL + 1;
 /** Height of the wooden dock above the water. */
 export const DOCK_Y = 0.55;
+/** Level from which a rock tile becomes snow. */
+export const SNOW_LEVEL = 8;
 
 export interface IslandMap {
   /** Tiles along one edge. */
@@ -135,6 +161,9 @@ export interface HousePlot {
   seed: number;
 }
 
+/** What grows on a spot: the biome decides. */
+export type TreeKind = "round" | "pine" | "palm";
+
 export interface TreeSpot {
   x: number;
   z: number;
@@ -144,6 +173,17 @@ export interface TreeSpot {
   size: number;
   /** 0..1 — picks between the two canopy greens. */
   shade: number;
+  kind: TreeKind;
+}
+
+export interface Boulder {
+  x: number;
+  z: number;
+  y: number;
+  /** 0..1 — radius scales with it. */
+  size: number;
+  /** 0..1 — a stable per-boulder rotation and shade pick. */
+  seed: number;
 }
 
 export interface Post {
@@ -158,11 +198,13 @@ export interface IslandContent {
   places: Record<PlaceId, Place>;
   houses: HousePlot[];
   trees: TreeSpot[];
+  /** Rocks scattered over the highland, the cliffs and the beaches. */
+  boulders: Boulder[];
   /** Hedge segments forming the village ring, with gaps at the four gates. */
   hedges: Post[];
   /** Light posts along the ring and the spokes. */
   lamps: Post[];
-  /** Solar panel rows in the north-west field (centre + rotation). */
+  /** Solar panel rows on the mountain's foot terrace (centre + rotation). */
   panels: Post[];
   /** Greenhouses in the gardens quarter. */
   greenhouses: Post[];
@@ -179,45 +221,6 @@ export interface KitPose {
   rotation: number;
 }
 
-/**
- * Ring slots (of 16) a kit building takes over instead of houses. The Plugin
- * Docks are 16 m wide, a house slot is ~15 m of arc, so the docks take two
- * neighbouring north-west slots and stand centred between them.
- */
-export const RING_KIT_SLOTS: Record<KitPlace, readonly number[]> = {
-  // Hubs sit on the north and west of the ring so their fronts face the camera
-  // (it looks from the south-east); houses take the slots whose backs it sees.
-  plugins: [13, 14], // north-west, two slots (16 m wide)
-  skills: [15], // north, beside the docks: the Skill Forge
-  mcp: [1], // north-east: the Relay Tower
-  cli: [11], // west: the Terminal Cantina
-};
-
-/** Footprints (tiles) of the kit buildings, for blocking the walk grid. */
-export const KIT_FOOTPRINTS: Record<KitPlace, [number, number]> = {
-  plugins: [8, 5],
-  skills: [7, 5],
-  mcp: [5, 5],
-  cli: [7, 5],
-};
-
-const KIT_PLACES = Object.keys(RING_KIT_SLOTS) as KitPlace[];
-
-function kitTile(place: KitPlace): [number, number] {
-  const p = ringPose(RING_KIT_SLOTS[place]);
-  return [Math.floor(p.x / TILE_M + CENTER_TILE), Math.floor(p.z / TILE_M + CENTER_TILE)];
-}
-
-/** Pose of a building centred on the given ring slots, front toward the square. */
-export function ringPose(slots: readonly number[], radiusTiles = HOUSE_RING_TILES): KitPose {
-  const mean = slots.reduce((a, b) => a + b, 0) / slots.length;
-  const angle = (mean / 16) * Math.PI * 2; // clockwise from north
-  const r = radiusTiles * TILE_M;
-  const x = Math.sin(angle) * r;
-  const z = -Math.cos(angle) * r;
-  return { x, z, rotation: Math.atan2(-x, -z) };
-}
-
 // ---------------------------------------------------------------------------
 // Deterministic noise
 // ---------------------------------------------------------------------------
@@ -232,6 +235,15 @@ export function hash2(x: number, z: number, seed: number): number {
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+function smoothstep(e0: number, e1: number, x: number): number {
+  const t = clamp((x - e0) / (e1 - e0), 0, 1);
+  return t * t * (3 - 2 * t);
 }
 
 /** Smooth value noise, 0..1. */
@@ -315,24 +327,69 @@ export const HEDGE_RING_TILES = 29;
 /** Half-width of a gate gap in the hedge ring, in tiles. */
 export const GATE_GAP_TILES = 3;
 
+/**
+ * Ring slots (of 16) a kit building takes over instead of houses. The Plugin
+ * Docks are 16 m wide, a house slot is ~15 m of arc, so the docks take two
+ * neighbouring north-west slots and stand centred between them.
+ */
+export const RING_KIT_SLOTS: Record<KitPlace, readonly number[]> = {
+  // Hubs sit on the north and west of the ring so their fronts face the camera
+  // (it looks from the south-east); houses take the slots whose backs it sees.
+  plugins: [13, 14], // north-west, two slots (16 m wide)
+  skills: [15], // north, beside the docks: the Skill Forge
+  mcp: [1], // north-east: the Relay Tower
+  cli: [11], // west: the Terminal Cantina
+};
+
+/** Footprints (tiles) of the kit buildings, for blocking the walk grid. */
+export const KIT_FOOTPRINTS: Record<KitPlace, [number, number]> = {
+  plugins: [8, 5],
+  skills: [7, 5],
+  mcp: [5, 5],
+  cli: [7, 5],
+};
+
+const KIT_PLACES = Object.keys(RING_KIT_SLOTS) as KitPlace[];
+
+function kitTile(place: KitPlace): [number, number] {
+  const p = ringPose(RING_KIT_SLOTS[place]);
+  return [Math.floor(p.x / TILE_M + CENTER_TILE), Math.floor(p.z / TILE_M + CENTER_TILE)];
+}
+
+/**
+ * The hub's gate: the podium sits astride the hedge ring at the north, so the
+ * gap there is as wide as the podium (the other three gates keep `GATE_GAP_TILES`).
+ */
+export const HUB_GATE_GAP_TILES = 10;
+
+/** Pose of a building centred on the given ring slots, front toward the square. */
+export function ringPose(slots: readonly number[], radiusTiles = HOUSE_RING_TILES): KitPose {
+  const mean = slots.reduce((a, b) => a + b, 0) / slots.length;
+  const angle = (mean / 16) * Math.PI * 2; // clockwise from north
+  const r = radiusTiles * TILE_M;
+  const x = Math.sin(angle) * r;
+  const z = -Math.cos(angle) * r;
+  return { x, z, rotation: Math.atan2(-x, -z) };
+}
+
 /** The four spokes leave the square toward the quarters. `dir` is (dx, dz). */
-const SPOKES: ReadonlyArray<{ dir: [number, number]; toTiles: number }> = [
-  { dir: [0, -1], toTiles: 52 }, // north → archive
-  { dir: [0, 1], toTiles: 52 }, // south → harbor
-  { dir: [-1, 0], toTiles: 52 }, // west → workshop
-  { dir: [1, 0], toTiles: 58 }, // east → lighthouse cape
+export const SPOKES: ReadonlyArray<{ dir: [number, number]; toTiles: number }> = [
+  { dir: [0, -1], toTiles: 61 }, // north → archive hill
+  { dir: [0, 1], toTiles: 62 }, // south → harbor
+  { dir: [-1, 0], toTiles: 60 }, // west → workshop clearing
+  { dir: [1, 0], toTiles: 80 }, // east → lighthouse cape
 ];
 
 /** Anchor tiles of the places (tile units, absolute). */
 const PLACE_TILES: Record<PlaceId, [number, number]> = {
   market: [CENTER_TILE, CENTER_TILE],
-  hub: [CENTER_TILE, CENTER_TILE - 20],
-  archive: [CENTER_TILE, CENTER_TILE - 54],
-  harbor: [CENTER_TILE, CENTER_TILE + 54],
-  workshop: [CENTER_TILE - 54, CENTER_TILE],
-  lighthouse: [CENTER_TILE + 62, CENTER_TILE],
-  gardens: [CENTER_TILE + 30, CENTER_TILE + 34],
-  solar: [CENTER_TILE - 32, CENTER_TILE - 32],
+  hub: [CENTER_TILE, CENTER_TILE - 30],
+  archive: [CENTER_TILE, CENTER_TILE - 66],
+  harbor: [CENTER_TILE, CENTER_TILE + 64],
+  workshop: [CENTER_TILE - 68, CENTER_TILE],
+  lighthouse: [CENTER_TILE + 84, CENTER_TILE],
+  gardens: [CENTER_TILE + 44, CENTER_TILE + 48],
+  solar: [CENTER_TILE - 40, CENTER_TILE - 40],
   // Kit hubs stand in the house ring (RING_KIT_SLOTS); these are their ring poses' tiles.
   plugins: kitTile("plugins"),
   skills: kitTile("skills"),
@@ -343,13 +400,13 @@ const PLACE_TILES: Record<PlaceId, [number, number]> = {
 /** Half extents (tiles) of the flat plots each place is built on. */
 const PLOT_HALF: Record<PlaceId, [number, number]> = {
   market: [0, 0],
-  hub: [5, 4],
-  archive: [6, 6],
-  harbor: [7, 4],
-  workshop: [8, 6],
-  lighthouse: [3, 3],
+  hub: [9, 5],
+  archive: [7, 7],
+  harbor: [8, 4],
+  workshop: [9, 6],
+  lighthouse: [4, 4],
   gardens: [9, 7],
-  solar: [8, 6],
+  solar: [8, 7],
   // Ring hubs have no flat plot of their own: they sit on the village plateau.
   plugins: [0, 0],
   skills: [0, 0],
@@ -357,16 +414,66 @@ const PLOT_HALF: Record<PlaceId, [number, number]> = {
   cli: [0, 0],
 };
 
+/** The terrain level each plot is flattened to — its terrace in the landscape. */
+const PLOT_LEVEL: Record<PlaceId, number> = {
+  market: PLATEAU_LEVEL,
+  hub: PODIUM_LEVEL,
+  archive: 5,
+  harbor: 2,
+  workshop: 3,
+  lighthouse: 6,
+  gardens: 2,
+  solar: 4,
+  plugins: PLATEAU_LEVEL,
+  skills: PLATEAU_LEVEL,
+  mcp: PLATEAU_LEVEL,
+  cli: PLATEAU_LEVEL,
+};
+
 /** Building footprints (half extents, tiles) that block walking. */
 const BUILDING_HALF: Partial<Record<PlaceId, [number, number]>> = {
-  hub: [4, 3],
+  hub: [6, 3],
   archive: [3, 3],
   workshop: [6, 3],
   lighthouse: [1, 1],
 };
 
 /** Where the dock reaches into the bay: from the harbor plot southward. */
-export const DOCK_TILES = { from: CENTER_TILE + 58, to: CENTER_TILE + 70, halfWidth: 1 } as const;
+export const DOCK_TILES = { from: CENTER_TILE + 66, to: CENTER_TILE + 80, halfWidth: 1 } as const;
+
+/**
+ * The biome regions, in normalised island coordinates (−1..1 from the centre,
+ * +x east, +z south). Each is a soft disc: `r` is where its influence ends.
+ */
+export const REGIONS = {
+  /** The backdrop: the mountain with the snow cap, north-west. */
+  mountain: { x: -0.5, z: -0.5, r: 0.42 },
+  /** The terraced hill the archive tower crowns, north. */
+  archiveHill: { x: 0, z: -0.52, r: 0.2 },
+  /** Alpine meadows, north-east. */
+  highland: { x: 0.45, z: -0.45, r: 0.38 },
+  /** The lighthouse cape, east. */
+  cape: { x: 0.72, z: 0, r: 0.25 },
+  /** The tropical cove with the lagoon, south-east. */
+  cove: { x: 0.5, z: 0.5, r: 0.34 },
+  /** The lagoon inside the cove — sea water enclosed by a sandbar. */
+  lagoon: { x: 0.5, z: 0.54, r: 0.075 },
+  /** The harbor bay, south. */
+  bay: { x: 0.05, z: 0.72, r: 0.2 },
+  /** Orchard meadows, south-west. */
+  orchard: { x: -0.45, z: 0.5, r: 0.3 },
+  /** The dark forest, west. */
+  forest: { x: -0.6, z: 0.02, r: 0.34 },
+} as const;
+export type RegionId = keyof typeof REGIONS;
+
+/** Small rock islets offshore: sea stacks with foam around them. */
+export const ISLETS: ReadonlyArray<{ x: number; z: number; r: number; level: number }> = [
+  { x: 0.93, z: -0.22, r: 0.032, level: 4 },
+  { x: 0.9, z: 0.24, r: 0.026, level: 3 },
+  { x: -0.58, z: 0.8, r: 0.04, level: 5 },
+  { x: -0.86, z: -0.6, r: 0.03, level: 6 },
+];
 
 // ---------------------------------------------------------------------------
 // Building the map
@@ -378,76 +485,16 @@ function fillRect(
   cz: number,
   hw: number,
   hd: number,
-  fn: (i: number) => void,
+  fn: (i: number, tx: number, tz: number) => void,
 ): void {
   for (let tz = cz - hd; tz <= cz + hd; tz++) {
     for (let tx = cx - hw; tx <= cx + hw; tx++) {
-      if (inBounds(map, tx, tz)) fn(tileIndex(map, tx, tz));
+      if (inBounds(map, tx, tz)) fn(tileIndex(map, tx, tz), tx, tz);
     }
   }
 }
 
-function paintPlateau(map: IslandMap, i: number, kind: TileKind): void {
-  map.level[i] = PLATEAU_LEVEL;
-  map.kind[i] = kind;
-  map.blocked[i] = 0;
-}
-
-/**
- * The terrain pass: island silhouette, bay, beaches, highland, rock, and the
- * flat market plateau in the middle.
- */
-function buildTerrain(map: IslandMap): void {
-  const C = CENTER_TILE;
-  for (let tz = 0; tz < map.size; tz++) {
-    for (let tx = 0; tx < map.size; tx++) {
-      const i = tileIndex(map, tx, tz);
-      const nx = (tx + 0.5 - C) / C;
-      const nz = (tz + 0.5 - C) / C;
-      const d = Math.hypot(nx, nz);
-      const shapeNoise = fbm(nx * 1.8 + 3.1, nz * 1.8 + 7.7, ISLAND_SEED);
-      const shape = d + (shapeNoise - 0.5) * 0.36;
-      // The harbor bay bites into the south coast.
-      const bayDist = Math.hypot(nx - 0.06, nz - 1.0);
-      const inBay = bayDist < 0.27;
-      const isLand = shape < 0.92 && !inBay;
-
-      if (!isLand) {
-        map.kind[i] = TileKind.water;
-        map.level[i] = 0;
-        map.blocked[i] = 1;
-        continue;
-      }
-
-      const elev = 1 - d * d + (fbm(nx * 3.3 + 11, nz * 3.3 + 5, ISLAND_SEED + 7) - 0.5) * 0.5;
-      const onEdge = shape > 0.8 || bayDist < 0.34;
-      let level = onEdge ? 1 : elev > 0.72 ? 3 : 2;
-      let kind: TileKind = level === 1 ? TileKind.sand : level === 3 ? TileKind.meadow : TileKind.grass;
-
-      // The north-eastern highland turns to rock where it climbs highest.
-      if (nx > 0.18 && nz < -0.18 && !onEdge) {
-        const ridge = fbm(nx * 5 + 21, nz * 5 + 9, ISLAND_SEED + 3);
-        if (elev + 0.35 * ridge > 1.02) {
-          level = 4;
-          kind = TileKind.rock;
-        }
-      }
-
-      map.level[i] = level;
-      map.kind[i] = kind;
-      map.blocked[i] = level === 4 ? 1 : 0;
-    }
-  }
-
-  // The market district is one flat plateau — the village needs level ground,
-  // and a plateau with a low rim reads as "the town" from any distance.
-  fillRect(map, C, C, MARKET_HALF_TILES + 4, MARKET_HALF_TILES + 4, (i) => {
-    if (map.kind[i] === TileKind.water) return; // the sea stays the sea
-    paintPlateau(map, i, TileKind.grass);
-  });
-}
-
-/** Rasterise a filled disc of tiles around (cx, cz). */
+/** Rasterise a filled disc (or ring) of tiles around (cx, cz). */
 function paintDisc(
   map: IslandMap,
   cx: number,
@@ -457,8 +504,8 @@ function paintDisc(
   fn: (i: number, tx: number, tz: number) => void,
 ): void {
   const r = Math.ceil(rMax);
-  for (let tz = cz - r; tz <= cz + r; tz++) {
-    for (let tx = cx - r; tx <= cx + r; tx++) {
+  for (let tz = Math.floor(cz - r); tz <= Math.ceil(cz + r); tz++) {
+    for (let tx = Math.floor(cx - r); tx <= Math.ceil(cx + r); tx++) {
       if (!inBounds(map, tx, tz)) continue;
       const dist = Math.hypot(tx + 0.5 - cx, tz + 0.5 - cz);
       if (dist >= rMin && dist < rMax) fn(tileIndex(map, tx, tz), tx, tz);
@@ -466,69 +513,274 @@ function paintDisc(
   }
 }
 
-/** The village: square, ring road, spokes, garden beds, plots and the dock. */
-function buildVillage(map: IslandMap): void {
+function paintLand(map: IslandMap, i: number, kind: TileKind, level: number): void {
+  map.level[i] = level;
+  map.kind[i] = kind;
+  map.blocked[i] = kind === TileKind.rock || kind === TileKind.snow ? 1 : 0;
+}
+
+function paintWater(map: IslandMap, i: number): void {
+  map.kind[i] = TileKind.water;
+  map.level[i] = 0;
+  map.blocked[i] = 1;
+}
+
+/** Normalised distance (0 at the centre, 1 at the edge) to a region. */
+function regionT(nx: number, nz: number, region: { x: number; z: number; r: number }): number {
+  return Math.hypot(nx - region.x, nz - region.z) / region.r;
+}
+
+/** A soft bump: 1 at the centre, 0 at the region's edge, rounded shoulders. */
+function bump(nx: number, nz: number, region: { x: number; z: number; r: number }, power = 1.3): number {
+  const t = regionT(nx, nz, region);
+  return t >= 1 ? 0 : Math.pow(1 - t, power);
+}
+
+/**
+ * The continuous height field, in levels (float). Composed, not rolled: a
+ * radial fall-off toward the sea, the designed features of every biome on top,
+ * then a little noise so the terraces meander instead of running in circles.
+ */
+export function heightAt(nx: number, nz: number): number {
+  const d = Math.hypot(nx, nz * 1.04);
+  // Level ~2 at the coast (a narrow beach where the noise dips), ~3.6 inland.
+  let h = 1.2 + 2.4 * (1 - Math.pow(d, 1.8));
+  h += 7.2 * bump(nx, nz, REGIONS.mountain, 1.4);
+  h += 2.7 * bump(nx, nz, REGIONS.archiveHill, 1.1);
+  h += 2.0 * bump(nx, nz, REGIONS.highland, 1.0);
+  h += 4.4 * bump(nx, nz, REGIONS.cape, 1.2);
+  h -= 1.7 * bump(nx, nz, REGIONS.cove, 1.0);
+  h -= 1.3 * bump(nx, nz, REGIONS.bay, 0.8);
+  h -= 0.7 * bump(nx, nz, REGIONS.orchard, 1.0);
+  h += 1.0 * bump(nx, nz, REGIONS.forest, 1.0);
+  h += (fbm(nx * 3.3 + 11, nz * 3.3 + 5, ISLAND_SEED + 7) - 0.5) * 1.5;
+  // The market plateau: dead flat, blended in over a wide skirt of terraces.
+  const plateauT = (Math.hypot(nx, nz) * CENTER_TILE) / PLATEAU_RADIUS_TILES;
+  const w = 1 - smoothstep(1.0, 1.55, plateauT);
+  return lerp(h, PLATEAU_LEVEL, w);
+}
+
+/** Whether normalised (nx, nz) is island (true) or sea (false). */
+export function isLandAt(nx: number, nz: number): boolean {
+  const d = Math.hypot(nx, nz * 1.04);
+  const shapeNoise = fbm(nx * 1.8 + 3.1, nz * 1.8 + 7.7, ISLAND_SEED);
+  let shape = d + (shapeNoise - 0.5) * 0.34;
+  // The cape reaches out into the sea; the mountain's coast bulges.
+  shape -= 0.14 * bump(nx, nz, { x: 0.9, z: 0, r: 0.3 }, 1.0);
+  shape -= 0.06 * bump(nx, nz, REGIONS.mountain, 1.0);
+  if (shape >= 0.86) return false;
+  if (regionT(nx, nz, REGIONS.bay) < 1) return false;
+  if (regionT(nx, nz, REGIONS.lagoon) < 1) return false;
+  // The lagoon's channel to the sea, south-east of it.
+  const cx = nx - REGIONS.lagoon.x;
+  const cz = nz - REGIONS.lagoon.z;
+  const along = (cx + cz) * Math.SQRT1_2;
+  const across = Math.abs(cx - cz) * Math.SQRT1_2;
+  if (along > 0 && along < 0.4 && across < 0.022) return false;
+  return true;
+}
+
+/** The kind a land tile gets from its level and the biome it lies in. */
+function biomeKind(nx: number, nz: number, level: number): TileKind {
+  if (level >= SNOW_LEVEL) return TileKind.snow;
+  if (level >= 7) return TileKind.rock;
+  const inMountain = regionT(nx, nz, REGIONS.mountain) < 1;
+  const inCape = regionT(nx, nz, REGIONS.cape) < 1;
+  const inHighland = regionT(nx, nz, REGIONS.highland) < 1;
+  const inCove = regionT(nx, nz, REGIONS.cove) < 0.8;
+  const inForest = regionT(nx, nz, REGIONS.forest) < 0.92;
+  const grain = fbm(nx * 6 + 31, nz * 6 + 17, ISLAND_SEED + 3);
+  if (level === 6) return inMountain || inCape ? TileKind.rock : TileKind.alpine;
+  if (level === 5) {
+    if ((inMountain || inCape) && grain > 0.55) return TileKind.rock;
+    return inMountain || inHighland || inCape ? TileKind.alpine : TileKind.meadow;
+  }
+  if (level === 1) return TileKind.sand;
+  if (level === 2) {
+    if (inCove) return TileKind.sand;
+    return grain > 0.6 ? TileKind.meadow : TileKind.grass;
+  }
+  // Levels 3 and 4: the rolling middle ground.
+  if (inForest && grain > 0.3) return TileKind.forest;
+  if (level === 4) return inHighland && grain > 0.5 ? TileKind.alpine : TileKind.meadow;
+  return grain > 0.66 ? TileKind.meadow : TileKind.grass;
+}
+
+/**
+ * The terrain pass: island silhouette, bay, lagoon, the height field
+ * quantised into levels, biome kinds, flower fields, islets.
+ */
+function buildTerrain(map: IslandMap): void {
   const C = CENTER_TILE;
-
-  // Open square with a ring of garden beds around it.
-  paintDisc(map, C, C, 0, PLAZA_RADIUS_TILES, (i) => paintPlateau(map, i, TileKind.plaza));
-  paintDisc(map, C, C, PLAZA_RADIUS_TILES, PLAZA_RADIUS_TILES + 1.5, (i, tx, tz) => {
-    // Beds alternate with plaza so the square stays open toward every house.
-    const a = Math.atan2(tz + 0.5 - C, tx + 0.5 - C);
-    const bed = Math.floor(((a + Math.PI) / (2 * Math.PI)) * 16) % 2 === 0;
-    paintPlateau(map, i, bed ? TileKind.garden : TileKind.plaza);
-  });
-
-  // Ring road around the houses.
-  paintDisc(map, C, C, RING_ROAD_TILES - 1, RING_ROAD_TILES + 1, (i) =>
-    paintPlateau(map, i, TileKind.path),
-  );
-
-  // Spokes from the square out to the quarters (width 3).
-  for (const spoke of SPOKES) {
-    for (let s = PLAZA_RADIUS_TILES - 1; s <= spoke.toTiles; s++) {
-      for (let w = -1; w <= 1; w++) {
-        const tx = C + spoke.dir[0] * s + spoke.dir[1] * w;
-        const tz = C + spoke.dir[1] * s + spoke.dir[0] * w;
-        if (!inBounds(map, tx, tz)) continue;
-        const i = tileIndex(map, tx, tz);
-        if (map.kind[i] === TileKind.water) continue;
-        paintPlateau(map, i, TileKind.path);
+  for (let tz = 0; tz < map.size; tz++) {
+    for (let tx = 0; tx < map.size; tx++) {
+      const i = tileIndex(map, tx, tz);
+      const nx = (tx + 0.5 - C) / C;
+      const nz = (tz + 0.5 - C) / C;
+      if (!isLandAt(nx, nz)) {
+        paintWater(map, i);
+        continue;
       }
+      const level = clamp(Math.round(heightAt(nx, nz)), 1, MAX_LEVEL);
+      let kind = biomeKind(nx, nz, level);
+      // Flower fields: drifts of blossom over the meadows, clustered by noise.
+      if (
+        (kind === TileKind.meadow || kind === TileKind.alpine) &&
+        fbm(nx * 9 + 3, nz * 9 + 41, ISLAND_SEED + 13) > 0.64 &&
+        hash2(tx, tz, 77) < 0.55
+      ) {
+        kind = TileKind.garden;
+      }
+      paintLand(map, i, kind, level);
     }
   }
 
-  // Flat plots for every place; the buildings on them block walking.
+  // Sandbar around the lagoon: a bright rim of beach, one step above the water.
+  const lag = REGIONS.lagoon;
+  paintDisc(map, C + lag.x * C, C + lag.z * C, 0, lag.r * C + 4.5, (i) => {
+    if (map.kind[i] !== TileKind.water) paintLand(map, i, TileKind.sand, 1);
+  });
+
+  // Beach around the bay.
+  const bay = REGIONS.bay;
+  paintDisc(map, C + bay.x * C, C + bay.z * C, 0, bay.r * C + 3.5, (i) => {
+    if (map.kind[i] !== TileKind.water && map.level[i] > 1) paintLand(map, i, TileKind.sand, 1);
+  });
+
+  // Islets: rock stacks with a green crown, so the sea is not empty.
+  for (const islet of ISLETS) {
+    const cx = C + islet.x * C;
+    const cz = C + islet.z * C;
+    const r = islet.r * C;
+    paintDisc(map, cx, cz, 0, r, (i, tx, tz) => {
+      const wobble = (hash2(tx, tz, 21) - 0.5) * 0.8;
+      const dist = Math.hypot(tx + 0.5 - cx, tz + 0.5 - cz) + wobble;
+      if (dist > r) return;
+      if (dist < r * 0.45) paintLand(map, i, TileKind.grass, islet.level);
+      else paintLand(map, i, TileKind.rock, Math.max(1, islet.level - (dist > r * 0.75 ? 2 : 1)));
+    });
+  }
+
+  // The breakwater sheltering the harbor: a line of rock in the bay's mouth.
+  for (let t = 0; t < 14; t++) {
+    const tx = C + 18 + t;
+    const tz = C + 96 - Math.round(t * 0.55);
+    fillRect(map, tx, tz, 0, 1, (i) => {
+      if (map.kind[i] === TileKind.water) paintLand(map, i, TileKind.rock, 2);
+    });
+  }
+}
+
+/** Flatten every place's plot to its terrace level. */
+function buildPlots(map: IslandMap): void {
   for (const id of Object.keys(PLACE_TILES) as PlaceId[]) {
     const [px, pz] = PLACE_TILES[id];
     const [hw, hd] = PLOT_HALF[id];
     if (hw === 0 && hd === 0) continue;
     const kind =
-      id === "gardens" ? TileKind.garden : id === "solar" ? TileKind.meadow : TileKind.plaza;
+      id === "gardens"
+        ? TileKind.garden
+        : id === "solar"
+          ? TileKind.meadow
+          : id === "lighthouse"
+            ? TileKind.rock
+            : TileKind.plaza;
     fillRect(map, px, pz, hw, hd, (i) => {
       if (map.kind[i] === TileKind.water) return;
-      paintPlateau(map, i, kind);
+      paintLand(map, i, kind, PLOT_LEVEL[id]);
+      if (id === "lighthouse") map.blocked[i] = 0; // the keeper walks the knob
     });
-    if (id === "lighthouse") {
-      // The lighthouse stands on a rocky knob.
-      fillRect(map, px, pz, hw, hd, (i) => {
-        map.level[i] = 3;
-        map.kind[i] = TileKind.rock;
-        map.blocked[i] = 0;
-      });
+  }
+}
+
+/**
+ * A road that climbs at most one level per tile: walked outward from the
+ * square, each tile clamps to its predecessor ±1, and the shoulders beside it
+ * come along, so the road never runs in a trench. This is what keeps every
+ * place reachable on foot whatever the terrain does.
+ */
+function gradeSpoke(map: IslandMap, dir: [number, number], fromTiles: number, toTiles: number): void {
+  const C = CENTER_TILE;
+  let prev = PLATEAU_LEVEL;
+  for (let s = fromTiles; s <= toTiles; s++) {
+    const cx = C + dir[0] * s;
+    const cz = C + dir[1] * s;
+    if (!inBounds(map, cx, cz)) break;
+    const ci = tileIndex(map, cx, cz);
+    const desired = map.kind[ci] === TileKind.water ? prev : map.level[ci];
+    const lvl = clamp(desired, prev - 1, prev + 1);
+    for (let w = -2; w <= 2; w++) {
+      const tx = cx + dir[1] * w;
+      const tz = cz + dir[0] * w;
+      if (!inBounds(map, tx, tz)) continue;
+      const i = tileIndex(map, tx, tz);
+      if (map.kind[i] === TileKind.water) continue;
+      if (Math.abs(w) <= 1) {
+        paintLand(map, i, TileKind.path, lvl);
+      } else if (Math.abs(map.level[i] - lvl) > 1) {
+        map.level[i] = lvl + Math.sign(map.level[i] - lvl);
+      }
     }
+    prev = lvl;
+  }
+}
+
+/** The village: square, ring road, spokes, garden beds and the dock. */
+function buildVillage(map: IslandMap): void {
+  const C = CENTER_TILE;
+
+  // Open square with a ring of garden beds around it.
+  paintDisc(map, C, C, 0, PLAZA_RADIUS_TILES, (i) => paintLand(map, i, TileKind.plaza, PLATEAU_LEVEL));
+  paintDisc(map, C, C, PLAZA_RADIUS_TILES, PLAZA_RADIUS_TILES + 1.5, (i, tx, tz) => {
+    // Beds alternate with plaza so the square stays open toward every house.
+    const a = Math.atan2(tz + 0.5 - C, tx + 0.5 - C);
+    const bed = Math.floor(((a + Math.PI) / (2 * Math.PI)) * 16) % 2 === 0;
+    paintLand(map, i, bed ? TileKind.garden : TileKind.plaza, PLATEAU_LEVEL);
+  });
+
+  // Ring road around the houses — it climbs the hub's podium rather than
+  // vanishing under it: the kind changes, the level stays.
+  paintDisc(map, C, C, RING_ROAD_TILES - 1, RING_ROAD_TILES + 1, (i) => {
+    const lvl = map.level[i] === PODIUM_LEVEL ? PODIUM_LEVEL : PLATEAU_LEVEL;
+    paintLand(map, i, TileKind.path, lvl);
+  });
+
+  // Spokes from the square out to the quarters (width 3), graded.
+  for (const spoke of SPOKES) gradeSpoke(map, spoke.dir, PLAZA_RADIUS_TILES - 1, spoke.toTiles);
+
+  // Buildings block walking; their tiles keep the plot level.
+  for (const id of Object.keys(BUILDING_HALF) as PlaceId[]) {
     const bh = BUILDING_HALF[id];
-    if (bh) fillRect(map, px, pz, bh[0], bh[1], (i) => (map.blocked[i] = 1));
+    if (!bh) continue;
+    const [px, pz] = PLACE_TILES[id];
+    fillRect(map, px, pz, bh[0], bh[1], (i) => {
+      map.blocked[i] = 1;
+      map.level[i] = PLOT_LEVEL[id];
+    });
   }
 
-  // The dock runs from the harbor plot into the bay.
+  // The dock runs from the harbor plot into the bay, one step above the water
+  // so a walker can step onto the planks from the beach.
   for (let tz = DOCK_TILES.from; tz <= DOCK_TILES.to; tz++) {
     for (let tx = C - DOCK_TILES.halfWidth; tx <= C + DOCK_TILES.halfWidth; tx++) {
       if (!inBounds(map, tx, tz)) continue;
       const i = tileIndex(map, tx, tz);
       map.kind[i] = TileKind.dock;
+      map.level[i] = 1;
       map.blocked[i] = 0;
     }
+  }
+  // A small jetty into the lagoon, from its northern sandbar.
+  const lag = REGIONS.lagoon;
+  const jx = Math.round(C + lag.x * C);
+  const jz0 = Math.round(C + lag.z * C - lag.r * C) - 2;
+  for (let tz = jz0; tz <= jz0 + 6; tz++) {
+    if (!inBounds(map, jx, tz)) continue;
+    const i = tileIndex(map, jx, tz);
+    if (map.kind[i] !== TileKind.water && map.kind[i] !== TileKind.sand) continue;
+    map.kind[i] = TileKind.dock;
+    map.level[i] = 1;
+    map.blocked[i] = 0;
   }
 }
 
@@ -588,8 +840,11 @@ function placeRingFurniture(map: IslandMap): { hedges: Post[]; lamps: Post[] } {
   const segments = Math.round(circumference / 2.2);
   for (let s = 0; s < segments; s++) {
     const angle = (s / segments) * Math.PI * 2;
-    // A gate is a gap centred on each cardinal direction.
-    const gapHalf = (GATE_GAP_TILES * TILE_M) / r;
+    // A gate is a gap centred on each cardinal direction; the north gate is
+    // the hub's podium, so its gap is as wide as the podium.
+    const toNorth = Math.min(angle, Math.PI * 2 - angle);
+    const gapTiles = toNorth < Math.PI / 4 ? HUB_GATE_GAP_TILES : GATE_GAP_TILES;
+    const gapHalf = (gapTiles * TILE_M) / r;
     const toCardinal = Math.abs(((angle + Math.PI / 4) % (Math.PI / 2)) - Math.PI / 4);
     if (toCardinal < gapHalf) continue;
     const x = Math.sin(angle) * r;
@@ -598,7 +853,7 @@ function placeRingFurniture(map: IslandMap): { hedges: Post[]; lamps: Post[] } {
     const [tx, tz] = worldToTile(x, z);
     if (inBounds(map, tx, tz)) map.blocked[tileIndex(map, tx, tz)] = 1;
   }
-  // Lamps: one at every gate post pair, and along the spokes every 8 tiles.
+  // Lamps: along the spokes every 8 tiles, on the road's shoulders.
   for (const spoke of SPOKES) {
     for (let s = PLAZA_RADIUS_TILES + 3; s <= spoke.toTiles - 2; s += 8) {
       for (const side of [-2.5, 2.5]) {
@@ -640,21 +895,47 @@ function placeQuarterFurniture(map: IslandMap): { panels: Post[]; greenhouses: P
   return { panels, greenhouses };
 }
 
-/** Trees wherever grass or meadow is free, away from roads and plots. */
+/** Which tree grows on a tile, and how densely, per biome. `null` = none. */
+function treeChoice(map: IslandMap, tx: number, tz: number): { kind: TreeKind; density: number } | null {
+  const i = tileIndex(map, tx, tz);
+  const k = map.kind[i];
+  const level = map.level[i];
+  const nx = (tx + 0.5 - CENTER_TILE) / CENTER_TILE;
+  const nz = (tz + 0.5 - CENTER_TILE) / CENTER_TILE;
+  const grain = hash2(tx, tz, 8);
+  if (k === TileKind.forest) return { kind: grain < 0.72 ? "round" : "pine", density: 0.34 };
+  if (k === TileKind.alpine) return { kind: "pine", density: 0.08 };
+  if (k === TileKind.sand) {
+    // Palms only in the tropical cove, thickest around the lagoon.
+    const cove = regionT(nx, nz, REGIONS.cove);
+    if (cove >= 1) return null;
+    const lagoon = regionT(nx, nz, REGIONS.lagoon);
+    return { kind: "palm", density: lagoon < 1.9 ? 0.11 : 0.045 };
+  }
+  if (k === TileKind.meadow) return { kind: level >= 5 ? "pine" : "round", density: 0.09 };
+  if (k === TileKind.grass) {
+    // Islets carry a tree or two; the mainland's grass stays open.
+    const offshore = Math.hypot(nx, nz) > 0.8;
+    return { kind: "round", density: offshore ? 0.5 : 0.05 };
+  }
+  return null;
+}
+
+/** Trees wherever their biome allows, away from roads and plots. */
 function placeTrees(map: IslandMap): TreeSpot[] {
   const trees: TreeSpot[] = [];
   const C = CENTER_TILE;
   for (let tz = 1; tz < map.size - 1; tz++) {
     for (let tx = 1; tx < map.size - 1; tx++) {
       const i = tileIndex(map, tx, tz);
-      const k = map.kind[i];
-      if (k !== TileKind.grass && k !== TileKind.meadow) continue;
       if (map.blocked[i]) continue;
+      const choice = treeChoice(map, tx, tz);
+      if (!choice) continue;
       const rTiles = Math.hypot(tx + 0.5 - C, tz + 0.5 - C);
       // Inside the village only a few trees, between the houses and the hedge.
       const inVillage = rTiles < HEDGE_RING_TILES + 1;
       if (inVillage && (rTiles < HOUSE_RING_TILES + 2 || rTiles > RING_ROAD_TILES + 1.5)) continue;
-      const density = inVillage ? 0.05 : k === TileKind.meadow ? 0.13 : 0.07;
+      const density = inVillage ? 0.05 : choice.density;
       if (hash2(tx, tz, ISLAND_SEED + 55) > density) continue;
       // Keep a clear margin to anything built or paved.
       let clear = true;
@@ -662,7 +943,12 @@ function placeTrees(map: IslandMap): TreeSpot[] {
         for (let dx = -1; dx <= 1; dx++) {
           const j = tileIndex(map, tx + dx, tz + dz);
           const kk = map.kind[j];
-          if (kk === TileKind.path || kk === TileKind.plaza || kk === TileKind.dock || kk === TileKind.garden || (map.blocked[j] && kk !== TileKind.water && kk !== TileKind.rock)) {
+          if (
+            kk === TileKind.path ||
+            kk === TileKind.plaza ||
+            kk === TileKind.dock ||
+            (map.blocked[j] && kk !== TileKind.water && kk !== TileKind.rock && kk !== TileKind.snow)
+          ) {
             clear = false;
             break;
           }
@@ -676,6 +962,7 @@ function placeTrees(map: IslandMap): TreeSpot[] {
         y: LEVEL_Y[map.level[i]],
         size: hash2(tx, tz, 5),
         shade: hash2(tx, tz, 6),
+        kind: choice.kind,
       });
       map.blocked[i] = 1;
     }
@@ -683,9 +970,51 @@ function placeTrees(map: IslandMap): TreeSpot[] {
   return trees;
 }
 
+/** Boulders on the high ground, along the cliffs and on the beaches. */
+function placeBoulders(map: IslandMap): Boulder[] {
+  const boulders: Boulder[] = [];
+  const C = CENTER_TILE;
+  for (let tz = 1; tz < map.size - 1; tz++) {
+    for (let tx = 1; tx < map.size - 1; tx++) {
+      const i = tileIndex(map, tx, tz);
+      const k = map.kind[i];
+      if (k === TileKind.water || k === TileKind.path || k === TileKind.plaza || k === TileKind.dock) continue;
+      if (Math.hypot(tx + 0.5 - C, tz + 0.5 - C) < HEDGE_RING_TILES + 4) continue;
+      let density: number;
+      if (k === TileKind.rock || k === TileKind.snow) density = 0.05;
+      else if (k === TileKind.alpine) density = 0.035;
+      else if (k === TileKind.sand) density = 0.012;
+      else density = 0.008;
+      // Rocks gather at the foot of cliffs: a higher neighbour raises the odds.
+      let cliff = false;
+      for (const [dx, dz] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ] as const) {
+        const j = tileIndex(map, tx + dx, tz + dz);
+        if (map.kind[j] !== TileKind.water && map.level[j] >= map.level[i] + 2) cliff = true;
+      }
+      if (cliff) density *= 3;
+      if (hash2(tx, tz, ISLAND_SEED + 91) > density) continue;
+      if (map.blocked[i] && k !== TileKind.rock && k !== TileKind.snow) continue; // a tree or a building
+      const [x, z] = tileToWorld(tx, tz);
+      boulders.push({
+        x: x + (hash2(tx, tz, 31) - 0.5) * 1.2,
+        z: z + (hash2(tx, tz, 32) - 0.5) * 1.2,
+        y: LEVEL_Y[map.level[i]],
+        size: hash2(tx, tz, 33),
+        seed: hash2(tx, tz, 34),
+      });
+      map.blocked[i] = 1;
+    }
+  }
+  return boulders;
+}
+
 function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
   const C = CENTER_TILE;
-  const facingCentre = (tx: number, tz: number) => Math.atan2(C - tx, C - tz);
   const place = (id: PlaceId, standTile: [number, number], facing: number): Place => ({
     id,
     tile: PLACE_TILES[id],
@@ -695,14 +1024,14 @@ function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
   const places: Record<PlaceId, Place> = {
     // The meeting spot: at the table under the tree, facing it.
     market: place("market", [C - 4, C + 3], Math.atan2(4, -3)),
-    // In front of the hub's door, facing the door (north).
-    hub: place("hub", [C, PLACE_TILES.hub[1] + 5], Math.PI),
+    // On the square at the foot of the hub's grand stair, facing the door (north).
+    hub: place("hub", [C, PLACE_TILES.hub[1] + 8], Math.PI),
     archive: place("archive", [C, PLACE_TILES.archive[1] + 5], Math.PI),
-    harbor: place("harbor", [C, PLACE_TILES.harbor[1] + 2], 0),
+    harbor: place("harbor", [C, PLACE_TILES.harbor[1] - 2], 0),
     workshop: place("workshop", [PLACE_TILES.workshop[0] + 8, C], -Math.PI / 2),
-    lighthouse: place("lighthouse", [PLACE_TILES.lighthouse[0] - 3, C], Math.PI / 2),
+    lighthouse: place("lighthouse", [PLACE_TILES.lighthouse[0] - 4, C], Math.PI / 2),
     gardens: place("gardens", [PLACE_TILES.gardens[0], PLACE_TILES.gardens[1]], 0),
-    solar: place("solar", [PLACE_TILES.solar[0] + 1, PLACE_TILES.solar[1] + 8], Math.PI),
+    solar: place("solar", [PLACE_TILES.solar[0] + 1, PLACE_TILES.solar[1] + 9], Math.PI),
     // Ring hubs: 7.5 m in front of the doors, toward the square, facing the building.
     ...(Object.fromEntries(
       KIT_PLACES.map((id) => {
@@ -714,14 +1043,13 @@ function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
       }),
     ) as Record<KitPlace, Place>),
   };
-  void facingCentre;
   // Make sure every stand tile is walkable — a place nobody can reach is a bug.
   for (const p of Object.values(places)) {
     const [tx, tz] = p.standTile;
     if (inBounds(map, tx, tz)) {
       const i = tileIndex(map, tx, tz);
       map.blocked[i] = 0;
-      if (map.kind[i] === TileKind.water) paintPlateau(map, i, TileKind.path);
+      if (map.kind[i] === TileKind.water) paintLand(map, i, TileKind.path, 1);
     }
   }
   return places;
@@ -751,6 +1079,7 @@ export function buildIsland(): Island {
     blocked: new Uint8Array(size * size),
   };
   buildTerrain(map);
+  buildPlots(map);
   buildVillage(map);
   const houses = placeHouses();
   blockHouses(map, houses);
@@ -772,10 +1101,11 @@ export function buildIsland(): Island {
   const { hedges, lamps } = placeRingFurniture(map);
   const { panels, greenhouses } = placeQuarterFurniture(map);
   const trees = placeTrees(map);
+  const boulders = placeBoulders(map);
   const places = buildPlaces(map);
   cached = {
     map,
-    content: { places, houses, trees, hedges, lamps, panels, greenhouses, kitPoses },
+    content: { places, houses, trees, boulders, hedges, lamps, panels, greenhouses, kitPoses },
   };
   return cached;
 }
@@ -850,13 +1180,14 @@ function canStep(map: IslandMap, from: number, tx: number, tz: number): boolean 
  * Shortest path from tile `from` to tile `to`, as a list of tiles INCLUDING the
  * start; `null` when no path exists (or the search budget runs out). Costs are
  * 1 / √2 per step, octile heuristic, corner cutting between two blocked tiles
- * forbidden so figures never clip a house corner.
+ * forbidden so figures never clip a house corner. The budget covers a walk
+ * from one coast to the other on the 256-tile island.
  */
 export function findPath(
   map: IslandMap,
   from: [number, number],
   to: [number, number],
-  maxExpansions = 40_000,
+  maxExpansions = 160_000,
 ): Array<[number, number]> | null {
   if (!isWalkable(map, to[0], to[1]) || !isWalkable(map, from[0], from[1])) return null;
   const n = map.size * map.size;

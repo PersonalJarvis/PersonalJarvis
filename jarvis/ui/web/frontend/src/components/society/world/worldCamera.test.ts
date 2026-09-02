@@ -6,6 +6,7 @@ import {
   CAMERA_PITCH_DEG,
   CAMERA_YAW_DEG,
   DEFAULT_ZOOM,
+  MAX_ZOOM,
   ZOOM_WIDTHS_M,
   cameraOffset,
   clampTarget,
@@ -28,10 +29,11 @@ describe("worldCamera", () => {
     expect(y).toBeGreaterThan(Math.hypot(x, z));
   });
 
-  it("zooms in three fixed steps and clamps at both ends", () => {
-    expect(ZOOM_WIDTHS_M).toEqual([32, 64, 128]);
+  it("zooms in five fixed steps, up to the whole island, and clamps at both ends", () => {
+    expect(ZOOM_WIDTHS_M).toEqual([32, 64, 128, 256, 512]);
+    expect(ZOOM_WIDTHS_M[MAX_ZOOM]).toBe(ISLAND_HALF_M * 2);
     expect(stepZoom(DEFAULT_ZOOM, 1)).toBe(2);
-    expect(stepZoom(2, 1)).toBe(2);
+    expect(stepZoom(MAX_ZOOM, 1)).toBe(MAX_ZOOM);
     expect(stepZoom(0, -1)).toBe(0);
     expect(stepZoom(1, -1)).toBe(0);
   });
@@ -89,7 +91,8 @@ describe("worldCamera", () => {
   it("reads a ?world=x,z,zoom deep link and ignores garbage", () => {
     expect(focusFromSearch("?view=agents&world=12,-30,0")).toEqual({ target: [12, -30], zoom: 0 });
     expect(focusFromSearch("?world=5,5")).toEqual({ target: [5, 5], zoom: 1 });
-    expect(focusFromSearch("?world=9999,0,7")?.target[0]).toBe(ISLAND_HALF_M);
+    expect(focusFromSearch("?world=9999,0,7")).toEqual({ target: [ISLAND_HALF_M, 0], zoom: 1 });
+    expect(focusFromSearch("?world=0,0,4")?.zoom).toBe(4);
     expect(focusFromSearch("?world=abc")).toBeNull();
     expect(focusFromSearch("?view=agents")).toBeNull();
   });

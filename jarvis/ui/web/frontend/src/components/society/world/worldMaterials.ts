@@ -17,8 +17,10 @@ import {
   RGBAFormat,
   SphereGeometry,
   TorusGeometry,
+  type BufferGeometry,
 } from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 import { BUILDING, NATURE } from "./worldPalette";
 
@@ -100,7 +102,34 @@ export interface WorldGeometries {
   sphere: SphereGeometry;
   dome: SphereGeometry;
   ring: TorusGeometry;
+  /** A conifer crown: two stacked cones, unit height, for the forest and the alpine slopes. */
+  pine: BufferGeometry;
+  /** A palm crown: six drooping fronds around the trunk top, unit radius. */
+  palmCrown: BufferGeometry;
   dispose: () => void;
+}
+
+function makePine(): BufferGeometry {
+  const lower = new CylinderGeometry(0, 0.5, 0.62, 7).translate(0, 0.31, 0);
+  const upper = new CylinderGeometry(0, 0.36, 0.55, 7).translate(0, 0.72, 0);
+  const merged = mergeGeometries([lower, upper], false);
+  lower.dispose();
+  upper.dispose();
+  return merged ?? lower;
+}
+
+function makePalmCrown(): BufferGeometry {
+  const fronds: BufferGeometry[] = [];
+  for (let k = 0; k < 6; k++) {
+    const frond = new BoxGeometry(0.28, 0.06, 1.0)
+      .translate(0, 0, 0.5)
+      .rotateX(0.42)
+      .rotateY((k / 6) * Math.PI * 2 + 0.3);
+    fronds.push(frond);
+  }
+  const merged = mergeGeometries(fronds, false);
+  fronds.forEach((f) => f.dispose());
+  return merged ?? fronds[0];
 }
 
 export function createWorldGeometries(): WorldGeometries {
@@ -113,7 +142,9 @@ export function createWorldGeometries(): WorldGeometries {
   const sphere = new SphereGeometry(0.5, 10, 8);
   const dome = new SphereGeometry(0.5, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2);
   const ring = new TorusGeometry(0.5, 0.06, 6, 24);
-  const all = [box, slab, cylinder, halfCylinder, cone, blob, sphere, dome, ring];
+  const pine = makePine();
+  const palmCrown = makePalmCrown();
+  const all = [box, slab, cylinder, halfCylinder, cone, blob, sphere, dome, ring, pine, palmCrown];
   return {
     box,
     slab,
@@ -124,6 +155,8 @@ export function createWorldGeometries(): WorldGeometries {
     sphere,
     dome,
     ring,
+    pine,
+    palmCrown,
     dispose: () => all.forEach((g) => g.dispose()),
   };
 }

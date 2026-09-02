@@ -6,7 +6,7 @@
  */
 import { create } from "zustand";
 
-import { DEFAULT_ZOOM, clampTarget, stepZoom, type ZoomLevel } from "./worldCamera";
+import { DEFAULT_ZOOM, MAX_ZOOM, clampTarget, stepZoom, type ZoomLevel } from "./worldCamera";
 
 export interface CameraState {
   /** Ground point the camera looks at, world metres. */
@@ -30,7 +30,7 @@ export interface CameraState {
 
 /**
  * `?world=x,z[,zoom]` deep-links a spot on the island (metres from the centre,
- * zoom step 0–2) — for "show me the harbor" from voice or a shared link, and
+ * zoom step 0–4) — for "show me the harbor" from voice or a shared link, and
  * for screenshots. Anything malformed falls back to the square.
  */
 export function focusFromSearch(search: string): { target: [number, number]; zoom: ZoomLevel } | null {
@@ -39,7 +39,10 @@ export function focusFromSearch(search: string): { target: [number, number]; zoo
   const parts = raw.split(",").map((v) => Number(v));
   if (parts.length < 2 || !parts.slice(0, 2).every(Number.isFinite)) return null;
   const target = clampTarget(parts[0], parts[1]);
-  const z = parts.length > 2 && Number.isInteger(parts[2]) && parts[2] >= 0 && parts[2] <= 2 ? (parts[2] as ZoomLevel) : DEFAULT_ZOOM;
+  const z =
+    parts.length > 2 && Number.isInteger(parts[2]) && parts[2] >= 0 && parts[2] <= MAX_ZOOM
+      ? (parts[2] as ZoomLevel)
+      : DEFAULT_ZOOM;
   return { target, zoom: z };
 }
 

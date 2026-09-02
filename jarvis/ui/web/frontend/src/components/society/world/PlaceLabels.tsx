@@ -11,11 +11,11 @@ import { buildIsland, groundY, tileToWorld, type PlaceId } from "./islandLayout"
 /** Label anchor height above the ground per place (roughly the roofline). */
 const LABEL_Y: Record<PlaceId, number> = {
   market: 12.5,
-  hub: 13,
+  hub: 26,
   workshop: 9,
   archive: 15,
   harbor: 8,
-  lighthouse: 16,
+  lighthouse: 20,
   gardens: 6,
   solar: 5,
   plugins: 13,

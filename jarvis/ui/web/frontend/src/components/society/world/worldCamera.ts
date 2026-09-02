@@ -6,8 +6,9 @@
  * Decisions (maintainer, 2026-09-01): a STEEP bird's-eye view — 50° below
  * the horizon at the classic 45° dimetric yaw — so the island reads as "seen
  * from above" while house fronts and figure silhouettes stay visible. Zoom
- * is three fixed steps (one field, four fields, the whole market district),
- * never continuous: with an integer pixel size every step stays crisp.
+ * is five fixed steps (one field, four fields, the market district, a quarter
+ * of the island, the whole island), never continuous: with an integer pixel
+ * size every step stays crisp, and the widest step is the postcard view.
  */
 import { ISLAND_HALF_M } from "./islandLayout";
 
@@ -17,8 +18,10 @@ export const CAMERA_YAW_DEG = 45;
 export const CAMERA_DISTANCE_M = 420;
 
 /** Ground width the orthographic frustum shows per zoom step, in metres. */
-export const ZOOM_WIDTHS_M = [32, 64, 128] as const;
-export type ZoomLevel = 0 | 1 | 2;
+export const ZOOM_WIDTHS_M = [32, 64, 128, 256, 512] as const;
+export type ZoomLevel = 0 | 1 | 2 | 3 | 4;
+/** The widest step: the whole island in one frame. */
+export const MAX_ZOOM: ZoomLevel = 4;
 /** Start on the middle step: the whole village square fits, figures stay readable. */
 export const DEFAULT_ZOOM: ZoomLevel = 1;
 

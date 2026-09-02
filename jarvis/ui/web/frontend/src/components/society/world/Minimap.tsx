@@ -1,16 +1,17 @@
 /**
- * The island at a glance: a 2D canvas painted once from the tile map, with the
- * viewport rectangle and the walkers' pins redrawn a few times a second.
- * Clicking it moves the camera there.
+ * The island at a glance: a 2D canvas painted once from the tile map — every
+ * kind in its colour, the high ground lighter and the low ground deeper so the
+ * relief reads — with the viewport rectangle and the walkers' pins redrawn a
+ * few times a second. Clicking it moves the camera there.
  */
 import { useEffect, useMemo, useRef } from "react";
 
 import { useT } from "@/i18n";
 import { useCameraStore } from "./cameraStore";
-import { ISLAND_HALF_M, TILE_M, buildIsland, type TileKind } from "./islandLayout";
+import { ISLAND_HALF_M, PLATEAU_LEVEL, TILE_M, TileKind, buildIsland } from "./islandLayout";
 import { walkerPins } from "./walkerRegistry";
 import { ZOOM_WIDTHS_M, visibleGroundCorners } from "./worldCamera";
-import { LABEL, minimapColor } from "./worldPalette";
+import { LABEL, WATER, minimapColor, shadeHex } from "./worldPalette";
 
 const SIZE_PX = 168;
 const REDRAW_MS = 120;
@@ -25,7 +26,13 @@ function paintBase(): HTMLCanvasElement | null {
   if (!ctx) return null;
   for (let tz = 0; tz < map.size; tz++) {
     for (let tx = 0; tx < map.size; tx++) {
-      ctx.fillStyle = minimapColor(map.kind[tz * map.size + tx] as TileKind);
+      const i = tz * map.size + tx;
+      const kind = map.kind[i] as TileKind;
+      if (kind === TileKind.water) {
+        ctx.fillStyle = WATER.deep;
+      } else {
+        ctx.fillStyle = shadeHex(minimapColor(kind), 1 + (map.level[i] - PLATEAU_LEVEL) * 0.06);
+      }
       ctx.fillRect(tx, tz, 1, 1);
     }
   }

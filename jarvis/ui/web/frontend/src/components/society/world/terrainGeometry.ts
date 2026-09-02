@@ -3,18 +3,22 @@
  *
  * Every land tile contributes a flat top quad at its level's height and, where
  * a neighbour sits lower (or is sea), a vertical side quad down to that
- * neighbour: cliffs, beach steps and the plateau rim come out of the level
- * map for free. Colours are per tile (two alternating shades per kind, so the
- * ground has the tile-art flicker under the pixel pass) and per side.
+ * neighbour: cliffs, terraces, beach steps and the plateau rim come out of the
+ * level map for free. Colours are per tile (two alternating shades per kind,
+ * so the ground has the tile-art flicker under the pixel pass) and per side;
+ * on top of that the high ground is tinted a touch lighter and the sand next
+ * to the water a touch darker (wet), the way a painted map reads height and
+ * shoreline.
  *
  * Pure three.js, no React: a test can build it under vitest, and the renderer
- * mounts the result once. ~13 k land tiles → roughly 40 k triangles.
+ * mounts the result once. ~36 k land tiles → roughly 110 k triangles.
  */
 import { BufferAttribute, BufferGeometry, Color } from "three";
 
 import {
   DOCK_Y,
   LEVEL_Y,
+  PLATEAU_LEVEL,
   TILE_M,
   TileKind,
   hash2,
@@ -25,7 +29,11 @@ import {
 import { TILE_COLORS } from "./worldPalette";
 
 /** How far below the water surface the coast walls reach (never a visible gap). */
-const SEA_FLOOR_Y = -0.6;
+const SEA_FLOOR_Y = -1.5;
+/** Lightening per level above the plateau (and darkening below): aerial tint. */
+const LEVEL_TINT = 0.022;
+/** Sand with the sea beside it darkens by this factor: the wet line. */
+const WET_SAND = 0.9;
 
 type Vec3 = [number, number, number];
 
@@ -72,6 +80,13 @@ function color(hex: string): Color {
   return c;
 }
 
+const NEIGHBOURS = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+] as const;
+
 /** Height of a tile's top surface; the sea floor for water and out-of-map. */
 function topY(map: IslandMap, tx: number, tz: number): number {
   if (!inBounds(map, tx, tz)) return SEA_FLOOR_Y;
@@ -85,19 +100,26 @@ function topY(map: IslandMap, tx: number, tz: number): number {
 /** 1 = fully lit; each higher neighbour and each built-on neighbour darkens the tile a step. */
 function tileAo(map: IslandMap, tx: number, tz: number, y: number): number {
   let ao = 1;
-  for (const [dx, dz] of [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-  ] as const) {
+  for (const [dx, dz] of NEIGHBOURS) {
     const nx = tx + dx;
     const nz = tz + dz;
     if (!inBounds(map, nx, nz)) continue;
-    if (topY(map, nx, nz) > y + 0.01) ao -= 0.09;
+    const ny = topY(map, nx, nz);
+    // A higher neighbour shades; a cliff (two steps or more) shades harder.
+    if (ny > y + 0.01) ao -= ny > y + 1.2 ? 0.12 : 0.09;
     else if (map.blocked[tileIndex(map, nx, nz)] && map.kind[tileIndex(map, nx, nz)] !== TileKind.water) ao -= 0.05;
   }
-  return Math.max(0.68, ao);
+  return Math.max(0.64, ao);
+}
+
+function touchesWater(map: IslandMap, tx: number, tz: number): boolean {
+  for (const [dx, dz] of NEIGHBOURS) {
+    const nx = tx + dx;
+    const nz = tz + dz;
+    if (!inBounds(map, nx, nz)) return true;
+    if (map.kind[tileIndex(map, nx, nz)] === TileKind.water) return true;
+  }
+  return false;
 }
 
 /** Build the terrain mesh for the whole map. */
@@ -110,6 +132,7 @@ export function buildTerrainGeometry(map: IslandMap): BufferGeometry {
       const kind = map.kind[i] as TileKind;
       if (kind === TileKind.water) continue;
       const y = topY(map, tx, tz);
+      const level = map.level[i];
       const x0 = tx * TILE_M - half;
       const x1 = x0 + TILE_M;
       const z0 = tz * TILE_M - half;
@@ -121,14 +144,19 @@ export function buildTerrainGeometry(map: IslandMap): BufferGeometry {
       // Analytic ambient occlusion (world-masterplan-v2.md §3.3): ground next
       // to a higher step or a building darkens a little, the way every corner
       // of a stylised village is shaded.
-      const ao = tileAo(map, tx, tz, y);
-      const top = ao < 1 ? color(shades.top[topIdx]).clone().multiplyScalar(ao) : color(shades.top[topIdx]);
+      let factor = tileAo(map, tx, tz, y);
+      // Aerial tint: the high ground is a touch lighter, the low ground a touch deeper.
+      if (kind !== TileKind.dock) factor *= 1 + (level - PLATEAU_LEVEL) * LEVEL_TINT;
+      // The wet line: sand with the sea beside it.
+      if (kind === TileKind.sand && touchesWater(map, tx, tz)) factor *= WET_SAND;
+      const base = color(shades.top[topIdx]);
+      const top = Math.abs(factor - 1) > 0.001 ? base.clone().multiplyScalar(factor) : base;
       b.quad([x0, y, z0], [x0, y, z1], [x1, y, z1], [x1, y, z0], UP, top);
 
-      const side = color(shades.side);
       // Dock planks stand on posts, not on a wall: no side faces, they float.
       if (kind === TileKind.dock) continue;
 
+      const side = color(shades.side);
       const south = topY(map, tx, tz + 1);
       if (south < y) b.quad([x0, south, z1], [x1, south, z1], [x1, y, z1], [x0, y, z1], SOUTH, side);
       const north = topY(map, tx, tz - 1);

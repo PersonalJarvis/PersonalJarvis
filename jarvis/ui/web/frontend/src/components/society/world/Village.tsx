@@ -1,7 +1,7 @@
 /**
- * The market district: twelve solarpunk houses in a ring around the open
- * square, the lead agent's hub at its head, the Quest Board monument with the
- * long table in the middle, the hedge ring with its four gates, and the lamps.
+ * The market district: the solarpunk houses in a ring around the open square,
+ * the lead agent's hub on its podium at the head, the Quest Board monument with
+ * the long table in the middle, the hedge ring with its four gates, and the lamps.
  *
  * Everything is primitives from `worldMaterials.ts` — no asset files. The
  * building language (docs/agent-society/world-art-direction.md §4): white
@@ -11,7 +11,7 @@ import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Color, InstancedMesh, Mesh, Object3D } from "three";
 
-import { buildIsland, groundY, type HousePlot, type Post } from "./islandLayout";
+import { LEVEL_Y, PLATEAU_LEVEL, buildIsland, groundY, type HousePlot, type Post } from "./islandLayout";
 import { QuestMonument } from "./QuestMonument";
 import { Block, useKit, type Kit } from "./WorldKit";
 import { PAL } from "./worldMaterials";
@@ -73,37 +73,110 @@ function House({ kit, plot }: { kit: Kit; plot: HousePlot }) {
   );
 }
 
-/** The lead agent's hub — the largest house, at the head of the square, with a beacon. */
+/**
+ * The lead agent's hub — the landmark at the head of the square, on its own
+ * podium one step above the village: a wide hall with a glass band and garden
+ * roofs, a set-back upper floor, a glass atrium tower under the dome, the
+ * beacon spire, two solar-roofed wings, a colonnade over the entrance, the
+ * grand stair down to the square and the reflecting pool at its foot.
+ * Local +z is the front (south, toward the square).
+ */
 function Hub({ kit, paused }: { kit: Kit; paused: boolean }) {
   const { map, content } = buildIsland();
   const [tx, tz] = content.places.hub.tile;
   const x = (tx + 0.5 - map.size / 2) * 2;
   const z = (tz + 0.5 - map.size / 2) * 2;
   const y = groundY(map, x, z);
+  const plazaDrop = LEVEL_Y[PLATEAU_LEVEL] - y; // negative: the square lies below the podium
   const beacon = useRef<Mesh>(null);
+  const halo = useRef<Mesh>(null);
   useFrame(({ clock }) => {
-    if (!beacon.current || paused) return;
+    if (paused) return;
     const t = clock.getElapsedTime();
-    const s = 1 + Math.sin(t * 2.2) * 0.12;
-    beacon.current.scale.setScalar(s * 1.3);
+    if (beacon.current) beacon.current.scale.setScalar((1 + Math.sin(t * 2.2) * 0.12) * 1.6);
+    if (halo.current) {
+      halo.current.rotation.z = t * 0.6;
+      const s = 1 + Math.sin(t * 2.2 + 1.2) * 0.06;
+      halo.current.scale.set(2.6 * s, 2.6 * s, 2.6);
+    }
   });
+  const towerZ = -0.5;
   return (
     <group position={[x, y, z]}>
-      <Block kit={kit} at={[0, 0.2, 0]} size={[15, 0.4, 11]} color={PAL.trim} />
-      <Block kit={kit} at={[0, 2.4, 0]} size={[14, 4.4, 10]} color={PAL.wall} />
-      {/* glass band all around */}
-      <Block kit={kit} at={[0, 2.6, 0]} size={[14.1, 1.2, 10.1]} color={PAL.hubGlass} glow />
-      {/* accent trim in the lead's colour */}
-      <Block kit={kit} at={[0, 4.7, 0]} size={[14.6, 0.3, 10.6]} color={PAL.hubAccent} />
-      {/* entrance: wide door, two steps, facing the square (south, +z) */}
-      <Block kit={kit} at={[0, 1.4, 5.1]} size={[3.2, 2.8, 0.2]} color={PAL.door} />
-      <Block kit={kit} at={[0, 0.5, 6.2]} size={[5, 0.2, 1.6]} color={PAL.trim} />
-      <Block kit={kit} at={[0, 0.3, 7.4]} size={[6, 0.2, 1.4]} color={PAL.trim} />
-      {/* dome */}
-      <mesh geometry={kit.g.dome} material={kit.m.lit(PAL.hubGlass)} position={[0, 4.85, 0]} scale={[9, 7, 9]} />
-      {/* beacon mast and light */}
-      <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.metal)} position={[0, 9.2, 0]} scale={[0.35, 2.4, 0.35]} />
-      <mesh ref={beacon} geometry={kit.g.sphere} material={kit.m.glow(PAL.beacon)} position={[0, 10.9, 0]} scale={1.3} />
+      {/* plinth and the main hall */}
+      <Block kit={kit} at={[0, 0.15, 0]} size={[25, 0.3, 13]} color={PAL.trim} />
+      <Block kit={kit} at={[0, 2.6, 0]} size={[24, 5.2, 12]} color={PAL.wall} />
+      <Block kit={kit} at={[0, 2.7, 0]} size={[24.1, 1.3, 12.1]} color={PAL.hubGlass} glow />
+      <Block kit={kit} at={[0, 5.35, 0]} size={[24.6, 0.3, 12.6]} color={PAL.hubAccent} />
+      {/* garden roofs on both ends of the hall */}
+      {[-8.6, 8.6].map((ox) => (
+        <group key={ox} position={[ox, 5.5, 0]}>
+          <Block kit={kit} at={[0, 0.2, 0]} size={[6.2, 0.4, 11.4]} color={PAL.trim} />
+          <Block kit={kit} at={[0, 0.5, 0]} size={[5.6, 0.25, 10.8]} color={PAL.gardenRoof} />
+          <mesh geometry={kit.g.blob} material={kit.m.lit(PAL.gardenRoofBush)} position={[0.6, 1.0, -2.4]} scale={1.3} />
+          <mesh geometry={kit.g.blob} material={kit.m.lit(PAL.gardenRoofBush)} position={[-0.9, 0.95, 2.2]} scale={1.1} />
+          <mesh geometry={kit.g.blob} material={kit.m.lit(PAL.flower)} position={[1.1, 0.85, 1.4]} scale={0.6} />
+        </group>
+      ))}
+      {/* the upper floor, set back */}
+      <Block kit={kit} at={[0, 7.4, towerZ]} size={[15, 4.2, 9]} color={PAL.wall} />
+      <Block kit={kit} at={[0, 7.6, towerZ]} size={[15.1, 1.2, 9.1]} color={PAL.hubGlass} glow />
+      <Block kit={kit} at={[0, 9.55, towerZ]} size={[15.6, 0.3, 9.6]} color={PAL.hubAccent} />
+      {/* the glass atrium under the dome */}
+      <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.trim)} position={[0, 9.85, towerZ]} scale={[8.6, 0.3, 8.6]} />
+      <mesh geometry={kit.g.cylinder} material={kit.m.glow(PAL.hubGlass)} position={[0, 12.3, towerZ]} scale={[8, 4.8, 8]} />
+      <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.hubAccent)} position={[0, 14.75, towerZ]} scale={[8.6, 0.3, 8.6]} />
+      <mesh geometry={kit.g.dome} material={kit.m.lit(PAL.hubGlass)} position={[0, 14.9, towerZ]} scale={[9, 6.6, 9]} />
+      {/* the spire: mast, halo ring and the pulsing beacon */}
+      <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.metal)} position={[0, 20.6, towerZ]} scale={[0.45, 5.4, 0.45]} />
+      <mesh ref={halo} geometry={kit.g.ring} material={kit.m.glow(PAL.beacon)} position={[0, 22.6, towerZ]} rotation={[Math.PI / 2, 0, 0]} scale={[2.6, 2.6, 2.6]} />
+      <mesh ref={beacon} geometry={kit.g.sphere} material={kit.m.glow(PAL.beaconCore)} position={[0, 23.8, towerZ]} scale={1.6} />
+      {/* two wings with solar barrel roofs */}
+      {[-15.5, 15.5].map((ox) => (
+        <group key={ox} position={[ox, 0, 1]}>
+          <Block kit={kit} at={[0, 0.15, 0]} size={[7.6, 0.3, 8.6]} color={PAL.trim} />
+          <Block kit={kit} at={[0, 1.9, 0]} size={[7, 3.8, 8]} color={PAL.wallShade} />
+          <Block kit={kit} at={[0, 1.9, 4.05]} size={[4.4, 1.2, 0.12]} color={PAL.glass} glow />
+          <mesh geometry={kit.g.halfCylinder} material={kit.m.lit(PAL.solar)} position={[0, 3.8, 0]} rotation={[0, 0, Math.PI / 2]} scale={[3.2, 7.4, 8.6]} />
+          <Block kit={kit} at={[0, 5.42, 0]} size={[7.5, 0.1, 0.5]} color={PAL.solarLine} />
+        </group>
+      ))}
+      {/* the colonnade over the entrance */}
+      {[-10, -6, -2, 2, 6, 10].map((px) => (
+        <mesh key={px} geometry={kit.g.cylinder} material={kit.m.lit(PAL.wall)} position={[px, 2.6, 7.4]} scale={[0.7, 5.2, 0.7]} />
+      ))}
+      <Block kit={kit} at={[0, 5.4, 7.5]} size={[23, 0.3, 3.2]} color={PAL.trim} />
+      <Block kit={kit} at={[0, 5.62, 7.5]} size={[22, 0.12, 2.8]} color={PAL.glass} glow />
+      {/* entrance: the wide door with glass to both sides */}
+      <Block kit={kit} at={[0, 1.8, 6.1]} size={[4.2, 3.6, 0.2]} color={PAL.door} />
+      <Block kit={kit} at={[-4.6, 1.9, 6.08]} size={[3.2, 2.6, 0.14]} color={PAL.glass} glow />
+      <Block kit={kit} at={[4.6, 1.9, 6.08]} size={[3.2, 2.6, 0.14]} color={PAL.glass} glow />
+      {/* planters on the podium's front corners */}
+      {[-13, 13].map((px) => (
+        <group key={px} position={[px, 0, 7.5]}>
+          <Block kit={kit} at={[0, 0.35, 0]} size={[2.4, 0.7, 2.4]} color={PAL.trim} />
+          <mesh geometry={kit.g.blob} material={kit.m.lit(PAL.gardenRoofBush)} position={[0, 1.2, 0]} scale={1.8} />
+        </group>
+      ))}
+      {/* the grand stair down to the square: three broad steps */}
+      {[0, 1, 2].map((k) => (
+        <Block
+          key={k}
+          kit={kit}
+          at={[0, plazaDrop * ((k + 1) / 3) + 0.17, 9.6 + k * 1.0]}
+          size={[11, 0.34, 1.0]}
+          color={PAL.trim}
+        />
+      ))}
+      {/* the reflecting pool and two flag masts at the foot of the stair */}
+      <Block kit={kit} at={[0, plazaDrop + 0.12, 13.2]} size={[8.4, 0.24, 2.2]} color={PAL.trim} />
+      <Block kit={kit} at={[0, plazaDrop + 0.2, 13.2]} size={[8, 0.12, 1.8]} color={PAL.pool} glow />
+      {[-6.2, 6.2].map((px) => (
+        <group key={px} position={[px, plazaDrop, 13.2]}>
+          <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.metal)} position={[0, 3.2, 0]} scale={[0.2, 6.4, 0.2]} />
+          <Block kit={kit} at={[0.8, 5.8, 0]} size={[1.5, 0.9, 0.08]} color={PAL.hubAccent} />
+        </group>
+      ))}
     </group>
   );
 }

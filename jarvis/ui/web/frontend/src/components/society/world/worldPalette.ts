@@ -3,11 +3,14 @@
  * app and never wears Ink & Paper. Every colour rendered inside the viewport
  * comes from here; the surrounding chrome keeps the app's theme tokens.
  *
- * Direction (maintainer, 2026-09-01, docs/agent-society/world-art-direction.md):
- * a bright pixel island in the warm light of a late afternoon — saturated,
- * friendly greens and blues, warm sand and stone — with a SOLARPUNK village on
- * it: white walls, glass, solar barrels, garden roofs, wood accents. Two
- * shades per terrain kind give the tile-art flicker under the pixel pass.
+ * Direction (maintainer, 2026-09-01/02, docs/agent-society/world-art-direction.md):
+ * a bright island in the warm light of a late afternoon — saturated, friendly
+ * greens and blues, warm sand and stone — composed of biomes at different
+ * heights (beach, meadows, forest, alpine, rock, snow) with a SOLARPUNK
+ * village on its central plateau: white walls, glass, solar barrels, garden
+ * roofs, wood accents. Two shades per terrain kind give the tile-art flicker
+ * under the pixel pass; the level tint in `terrainGeometry.ts` lightens the
+ * high ground a little, the way distance haze does.
  */
 import { TileKind } from "./islandLayout";
 
@@ -28,14 +31,19 @@ export const TILE_COLORS: Record<TileKind, TileShades> = {
   [TileKind.path]: { top: ["#dcc9a5", "#d0bd97"], side: "#a48c66" },
   [TileKind.garden]: { top: ["#b7dc6a", "#e18db1"], side: "#8e6a44" },
   [TileKind.dock]: { top: ["#b6853f", "#a87634"], side: "#7d5623" },
+  [TileKind.forest]: { top: ["#4f9e47", "#47923f"], side: "#6d5236" },
+  [TileKind.alpine]: { top: ["#bcd97c", "#aecf6f"], side: "#7c6a4c" },
+  [TileKind.snow]: { top: ["#f6f9fc", "#e9eff6"], side: "#8f92a3" },
 };
 
-/** Water: the animated surface and its pixel highlights. */
+/** Water: the animated surface, from the turquoise shallows to the open sea. */
 export const WATER = {
+  abyss: "#1e5c9a",
   deep: "#2f7fc4",
   surface: "#44a0dd",
-  ripple: "#8fd0f4",
-  foam: "#d9f2ff",
+  shallow: "#72d3e2",
+  ripple: "#9fdcf6",
+  foam: "#e4f6ff",
 };
 
 /** Sky and light. NoToneMapping keeps these exact. */
@@ -72,12 +80,15 @@ export const BUILDING = {
   door: "#e0893b",
   hubAccent: "#2f6f8f",
   hubGlass: "#bfe7ff",
+  /** The hub's forecourt pool: still water, lit from within. */
+  pool: "#86d9ea",
   beacon: "#ffe08a",
   beaconCore: "#fff6d5",
   workshopRoof: "#d86a4a",
   archiveDome: "#5aa7c8",
   lighthouseStripe: "#e05a5a",
   metal: "#8b8f9c",
+  buoy: "#e8563f",
 };
 
 export const NATURE = {
@@ -87,6 +98,17 @@ export const NATURE = {
   canopyLight: "#93da7c",
   bigCanopy: "#57b84f",
   bigCanopyLight: "#8fdc7a",
+  /** Conifers of the forest and the alpine slopes. */
+  pineA: "#2f7f45",
+  pineB: "#3b9452",
+  pineLight: "#5aae64",
+  /** Palms of the cove. */
+  palmTrunk: "#a8794a",
+  palmLeaf: "#4fb254",
+  palmLeafLight: "#7ccf6c",
+  /** Boulders: two greys, warm and cool. */
+  boulderA: "#a19fab",
+  boulderB: "#7e7c8a",
   hedge: "#3f8f3f",
   hedgeLight: "#57a94f",
   flower: "#ef8fb6",
@@ -108,4 +130,11 @@ export const LABEL = {
 /** Colours for the 2D minimap, one per tile kind (top shade 0). */
 export function minimapColor(kind: TileKind): string {
   return TILE_COLORS[kind].top[0];
+}
+
+/** A hex colour scaled by `factor` (clamped), for the minimap's height shading. */
+export function shadeHex(hex: string, factor: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (shift: number) => Math.max(0, Math.min(255, Math.round(((n >> shift) & 255) * factor)));
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
 }

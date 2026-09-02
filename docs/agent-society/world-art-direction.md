@@ -21,12 +21,12 @@ places of the society. Seen steeply from above, lightly pixelated, never dark, n
 |---|---|---|---|
 | 1 | Look | **Colourful pixel island** (cosy-farming-game softness in 3D) | matches "bright, beautiful, lightly pixelated"; a block diorama or clean low-poly would lose the warmth |
 | 2 | Camera | **Steep bird's-eye: 50° below the horizon, 45° dimetric yaw**, orthographic | reads as "from above" yet keeps house fronts and figure silhouettes; 30–35° gives more façade but less overview |
-| 3 | Size | **10 × 10 fields; the central 4 × 4 fields are the market district** | the maintainer wants a big island that is not seen in one screen; one field = one screen at the closest zoom |
-| 4 | Landscape | **A village / small town** on a green island: meadows, beach, a bay, one rocky highland | free-text decision: "a village, ultramodern, future-oriented" |
+| 3 | Size | **16 × 16 fields (512 m); the central 4 × 4 fields are the market district** | the maintainer wants a big island that is not seen in one screen — grown from 10 × 10 on 2026-09-02 ("at least 50 % bigger"); one field = one screen at the closest zoom |
+| 4 | Landscape | **A village / small town** on an island of **biomes at different heights**: a snow-capped mountain, terraced hills, alpine meadows, a rocky cape, a tropical cove with a lagoon, the harbor bay, orchards, a dark forest | free-text decisions: "a village, ultramodern, future-oriented" (2026-09-01) and "not flat — biomes, heights, spectacular, never overloaded" (2026-09-02) |
 | 5 | Architecture | **Solarpunk village** — white + glass + solar + gardens + wood, lots of green between | colourful AND futuristic; pure factory grey or neon-cyber contradicts the bright island |
 | 6 | Centre | **Comic-village ring structure, modernised**: houses around the open square, the big tree with the long table in the middle, the lead's hub at the head (north) | the maintainer's own image ("Asterix-style village structure, only modern") |
 | 7 | Pixel grain | **Fine — 2 screen pixels per rendered pixel** (a 1280-px stage renders at 640 px) | figures and signs stay readable; 320×180 would be too coarse for a big island |
-| 8 | Navigation | **Drag + arrow keys/WASD, three fixed zoom steps (32 / 64 / 128 m), minimap** | 100 fields need zoom to find an agent; fixed steps keep pixels crisp |
+| 8 | Navigation | **Drag + arrow keys/WASD, five fixed zoom steps (32 / 64 / 128 / 256 / 512 m), minimap with relief** | 256 fields need zoom to find an agent; fixed steps keep pixels crisp; the widest step is the postcard of the island |
 
 Decided by the build, open to the maintainer: fixed warm-afternoon light in V1 (a real-clock
 day/night cycle is a later flavour); animated pixel water; the hub carries the pulsing beacon
@@ -34,46 +34,69 @@ that will map onto the voice orb.
 
 ## 3. Layout
 
-Units: 1 world unit = 1 m; one tile = 2 m; the island is 160 × 160 tiles (320 m). World origin
-is the island centre; +x east, +z south.
+Units: 1 world unit = 1 m; one tile = 2 m; the island is 256 × 256 tiles (512 m). World origin
+is the island centre; +x east, +z south. The camera looks toward the north-west, so the tall
+things stand at the back (north-west) and the low, bright things in the foreground (south-east).
 
 ```
-            N  (archive tower)
-            |
-   solar    |    rock highland
-   field    |
-W (workshop)—[ MARKET DISTRICT ]—(lighthouse cape) E
-            |
-   gardens  |
- greenhouses|
-            S  (harbor gate + dock in the bay)
+   MOUNTAIN (snow cap)      N  archive HILL      ALPINE meadows, flower fields
+   solar terrace            |
+                            |
+W  dark FOREST  (workshop)—[ MARKET PLATEAU ]—(lighthouse on the rocky CAPE)  E   · islets
+                            |
+   ORCHARD meadows          |            tropical COVE: lagoon, sandbar, palms, gardens
+                            S  harbor BAY, dock, breakwater
 ```
 
-**Market district (64 × 64 tiles, one flat plateau):**
+**Terrain:** a continuous height field (`islandLayout.heightAt`) — a radial fall-off plus one
+designed bump or dip per biome (`REGIONS`) plus a little noise — quantised into ten levels
+(`LEVEL_Y`, 0.35 m at the beach to 12.6 m at the peak). Every slope becomes a terrace, every
+steep place a cliff. The tile kind follows level and region: sand → grass / meadow → forest (west)
+→ alpine (high, north-east and the mountain) → rock → snow (level 8+). Flower fields are drifts of
+`garden` tiles over the meadows. Offshore: four rock islets with a green crown, the breakwater in
+the bay's mouth, the lagoon (sea level, enclosed by a sandbar, a channel to the sea, a jetty).
+
+**Roads are graded:** each spoke is walked outward from the square and clamped to ±1 level per
+tile, shoulders included, so a walker can climb to the archive hill or the cape; cliffs of two
+steps or more are real barriers (`findPath` refuses them). Every place's plot is flattened to its
+own terrace level (`PLOT_LEVEL`): the archive on the hill at 5, the lighthouse knob at 6, the
+harbor and the gardens low at 2, the solar field on the mountain's foot terrace at 4.
+
+**Market district (a round plateau of radius 39 tiles, level 3):**
 - open square, radius 13 tiles, paved; garden beds alternate around its rim;
 - the big tree in the exact centre, a ring bench around it, the long table on the south side —
   this is the `meeting` checkpoint (MASTERPLAN §2.7);
-- 12 houses on a ring at radius 19 tiles, doors facing the square; the four cardinal directions
-  stay open as gates; three variants cycle: solar-barrel roof, garden roof, glass loft;
-- the **hub** (lead agent) at the head of the square, north, radius 20: the largest building,
-  glass band, dome, beacon mast;
-- ring road at radius 25, hedge ring with four gates at radius 29, lamps along the spokes;
+- the house ring at radius 19 tiles, doors facing the square; the four cardinal directions stay
+  open as gates; the Plugin Docks take two north-west slots, the hub's podium the two slots
+  flanking the north gate — eight houses remain, three variants cycling: solar-barrel roof,
+  garden roof, glass loft;
+- the **hub** (lead agent) at the head of the square, north, on a **podium one level up**
+  (18 × 10 tiles): a 24 × 12 m hall with a glass band and garden roofs, a set-back upper floor,
+  the glass atrium under the dome, the beacon spire with its halo, two solar-roofed wings, a
+  colonnade over the entrance, the grand stair down to the square, the reflecting pool and two
+  flag masts at its foot;
+- ring road at radius 25 (it climbs the podium's back terrace instead of vanishing under it),
+  hedge ring with four gates at radius 29, lamps along the spokes;
 - four spokes (width 3 tiles) from the square to the quarters.
 
 **Quarters and checkpoints** (backend place → island place, `Walkers.tsx`):
 
 | checkpoint | place | building |
 |---|---|---|
-| `desk` | workshop (west) | long hall, sawtooth skylights, wide door toward the village |
+| `desk` | workshop (west, a clearing in the forest) | long hall, sawtooth skylights, wide door toward the village |
 | `meeting` | market square | the table under the big tree |
-| `archive` | archive (north) | round tower, two glass bands, blue dome |
-| `gate` | harbor gate (south) | gate pillars over the dock into the bay, kiosk, moored boat |
-| — | lighthouse (east cape) | striped tower with rotating lamp, keeper's hut |
-| — | gardens (south-east) | six glass greenhouses on garden tiles |
-| — | solar field (north-west) | 35 tilted panels on posts |
+| `archive` | archive (north, on the terraced hill) | round tower, two glass bands, blue dome |
+| `gate` | harbor gate (south, the bay) | gate pillars over the dock into the bay, kiosk, two moored boats, buoys, breakwater |
+| — | lighthouse (east cape, on the rock) | striped tower with rotating lamp, keeper's hut |
+| — | gardens (south-east, the cove's low terrace) | six glass greenhouses on garden tiles |
+| — | solar field (north-west, the mountain's foot terrace) | 35 tilted panels on posts |
 
 Idle agents (`idle`) wander inside the square with the rest-biased model (`wander.ts`);
 paused agents stand still.
+
+**Vegetation per biome** (`treeChoice`): round trees on grass and meadow (dense and taller in the
+forest), pines on the alpine meadows and the high slopes, palms on the cove's sand — thickest
+around the lagoon; boulders on the high ground, at the foot of cliffs and on the beaches.
 
 ## 4. Palette
 
@@ -84,9 +107,10 @@ tile-art flicker under the pixel pass.
 | Role | Colours |
 |---|---|
 | sky / clear | `#a5dbff` |
-| sea | surface `#44a0dd`, deep `#2f7fc4`, ripple `#8fd0f4`, foam `#d9f2ff` |
+| sea | shallow `#72d3e2`, surface `#44a0dd`, deep `#2f7fc4`, abyss `#1e5c9a`, ripple `#9fdcf6`, foam `#e4f6ff` |
 | sand | `#f3e2ad` / `#ead597` |
 | grass | `#7ccb5c` / `#6fbe51`; meadow (high ground) `#97d46c` / `#8ac860` |
+| forest floor | `#4f9e47` / `#47923f`; alpine `#bcd97c` / `#aecf6f`; snow `#f6f9fc` / `#e9eff6` |
 | rock | `#a8a7b3` / `#9a99a6`, faces `#6f6e7c` |
 | square / paths | `#ece1cf` / `#e2d5c0`; paths `#dcc9a5` / `#d0bd97` |
 | cliff faces under grass | `#8e6a44` |
@@ -95,7 +119,7 @@ tile-art flicker under the pixel pass.
 | solar | `#26375a`, seams `#3e5f95` |
 | wood | `#b57f45` / `#8c5e2f`, doors `#e0893b` |
 | lead accent | `#2f6f8f` (the Jarvis palette of the roster), beacon `#ffe08a` |
-| trees | trunk `#7a5230`, canopies `#4faf49` / `#6cc35e` / `#93da7c` |
+| trees | trunk `#7a5230`, canopies `#4faf49` / `#6cc35e` / `#93da7c`; pines `#2f7f45` / `#3b9452` / `#5aae64`; palms `#4fb254` / `#7ccf6c`; boulders `#a19fab` / `#7e7c8a` |
 | in-world type | Pixelify Sans (OFL, bundled via fontsource), ink `#1f2a3a` on cream chips |
 
 Light: hemisphere sky `#d6ecff` / ground `#7f9c5a`, one warm directional sun `#fff1d6` from the
@@ -108,8 +132,9 @@ lamps and beacons — never PBR.
 - Orthographic camera, `RenderPixelatedPass` (normal edge 0.18, depth edge 0.28) +
   `OutputPass`, `dpr = 1`, antialias off. Pixel size is an integer (2); zoom never scales the
   pixel grid.
-- Terrain is ONE merged vertex-coloured mesh; trees, hedges, lamps, panels and greenhouses are
-  instanced; buildings are shared unit geometries scaled per use, sharing ~25 materials through
+- Terrain is ONE merged vertex-coloured mesh (high ground tinted lighter, wet sand darker); trees,
+  pines, palms, boulders, hedges, lamps, panels and greenhouses are instanced; the sea is one
+  plane whose shader reads a shore-distance texture (depth tint, crests rolling in, foam line); buildings are shared unit geometries scaled per use, sharing ~25 materials through
   `WorldKit`.
 - Every canvas mounts through `useWebglSurface`; the loop pauses via IntersectionObserver;
   reduced motion → demand-driven frames, no wander, no water drift; no WebGL → fallback to the

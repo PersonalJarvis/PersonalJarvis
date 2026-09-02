@@ -6,7 +6,7 @@
  */
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { InstancedMesh, Mesh, Object3D } from "three";
+import { Group, InstancedMesh, Mesh, Object3D } from "three";
 
 import { buildIsland, groundY, tileToWorld, type PlaceId, type Post } from "./islandLayout";
 import { KIT_PLACEMENTS, KitBuilding } from "./KitBuilding";
@@ -67,11 +67,24 @@ function Archive({ kit }: { kit: Kit }) {
 function Harbor({ kit, paused }: { kit: Kit; paused: boolean }) {
   const [x, y, z] = placeWorld("harbor");
   const boat = useRef<Mesh>(null);
+  const boat2 = useRef<Mesh>(null);
+  const buoys = useRef<Group>(null);
   useFrame(({ clock }) => {
-    if (!boat.current || paused) return;
+    if (paused) return;
     const t = clock.getElapsedTime();
-    boat.current.position.y = 0.15 + Math.sin(t * 1.1) * 0.08;
-    boat.current.rotation.z = Math.sin(t * 0.8) * 0.03;
+    if (boat.current) {
+      boat.current.position.y = 0.15 + Math.sin(t * 1.1) * 0.08;
+      boat.current.rotation.z = Math.sin(t * 0.8) * 0.03;
+    }
+    if (boat2.current) {
+      boat2.current.position.y = 0.15 + Math.sin(t * 0.9 + 1.7) * 0.09;
+      boat2.current.rotation.z = Math.sin(t * 0.7 + 0.4) * 0.035;
+    }
+    if (buoys.current) {
+      buoys.current.children.forEach((b, i) => {
+        b.position.y = 0.25 + Math.sin(t * 1.3 + i * 2.1) * 0.12;
+      });
+    }
   });
   return (
     <group position={[x, y, z]}>
@@ -86,12 +99,26 @@ function Harbor({ kit, paused }: { kit: Kit; paused: boolean }) {
       <Block kit={kit} at={[-7, 1.4, 2]} size={[4, 2.8, 3.5]} color={PAL.wallShade} />
       <Block kit={kit} at={[-7, 2.95, 2]} size={[4.6, 0.3, 4.1]} color={PAL.solar} />
       <Block kit={kit} at={[-7, 1.6, 3.8]} size={[2.4, 1.0, 0.12]} color={PAL.glass} glow />
-      {/* a boat moored beside the dock */}
-      <group position={[6.5, -y, 24]}>
+      {/* boats moored beside the dock, and the buoys marking the fairway */}
+      <group position={[6.5, -y, 26]}>
         <mesh ref={boat} geometry={kit.g.box} material={kit.m.lit(PAL.wood)} position={[0, 0.15, 0]} scale={[2.2, 1.0, 6]}>
           <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.woodDark)} position={[0, 2.4, 0.1]} scale={[0.08, 4.4, 0.04]} />
           <mesh geometry={kit.g.box} material={kit.m.lit(PAL.wall)} position={[0.45, 2.6, 0.1]} scale={[0.75, 2.6, 0.03]} />
         </mesh>
+      </group>
+      <group position={[-7, -y, 32]} rotation={[0, 0.35, 0]}>
+        <mesh ref={boat2} geometry={kit.g.box} material={kit.m.lit(PAL.hubAccent)} position={[0, 0.15, 0]} scale={[2.6, 1.0, 7]}>
+          <mesh geometry={kit.g.box} material={kit.m.lit(PAL.wall)} position={[0, 0.9, -0.1]} scale={[0.7, 0.9, 0.36]} />
+        </mesh>
+      </group>
+      <group ref={buoys} position={[0, -y, 0]}>
+        {[
+          [16, 44],
+          [-14, 48],
+          [4, 58],
+        ].map(([bx, bz]) => (
+          <mesh key={`${bx},${bz}`} geometry={kit.g.sphere} material={kit.m.lit(PAL.buoy)} position={[bx, 0.25, bz]} scale={[1.1, 1.3, 1.1]} />
+        ))}
       </group>
     </group>
   );
@@ -105,7 +132,7 @@ function Lighthouse({ kit, paused }: { kit: Kit; paused: boolean }) {
     lamp.current.rotation.y = clock.getElapsedTime() * 1.4;
   });
   return (
-    <group position={[x, y, z]}>
+    <group position={[x, y, z]} scale={[1.3, 1.3, 1.3]}>
       <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.trim)} position={[0, 0.25, 0]} scale={[5.5, 0.5, 5.5]} />
       <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.wall)} position={[0, 5.5, 0]} scale={[3.4, 11, 3.4]} />
       <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.lighthouseStripe)} position={[0, 3.2, 0]} scale={[3.45, 1.5, 3.45]} />
