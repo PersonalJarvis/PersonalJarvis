@@ -433,7 +433,7 @@ class WorkflowRunner:
                 "No brain available — workflow requires a BrainManager"
             )
         prompt = _expand_template(step.prompt, outputs, input_data)
-        reply = await _maybe_await_brain(self._brain, prompt)
+        reply = await _run_isolated_or_call(self._brain, step, prompt)
         # Cap at the user-defined max_output_chars
         cap = getattr(step, "max_output_chars", 2000)
         if len(reply) > cap:
@@ -607,8 +607,8 @@ class WorkflowRunner:
                 cfg = load_config()
                 chat_id = cfg.integrations.telegram.chat_id.strip()
                 parse_mode = cfg.integrations.telegram.parse_mode or "Markdown"
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception:  # noqa: BLE001 — no config = the error below
+                log.debug("telegram_send: config chat_id unavailable", exc_info=True)
         if not chat_id:
             raise RuntimeError(
                 "Telegram chat ID not set — either specify 'chat_id' in "
@@ -677,6 +677,28 @@ def _expand_template(
         return m.group(0)
 
     return _TEMPLATE_RE.sub(repl, s)
+
+
+async def _run_isolated_or_call(brain: Any, step: Any, prompt: str) -> str:
+    """One brain turn for a ``brain_prompt`` step.
+
+    A ``BrainManager`` exposes ``run_task`` — an isolated agentic turn with an
+    EMPTY history and the step's tool allowlist. That is the path a scheduled
+    step must take: the plain callable (``BrainManager.__call__`` →
+    ``generate``) runs the LIVE voice conversation's history and full tool
+    surface, so a 07:30 routine would answer inside whatever the user was
+    last talking about and could touch any tool (BUG-212). Brains without
+    ``run_task`` (test fakes, minimal providers) keep the callable path.
+    """
+    run_task = getattr(brain, "run_task", None)
+    if callable(run_task):
+        result = await run_task(
+            prompt=prompt,
+            allowed_tools=tuple(getattr(step, "tools", ()) or ()),
+            model_tier=getattr(step, "model_tier", "auto") or "auto",
+        )
+        return str(result or "")
+    return await _maybe_await_brain(brain, prompt)
 
 
 async def _maybe_await_brain(brain: Any, prompt: str) -> str:

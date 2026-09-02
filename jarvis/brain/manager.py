@@ -13203,6 +13203,16 @@ class BrainManager:
         """
         intent = "deep" if model_tier == "deep" else "fast"
         tools = self._select_task_tools(allowed_tools)
+        # The per-turn context (date/time, awareness, wiki) rides on the user
+        # message in cache-optimized mode; without it a scheduled turn did not
+        # know what day it was (BUG-212 — the morning brief prompts say "the
+        # date is in your context" and it was not). Legacy mode carries it in
+        # the system prompt and this stays empty.
+        try:
+            turn_context = self._build_turn_context()
+        except Exception:  # noqa: BLE001 — the context block is a nicety
+            log.debug("run_task: turn context skipped", exc_info=True)
+            turn_context = ""
         attempts: list[str] = [self._active_name]
         failures: list[str] = []
         while attempts:
@@ -13221,6 +13231,7 @@ class BrainManager:
                 )
                 agg = await dispatcher.dispatch(
                     prompt, history=[], intent_level=intent, trace_id=trace_id,
+                    turn_context=turn_context,
                 )
                 return agg.text or ""
             except Exception as exc:

@@ -14867,3 +14867,60 @@ asserts `dictionary_bias=False`),
 **Related.** BUG-185 (the echo guard, which stays as the net for the voice
 lane), F14 (dictation builds its own prompt-free provider), AP-21/22 (the
 opt-out rides the same cross-family chain).
+
+## BUG-212: the Morning Briefing arrived at random hours, and only ever said hello (HIGH, FIXED 2026-09-02)
+
+**Symptom.** The scheduled Morning Briefing (cron `30 7 * * *`) was spoken
+once a day but at 10:15, 20:49, 15:04, 11:18 — never at 07:30 — and every
+time it was three sentences of greeting ("Good morning. It's Wednesday, a
+fresh start…"), no calendar, no mail, no news. The recurring Automations
+(`jarvis/tasks`) drifted the same way: a daily 07:30 task that once fired
+late re-armed at "then + 24 h" and stayed late for good.
+
+**Root cause.** Three things stacked.
+1. *Catch-up without grace.* `WorkflowScheduler._tick` fired ANY row whose
+   stored `next_run_at_ns` was `<= now`, however stale. The 07:30 slot is
+   stored the evening before, the app is not running at 07:30, and the first
+   tick after boot fires it — every run in `workflow_runs` starts at the
+   exact second the `Workflow scheduler started` log line appears. The task
+   scheduler (`hydrate()`) and the Conductor had the identical pattern, and
+   `TaskScheduler._rearm_every` re-armed at `now + interval` instead of the
+   `start_at` grid, so one late firing shifted the schedule permanently.
+2. *A greeting prompt on the chat path.* The seed asked for "a short, friendly
+   morning announcement (max 3 sentences)", and a `brain_prompt` step ran
+   `BrainManager.__call__` → `generate()`: the LIVE voice history, the full
+   tool surface, no allowlist. Nothing in the chain could look anything up.
+3. *No date in the isolated turn.* `BrainManager.run_task` (the Automations
+   path) dispatched without `turn_context`; in the default cache-optimized
+   prompt layout that block carries the date and time, so a scheduled turn
+   did not know what day it was although its prompts say the date is in
+   context.
+
+**Fix.** One misfire policy for every scheduler (`jarvis/core/misfire.py`,
+`MISFIRE_GRACE_S` = 30 min): a slot later than that is **missed** — recorded
+as a `missed` workflow run (dated at the slot, with the reason) or a `missed`
+task step, `WorkflowScheduled(reason="missed")` on the bus, the schedule
+continues from the next occurrence, the runner is never called. Within the
+grace the slot still fires (a slow boot at 07:35 is still the morning).
+One-shot task triggers keep firing late (ADR-0005 H9: a reminder survives a
+crash). Recurring tasks re-arm on their wall-clock grid
+(`next_every_due_ns`). `BrainPromptStep` grew `tools` and `model_tier`, and
+the workflow runner prefers `brain.run_task(...)` — an isolated turn with an
+empty history and the step's allowlist — over the callable chat path.
+`run_task` now passes `turn_context`. The seed Morning Briefing is v2: a
+read-only allowlist (`google_calendar`, `gmail`, `wiki-recall`,
+`search_web`) and a prompt that grounds every sentence in tool output, greets
+by the actual time of day and skips a disconnected area in one clause;
+`ensure_seed_workflows` migrates the shipped v1 row (recognised by its
+prompt, `created_by == "seed"`) and keeps the user's on/off choice. The
+Workflows view renders `missed` as a neutral state with the reason (en/de/es).
+
+**Guard.** `tests/unit/workflows/test_misfire.py`,
+`tests/unit/tasks/test_scheduler_misfire.py`,
+`tests/unit/conductor/test_misfire.py` (pins the Conductor's grace to the
+app-wide one), `tests/unit/workflows/test_brain_prompt_isolated.py`,
+`tests/unit/workflows/test_seed_scheduled.py` (v2 shape + migration).
+
+**Related.** ADR-0005 (misfire handling was listed as "not required" — it
+was), AU-02 (the one cron seed that ships on), AP-31 (the grace is a module
+constant, not a config field nobody reads).

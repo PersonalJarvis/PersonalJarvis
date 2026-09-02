@@ -5,8 +5,10 @@ user, after the first launch, to open the WorkflowsView and see 3
 meaningful examples, be able to click "Run", and get a result right away.
 
 - *Morning Briefing* (cron 30 7 * * *, **enabled**) — brain_prompt → speak
-  chain. Produces a mini standup announcement. No external service needed,
-  which is exactly why it is the only cron seed that ships switched on.
+  chain. An isolated agent turn over the read-only tools that are connected
+  (calendar, mail, memory, web/weather) produces a spoken day briefing. It
+  needs no credentials to run at all, which is exactly why it is the only
+  cron seed that ships switched on.
 - *Code Review* (manual) — git diff capture followed by a brain review.
 - *URL Summary* (manual, input field ``url``) — brain_prompt with the
   template variable {{input.url}}. Demos input binding.
@@ -56,30 +58,35 @@ def _morning_briefing() -> WorkflowDef:
     Language is NOT pinned here: the prompt asks for the configured output
     language and the speak step passes ``auto``, so the one resolver decides
     (CLAUDE.md §1). The seed used to hardcode German for everyone.
+
+    Version 2 (BUG-212): the first seed asked for "a short, friendly morning
+    announcement" and got exactly that — a greeting and a motivational
+    phrase, no facts. The step now runs as an isolated agent turn with a
+    read-only tool allowlist (calendar, mail, memory, web + weather) and a
+    prompt that grounds every sentence in tool output. Tools that are not
+    connected on an install are simply skipped, so a fresh box still gets a
+    briefing — an honest one about what is and is not connected.
     """
     now_ns = time.time_ns()
     return WorkflowDef(
         id=_WF_MORNING_BRIEFING,
         name="Morning Briefing",
         description=(
-            "Daily 7:30 announcement: current time, day of week, and a short, "
-            "friendly greeting. Demonstrates a brain_prompt → speak chain."
+            "Daily 07:30 spoken briefing: today's calendar, mail that matters, "
+            "what you noted for today, headlines and weather — from the tools "
+            "that are connected, nothing invented."
         ),
         trigger=CronTrigger(expression="30 7 * * *"),
         steps=(
             BrainPromptStep(
-                label="Generate daily summary",
-                prompt=(
-                    "You are Jarvis. It's currently morning. Compose a short, "
-                    "friendly morning announcement (max 3 sentences) in the "
-                    "configured output language. Include the day of the week "
-                    "and a short motivating remark. NO emojis, NO stating the "
-                    "time — the user can already see that."
-                ),
-                max_output_chars=500,
+                label="Compile the briefing",
+                prompt=_MORNING_BRIEFING_PROMPT,
+                max_output_chars=1_600,
+                tools=MORNING_BRIEFING_TOOLS,
+                model_tier="auto",
             ),
             SpeakStep(
-                label="Play announcement",
+                label="Speak the briefing",
                 text="{{prev.output}}",
                 priority="normal",
                 language="auto",
@@ -90,6 +97,47 @@ def _morning_briefing() -> WorkflowDef:
         created_by="seed",
         tags=("demo", "brain", "speak"),
     )
+
+
+#: Read-side grants for the briefing. Every name is a live tool name or a
+#: plugin prefix (``grant_matches``); a name that is not connected is skipped
+#: by ``BrainManager._select_task_tools``. No tool here can send, write or
+#: delete anything, so an unattended 07:30 run never waits on an approval.
+MORNING_BRIEFING_TOOLS: tuple[str, ...] = (
+    "google_calendar", "gmail", "wiki-recall", "search_web",
+)
+
+#: Marker of the shipped v1 prompt — how the migration recognises the old
+#: seed row (and ONLY that row: a user's own edit never carries it).
+_LEGACY_MORNING_BRIEFING_MARKER = "Compose a short, friendly morning announcement"
+
+_MORNING_BRIEFING_PROMPT = """\
+You are Jarvis, compiling the user's daily briefing that will be SPOKEN aloud.
+The current date and time are in your context: open with the greeting that fits
+the actual time of day (morning, afternoon or evening) and name the weekday.
+
+Gather the facts with the tools you actually have in this turn. Every sentence
+below must come from tool output. When a tool for an area is not available,
+skip that area in one short clause (e.g. "the calendar is not connected yet")
+and move on. Never invent an event, a mail, a headline or a city.
+
+1. Calendar (a calendar tool): today's events. No events: the day is free.
+   One: name it with its time. Several: the count plus the next one with its
+   time. If the next event starts within the hour, say so.
+2. Mail (a mail tool): unread mail. Name at most three that matter, each as
+   sender and subject in one clause. Never read a mail body out.
+3. Memory (wiki-recall): anything the user noted as due or planned for today.
+4. World (search_web): the two or three headlines that matter most for the
+   user's interests, each with its source named. If the user's city is known
+   from memory, one clause of weather from search_web ("weather <city> today":
+   current conditions, high and low). If no city is known, no weather.
+
+Then write the briefing: 5 to 8 short sentences, most important first, plain
+prose for speech — no bullets, no headings, no emojis, no markdown, no URLs.
+Close with one sentence on what matters most today. Do not describe your
+process and do not say that you searched. Write in the configured output
+language.
+"""
 
 
 def _code_review() -> WorkflowDef:
@@ -293,8 +341,16 @@ async def ensure_seed_workflows(store: WorkflowStore) -> int:
     for wf in SEED_WORKFLOWS:
         existing = await store.get_workflow(str(wf.id))
         if existing is not None:
-            if wf.id == _WF_CODE_REVIEW and _is_legacy_code_review(existing):
+            legacy = (
+                (wf.id == _WF_CODE_REVIEW and _is_legacy_code_review(existing))
+                or (wf.id == _WF_MORNING_BRIEFING
+                    and _is_legacy_morning_briefing(existing))
+            )
+            if legacy:
                 await store.upsert_workflow(wf)
+                # The user's on/off choice outlives a seed upgrade: an upsert
+                # writes the seed's ``enabled``, so restore the row's own.
+                await store.set_enabled(str(wf.id), bool(existing.get("enabled")))
                 migrated += 1
             continue
         await store.upsert_workflow(wf)
@@ -304,6 +360,21 @@ async def ensure_seed_workflows(store: WorkflowStore) -> int:
     if migrated:
         log.info("Legacy unavailable seed workflows migrated: %d", migrated)
     return added
+
+
+def _is_legacy_morning_briefing(row: dict[str, object]) -> bool:
+    """Identify only the shipped v1 greeting seed, never a user's own edit."""
+    if row.get("created_by") != "seed":
+        return False
+    try:
+        definition = WorkflowDef.model_validate_json(str(row.get("def_json") or ""))
+    except Exception:  # noqa: BLE001 - malformed legacy data stays user-owned
+        return False
+    return any(
+        isinstance(step, BrainPromptStep)
+        and _LEGACY_MORNING_BRIEFING_MARKER in step.prompt
+        for step in definition.steps
+    )
 
 
 def _is_legacy_code_review(row: dict[str, object]) -> bool:

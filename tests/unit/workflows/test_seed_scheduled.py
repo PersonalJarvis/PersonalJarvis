@@ -11,13 +11,23 @@ would just manufacture failing runs on somebody else's machine.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from jarvis.workflows.schema import (
     BrainPromptStep,
     CronTrigger,
     ManualTrigger,
     SpeakStep,
+    WorkflowDef,
 )
-from jarvis.workflows.seed import SEED_WORKFLOWS
+from jarvis.workflows.seed import (
+    MORNING_BRIEFING_TOOLS,
+    SEED_WORKFLOWS,
+    ensure_seed_workflows,
+)
+from jarvis.workflows.store import WorkflowStore
 
 _CREDENTIAL_FREE_STEPS = (BrainPromptStep, SpeakStep)
 
@@ -82,3 +92,95 @@ def test_the_manual_seeds_are_untouched() -> None:
         wf = _seed(name)
         assert isinstance(wf.trigger, ManualTrigger)
         assert wf.enabled
+
+
+# ----------------------------------------------------------------------
+# BUG-212 — version 2: a briefing, not a greeting
+# ----------------------------------------------------------------------
+
+#: Every grant is a read-side tool: nothing here can send, write or delete,
+#: so an unattended run never waits on an approval nobody is there to give.
+_READ_ONLY_GRANTS = frozenset({"google_calendar", "gmail", "wiki-recall", "search_web"})
+
+
+def test_the_briefing_step_is_an_isolated_turn_with_read_only_tools() -> None:
+    briefing = _seed("Morning Briefing")
+    brain = next(s for s in briefing.steps if isinstance(s, BrainPromptStep))
+    assert brain.tools == MORNING_BRIEFING_TOOLS
+    assert set(brain.tools) <= _READ_ONLY_GRANTS
+    assert brain.model_tier in ("auto", "fast", "deep")
+
+
+def test_the_briefing_prompt_grounds_itself_and_greets_by_time_of_day() -> None:
+    briefing = _seed("Morning Briefing")
+    prompt = next(s.prompt for s in briefing.steps if isinstance(s, BrainPromptStep))
+    assert "tool output" in prompt
+    assert "Never invent" in prompt
+    assert "time of day" in prompt
+    assert "not connected" in prompt, "a disconnected area is skipped, not faked"
+    assert "Compose a short, friendly morning announcement" not in prompt
+
+
+@pytest.fixture
+async def store(tmp_path: Path) -> WorkflowStore:
+    s = WorkflowStore(tmp_path / "wf.sqlite")
+    await s.init()
+    yield s
+    await s.close()
+
+
+def _v1_morning_briefing(*, enabled: bool) -> WorkflowDef:
+    """The shipped v1 row, the shape an installed box carries in its DB."""
+    v2 = _seed("Morning Briefing")
+    return v2.model_copy(update={
+        "enabled": enabled,
+        "steps": (
+            BrainPromptStep(
+                label="Generate daily summary",
+                prompt=(
+                    "You are Jarvis. It's currently morning. Compose a short, "
+                    "friendly morning announcement (max 3 sentences) in the "
+                    "configured output language."
+                ),
+                max_output_chars=500,
+            ),
+            SpeakStep(label="Play announcement", text="{{prev.output}}", language="auto"),
+        ),
+    })
+
+
+async def test_the_shipped_v1_row_is_migrated_and_keeps_its_switch(
+    store: WorkflowStore,
+) -> None:
+    """An installed box has the greeting seed in its DB; it must become the
+    briefing without flipping the user's on/off choice."""
+    await store.upsert_workflow(_v1_morning_briefing(enabled=False))
+
+    added = await ensure_seed_workflows(store)
+
+    assert added == len(SEED_WORKFLOWS) - 1
+    row = await store.get_workflow(str(_seed("Morning Briefing").id))
+    assert row is not None
+    assert row["enabled"] == 0, "the user had it off — still off"
+    definition = WorkflowDef.model_validate_json(row["def_json"])
+    brain = next(s for s in definition.steps if isinstance(s, BrainPromptStep))
+    assert brain.tools == MORNING_BRIEFING_TOOLS
+
+
+async def test_a_users_own_edit_of_the_briefing_is_left_alone(
+    store: WorkflowStore,
+) -> None:
+    edited = _seed("Morning Briefing").model_copy(update={
+        "steps": (
+            BrainPromptStep(prompt="Read me my own notes file and nothing else."),
+            SpeakStep(text="{{prev.output}}", language="auto"),
+        ),
+    })
+    await store.upsert_workflow(edited)
+
+    await ensure_seed_workflows(store)
+
+    row = await store.get_workflow(str(edited.id))
+    assert row is not None
+    definition = WorkflowDef.model_validate_json(row["def_json"])
+    assert definition.steps[0].prompt == "Read me my own notes file and nothing else."
