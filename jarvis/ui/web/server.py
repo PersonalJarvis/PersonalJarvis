@@ -394,6 +394,7 @@ class WebServer:
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
         from .society_routes import router as society_router
+        from .society_figure_routes import router as society_figure_router
         from .starter_plan_routes import router as starter_plan_router
         from .sub_agents_routes import router as sub_agents_router
         from .tasks_routes import router as tasks_router
@@ -573,6 +574,7 @@ class WebServer:
 
         set_society_factory(self._build_society_runtime)
         app.include_router(society_router)
+        app.include_router(society_figure_router)
         app.include_router(drop_router)
         # Default: no recorder wired up — _init_session_stack() in start()
         # sets this once it succeeds.

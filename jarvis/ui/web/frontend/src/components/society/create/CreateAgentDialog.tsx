@@ -10,11 +10,11 @@
  * Until the society backend is bound, "Create" appends a sample row to this
  * window's roster (data.ts, the single swap point) and opens its card.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as Collapsible from "@radix-ui/react-collapsible";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Shuffle, X } from "lucide-react";
+import { ChevronDown, Shuffle, Upload, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -70,6 +70,10 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [focus, setFocus] = useState<string[]>([]);
   const [grants, setGrants] = useState<string[]>([]);
   const [toolQuery, setToolQuery] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  const [importProblems, setImportProblems] = useState<string[] | null>(null);
+  const [importedName, setImportedName] = useState<string | null>(null);
   const capabilities = useSocietyCapabilities(open);
   const [advanced, setAdvanced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -102,6 +106,8 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setFocus([]);
     setGrants([]);
     setToolQuery("");
+    setImportProblems(null);
+    setImportedName(null);
     setError(null);
     setSubmitting(false);
   }, [open]);
@@ -113,6 +119,42 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const applyPreset = (id: string) => {
     const preset = PALETTE_PRESETS.find((p) => p.id === id);
     if (preset) setRecipe((r) => ({ ...r, palette: { ...preset.palette } }));
+  };
+
+  /**
+   * Import the person's own GLB: the backend runs the figure gate and keeps
+   * the file only when it passes; its reasons come back verbatim otherwise.
+   */
+  const importFigure = async (file: File) => {
+    setImporting(true);
+    setImportProblems(null);
+    try {
+      const res = await fetch(`/api/society/figures?name=${encodeURIComponent(file.name.replace(/\.glb$/i, ""))}`, {
+        method: "POST",
+        headers: { "Content-Type": "model/gltf-binary" },
+        body: file,
+      });
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+        setImportProblems([typeof detail?.detail === "string" ? detail.detail : t("society.create.import_failed")]);
+        return;
+      }
+      const payload = (await res.json()) as
+        | { accepted: true; figure: { url: string; file: string; height_m: number | null } }
+        | { accepted: false; problems: string[] };
+      if (!payload.accepted) {
+        setImportProblems(payload.problems);
+        return;
+      }
+      setImportedName(payload.figure.file);
+      setStyle("custom");
+      setRecipe((r) => ({ ...r, model: payload.figure.url, parts: {}, style: "custom" }));
+    } catch {
+      setImportProblems([t("society.create.import_failed")]);
+    } finally {
+      setImporting(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
   };
 
   const submit = async () => {
@@ -390,6 +432,27 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
               <div className="shrink-0 border-t border-border p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <span className={labelClass}>{t("society.create.look")}</span>
+                  <div className="flex items-center gap-1">
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    accept=".glb,model/gltf-binary"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void importFigure(file);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={importing}
+                    onClick={() => fileInput.current?.click()}
+                    title={t("society.create.import_hint")}
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                  >
+                    <Upload className="h-3.5 w-3.5" aria-hidden />
+                    {importing ? t("society.create.importing") : t("society.create.import")}
+                  </button>
                   <button
                     type="button"
                     onClick={() => setRecipe((r) => ({ ...r, palette: shufflePalette() }))}
@@ -398,7 +461,38 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                     <Shuffle className="h-3.5 w-3.5" aria-hidden />
                     {t("society.create.shuffle")}
                   </button>
+                  </div>
                 </div>
+                {importProblems ? (
+                  <div role="alert" className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-[11px] text-foreground">
+                    <p className="mb-1 font-medium">{t("society.create.import_rejected")}</p>
+                    <ul className="list-disc pl-4">
+                      {importProblems.map((p) => (
+                        <li key={p}>{p}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {importedName && recipe.model ? (
+                  <p className="mb-3 text-[11px] text-muted-foreground">
+                    {t("society.create.import_ok").replace("{0}", importedName)}{" "}
+                    <button
+                      type="button"
+                      className="underline hover:text-foreground"
+                      onClick={() => {
+                        setImportedName(null);
+                        setStyle("modern");
+                        setRecipe((r) => {
+                          const next = { ...r, style: "modern" };
+                          delete next.model;
+                          return next;
+                        });
+                      }}
+                    >
+                      {t("society.create.import_reset")}
+                    </button>
+                  </p>
+                ) : null}
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center gap-3">
                     <span className="w-16 text-[11px] text-muted-foreground">{t("society.create.style")}</span>

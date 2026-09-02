@@ -3673,7 +3673,9 @@
     "empty_hint_prefix": "Ist das Backend frisch? Schau in",
     "step_speak": "Sprich",
     "now": "jetzt",
-    "ago_suffix": "her"
+    "ago_suffix": "her",
+    "run_missed": "verpasst",
+    "run_missed_hint": "Die App lief zum geplanten Zeitpunkt nicht — übersprungen bis zum nächsten Termin."
   },
   "conductor_view": {
     "new_job": "Neuer Job",
@@ -5221,6 +5223,13 @@
       "shoes": "Schuhe"
     },
     "create": {
+      "import": ".glb importieren",
+      "importing": "Wird geprüft…",
+      "import_hint": "Bring deine eigene Figur mit — ein binäres glTF, das den Figurenvertrag einhält (docs/agent-society/character-pipeline.md).",
+      "import_rejected": "Die Figur hält den Vertrag noch nicht ein:",
+      "import_failed": "Die Figur konnte nicht importiert werden.",
+      "import_ok": "{0} importiert — Teile und Palette kommen aus dem Katalog, das Modell ist deins.",
+      "import_reset": "Zurück zum Katalog",
       "tools_title": "Werkzeuge",
       "focus_hint": "Wähle, wozu dieser Agent zuerst greifen soll; alle anderen erlaubten Werkzeuge behält er.",
       "allowlist_hint": "Wähle die einzigen Werkzeuge, die dieser Agent nutzen darf.",

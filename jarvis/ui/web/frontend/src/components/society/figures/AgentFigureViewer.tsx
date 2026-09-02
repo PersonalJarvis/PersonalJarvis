@@ -148,6 +148,7 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
                 orbitTick={orbitTick}
               />
             </Suspense>
+            <HostSizeSync />
             <PixelPass />
           </Canvas>
         </FigureErrorBoundary>
@@ -250,6 +251,32 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
       </mesh>
     </>
   );
+}
+
+/**
+ * Keeps the renderer sized to its container. R3F measures its wrapper once
+ * on mount and then through its own ResizeObserver; inside a dialog that
+ * mounts mid-animation the first measure has come back 300×150 and the
+ * observer never corrected it, so the figure was drawn into a thumbnail.
+ * Observing the wrapper ourselves and pushing the size into the store is
+ * cheap insurance.
+ */
+function HostSizeSync() {
+  const gl = useThree((s) => s.gl);
+  const setSize = useThree((s) => s.setSize);
+  useEffect(() => {
+    const wrapper = gl.domElement.parentElement;
+    if (!wrapper || typeof ResizeObserver === "undefined") return;
+    const sync = () => {
+      const rect = wrapper.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) setSize(rect.width, rect.height);
+    };
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(wrapper);
+    return () => observer.disconnect();
+  }, [gl, setSize]);
+  return null;
 }
 
 /** The island's look, in the card: the scene through a low-resolution, nearest-filtered target. */

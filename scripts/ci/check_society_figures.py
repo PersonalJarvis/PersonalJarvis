@@ -71,8 +71,13 @@ def check_file(
     path: Path,
     contract: dict | None = None,
     sources_md: Path | None = None,
+    require_ledger: bool = True,
 ) -> list[str]:
-    """Every contract violation of one GLB, as human-readable lines (empty = pass)."""
+    """Every contract violation of one GLB, as human-readable lines (empty = pass).
+
+    ``require_ledger=False`` is for a person's own imported figure: it must honour
+    the contract like a shipped one, but it has no row in the provenance ledger.
+    """
     gt = _load_tools()
     contract = contract or load_contract()
     limits = contract["limits"]
@@ -322,9 +327,10 @@ def check_file(
         problems.append(f"needs a decoder we do not ship: {sorted(used & FORBIDDEN_EXTENSIONS)}")
 
     # 15 — provenance
-    ledger = sources_md if sources_md is not None else path.parent / "SOURCES.md"
-    if not ledger.exists() or f"`{path.name}`" not in ledger.read_text(encoding="utf-8"):
-        problems.append(f"no row for `{path.name}` in {ledger.name}")
+    if require_ledger:
+        ledger = sources_md if sources_md is not None else path.parent / "SOURCES.md"
+        if not ledger.exists() or f"`{path.name}`" not in ledger.read_text(encoding="utf-8"):
+            problems.append(f"no row for `{path.name}` in {ledger.name}")
 
     return problems
 

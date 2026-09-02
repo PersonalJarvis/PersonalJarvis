@@ -3673,7 +3673,9 @@
     "empty_hint_prefix": "Is the backend fresh? Check",
     "step_speak": "Speak",
     "now": "now",
-    "ago_suffix": "ago"
+    "ago_suffix": "ago",
+    "run_missed": "missed",
+    "run_missed_hint": "The app was not running at the scheduled time — skipped to the next occurrence."
   },
   "conductor_view": {
     "new_job": "New job",
@@ -5221,6 +5223,13 @@
       "shoes": "Shoes"
     },
     "create": {
+      "import": "Import .glb",
+      "importing": "Checking…",
+      "import_hint": "Bring your own figure — a binary glTF that honours the character contract (docs/agent-society/character-pipeline.md).",
+      "import_rejected": "The figure does not honour the contract yet:",
+      "import_failed": "The figure could not be imported.",
+      "import_ok": "Imported {0} — parts and palette come from the catalog; the model is yours.",
+      "import_reset": "Back to the catalog",
       "tools_title": "Tools",
       "focus_hint": "Pick what this agent should reach for first; it keeps every other tool the tiers allow.",
       "allowlist_hint": "Pick the only tools this agent may use.",
