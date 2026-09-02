@@ -58,6 +58,7 @@ describe("brainSeats", () => {
         societyRow({ id: "claude-api", runner: "claude-cli", subscription: true, platform: "claude" }),
         societyRow({ id: "ollama", runner: "brain", keyless: true }),
       ],
+      { ollama: [{ id: "qwen3:8b", label: "qwen3:8b" }] },
     );
     expect(seats.map((s) => `${s.kind}:${s.provider.id}`)).toEqual([
       "subscription:claude-api",
