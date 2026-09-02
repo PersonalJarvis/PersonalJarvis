@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.society.checkpoints import CheckpointEngine, Facts, derive
+from jarvis.society.checkpoints import CheckpointEngine, Facts, derive, family_of_tool
 from jarvis.society.events import Checkpoint, MsgType, SocietyEnvelope
 from jarvis.society.runtime import SocietyRuntime
 
@@ -98,3 +98,110 @@ async def test_paused_agent_stays_home(rt: SocietyRuntime):
     )
     assert (await rt.roster.get("scout")).checkpoint is Checkpoint.IDLE
     assert await rt.checkpoints.refresh("ghost") is None
+
+
+# ------------------------------------------------------------- the hub shops
+
+
+def test_running_agents_stand_at_the_shop_of_their_tools():
+    assert derive(Facts(running=True, family="plugin")) is Checkpoint.HUB_PLUGINS
+    assert derive(Facts(running=True, family="skill")) is Checkpoint.HUB_SKILLS
+    assert derive(Facts(running=True, family="mcp")) is Checkpoint.HUB_MCP
+    assert derive(Facts(running=True, family="cli")) is Checkpoint.HUB_CLI
+    assert derive(Facts(running=True, family="core")) is Checkpoint.DESK
+    # A CLI seat outranks the family; the memory hold outranks the shop.
+    assert derive(Facts(running=True, cli_seat=True, family="plugin")) is Checkpoint.HUB_CLI
+    assert derive(Facts(running=True, family="plugin", memory_active=True)) is Checkpoint.ARCHIVE
+    # Nobody stands in a shop without a turn.
+    assert derive(Facts(family="plugin")) is Checkpoint.IDLE
+
+
+def test_family_of_tool():
+    assert family_of_tool("gmail") == "plugin"
+    assert family_of_tool("cli_claude") == "cli"
+    assert family_of_tool("github/search_issues") == "mcp"
+    assert family_of_tool("society_run_skill") == "skill"
+    assert family_of_tool("society_shell") == "core"
+    assert family_of_tool("society_browser") == "core"
+    assert family_of_tool("spawn-worker") == "core"
+
+
+class FakeChatService:
+    """The slice of the agent-chat service the engine touches."""
+
+    def __init__(self) -> None:
+        self.queues: dict[str, list[asyncio.Queue]] = {}
+        self.running: set[str] = set()
+
+    def is_running(self, session_id: str) -> bool:
+        return session_id in self.running
+
+    def subscribe(self, session_id: str) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue()
+        self.queues.setdefault(session_id, []).append(q)
+        return q
+
+    def unsubscribe(self, session_id: str, q: asyncio.Queue) -> None:
+        self.queues.get(session_id, []).remove(q)
+
+    def emit(self, session_id: str, kind: str, **payload) -> None:
+        for q in self.queues.get(session_id, []):
+            q.put_nowait({"kind": kind, "payload": payload})
+
+
+async def _settle() -> None:
+    for _ in range(6):
+        await asyncio.sleep(0.01)
+
+
+async def test_a_typed_turn_walks_to_the_docks_and_back(rt: SocietyRuntime):
+    """A message typed into the card never passes the scheduler — the turn watcher
+    still sends the figure to the shop of the tools it uses."""
+    svc = FakeChatService()
+    rt._get_chat = lambda: svc  # noqa: SLF001
+    pushed: list = []
+    rt.checkpoints._publish = pushed.append  # noqa: SLF001
+    session = "society:scout"
+    svc.running.add(session)
+    rt.checkpoints.note_turn_started("scout", session)
+    await _settle()
+    assert (await rt.roster.get("scout")).checkpoint is Checkpoint.DESK
+    assert rt.checkpoints.is_busy("scout")
+    svc.emit(session, "tool_call", name="gmail", input={})
+    await _settle()
+    assert (await rt.roster.get("scout")).checkpoint is Checkpoint.HUB_PLUGINS
+    # A second watcher for the same agent is not started while one runs.
+    rt.checkpoints.note_turn_started("scout", session)
+    assert len(svc.queues[session]) == 1
+    svc.running.discard(session)
+    svc.emit(session, "turn_finished", status="ok")
+    await _settle()
+    assert (await rt.roster.get("scout")).checkpoint is Checkpoint.IDLE
+    assert svc.queues[session] == []
+    assert [p.checkpoint for p in pushed] == ["desk", "hub:plugins", "idle"]
+
+
+async def test_family_hysteresis(rt: SocietyRuntime):
+    """The first family wins at once; a different one must dominate 20 s before the
+    figure changes shops, and the timer makes the switch without another call."""
+    now = [1000.0]
+    engine = CheckpointEngine(rt, publish=lambda _e: None, clock=lambda: now[0])
+    rt.checkpoints.detach()
+    rt.checkpoints = engine
+    engine.attach()
+    rt.scheduler.note_run_started("run-1", "scout")
+    await engine.note_tool_call("scout", "gmail")
+    assert (await rt.roster.get("scout")).checkpoint is Checkpoint.HUB_PLUGINS
+    for _ in range(3):
+        await engine.note_tool_call("scout", "github/list_prs")
+    # MCP dominates the window (3 of 4) but has not for 20 s: still at the Docks.
+    assert (await rt.roster.get("scout")).checkpoint is Checkpoint.HUB_PLUGINS
+    now[0] += 21.0
+    await engine.note_tool_call("scout", "github/list_prs")
+    assert (await rt.roster.get("scout")).checkpoint is Checkpoint.HUB_MCP
+    # The run ends: the window is cleared and the figure goes home.
+    engine.clear_tool_calls("scout")
+    rt.scheduler.note_run_ended("run-1")
+    assert await engine.refresh("scout") is Checkpoint.IDLE
+    assert engine.family_for("scout") is None
+    engine.detach()

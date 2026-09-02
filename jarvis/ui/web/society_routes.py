@@ -151,13 +151,13 @@ class RoomSayBody(BaseModel):
 async def list_agents(request: Request, include_archived: bool = False) -> dict[str, Any]:
     rt = await _runtime(request)
     agents = await rt.roster.list(include_archived=include_archived)
-    running = rt.scheduler.running
     rows = []
     for agent in agents:
         row = agent.to_dict()
         if agent.state == "paused":
             row["run_state"] = "paused"
-        elif agent.agent_id in running.values():
+        elif rt.checkpoints.is_busy(agent.agent_id):
+            # A scheduler run OR a turn typed into the card: both are work.
             row["run_state"] = "working"
         else:
             row["run_state"] = "idle"

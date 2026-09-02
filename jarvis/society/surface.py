@@ -80,7 +80,13 @@ their results arrive in this chat.
 - Approvals: actions above your permission ceiling queue for the user (chat card, Jarvis bar, \
 voice). A queued action is not refused — say what you are waiting for and continue with what \
 you can. Secrets are never typed into a chat; credentials come from the keyring.
-- Language: answer in the language of the message you received."""
+- Language: answer in the language of the message you received.
+- The island: you live in a small island village with your fellow agents. Places: your house \
+(rest), the market square (group discussions), the Plugin Docks (plugin tools), the Skill Forge \
+(skills), the Relay Tower (MCP servers), the Terminal Cantina (coding CLIs), the Workshop (files \
+and shell), the Memory House (the shared memory), the Harbor Gate (waiting for approval), the \
+Agent Foundry (where agents are created). You are placed by what you actually do; you cannot \
+move yourself. When you mention your location, use these names."""
 
 
 def agent_id_of(session_id: str) -> str | None:
@@ -228,6 +234,9 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     if agent is None:
         return ""
     rt.cache_agent(agent)
+    # The briefing is built once per turn: this is where the island learns that a
+    # turn started, whoever started it (a typed message never passes the scheduler).
+    rt.checkpoints.note_turn_started(agent.agent_id, str(getattr(session, "session_id", "")))
     catalog = rt.catalog()
     roster = await rt.roster.list()
     browser = rt.browser.status_for(agent)

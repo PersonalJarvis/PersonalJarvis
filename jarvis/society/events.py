@@ -92,6 +92,12 @@ class Checkpoint(StrEnum):
     ARCHIVE = "archive"
     GATE = "gate"
     IDLE = "idle"
+    #: The hub shops of the island (world-behaviour-manual.md §2): a running
+    #: agent stands at the shop of the capability family it is using.
+    HUB_PLUGINS = "hub:plugins"
+    HUB_SKILLS = "hub:skills"
+    HUB_MCP = "hub:mcp"
+    HUB_CLI = "hub:cli"
 
 
 class PermissionCeiling(StrEnum):

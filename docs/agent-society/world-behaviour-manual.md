@@ -35,9 +35,10 @@ gesture becomes a typed event, and the figure follows because the truth changed.
 | `foundry` | Agent Foundry | being created (3 s), or changing its avatar |
 | `wander` | the square and its own street | idle; the rest-biased model picks the beats |
 
-V1 ships `desk | meeting | archive | gate | idle` (`data.ts`); this table is the M3d superset.
-`hub:*` values join the five-layer parity set (Python enum ↔ SQL CHECK ↔ Pydantic ↔ TS ↔ UI, AP-4)
-when they land in the schema — never as free strings.
+Shipped vocabulary (2026-09-02): `desk | meeting | archive | gate | idle | hub:plugins | hub:skills |
+hub:mcp | hub:cli` — in all five layers (Python enum ↔ SQL CHECK ↔ Pydantic ↔ TS ↔ UI, AP-4; an
+older `society.db` is rebuilt to the wider CHECK on open). `home`, `gallery`, `hub:workshop` and
+`hub:models` are still this table's superset and join the same way — never as free strings.
 
 ## 3. Derivation — who decides the place (trusted Python, no LLM)
 
@@ -53,7 +54,7 @@ sees. Rules, in priority order; the first that matches wins:
    capability catalog of `agent-definition.md` §3.1). The place changes only when a different
    family has dominated for **≥ 20 s** — hysteresis, so a figure never ping-pongs between shops.
    A local-brain agent whose model is inferring right now → `hub:models` outranks the family.
-6. A memory touch in the last 60 s → `archive` (the Memory House). **Built:** `jarvis/society/checkpoints.py` derives `paused → idle`, `gate`, `meeting`, `archive`, `desk`, `idle` over today's vocabulary and publishes `SocietyCheckpointChanged`; the `hub:*` rules join with the five-layer change.
+6. A memory touch in the last 60 s → `archive` (the Memory House). **Built:** `jarvis/society/checkpoints.py` derives `paused → idle`, `gate`, `meeting`, `archive`, `hub:cli`, `hub:plugins | hub:skills | hub:mcp` (dominant family of the last 8 tool calls, 20 s hysteresis), `desk`, `idle` and publishes `SocietyCheckpointChanged`. "A worker runs under the agent's identity" means EITHER a scheduler run (`ASSIGN`) OR a turn typed into the agent's card: the society surface reports every turn start (`note_turn_started`), and the engine watches that turn's `tool_call` / `turn_finished` events. `hub:workshop` and `hub:models` are still open.
 7. Being created / avatar change → `foundry`.
 8. Otherwise → `wander`.
 

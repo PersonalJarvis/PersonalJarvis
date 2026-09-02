@@ -113,6 +113,61 @@ class SocietyStore:
                 "TEXT NOT NULL DEFAULT '[]'"
             )
             log.info("society store: migration applied — added browser_allowed_domains")
+        await self._migrate_checkpoint_vocabulary()
+
+    async def _migrate_checkpoint_vocabulary(self) -> None:
+        """Widen the ``checkpoint`` CHECK to today's vocabulary (the hub shops, 2026-09).
+
+        SQLite cannot alter a CHECK constraint in place, so a database created
+        by an older build gets the standard rebuild: create the table from the
+        current schema under a scratch name, copy every column both versions
+        share, drop the old table, rename. Idempotent — a table whose CHECK
+        already lists every ``Checkpoint`` value is left alone.
+        """
+        from .events import Checkpoint
+
+        cur = await self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'society_agents'"
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        ddl = str(row[0]) if row and row[0] else ""
+        if all(f"'{value}'" in ddl for value in Checkpoint):
+            return
+        schema = _SCHEMA_PATH.read_text(encoding="utf-8")
+        start = schema.index("CREATE TABLE IF NOT EXISTS society_agents")
+        end = schema.index(");", start) + 2
+        fresh_ddl = schema[start:end].replace(
+            "CREATE TABLE IF NOT EXISTS society_agents", "CREATE TABLE society_agents__new", 1
+        )
+        cur = await self.conn.execute("PRAGMA table_info(society_agents)")
+        old_cols = [str(r[1]) for r in await cur.fetchall()]
+        await cur.close()
+        await self.conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            await self.conn.execute("BEGIN")
+            await self.conn.execute(fresh_ddl)
+            cur = await self.conn.execute("PRAGMA table_info(society_agents__new)")
+            new_cols = {str(r[1]) for r in await cur.fetchall()}
+            await cur.close()
+            shared = ", ".join(c for c in old_cols if c in new_cols)
+            # Column names come from PRAGMA table_info, never from input.
+            copy_sql = (
+                f"INSERT INTO society_agents__new ({shared}) SELECT {shared} FROM society_agents"  # noqa: S608, E501
+            )
+            await self.conn.execute(copy_sql)
+            await self.conn.execute("DROP TABLE society_agents")
+            await self.conn.execute("ALTER TABLE society_agents__new RENAME TO society_agents")
+            await self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_society_agents_state ON society_agents(state)"
+            )
+            await self.conn.execute("COMMIT")
+        except Exception:
+            await self.conn.execute("ROLLBACK")
+            raise
+        finally:
+            await self.conn.execute("PRAGMA foreign_keys=ON")
+        log.info("society store: migration applied — checkpoint vocabulary widened")
 
     async def _ensure_fts(self) -> None:
         """FTS5 over knowledge summaries; optional — a sqlite without FTS5 still

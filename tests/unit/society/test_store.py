@@ -120,3 +120,47 @@ async def test_open_is_idempotent(tmp_path: Path):
     await s.open()
     await s.close()
     await s.close()
+
+
+async def test_checkpoint_check_is_widened_on_an_old_database(tmp_path):
+    """A society.db created before the hub shops carries the five-value CHECK;
+    opening it rebuilds the table and keeps every row."""
+    import sqlite3
+
+    from jarvis.society.roster import Roster
+    from jarvis.society.store import _SCHEMA_PATH, SocietyStore
+
+    schema = _SCHEMA_PATH.read_text(encoding="utf-8")
+    start = schema.index("CHECK (checkpoint IN (")
+    end = schema.index("))", start) + 2
+    old_schema = (
+        schema[:start]
+        + "CHECK (checkpoint IN ('desk', 'meeting', 'archive', 'gate', 'idle'))"
+        + schema[end:]
+    )
+    db = tmp_path / "society.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(old_schema)
+    conn.execute(
+        "INSERT INTO society_agents (agent_id, name, tier, created_ms, updated_ms) "
+        "VALUES ('scout', 'Scout', 'specialist', 1, 1)"
+    )
+    conn.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE society_agents SET checkpoint = 'hub:plugins'")
+    conn.close()
+
+    store = SocietyStore(db)
+    await store.open()
+    try:
+        roster = Roster(store)
+        scout = await roster.get("scout")
+        assert scout is not None and scout.name == "Scout"
+        await roster.update("scout", {"checkpoint": "hub:plugins"})
+        assert str((await roster.get("scout")).checkpoint) == "hub:plugins"
+        # Idempotent: a second open leaves the rebuilt table alone.
+        await store.close()
+        await store.open()
+        assert str((await Roster(store).get("scout")).checkpoint) == "hub:plugins"
+    finally:
+        await store.close()

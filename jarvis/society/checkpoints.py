@@ -1,22 +1,39 @@
 """Where an agent IS on the island — derived, never decided by a model.
 
 ``docs/agent-society/world-behaviour-manual.md`` §3 and ``memory-house.md``
-§3.4. The rules run over facts the runtime already has and answer with one of
-the checkpoints that exist in every layer today (``desk | meeting | archive |
-gate | idle``). The first rule that matches wins:
+§3.4. The rules run over facts the runtime already has and answer with one
+checkpoint of the five-layer vocabulary (``events.Checkpoint``). The first
+rule that matches wins:
 
 1. paused                                  -> idle   (home, until the superset lands)
 2. an open approval for the agent          -> gate
 3. member of a running room                -> meeting
 4. memory activity within the hold window  -> archive (the Memory House, 60 s)
-5. a run in flight under its identity      -> desk   (the workshop)
+5. a turn or run in flight under its identity:
+     on a CLI seat                         -> hub:cli   (the Terminal Cantina)
+     dominant tool family plugin/skill/mcp -> hub:<family>
+     otherwise                             -> desk      (the workshop)
 6. otherwise                               -> idle
+
+"In flight" covers BOTH ways work reaches an agent: an ``ASSIGN`` the scheduler
+dispatched (its run id sits in ``scheduler.running``) and a message typed
+straight into the agent's card (a turn on its canonical chat session, which
+never touches the scheduler). The society surface reports the start of every
+turn (``note_turn_started``); from then on the engine watches the turn's own
+event stream for ``tool_call`` and ``turn_finished``, so the figure walks to
+the shop of the tools it actually uses and comes back when the turn ends.
+
+The family behind a place is the dominant capability family of the last
+``FAMILY_WINDOW`` tool calls; a figure changes shops only after a different
+family has dominated for ``FAMILY_HYSTERESIS_S`` — hysteresis, so nobody
+ping-pongs between the Docks and the Forge. The first family of a turn wins
+at once: the walk itself is the delay.
 
 The engine persists a change through the roster, publishes
 ``SocietyCheckpointChanged`` on the app bus (the WebSocket forwards every bus
 event, so the island re-reads its roster within a second) and re-evaluates
-by timer when a hold expires. Idle costs nothing: no timer runs unless a hold
-is pending.
+by timer when a hold or the hysteresis expires. Idle costs nothing: no timer
+runs unless a hold is pending, and no watcher runs unless a turn does.
 """
 
 from __future__ import annotations
@@ -24,16 +41,58 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import Counter, deque
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
+from .capabilities import CapabilityKind, capability_id_for_tool
 from .events import AgentState, Checkpoint, MsgType, RoomState, SocietyEnvelope
 from .memory import MEMORY_HOLD_S
 
 log = logging.getLogger(__name__)
 
-__all__ = ["CheckpointEngine", "Facts", "derive"]
+__all__ = [
+    "FAMILY_HYSTERESIS_S",
+    "FAMILY_WINDOW",
+    "CheckpointEngine",
+    "Facts",
+    "derive",
+    "family_of_tool",
+]
+
+#: Tool calls that decide the dominant family (world-behaviour-manual.md §3 rule 5).
+FAMILY_WINDOW: Final[int] = 8
+#: Seconds a different family must dominate before the figure changes shops.
+FAMILY_HYSTERESIS_S: Final[float] = 20.0
+#: The watcher re-checks a turn that emits nothing for this long (a stuck runner
+#: never leaves a figure standing in a shop forever).
+_WATCH_IDLE_S: Final[float] = 15.0
+
+#: Capability family -> the hub the figure stands at. ``core`` is the workshop.
+_FAMILY_HUB: Final[dict[str, Checkpoint]] = {
+    str(CapabilityKind.PLUGIN): Checkpoint.HUB_PLUGINS,
+    str(CapabilityKind.SKILL): Checkpoint.HUB_SKILLS,
+    str(CapabilityKind.MCP): Checkpoint.HUB_MCP,
+    str(CapabilityKind.CLI): Checkpoint.HUB_CLI,
+}
+
+#: Society-surface tools that are not plugins: the shell, the browser, the memory
+#: hands and teammate messaging are core work; a learned skill is a skill.
+_SOCIETY_SKILL_TOOL: Final[str] = "society_run_skill"
+_SOCIETY_PREFIX: Final[str] = "society_"
+
+
+def family_of_tool(tool_name: str) -> str:
+    """The capability family of a brain tool name: ``plugin | skill | mcp | cli | core``."""
+    if tool_name == _SOCIETY_SKILL_TOOL:
+        return str(CapabilityKind.SKILL)
+    if tool_name.startswith(_SOCIETY_PREFIX):
+        return str(CapabilityKind.CORE)
+    cap = capability_id_for_tool(tool_name)
+    if cap is None:
+        return str(CapabilityKind.CORE)
+    return cap.partition(":")[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +101,12 @@ class Facts:
     open_approval: bool = False
     in_room: bool = False
     memory_active: bool = False
+    #: A scheduler run (ASSIGN) or a chat turn is in flight under the agent's identity.
     running: bool = False
+    #: The agent answers on a coding-CLI seat (Claude Code, Codex, …).
+    cli_seat: bool = False
+    #: Dominant capability family of its recent tool calls, after hysteresis; None = none yet.
+    family: str | None = None
 
 
 def derive(facts: Facts) -> Checkpoint:
@@ -56,8 +120,58 @@ def derive(facts: Facts) -> Checkpoint:
     if facts.memory_active:
         return Checkpoint.ARCHIVE
     if facts.running:
+        if facts.cli_seat:
+            return Checkpoint.HUB_CLI
+        if facts.family is not None:
+            return _FAMILY_HUB.get(facts.family, Checkpoint.DESK)
         return Checkpoint.DESK
     return Checkpoint.IDLE
+
+
+@dataclass(slots=True)
+class _FamilyTrack:
+    """The recent tool calls of one agent and the hysteresis over them."""
+
+    calls: deque[str]
+    #: The family the figure currently stands for.
+    current: str | None = None
+    #: A different family that has started to dominate, and since when.
+    candidate: str | None = None
+    candidate_since: float = 0.0
+
+    def dominant(self) -> str | None:
+        if not self.calls:
+            return None
+        counts = Counter(self.calls)
+        top = max(counts.values())
+        # Ties go to the most recent call among the leaders.
+        for name in reversed(self.calls):
+            if counts[name] == top:
+                return name
+        return None  # pragma: no cover — the loop always returns
+
+    def settle(self, now: float) -> bool:
+        """Apply hysteresis; returns True when ``current`` changed."""
+        top = self.dominant()
+        if top is None or top == self.current:
+            self.candidate = None
+            return False
+        if self.current is None:
+            self.current = top
+            self.candidate = None
+            return True
+        if self.candidate != top:
+            self.candidate, self.candidate_since = top, now
+            return False
+        if now - self.candidate_since >= FAMILY_HYSTERESIS_S:
+            self.current, self.candidate = top, None
+            return True
+        return False
+
+    def hysteresis_due_in(self, now: float) -> float | None:
+        if self.candidate is None:
+            return None
+        return max(0.0, FAMILY_HYSTERESIS_S - (now - self.candidate_since))
 
 
 #: Envelope types after which an agent's place may have changed.
@@ -88,10 +202,14 @@ class CheckpointEngine:
         self._publish = publish
         self._clock = clock
         self._memory_until: dict[str, float] = {}
+        self._families: dict[str, _FamilyTrack] = {}
         #: One refresh per agent at a time: a RESULT and the VETO it may draw arrive together.
         self._locks: dict[str, asyncio.Lock] = {}
-        self._timers: dict[str, asyncio.TimerHandle] = {}
+        #: Timers keyed by (agent, purpose): memory hold and family hysteresis are independent.
+        self._timers: dict[tuple[str, str], asyncio.TimerHandle] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        #: One turn watcher per agent; its canonical session runs one turn at a time.
+        self._watchers: dict[str, asyncio.Task[None]] = {}
         self._unsubscribe: Callable[[], None] | None = None
 
     # ------------------------------------------------------------ lifecycle
@@ -110,6 +228,9 @@ class CheckpointEngine:
         for task in list(self._tasks):
             task.cancel()
         self._tasks.clear()
+        for task in list(self._watchers.values()):
+            task.cancel()
+        self._watchers.clear()
 
     # --------------------------------------------------------------- inputs
 
@@ -117,7 +238,43 @@ class CheckpointEngine:
         """The memory service touched the vault for ``agent_id``: the figure goes to the house."""
         self._memory_until[agent_id] = self._clock() + self._hold_s
         await self.refresh(agent_id)
-        self._arm(agent_id, self._hold_s + 0.05)
+        self._arm(agent_id, "memory", self._hold_s + 0.05)
+
+    def note_turn_started(self, agent_id: str, session_id: str) -> None:
+        """A turn began on the agent's chat session (the society surface reports every one).
+
+        Starts the watcher that follows the turn's ``tool_call`` and
+        ``turn_finished`` events; idempotent while a watcher for the agent runs.
+        """
+        running = self._watchers.get(agent_id)
+        if running is not None and not running.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._watch_turn(agent_id, session_id))
+        self._watchers[agent_id] = task
+        task.add_done_callback(lambda t, a=agent_id: self._watcher_done(a, t))
+
+    async def note_tool_call(self, agent_id: str, tool_name: str) -> None:
+        """The agent called ``tool_name``: its dominant family may move it to a shop."""
+        track = self._families.get(agent_id)
+        if track is None:
+            track = self._families[agent_id] = _FamilyTrack(calls=deque(maxlen=FAMILY_WINDOW))
+        track.calls.append(family_of_tool(tool_name))
+        now = self._clock()
+        changed = track.settle(now)
+        due = track.hysteresis_due_in(now)
+        if due is not None:
+            self._arm(agent_id, "family", due + 0.05)
+        if changed or track.current is not None:
+            await self.refresh(agent_id)
+
+    def clear_tool_calls(self, agent_id: str) -> None:
+        """The turn ended: the next one starts with a clean window."""
+        self._families.pop(agent_id, None)
+        self._disarm(agent_id, "family")
 
     async def _on_envelope(self, env: SocietyEnvelope) -> None:
         if env.msg_type is MsgType.DIGEST:
@@ -136,10 +293,92 @@ class CheckpointEngine:
             if who and who != "user":
                 await self.refresh(who)
 
+    # -------------------------------------------------------- turn watcher
+
+    async def _watch_turn(self, agent_id: str, session_id: str) -> None:
+        svc = self._chat_service()
+        if svc is None:
+            return
+        queue = svc.subscribe(session_id)
+        try:
+            await self.refresh(agent_id)
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=_WATCH_IDLE_S)
+                except TimeoutError:
+                    if not svc.is_running(session_id):
+                        break
+                    continue
+                kind = event.get("kind")
+                payload = event.get("payload") or {}
+                if kind == "tool_call":
+                    name = str(payload.get("name") or payload.get("tool") or "")
+                    if name:
+                        await self.note_tool_call(agent_id, name)
+                elif kind == "turn_finished":
+                    break
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — the world is a projection; a miss never breaks the turn
+            log.warning("society checkpoints: turn watcher for %s failed", agent_id, exc_info=True)
+        finally:
+            svc.unsubscribe(session_id, queue)
+            self.clear_tool_calls(agent_id)
+            # Runs on the loop even when the task is cancelled during shutdown.
+            self._fire(agent_id, "turn")
+
+    def _watcher_done(self, agent_id: str, task: asyncio.Task[None]) -> None:
+        if self._watchers.get(agent_id) is task:
+            self._watchers.pop(agent_id, None)
+
+    def _chat_service(self) -> Any | None:
+        getter = getattr(self._runtime, "_get_chat", None)
+        try:
+            return getter() if getter is not None else None
+        except Exception:  # noqa: BLE001 — no chat service means no turns to watch
+            log.debug("society checkpoints: chat service unavailable", exc_info=True)
+            return None
+
+    def turn_running(self, agent_id: str) -> bool:
+        """True while the agent's canonical chat session runs a turn."""
+        svc = self._chat_service()
+        if svc is None:
+            return False
+        from .roster import canonical_session_id
+
+        try:
+            return bool(svc.is_running(canonical_session_id(agent_id)))
+        except Exception:  # noqa: BLE001 — a service without the probe reports no turn
+            log.debug("society checkpoints: is_running probe failed", exc_info=True)
+            return False
+
+    def is_busy(self, agent_id: str) -> bool:
+        """A run or a turn is in flight for the agent (rows show it as ``working``)."""
+        return agent_id in self._runtime.scheduler.running.values() or self.turn_running(agent_id)
+
     # ------------------------------------------------------------ derivation
 
     def memory_active(self, agent_id: str) -> bool:
         return self._memory_until.get(agent_id, 0.0) > self._clock()
+
+    def family_for(self, agent_id: str) -> str | None:
+        track = self._families.get(agent_id)
+        if track is None:
+            return None
+        track.settle(self._clock())
+        return track.current
+
+    def _cli_seat(self, agent: Any) -> bool:
+        provider = str(getattr(agent, "provider", "") or "")
+        if not provider:
+            return False
+        try:
+            from jarvis.agent_chat.service import resolve_runner
+
+            return resolve_runner(provider, surface="society").endswith("-cli")
+        except Exception:  # noqa: BLE001 — a missing catalog row is not a seat
+            log.debug("society checkpoints: runner lookup failed for %s", provider, exc_info=True)
+            return False
 
     async def facts_for(self, agent_id: str) -> Facts | None:
         rt = self._runtime
@@ -148,12 +387,15 @@ class CheckpointEngine:
             return None
         pending = await rt.approvals.pending()
         rooms = await rt.rooms.list(state=RoomState.RUNNING)
+        running = self.is_busy(agent_id)
         return Facts(
             paused=agent.state is not AgentState.ACTIVE,
             open_approval=any(a.agent_id == agent_id for a in pending),
             in_room=any(agent_id in r.members for r in rooms),
             memory_active=self.memory_active(agent_id),
-            running=agent_id in rt.scheduler.running.values(),
+            running=running,
+            cli_seat=running and self._cli_seat(agent),
+            family=self.family_for(agent_id) if running else None,
         )
 
     async def refresh(self, agent_id: str) -> Checkpoint | None:
@@ -205,18 +447,27 @@ class CheckpointEngine:
 
     # ---------------------------------------------------------------- timers
 
-    def _arm(self, agent_id: str, delay_s: float) -> None:
-        old = self._timers.pop(agent_id, None)
-        if old is not None:
-            old.cancel()
+    def _arm(self, agent_id: str, purpose: str, delay_s: float) -> None:
+        self._disarm(agent_id, purpose)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        self._timers[agent_id] = loop.call_later(delay_s, self._fire, agent_id)
+        self._timers[(agent_id, purpose)] = loop.call_later(delay_s, self._fire, agent_id, purpose)
 
-    def _fire(self, agent_id: str) -> None:
-        self._timers.pop(agent_id, None)
-        task = asyncio.create_task(self.refresh(agent_id))
+    def _disarm(self, agent_id: str, purpose: str) -> None:
+        old = self._timers.pop((agent_id, purpose), None)
+        if old is not None:
+            old.cancel()
+
+    def _fire(self, agent_id: str, purpose: str) -> None:
+        self._timers.pop((agent_id, purpose), None)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if loop.is_closed():
+            return
+        task = loop.create_task(self.refresh(agent_id))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)

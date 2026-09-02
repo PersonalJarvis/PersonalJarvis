@@ -31,7 +31,17 @@ export type AgentState = (typeof AGENT_STATES)[number];
 export const RUN_STATES = ["idle", "working", "waiting", "paused"] as const;
 export type RunState = (typeof RUN_STATES)[number];
 
-export const CHECKPOINTS = ["desk", "meeting", "archive", "gate", "idle"] as const;
+export const CHECKPOINTS = [
+  "desk",
+  "meeting",
+  "archive",
+  "gate",
+  "idle",
+  "hub:plugins",
+  "hub:skills",
+  "hub:mcp",
+  "hub:cli",
+] as const;
 export type Checkpoint = (typeof CHECKPOINTS)[number];
 
 export const PERMISSION_CEILINGS = ["safe", "monitor", "ask"] as const;
