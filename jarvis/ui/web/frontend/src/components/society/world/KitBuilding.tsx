@@ -14,6 +14,9 @@ import { Color, Mesh, MeshBasicMaterial, MeshStandardMaterial, MeshToonMaterial,
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 
 import pluginDocksUrl from "@/assets/society/world/kit/plugin-docks.glb";
+import relayTowerUrl from "@/assets/society/world/kit/relay-tower.glb";
+import skillForgeUrl from "@/assets/society/world/kit/skill-forge.glb";
+import terminalCantinaUrl from "@/assets/society/world/kit/terminal-cantina.glb";
 import { useCameraStore } from "./cameraStore";
 import { buildIsland, groundY, type KitPlace } from "./islandLayout";
 import { createToonRamp } from "./worldMaterials";
@@ -21,13 +24,27 @@ import { createToonRamp } from "./worldMaterials";
 /** Every kit file the registry knows. Adding a building = adding a row. */
 export const KIT_URLS = {
   "plugin-docks": pluginDocksUrl,
+  "skill-forge": skillForgeUrl,
+  "relay-tower": relayTowerUrl,
+  "terminal-cantina": terminalCantinaUrl,
 } as const;
 export type KitId = keyof typeof KIT_URLS;
 
 /** Which kit file stands at which kit place; the pose comes from the island layout. */
 export const KIT_PLACEMENTS: ReadonlyArray<{ kit: KitId; place: KitPlace }> = [
   { kit: "plugin-docks", place: "plugins" },
+  { kit: "skill-forge", place: "skills" },
+  { kit: "relay-tower", place: "mcp" },
+  { kit: "terminal-cantina", place: "cli" },
 ];
+
+/** Radius of the hover/selection ring drawn under each kit, in metres. */
+const KIT_RING_R: Record<KitId, number> = {
+  "plugin-docks": 9.9,
+  "skill-forge": 8.6,
+  "relay-tower": 6.4,
+  "terminal-cantina": 8.8,
+};
 
 /** Emission above this strength renders unlit (a lamp, a neon tube), below it stays a lit toon. */
 const GLOW_STRENGTH = 1.5;
@@ -117,7 +134,7 @@ export function KitBuilding({
       <primitive object={instance} />
       {(hover || selected) && (
         <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[9.6, 10.2, 48]} />
+          <ringGeometry args={[KIT_RING_R[kit] - 0.3, KIT_RING_R[kit] + 0.3, 48]} />
           <meshBasicMaterial color={selected ? "#ffd166" : "#fffaf0"} transparent opacity={0.85} />
         </mesh>
       )}
@@ -125,4 +142,4 @@ export function KitBuilding({
   );
 }
 
-useGLTF.preload(pluginDocksUrl);
+for (const url of Object.values(KIT_URLS)) useGLTF.preload(url);

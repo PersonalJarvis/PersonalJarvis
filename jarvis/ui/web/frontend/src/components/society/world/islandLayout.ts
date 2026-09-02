@@ -104,7 +104,10 @@ export type PlaceId =
   | "lighthouse"
   | "gardens"
   | "solar"
-  | "plugins";
+  | "plugins"
+  | "skills"
+  | "mcp"
+  | "cli";
 
 export interface Place {
   id: PlaceId;
@@ -168,7 +171,7 @@ export interface IslandContent {
 }
 
 /** Places that are World Kit buildings sitting IN the house ring (world-masterplan-v2.md §5). */
-export type KitPlace = "plugins";
+export type KitPlace = "plugins" | "skills" | "mcp" | "cli";
 
 export interface KitPose {
   x: number;
@@ -181,7 +184,29 @@ export interface KitPose {
  * Docks are 16 m wide, a house slot is ~15 m of arc, so the docks take two
  * neighbouring north-west slots and stand centred between them.
  */
-export const RING_KIT_SLOTS: Record<KitPlace, readonly number[]> = { plugins: [13, 14] };
+export const RING_KIT_SLOTS: Record<KitPlace, readonly number[]> = {
+  // Hubs sit on the north and west of the ring so their fronts face the camera
+  // (it looks from the south-east); houses take the slots whose backs it sees.
+  plugins: [13, 14], // north-west, two slots (16 m wide)
+  skills: [15], // north, beside the docks: the Skill Forge
+  mcp: [1], // north-east: the Relay Tower
+  cli: [11], // west: the Terminal Cantina
+};
+
+/** Footprints (tiles) of the kit buildings, for blocking the walk grid. */
+export const KIT_FOOTPRINTS: Record<KitPlace, [number, number]> = {
+  plugins: [8, 5],
+  skills: [7, 5],
+  mcp: [5, 5],
+  cli: [7, 5],
+};
+
+const KIT_PLACES = Object.keys(RING_KIT_SLOTS) as KitPlace[];
+
+function kitTile(place: KitPlace): [number, number] {
+  const p = ringPose(RING_KIT_SLOTS[place]);
+  return [Math.floor(p.x / TILE_M + CENTER_TILE), Math.floor(p.z / TILE_M + CENTER_TILE)];
+}
 
 /** Pose of a building centred on the given ring slots, front toward the square. */
 export function ringPose(slots: readonly number[], radiusTiles = HOUSE_RING_TILES): KitPose {
@@ -308,14 +333,11 @@ const PLACE_TILES: Record<PlaceId, [number, number]> = {
   lighthouse: [CENTER_TILE + 62, CENTER_TILE],
   gardens: [CENTER_TILE + 30, CENTER_TILE + 34],
   solar: [CENTER_TILE - 32, CENTER_TILE - 32],
-  // The Plugin Docks stand in the house ring (RING_KIT_SLOTS); this tile is the ring pose's tile.
-  plugins: (() => {
-    const p = ringPose(RING_KIT_SLOTS.plugins);
-    return [Math.floor(p.x / TILE_M + CENTER_TILE), Math.floor(p.z / TILE_M + CENTER_TILE)] as [
-      number,
-      number,
-    ];
-  })(),
+  // Kit hubs stand in the house ring (RING_KIT_SLOTS); these are their ring poses' tiles.
+  plugins: kitTile("plugins"),
+  skills: kitTile("skills"),
+  mcp: kitTile("mcp"),
+  cli: kitTile("cli"),
 };
 
 /** Half extents (tiles) of the flat plots each place is built on. */
@@ -328,7 +350,11 @@ const PLOT_HALF: Record<PlaceId, [number, number]> = {
   lighthouse: [3, 3],
   gardens: [9, 7],
   solar: [8, 6],
-  plugins: [0, 0], // no flat plot of its own: it sits on the village plateau
+  // Ring hubs have no flat plot of their own: they sit on the village plateau.
+  plugins: [0, 0],
+  skills: [0, 0],
+  mcp: [0, 0],
+  cli: [0, 0],
 };
 
 /** Building footprints (half extents, tiles) that block walking. */
@@ -677,14 +703,16 @@ function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
     lighthouse: place("lighthouse", [PLACE_TILES.lighthouse[0] - 3, C], Math.PI / 2),
     gardens: place("gardens", [PLACE_TILES.gardens[0], PLACE_TILES.gardens[1]], 0),
     solar: place("solar", [PLACE_TILES.solar[0] + 1, PLACE_TILES.solar[1] + 8], Math.PI),
-    // In front of the docks' bays (7.5 m toward the square), facing the building.
-    plugins: (() => {
-      const p = ringPose(RING_KIT_SLOTS.plugins);
-      const fx = Math.sin(p.rotation);
-      const fz = Math.cos(p.rotation);
-      const tile = worldToTile(p.x + fx * 7.5, p.z + fz * 7.5);
-      return place("plugins", tile, p.rotation + Math.PI);
-    })(),
+    // Ring hubs: 7.5 m in front of the doors, toward the square, facing the building.
+    ...(Object.fromEntries(
+      KIT_PLACES.map((id) => {
+        const p = ringPose(RING_KIT_SLOTS[id]);
+        const fx = Math.sin(p.rotation);
+        const fz = Math.cos(p.rotation);
+        const tile = worldToTile(p.x + fx * 7.5, p.z + fz * 7.5);
+        return [id, place(id, tile, p.rotation + Math.PI)];
+      }),
+    ) as Record<KitPlace, Place>),
   };
   void facingCentre;
   // Make sure every stand tile is walkable — a place nobody can reach is a bug.
@@ -726,9 +754,20 @@ export function buildIsland(): Island {
   buildVillage(map);
   const houses = placeHouses();
   blockHouses(map, houses);
-  const kitPoses: Record<KitPlace, KitPose> = { plugins: ringPose(RING_KIT_SLOTS.plugins) };
-  // The docks' footprint (8 x 5 tiles) blocks walking like a house does.
-  blockHouses(map, [{ ...kitPoses.plugins, w: 8, d: 5, variant: "glass-loft", seed: 0 }]);
+  const kitPoses = Object.fromEntries(
+    KIT_PLACES.map((id) => [id, ringPose(RING_KIT_SLOTS[id])]),
+  ) as Record<KitPlace, KitPose>;
+  // Kit footprints block walking like houses do.
+  blockHouses(
+    map,
+    KIT_PLACES.map((id) => ({
+      ...kitPoses[id],
+      w: KIT_FOOTPRINTS[id][0],
+      d: KIT_FOOTPRINTS[id][1],
+      variant: "glass-loft" as const,
+      seed: 0,
+    })),
+  );
   blockSquareFurniture(map);
   const { hedges, lamps } = placeRingFurniture(map);
   const { panels, greenhouses } = placeQuarterFurniture(map);
