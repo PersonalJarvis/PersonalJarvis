@@ -200,6 +200,13 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
   const invalidate = useThree((s) => s.invalidate);
   const groupRef = useRef<THREE.Group>(null);
   const figureRef = useRef<AssembledFigure | null>(null);
+  // What the camera frames: the body plus whatever it wears. A wizard hat
+  // reaches above the figure's own height, and framing by the height alone
+  // cut its point off the top of the column.
+  const [framedHeightM, setFramedHeightM] = useState(heightM);
+  // How far the camera stands back: the figure's LARGEST extent, so a fox is
+  // framed by its length and a person still by their height.
+  const [framedSpanM, setFramedSpanM] = useState(heightM);
 
   // One assembled figure per look; the previous one is disposed first.
   useEffect(() => {
@@ -210,6 +217,8 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
       assets.parts.map((p) => p.gltf),
     );
     figureRef.current = figure;
+    setFramedHeightM(figure?.renderedHeightM ?? heightM);
+    setFramedSpanM(figure?.renderedSpanM ?? heightM);
     const group = groupRef.current;
     if (figure && group) group.add(figure.root);
     if (figure) {
@@ -250,13 +259,13 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
     if (group) group.rotation.y = o.yaw;
     // 2.4 heights of distance: larger than the 2.6 it opened with (maintainer:
     // "about a fifth"), with the crown and the hem still inside the frame.
-    const mid = heightM * 0.5;
-    const distance = (heightM * 2.5) / o.zoom;
+    const mid = framedHeightM * 0.5;
+    const distance = (framedSpanM * 2.5) / o.zoom;
     camera.position.set(0, mid + Math.sin(o.pitch) * distance, Math.cos(o.pitch) * distance);
     camera.lookAt(0, mid, 0);
     camera.updateProjectionMatrix();
     invalidate();
-  }, [orbitTick, heightM, camera, invalidate, orbit]);
+  }, [orbitTick, framedHeightM, framedSpanM, camera, invalidate, orbit]);
 
   useFrame((_, dt) => {
     if (paused) return;

@@ -5197,6 +5197,8 @@
     "slot": {
       "hair": "Hair",
       "headgear": "Headgear",
+      "collar": "Collar",
+      "tail_extra": "Tail",
       "face_extra": "Face",
       "torso_over": "Over",
       "belt": "Belt",

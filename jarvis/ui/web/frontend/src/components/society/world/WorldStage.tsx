@@ -18,7 +18,7 @@ import "@fontsource/pixelify-sans/500.css";
 import "@fontsource/pixelify-sans/600.css";
 import "./world.css";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { Canvas } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
 
@@ -27,7 +27,6 @@ import { useCanvasAwake } from "@/hooks/useCanvasAwake";
 import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useWebglSupported } from "@/lib/graphDimension";
 import { useSocietyRoster } from "../data";
-import { syncBuildingPoses, useBuildingPoses } from "./buildingPoses";
 import { useCameraStore } from "./cameraStore";
 import { Clouds } from "./Clouds";
 import { FoundryDrawer } from "./FoundryDrawer";
@@ -49,12 +48,11 @@ import { WorldCameraRig } from "./WorldCameraRig";
 import { WorldComposer } from "./WorldComposer";
 import { WorldHud } from "./WorldHud";
 import { WorldKitProvider } from "./WorldKit";
-import { isKitPlace, type KitPlace, type PlaceId } from "./islandLayout";
+import { RING_KIT_SLOTS, type KitPlace, type PlaceId } from "./islandLayout";
 
-/** Only kit hubs open a drawer; other places are scenery. */
+/** Only ring hubs open a drawer; other places are scenery. */
 function asHub(place: PlaceId): KitPlace | null {
-  // Not "is it in the house ring" — the foundry crowns the mountain instead.
-  return isKitPlace(place) ? place : null;
+  return place in RING_KIT_SLOTS ? (place as KitPlace) : null;
 }
 import { cameraOffset } from "./worldCamera";
 import { SKY } from "./worldPalette";
@@ -92,8 +90,6 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
   const [memoryOpen, setMemoryOpen] = useState(false);
 
   useWorldControls(hostRef, webgl);
-  // The viewer's turned buildings go into the island before the first frame.
-  useEffect(syncBuildingPoses, []);
 
   const select = useCallback(
     (agentId: string | null) => {
@@ -145,10 +141,7 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
           gl={{ antialias: grain === 0, alpha: false, powerPreference: "high-performance", stencil: false }}
           frameloop={frameloop}
           onPointerMissed={() => {
-            const poses = useBuildingPoses.getState();
-            if (useCameraStore.getState().dragging || poses.rotating) return;
-            select(null);
-            poses.select(null);
+            if (!useCameraStore.getState().dragging) select(null);
           }}
         >
           <color attach="background" args={[SKY.clear]} />

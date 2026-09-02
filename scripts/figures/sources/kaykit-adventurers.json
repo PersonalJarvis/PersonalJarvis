@@ -117,7 +117,7 @@
         "emissive": "#ffd166"
       },
       "parts": [
-        { "object": "Rogue_Cape", "id": "back-rogue-cape", "slot": "back", "label": "Ranger cape", "styles": ["fantasy", "modern"] },
+        { "object": "Rogue_Cape", "id": "back-rogue-cape", "slot": "back", "label": "Ranger cape", "styles": ["fantasy"], "two_sided": true },
         { "object": "Knife", "id": "hand_r-knife", "slot": "hand_r", "label": "Knife", "styles": ["fantasy"] }
       ]
     },
@@ -166,7 +166,7 @@
       },
       "parts": [
         { "object": "Knight_Helmet", "id": "headgear-knight-helmet", "slot": "headgear", "label": "Knight helmet", "styles": ["fantasy"], "hides": ["hair"] },
-        { "object": "Knight_Cape", "id": "back-knight-cape", "slot": "back", "label": "Knight cape", "styles": ["fantasy"] },
+        { "object": "Knight_Cape", "id": "back-knight-cape", "slot": "back", "label": "Knight cape", "styles": ["fantasy"], "two_sided": true },
         { "object": "1H_Sword", "id": "hand_r-sword", "slot": "hand_r", "label": "Sword", "styles": ["fantasy"] },
         { "object": "Round_Shield", "id": "hand_l-round-shield", "slot": "hand_l", "label": "Round shield", "styles": ["fantasy"] }
       ]
@@ -217,9 +217,9 @@
       },
       "parts": [
         { "object": "Mage_Hat", "id": "headgear-mage-hat", "slot": "headgear", "label": "Wizard hat", "styles": ["fantasy"], "hides": ["hair"] },
-        { "object": "Mage_Cape", "id": "back-mage-cape", "slot": "back", "label": "Mage cape", "styles": ["fantasy"] },
+        { "object": "Mage_Cape", "id": "back-mage-cape", "slot": "back", "label": "Mage cape", "styles": ["fantasy"], "two_sided": true, "cell_map": { "c2r1": "primary" } },
         { "object": "2H_Staff", "id": "hand_r-staff", "slot": "hand_r", "label": "Staff", "styles": ["fantasy"] },
-        { "object": "Spellbook", "id": "hand_l-spellbook", "slot": "hand_l", "label": "Spellbook", "styles": ["fantasy", "modern"] }
+        { "object": "Spellbook", "id": "hand_l-spellbook", "slot": "hand_l", "label": "Spellbook", "styles": ["fantasy"] }
       ]
     },
     "Barbarian": {
@@ -267,9 +267,9 @@
       },
       "parts": [
         { "object": "Barbarian_Hat", "id": "headgear-horned-hat", "slot": "headgear", "label": "Horned hat", "styles": ["fantasy"], "hides": ["hair"] },
-        { "object": "Barbarian_Cape", "id": "back-fur-cape", "slot": "back", "label": "Fur cape", "styles": ["fantasy"] },
+        { "object": "Barbarian_Cape", "id": "back-fur-cape", "slot": "back", "label": "Fur cape", "styles": ["fantasy"], "two_sided": true, "cell_map": { "c7r0": "fur" } },
         { "object": "1H_Axe", "id": "hand_r-axe", "slot": "hand_r", "label": "Axe", "styles": ["fantasy"] },
-        { "object": "Mug", "id": "hand_r-mug", "slot": "hand_r", "label": "Mug", "styles": ["modern", "fantasy"] },
+        { "object": "Mug", "id": "hand_r-mug", "slot": "hand_r", "label": "Mug", "styles": ["modern", "fantasy", "cartoon", "scifi"] },
         { "object": "Barbarian_Round_Shield", "id": "hand_l-wooden-shield", "slot": "hand_l", "label": "Wooden shield", "styles": ["fantasy"] }
       ]
     }

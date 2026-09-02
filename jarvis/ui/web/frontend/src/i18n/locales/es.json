@@ -5197,6 +5197,8 @@
     "slot": {
       "hair": "Pelo",
       "headgear": "Sombrero",
+      "collar": "Collar",
+      "tail_extra": "Cola",
       "face_extra": "Cara",
       "torso_over": "Capa superior",
       "belt": "Cinturón",

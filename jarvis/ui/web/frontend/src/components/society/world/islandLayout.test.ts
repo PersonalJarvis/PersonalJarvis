@@ -19,22 +19,14 @@ import {
   PODIUM_LEVEL,
   REGIONS,
   RING_KIT_SLOTS,
-  SUMMIT_LEVEL,
   SNOW_LEVEL,
   SPOKES,
   TileKind,
-  applyBuildingYaws,
   buildIsland,
-  defaultBuildingYaw,
-  facesCamera,
   findPath,
   groundY,
   hash2,
-  houseDefaultRotation,
-  houseId,
   isWalkable,
-  kitId,
-  nearestWalkable,
   randomPlazaTile,
   smoothPath,
   tileIndex,
@@ -152,124 +144,27 @@ describe("islandLayout", () => {
   it("opens a paved square in the middle with a ring of houses around it", () => {
     const { map, content } = island;
     expect(map.kind[tileIndex(map, CENTER_TILE + 5, CENTER_TILE + 5)]).toBe(TileKind.plaza);
-    expect(content.houses.length).toBe(7); // 12 slots, five taken by the ring hubs
+    expect(content.houses.length).toBe(5); // 12 slots, seven taken by the five ring hubs
     for (const h of content.houses) {
       const r = Math.hypot(h.x, h.z) / 2;
       expect(r).toBeGreaterThan(PLAZA_RADIUS_TILES);
       expect(r).toBeLessThan(HEDGE_RING_TILES);
-      // A door faces the square or the ring road: local +z rotated by
-      // `rotation` points along the radius, one way or the other …
+      // Doors face the square: local +z rotated by `rotation` points at the centre.
       const fx = Math.sin(h.rotation);
       const fz = Math.cos(h.rotation);
-      const along = (fx * -h.x + fz * -h.z) / Math.hypot(h.x, h.z);
-      expect(Math.abs(along), `house ${h.slot}`).toBeCloseTo(1, 6);
-      // … and never away from the camera: no house shows the viewer its back.
-      expect(facesCamera(h.rotation), `house ${h.slot}`).toBe(true);
-      expect(h.rotation).toBe(h.defaultRotation);
-      expect(h.defaultRotation).toBeCloseTo(houseDefaultRotation(h.x, h.z), 9);
+      const toCentre = [-h.x, -h.z];
+      const dot = fx * toCentre[0] + fz * toCentre[1];
+      expect(dot).toBeGreaterThan(0);
       // No house stands on the hub's podium.
       const [tx, tz] = worldToTile(h.x, h.z);
       expect(map.level[tileIndex(map, tx, tz)]).toBe(PLATEAU_LEVEL);
     }
-    // The houses stand in the south-east half, the camera's side of the ring,
-    // so most of them face the road — that is the point of the rule.
-    const towardRoad = content.houses.filter((h) => Math.sin(h.rotation) * h.x + Math.cos(h.rotation) * h.z > 0);
-    expect(towardRoad.length).toBeGreaterThanOrEqual(4);
-    // A house on the far side would keep its door on the square.
-    expect(facesCamera(houseDefaultRotation(-30, -30))).toBe(true);
-    expect(houseDefaultRotation(-30, -30)).toBeCloseTo(Math.atan2(30, 30), 9);
-  });
-
-  it("blocks the square's furniture and the landmarks' add-ons so nobody walks through a bench", () => {
-    const { map, content } = island;
-    // The Quest Board's plinth and the ring bench: nothing walkable inside 6 m.
-    for (const [x, z] of [
-      [1, 1],
-      [5, 3],
-      [-5, 1],
-      [1, -5],
-    ]) {
-      expect(isWalkable(map, ...worldToTile(x, z)), `square ${x},${z}`).toBe(false);
-    }
-    expect(isWalkable(map, ...worldToTile(7, 1))).toBe(true);
-    // The long table with its benches, south of the monument.
-    expect(isWalkable(map, ...worldToTile(0, 8.5))).toBe(false);
-    expect(isWalkable(map, ...worldToTile(-4, 7))).toBe(false);
-    expect(isWalkable(map, ...worldToTile(0, 12))).toBe(true);
-    // The meeting stand tile beside the table stays reachable.
-    const meet = content.places.market.standTile;
-    expect(isWalkable(map, meet[0], meet[1])).toBe(true);
-    // A walk from the west of the square to the east goes AROUND the middle.
-    const path = findPath(map, worldToTile(-16, 1), worldToTile(16, 1));
-    expect(path).not.toBeNull();
-    for (const [tx, tz] of path!) {
-      const [x, z] = tileToWorld(tx, tz);
-      expect(Math.hypot(x, z)).toBeGreaterThan(5);
-    }
-    // The hub's wings and reflecting pool, the harbor kiosk, the keeper's hut.
-    const [hx, hz] = tileToWorld(...content.places.hub.tile);
-    expect(isWalkable(map, ...worldToTile(hx + 15.5, hz + 1))).toBe(false);
-    expect(isWalkable(map, ...worldToTile(hx, hz + 13.2))).toBe(false);
-    const [bx, bz] = tileToWorld(...content.places.harbor.tile);
-    expect(isWalkable(map, ...worldToTile(bx - 7, bz + 2))).toBe(false);
-    const [lx, lz] = tileToWorld(...content.places.lighthouse.tile);
-    expect(isWalkable(map, ...worldToTile(lx - 6.5, lz + 3.9))).toBe(false);
-    // Every lamp post and hedge segment stands on a blocked tile — except a
-    // lamp on a dock plank (the planks stay open) or on a place's stand tile
-    // (a stand tile is always kept reachable; the figure stands at the lamp).
-    const stands = new Set(Object.values(content.places).map((p) => p.standTile.join(",")));
-    for (const l of content.lamps) {
-      const [tx, tz] = worldToTile(l.x, l.z);
-      if (map.kind[tileIndex(map, tx, tz)] === TileKind.dock || stands.has(`${tx},${tz}`)) continue;
-      expect(isWalkable(map, tx, tz), `lamp ${l.x},${l.z}`).toBe(false);
-    }
-    for (const h of content.hedges) expect(isWalkable(map, ...worldToTile(h.x, h.z))).toBe(false);
-    // Idle wandering never picks a tile inside the bench ring.
-    for (let i = 0; i < 40; i++) {
-      const [tx, tz] = randomPlazaTile(map, () => (i * 0.137) % 1);
-      const [x, z] = tileToWorld(tx, tz);
-      expect(Math.hypot(x, z)).toBeGreaterThan(6);
-    }
-  });
-
-  it("turns buildings in place and re-stamps their footprints", () => {
-    const { map, content } = island;
-    const house = content.houses[0];
-    const rest = house.defaultRotation;
-    // With no overrides the blocked layer equals the built one.
-    const before = map.blocked.slice();
-    applyBuildingYaws(island, {});
-    expect(map.blocked).toEqual(before);
-    // Turning a house a quarter round moves its blocked tiles.
-    applyBuildingYaws(island, { [houseId(house.slot)]: rest + Math.PI / 2 });
-    expect(house.rotation).toBeCloseTo(rest + Math.PI / 2, 9);
-    expect(map.blocked).not.toEqual(before);
-    // Every stand tile is still walkable, and every house tile still blocked.
-    for (const p of Object.values(content.places)) expect(isWalkable(map, p.standTile[0], p.standTile[1]), p.id).toBe(true);
-    expect(isWalkable(map, ...worldToTile(house.x, house.z))).toBe(false);
-    // Back to rest restores the exact layer.
-    applyBuildingYaws(island, {});
-    expect(house.rotation).toBe(rest);
-    expect(map.blocked).toEqual(before);
-    // Every turnable building has a designed heading to return to.
-    expect(defaultBuildingYaw(houseId(house.slot))).toBe(rest);
-    expect(defaultBuildingYaw(kitId("cli"))).toBeCloseTo(content.kitPoses.cli.rotation, 9);
-    // A figure caught inside a footprint finds the nearest free tile.
-    const inside = worldToTile(house.x, house.z);
-    const out = nearestWalkable(map, inside[0], inside[1]);
-    expect(out).not.toBeNull();
-    expect(isWalkable(map, out![0], out![1])).toBe(true);
-    expect(Math.max(Math.abs(out![0] - inside[0]), Math.abs(out![1] - inside[1]))).toBeLessThanOrEqual(3);
   });
 
   it("puts the Plugin Docks on the house ring, facing the square, with a reachable stand", () => {
     const { map, content } = island;
     for (const [id, pose] of Object.entries(content.kitPoses)) {
-      // Ring hubs stand on the house ring; a hub with an anchor of its own does
-      // not — the Agent Foundry crowns the mountain (SUMMIT_TILE).
-      if (id in RING_KIT_SLOTS) {
-        expect(Math.hypot(pose.x, pose.z) / 2, id).toBeCloseTo(HOUSE_RING_TILES, 5);
-      }
+      expect(Math.hypot(pose.x, pose.z) / 2, id).toBeCloseTo(HOUSE_RING_TILES, 5);
       const fx = Math.sin(pose.rotation);
       const fz = Math.cos(pose.rotation);
       // The front points at the centre, unless the building faces the road on purpose.
@@ -282,12 +177,10 @@ describe("islandLayout", () => {
     // No two hubs share a slot.
     const slots = Object.values(RING_KIT_SLOTS).flat();
     expect(new Set(slots).size).toBe(slots.length);
-    // No ring hub stands on the hub's podium; the summit hub stands on its own
-    // terrace on the mountain, far above the village.
-    for (const [id, pose] of Object.entries(content.kitPoses)) {
+    // No ring hub stands on the hub's podium.
+    for (const pose of Object.values(content.kitPoses)) {
       const [tx, tz] = worldToTile(pose.x, pose.z);
-      const level = map.level[tileIndex(map, tx, tz)];
-      expect(level, id).toBe(id in RING_KIT_SLOTS ? PLATEAU_LEVEL : SUMMIT_LEVEL);
+      expect(map.level[tileIndex(map, tx, tz)]).toBe(PLATEAU_LEVEL);
     }
   });
 

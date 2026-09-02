@@ -35,7 +35,22 @@ export interface PartExtras {
   attach: string;
   hides: string[];
   label: string;
+  /** Flat cloth with no back face of its own; see `two_sided` in the catalog. */
+  two_sided?: boolean;
 }
+
+/**
+ * The material slot a body primitive fills, read off its name — the build
+ * names every slot `<figure id>-<slot>` (`biped-mage-hair`, `spirit-gigi-marks`).
+ * A part's `hides` list names slots, so this is how the two meet.
+ */
+export function materialSlotOf(name: string): string {
+  const cut = name.lastIndexOf("-");
+  return cut < 0 ? "" : name.slice(cut + 1);
+}
+
+/** The slot every base paints its body with; nothing may hide it. */
+const BODY_SLOT = "sheet";
 
 export interface LoadedGltf {
   scene: THREE.Object3D;
@@ -91,7 +106,39 @@ export interface AssembledFigure {
   extras: FigureExtras;
   /** Source units → rendered metres. */
   scale: number;
+  /**
+   * Rendered metres from the ground to the top of everything worn — the body
+   * plus a wizard hat's point. The body alone is `heightM`; a camera that
+   * frames by that alone cuts the hat off, so the viewer frames by this.
+   */
+  renderedHeightM: number;
+  /**
+   * The largest of the three rendered extents. A person is taller than they
+   * are wide, so for a biped this is the height; a fox is half again as long
+   * as it is tall, and a camera pulled back by its height alone crops its
+   * nose and tail.
+   */
+  renderedSpanM: number;
   dispose(): void;
+}
+
+/**
+ * Take the source material's face sides, cutout and depth behaviour with us.
+ * The pixel look is Lambert (or unlit for the glowing marks), but which faces
+ * exist is geometry, not shading: a cape is one open sheet of cloth, and
+ * rendering it front-side-only makes the half of it that faces the wearer —
+ * and every edge that reaches past the body — disappear.
+ */
+function copySurface(from: THREE.Material, to: THREE.Material, forceDoubleSide: boolean): void {
+  to.side = forceDoubleSide ? THREE.DoubleSide : from.side;
+  to.transparent = from.transparent;
+  to.opacity = from.opacity;
+  to.alphaTest = from.alphaTest;
+  to.depthWrite = from.depthWrite;
+}
+
+function firstMaterialOf(node: THREE.Mesh): THREE.Material {
+  return (Array.isArray(node.material) ? node.material[0] : node.material) as THREE.Material;
 }
 
 /**
@@ -121,17 +168,16 @@ export function assembleFigure(
   body.traverse((node) => {
     if (node.name === "FWD") node.visible = false;
     if (!(node instanceof THREE.Mesh)) return;
-    const original = (Array.isArray(node.material) ? node.material[0] : node.material) as
-      | THREE.MeshStandardMaterial
-      | THREE.MeshBasicMaterial;
+    const original = firstMaterialOf(node) as THREE.MeshStandardMaterial | THREE.MeshBasicMaterial;
     const map = original.map ?? null;
     if (map && !painted) painted = paintPalette(map, palette);
     // A "-marks" slot (Gigi's eyes, mouth, scanlines) glows: unlit, so it
     // reads white on the dark body under any light, like the mascot in 2D.
-    const material = original.name.endsWith("-marks")
+    const material = materialSlotOf(original.name) === "marks"
       ? new THREE.MeshBasicMaterial({ map: painted ?? map, color: 0xffffff })
       : new THREE.MeshLambertMaterial({ map: painted ?? map, color: 0xffffff });
     material.name = original.name;
+    copySurface(original, material, false);
     node.material = material;
     // A skinned mesh's bounds ignore its bones; culling it by the rest pose
     // hides a figure whose arms leave the box. Two draw calls are cheaper.
@@ -148,25 +194,54 @@ export function assembleFigure(
   // the body's skeleton with the body's bind matrix and follows every clip.
   const anchor = skinned[0] ?? null;
   const hidden = new Set<string>();
+  const worn: THREE.SkinnedMesh[] = [];
   for (const partGltf of parts) {
     const partExtras = readPartExtras(partGltf);
-    if (!anchor || !partExtras) continue;
+    // A part built for another archetype binds to bones this skeleton does
+    // not have; it would hang in the air. The figure renders without it.
+    if (!anchor || !partExtras || partExtras.archetype !== extras.archetype) continue;
     partGltf.scene.traverse((node) => {
       if (!(node instanceof THREE.SkinnedMesh)) return;
-      const material = new THREE.MeshLambertMaterial({ map: painted ?? undefined, color: 0xffffff });
+      const source = firstMaterialOf(node);
+      // The part's own sheet is the fallback, not `undefined`: an imported
+      // body carries no palette strip to paint, and a part without a map is
+      // a flat white silhouette.
+      const map = painted ?? (source as THREE.MeshStandardMaterial).map ?? undefined;
+      const material = new THREE.MeshLambertMaterial({ map, color: 0xffffff });
+      material.name = `part-${partExtras.slot}`;
+      copySurface(source, material, partExtras.two_sided === true);
       const mesh = new THREE.SkinnedMesh(node.geometry, material);
       mesh.name = `part:${partExtras.slot}`;
       mesh.frustumCulled = false;
       mesh.bind(anchor.skeleton, anchor.bindMatrix);
       anchor.parent?.add(mesh);
       owned.push(material);
+      worn.push(mesh);
     });
     for (const hide of partExtras.hides ?? []) hidden.add(hide);
   }
+  // `hides` names material slots, not just hair: a full helmet hides the
+  // hair, a diving suit could hide the hands. The body slot itself never goes.
   for (const mesh of bodyMeshes) {
-    const materialName = (mesh.material as THREE.Material).name ?? "";
-    if (hidden.has("hair") && materialName.endsWith("-hair")) mesh.visible = false;
+    const slot = materialSlotOf(firstMaterialOf(mesh).name ?? "");
+    if (slot && slot !== BODY_SLOT && hidden.has(slot)) mesh.visible = false;
   }
+
+  // What the camera has to fit: the rest-pose bounds of everything visible,
+  // in rendered metres. A wizard hat reaches a third of a metre above a
+  // 1.75 m figure; framing by the body's height alone decapitates it.
+  const bounds = new THREE.Box3();
+  for (const mesh of [...bodyMeshes, ...worn]) {
+    if (!mesh.visible) continue;
+    mesh.geometry.computeBoundingBox();
+    const box = mesh.geometry.boundingBox;
+    if (box) bounds.union(box);
+  }
+  const renderedHeightM = bounds.isEmpty() ? heightM : Math.max(heightM, bounds.max.y * scale);
+  const size = bounds.isEmpty() ? null : bounds.getSize(new THREE.Vector3());
+  const renderedSpanM = size
+    ? Math.max(renderedHeightM, size.x * scale, size.z * scale)
+    : renderedHeightM;
 
   const mixer = new THREE.AnimationMixer(body);
   const actions: Record<string, THREE.AnimationAction> = {};
@@ -184,6 +259,8 @@ export function assembleFigure(
     actions,
     extras,
     scale,
+    renderedHeightM,
+    renderedSpanM,
     dispose() {
       mixer.stopAllAction();
       mixer.uncacheRoot(body);

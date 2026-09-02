@@ -1,0 +1,99 @@
+{
+  "$comment": "Bodies modelled by scripts/figures/humanoid_builder.py — first-party geometry and sheets on the CC0 KayKit rig and clips (character-pipeline.md §8.2 route B, §12 decision 1). No mesh of the donor survives the build: it is imported for its 23 deform bones and nine clips, every object it shipped is deleted, and the body is built from boxes. The donor's own sha256 rows stay in SOURCES.md through the kaykit-adventurers source.",
+  "name": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig)",
+  "author": "Personal Jarvis",
+  "license": "first-party",
+  "license_url": "",
+  "procedural": "humanoid",
+  "rig_source": "kaykit-adventurers",
+  "rig_character": "Rogue",
+  "files": {},
+  "characters": {
+    "Office": {
+      "profile": "office",
+      "$comment": "The accessories live on this one character: they hang on `chest` and the handslots, bones every biped of this rig shares, so one file fits Office, Casual, Chibi and Android alike. `headgear-cap` is cut for this module's own crown height and skull width and is therefore tagged only to the styles built on it — never to the wider KayKit heads.",
+      "parts": ["back-backpack", "hand_l-tablet", "hand_r-wrench", "headgear-cap"],
+      "default_palette": {
+        "skin": "#f1c4a0",
+        "skin_shade": "#d3a382",
+        "hair": "#3b2a20",
+        "eyes": "#1b2427",
+        "primary": "#f2f2ee",
+        "primary_shade": "#d3d3cd",
+        "secondary": "#1f2a44",
+        "secondary_shade": "#141c2e",
+        "accent": "#a8322f",
+        "metal": "#9aa3a8",
+        "leather": "#3a2a20",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#241f1c",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ffd166"
+      }
+    },
+    "Casual": {
+      "profile": "casual",
+      "default_palette": {
+        "skin": "#d8a37c",
+        "skin_shade": "#b98763",
+        "hair": "#241a15",
+        "eyes": "#1b2427",
+        "primary": "#3f7d6a",
+        "primary_shade": "#2c5a4c",
+        "secondary": "#3d5a80",
+        "secondary_shade": "#2b3f5a",
+        "accent": "#e8c46b",
+        "metal": "#9aa3a8",
+        "leather": "#4a3526",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#e9e5dc",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ffd166"
+      }
+    },
+    "Chibi": {
+      "profile": "chibi",
+      "default_palette": {
+        "skin": "#f6cdaa",
+        "skin_shade": "#dcab86",
+        "hair": "#c9522f",
+        "eyes": "#241d1a",
+        "primary": "#e2604a",
+        "primary_shade": "#b8452f",
+        "secondary": "#f6d98a",
+        "secondary_shade": "#d9b45f",
+        "accent": "#4fb7a5",
+        "metal": "#a8b2b7",
+        "leather": "#8a5a38",
+        "fur": "#c98b62",
+        "fur_shade": "#9b6242",
+        "shoes": "#3b4a63",
+        "eye_white": "#ffffff",
+        "emissive": "#ffe066"
+      }
+    },
+    "Android": {
+      "profile": "android",
+      "default_palette": {
+        "skin": "#c9d2d8",
+        "skin_shade": "#a3adb5",
+        "hair": "#5a646b",
+        "eyes": "#101820",
+        "primary": "#2f6f8f",
+        "primary_shade": "#1f4a60",
+        "secondary": "#cdd6db",
+        "secondary_shade": "#9aa5ab",
+        "accent": "#4fd1c5",
+        "metal": "#b6c0c6",
+        "leather": "#39444b",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#1f4a60",
+        "eye_white": "#e6ecef",
+        "emissive": "#6ff2e3"
+      }
+    }
+  }
+}

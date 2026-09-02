@@ -389,7 +389,6 @@
       "character": "Rogue",
       "label": "Ranger",
       "styles": [
-        "modern",
         "fantasy"
       ]
     },
@@ -427,6 +426,66 @@
       "label": "Barbarian",
       "styles": [
         "fantasy"
+      ]
+    },
+    {
+      "id": "biped-office",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "office",
+      "source": "jarvis-humanoids",
+      "character": "Office",
+      "label": "Office",
+      "styles": [
+        "modern"
+      ]
+    },
+    {
+      "id": "biped-casual",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "casual",
+      "source": "jarvis-humanoids",
+      "character": "Casual",
+      "label": "Casual",
+      "styles": [
+        "modern"
+      ]
+    },
+    {
+      "id": "biped-chibi",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "chibi",
+      "source": "jarvis-humanoids",
+      "character": "Chibi",
+      "label": "Chibi",
+      "styles": [
+        "cartoon"
+      ]
+    },
+    {
+      "id": "biped-android",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "android",
+      "source": "jarvis-humanoids",
+      "character": "Android",
+      "label": "Android",
+      "styles": [
+        "scifi"
+      ]
+    },
+    {
+      "id": "quadruped-fox",
+      "archetype": "quadruped",
+      "variant": "default",
+      "base": "fox",
+      "source": "jarvis-animals",
+      "character": "Fox",
+      "label": "Fox",
+      "styles": [
+        "animal"
       ]
     },
     {

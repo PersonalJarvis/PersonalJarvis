@@ -10,7 +10,7 @@
  * runtime repaints exactly those cells to recolour a figure.
  */
 
-import { catalogBaseFor } from "./figureRegistry";
+import { basesForStyle, catalogBaseFor } from "./figureRegistry";
 
 export const PALETTE_CELLS = [
   "skin",
@@ -208,10 +208,26 @@ export function recipeKey(recipe: FigureRecipe): string {
   return `${recipe.archetype}/${recipe.base}|${recipe.model ?? ""}|${parts}|${palette}|${recipe.heightM ?? ""}`;
 }
 
-/** The recipe a brand-new biped starts from: the ranger base, one preset, no parts. */
-export function defaultRecipe(presetId = "ranger", base = "rogue"): FigureRecipe {
-  const preset = PALETTE_PRESETS.find((p) => p.id === presetId) ?? PALETTE_PRESETS[0];
-  return { contract: 1, archetype: "biped", base, parts: {}, palette: { ...preset.palette } };
+/**
+ * The recipe a brand-new figure starts from: the first base of `style`, that
+ * base's own default palette, no parts.
+ *
+ * The base is LOOKED UP from the style rather than named here. Hard-coding
+ * one meant that when the ranger stopped being a `modern` body the creator
+ * opened on "Modern" with a fantasy ranger in the preview and no build
+ * selected — a contradiction that only a person clicking around would find.
+ */
+export function defaultRecipe(style = "modern"): FigureRecipe {
+  const base = basesForStyle(style)[0] ?? null;
+  return {
+    contract: 1,
+    archetype: base?.archetype ?? "biped",
+    base: base?.base ?? "rogue",
+    style,
+    parts: {},
+    palette: base ? { ...base.palette } : { ...PALETTE_PRESETS[0].palette },
+    heightM: base?.heightM,
+  };
 }
 
 /** The three legacy roster colours (primary/secondary/accent) as recipe cells. */

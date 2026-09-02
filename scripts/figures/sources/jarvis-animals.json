@@ -1,0 +1,33 @@
+{
+  "$comment": "Four-legged companions, modelled and keyed by scripts/figures/quadruped_builder.py. The `animal` style has no CC0 donor of the right archetype, so the whole character is first-party: the contract's 21-bone quadruped rig, a blocky body on it and its seven clips written frame by frame. Nothing is downloaded.",
+  "name": "Personal Jarvis animals (first-party)",
+  "author": "Personal Jarvis",
+  "license": "first-party",
+  "license_url": "",
+  "procedural": "quadruped",
+  "files": {},
+  "characters": {
+    "Fox": {
+      "shape": "fox",
+      "parts": ["collar-band"],
+      "default_palette": {
+        "skin": "#f0b5a8",
+        "skin_shade": "#d29488",
+        "hair": "#b8532a",
+        "eyes": "#1a1614",
+        "primary": "#c25a2a",
+        "primary_shade": "#9a4420",
+        "secondary": "#f4efe6",
+        "secondary_shade": "#d8d0c2",
+        "accent": "#f2c14e",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#c8622b",
+        "fur_shade": "#f4efe6",
+        "shoes": "#2b2320",
+        "eye_white": "#fbf8f2",
+        "emissive": "#ffd166"
+      }
+    }
+  }
+}

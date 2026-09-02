@@ -431,7 +431,7 @@ def skin_part_to_bone(part: bpy.types.Object, arm: bpy.types.Object, bone: str) 
 # ---------------------------------------------------------------------------
 
 
-def finish_common(glb: gt.Glb) -> gt.Glb:
+def finish_common(glb: gt.Glb, two_sided: bool = False) -> gt.Glb:
     doc = glb.doc
     for sampler in doc.get("samplers", []):
         sampler["magFilter"] = 9728
@@ -444,7 +444,15 @@ def finish_common(glb: gt.Glb) -> gt.Glb:
             tex["sampler"] = 0
     for mat in doc.get("materials", []):
         mat["alphaMode"] = "OPAQUE"
-        mat.pop("doubleSided", None)
+        # Single-sided is the default and the cheap one: a solid body has no
+        # visible back faces. Flat cloth does — a cape is ONE open sheet of
+        # 84 triangles with no inside, and culling its back faces makes the
+        # half that faces the wearer, and every edge that reaches past the
+        # body, vanish. Those parts say so and get both sides.
+        if two_sided:
+            mat["doubleSided"] = True
+        else:
+            mat.pop("doubleSided", None)
     for anim in doc.get("animations", []):
         keep_channels = []
         for ch in anim["channels"]:
@@ -507,13 +515,15 @@ def finish_base(
     doc["asset"]["generator"] = "Personal Jarvis build_figures.py"
     gt.write_glb(glb_path, doc, glb.blob)
     log(
-        f"finished {glb_path.name}: {glb_path.stat().st_size // 1024} KB, {tris} tris, clips {sorted(clips)}"
+        f"finished {glb_path.name}: {glb_path.stat().st_size // 1024} KB, "
+        f"{tris} tris, clips {sorted(clips)}"
     )
     return {"triangles": tris, "clips": sorted(clips), "height_m": extras["height_m"]}
 
 
 def finish_part(glb_path: Path, spec: dict, target: dict, source: dict, attach: str) -> dict:
-    glb = finish_common(gt.read_glb(glb_path))
+    two_sided = bool(spec.get("two_sided"))
+    glb = finish_common(gt.read_glb(glb_path), two_sided=two_sided)
     doc = glb.doc
     doc["animations"] = []
     glb = gt.prune_unused(glb)
@@ -530,13 +540,14 @@ def finish_part(glb_path: Path, spec: dict, target: dict, source: dict, attach: 
         "hides": spec.get("hides", []),
         "label": spec["label"],
         "styles": spec.get("styles", []),
+        "two_sided": two_sided,
         "source": f"{source['name']} ({source['license']}) / {spec['object']}",
     }
     doc.setdefault("asset", {})["extras"] = {"jarvis_part": extras}
     doc["asset"]["generator"] = "Personal Jarvis build_figures.py"
     gt.write_glb(glb_path, doc, glb.blob)
     log(f"finished part {glb_path.name}: {glb_path.stat().st_size // 1024} KB, {tris} tris")
-    return {"triangles": tris}
+    return {"triangles": tris, "two_sided": two_sided}
 
 
 _GATE = None
@@ -575,6 +586,10 @@ def build_target(target: dict, out_dir: Path, ledger: Path) -> tuple[dict, list[
     part_specs = character.get("parts", [])
     if source.get("procedural") == "gigi":
         return build_procedural_gigi(target, source, archetype, out_dir)
+    if source.get("procedural") == "humanoid":
+        return build_procedural_humanoid(target, source, archetype, out_dir)
+    if source.get("procedural") == "quadruped":
+        return build_procedural_quadruped(target, source, archetype, out_dir)
     src_file = fetch_source_file(source, f"{target['character']}.glb")
     log(f"building {target['id']} from {src_file.name}")
 
@@ -634,7 +649,9 @@ def build_target(target: dict, out_dir: Path, ledger: Path) -> tuple[dict, list[
         report = reuv_to_palette(
             part,
             {},
-            {"*": character["cell_map"].get("*", {})},
+            # The part's own map wins: an accessory can share an atlas cell
+            # with something on the body that means a different thing on it.
+            {"*": {**character["cell_map"].get("*", {}), **spec.get("cell_map", {})}},
             source["atlas_grid"],
             fallback=source.get("part_cell_map", {}),
         )
@@ -660,6 +677,94 @@ def build_target(target: dict, out_dir: Path, ledger: Path) -> tuple[dict, list[
             }
         )
     return base_entry, part_entries
+
+
+def build_procedural_quadruped(
+    target: dict, source: dict, archetype: dict, out_dir: Path
+) -> tuple[dict, list[dict]]:
+    """An animal: rig, body and clips all written by ``quadruped_builder.py``.
+
+    There is no CC0 donor of this archetype, so unlike the humanoids nothing
+    is borrowed — the 21-bone skeleton and all seven clips are keyed here.
+    """
+    import quadruped_builder  # noqa: PLC0415 — Blender-only module beside this file
+
+    log(f"building {target['id']} procedurally")
+    reset_scene()
+    bpy.context.scene.render.fps = quadruped_builder.FPS
+    character = source["characters"][target["character"]]
+    sheet_path = CACHE / f"{target['id']}-sheet.png"
+    write_sheet(sheet_path, character["default_palette"])
+    img = load_sheet(sheet_path)
+    arm, body, uv_report = quadruped_builder.build_quadruped(
+        character["shape"], CONTRACT["sheet"], img, sheet_material
+    )
+    apply_materials(body, img, target["id"], uv_report["hair_faces"])
+    for name, spec in archetype["clips"].items():
+        action = bpy.data.actions.get(name)
+        if action is not None:
+            normalize_clip(action, spec["loop"])
+    fwd = add_forward_marker(arm)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    base_path = out_dir / f"{target['id']}.glb"
+    export_glb(base_path, [body, arm, fwd], animations=True)
+    facts = finish_base(base_path, target, source, archetype, uv_report)
+    entry = {
+        "id": f"{target['archetype']}/{target['base']}",
+        "file": base_path.name,
+        "archetype": target["archetype"],
+        "variant": target["variant"],
+        "base": target["base"],
+        "label": target["label"],
+        "styles": target.get("styles", []),
+        "heightM": archetype["variants"][target["variant"]]["height_m"],
+        "palette": character["default_palette"],
+        "source": f"{source['name']} / {target['character']}",
+        "license": source["license"],
+        "note": (
+            f"rig, body and clips written by quadruped_builder.py "
+            f"(shape `{character['shape']}`); no external source"
+        ),
+        **facts,
+    }
+
+    for action in list(bpy.data.actions):
+        bpy.data.actions.remove(action)
+    part_entries = []
+    parts_dir = out_dir / "parts" / target["archetype"]
+    for part_id in character.get("parts", []):
+        spec = dict(quadruped_builder.PART_SPECS[part_id])
+        spec["id"] = part_id
+        spec["object"] = part_id
+        attach = archetype["slots"][spec["slot"]]["attach"]
+        part, report = quadruped_builder.build_part(
+            part_id, arm, CONTRACT["sheet"], img, sheet_material
+        )
+        apply_materials(part, img, part_id, [])
+        parts_dir.mkdir(parents=True, exist_ok=True)
+        part_path = parts_dir / f"{part_id}.glb"
+        export_glb(part_path, [part, arm], animations=False)
+        pfacts = finish_part(part_path, spec, target, source, attach)
+        bpy.data.objects.remove(part, do_unlink=True)
+        part_entries.append(
+            {
+                "id": part_id,
+                "file": f"parts/{target['archetype']}/{part_path.name}",
+                "archetype": target["archetype"],
+                "slot": spec["slot"],
+                "attach": attach,
+                "label": spec["label"],
+                "styles": spec.get("styles", []),
+                "hides": spec.get("hides", []),
+                "from_base": target["base"],
+                "source": f"{source['name']} / {part_id}",
+                "license": source["license"],
+                "palette_cells": report["used"],
+                **pfacts,
+            }
+        )
+    return entry, part_entries
 
 
 def build_procedural_gigi(
@@ -698,6 +803,107 @@ def build_procedural_gigi(
     return entry, []
 
 
+def build_procedural_humanoid(
+    target: dict, source: dict, archetype: dict, out_dir: Path
+) -> tuple[dict, list[dict]]:
+    """A body modelled by ``humanoid_builder.py`` on the CC0 donor's rig and clips.
+
+    The donor gives the skeleton and the nine clips and nothing else: every
+    mesh it shipped is deleted before the new body is built, so what ships is
+    our geometry on a CC0 rig — the arrangement §12 of the pipeline settled.
+    """
+    import humanoid_builder  # noqa: PLC0415 — Blender-only module beside this file
+
+    rig = load_source(source["rig_source"])
+    character = source["characters"][target["character"]]
+    rig_file = fetch_source_file(rig, f"{source['rig_character']}.glb")
+    log(f"building {target['id']} procedurally on the {source['rig_character']} rig")
+
+    reset_scene()
+    import_glb(rig_file, int(rig.get("fps", 30)))
+    arm = find_armature()
+    keep_objects(arm, set())  # the donor's own meshes go; the rig and clips stay
+    dropped = drop_bones(arm, rig["drop_bone_patterns"])
+    log(f"dropped {len(dropped)} control bones")
+    rename_bones(arm, rig["bone_map"], archetype["bones"])
+    kept = filter_clips(rig["clip_map"], archetype["clips"])
+    for name, action in kept.items():
+        normalize_clip(action, archetype["clips"][name]["loop"])
+
+    sheet_path = CACHE / f"{target['id']}-sheet.png"
+    write_sheet(sheet_path, character["default_palette"])
+    img = load_sheet(sheet_path)
+    body, uv_report = humanoid_builder.build_humanoid(
+        character["profile"], arm, CONTRACT["sheet"], img, sheet_material
+    )
+    apply_materials(body, img, target["id"], uv_report["hair_faces"])
+    fwd = add_forward_marker(arm)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    base_path = out_dir / f"{target['id']}.glb"
+    export_glb(base_path, [body, arm, fwd], animations=True)
+    facts = finish_base(base_path, target, source, archetype, uv_report)
+    entry = {
+        "id": f"{target['archetype']}/{target['base']}",
+        "file": base_path.name,
+        "archetype": target["archetype"],
+        "variant": target["variant"],
+        "base": target["base"],
+        "label": target["label"],
+        "styles": target.get("styles", []),
+        "heightM": archetype["variants"][target["variant"]]["height_m"],
+        "palette": character["default_palette"],
+        "source": f"{source['name']} / {target['character']}",
+        "license": source["license"],
+        "note": (
+            f"body modelled by humanoid_builder.py (profile `{character['profile']}`); "
+            f"rig and clips from {rig['name']} ({rig['license']}) / {source['rig_character']}, "
+            "every donor mesh deleted"
+        ),
+        **facts,
+    }
+
+    # Accessories, modelled the same way and hung on bones every biped shares,
+    # so one file fits every base of its style. Declared on ONE character so
+    # the four bodies do not each rebuild the same four files.
+    for action in list(bpy.data.actions):
+        bpy.data.actions.remove(action)
+    part_entries = []
+    parts_dir = out_dir / "parts" / target["archetype"]
+    for part_id in character.get("parts", []):
+        spec = dict(humanoid_builder.PART_SPECS[part_id])
+        spec["id"] = part_id
+        spec["object"] = part_id
+        attach = archetype["slots"][spec["slot"]]["attach"]
+        part, report = humanoid_builder.build_part(
+            part_id, arm, CONTRACT["sheet"], img, sheet_material
+        )
+        apply_materials(part, img, part_id, [])
+        parts_dir.mkdir(parents=True, exist_ok=True)
+        part_path = parts_dir / f"{part_id}.glb"
+        export_glb(part_path, [part, arm], animations=False)
+        pfacts = finish_part(part_path, spec, target, source, attach)
+        bpy.data.objects.remove(part, do_unlink=True)
+        part_entries.append(
+            {
+                "id": part_id,
+                "file": f"parts/{target['archetype']}/{part_path.name}",
+                "archetype": target["archetype"],
+                "slot": spec["slot"],
+                "attach": attach,
+                "label": spec["label"],
+                "styles": spec.get("styles", []),
+                "hides": spec.get("hides", []),
+                "from_base": target["base"],
+                "source": f"{source['name']} / {part_id}",
+                "license": source["license"],
+                "palette_cells": report["used"],
+                **pfacts,
+            }
+        )
+    return entry, part_entries
+
+
 def write_ledger(
     path: Path, bases: list[dict], parts: list[dict], sources: dict[str, dict]
 ) -> None:
@@ -713,21 +919,26 @@ def write_ledger(
         "| File | Source | License | What the build changed |",
         "|---|---|---|---|",
     ]
+    imported_note = (
+        "body meshes joined; IK/control bones dropped; 23 deform bones renamed; clips "
+        "kept/renamed, root XZ zeroed, loops closed; faces re-UV'd onto the palette strip; "
+        "hair as its own primitive; FWD marker; extras"
+    )
     for b in bases:
         lines.append(
-            f"| `{b['file']}` | {b['source']} | {b['license']} | body meshes joined; IK/control bones "
-            f"dropped; 23 deform bones renamed; clips kept/renamed, root XZ zeroed, loops closed; "
-            f"faces re-UV'd onto the palette strip; hair as its own primitive; FWD marker; extras |"
+            f"| `{b['file']}` | {b['source']} | {b['license']} | {b.get('note') or imported_note} |"
         )
     for p in parts:
         lines.append(
-            f"| `{p['file'].split('/')[-1]}` | {p['source']} | {p['license']} | unparented at rest, "
-            f"skinned to `{p['attach']}` with weight 1; re-UV'd onto the palette strip; no clips; extras |"
+            f"| `{p['file'].split('/')[-1]}` | {p['source']} | {p['license']} | unparented at "
+            f"rest, skinned to `{p['attach']}` with weight 1; re-UV'd onto the palette strip; "
+            "no clips; extras |"
         )
     lines.append("")
-    for name, src in sources.items():
+    for src in sources.values():
         lines.append(
-            f"- **{src['name']}** — {src['author']}, {src['license']} ({src['license_url']}); files:"
+            f"- **{src['name']}** — {src['author']}, {src['license']} "
+            f"({src['license_url']}); files:"
         )
         for fname, sha in src["files"].items():
             lines.append(f"  - `{fname}` sha256 `{sha}`")

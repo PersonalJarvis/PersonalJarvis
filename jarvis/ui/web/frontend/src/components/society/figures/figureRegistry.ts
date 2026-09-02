@@ -44,6 +44,8 @@ export interface CatalogPart {
   source: string;
   license: string;
   triangles: number;
+  /** Flat cloth (a cape) has no back face of its own; the runtime renders it from both sides. */
+  two_sided?: boolean;
 }
 
 export interface FigureCatalog {
@@ -83,9 +85,25 @@ export interface FigureAsset {
   catalog: CatalogBase | null;
 }
 
+/**
+ * The catalog row behind a recipe. The archetype narrows it, but a recipe
+ * whose archetype drifted from its base — a saved row from before the base
+ * moved archetype, or a style switch that forgot to carry it — still finds
+ * its figure by base name alone. Silently rendering the wrong figure is the
+ * one outcome worth ruling out.
+ */
 export function catalogBaseFor(recipe: Pick<FigureRecipe, "archetype" | "base">): CatalogBase | null {
   const base = LEGACY_BASES[recipe.base] ?? recipe.base;
-  return CATALOG.bases.find((b) => b.archetype === recipe.archetype && b.base === base) ?? null;
+  return (
+    CATALOG.bases.find((b) => b.archetype === recipe.archetype && b.base === base) ??
+    CATALOG.bases.find((b) => b.base === base) ??
+    null
+  );
+}
+
+/** The archetype a base belongs to — the value a recipe must carry with it. */
+export function archetypeOfBase(base: string): FigureArchetype | null {
+  return catalogBaseFor({ archetype: "biped", base })?.archetype ?? null;
 }
 
 /** The GLB behind a recipe: a catalog base, or the recipe's own imported model. */
@@ -128,48 +146,90 @@ export function partAssetFor(partId: string): PartAsset | null {
   return url ? { url, part } : null;
 }
 
-/** The parts a recipe wears, resolved; unknown ids are dropped, not fatal. */
-export function partAssetsFor(recipe: Pick<FigureRecipe, "parts">): PartAsset[] {
+/**
+ * The parts a recipe wears, resolved. An unknown id is dropped, and so is a
+ * part built for another archetype — a biped cape skinned to `chest` binds to
+ * nothing on Gigi's three-bone rig and would hang in the air beside her.
+ * Neither is fatal: the figure renders without it.
+ */
+export function partAssetsFor(
+  recipe: Pick<FigureRecipe, "parts"> & Partial<Pick<FigureRecipe, "archetype" | "base">>,
+): PartAsset[] {
+  const archetype = recipe.base
+    ? (catalogBaseFor({ archetype: recipe.archetype ?? "biped", base: recipe.base })?.archetype ?? recipe.archetype)
+    : recipe.archetype;
   return Object.values(recipe.parts ?? {})
     .map((id) => (id ? partAssetFor(id) : null))
-    .filter((p): p is PartAsset => p !== null);
+    .filter((p): p is PartAsset => p !== null)
+    .filter((p) => !archetype || p.part.archetype === archetype);
 }
 
-/** Styles that have at least one base today, in catalog order; the creator disables the rest. */
+/**
+ * Styles that have at least one base today, in catalog order; the creator
+ * disables the rest. `custom` is the import lane and never appears here — it
+ * has no catalog base by definition; the creator enables it once a person's
+ * own GLB is in.
+ */
 export function stylesWithBases(): string[] {
   const live = new Set(CATALOG.bases.flatMap((b) => b.styles));
   return Object.keys(CATALOG.styles).filter((s) => live.has(s));
 }
 
-export function basesForStyle(style: string | null, archetype: FigureArchetype = "biped"): CatalogBase[] {
-  return CATALOG.bases.filter((b) => b.archetype === archetype && (!style || b.styles.includes(style)));
+/**
+ * The bases a style offers. A style is NOT tied to one archetype — `animal`
+ * is quadruped, `spirit` is spirit, `cartoon` may be either — so the
+ * archetype narrows the list only when the caller asks for one.
+ */
+export function basesForStyle(style: string | null, archetype: FigureArchetype | null = null): CatalogBase[] {
+  return CATALOG.bases.filter(
+    (b) => (!archetype || b.archetype === archetype) && (!style || b.styles.includes(style)),
+  );
 }
 
-export function partsForSlot(slot: string, archetype: FigureArchetype = "biped", style: string | null = null): CatalogPart[] {
+export function partsForSlot(
+  slot: string,
+  archetype: FigureArchetype = "biped",
+  style: string | null = null,
+): CatalogPart[] {
   return CATALOG.parts.filter(
     (p) => p.archetype === archetype && p.slot === slot && (!style || p.styles.includes(style)),
   );
 }
 
-/** Slots any catalog part fills for an archetype, in the contract's order of the parts list. */
-export function slotsWithParts(archetype: FigureArchetype = "biped"): string[] {
+/**
+ * Slots that hold at least one part for this archetype AND style, in the
+ * order the catalog lists them. A slot with nothing to offer is not a row of
+ * one "None" button — it is not a row at all.
+ */
+export function slotsWithParts(archetype: FigureArchetype = "biped", style: string | null = null): string[] {
   const seen: string[] = [];
   for (const p of CATALOG.parts) {
-    if (p.archetype === archetype && !seen.includes(p.slot)) seen.push(p.slot);
+    if (p.archetype !== archetype) continue;
+    if (style && !p.styles.includes(style)) continue;
+    if (!seen.includes(p.slot)) seen.push(p.slot);
   }
   return seen;
 }
 
+/**
+ * The parts of `recipe` that the given base and style still support — what a
+ * style or base switch must keep. A cape tagged `fantasy` does not survive a
+ * move to `scifi`, and no biped part survives a move to a quadruped.
+ */
+export function keepablePartsFor(
+  parts: Record<string, string>,
+  archetype: FigureArchetype,
+  style: string | null,
+): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const [slot, id] of Object.entries(parts ?? {})) {
+    const part = CATALOG.parts.find((p) => p.id === id);
+    if (!part || part.archetype !== archetype || part.slot !== slot) continue;
+    if (style && !part.styles.includes(style)) continue;
+    kept[slot] = id;
+  }
+  return kept;
+}
+
 /** Every asset URL, for preloading the moment the section opens. */
 export const FIGURE_URLS: readonly string[] = Object.values(FILES);
-
-/**
- * Bases the creator can pick today, per archetype — keyed by the legacy
- * small/medium/large ids the dialog still offers. The catalog's own `base`
- * names (rogue, …) stay inside the catalog; this list is the dialog's.
- */
-export const AVAILABLE_BASES: Readonly<Record<FigureArchetype, readonly string[]>> = {
-  biped: ["medium"],
-  quadruped: [],
-  spirit: [],
-};

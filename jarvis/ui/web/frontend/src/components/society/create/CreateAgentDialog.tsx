@@ -68,11 +68,41 @@ import {
   type FigureRecipe,
   type PaletteCell,
 } from "../figures/figureRecipe";
-import { basesForStyle, partsForSlot, slotsWithParts, stylesWithBases, CATALOG } from "../figures/figureRegistry";
+import {
+  basesForStyle,
+  catalogBaseFor,
+  keepablePartsFor,
+  partsForSlot,
+  slotsWithParts,
+  stylesWithBases,
+  CATALOG,
+} from "../figures/figureRegistry";
+import type { FigureArchetype } from "../figures/figureRecipe";
 
 const CEILINGS: readonly PermissionCeiling[] = ["safe", "monitor", "ask"];
-const HEIGHT_MIN = 1.5;
-const HEIGHT_MAX = 2.1;
+
+/**
+ * How tall a figure may be made, per archetype. One 1.5–2.1 m band fits a
+ * person and nothing else: a fox at 1.75 m is a horse, and Gigi's own scale
+ * is 1.9 m. The band is the archetype's contract height ±25 %.
+ */
+const HEIGHT_RANGE: Readonly<Record<FigureArchetype, { min: number; max: number }>> = {
+  biped: { min: 1.5, max: 2.1 },
+  quadruped: { min: 0.6, max: 1.3 },
+  spirit: { min: 1.5, max: 2.4 },
+};
+const IMPORTED_RANGE = { min: 0.6, max: 2.4 };
+
+/** What the creator opens on; the base comes from the style, never the other way round. */
+const DEFAULT_STYLE = "modern";
+
+/** True while the recipe still wears its own base's stock colours, cell for cell. */
+function untouchedPalette(recipe: FigureRecipe): boolean {
+  const stock = catalogBaseFor(recipe)?.palette;
+  if (!stock) return false;
+  const worn = recipe.palette ?? {};
+  return Object.entries(worn).every(([cell, value]) => stock[cell as PaletteCell] === value);
+}
 
 export interface CreateAgentDialogProps {
   open: boolean;
@@ -86,8 +116,8 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [recipe, setRecipe] = useState<FigureRecipe>(() => defaultRecipe("ranger"));
-  const [style, setStyle] = useState<string>("modern");
+  const [recipe, setRecipe] = useState<FigureRecipe>(() => defaultRecipe(DEFAULT_STYLE));
+  const [style, setStyle] = useState<string>(DEFAULT_STYLE);
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
@@ -197,7 +227,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setName("");
     setTitle("");
     setDescription("");
-    setRecipe(defaultRecipe("ranger"));
+    setRecipe(defaultRecipe(DEFAULT_STYLE));
     setProviderId("");
     setModel("");
     setEffort("");
@@ -209,6 +239,53 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   }, [open]);
 
   const palette = useMemo(() => resolvePalette(recipe), [recipe]);
+
+  // The look editor's own truth: which figure the recipe names, what
+  // archetype it is, and therefore which slots, parts and heights exist. An
+  // imported GLB has no catalog row — its rows are colours and height only.
+  const imported = Boolean(recipe.model);
+  const baseEntry = imported ? null : catalogBaseFor(recipe);
+  const archetype: FigureArchetype = baseEntry?.archetype ?? recipe.archetype;
+  const styleOptions = useMemo(() => stylesWithBases(), []);
+  const bases = useMemo(() => basesForStyle(style), [style]);
+  const slots = useMemo(
+    () => (imported ? [] : slotsWithParts(archetype, style)),
+    [imported, archetype, style],
+  );
+  const heights = imported ? IMPORTED_RANGE : (HEIGHT_RANGE[archetype] ?? HEIGHT_RANGE.biped);
+  const defaultHeight = baseEntry?.heightM ?? 1.75;
+  const heightM = Math.min(heights.max, Math.max(heights.min, recipe.heightM ?? defaultHeight));
+
+  /**
+   * Move the recipe onto a base: its archetype comes with it, the parts that
+   * the new base and style cannot wear are dropped, and the height lands in
+   * the new archetype's band. Carrying a biped's cape onto a fox, or a 1.75 m
+   * height onto a 0.9 m animal, is how a "working" creator renders nonsense.
+   */
+  const selectBase = (nextStyle: string, base: string) => {
+    const entry = CATALOG.bases.find((b) => b.base === base) ?? null;
+    const nextArchetype: FigureArchetype = entry?.archetype ?? "biped";
+    const band = HEIGHT_RANGE[nextArchetype] ?? HEIGHT_RANGE.biped;
+    setStyle(nextStyle);
+    setRecipe((r) => {
+      const next: FigureRecipe = {
+        ...r,
+        archetype: nextArchetype,
+        base,
+        style: nextStyle,
+        parts: keepablePartsFor(r.parts, nextArchetype, nextStyle),
+        heightM: Math.min(band.max, Math.max(band.min, r.heightM ?? entry?.heightM ?? 1.75)),
+        // Colours a person chose are theirs and survive the switch; colours
+        // they never touched are the OLD figure's defaults and have no
+        // business on the new one — a fox does not want the jeans blue its
+        // paws inherited from the casual body.
+        palette: untouchedPalette(r) && entry ? { ...entry.palette } : r.palette,
+      };
+      delete next.model;
+      return next;
+    });
+    setImportedName(null);
+  };
 
   const setCell = (cell: PaletteCell, value: string) =>
     setRecipe((r) => ({ ...r, palette: { ...r.palette, [cell]: value } }));
@@ -576,15 +653,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                     <button
                       type="button"
                       className="underline hover:text-foreground"
-                      onClick={() => {
-                        setImportedName(null);
-                        setStyle("modern");
-                        setRecipe((r) => {
-                          const next = { ...r, style: "modern" };
-                          delete next.model;
-                          return next;
-                        });
-                      }}
+                      onClick={() => selectBase(DEFAULT_STYLE, basesForStyle(DEFAULT_STYLE)[0]?.base ?? "rogue")}
                     >
                       {t("society.create.import_reset")}
                     </button>
@@ -595,30 +664,37 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                     <span className="w-16 text-xs text-muted-foreground">{t("society.create.style")}</span>
                     <Segmented
                       value={style}
-                      options={Object.keys(CATALOG.styles).map((id) => ({
-                        value: id,
-                        label: t(`society.style.${id}`),
-                        disabled: !stylesWithBases().includes(id),
-                        hint: stylesWithBases().includes(id) ? undefined : t("society.create.style_soon"),
-                      }))}
+                      options={Object.keys(CATALOG.styles).map((id) => {
+                        // "Imported" is not a style to pick — it is where the
+                        // Import button lands, so it lights up once a GLB is in.
+                        const live = id === "custom" ? imported : styleOptions.includes(id);
+                        return {
+                          value: id,
+                          label: t(`society.style.${id}`),
+                          disabled: !live,
+                          hint: live
+                            ? undefined
+                            : t(id === "custom" ? "society.create.style_import_hint" : "society.create.style_soon"),
+                        };
+                      })}
                       onChange={(next) => {
-                        setStyle(next);
-                        const first = basesForStyle(next)[0];
-                        if (first && !basesForStyle(next).some((b) => b.base === recipe.base)) {
-                          setRecipe((r) => ({ ...r, base: first.base, parts: {}, style: next }));
-                        }
+                        if (next === style) return;
+                        const keep = basesForStyle(next).some((b) => b.base === recipe.base);
+                        selectBase(next, keep ? recipe.base : (basesForStyle(next)[0]?.base ?? recipe.base));
                       }}
                     />
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="w-16 text-xs text-muted-foreground">{t("society.create.base")}</span>
-                    <Segmented
-                      value={recipe.base}
-                      options={basesForStyle(style).map((b) => ({ value: b.base, label: b.label }))}
-                      onChange={(base) => setRecipe((r) => ({ ...r, base, style }))}
-                    />
-                  </div>
-                  {slotsWithParts("biped").map((slot) => (
+                  {imported ? null : (
+                    <div className="flex items-center gap-3">
+                      <span className="w-16 text-xs text-muted-foreground">{t("society.create.base")}</span>
+                      <Segmented
+                        value={recipe.base}
+                        options={bases.map((b) => ({ value: b.base, label: b.label }))}
+                        onChange={(base) => selectBase(style, base)}
+                      />
+                    </div>
+                  )}
+                  {slots.map((slot) => (
                     <div key={slot} className="flex items-center gap-3">
                       <span className="w-16 text-xs text-muted-foreground">{t(`society.slot.${slot}`)}</span>
                       <div className="flex flex-wrap gap-1">
@@ -626,7 +702,10 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                           value={recipe.parts[slot] ?? ""}
                           options={[
                             { value: "", label: t("society.create.none") },
-                            ...partsForSlot(slot, "biped", null).map((part) => ({ value: part.id, label: part.label })),
+                            ...partsForSlot(slot, archetype, style).map((part) => ({
+                              value: part.id,
+                              label: part.label,
+                            })),
                           ]}
                           onChange={(id) =>
                             setRecipe((r) => {
@@ -686,15 +765,15 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                     <input
                       id="society-create-height"
                       type="range"
-                      min={HEIGHT_MIN}
-                      max={HEIGHT_MAX}
+                      min={heights.min}
+                      max={heights.max}
                       step={0.01}
-                      value={recipe.heightM ?? 1.75}
+                      value={heightM}
                       onChange={(e) => setRecipe((r) => ({ ...r, heightM: Number.parseFloat(e.target.value) }))}
                       className="flex-1"
                     />
                     <span className="w-14 text-right font-mono text-xs text-muted-foreground">
-                      {(recipe.heightM ?? 1.75).toFixed(2)} m
+                      {heightM.toFixed(2)} m
                     </span>
                   </div>
                 </div>
