@@ -32,6 +32,7 @@ import { Clouds } from "./Clouds";
 import { Landmarks } from "./Landmarks";
 import { PlaceLabels } from "./PlaceLabels";
 import { HubDrawer } from "./HubDrawer";
+import { QuestBoardDrawer } from "./QuestBoardDrawer";
 import { Shadowed } from "./Shadowed";
 import { SunRig } from "./SunRig";
 import { Terrain, Water } from "./Terrain";
@@ -79,6 +80,7 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
   const sample = roster.data?.sample ?? true;
   const [selected, setSelected] = useState<string | null>(null);
   const [openHub, setOpenHub] = useState<KitPlace | null>(null);
+  const [questOpen, setQuestOpen] = useState(false);
 
   useWorldControls(hostRef, webgl);
 
@@ -142,10 +144,18 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
             <Terrain />
             <Water paused={reduced} />
             <Shadowed>
-              <Village paused={reduced} />
+              <Village
+                paused={reduced}
+                questOpen={questOpen}
+                onQuestClick={() => {
+                  setOpenHub(null);
+                  setQuestOpen((cur) => !cur);
+                }}
+              />
               <Landmarks
                 paused={reduced}
                 onHubClick={(p) => {
+                  setQuestOpen(false);
                   const hub = asHub(p);
                   if (hub) setOpenHub((cur) => (cur === hub ? null : hub));
                 }}
@@ -165,6 +175,7 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
         <WorldHud agents={agents} sample={sample} awake={awake} reducedMotion={reduced} topRight={topRight} />
       )}
       {ready && openHub && <HubDrawer hub={openHub} onClose={() => setOpenHub(null)} />}
+      {ready && questOpen && <QuestBoardDrawer onClose={() => setQuestOpen(false)} />}
     </div>
   );
 }

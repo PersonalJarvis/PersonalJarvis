@@ -1,7 +1,7 @@
 /**
  * The market district: twelve solarpunk houses in a ring around the open
- * square, the lead agent's hub at its head, the big tree with the round table
- * in the middle, the hedge ring with its four gates, and the lamps.
+ * square, the lead agent's hub at its head, the Quest Board monument with the
+ * long table in the middle, the hedge ring with its four gates, and the lamps.
  *
  * Everything is primitives from `worldMaterials.ts` — no asset files. The
  * building language (docs/agent-society/world-art-direction.md §4): white
@@ -12,6 +12,7 @@ import { useFrame } from "@react-three/fiber";
 import { Color, InstancedMesh, Mesh, Object3D } from "three";
 
 import { buildIsland, groundY, type HousePlot, type Post } from "./islandLayout";
+import { QuestMonument } from "./QuestMonument";
 import { Block, useKit, type Kit } from "./WorldKit";
 import { PAL } from "./worldMaterials";
 
@@ -107,19 +108,25 @@ function Hub({ kit, paused }: { kit: Kit; paused: boolean }) {
   );
 }
 
-/** The big tree in the middle of the square, the ring bench and the long table. */
-function SquareCentre({ kit }: { kit: Kit }) {
+/** The Quest Board in the middle of the square, the ring bench and the long table. */
+function SquareCentre({
+  kit,
+  paused,
+  onQuestClick,
+  questOpen,
+}: {
+  kit: Kit;
+  paused: boolean;
+  onQuestClick?: () => void;
+  questOpen?: boolean;
+}) {
   const { map } = buildIsland();
   const y = groundY(map, 1, 1);
   return (
     <group position={[0, y, 0]}>
-      <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.trunk)} position={[0, 2.6, 0]} scale={[1.8, 5.2, 1.8]} />
-      <mesh geometry={kit.g.blob} material={kit.m.lit(PAL.bigCanopy)} position={[0, 6.4, 0]} scale={[9.5, 6.5, 9.5]} />
-      <mesh geometry={kit.g.blob} material={kit.m.lit(PAL.bigCanopyLight)} position={[2.4, 7.8, 1.2]} scale={[5.5, 4.5, 5.5]} />
-      <mesh geometry={kit.g.blob} material={kit.m.lit(PAL.bigCanopy)} position={[-2.8, 7.4, -1.6]} scale={[5, 4, 5]} />
-      <mesh geometry={kit.g.blob} material={kit.m.lit(PAL.bigCanopyLight)} position={[0.4, 9.6, -0.6]} scale={[4.2, 3.4, 4.2]} />
-      {/* ring bench */}
-      <mesh geometry={kit.g.ring} material={kit.m.lit(PAL.bench)} position={[0, 0.45, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[7.4, 7.4, 4]} />
+      <QuestMonument paused={paused} onClick={onQuestClick} selected={questOpen} />
+      {/* ring bench around the monument's plinth */}
+      <mesh geometry={kit.g.ring} material={kit.m.lit(PAL.bench)} position={[0, 0.45, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[10.2, 10.2, 4]} />
       {/* the long table on the south side, where everyone gathers */}
       <Block kit={kit} at={[0, 0.85, 8.5]} size={[10, 0.2, 1.8]} color={PAL.tableWood} />
       <Block kit={kit} at={[-4, 0.4, 8.5]} size={[0.4, 0.8, 1.4]} color={PAL.woodDark} />
@@ -175,7 +182,16 @@ function Lamps({ kit, posts }: { kit: Kit; posts: Post[] }) {
   );
 }
 
-export function Village({ paused }: { paused: boolean }) {
+export function Village({
+  paused,
+  onQuestClick,
+  questOpen,
+}: {
+  paused: boolean;
+  /** The Quest Board monument was clicked — the stage opens its drawer. */
+  onQuestClick?: () => void;
+  questOpen?: boolean;
+}) {
   const kit = useKit();
   const { content } = buildIsland();
   return (
@@ -184,7 +200,7 @@ export function Village({ paused }: { paused: boolean }) {
         <House key={i} kit={kit} plot={plot} />
       ))}
       <Hub kit={kit} paused={paused} />
-      <SquareCentre kit={kit} />
+      <SquareCentre kit={kit} paused={paused} onQuestClick={onQuestClick} questOpen={questOpen} />
       <Hedges kit={kit} posts={content.hedges} />
       <Lamps kit={kit} posts={content.lamps} />
     </group>

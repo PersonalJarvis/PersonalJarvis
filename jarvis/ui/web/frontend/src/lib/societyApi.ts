@@ -151,3 +151,80 @@ export interface SocietyAgentRow {
   stats: { runs: number; total_cost_usd: number; last_active_ms: number | null };
   run_state?: RunState;
 }
+
+/** One quest as GET /api/society/quests returns it (jarvis/society/quests.py). */
+export interface SocietyQuestRow {
+  quest_id: string;
+  title: string;
+  text: string;
+  state: QuestState;
+  created_by: string;
+  /** The taker, once routed; null while nobody could take it. */
+  agent_id: string | null;
+  trace_id: string;
+  assign_event_id: string | null;
+  run_id: string;
+  /** How the taker was chosen: reason ("focus-match" | "keyword-match" | "generalist" |
+   *  "orchestrator" | "forged:<capability>"), score, focus, forged. */
+  routing: { reason?: string; score?: number; focus?: string[]; forged?: boolean; agent_id?: string };
+  /** The handoff (status, done, output, open, text) or the typed refusal (reason, retry). */
+  result: {
+    status?: string;
+    done?: string;
+    output?: string[];
+    open?: string[];
+    text?: string;
+    reason?: string;
+    retry?: string;
+  };
+  created_ms: number;
+  updated_ms: number;
+  done_ms: number | null;
+}
+
+async function questJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (typeof body.detail === "string") detail = body.detail;
+      else if (body.detail && typeof body.detail === "object" && "detail" in body.detail)
+        detail = String((body.detail as { detail: unknown }).detail);
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as T;
+}
+
+export async function fetchSocietyQuests(): Promise<SocietyQuestRow[]> {
+  const body = await questJson<{ quests?: SocietyQuestRow[] }>("/api/society/quests");
+  return Array.isArray(body.quests) ? body.quests : [];
+}
+
+export async function postSocietyQuest(text: string, title = ""): Promise<SocietyQuestRow> {
+  const body = await questJson<{ quest: SocietyQuestRow }>("/api/society/quests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, title }),
+  });
+  return body.quest;
+}
+
+export async function cancelSocietyQuest(questId: string): Promise<SocietyQuestRow> {
+  const body = await questJson<{ quest: SocietyQuestRow }>(
+    `/api/society/quests/${encodeURIComponent(questId)}/cancel`,
+    { method: "POST" },
+  );
+  return body.quest;
+}
+
+export async function retrySocietyQuest(questId: string): Promise<SocietyQuestRow> {
+  const body = await questJson<{ quest: SocietyQuestRow }>(
+    `/api/society/quests/${encodeURIComponent(questId)}/retry`,
+    { method: "POST" },
+  );
+  return body.quest;
+}
