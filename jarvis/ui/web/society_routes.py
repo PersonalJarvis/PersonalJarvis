@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from jarvis.society.events import MsgType
 from jarvis.society.failure_reasons import FailureReason, retry_action
+from jarvis.society.memory import MEMORY_SHARE_CAPABILITY, MemoryRefused
 from jarvis.society.rooms import RoomError
 from jarvis.society.roster import RosterError
 from jarvis.society.runtime import SocietyRuntime
@@ -212,6 +213,9 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
         updated = await rt.roster.update(agent.agent_id, fields)
     except RosterError as exc:
         raise _typed_error(exc) from exc
+    if "state" in fields:
+        await rt.checkpoints.refresh(agent.agent_id)
+        updated = await rt.roster.get(agent.agent_id) or updated
     return {"agent": updated.to_dict()}
 
 
@@ -740,7 +744,14 @@ async def resolve_approval(
         item = await rt.approvals.resolve(approval_id, approve=body.approve, note=body.note)
     except KeyError as exc:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
-    return {"approval": item.to_dict()}
+    promoted: str | None = None
+    if body.approve and item.capability == MEMORY_SHARE_CAPABILITY:
+        knowledge_id = int(item.action.get("knowledge_id") or 0)
+        try:
+            promoted = await rt.memory.promote(knowledge_id)
+        except MemoryRefused as exc:
+            raise HTTPException(409, {"reason": "blocked_by_policy", "detail": str(exc)}) from exc
+    return {"approval": item.to_dict(), "promoted": promoted}
 
 
 @router.post("/approvals/resurface")
@@ -749,6 +760,59 @@ async def resurface_approvals(request: Request) -> dict[str, Any]:
     rt = await _runtime(request)
     revived = await rt.approvals.resurface()
     return {"approvals": [a.to_dict() for a in revived], "total": len(revived)}
+
+
+# ------------------------------------------------------------------- memory
+
+
+class RecallBody(BaseModel):
+    query: str = Field(min_length=1, max_length=400)
+    agent_id: str = "jarvis"
+    k: int = Field(default=8, ge=1, le=20)
+
+
+@router.get("/memory")
+async def memory_overview(request: Request) -> dict[str, Any]:
+    """What the Memory House shows: shared topics, every agent's memory head, the review queue."""
+    rt = await _runtime(request)
+    return await rt.memory.overview()
+
+
+@router.post("/memory/recall")
+async def memory_recall(body: RecallBody, request: Request) -> dict[str, Any]:
+    """A lookup as the given agent would see it (scope labels included). Read-only."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(body.agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    hits = await rt.memory.recall(agent, body.query, k=body.k)
+    return {"hits": [h.to_dict() for h in hits], "total": len(hits)}
+
+
+@router.post("/memory/{knowledge_id}/promote", openapi_extra={"x-jarvis-dangerous": True})
+async def memory_promote(knowledge_id: int, request: Request) -> dict[str, Any]:
+    """Copy a staged agent page into society/shared/ as reviewed team knowledge."""
+    rt = await _runtime(request)
+    try:
+        path = await rt.memory.promote(knowledge_id)
+    except MemoryRefused as exc:
+        raise HTTPException(
+            404, {"reason": str(FailureReason.TARGET_UNKNOWN), "detail": str(exc)}
+        ) from exc
+    return {"path": path, "reviewed": True}
+
+
+@router.post("/memory/{knowledge_id}/dismiss")
+async def memory_dismiss(knowledge_id: int, request: Request) -> dict[str, Any]:
+    """Mark a staged page reviewed without promotion; it stays in the agent's own folder."""
+    rt = await _runtime(request)
+    try:
+        await rt.memory.dismiss(knowledge_id)
+    except MemoryRefused as exc:
+        raise HTTPException(
+            404, {"reason": str(FailureReason.TARGET_UNKNOWN), "detail": str(exc)}
+        ) from exc
+    return {"id": knowledge_id, "reviewed": True}
 
 
 # ----------------------------------------------------------------- controls

@@ -2131,6 +2131,22 @@ class WikiPageChanged(Event):
     kind: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class SocietyCheckpointChanged(Event):
+    """A society agent's derived place on the island changed.
+
+    Published by :class:`jarvis.society.checkpoints.CheckpointEngine` after
+    the roster row was updated (trusted Python rules, never a model —
+    ``docs/agent-society/world-behaviour-manual.md`` §3). The WebSocket
+    forwards it; the World stage re-reads its roster so the figure walks
+    within a second instead of on the next poll.
+    """
+
+    agent_id: str = ""
+    checkpoint: str = ""
+    previous: str = ""
+
+
 # ----------------------------------------------------------------------
 # Visible-Feedback Contract (ADR-0016)
 # ----------------------------------------------------------------------

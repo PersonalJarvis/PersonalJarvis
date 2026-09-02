@@ -297,3 +297,74 @@ def test_browser_routes(client, tmp_path, monkeypatch):
     monkeypatch.setattr(install_mod, "start_install", lambda data_dir=None: (True, "stubbed"))
     started = c.post("/api/society/browser/install").json()
     assert started["started"] is True and started["message"] == "stubbed"
+
+
+# ------------------------------------------------------------------- memory
+
+
+@pytest.fixture
+def memory_client(tmp_path: Path):
+    cfg = SimpleNamespace(
+        wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")),
+        memory=SimpleNamespace(data_dir=str(tmp_path / "data")),
+    )
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False, cfg=lambda: cfg)
+    app = FastAPI()
+    app.include_router(router)
+    app.state.society = None
+    app.state.society_factory = lambda: runtime
+    with TestClient(app) as c:
+        yield c, tmp_path / "vault"
+
+
+def test_memory_overview_recall_and_promotion_through_approvals(memory_client):
+    c, vault = memory_client
+    c.post("/api/society/agents", json={"name": "Scout"})
+    # An agent proposes team knowledge: staged in its own folder, parked for the person.
+    import asyncio
+
+    runtime: SocietyRuntime = c.app.state.society
+    scout = asyncio.run(runtime.roster.get("scout"))
+    assert scout is not None
+    got = asyncio.run(
+        runtime.memory.propose_shared(scout, "Hosting", "We host on Hetzner.", root=vault)
+    )
+    view = c.get("/api/society/memory").json()
+    assert view["shared"] == []
+    assert [u["id"] for u in view["unreviewed"]] == [got["knowledge_id"]]
+    assert next(a for a in view["agents"] if a["agent_id"] == "scout")["notes"] == 1
+    # The proposal waits for the person: the figure stands at the gate (rule 2 beats rule 4).
+    assert c.get("/api/society/agents/scout").json()["agent"]["checkpoint"] == "gate"
+    # Recall as Jarvis sees it: another agent's unreviewed page, labelled.
+    hits = c.post("/api/society/memory/recall", json={"query": "Hetzner hosting"}).json()["hits"]
+    assert hits and hits[0]["label"] == "unreviewed · agent · scout"
+    # Approving the share item promotes the page.
+    approvals = c.get("/api/society/approvals").json()["approvals"]
+    assert approvals[0]["capability"] == "core:memory:share"
+    res = c.post(f"/api/society/approvals/{approvals[0]['id']}/resolve", json={"approve": True})
+    assert res.status_code == 200, res.text
+    assert res.json()["promoted"] == "society/shared/hosting.md"
+    assert (vault / "society" / "shared" / "hosting.md").is_file()
+    view = c.get("/api/society/memory").json()
+    assert view["shared"][0]["title"] == "Hosting" and view["unreviewed"] == []
+    hits = c.post("/api/society/memory/recall", json={"query": "Hetzner"}).json()["hits"]
+    assert hits[0]["scope"] == "shared"
+    # Direct promote/dismiss on unknown rows answer 404.
+    assert c.post("/api/society/memory/999/promote").status_code == 404
+    assert c.post("/api/society/memory/999/dismiss").status_code == 404
+
+
+def test_pausing_moves_the_figure_home(memory_client):
+    c, _ = memory_client
+    c.post("/api/society/agents", json={"name": "Scout"})
+    runtime: SocietyRuntime = c.app.state.society
+    import asyncio
+
+    asyncio.run(
+        runtime.approvals.enqueue(
+            agent_id="scout", trace_id="t", capability="x", action={}, summary="x"
+        )
+    )
+    assert c.get("/api/society/agents/scout").json()["agent"]["checkpoint"] == "gate"
+    res = c.patch("/api/society/agents/scout", json={"state": "paused"})
+    assert res.json()["agent"]["checkpoint"] == "idle"

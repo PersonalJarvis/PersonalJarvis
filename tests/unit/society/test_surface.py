@@ -8,7 +8,12 @@ from types import SimpleNamespace
 import pytest
 
 from jarvis.society import runtime as runtime_mod
-from jarvis.society.agent_tools import MESSAGE_TOOL_NAME, SHELL_TOOL_NAME, WIKI_NOTE_TOOL_NAME
+from jarvis.society.agent_tools import (
+    MEMORY_RECALL_TOOL_NAME,
+    MESSAGE_TOOL_NAME,
+    SHELL_TOOL_NAME,
+    WIKI_NOTE_TOOL_NAME,
+)
 from jarvis.society.learning import RUN_SKILL_TOOL_NAME
 from jarvis.society.runtime import SocietyRuntime
 from jarvis.society.surface import (
@@ -72,7 +77,13 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
     cfg = SimpleNamespace(wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")))
     session = SimpleNamespace(session_id="society:mailbox")
     own = society_tools(cfg, None, session)
-    assert set(own) == {MESSAGE_TOOL_NAME, WIKI_NOTE_TOOL_NAME, SHELL_TOOL_NAME, *FOLDER}
+    assert set(own) == {
+        MESSAGE_TOOL_NAME,
+        WIKI_NOTE_TOOL_NAME,
+        SHELL_TOOL_NAME,
+        MEMORY_RECALL_TOOL_NAME,
+        *FOLDER,
+    }
     assert "RunCommand" not in own
 
     # The briefing fills the cache the sync filter reads.
@@ -82,7 +93,13 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
     filt = society_tool_filter(session)
     assert filt is not None
     picked = list(filt(merged))
-    own_names = {MESSAGE_TOOL_NAME, WIKI_NOTE_TOOL_NAME, SHELL_TOOL_NAME, *FOLDER}
+    own_names = {
+        MESSAGE_TOOL_NAME,
+        WIKI_NOTE_TOOL_NAME,
+        SHELL_TOOL_NAME,
+        MEMORY_RECALL_TOOL_NAME,
+        *FOLDER,
+    }
     assert set(picked[: len(own_names)]) == own_names
     assert picked[len(own_names)] == "gmail"  # focus first
     assert "spawn-worker" not in picked and "cli_gh" not in picked

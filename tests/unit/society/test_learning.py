@@ -121,7 +121,9 @@ async def test_learned_skill_is_active_for_the_agent_only(rt: SocietyRuntime, tm
     assert "state: active" in text
     # Board + chat notice + memory line.
     digest = [e for e in await rt.store.events_since(0) if e.msg_type is MsgType.DIGEST]
-    assert digest[-1].payload["kind"] == "learned_skill"
+    assert [e.payload["kind"] for e in digest if e.payload["kind"] != "memory"][-1] == (
+        "learned_skill"
+    )
     assert notices == [{"kind": "learned_skill", "slug": slug, "name": "Thumbnail style"}]
     memory = tmp_path / "vault" / "society" / "tuber" / "memory.md"
     assert memory.is_file() and "thumbnail-style" in memory.read_text(encoding="utf-8")
