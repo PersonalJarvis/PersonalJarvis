@@ -12,11 +12,22 @@ export interface WorkflowSummary {
   created_at_ns: number | null;
   created_by: "user" | "seed" | "brain" | string;
   last_run_at_ns: number | null;
-  last_run_state: "completed" | "failed" | null;
+  // "missed" = the cron slot passed while the app was not running; the
+  // scheduler skipped it instead of catching up hours later (BUG-212).
+  last_run_state: "completed" | "failed" | "missed" | null;
   next_run_at_ns: number | null;
   step_count: number;
   tags: string[];
 }
+
+// Mirrors WorkflowRunState in jarvis/workflows/schema.py.
+export type WorkflowRunState =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "missed";
 
 export interface WorkflowRunStep {
   seq: number;
@@ -32,7 +43,7 @@ export interface WorkflowRunStep {
 export interface WorkflowRun {
   id: string;
   workflow_id: string;
-  state: "pending" | "running" | "completed" | "failed" | "cancelled";
+  state: WorkflowRunState;
   trigger: string;
   started_at_ns: number;
   finished_at_ns: number;

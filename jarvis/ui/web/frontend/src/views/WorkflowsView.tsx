@@ -8,6 +8,7 @@ import {
   Calendar,
   CheckCircle2,
   AlertCircle,
+  CircleSlash,
   ChevronDown,
   ChevronRight,
   MessageSquare,
@@ -528,6 +529,7 @@ function WorkflowDetailBody({ workflowId }: { workflowId: string }) {
 }
 
 function RunRow({ run }: { run: WorkflowRun }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <div className="rounded-md border border-border/60 bg-card/30">
@@ -542,6 +544,8 @@ function RunRow({ run }: { run: WorkflowRun }) {
           <AlertCircle className="h-3.5 w-3.5 text-destructive" />
         ) : run.state === "running" ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+        ) : run.state === "missed" ? (
+          <CircleSlash className="h-3.5 w-3.5 text-muted-foreground" />
         ) : (
           <Clock className="h-3.5 w-3.5 text-muted-foreground" />
         )}
@@ -549,14 +553,18 @@ function RunRow({ run }: { run: WorkflowRun }) {
           {formatShortTime(run.started_at_ns)}
         </span>
         <Badge variant="outline" className="text-micro">
-          {run.state}
+          {run.state === "missed" ? t("workflows_view.run_missed") : run.state}
         </Badge>
         <span className="text-muted-foreground">{run.trigger}</span>
-        {run.error && (
+        {run.state === "missed" ? (
+          <span className="ml-auto line-clamp-1 text-muted-foreground">
+            {t("workflows_view.run_missed_hint")}
+          </span>
+        ) : run.error ? (
           <span className="ml-auto line-clamp-1 text-destructive/80">
             {run.error}
           </span>
-        )}
+        ) : null}
       </button>
       {open && <RunStepsDetail runId={run.id} />}
     </div>
@@ -624,19 +632,30 @@ function TriggerBadge({ workflow }: { workflow: WorkflowSummary }) {
 }
 
 function LastRunBadge({ workflow }: { workflow: WorkflowSummary }) {
+  const t = useT();
   if (!workflow.last_run_at_ns) return null;
   const ok = workflow.last_run_state === "completed";
+  // A missed slot is not a failure: the app was not running at the time and
+  // the scheduler skipped it on purpose (BUG-212). Neutral, with the reason.
+  const missed = workflow.last_run_state === "missed";
   return (
     <Badge
-      variant={ok ? "outline" : "destructive"}
+      variant={ok || missed ? "outline" : "destructive"}
       className="text-micro"
-      title={formatAbsolute(workflow.last_run_at_ns)}
+      title={
+        missed
+          ? `${t("workflows_view.run_missed_hint")} — ${formatAbsolute(workflow.last_run_at_ns)}`
+          : formatAbsolute(workflow.last_run_at_ns)
+      }
     >
       {ok ? (
         <CheckCircle2 className="mr-1 h-3 w-3" />
+      ) : missed ? (
+        <CircleSlash className="mr-1 h-3 w-3" />
       ) : (
         <AlertCircle className="mr-1 h-3 w-3" />
       )}
+      {missed ? `${t("workflows_view.run_missed")} · ` : null}
       {formatPastDelta(workflow.last_run_at_ns)}
     </Badge>
   );
