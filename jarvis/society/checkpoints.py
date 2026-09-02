@@ -81,14 +81,31 @@ _FAMILY_HUB: Final[dict[str, Checkpoint]] = {
 #: hands and teammate messaging are core work; a learned skill is a skill.
 _SOCIETY_SKILL_TOOL: Final[str] = "society_run_skill"
 _SOCIETY_PREFIX: Final[str] = "society_"
+#: A coding CLI names an MCP tool ``mcp__<server>__<tool>``; Jarvis' own server
+#: carries the plugins, so those calls are classified by the tool behind them.
+_CLI_MCP_PREFIX: Final[str] = "mcp__"
+_JARVIS_MCP_SERVER: Final[str] = "jarvis"
 
 
-def family_of_tool(tool_name: str) -> str:
-    """The capability family of a brain tool name: ``plugin | skill | mcp | cli | core``."""
+def family_of_tool(tool_name: str, *, cli_seat: bool = False) -> str:
+    """The capability family of a tool call: ``plugin | skill | mcp | cli | core``.
+
+    ``cli_seat`` says the call came from a coding CLI (Claude Code, Codex, …):
+    its native tools (Bash, Read, Edit, …) are CLI work, and its MCP calls are
+    read through the ``mcp__<server>__<tool>`` name — Jarvis' server hands out
+    the plugins, any other server is an MCP capability.
+    """
+    if tool_name.startswith(_CLI_MCP_PREFIX):
+        server, _, inner = tool_name[len(_CLI_MCP_PREFIX) :].partition("__")
+        if server == _JARVIS_MCP_SERVER and inner:
+            return family_of_tool(inner)
+        return str(CapabilityKind.MCP)
     if tool_name == _SOCIETY_SKILL_TOOL:
         return str(CapabilityKind.SKILL)
     if tool_name.startswith(_SOCIETY_PREFIX):
         return str(CapabilityKind.CORE)
+    if cli_seat:
+        return str(CapabilityKind.CLI)
     cap = capability_id_for_tool(tool_name)
     if cap is None:
         return str(CapabilityKind.CORE)
@@ -120,10 +137,12 @@ def derive(facts: Facts) -> Checkpoint:
     if facts.memory_active:
         return Checkpoint.ARCHIVE
     if facts.running:
-        if facts.cli_seat:
-            return Checkpoint.HUB_CLI
+        # What the agent visibly does wins; a CLI seat that has not called a
+        # tool yet (or only its native ones) sits in the Cantina.
         if facts.family is not None:
             return _FAMILY_HUB.get(facts.family, Checkpoint.DESK)
+        if facts.cli_seat:
+            return Checkpoint.HUB_CLI
         return Checkpoint.DESK
     return Checkpoint.IDLE
 
@@ -257,12 +276,14 @@ class CheckpointEngine:
         self._watchers[agent_id] = task
         task.add_done_callback(lambda t, a=agent_id: self._watcher_done(a, t))
 
-    async def note_tool_call(self, agent_id: str, tool_name: str) -> None:
+    async def note_tool_call(
+        self, agent_id: str, tool_name: str, *, cli_seat: bool = False
+    ) -> None:
         """The agent called ``tool_name``: its dominant family may move it to a shop."""
         track = self._families.get(agent_id)
         if track is None:
             track = self._families[agent_id] = _FamilyTrack(calls=deque(maxlen=FAMILY_WINDOW))
-        track.calls.append(family_of_tool(tool_name))
+        track.calls.append(family_of_tool(tool_name, cli_seat=cli_seat))
         now = self._clock()
         changed = track.settle(now)
         due = track.hysteresis_due_in(now)
@@ -301,6 +322,8 @@ class CheckpointEngine:
             return
         queue = svc.subscribe(session_id)
         try:
+            agent = await self._runtime.roster.get(agent_id)
+            cli_seat = agent is not None and self._cli_seat(agent)
             await self.refresh(agent_id)
             while True:
                 try:
@@ -314,7 +337,7 @@ class CheckpointEngine:
                 if kind == "tool_call":
                     name = str(payload.get("name") or payload.get("tool") or "")
                     if name:
-                        await self.note_tool_call(agent_id, name)
+                        await self.note_tool_call(agent_id, name, cli_seat=cli_seat)
                 elif kind == "turn_finished":
                     break
         except asyncio.CancelledError:

@@ -109,8 +109,10 @@ def test_running_agents_stand_at_the_shop_of_their_tools():
     assert derive(Facts(running=True, family="mcp")) is Checkpoint.HUB_MCP
     assert derive(Facts(running=True, family="cli")) is Checkpoint.HUB_CLI
     assert derive(Facts(running=True, family="core")) is Checkpoint.DESK
-    # A CLI seat outranks the family; the memory hold outranks the shop.
-    assert derive(Facts(running=True, cli_seat=True, family="plugin")) is Checkpoint.HUB_CLI
+    # A CLI seat sits in the Cantina until its calls say otherwise; memory outranks the shop.
+    assert derive(Facts(running=True, cli_seat=True)) is Checkpoint.HUB_CLI
+    assert derive(Facts(running=True, cli_seat=True, family="cli")) is Checkpoint.HUB_CLI
+    assert derive(Facts(running=True, cli_seat=True, family="plugin")) is Checkpoint.HUB_PLUGINS
     assert derive(Facts(running=True, family="plugin", memory_active=True)) is Checkpoint.ARCHIVE
     # Nobody stands in a shop without a turn.
     assert derive(Facts(family="plugin")) is Checkpoint.IDLE
@@ -124,6 +126,13 @@ def test_family_of_tool():
     assert family_of_tool("society_shell") == "core"
     assert family_of_tool("society_browser") == "core"
     assert family_of_tool("spawn-worker") == "core"
+    # A coding CLI: native tools are CLI work, Jarvis' MCP server hands out the plugins.
+    assert family_of_tool("Bash", cli_seat=True) == "cli"
+    assert family_of_tool("Read", cli_seat=True) == "cli"
+    assert family_of_tool("mcp__jarvis__gmail", cli_seat=True) == "plugin"
+    assert family_of_tool("mcp__jarvis__society_run_skill", cli_seat=True) == "skill"
+    assert family_of_tool("mcp__github__search_issues", cli_seat=True) == "mcp"
+    assert family_of_tool("mcp__github__search_issues") == "mcp"
 
 
 class FakeChatService:
