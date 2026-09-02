@@ -176,8 +176,8 @@ const WATER_FRAGMENT = /* glsl */ `
     // Sparkle on the open water.
     float g1 = sin(vWorld.x * 0.42 + vWorld.z * 0.18 + time * 0.9);
     float g2 = sin(vWorld.z * 0.37 - vWorld.x * 0.21 - time * 0.7);
-    float patch = smoothstep(0.42, 0.72, noise(vWorld.xz * 0.06 + vec2(time * 0.05, -time * 0.03)));
-    float glint = smoothstep(0.9, 1.0, g1 * g2) * smoothstep(4.0, 12.0, dist) * patch;
+    float glintPatch = smoothstep(0.42, 0.72, noise(vWorld.xz * 0.06 + vec2(time * 0.05, -time * 0.03)));
+    float glint = smoothstep(0.9, 1.0, g1 * g2) * smoothstep(4.0, 12.0, dist) * glintPatch;
     col = mix(col, ripple, glint * 0.45);
 
     gl_FragColor = vec4(col, 1.0);
