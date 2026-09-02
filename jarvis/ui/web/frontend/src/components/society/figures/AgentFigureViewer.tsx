@@ -36,8 +36,15 @@ import { useFigureAssets } from "./useFigureAssets";
 /** Target resolution the pixel pass renders the column at (docs §9.3). */
 const PIXEL_TARGET_WIDTH = 240;
 
-/** Camera pitch limits: straight down is +90°, straight up −90°; stop short of the poles. */
+/** Camera pitch limit upwards: straight down is +90°; stop short of the pole. */
 const PITCH_LIMIT = (80 * Math.PI) / 180;
+/**
+ * How far the camera may dip below eye level. The figure stands on a lobby
+ * platform (LobbyStage); a camera under that platform sees its base cap and
+ * nothing else, so "from below" is the low, heroic angle — a little under
+ * the platform's top — never a view from beneath the floor.
+ */
+const PITCH_FLOOR = (12 * Math.PI) / 180;
 
 const ZOOM_MIN = 0.55;
 const ZOOM_MAX = 2.4;
@@ -90,7 +97,7 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
     d.y = e.clientY;
     const o = orbit.current;
     o.yaw += dx * 0.012;
-    o.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, o.pitch + dy * 0.01));
+    o.pitch = Math.max(-PITCH_FLOOR, Math.min(PITCH_LIMIT, o.pitch + dy * 0.01));
     setOrbitTick((n) => n + 1);
   }, []);
   const onPointerUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
@@ -117,12 +124,12 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
         drag.current ? "cursor-grabbing" : "cursor-grab",
         className,
       )}
-      // The figure stage is the island's own bright space, not the app's ink
-      // (MASTERPLAN §4.3): warm light in both themes, so a dark figure — Gigi
-      // is near-black with white marks — reads instead of vanishing.
+      // The room around the lobby is the app's own room (v4 tokens): a dark
+      // figure is separated from it by the lobby's accent rim light, not by
+      // painting the stage a warm colour of its own (LobbyStage).
       style={{
         background:
-          "radial-gradient(120% 90% at 50% 38%, #fbf6ee 0%, #ebe2d2 52%, #d9cdb9 100%)",
+          "radial-gradient(120% 90% at 50% 40%, hsl(var(--secondary)) 0%, hsl(var(--background)) 72%)",
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -163,7 +170,7 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
       ) : (
         <PaletteTile palette={palette} label={t("society.figure.no_figure")} />
       )}
-      <p className="pointer-events-none absolute inset-x-0 bottom-2 text-center text-xs text-[#5b5245]/80">
+      <p className="pointer-events-none absolute inset-x-0 bottom-2 text-center text-xs text-muted-foreground">
         {reduced ? t("society.figure.reduced_motion") : t("society.figure.drag_hint")}
       </p>
     </div>
@@ -258,12 +265,9 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
 
   return (
     <>
-      <hemisphereLight args={[0xffffff, 0x8fa0b3, 1.15]} />
-      <directionalLight position={[2.2, 4.5, 3.2]} intensity={1.9} />
-      <directionalLight position={[-3, 2, -2]} intensity={0.45} />
       <group ref={groupRef} />
-      {/* The room the agent spawns into: podium, floor, back wall, beams (LobbyStage). */}
-      <LobbyStage heightM={heightM} accent={palette.accent} paused={paused} />
+      {/* The room the agent spawns into, lights included (LobbyStage). */}
+      <LobbyStage heightM={heightM} paused={paused} />
     </>
   );
 }
