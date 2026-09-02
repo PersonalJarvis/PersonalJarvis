@@ -903,91 +903,97 @@ function NavRow({
    * fill with one hand and take the meaning away with the other.
    */
   return (
-    <li className={cn(expand && "relative")}>
-      <button
-        type="button"
-        data-testid={`nav-row-${item.id}`}
-        onClick={onClick}
-        title={hint}
-        className={clsx(
-          "group relative flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          // Leave the chevron its own column so the two buttons never overlap.
-          expand && "pr-9",
-          // Rest is muted ink; hover AND active are the same lift with body
-          // ink, and only the active row carries the 2 px accent bar at the
-          // left edge (`.jarvis-nav-active`).
-          active
-            ? "jarvis-nav-active bg-secondary text-foreground"
-            : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-        )}
-      >
-        <Icon
-          aria-hidden
-          className={cn(
-            "h-4 w-4 shrink-0 transition-colors",
-            active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
-          )}
-        />
-        <span className="flex min-w-0 flex-1 items-center gap-2 text-left">
-          {/* The row is a fixed 40px now, so a long label has to be cut rather
-              than allowed to wrap out of it. */}
-          <span className="truncate">{label}</span>
-          {betaLabel && (
-            <span
-              data-testid={`nav-beta-${item.id}`}
-              className="shrink-0 rounded-sm border border-border bg-secondary px-1 text-xs font-medium text-muted-foreground"
-            >
-              {betaLabel}
-            </span>
-          )}
-        </span>
-        {/* No ring around these: they sit in clear space at the row's end, and
-            a rim on something that already has a fill is one device too many. */}
-        {alert && (
-          <span
-            data-testid={`nav-alert-${item.id}`}
-            role="status"
-            aria-label={alertTitle}
-            className="h-2 w-2 shrink-0 rounded-full bg-destructive"
-          />
-        )}
-        {!alert && warn && (
-          <span
-            data-testid={`nav-warn-${item.id}`}
-            role="status"
-            aria-label={warnTitle}
-            className="h-2 w-2 shrink-0 rounded-full bg-warning"
-          />
-        )}
-        {badge !== undefined && badge > 0 && (
-          <span className="shrink-0 rounded-sm bg-secondary px-1 text-xs tabular-nums text-muted-foreground">
-            {badge}
-          </span>
-        )}
-      </button>
-      {expand && (
+    <li>
+      {/* The chevron is positioned against THIS box, not the <li>. If the
+          open list lived in the same relative parent, `top-1/2` walked to
+          the middle of the chats and the rows painted over the only control
+          that folds them away (maintainer, 2026-09-02). */}
+      <div className={expand ? "relative" : undefined}>
         <button
           type="button"
-          onClick={expand.onToggle}
-          aria-expanded={expand.open}
-          aria-label={expand.label}
-          title={expand.label}
-          data-testid={`nav-expand-${item.id}`}
-          className={cn(
-            "absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md transition-colors",
-            // `hover:bg-background/60` painted the PAGE over the rail here,
-            // i.e. it went darker under the pointer. Up the ladder instead.
-            "text-muted-foreground hover:bg-surface-raised hover:text-foreground",
+          data-testid={`nav-row-${item.id}`}
+          onClick={onClick}
+          title={hint}
+          className={clsx(
+            "group relative flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium transition-colors",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            // Leave the chevron its own column so the two buttons never overlap.
+            expand && "pr-9",
+            // Rest is muted ink; hover AND active are the same lift with body
+            // ink, and only the active row carries the 2 px accent bar at the
+            // left edge (`.jarvis-nav-active`).
+            active
+              ? "jarvis-nav-active bg-secondary text-foreground"
+              : "text-muted-foreground hover:bg-secondary hover:text-foreground",
           )}
         >
-          <ChevronDown
+          <Icon
             aria-hidden
-            className={cn("h-3.5 w-3.5 transition-transform", expand.open && "rotate-180")}
+            className={cn(
+              "h-4 w-4 shrink-0 transition-colors",
+              active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
+            )}
           />
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-left">
+            {/* The row is a fixed 40px now, so a long label has to be cut rather
+                than allowed to wrap out of it. */}
+            <span className="truncate">{label}</span>
+            {betaLabel && (
+              <span
+                data-testid={`nav-beta-${item.id}`}
+                className="shrink-0 rounded-sm border border-border bg-secondary px-1 text-xs font-medium text-muted-foreground"
+              >
+                {betaLabel}
+              </span>
+            )}
+          </span>
+          {/* No ring around these: they sit in clear space at the row's end, and
+              a rim on something that already has a fill is one device too many. */}
+          {alert && (
+            <span
+              data-testid={`nav-alert-${item.id}`}
+              role="status"
+              aria-label={alertTitle}
+              className="h-2 w-2 shrink-0 rounded-full bg-destructive"
+            />
+          )}
+          {!alert && warn && (
+            <span
+              data-testid={`nav-warn-${item.id}`}
+              role="status"
+              aria-label={warnTitle}
+              className="h-2 w-2 shrink-0 rounded-full bg-warning"
+            />
+          )}
+          {badge !== undefined && badge > 0 && (
+            <span className="shrink-0 rounded-sm bg-secondary px-1 text-xs tabular-nums text-muted-foreground">
+              {badge}
+            </span>
+          )}
         </button>
-      )}
+        {expand && (
+          <button
+            type="button"
+            onClick={expand.onToggle}
+            aria-expanded={expand.open}
+            aria-label={expand.label}
+            title={expand.label}
+            data-testid={`nav-expand-${item.id}`}
+            className={cn(
+              "absolute right-2 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md transition-colors",
+              // `hover:bg-background/60` painted the PAGE over the rail here,
+              // i.e. it went darker under the pointer. Up the ladder instead.
+              "text-muted-foreground hover:bg-surface-raised hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+          >
+            <ChevronDown
+              aria-hidden
+              className={cn("h-3.5 w-3.5 transition-transform", expand.open && "rotate-180")}
+            />
+          </button>
+        )}
+      </div>
       {expand?.open && children}
     </li>
   );

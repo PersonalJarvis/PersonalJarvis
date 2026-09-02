@@ -904,6 +904,12 @@ describe("the Chat row's history", () => {
     });
     expect(screen.getByTestId("nav-expand-chats").getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByTestId("recent-chats")).toBeTruthy();
+    // The list must not live in the chevron's positioning parent: `top-1/2`
+    // would then sit in the middle of the chats and the rows would cover
+    // the only control that hides them again.
+    const chevron = screen.getByTestId("nav-expand-chats");
+    const list = screen.getByTestId("recent-chats");
+    expect(chevron.parentElement?.contains(list)).toBe(false);
 
     act(() => {
       screen.getByTestId("nav-expand-chats").click();
