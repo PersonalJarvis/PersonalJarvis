@@ -102,7 +102,15 @@ function WorldLoading() {
   return <div className="h-full w-full animate-pulse bg-secondary" aria-hidden />;
 }
 
-export function JarvisAgentsView() {
+export interface JarvisAgentsViewProps {
+  /**
+   * A figure on the island was clicked (or the selection cleared). The
+   * society view hooks its model card in here; standalone, nothing listens.
+   */
+  onSelectAgent?: (agentId: string | null) => void;
+}
+
+export function JarvisAgentsView({ onSelectAgent }: JarvisAgentsViewProps = {}) {
   const { health } = useSectionHealth();
   const subAgents = useSubAgentStore((s) => s.subAgents);
   const sweepExpired = useSubAgentStore((s) => s.sweepExpired);
@@ -247,7 +255,11 @@ export function JarvisAgentsView() {
     return (
       <div className="h-full min-h-0">
         <Suspense fallback={<WorldLoading />}>
-          <WorldStage topRight={modeSwitch} onOpenLedger={() => switchMode("ledger")} />
+          <WorldStage
+            topRight={modeSwitch}
+            onOpenLedger={() => switchMode("ledger")}
+            onSelectAgent={onSelectAgent}
+          />
         </Suspense>
       </div>
     );
