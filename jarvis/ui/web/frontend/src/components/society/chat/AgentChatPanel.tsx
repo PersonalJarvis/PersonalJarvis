@@ -9,9 +9,18 @@
  * the task to that agent — Jarvis delegates through its router tool and
  * reports back here. The reasoning trail stays readable: a folded
  * "Thinking · 4 s" line above the answer, never a second wall of text.
+ *
+ * Jarvis' card alone also has a `Voice | Chat` switch (maintainer,
+ * 2026-09-02): Jarvis is the one agent a person talks to by voice, so the
+ * column can show the front page's voice stage in place — the Jarvis bar,
+ * the wake word, the realtime brain — instead of a typed chat. The two run
+ * on different brains on purpose: the typed chat is Jarvis' own harness on
+ * a provider API behind a key with a per-chat model pick (runner_brain),
+ * the voice runs on the realtime tier (`[brain.realtime]`), which no text
+ * runner can drive. The header says so while voice is showing.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Mic, MicOff, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
+import { MessageSquare, Mic, MicOff, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -20,6 +29,7 @@ import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip"
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import type { ReasoningBlock, TimelineItem, ToolBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
+import { VoiceStage } from "@/components/home/VoiceStage";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -185,9 +195,32 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
 
   const mentionable = useMemo(() => roster.filter((a) => a.tier !== "lead"), [roster]);
 
+  // Voice or typed — Jarvis' card only. The other agents have no voice: the
+  // wake word, the realtime brain and the microphone belong to the lead.
+  const [mode, setMode] = useState<JarvisCardMode>(lastJarvisCardMode);
+  const pickMode = (next: JarvisCardMode) => {
+    lastJarvisCardMode = next;
+    setMode(next);
+  };
+
+  if (mode === "voice") {
+    return (
+      <div className="flex h-full min-h-0 flex-col" data-testid="society-chat" data-mode="voice">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+          <JarvisModeSwitch mode={mode} onPick={pickMode} />
+          <span className="min-w-0 truncate text-xs text-muted-foreground" title={t("society.chat.voice_note")}>
+            {t("society.chat.voice_note")}
+          </span>
+        </div>
+        <VoiceStage />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full min-h-0 flex-col" data-testid="society-chat">
+    <div className="flex h-full min-h-0 flex-col" data-testid="society-chat" data-mode="chat">
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <JarvisModeSwitch mode={mode} onPick={pickMode} />
         <ModelPicker />
         <EffortPicker />
         <button
@@ -216,6 +249,52 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
         onSend={send}
         onCancel={cancel}
       />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// voice | chat — the lead's card only
+// ---------------------------------------------------------------------------
+
+type JarvisCardMode = "chat" | "voice";
+
+/** Remembered for the app session, so a card reopened stays on the half you last used. */
+let lastJarvisCardMode: JarvisCardMode = "chat";
+
+/**
+ * The same `Voice | Chat` idea as the sidebar's switch, scoped to the card:
+ * it changes what THIS column shows and leaves the front page's own choice
+ * alone. Voice is the front page's voice stage itself (the Jarvis bar, the
+ * wake word, the realtime brain) — one voice, shown in a second place, never
+ * a second microphone.
+ */
+function JarvisModeSwitch({ mode, onPick }: { mode: JarvisCardMode; onPick: (m: JarvisCardMode) => void }) {
+  const t = useT();
+  const tab = (value: JarvisCardMode, icon: React.ReactNode, label: string) => (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={mode === value}
+      data-testid={`society-jarvis-mode-${value}`}
+      onClick={() => onPick(value)}
+      className={cn(
+        "flex items-center gap-1 rounded-[5px] px-2 py-0.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        mode === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+  return (
+    <div
+      role="tablist"
+      aria-label={t("society.chat.mode_hint")}
+      className="grid shrink-0 grid-cols-2 gap-0.5 rounded-md border border-border bg-background p-0.5"
+    >
+      {tab("voice", <Mic aria-hidden className="h-3 w-3" />, t("society.chat.mode_voice"))}
+      {tab("chat", <MessageSquare aria-hidden className="h-3 w-3" />, t("society.chat.mode_chat"))}
     </div>
   );
 }
