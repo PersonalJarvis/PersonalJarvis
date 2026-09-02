@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { OutputPreview } from "@/components/visualization/OutputPreview";
 import { RunGraphPanel } from "@/components/visualization/RunGraphPanel";
@@ -97,11 +98,11 @@ import {
 
 /** What a row's status dot means — the run vocabulary, one language. */
 const RUN_DOT: Record<OutputStatus, string> = {
-  success: "bg-muted-foreground",
+  success: "bg-success",
   error: "bg-destructive",
-  running: "bg-foreground/70 animate-pulse",
-  cancelled: "bg-foreground",
-  unknown: "bg-muted-foreground/50",
+  running: "bg-success animate-pulse",
+  cancelled: "bg-warning",
+  unknown: "bg-muted-foreground",
 };
 
 const KIND_ICON: Record<VisualKind, typeof Globe> = {
@@ -383,21 +384,20 @@ export function VisualizationView() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ViewHeader
-        icon={<Shapes className="h-4 w-4 text-primary" aria-hidden />}
+        icon={<Shapes aria-hidden />}
         title={t("visualization.title")}
         subtitle={t("visualization.subtitle")}
         right={
           <Button
             variant="outline"
-            size="sm"
             onClick={refetch}
             disabled={loading}
             data-testid="visualization-refresh"
           >
             {loading ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+              <Loader2 className="animate-spin" aria-hidden />
             ) : (
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              <RefreshCw aria-hidden />
             )}
             {t("visualization.refresh")}
           </Button>
@@ -406,20 +406,12 @@ export function VisualizationView() {
 
       <div className="flex min-h-0 flex-1">
         {/* Rail — builds in progress first, then every artifact and run, newest first. */}
-        <aside className="flex w-72 shrink-0 flex-col border-r border-border">
-          <div className="flex flex-col gap-2 border-b border-border px-3 py-2">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              {t("visualization.rail")}
-              {rows.length > 0 && (
-                <span className="ml-1.5 normal-case tracking-normal text-muted-foreground/70">
-                  · {rows.length}
-                </span>
-              )}
-            </p>
+        <aside className="flex w-80 shrink-0 flex-col border-r border-border bg-sidebar">
+          <div className="flex flex-col gap-2 px-3 pt-1">
             <RailFilterControl filter={filter} counts={counts} onChange={setFilter} />
           </div>
           <ScrollArea className="min-h-0 flex-1">
-            <ul className="space-y-1 p-2" data-testid="visualization-artifacts">
+            <ul className="space-y-0.5 p-2" data-testid="visualization-artifacts">
               {rows.map((row) => (
                 <li key={row.key}>
                   <RailRowButton
@@ -431,7 +423,7 @@ export function VisualizationView() {
               ))}
             </ul>
             {gallery.skippedRuns > 0 && (
-              <p className="px-3 pb-3 text-[11px] text-muted-foreground/70">
+              <p className="px-3 pb-3 text-sm text-foreground-faint">
                 {t("visualization.older_not_scanned").replace(
                   "{0}",
                   String(gallery.scannedRuns),
@@ -483,10 +475,11 @@ function RailFilterControl({
     { id: "outputs", label: t("visualization.filter_outputs") },
   ];
   return (
+    // Underline tabs (v4), never pill segments.
     <div
       role="radiogroup"
       aria-label={t("visualization.rail_filter")}
-      className="flex items-center rounded-md border border-border bg-secondary/40 p-0.5"
+      className="flex items-center gap-5 border-b border-border"
       data-testid="visualization-filter"
     >
       {options.map(({ id, label }) => (
@@ -498,14 +491,15 @@ function RailFilterControl({
           onClick={() => onChange(id)}
           data-testid={`visualization-filter-${id}`}
           className={cn(
-            "inline-flex flex-1 items-center justify-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium transition-colors",
+            "relative -mb-px inline-flex h-10 items-center gap-1.5 border-b-2 text-base font-medium transition-colors",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             filter === id
-              ? "bg-background text-foreground"
-              : "text-muted-foreground hover:text-foreground",
+              ? "border-accent text-foreground-strong"
+              : "border-transparent text-muted-foreground hover:text-foreground",
           )}
         >
           {label}
-          <span className="tabular-nums text-muted-foreground/70">{counts[id]}</span>
+          <span className="text-sm tabular-nums text-foreground-faint">{counts[id]}</span>
         </button>
       ))}
     </div>
@@ -523,10 +517,11 @@ function RailRowButton({
 }) {
   const t = useT();
   const base = cn(
-    "flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-xs transition-colors",
+    "flex w-full items-start gap-2.5 rounded-md px-3 py-3 text-left text-sm transition-colors",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
     active
-      ? "bg-primary/15 text-foreground"
-      : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+      ? "bg-secondary text-foreground"
+      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
   );
   // Every row can be dragged onto the Jarvis dock — the run is what the dock
   // takes, whichever of its artifacts the row happens to show.
@@ -552,7 +547,7 @@ function RailRowButton({
       >
         <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-primary" aria-hidden />
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-medium text-foreground">
+          <span className="block truncate text-base font-medium text-foreground">
             {parsed?.title || t("visualization.building")}
           </span>
           <span className="block truncate">{t("visualization.building")}</span>
@@ -586,7 +581,7 @@ function RailRowButton({
           />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-medium text-foreground">{visual.title}</span>
+          <span className="block truncate text-base font-medium text-foreground">{visual.title}</span>
           <span className="block truncate">
             {[
               formatWhen(visual.mtime),
@@ -627,7 +622,7 @@ function RailRowButton({
         )}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium text-foreground">{runTitle(run)}</span>
+        <span className="block truncate text-base font-medium text-foreground">{runTitle(run)}</span>
         <span className="block truncate">
           {[formatWhen(runWhen(run)), run.summary?.trim() || run.terminal_reason || status]
             .filter(Boolean)
@@ -807,22 +802,25 @@ function ArtifactToolbar({
   ];
 
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2">
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <p className="truncate text-sm font-medium" data-testid="visualization-title">
+    <div className="flex shrink-0 items-end gap-4 border-b border-border px-6 pt-4">
+      <div className="min-w-0 flex-1 pb-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <p
+            className="truncate text-xl font-semibold text-foreground-strong"
+            data-testid="visualization-title"
+          >
             {title}
           </p>
           {run && <RunStatusBadge run={run} />}
           {run && <RunActions run={run} onJumpToRun={onJumpToRun} />}
         </div>
-        <p className="truncate text-[11px] text-muted-foreground">{caption}</p>
+        <p className="mt-0.5 truncate text-sm text-muted-foreground">{caption}</p>
       </div>
 
       <div
         role="tablist"
         aria-label={t("visualization.stage_tabs")}
-        className="flex shrink-0 items-center rounded-md border border-border bg-secondary/40 p-0.5"
+        className="-mb-px flex shrink-0 items-center gap-5"
       >
         {tabs
           .filter((tab) => tab.show)
@@ -835,19 +833,20 @@ function ArtifactToolbar({
               onClick={() => onMode(id)}
               data-testid={`visualization-tab-${id}`}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors",
+                "relative inline-flex h-10 items-center gap-1.5 border-b-2 text-base font-medium transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 mode === id
-                  ? "bg-background text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
+                  ? "border-accent text-foreground-strong"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
               )}
             >
-              <Icon className="h-3.5 w-3.5" aria-hidden />
+              <Icon className="h-4 w-4" aria-hidden />
               {label}
             </button>
           ))}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1 pb-3">
         {mode === "run" && slug && (
           <Button
             variant="ghost"
@@ -928,7 +927,7 @@ function ArtifactStage({ visual }: { visual: VisualArtifact }) {
   if (failed) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center">
-        <p className="max-w-sm text-xs text-muted-foreground">
+        <p className="max-w-sm text-base text-muted-foreground">
           {t("visualization.render_failed")}
         </p>
       </div>
@@ -963,7 +962,7 @@ function ArtifactStage({ visual }: { visual: VisualArtifact }) {
           sandbox="allow-scripts"
           className="min-h-0 w-full flex-1 border-0 bg-background"
         />
-        <p className="flex shrink-0 items-center gap-1.5 border-t border-border px-4 py-1.5 text-[11px] text-muted-foreground">
+        <p className="flex shrink-0 items-center gap-1.5 border-t border-border px-4 py-1.5 text-sm text-muted-foreground">
           <ShieldCheck className="h-3 w-3 shrink-0" aria-hidden />
           {t("visualization.page_sandbox_note")}
         </p>
@@ -984,7 +983,7 @@ function ArtifactStage({ visual }: { visual: VisualArtifact }) {
         sandbox=""
         className="min-h-0 w-full flex-1 border-0 bg-white"
       />
-      <p className="flex shrink-0 items-center gap-1.5 border-t border-border px-4 py-1.5 text-[11px] text-muted-foreground">
+      <p className="flex shrink-0 items-center gap-1.5 border-t border-border px-4 py-1.5 text-sm text-muted-foreground">
         <ShieldCheck className="h-3 w-3 shrink-0" aria-hidden />
         {t("visualization.sandbox_note")}
       </p>
@@ -1006,13 +1005,13 @@ function ArtifactSource({ slug, path }: { slug: string; path: string }) {
   if (file.isError || !file.data) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center">
-        <p className="text-xs text-muted-foreground">{t("visualization.source_failed")}</p>
+        <p className="text-base text-muted-foreground">{t("visualization.source_failed")}</p>
       </div>
     );
   }
   return (
     <pre
-      className="h-full overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-[11px] leading-relaxed text-foreground/90"
+      className="h-full overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-sm leading-relaxed text-foreground/90"
       data-testid="visualization-source"
     >
       {file.data.text}
@@ -1028,16 +1027,16 @@ function BuildingStage({ run }: { run: OutputSummary }) {
   const parsed = parseArtifactUtterance(run.utterance);
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center"
+      className="flex min-h-0 flex-1 flex-col items-center justify-center p-8"
       data-testid="visualization-building"
     >
-      <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden />
-      <p className="text-sm font-medium">
-        {t("visualization.building_title").replace("{0}", parsed?.title ?? "")}
-      </p>
-      <p className="max-w-sm text-xs text-muted-foreground">{t("visualization.building_body")}</p>
+      <EmptyState
+        icon={<Loader2 className="animate-spin" aria-hidden />}
+        title={t("visualization.building_title").replace("{0}", parsed?.title ?? "")}
+        description={t("visualization.building_body")}
+      />
       {parsed?.request && (
-        <p className="max-w-md truncate text-[11px] text-muted-foreground/70">{parsed.request}</p>
+        <p className="max-w-md truncate text-sm text-foreground-faint">{parsed.request}</p>
       )}
     </div>
   );
@@ -1047,20 +1046,20 @@ function EmptyStage({ loading, error }: { loading: boolean; error: boolean }) {
   const t = useT();
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-8 text-center"
+      className="flex min-h-0 flex-1 flex-col items-center justify-center p-8"
       data-testid="visualization-empty"
     >
-      {loading && !error ? (
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
-      ) : (
-        <Shapes className="h-6 w-6 text-muted-foreground" aria-hidden />
-      )}
-      <p className="text-sm font-medium">
-        {t(error ? "visualization.error_title" : "visualization.empty_title")}
-      </p>
-      <p className="max-w-sm text-xs text-muted-foreground">
-        {t(error ? "visualization.error_body" : "visualization.empty_body")}
-      </p>
+      <EmptyState
+        icon={
+          loading && !error ? (
+            <Loader2 className="animate-spin" aria-hidden />
+          ) : (
+            <Shapes aria-hidden />
+          )
+        }
+        title={t(error ? "visualization.error_title" : "visualization.empty_title")}
+        description={t(error ? "visualization.error_body" : "visualization.empty_body")}
+      />
     </div>
   );
 }

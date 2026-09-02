@@ -39,11 +39,9 @@ export function PanelHeader({
   return (
     <div className={cn("flex items-start justify-between gap-4", className)}>
       <div className="min-w-0">
-        <h2 className="font-display text-base font-semibold tracking-tight text-foreground">
-          {title}
-        </h2>
+        <h2 className="text-lg font-semibold text-foreground-strong">{title}</h2>
         {subtitle ? (
-          <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
+          <p className="mt-1 text-base text-muted-foreground">{subtitle}</p>
         ) : null}
       </div>
       {actions ? (
@@ -84,8 +82,9 @@ export function IconButton({
       title={label}
       className={cn(
         "grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-colors",
-        "hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
-        active && "bg-accent text-foreground",
+        "hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        active && "bg-secondary text-foreground",
         className,
       )}
     >
@@ -126,11 +125,13 @@ export function SoftButton({
       aria-expanded={ariaExpanded}
       aria-haspopup={ariaHasPopup}
       className={cn(
-        "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors",
+        "inline-flex h-9 items-center gap-2 rounded-md px-3 text-base font-medium transition-colors",
         "disabled:cursor-not-allowed disabled:opacity-50",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        "[&>svg]:h-4 [&>svg]:w-4 [&>svg]:shrink-0",
         primary
           ? "bg-primary text-primary-foreground hover:bg-primary/90"
-          : "bg-secondary text-foreground hover:bg-popover",
+          : "bg-secondary text-foreground hover:bg-surface-raised",
         className,
       )}
     >
@@ -219,7 +220,7 @@ export function ActionMenu({
                 }}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors",
-                  "hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
+                  "hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50",
                   a.destructive && "text-destructive hover:bg-secondary",
                 )}
               >
@@ -288,7 +289,7 @@ export function TableHead({ columns }: { columns: Column[] }) {
   return (
     <div
       role="row"
-      className="grid items-center gap-x-5 border-b border-border px-3 py-2.5 text-meta text-muted-foreground"
+      className="grid items-center gap-x-5 border-b border-border px-3 py-2.5 text-sm text-muted-foreground"
       style={{ gridTemplateColumns: gridTemplate(columns) }}
     >
       {columns.map((c) => (
@@ -349,10 +350,10 @@ export function TableRow({
           : undefined
       }
       className={cn(
-        "group grid min-h-[54px] items-center gap-x-5 border-b border-border px-3 py-2.5 transition-colors last:border-b-0",
+        "group grid min-h-[48px] items-center gap-x-5 border-b border-border px-3 py-2 transition-colors last:border-b-0",
         clickable &&
           "cursor-pointer hover:bg-secondary focus:outline-none focus-visible:bg-secondary",
-        selected && "bg-sheen/[0.06]",
+        selected && "bg-accent-soft",
         className,
       )}
       style={{ gridTemplateColumns: gridTemplate(columns) }}
@@ -397,7 +398,7 @@ export function Cell({
 /** The empty-state block under a table: short, centred, dashed frame. */
 export function EmptyRow({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center text-sm text-muted-foreground">
+    <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center text-base text-muted-foreground">
       {children}
     </div>
   );
@@ -412,7 +413,7 @@ export function BackLink({ label, onClick }: { label: string; onClick: () => voi
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground transition-colors hover:text-foreground"
+      className="inline-flex items-center gap-1.5 rounded-sm text-base font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <ArrowLeft className="h-4 w-4" />
       {label}
@@ -439,10 +440,10 @@ export function DetailHeader({
         {leading}
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-xl font-semibold leading-tight">{title}</h3>
+            <h3 className="truncate text-xl font-semibold text-foreground-strong">{title}</h3>
             {titleAccessory}
           </div>
-          {byline ? <p className="mt-1 text-sm text-muted-foreground">{byline}</p> : null}
+          {byline ? <p className="mt-1 text-base text-muted-foreground">{byline}</p> : null}
         </div>
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
@@ -596,7 +597,7 @@ export function InlineSearch({
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       aria-label={placeholder}
-      className="h-8 w-full rounded-md border border-border bg-background px-3 text-sm placeholder:text-faint-foreground focus:outline-none focus:ring-2 focus:ring-border-strong"
+      className="h-9 w-full rounded-md border border-border-strong bg-input px-3 text-base placeholder:text-foreground-faint transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background"
     />
   );
 }
@@ -614,7 +615,9 @@ export function SegmentedFilter<T extends string>({
   label: string;
 }) {
   return (
-    <div role="tablist" aria-label={label} className="flex items-center gap-1">
+    // Underline tabs (v4): a 2 px accent line under the active tab, a hairline
+    // under the row. Never pill segments.
+    <div role="tablist" aria-label={label} className="flex items-center gap-6 border-b border-border">
       {options.map((o) => {
         const active = o.id === value;
         return (
@@ -625,17 +628,16 @@ export function SegmentedFilter<T extends string>({
             aria-selected={active}
             onClick={() => onChange(o.id)}
             className={cn(
-              "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors",
+              "relative -mb-px inline-flex h-10 items-center gap-2 border-b-2 text-base font-medium transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               active
-                ? "bg-secondary font-medium text-foreground"
-                : "text-muted-foreground hover:text-foreground",
+                ? "border-accent text-foreground-strong"
+                : "border-transparent text-muted-foreground hover:text-foreground",
             )}
           >
             {o.label}
             {typeof o.count === "number" && (
-              <span className={cn("tabular-nums", active ? "text-muted-foreground" : "text-muted-foreground/60")}>
-                {o.count}
-              </span>
+              <span className="text-sm tabular-nums text-foreground-faint">{o.count}</span>
             )}
           </button>
         );
@@ -659,6 +661,25 @@ export function SegmentedFilter<T extends string>({
  * `tone` colours the icon and a live pip; the value itself stays
  * `foreground` so a row of tiles reads as one block of numbers.
  */
+/**
+ * Four (or fewer) headline numbers as ONE card, the cells separated by
+ * hairlines — the v4 stat row. Put `StatTile`s with `cell` inside.
+ */
+export function StatGroup({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-2 overflow-hidden rounded-lg border border-border bg-card xl:grid-cols-4",
+        "[&>*]:border-border [&>*:nth-child(even)]:border-l [&>*:nth-child(n+3)]:border-t",
+        "xl:[&>*:nth-child(n+2)]:border-l xl:[&>*:nth-child(n+3)]:border-t-0",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function StatTile({
   icon,
   label,
@@ -666,6 +687,7 @@ export function StatTile({
   hint,
   tone = "ok",
   loading,
+  cell = false,
 }: {
   icon?: ReactNode;
   label: string;
@@ -673,6 +695,8 @@ export function StatTile({
   hint?: ReactNode;
   tone?: "ok" | "warn" | "danger" | "primary" | "success";
   loading?: boolean;
+  /** Render as a cell of a `StatGroup` (no ground of its own). */
+  cell?: boolean;
 }) {
   return (
     // A named group, so a screen reader announces "Failed, 0, nothing broke"
@@ -680,9 +704,9 @@ export function StatTile({
     <div
       role="group"
       aria-label={label}
-      className="jarvis-stat-tile"
+      className={cell ? "min-w-0 px-5 py-4" : "jarvis-stat-tile"}
     >
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
         {icon ? (
           <span
             className={cn(
@@ -715,8 +739,8 @@ export function StatTile({
       ) : (
         <div
           className={cn(
-            "mt-1.5 truncate font-display text-[22px] font-semibold tabular-nums",
-            "tracking-tight text-foreground",
+            "mt-1.5 truncate text-2xl font-semibold tabular-nums",
+            tone === "danger" ? "text-destructive" : "text-foreground-strong",
           )}
           title={typeof value === "string" ? value : undefined}
         >
@@ -729,7 +753,7 @@ export function StatTile({
         </div>
       ) : hint ? (
         <div
-          className="mt-0.5 truncate text-micro text-muted-foreground"
+          className="mt-0.5 truncate text-sm text-foreground-faint"
           title={typeof hint === "string" ? hint : undefined}
         >
           {hint}

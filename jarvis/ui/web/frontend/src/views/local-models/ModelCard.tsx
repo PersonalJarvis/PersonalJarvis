@@ -29,6 +29,8 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { estimateContextGb, formatContext, formatGb } from "./localModelsFormat";
+import { Badge } from "@/components/ui/badge";
+import { CapabilityIcons } from "./CapabilityIcons";
 import { capabilityChips, findModel, labelFor, modelLabel } from "./modelNames";
 import { RolePicker } from "./RolePicker";
 import type { RoleProgress } from "./useRoleActions";
@@ -90,19 +92,19 @@ const RING: Record<ModelCardState, string> = {
   unknown: "border-border",
   // Amber and red carry meanings the token set has no name for; the accent
   // stays for the memory bar and the primary button.
-  slow: "border-foreground/40",
+  slow: "border-warning/40",
   unfit: "border-destructive/50",
-  missing: "border-foreground/50",
+  missing: "border-warning/50",
   empty: "border-dashed border-border",
   blocked: "border-border/60",
 };
 
 const VERDICT_TONE: Record<ModelCardState, string> = {
-  ready: "text-muted-foreground",
+  ready: "text-success",
   unknown: "text-muted-foreground",
-  slow: "text-foreground",
+  slow: "text-warning",
   unfit: "text-destructive",
-  missing: "text-foreground",
+  missing: "text-warning",
   empty: "text-muted-foreground",
   blocked: "text-muted-foreground",
 };
@@ -200,28 +202,27 @@ export function ModelCard({
     }
   })();
 
-  const chips: Array<{ text: string; on?: boolean }> = [];
+  // One line of spec ("14B · Q4_K_M · 8.4 GB · 128k ctx"), the capabilities
+  // as an icon row, and the loaded state as a success badge (v4).
+  const facts: string[] = [];
   if (current) {
-    if (current.params_label) chips.push({ text: current.params_label, on: true });
+    if (current.params_label) facts.push(current.params_label);
     if (current.quant_label || current.quantization_level)
-      chips.push({ text: current.quant_label || current.quantization_level });
-    chips.push({ text: formatGb(current.size_bytes) });
+      facts.push(current.quant_label || current.quantization_level);
+    facts.push(formatGb(current.size_bytes));
     if (current.context_length) {
-      chips.push({
-        text:
-          row.id === "voice" && row.context_tokens
-            ? fill(t("local_models.jobs.context_of"), {
-                context: formatContext(row.context_tokens),
-                native: formatContext(current.context_length),
-              })
-            : `${formatContext(current.context_length)} ctx`,
-        on: row.id === "voice",
-      });
+      facts.push(
+        row.id === "voice" && row.context_tokens
+          ? fill(t("local_models.jobs.context_of"), {
+              context: formatContext(row.context_tokens),
+              native: formatContext(current.context_length),
+            })
+          : `${formatContext(current.context_length)} ctx`,
+      );
     }
-    for (const cap of capabilityChips(current)) chips.push({ text: cap, on: true });
-    if (current.source) chips.push({ text: current.source });
-    if (current.loaded) chips.push({ text: t("local_models.jobs.loaded_now"), on: true });
+    if (current.source) facts.push(current.source);
   }
+  const caps = current ? capabilityChips(current) : [];
 
   const memoryText = (() => {
     if (share <= 0) return t("local_models.jobs.memory_unknown");
@@ -243,7 +244,7 @@ export function ModelCard({
   return (
     <article
       className={cn(
-        "flex flex-col rounded-2xl border bg-card p-4 transition-colors",
+        "flex h-full flex-col rounded-lg border bg-card p-5 transition-colors",
         RING[state],
       )}
       data-testid={`model-card-${row.id}`}
@@ -253,10 +254,10 @@ export function ModelCard({
       {/* The job: an eyebrow, because the job is the category and the model
           below it is the value — not the other way round. */}
       <div className="flex items-baseline justify-between gap-2">
-        <p className="text-micro font-medium text-muted-foreground">
+        <p className="text-sm font-medium uppercase tracking-wide text-foreground-faint">
           {t(row.label_key)}
         </p>
-        <p className="truncate text-micro text-muted-foreground">
+        <p className="truncate text-sm text-muted-foreground">
           {t(`local_models.jobs.${row.id}_purpose`)}
         </p>
       </div>
@@ -268,29 +269,33 @@ export function ModelCard({
           <>
             <p className="flex flex-wrap items-baseline gap-x-2">
               <span
-                className="font-display text-lg font-semibold tracking-tight text-foreground"
+                className="text-lg font-semibold text-foreground-strong"
                 data-testid={`model-card-current-${row.id}`}
               >
                 {modelLabel(current, row.current)}
               </span>
               <span
-                className="truncate font-mono text-micro text-muted-foreground"
+                className="truncate font-mono text-sm text-muted-foreground"
                 title={row.current}
                 data-testid={`model-card-tag-${row.id}`}
               >
                 {row.current}
               </span>
             </p>
-            {chips.length > 0 ? (
-              <p className="mt-1.5 flex flex-wrap gap-1" data-testid={`model-card-chips-${row.id}`}>
-                {chips.map((chip) => (
-                  <Chip key={chip.text} on={chip.on}>
-                    {chip.text}
-                  </Chip>
-                ))}
-              </p>
+            {facts.length > 0 ? (
+              <div className="mt-1.5 space-y-2" data-testid={`model-card-chips-${row.id}`}>
+                <p className="text-sm text-muted-foreground">{facts.join(" · ")}</p>
+                {(caps.length > 0 || current?.loaded) && (
+                  <p className="flex flex-wrap items-center gap-2">
+                    <CapabilityIcons capabilities={caps} />
+                    {current?.loaded && (
+                      <Badge variant="success">{t("local_models.jobs.loaded_now")}</Badge>
+                    )}
+                  </p>
+                )}
+              </div>
             ) : (
-              <p className="mt-1 text-micro text-muted-foreground">
+              <p className="mt-1 text-sm text-muted-foreground">
                 {state === "missing"
                   ? t("local_models.jobs.not_on_disk")
                   : t("local_models.jobs.no_facts")}
@@ -305,7 +310,7 @@ export function ModelCard({
       {/* The verdict: one line, one rule, the same the picker uses. */}
       {row.current && (
         <p
-          className={cn("mt-2 flex gap-1.5 text-xs leading-snug", VERDICT_TONE[state])}
+          className={cn("mt-2 flex gap-1.5 text-sm", VERDICT_TONE[state])}
           data-testid={`model-card-verdict-${row.id}`}
         >
           <span aria-hidden className="w-3 shrink-0 text-center font-semibold">
@@ -352,7 +357,7 @@ export function ModelCard({
               />
             )}
           </div>
-          <p className="mt-1 text-micro tabular-nums text-muted-foreground">{memoryText}</p>
+          <p className="mt-1 text-sm tabular-nums text-muted-foreground">{memoryText}</p>
         </div>
       )}
 
@@ -405,7 +410,7 @@ export function ModelCard({
 
       {/* The plumbing, one click away: where the pick lives, what the job
           asks for, what the recommendation would be and why. */}
-      <details className="mt-3 border-t border-dashed border-border pt-2 text-micro text-muted-foreground">
+      <details className="mt-3 border-t border-dashed border-border pt-2 text-sm text-muted-foreground">
         <summary className="cursor-pointer select-none">{t("local_models.jobs.details")}</summary>
         <dl className="mt-1.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
           <dt>{t("local_models.jobs.details_config")}</dt>

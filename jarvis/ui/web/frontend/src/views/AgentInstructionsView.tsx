@@ -1,31 +1,36 @@
-import { useEffect, useState } from "react";
-import { FilePlus2, RotateCcw, Save, ScrollText } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { FilePlus2, PenLine, RotateCcw, Save, ScrollText } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useAgentInstructions } from "@/hooks/useAgentInstructions";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
 /**
- * AgentInstructionsView — full-page editor for the user's personal
- * standing-instructions file (an AGENTS.md / CLAUDE.md equivalent). The file is
- * named after the assistant (the heading shows the dynamic `<Name>.md`, e.g.
- * "Ruben.md"). It is distinct from the System Prompt: here the user writes their
- * own preferences for how the assistant works with them. Changes apply on the
- * assistant's next message — no restart.
+ * The assistant's standing instructions — one markdown file, edited in place.
  *
- * Backed by /api/settings/agent-instructions (GET/PUT/DELETE) via
- * useAgentInstructions.
+ * A PageHeader named after the file, the content capped at the reading
+ * measure, and the editor as ONE card: the textarea, a character count, and
+ * a sticky action row at its foot. Empty, the card opens with an EmptyState
+ * offering the template or a blank page; the textarea stays mounted so the
+ * page never swaps its editor out from under a keyboard.
  */
 export function AgentInstructionsView() {
   const t = useT();
   const { config, loading, error, save } = useAgentInstructions();
   const pushToast = useEventStore((s) => s.pushToast);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
 
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  // "Write from scratch" hides the empty state for this visit even though the
+  // draft is still blank — the user asked for the blank page.
+  const [writing, setWriting] = useState(false);
 
-  // Reflect the server value on load and after every save. Coalesce a
-  // missing `content` to "" so a malformed response degrades instead of crashing.
   useEffect(() => {
     if (config) setDraft(config.content ?? "");
   }, [config]);
@@ -35,6 +40,9 @@ export function AgentInstructionsView() {
   const dirty = !!config && draft !== (config.content ?? "");
   const canRevert = dirty;
   const trimmedEmpty = draft.trim().length === 0;
+  // Also while loading: the template button must be the same element before
+  // and after the config lands, so a click queued on it is never lost.
+  const showEmpty = trimmedEmpty && !writing;
 
   async function onSave() {
     if (!dirty) return;
@@ -57,94 +65,98 @@ export function AgentInstructionsView() {
     if (config?.template) setDraft(config.template);
   }
 
+  function onWriteFromScratch() {
+    setWriting(true);
+    requestAnimationFrame(() => editorRef.current?.focus());
+  }
+
   return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto p-6">
-      <div className="flex items-start gap-3">
-        <ScrollText className="mt-1 h-5 w-5 shrink-0 text-primary" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h1 className="font-display text-xl font-semibold">{filename}</h1>
-            <span
-              className={`rounded-full px-2 py-0.5 text-micro font-medium uppercase tracking-wide ${
-                exists
-                  ? "border border-primary/40 bg-primary/10 text-primary"
-                  : "border border-border bg-muted/60 text-muted-foreground"
-              }`}
-            >
-              {exists
-                ? t("agent_instructions.active_badge")
-                : t("agent_instructions.empty_badge")}
-            </span>
-          </div>
-          <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-            {t("agent_instructions.subtitle")}
-          </p>
-        </div>
-      </div>
-
-      {error && <p className="text-xs text-destructive">{error}</p>}
-
-      <div>
-        <label className="block text-xs font-medium text-muted-foreground">
-          {t("agent_instructions.editor_label")}
-        </label>
-        <textarea
-          data-testid="agent-instructions-editor"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          disabled={loading}
-          spellCheck={false}
-          rows={18}
-          placeholder={t("agent_instructions.placeholder")}
-          className="jarvis-input-surface mt-1 w-full resize-y rounded-md border border-input px-3 py-2 font-mono text-xs leading-relaxed focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+    <div className="flex h-full flex-col overflow-y-auto px-8 pb-6">
+      <div className="mx-auto w-full max-w-3xl">
+        <PageHeader
+          icon={<ScrollText />}
+          title={filename}
+          description={t("agent_instructions.subtitle")}
+          actions={
+            !exists ? (
+              <Badge variant="secondary">{t("agent_instructions.empty_badge")}</Badge>
+            ) : undefined
+          }
         />
-        <div className="mt-1.5 flex items-center justify-between">
-          <span className="font-mono text-[11px] text-muted-foreground">
-            {t("agent_instructions.chars").replace("{0}", String(draft.length))}
-          </span>
-          {trimmedEmpty && (
-            <span className="text-[11px] text-foreground">
-              {t("agent_instructions.empty_hint")}
-            </span>
+
+        {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
+
+        <Card className="flex flex-col overflow-hidden">
+          <label className="sr-only" htmlFor="agent-instructions-editor">
+            {t("agent_instructions.editor_label")}
+          </label>
+          {showEmpty && (
+            <EmptyState
+              icon={<ScrollText />}
+              title={t("agent_instructions.empty_badge")}
+              description={t("agent_instructions.empty_hint")}
+              actions={
+                <>
+                  <Button onClick={onLoadTemplate} disabled={!config?.template}>
+                    <FilePlus2 />
+                    {t("agent_instructions.load_template")}
+                  </Button>
+                  <Button variant="outline" onClick={onWriteFromScratch}>
+                    <PenLine />
+                    {t("agent_instructions.write_from_scratch")}
+                  </Button>
+                </>
+              }
+            />
           )}
-        </div>
-      </div>
+          <Textarea
+            id="agent-instructions-editor"
+            ref={editorRef}
+            data-testid="agent-instructions-editor"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onFocus={() => setWriting(true)}
+            disabled={loading}
+            spellCheck={false}
+            placeholder={t("agent_instructions.placeholder")}
+            className={
+              showEmpty
+                ? "sr-only"
+                : "min-h-[60vh] resize-y rounded-none border-0 p-5 text-base leading-7 focus-visible:ring-0 focus-visible:ring-offset-0"
+            }
+          />
+          {/* Sticky action row: count left, Save + Revert right. */}
+          <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-border bg-card px-5 py-3">
+            <span className="text-sm tabular-nums text-foreground-faint">
+              {t("agent_instructions.chars").replace("{0}", String(draft.length))}
+            </span>
+            <div className="flex items-center gap-2">
+              {!showEmpty && (
+                <Button
+                  variant="ghost"
+                  onClick={onLoadTemplate}
+                  disabled={loading || !config?.template}
+                >
+                  <FilePlus2 />
+                  {t("agent_instructions.load_template")}
+                </Button>
+              )}
+              <Button variant="ghost" onClick={onRevert} disabled={loading || !canRevert}>
+                <RotateCcw />
+                {t("agent_instructions.revert")}
+              </Button>
+              <Button onClick={onSave} disabled={saving || loading || !dirty}>
+                <Save />
+                {saving ? t("agent_instructions.saving") : t("agent_instructions.save")}
+              </Button>
+            </div>
+          </div>
+        </Card>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          size="sm"
-          onClick={onSave}
-          disabled={saving || loading || !dirty}
-          className="gap-1.5"
-        >
-          <Save className="h-3.5 w-3.5" />
-          {saving ? t("agent_instructions.saving") : t("agent_instructions.save")}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onLoadTemplate}
-          disabled={loading || !config?.template}
-          className="gap-1.5"
-        >
-          <FilePlus2 className="h-3.5 w-3.5" />
-          {t("agent_instructions.load_template")}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onRevert}
-          disabled={loading || !canRevert}
-          className="gap-1.5"
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-          {t("agent_instructions.revert")}
-        </Button>
+        <p className="mt-3 text-sm text-muted-foreground">
+          {t("agent_instructions.applies_next_turn")}
+        </p>
       </div>
-
-      <p className="text-[11px] text-muted-foreground">
-        {t("agent_instructions.applies_next_turn")}
-      </p>
     </div>
   );
 }

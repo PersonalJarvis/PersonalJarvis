@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { formatContext, formatGb } from "./localModelsFormat";
 import { canonical } from "./localSetup";
 import { modelLabel } from "./modelNames";
+import { CapabilityIcons } from "./CapabilityIcons";
 
 export interface InstalledPanelProps {
   models: LocalModelRow[];
@@ -59,10 +60,8 @@ function Chip({
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-micro font-medium",
-        tone === "primary"
-          ? "bg-secondary text-foreground-strong"
-          : "bg-secondary text-muted-foreground",
+        "inline-flex h-6 shrink-0 items-center rounded-md border border-border bg-secondary px-2 text-xs font-medium",
+        tone === "primary" ? "text-foreground" : "text-muted-foreground",
       )}
     >
       {children}
@@ -158,7 +157,7 @@ export function InstalledPanel({
         {sorted.length > 0 && (
           <ul
             aria-label={k("list_label")}
-            className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card"
+            className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card"
           >
             {sorted.map((row) => {
               const caps = row.probed
@@ -170,20 +169,20 @@ export function InstalledPanel({
               return (
                 <li
                   key={row.name}
-                  className="grid gap-2 px-3.5 py-2.5 sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.4fr)] sm:items-center"
+                  className="grid min-h-12 gap-2 px-4 py-2 transition-colors hover:bg-secondary sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.4fr)] sm:items-center"
                   data-testid={`installed-${row.name}`}
                 >
                   <div className="min-w-0">
                     <StatusDot
                       tone={row.loaded ? "ok" : "off"}
                       label={
-                        <span className="text-sm text-foreground">
+                        <span className="text-base font-medium text-foreground">
                           {modelLabel(row)}
                         </span>
                       }
                     />
-                    <div className="ml-4 mt-0.5 text-micro text-muted-foreground">
-                      <span className="font-mono text-foreground">{row.name}</span>
+                    <div className="ml-4 mt-0.5 text-sm text-muted-foreground">
+                      <span className="font-mono">{row.name}</span>
                       {[
                         row.quant_label || row.quantization_level,
                         formatGb(row.size_bytes),
@@ -197,7 +196,7 @@ export function InstalledPanel({
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {row.probed ? (
-                      caps.map((cap) => <Chip key={cap}>{cap}</Chip>)
+                      <CapabilityIcons capabilities={caps} />
                     ) : (
                       <Chip>{k("unknown_caps")}</Chip>
                     )}
@@ -210,7 +209,7 @@ export function InstalledPanel({
                     ))}
                     {picks.length > 0 && (
                       <span
-                        className="text-micro text-muted-foreground"
+                        className="text-sm text-muted-foreground"
                         data-testid={`installed-recommended-${row.name}`}
                       >
                         {fill(k("recommended_for"), {

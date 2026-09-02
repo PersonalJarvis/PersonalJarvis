@@ -26,7 +26,7 @@
  * now nothing hides one either.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Info, Loader2 } from "lucide-react";
 
 import { SoftButton, StatusDot } from "@/components/extensions/primitives";
 import {
@@ -182,24 +182,29 @@ export function OverviewPanel({
             </p>
           )}
           {otherBrainActive && (
-            <p
-              className="text-sm text-foreground"
+            // An info callout — the accent wash with a link button — rather
+            // than a sentence lost between the tabs and the memory strip.
+            <div
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-accent/20 bg-accent-soft px-4 py-3 text-base text-foreground"
               data-testid="overview-brain-clause"
             >
-              {fill(t("local_models.overview.status_brain_other"), {
-                server: serverLabel,
-                brain: activeBrain?.label ?? "",
-              })}{" "}
+              <Info aria-hidden className="h-4 w-4 shrink-0 text-accent" />
+              <span className="min-w-0 flex-1">
+                {fill(t("local_models.overview.status_brain_other"), {
+                  server: serverLabel,
+                  brain: activeBrain?.label ?? "",
+                })}
+              </span>
               {onOpenApiKeys && (
                 <button
                   type="button"
                   onClick={onOpenApiKeys}
-                  className="font-medium text-foreground-strong hover:underline"
+                  className="shrink-0 rounded-sm font-medium text-accent underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {t("local_models.roles.other_brain_link")}
                 </button>
               )}
-            </p>
+            </div>
           )}
         </div>
       )}
@@ -208,7 +213,7 @@ export function OverviewPanel({
 
       {/* The grid. Peers, two columns on a wide pane. */}
       <div
-        className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4"
+        className="grid grid-cols-1 gap-4 md:grid-cols-2 min-[1400px]:grid-cols-4"
         data-testid="model-card-grid"
       >
         {cardRows.length === 0 && overview.isLoading
@@ -295,7 +300,7 @@ export function OverviewPanel({
 function CardSkeleton() {
   return (
     <div
-      className="h-[17rem] animate-pulse rounded-2xl border border-dashed border-border bg-card"
+      className="h-[17rem] animate-pulse rounded-lg border border-dashed border-border bg-card"
       data-testid="model-card-skeleton"
     />
   );
@@ -331,14 +336,14 @@ function SideJobRow({
   const current = findModel(models, row.current);
   return (
     <div
-      className="grid gap-3 rounded-xl border border-border bg-card px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)_auto] lg:items-center"
+      className="grid gap-3 rounded-lg border border-border bg-card px-5 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)_auto] lg:items-center"
       data-testid={`side-job-${row.id}`}
     >
       <div className="min-w-0">
-        <p className="text-micro font-medium text-muted-foreground">
+        <p className="text-sm font-medium uppercase tracking-wide text-foreground-faint">
           {t(row.label_key)}
         </p>
-        <p className="mt-0.5 text-xs text-muted-foreground">
+        <p className="mt-0.5 text-sm text-muted-foreground">
           {row.note || t(`local_models.jobs.${row.id}_purpose`)}
           {current && (
             <span className="ml-2 text-foreground">
@@ -349,7 +354,7 @@ function SideJobRow({
       </div>
       <div className="min-w-0">
         {blocked ? (
-          <span className="text-xs text-muted-foreground">
+          <span className="text-sm text-muted-foreground">
             {t("local_models.roles.read_only")}
           </span>
         ) : (
@@ -364,12 +369,12 @@ function SideJobRow({
       </div>
       <div className="flex items-center gap-2 lg:justify-end">
         {missing && (
-          <span className="text-xs text-foreground">
+          <span className="text-sm text-warning">
             {t("local_models.jobs.not_on_disk")}
           </span>
         )}
         {row.current_fit === "unfit" && row.current_reason && (
-          <span className="text-xs text-destructive">{row.current_reason}</span>
+          <span className="text-sm text-destructive">{row.current_reason}</span>
         )}
         {onTune && row.current && row.installed && (
           <SoftButton onClick={() => onTune(row.current)} className="h-8">
@@ -392,7 +397,7 @@ function FootnoteJobs({
   t: (key: string) => string;
 }) {
   return (
-    <p className="text-xs text-muted-foreground" data-testid="roles-more">
+    <p className="text-sm text-muted-foreground" data-testid="roles-more">
       {rows.map((row, i) => (
         <span key={row.id}>
           {i > 0 && " · "}
@@ -540,7 +545,7 @@ function SetupProgress({
 
   return (
     <div
-      className="mt-3 space-y-1 border-t border-border pt-3 text-xs"
+      className="mt-3 space-y-1 border-t border-border pt-3 text-sm"
       data-testid="setup-progress"
     >
       <StatusDot tone={tone} pulse={tone === "busy"} label={text} />

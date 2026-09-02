@@ -42,6 +42,7 @@ import {
   PanelHeader,
   SegmentedFilter,
   SoftButton,
+  StatGroup,
   StatTile,
 } from "@/components/extensions/primitives";
 import { fill, useT } from "@/i18n";
@@ -208,7 +209,7 @@ export function AutomationsView() {
   return (
     <div className="flex h-full flex-col">
       <ViewHeader
-        icon={<Workflow className="h-4 w-4" />}
+        icon={<Workflow />}
         title={t("automations_view.title")}
         subtitle={t("automations_view.subtitle")}
         right={
@@ -238,7 +239,7 @@ export function AutomationsView() {
       )}
 
       <ScrollArea className="flex-1">
-        <div className="flex flex-col gap-group py-6">
+        <div className="flex flex-col gap-6 px-8 py-6">
           {notice && (
             <div
               role="status"
@@ -266,8 +267,9 @@ export function AutomationsView() {
           )}
 
           {/* Headline numbers — what is armed, what happens next, what broke. */}
-          <div className="grid gap-stack sm:grid-cols-2 xl:grid-cols-4">
+          <StatGroup>
             <StatTile
+              cell
               icon={<Zap className="h-4 w-4" />}
               label={t("automations_view.stat_active")}
               value={stats.active}
@@ -280,6 +282,7 @@ export function AutomationsView() {
               loading={tasksQuery.isLoading}
             />
             <StatTile
+              cell
               icon={<Timer className="h-4 w-4" />}
               label={t("automations_view.stat_next")}
               value={<NextRunValue dueNs={stats.nextDueNs} />}
@@ -287,6 +290,7 @@ export function AutomationsView() {
               loading={tasksQuery.isLoading}
             />
             <StatTile
+              cell
               icon={<CalendarClock className="h-4 w-4" />}
               label={t("automations_view.stat_schedules")}
               value={stats.schedules}
@@ -294,6 +298,7 @@ export function AutomationsView() {
               loading={tasksQuery.isLoading}
             />
             <StatTile
+              cell
               icon={<AlertTriangle className="h-4 w-4" />}
               label={t("automations_view.stat_problems")}
               value={stats.problems}
@@ -301,7 +306,7 @@ export function AutomationsView() {
               tone={stats.problems > 0 ? "danger" : "success"}
               loading={tasksQuery.isLoading}
             />
-          </div>
+          </StatGroup>
 
           <SegmentedFilter<Tab>
             label={t("automations_view.tabs_label")}

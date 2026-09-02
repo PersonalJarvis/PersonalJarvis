@@ -27,8 +27,9 @@ import {
   Panel,
   PanelHeader,
   SegmentedFilter,
-  SoftButton,
 } from "@/components/extensions/primitives";
+import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useInventory, useReloadLocalModels } from "@/hooks/useLocalModels";
 import { useProviders } from "@/hooks/useProviders";
 import {
@@ -46,6 +47,7 @@ import { InventoryPanel } from "@/views/local-models/InventoryPanel";
 import { OverviewPanel } from "@/views/local-models/OverviewPanel";
 import { ServerPanel } from "@/views/local-models/ServerPanel";
 import { TuneSheet } from "@/views/local-models/TuneSheet";
+import { OllamaIcon } from "@/components/icons/OllamaIcon";
 import { useEventStore } from "@/store/events";
 import { useLocaleChunk, useT } from "@/i18n";
 
@@ -150,41 +152,39 @@ export function LocalModelsView() {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
-      <div className="flex w-full shrink-0 flex-col gap-4 px-8 py-6">
-        <BackLink
-          label={t("local_models.back")}
-          onClick={() => setActiveSection("apikeys")}
-        />
-        <PanelHeader
-          title={t("local_models.title")}
-          subtitle={t("local_models.subtitle")}
-        />
-
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <SegmentedFilter<LocalModelsTab>
-            label={t("local_models.tabs_label")}
-            value={tab}
-            onChange={setTab}
-            options={tabs}
-          />
-          <SoftButton
-            onClick={onReload}
-            disabled={!providerId || reloading}
-            ariaLabel={t("local_models.reload")}
-            className="h-8"
-          >
-            {reloading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
-            )}
-            {t("local_models.reload")}
-          </SoftButton>
+      <div className="w-full shrink-0 px-8">
+        <div className="pt-4">
+          <BackLink label={t("local_models.back")} onClick={() => setActiveSection("apikeys")} />
         </div>
+        <PageHeader
+          icon={<OllamaIcon />}
+          title={t("local_models.title")}
+          description={t("local_models.subtitle")}
+          className="pt-3"
+          actions={
+            <Button
+              variant="outline"
+              onClick={onReload}
+              disabled={!providerId || reloading}
+              aria-label={t("local_models.reload")}
+            >
+              {reloading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              {t("local_models.reload")}
+            </Button>
+          }
+          tabs={
+            <SegmentedFilter<LocalModelsTab>
+              label={t("local_models.tabs_label")}
+              value={tab}
+              onChange={setTab}
+              options={tabs}
+            />
+          }
+        />
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="flex w-full flex-col gap-4 px-8 pb-6">
+        <div className="flex w-full flex-col gap-5 px-8 py-6">
           {loading && !providerId && (
             <p className="text-sm text-muted-foreground">
               {t("local_models.loading")}

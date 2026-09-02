@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, type ReactNode } from "react";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { MessageSquare, Mic, Plus, Trash2, AudioLines } from "lucide-react";
 import { identityInitial, identityMark } from "@/lib/identityHue";
 import {
@@ -525,37 +526,28 @@ export function ViewHeader({
 }: {
   icon: ReactNode;
   title: string;
-  // Optional inline accessory rendered right next to the title (e.g. a
-  // "Research Preview" / "Beta" pill). Absent for every other view.
   titleBadge?: ReactNode;
   subtitle?: string;
   right?: ReactNode;
 }) {
+  // The one header every view wears (v4): `PageHeader` at the view gutter.
+  // `titleBadge` rides in the actions slot, before the view's own controls.
   return (
-    <header className="flex items-center gap-stack border-b border-border px-6 py-4">
-      {/*
-       * The icon box is a lift tile with no rim — a fill and a border around
-       * the same 32px square is the belt-and-braces this system drops. The
-       * `[&_svg]:` rule is the single point where the mark is neutralised:
-       * most call sites hand this header an icon painted with --primary, and
-       * --primary is a fill, never a decorative glyph. Setting it here means
-       * one edit answers for every section instead of thirty.
-       */}
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-secondary [&_svg]:text-muted-foreground">
-        {icon}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-row">
-          <h2 className="truncate font-display text-page font-semibold text-foreground-strong">
-            {title}
-          </h2>
-          {titleBadge}
-        </div>
-        {subtitle && (
-          <p className="truncate text-meta text-muted-foreground">{subtitle}</p>
-        )}
-      </div>
-      {right}
-    </header>
+    <div className="shrink-0 px-8">
+      <PageHeader
+        icon={icon}
+        title={title}
+        description={subtitle}
+        className="pb-4"
+        actions={
+          titleBadge || right ? (
+            <>
+              {titleBadge}
+              {right}
+            </>
+          ) : undefined
+        }
+      />
+    </div>
   );
 }

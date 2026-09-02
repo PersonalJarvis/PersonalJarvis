@@ -183,9 +183,9 @@ function RailHeading({
 }) {
   return (
     <div className="flex items-baseline gap-2">
-      <h3 className="text-title font-semibold text-foreground-strong">{title}</h3>
+      <h3 className="text-sm font-medium uppercase tracking-wide text-foreground-faint">{title}</h3>
       {count !== undefined && count !== "" && (
-        <span className="text-meta tabular-nums text-muted-foreground">{count}</span>
+        <span className="text-sm tabular-nums text-foreground-faint">{count}</span>
       )}
       <span className="ml-auto flex items-center">{right}</span>
     </div>
@@ -246,13 +246,17 @@ export function ProfileView() {
           <div
             className={cn(
               "grid min-h-0 flex-1 grid-cols-1 overflow-y-auto scrollbar-jarvis",
-              "lg:grid-cols-[minmax(320px,1fr)_minmax(0,1.15fr)_minmax(280px,330px)]",
+              "lg:grid-cols-[minmax(360px,1fr)_minmax(0,1.25fr)]",
               "lg:overflow-hidden",
             )}
           >
             <LedgerRail meta={meta} />
-            <SourceRail />
-            <MarginRail data={data} meta={meta} />
+            {/* Two columns (v4): the source, with the "would love to know"
+                prompt and the review queue stacked under it as cards. */}
+            <div className="flex min-w-0 flex-col lg:min-h-0 lg:overflow-y-auto scrollbar-jarvis">
+              <SourceRail />
+              <MarginRail data={data} meta={meta} />
+            </div>
           </div>
         </>
       )}
@@ -301,17 +305,30 @@ function IdentityStrip({
       : t("profile_view.people_known").replace("{0}", String(data.people.length));
 
   return (
-    <div className="profile-rise flex items-center gap-row border-b border-border px-6 py-3">
+    <div className="profile-rise flex items-center gap-row border-b border-border px-8 py-3">
       <AvatarButton name={name} hasAvatar={!!data.has_avatar} />
 
       <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-        <h1 className="font-display text-title font-semibold text-foreground-strong">{headline}</h1>
-        <span className="text-meta text-muted-foreground">
+        <h1 className="text-lg font-semibold text-foreground-strong">{headline}</h1>
+        <span className="text-sm text-muted-foreground">
           {t(`profile_view.stages.${stage.key}`)}
         </span>
       </div>
 
-      <div className="ml-auto flex shrink-0 items-center text-meta text-muted-foreground">
+      <div className="ml-auto flex shrink-0 items-center text-sm text-muted-foreground">
+        <span
+          className="mr-2 hidden h-1 w-24 overflow-hidden rounded-full bg-secondary sm:block"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={TOTAL_FIELDS}
+          aria-valuenow={filled}
+          data-testid="profile-progress"
+        >
+          <span
+            className="block h-full rounded-full bg-accent"
+            style={{ width: `${Math.round((filled / Math.max(TOTAL_FIELDS, 1)) * 100)}%` }}
+          />
+        </span>
         <span className="tabular-nums text-foreground">{ratio}</span>
         <Dot />
         {peopleLine}
@@ -470,12 +487,12 @@ function LedgerRail({ meta }: { meta: Record<string, unknown> }) {
   const t = useT();
 
   return (
-    <section className="flex min-w-0 flex-col bg-sidebar px-6 py-6 lg:min-h-0 lg:overflow-y-auto lg:py-7 scrollbar-jarvis">
+    <section className="flex min-w-0 flex-col border-r border-border px-8 py-6 lg:min-h-0 lg:overflow-y-auto scrollbar-jarvis">
       <div className="profile-rise" style={{ animationDelay: "60ms" }}>
-        <h2 className="font-display text-page font-semibold text-foreground-strong">
+        <h2 className="text-lg font-semibold text-foreground-strong">
           {t("profile_view.section_knowledge")}
         </h2>
-        <p className="mt-1 text-meta text-muted-foreground">
+        <p className="mt-1 text-base text-muted-foreground">
           {t("profile_view.section_knowledge_sub")}
         </p>
       </div>
@@ -669,15 +686,15 @@ function EditableFieldRow({
   // affordance that fills it in.
   if (!editing) {
     return (
-      <div className="group flex items-baseline justify-between gap-3 rounded-md px-2 py-1.5 -mx-2 transition-colors hover:bg-secondary">
-        <dt className="shrink-0 text-meta text-muted-foreground">{label}</dt>
+      <div className="group -mx-2 flex min-h-10 items-center justify-between gap-3 rounded-md px-2 py-1 transition-colors hover:bg-secondary">
+        <dt className="shrink-0 text-base text-muted-foreground">{label}</dt>
         <dd className="flex min-w-0 max-w-[68%] items-center justify-end gap-2">
           {kind === "list" && !empty ? (
             <div className="flex flex-wrap justify-end gap-1">
               {(value as unknown[]).map((item) => (
                 <span
                   key={String(item)}
-                  className="rounded-full bg-secondary px-2 py-0.5 text-meta text-foreground group-hover:bg-popover"
+                  className="rounded-md border border-border bg-secondary px-2 text-sm leading-6 text-foreground"
                 >
                   {String(item)}
                 </span>
@@ -687,12 +704,12 @@ function EditableFieldRow({
             <span
               aria-label={t("profile_view.field_unknown")}
               title={t("profile_view.field_unknown")}
-              className="text-body text-faint-foreground"
+              className="text-base text-foreground-faint"
             >
               —
             </span>
           ) : (
-            <span className="text-body text-foreground [overflow-wrap:anywhere]">
+            <span className="text-base text-foreground [overflow-wrap:anywhere]">
               {renderValue(t, value)}
             </span>
           )}
@@ -851,7 +868,7 @@ function MarginRail({
   meta: Record<string, unknown>;
 }) {
   return (
-    <aside className="flex min-w-0 flex-col gap-group bg-sidebar px-5 py-6 lg:min-h-0 lg:overflow-y-auto lg:py-8 scrollbar-jarvis">
+    <aside className="flex min-w-0 flex-col gap-6 border-t border-border px-8 py-6">
       <div className="profile-rise" style={{ animationDelay: "80ms" }}>
         <AskCard meta={meta} />
       </div>
@@ -882,8 +899,8 @@ function AskCard({ meta }: { meta: Record<string, unknown> }) {
   // rail. The nested "say this" well steps UP to --secondary rather than down
   // into a translucent wash of the page behind it.
   return (
-    <div className="rounded-lg bg-card p-block shadow-rim">
-      <div className="flex items-center gap-1.5 text-meta text-muted-foreground">
+    <div className="rounded-lg border border-border bg-card p-5">
+      <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <Sparkles className="h-3.5 w-3.5" />
         {t("profile_view.ask_title")}
         <span className="ml-auto tabular-nums">
@@ -891,7 +908,7 @@ function AskCard({ meta }: { meta: Record<string, unknown> }) {
         </span>
       </div>
 
-      <p className="mt-2.5 font-display text-title font-semibold text-foreground-strong">
+      <p className="mt-2.5 text-lg font-semibold text-foreground-strong">
         {t(`profile_view.questions.${q.field}`)}
       </p>
 
@@ -911,7 +928,7 @@ function AskCard({ meta }: { meta: Record<string, unknown> }) {
           type="button"
           data-testid="ask-next"
           onClick={() => setIdx((i) => i + 1)}
-          className="inline-flex items-center gap-1 rounded-full bg-secondary px-3 py-1 text-meta font-medium text-foreground transition-colors hover:bg-popover"
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-border-strong px-3 text-sm font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {t("profile_view.ask_next")}
           <ChevronRight className="h-3 w-3" />
@@ -1527,9 +1544,10 @@ function SourceRail() {
                   data-testid="profile-source-markdown"
                   className={cn(
                     PROSE_BASE,
-                    "max-w-reading text-reading text-foreground",
-                    "prose-headings:font-display prose-headings:text-foreground-strong",
-                    "prose-h1:text-page prose-h2:mt-group prose-h2:text-title prose-h3:text-title",
+                    "max-w-3xl text-base leading-7 text-foreground",
+                    "prose-headings:text-foreground-strong",
+                    "prose-h1:text-xl prose-h2:mt-group prose-h2:text-lg prose-h3:text-lg",
+                    "prose-blockquote:border-l-2 prose-blockquote:border-border prose-blockquote:pl-4 prose-blockquote:font-normal prose-blockquote:not-italic prose-blockquote:text-muted-foreground",
                     "prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground-strong",
                   )}
                 >

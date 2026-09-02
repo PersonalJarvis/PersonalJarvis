@@ -219,7 +219,7 @@ function AutomationRow({
             <Icon className="h-4 w-4" />
           </IdentityGlyph>
           <span className="min-w-0">
-            <span className="block truncate font-medium text-foreground">
+            <span className="block truncate text-base font-medium text-foreground">
               {task.title || t("tasks_view.untitled")}
             </span>
             <AutomationSubline task={task} fallback={template?.description ?? ""} />
@@ -299,7 +299,7 @@ function AutomationSubline({ task, fallback }: { task: TaskSummary; fallback: st
   const { data } = useTaskDetail(task.id, needsSpec);
   const text = fallback || firstLine(promptOfSpec(data?.spec));
   if (!text) return null;
-  return <span className="block truncate text-meta text-muted-foreground">{text}</span>;
+  return <span className="block truncate text-sm text-muted-foreground">{text}</span>;
 }
 
 /** The one-question delete confirmation, in place under its row. */
