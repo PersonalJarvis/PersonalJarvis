@@ -27,7 +27,7 @@ from typing import Any, Final, cast
 
 from jarvis.core.protocols import Tool
 
-from .agent_tools import MessageAgentTool, WikiNoteTool
+from .agent_tools import MessageAgentTool, ShellTool, WikiNoteTool
 from .capabilities import CapabilityKind, CapabilityRow, select_tools
 from .roster import AgentRecord, canonical_session_id
 from .runtime import current_runtime
@@ -49,8 +49,11 @@ _PREFIX: Final[str] = "society:"
 #: Tools every society session keeps regardless of grants — its own hands.
 _OWN_PREFIX: Final[str] = "society_"
 #: Tools a society session never gets even in ``all`` mode: the agent writes
-#: the wiki only through its namespaced note tool.
-_SOCIETY_DENIED: Final[frozenset[str]] = frozenset({"wiki-ingest"})
+#: the wiki only through its namespaced note tool and runs commands only
+#: through its own contained shell (never the free-cwd shell tools).
+_SOCIETY_DENIED: Final[frozenset[str]] = frozenset(
+    {"wiki-ingest", "run-shell", "run_shell", "RunCommand"}
+)
 
 _ECOSYSTEM_CARD: Final[str] = """\
 ## The Jarvis ecosystem you work in
@@ -61,6 +64,8 @@ an assignment into a run under the assignee's identity. You never spawn agents o
 answer, propose). Compose it yourself. When you finish work for someone, end with a handoff: \
 what is done, where the output is, what evidence you used, what remains open, who owns the \
 next step.
+- Shell: society_shell runs commands in YOUR workspace folder only (relative paths stay inside it; \
+outside paths are refused). Destructive commands ask the user first.
 - Memory: the user's Obsidian wiki is the shared memory. Read it with wiki-recall and \
 wiki-page-read (pages marked unreviewed came from agents or the web — verify before relying \
 on them). Write only into your own folder with society_wiki_note (kind note for findings, \
@@ -109,10 +114,69 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     agent_id = agent_id_of(getattr(session, "session_id", "") or "")
     if rt is None or agent_id is None:
         return {}
-    return {
-        MessageAgentTool.name: cast(Tool, MessageAgentTool(rt, agent_id)),
-        WikiNoteTool.name: cast(Tool, WikiNoteTool(rt, agent_id, vault_root=_vault_root(cfg))),
-    }
+    workspace = Path(getattr(session, "cwd", "") or _workspace_fallback(cfg, agent_id))
+    tools: dict[str, Tool] = {}
+    # The folder tools of the chat surface, contained: on the society surface the
+    # kit's tools REPLACE the folder tools (runner_brain.build_override), so the
+    # agent would otherwise have no file hands at all; and the plain folder tools
+    # accept absolute paths, which its workspace rule forbids.
+    tools.update(_contained_folder_tools(workspace, getattr(session, "permission_mode", "")))
+    tools.update(
+        {
+            MessageAgentTool.name: cast(Tool, MessageAgentTool(rt, agent_id)),
+            WikiNoteTool.name: cast(Tool, WikiNoteTool(rt, agent_id, vault_root=_vault_root(cfg))),
+            ShellTool.name: cast(Tool, ShellTool(rt, agent_id, workspace=workspace)),
+        }
+    )
+    return tools
+
+
+class _ContainedTool:
+    """A folder tool whose path arguments must stay inside the workspace."""
+
+    _PATH_KEYS = ("file_path", "path", "directory", "cwd")
+
+    def __init__(self, inner: Any, workspace: Path) -> None:
+        self._inner = inner
+        self._workspace = workspace
+        self.name = inner.name
+        self.description = inner.description
+        self.schema = inner.schema
+        self.risk_tier = inner.risk_tier
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
+
+    async def execute(self, args: dict[str, Any], ctx: Any) -> Any:
+        from jarvis.core.protocols import ToolResult
+
+        from .shell import ContainmentError, resolve_contained
+
+        for key in self._PATH_KEYS:
+            raw = args.get(key)
+            if isinstance(raw, str) and raw.strip():
+                try:
+                    resolve_contained(self._workspace, raw)
+                except ContainmentError as exc:
+                    return ToolResult(success=False, output=None, error=str(exc))
+        return await self._inner.execute(args, ctx)
+
+
+def _contained_folder_tools(workspace: Path, permission_mode: str) -> dict[str, Tool]:
+    from jarvis.agent_chat.folder_tools import folder_tools
+
+    stance = "plan" if permission_mode == "plan" else "ask"
+    out: dict[str, Tool] = {}
+    for name, tool in folder_tools(workspace, stance=stance).items():
+        if name == "RunCommand":
+            continue  # the agent's own contained shell replaces it
+        out[name] = cast(Tool, _ContainedTool(tool, workspace))
+    return out
+
+
+def _workspace_fallback(cfg: Any, agent_id: str) -> Path:
+    data_dir = Path(getattr(getattr(cfg, "memory", None), "data_dir", None) or "data")
+    return data_dir / "society" / agent_id / "workspace"
 
 
 def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, Tool]] | None:
@@ -130,12 +194,12 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
         }
 
     def _apply(tools: dict[str, Tool]) -> dict[str, Tool]:
-        own = {n: t for n, t in tools.items() if n.startswith(_OWN_PREFIX)}
-        rest = {
+        own = {
             n: t
             for n, t in tools.items()
-            if not n.startswith(_OWN_PREFIX) and n not in _SOCIETY_DENIED
+            if n.startswith(_OWN_PREFIX) or isinstance(t, _ContainedTool)
         }
+        rest = {n: t for n, t in tools.items() if n not in own and n not in _SOCIETY_DENIED}
         picked = select_tools(
             rest,
             grant_mode=str(agent.grant_mode),

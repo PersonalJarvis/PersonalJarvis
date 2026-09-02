@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from jarvis.society import runtime as runtime_mod
-from jarvis.society.agent_tools import MESSAGE_TOOL_NAME, WIKI_NOTE_TOOL_NAME
+from jarvis.society.agent_tools import MESSAGE_TOOL_NAME, SHELL_TOOL_NAME, WIKI_NOTE_TOOL_NAME
 from jarvis.society.runtime import SocietyRuntime
 from jarvis.society.surface import (
     agent_id_of,
@@ -18,6 +18,9 @@ from jarvis.society.surface import (
     society_tool_filter,
     society_tools,
 )
+
+
+FOLDER = ["Read", "Write", "Edit", "Ls", "Glob", "Grep"]
 
 
 def _tool(name: str, desc: str = "x.") -> SimpleNamespace:
@@ -68,7 +71,8 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
     cfg = SimpleNamespace(wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")))
     session = SimpleNamespace(session_id="society:mailbox")
     own = society_tools(cfg, None, session)
-    assert set(own) == {MESSAGE_TOOL_NAME, WIKI_NOTE_TOOL_NAME}
+    assert set(own) == {MESSAGE_TOOL_NAME, WIKI_NOTE_TOOL_NAME, SHELL_TOOL_NAME, *FOLDER}
+    assert "RunCommand" not in own
 
     # The briefing fills the cache the sync filter reads.
     extra = await society_system_extra(cfg, None, session)
@@ -77,8 +81,9 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
     filt = society_tool_filter(session)
     assert filt is not None
     picked = list(filt(merged))
-    assert picked[:2] == [MESSAGE_TOOL_NAME, WIKI_NOTE_TOOL_NAME]
-    assert picked[2] == "gmail"  # focus first
+    own_names = {MESSAGE_TOOL_NAME, WIKI_NOTE_TOOL_NAME, SHELL_TOOL_NAME, *FOLDER}
+    assert set(picked[: len(own_names)]) == own_names
+    assert picked[len(own_names)] == "gmail"  # focus first
     assert "spawn-worker" not in picked and "cli_gh" not in picked
     assert "wiki-ingest" not in picked  # writes go through the namespaced note tool
     assert "wiki-recall" in picked
@@ -94,7 +99,9 @@ async def test_allowlist_mode_keeps_only_grants(rt: SocietyRuntime, tmp_path: Pa
     filt = society_tool_filter(session)
     assert filt is not None
     picked = list(filt({**TOOLS, **society_tools(cfg, None, session)}))
-    assert picked == [MESSAGE_TOOL_NAME, WIKI_NOTE_TOOL_NAME, "search-web"]
+    assert picked[-1] == "search-web"
+    assert {MESSAGE_TOOL_NAME, WIKI_NOTE_TOOL_NAME, SHELL_TOOL_NAME, *FOLDER} <= set(picked)
+    assert "gmail" not in picked and "cli_gh" not in picked
 
 
 async def test_unknown_agent_gets_no_briefing(rt: SocietyRuntime):

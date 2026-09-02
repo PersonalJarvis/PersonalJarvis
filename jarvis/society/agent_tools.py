@@ -36,10 +36,18 @@ from .roster import AgentState, slugify
 
 log = logging.getLogger(__name__)
 
-__all__ = ["MESSAGE_TOOL_NAME", "WIKI_NOTE_TOOL_NAME", "MessageAgentTool", "WikiNoteTool"]
+__all__ = [
+    "MESSAGE_TOOL_NAME",
+    "SHELL_TOOL_NAME",
+    "WIKI_NOTE_TOOL_NAME",
+    "MessageAgentTool",
+    "ShellTool",
+    "WikiNoteTool",
+]
 
 MESSAGE_TOOL_NAME: Final[str] = "society_message_agent"
 WIKI_NOTE_TOOL_NAME: Final[str] = "society_wiki_note"
+SHELL_TOOL_NAME: Final[str] = "society_shell"
 _KINDS: Final[dict[str, MsgType]] = {
     "say": MsgType.SAY,
     "query": MsgType.QUERY,
@@ -265,3 +273,130 @@ class WikiNoteTool:
             "reviewed: false\n"
             "---\n"
         )
+
+
+class ShellTool:
+    """Run a command in the agent's OWN workspace folder (agent-definition §3).
+
+    Local by decision (see ``jarvis/society/shell.py``): no container, but
+    path containment, the destructive-command escalation the global shell
+    tool uses, capped output and a hard timeout. Above the agent's ceiling or
+    on a require-approval rule the call parks in the approvals queue instead
+    of running (the chat shows the card; the person decides).
+    """
+
+    name: str = SHELL_TOOL_NAME
+    risk_tier: str = "monitor"
+    description: str = (
+        "Run a shell command in YOUR workspace folder (your files live there; relative paths "
+        "resolve inside it, paths outside it are refused). Use it for scripts, file "
+        "conversions, git, package managers and small tools. Output is capped; long jobs get "
+        "a timeout_s up to 900. Destructive commands (delete, format, reset) ask the user first."
+    )
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "command": {"type": "string", "description": "The command line to run."},
+            "cwd": {
+                "type": "string",
+                "description": "Subfolder of your workspace to run in (default: the workspace).",
+            },
+            "timeout_s": {
+                "type": "number",
+                "description": "Seconds before the command is killed.",
+            },
+        },
+        "required": ["command"],
+    }
+    is_action_tool: bool = True
+
+    def __init__(
+        self, runtime: Any, agent_id: str, *, workspace: Path, backend: Any = None
+    ) -> None:
+        from .shell import default_backend
+
+        self._runtime = runtime
+        self._agent_id = agent_id
+        self._workspace = Path(workspace)
+        self._backend = backend or default_backend()
+
+    @staticmethod
+    def _level(command: str) -> str:
+        from jarvis.safety.command_impact import classify_command
+
+        return str(classify_command(command).level)
+
+    def risk_tier_for_args(self, args: dict[str, Any]) -> str | None:
+        from jarvis.safety.command_impact import DESTRUCTIVE
+
+        command = str(args.get("command") or "").strip()
+        if command and self._level(command) == DESTRUCTIVE:
+            return "ask"
+        return None
+
+    def describe_args(self, args: dict[str, Any]) -> dict[str, str] | None:
+        command = str(args.get("command") or "").strip()
+        if not command:
+            return None
+        return {"command": command[:300], "folder": str(self._workspace)}
+
+    async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
+        from jarvis.safety.command_impact import DESTRUCTIVE
+
+        from .approvals import Verdict, decide
+        from .shell import DEFAULT_TIMEOUT_S, ContainmentError, resolve_contained
+
+        rt = self._runtime
+        caller = await rt.roster.get(self._agent_id)
+        if caller is None or caller.state is not AgentState.ACTIVE:
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "caller is not an active agent")
+        if await rt.store.kill_switch():
+            return _failure(FailureReason.KILL_SWITCH, "the society is halted")
+        command = str(args.get("command") or "").strip()
+        if not command:
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "command is required")
+        try:
+            cwd = resolve_contained(self._workspace, args.get("cwd"))
+        except ContainmentError as exc:
+            return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
+        level = self._level(command)
+        tier = "ask" if level == DESTRUCTIVE else "monitor"
+        verdict = decide(caller, "core:shell", tier, verb=level)
+        if verdict is Verdict.BLOCK:
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "command class is blocked")
+        if verdict is Verdict.QUEUE:
+            item = await rt.approvals.enqueue(
+                agent_id=caller.agent_id,
+                trace_id=f"shell:{caller.agent_id}:{getattr(ctx, 'trace_id', '')}"[:120],
+                capability="core:shell",
+                action={"command": command[:2000], "cwd": str(cwd), "level": level},
+                summary=f"Run in {cwd.name}: {command[:200]}",
+            )
+            return ToolResult(
+                success=False,
+                output={
+                    "reason": str(FailureReason.APPROVAL_REQUIRED),
+                    "retry": str(retry_action(FailureReason.APPROVAL_REQUIRED)),
+                    "approval_id": item.id,
+                },
+                error="approval_required: the user has to allow this command",
+            )
+        cwd.mkdir(parents=True, exist_ok=True)
+        try:
+            timeout = float(args.get("timeout_s") or DEFAULT_TIMEOUT_S)
+        except (TypeError, ValueError):
+            timeout = DEFAULT_TIMEOUT_S
+        result = await self._backend.run(command, cwd=cwd, timeout_s=timeout)
+        body = {
+            "output": result.output,
+            "exit_code": result.exit_code,
+            "seconds": round(result.seconds, 2),
+            "folder": str(cwd),
+            "backend": getattr(self._backend, "name", "local"),
+        }
+        if result.timed_out:
+            return ToolResult(success=False, output=body, error="command timed out")
+        if result.failed_to_start:
+            return ToolResult(success=False, output=body, error=result.output)
+        error = None if result.ok else f"exit {result.exit_code}"
+        return ToolResult(success=result.ok, output=body, error=error)

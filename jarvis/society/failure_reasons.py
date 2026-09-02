@@ -48,6 +48,7 @@ class FailureReason(StrEnum):
     MESSAGE_CAP = "message_cap"
     KILL_SWITCH = "kill_switch"
     BLOCKED_BY_POLICY = "blocked_by_policy"
+    APPROVAL_REQUIRED = "approval_required"
     INVALID_RESULT = "invalid_result"
     # Everything else
     INTERNAL_ERROR = "internal_error"
@@ -81,6 +82,7 @@ _RETRY: Final[dict[FailureReason, RetryAction]] = {
     FailureReason.MESSAGE_CAP: RetryAction.NEVER,
     FailureReason.KILL_SWITCH: RetryAction.NEVER,
     FailureReason.BLOCKED_BY_POLICY: RetryAction.NEVER,
+    FailureReason.APPROVAL_REQUIRED: RetryAction.RETRY_LATER,
     FailureReason.INVALID_RESULT: RetryAction.NEVER,
     FailureReason.INTERNAL_ERROR: RetryAction.RETRY_LATER,
 }
