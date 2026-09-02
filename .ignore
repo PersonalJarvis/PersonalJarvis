@@ -1,0 +1,6 @@
+# ripgrep-only companion to .gitignore (precedence: .ignore > .gitignore).
+# The marketing site clone is git-ignored on purpose (see .gitignore), but
+# editors and agents build their @-file pickers with ripgrep, and a git-ignored
+# folder vanishes from them too. Un-hide it for those tools only; git itself
+# never reads this file, so the site still cannot be staged from here.
+!personaljarvisweb/
