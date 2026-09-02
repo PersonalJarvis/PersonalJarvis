@@ -44,9 +44,14 @@ export const SKY = {
   hemiSky: "#d6ecff",
   hemiGround: "#7f9c5a",
   sun: "#fff1d6",
-  /** Directional and hemisphere intensities are plain multipliers in three r155+ — no π. */
-  sunIntensity: 0.8,
-  hemiIntensity: 0.78,
+  /**
+   * three r155+ lights are physical: Lambert/Toon divide irradiance by π, so a
+   * directional or hemisphere intensity of π lights a surface to exactly its
+   * colour. Lit horizontal ground lands just under 1.0 with these two; shade
+   * keeps ~55 % — the Clash-of-Clans contrast without clipping white walls.
+   */
+  sunIntensity: 0.72 * Math.PI,
+  hemiIntensity: 0.62 * Math.PI,
   /** Direction the sun shines FROM (unit-ish vector; warm afternoon, south-west). */
   sunFrom: [-60, 90, 45] as const,
 };
