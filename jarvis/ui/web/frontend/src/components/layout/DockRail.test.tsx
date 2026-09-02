@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { DOCK_RAIL_GEOMETRY, DockRail } from "@/components/layout/DockRail";
-import { NAV_GROUPS } from "@/components/layout/navGroups";
+import { NAV_FOOTER_ITEMS, NAV_GROUPS } from "@/components/layout/navGroups";
 import { useEventStore } from "@/store/events";
 
 // usePluginAttention polls /api/marketplace/plugins; the test drives it.
@@ -15,7 +15,8 @@ vi.mock("@/hooks/usePluginAttention", () => ({
       : { count: 0, names: [] },
 }));
 
-const ITEMS = NAV_GROUPS.flat();
+// The rail lists the footer's Feedback row too, behind one more hairline.
+const ITEMS = [...NAV_GROUPS.flat(), ...NAV_FOOTER_ITEMS];
 const { BASE, GAP, PAD_TOP } = DOCK_RAIL_GEOMETRY;
 
 /** clientY that lands on the centre of icon `i` (jsdom rects sit at 0,0). */

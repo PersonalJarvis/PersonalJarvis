@@ -81,20 +81,51 @@ export interface NavItem {
 }
 
 
-// Sidebar nav, clustered into logical groups separated by a thin divider:
-//   1) daily tools   2) content & data   3) configuration   4) social links.
-// The render walks the groups in order and draws a separator between them, so
-// the order below IS the on-screen order.
+/**
+ * The sidebar's group labels, one per entry of `NAV_GROUPS`, by position.
+ *
+ * The first group (the front page) carries no label and is never collapsed.
+ * Every other group is collapsible; `defaultOpen` is what a fresh install
+ * shows, and the user's choice is remembered per group in localStorage.
+ * "Tools" and "You" start folded so the column fits 1080 px without a
+ * scrollbar with the defaults.
+ */
+export interface NavGroupMeta {
+  id: string;
+  labelKey?: string;
+  fallbackLabel?: string;
+  defaultOpen: boolean;
+}
+
+export const NAV_GROUP_META: readonly NavGroupMeta[] = [
+  { id: "home", defaultOpen: true },
+  {
+    id: "workspace",
+    labelKey: "nav.group_workspace",
+    fallbackLabel: "Workspace",
+    defaultOpen: true,
+  },
+  { id: "tools", labelKey: "nav.group_tools", fallbackLabel: "Tools", defaultOpen: false },
+  { id: "you", labelKey: "nav.group_you", fallbackLabel: "You", defaultOpen: false },
+  { id: "system", labelKey: "nav.group_system", fallbackLabel: "System", defaultOpen: true },
+];
+
+// Sidebar nav in four labelled groups (v4, 2026-09-02):
+//   Workspace · Tools · You · System — preceded by the front page's own row.
+// The render walks the groups in order, so the order below IS the on-screen
+// order. Every section id is unchanged, so routing, deep links and the
+// navigate parity tests do not move.
 //
 // Exported because the mission deck shows every section at once and jumps to
 // them. A second hand-written list there would be the classic drift trap
 // (AP-4): a section added here would silently never appear on the deck.
 export const NAV_GROUPS: NavItem[][] = [
-  // 1) Daily tools — what the user reaches for most often.
+  // 0) The front page — Voice or Chat, named after the face the switch picked.
+  [{ id: "chats", labelKey: "nav.chats", icon: MessageSquare }],
+  // 1) Workspace — what the user builds with and reads back.
   [
-    { id: "chats", labelKey: "nav.chats", icon: MessageSquare },
     { id: "agents", labelKey: "nav.agents", icon: Users },
-    // Skills & Tools — Skills + Plugins + MCPs behind one tab switch. The id
+    // Skills & Plugins — Skills + Plugins + MCPs behind one tab switch. The id
     // "skills" is the default landing (Skills tab); matchIds keeps the row
     // highlighted for any of the fronted sections.
     {
@@ -103,36 +134,20 @@ export const NAV_GROUPS: NavItem[][] = [
       icon: Boxes,
       matchIds: ["skills", "plugins", "mcps"],
     },
-    // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
-    { id: "clis", labelKey: "nav.clis_hub", icon: Terminal, matchIds: ["clis", "cli-test-hub"] },
-    // The marketplace. Sits right under Skills & Tools because that is what
-    // fills those lists: a plugin, a skill or a wallpaper published there ends
-    // up in one of them once installed. Same Store icon as the badge that
-    // marks an installed entry, so the mark and its origin read as one thing.
+    // The marketplace fills those lists: a plugin, a skill or a wallpaper
+    // published there ends up in one of them once installed.
     {
       id: "marketplace",
       labelKey: "nav.marketplace",
       icon: Store,
       fallbackLabel: "Marketplace",
     },
-  ],
-  // 2) Content & data — things the user reads, edits, or browses.
-  [
     // Automations — the recurring agent tasks and their catalogue. The id stays
     // "tasks" (navigate parity, deep links); only the label and glyph changed.
     { id: "tasks", labelKey: "nav.tasks", icon: Workflow, fallbackLabel: "Automations" },
-    { id: "sessions", labelKey: "nav.sessions", icon: Mic },
-    { id: "run_inspector", labelKey: "nav.run_inspector", icon: Gauge },
-    // Spend & Tokens — every token the app spent, priced per provider,
-    // model and role. Sits with the other things the user reads back
-    // rather than with the settings: it reports, it does not configure.
-    { id: "costs", labelKey: "nav.costs", icon: Wallet, fallbackLabel: "Spend" },
-    // Artifacts — everything a run produced: the pages and pictures on a
-    // full-size stage, and every other run (its files, status and controls)
-    // in the same rail. The Outputs section that used to list the runs
-    // folded into this one (2026-08-23); the id stays "visualization" because
-    // it crosses the navigate parity test, the detachable-view registry and
-    // deep links.
+    // Artifacts — everything a run produced. The id stays "visualization"
+    // because it crosses the navigate parity test, the detachable-view
+    // registry and deep links.
     {
       id: "visualization",
       labelKey: "nav.visualization",
@@ -141,7 +156,31 @@ export const NAV_GROUPS: NavItem[][] = [
     },
     { id: "board", labelKey: "nav.board", icon: Sparkles },
     { id: "memory", labelKey: "nav.wiki", icon: Notebook },
-    { id: "contacts", labelKey: "nav.contacts", icon: Contact },
+    { id: "docs", labelKey: "nav.docs", icon: BookOpen },
+  ],
+  // 2) Tools — the instruments: transcription, the run inspector, the CLIs
+  // and the Agentic IDE (which puts real coding agents to work in a folder,
+  // so its row says "Beta" up front).
+  [
+    { id: "sessions", labelKey: "nav.sessions", icon: Mic },
+    { id: "run_inspector", labelKey: "nav.run_inspector", icon: Gauge },
+    // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
+    { id: "clis", labelKey: "nav.clis_hub", icon: Terminal, matchIds: ["clis", "cli-test-hub"] },
+    {
+      id: "agentic-ide",
+      labelKey: "nav.agentic_ide",
+      icon: MessagesSquare,
+      fallbackLabel: "Agentic IDE",
+      // The classic grid is the same destination as far as the row is
+      // concerned: someone who stepped back into it should still see where
+      // they are in the navigation.
+      matchIds: ["agentic-ide", "chat-workspace", "agentic-ide-classic"],
+      beta: true,
+    },
+  ],
+  // 3) You — what the assistant knows about the user, and the user's own
+  // ledgers.
+  [
     { id: "profile", labelKey: "nav.profile", icon: UserCircle2 },
     {
       id: "agent-instructions",
@@ -149,14 +188,17 @@ export const NAV_GROUPS: NavItem[][] = [
       icon: ScrollText,
       fallbackLabel: "Instructions",
     },
-    { id: "docs", labelKey: "nav.docs", icon: BookOpen },
+    { id: "contacts", labelKey: "nav.contacts", icon: Contact },
+    // Spend & Tokens — every token the app spent, priced per provider, model
+    // and role. It reports, it does not configure.
+    { id: "costs", labelKey: "nav.costs", icon: Wallet, fallbackLabel: "Spend" },
+    { id: "socials", labelKey: "nav.socials", icon: Share2 },
   ],
-  // 3) Configuration. API Keys now also fronts the former "Telephony" screen —
-  // the telephony status/credentials/scripts/calls live as a section inside the
+  // 4) System. API Keys also fronts the former "Telephony" screen — the
+  // telephony status/credentials/scripts/calls live as a section inside the
   // API-Keys view, so matchIds keeps this row highlighted when a "geh zur
   // Telefonie" voice command lands on the "telephony" id. Settings likewise
-  // fronts the former "Taskbar" + "Languages" sections (overlay/dictation
-  // controls live in OverlayTaskbarGroup, language selectors in LanguagesGroup).
+  // fronts the former "Taskbar" + "Languages" sections.
   [
     {
       id: "apikeys",
@@ -180,9 +222,7 @@ export const NAV_GROUPS: NavItem[][] = [
     },
     // The voice section — dictation, the custom vocabulary, the keys that start
     // it, the dictation language and the speech-to-text providers — behind one
-    // tab switch. "dictation" is the default landing; matchIds keeps the row
-    // highlighted for any of the fronted tabs. The label carries the {name}
-    // token, so the row reads as the user's own wake-word brand.
+    // tab switch. "dictation" is the default landing.
     {
       id: "dictation",
       labelKey: "nav.voice",
@@ -198,8 +238,6 @@ export const NAV_GROUPS: NavItem[][] = [
       // missing from a locale, and it is NOT interpolated.
       fallbackLabel: "Voice",
     },
-    // Appearance. Sits with the configuration group rather than with the
-    // content views: it changes how the app looks, not what it holds.
     {
       id: "wallpaper",
       labelKey: "nav.wallpaper",
@@ -207,26 +245,13 @@ export const NAV_GROUPS: NavItem[][] = [
       fallbackLabel: "Wallpaper",
     },
   ],
-  // 4) Social links + in-app feedback.
-  [
-    { id: "socials", labelKey: "nav.socials", icon: Share2 },
-    { id: "feedback", labelKey: "nav.feedback", icon: MessageSquareWarning },
-  ],
-  // 5) The Agentic IDE — its own bottom group on purpose. It is not one more
-  // page among the tools above: opening it puts real coding agents to work in a
-  // folder and can narrow the assistant to that workspace, so it sits apart
-  // with its own divider rather than blending into the list.
-  [
-    {
-      id: "agentic-ide",
-      labelKey: "nav.agentic_ide",
-      icon: MessagesSquare,
-      fallbackLabel: "Agentic IDE",
-      // The classic grid is the same destination as far as the row is
-      // concerned: someone who stepped back into it should still see where
-      // they are in the navigation.
-      matchIds: ["agentic-ide", "chat-workspace", "agentic-ide-classic"],
-      beta: true,
-    },
-  ],
+];
+
+/**
+ * Feedback lives in the sidebar's footer beside the brain card, not in a
+ * group: it is a door out of the product, not a section of it. Kept as a
+ * `NavItem` so the deck and the rail can still list it from one definition.
+ */
+export const NAV_FOOTER_ITEMS: NavItem[] = [
+  { id: "feedback", labelKey: "nav.feedback", icon: MessageSquareWarning },
 ];

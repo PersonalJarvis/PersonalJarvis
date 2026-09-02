@@ -33,14 +33,15 @@ describe("CodingModeBadge", () => {
     expect(badge.getAttribute("title")).toContain("Personal Jarvis");
   });
 
-  it("distinguishes 'agents running' from 'Jarvis is in their context'", () => {
+  it("says nothing while agents run but Jarvis is not in their context", () => {
     useEventStore.setState({
       codingMode: { active: false, hasWorkspace: true, workspace: "" },
       activeSection: "settings",
     });
     render(<CodingModeBadge />);
-    const badge = screen.getByTestId("coding-mode-badge");
-    expect(badge.textContent).toMatch(/OFF|AUS|INACTIVO/);
+    // OFF is the absence of the badge: a permanent "OFF" pill in the chrome
+    // of every screen was a reminder of a thing that was not happening.
+    expect(screen.queryByTestId("coding-mode-badge")).toBeNull();
   });
 
   it("navigates to the workspace instead of toggling the mode", () => {

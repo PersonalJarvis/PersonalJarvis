@@ -101,6 +101,24 @@ const config: Config = {
         "border-strong": "hsl(var(--border-strong))",
         "foreground-strong": "hsl(var(--foreground-strong))",
         "faint-foreground": "hsl(var(--faint-foreground))",
+        /*
+         * v4 (2026-09-02) — the neutral ladder's three new steps.
+         *
+         *   surface-raised       pressed / selected rows, code blocks: one
+         *                        step above --secondary.
+         *   foreground-secondary body on cards, descriptions: between body
+         *                        ink and meta ink.
+         *   foreground-faint     the same value as faint-foreground under the
+         *                        name the scale reads top-down (foreground →
+         *                        foreground-secondary → muted-foreground →
+         *                        foreground-faint).
+         *   accent-soft          the selected-row wash: the accent at 12 %,
+         *                        the only alpha surface the system keeps.
+         */
+        "surface-raised": "hsl(var(--surface-raised))",
+        "foreground-secondary": "hsl(var(--foreground-secondary))",
+        "foreground-faint": "hsl(var(--foreground-faint))",
+        "accent-soft": "rgb(var(--accent-rgb) / 0.12)",
       },
       /*
        * The three families, restated here so the utility layer and the base
@@ -124,12 +142,15 @@ const config: Config = {
           "Segoe UI",
           "sans-serif",
         ],
+        // Inter only (v4): `display` is the same family — the class survives
+        // for its call sites and carries weight + tracking from index.css.
         display: [
-          "Space Grotesk",
           "Inter Variable",
           "Inter",
           "ui-sans-serif",
           "system-ui",
+          "-apple-system",
+          "Segoe UI",
           "sans-serif",
         ],
         mono: [
@@ -141,38 +162,40 @@ const config: Config = {
         ],
       },
       /*
-       * The seven-step type scale, each step carrying its own line height and
-       * tracking so a size cannot be picked without the leading that goes with
-       * it.
+       * The SIX-step type scale (v4, 2026-09-02). Tailwind's own names carry
+       * it, so `text-sm` / `text-base` land on the scale instead of on the
+       * framework's 16 px default, and 12 px is the floor — there is no step
+       * below it to reach for.
        *
-       * No named scale existed, so authors reached for arbitrary values: of
-       * ~2,956 explicit size classes, 2,181 are 12px or under, bottoming out at
-       * a single `text-[7px]`. Named steps give the seven sizes the design
-       * actually has, and 11px (`text-micro`) is the hard floor — there is no
-       * step below it to reach for.
+       *   xs    12/16  badges, keyboard hints, table meta — the ONLY 12 px
+       *   sm    13/18  dense table cells, chip labels, code
+       *   base  14/20  default body, sidebar items, inputs, buttons
+       *   lg    16/24  card titles, list item titles, composer text
+       *   xl    20/28  view titles (the h1 inside a view)
+       *   2xl   28/34  hero / home greeting only
        *
-       * Tailwind's own xs/sm/base/lg/... entries are deliberately left intact:
-       * thousands of call sites use them and this wave does not migrate them.
-       *
-       *   display  24/1.2   section headline, the largest thing on a screen
-       *   page     20/1.3   the title of a view
-       *   title    15/1.4   card and row titles (600)
-       *   reading  15/1.6   running prose — chat, docs, descriptions
-       *   body     14/1.5   the default for everything else
-       *   meta     13/1.45  timestamps, table heads, secondary detail
-       *   micro    11/1.4   badges and dense labels. THE FLOOR.
+       * The earlier named steps (display … micro) stay as ALIASES onto these
+       * six so their ~1,100 call sites keep compiling and land on the scale:
+       * display→2xl, page→xl, title/reading→lg, body→base, meta→sm, micro→xs.
+       * `reading` keeps the loose leading running prose needs.
        */
       fontSize: {
+        xs: ["12px", { lineHeight: "16px" }],
+        sm: ["13px", { lineHeight: "18px" }],
+        base: ["14px", { lineHeight: "20px" }],
+        lg: ["16px", { lineHeight: "24px" }],
+        xl: ["20px", { lineHeight: "28px", letterSpacing: "-0.015em" }],
+        "2xl": ["28px", { lineHeight: "34px", letterSpacing: "-0.02em" }],
         display: [
-          "24px",
-          { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "600" },
+          "28px",
+          { lineHeight: "34px", letterSpacing: "-0.02em", fontWeight: "600" },
         ],
-        page: ["20px", { lineHeight: "1.3", letterSpacing: "-0.015em" }],
-        title: ["15px", { lineHeight: "1.4" }],
-        reading: ["15px", { lineHeight: "1.6" }],
-        body: ["14px", { lineHeight: "1.5" }],
-        meta: ["13px", { lineHeight: "1.45" }],
-        micro: ["11px", { lineHeight: "1.4", letterSpacing: "0.01em" }],
+        page: ["20px", { lineHeight: "28px", letterSpacing: "-0.015em" }],
+        title: ["16px", { lineHeight: "24px" }],
+        reading: ["16px", { lineHeight: "28px" }],
+        body: ["14px", { lineHeight: "20px" }],
+        meta: ["13px", { lineHeight: "18px" }],
+        micro: ["12px", { lineHeight: "16px" }],
       },
       /*
        * Two elevations, and nothing else.

@@ -34,22 +34,24 @@ Theme = Literal["dark", "light"]
 #: resolved to one of the two concrete themes by :func:`resolve_theme`.
 THEME_CHOICES: tuple[str, ...] = ("dark", "light", "system")
 
-#: Window/holding-page ground per theme. Dark is the deep slate the app shell
-#: sits on; light is the warm paper of ``--background``.
+#: Window/holding-page ground per theme — ``--background`` in ``index.css``
+#: (neutral, zero saturation, v4 2026-09-02). Mirrored by the ``--jbs-bg``
+#: tokens in ``frontend/index.html`` and the hex table in ``docs/BRAND.md``.
 WINDOW_BACKGROUND: dict[str, str] = {
-    "dark": "#0a0e14",
-    "light": "#fcfbf8",
+    "dark": "#0a0a0a",
+    "light": "#ffffff",
 }
 
-#: Text colours for the holding page, so it is legible on either ground.
+#: Text colours for the holding page (``--foreground``), legible on either ground.
 HOLDING_PAGE_FOREGROUND: dict[str, str] = {
-    "dark": "#e6e6e6",
-    "light": "#2b2b33",
+    "dark": "#fafafa",
+    "light": "#171717",
 }
 
+#: ``--muted-foreground``: the holding page's secondary line.
 HOLDING_PAGE_MUTED: dict[str, str] = {
-    "dark": "#9aa3ad",
-    "light": "#6b6b76",
+    "dark": "#a1a1a1",
+    "light": "#666666",
 }
 
 _DEFAULT_THEME: Theme = "dark"

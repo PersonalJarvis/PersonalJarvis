@@ -30,7 +30,7 @@ export function SurfaceSwitch({ className }: { className?: string }) {
       aria-label={t("sidebar.surface_hint")}
       data-testid="home-surface-switch"
       className={cn(
-        "grid grid-cols-2 gap-0.5 rounded-xl bg-background p-0.5",
+        "grid h-9 grid-cols-2 gap-0.5 rounded-md border border-border bg-background p-0.5",
         className,
       )}
     >
@@ -73,11 +73,11 @@ function SurfaceTab({
       data-testid={testId}
       onClick={onClick}
       className={cn(
-        "flex items-center justify-center gap-1.5 rounded-[10px] px-2 py-1.5 text-xs font-medium transition-colors",
-        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        "flex items-center justify-center gap-1.5 rounded-[6px] px-2 text-base font-medium transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         active
           ? "bg-secondary text-foreground"
-          : "text-foreground/70 hover:text-foreground",
+          : "text-muted-foreground hover:text-foreground",
       )}
     >
       {icon}

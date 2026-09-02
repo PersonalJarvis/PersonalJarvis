@@ -3,43 +3,42 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 /**
- * A chip. Pill-shaped, 11px, and quiet unless it is carrying a status.
+ * A badge: 24 px tall, 8 px radius, the xs step, and quiet unless it carries
+ * a status.
  *
- * The default used to be `bg-foreground/70` — a near-white slab that made a
- * neutral label the loudest object on a screen and inverted the ink ramp. It
- * now rests on --secondary, the same lift every other small surface uses, and
- * the three variants that mean something (`life`, `fault`, `degraded`) are the
- * only ones carrying hue. A status is never drawn in --foreground or
- * --primary: white "cancelled" outshouting a green "running" is exactly the
- * inversion those variants exist to prevent.
+ * The neutral default rests on --secondary with meta ink. The four coloured
+ * variants (`accent`, `success`, `warning`, `destructive`) are SOFT washes —
+ * the hue at 12 % under text in the hue — so a status never becomes the
+ * loudest object on a screen the way a solid fill did. `solid` is the rare
+ * deliberate --primary fill for the one chip that must be looked at.
  *
- * `solid` is the rare deliberate --primary fill; reach for it when a chip is
- * genuinely the one thing to look at, never as a default.
- *
- * A badge does not hover: it is a label, not a control. It is also the ONE
- * place in the product where `uppercase` is allowed, and callers opt into it.
+ * The older names (`life`, `fault`, `degraded`, `info`) stay as aliases onto
+ * the soft variants so their call sites keep compiling and land on the new
+ * look without an edit. A badge does not hover: it is a label, not a control.
+ * It is also the ONE place `uppercase` is allowed, and callers opt into it.
  */
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ring-offset-background focus:outline-none focus:ring-2 focus:ring-border-strong focus:ring-offset-2",
+  "inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-xs font-medium ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:shrink-0",
   {
     variants: {
       variant: {
-        default: "border-border bg-secondary text-foreground",
+        default: "border-border bg-secondary text-muted-foreground",
         secondary: "border-transparent bg-secondary text-muted-foreground",
         outline: "border-border-strong bg-transparent text-muted-foreground",
         solid: "border-transparent bg-primary text-primary-foreground",
+        /** Informational: selected, new, a count worth noting. */
+        accent: "border-accent/20 bg-accent-soft text-accent",
         /** Running, live, connected, on, passed. */
-        life: "border-transparent bg-success text-primary-foreground",
+        success: "border-success/20 bg-success/[0.12] text-success",
+        /** Paused, stale, partial, over quota. */
+        warning: "border-warning/20 bg-warning/[0.12] text-warning",
         /** Failed, blocked, disconnected, error. */
-        fault: "border-transparent bg-destructive text-destructive-foreground",
-        /** Stale, partial, needs attention. */
-        degraded: "border-transparent bg-warning text-primary-foreground",
-        info: "border-transparent bg-info text-info-foreground",
-        /**
-         * Retained so the ~30 existing call sites keep compiling; `fault` is
-         * the name to use for new code.
-         */
-        destructive: "border-transparent bg-destructive text-destructive-foreground",
+        destructive: "border-destructive/20 bg-destructive/[0.12] text-destructive",
+        // Aliases retained for existing call sites; use the four above.
+        life: "border-success/20 bg-success/[0.12] text-success",
+        fault: "border-destructive/20 bg-destructive/[0.12] text-destructive",
+        degraded: "border-warning/20 bg-warning/[0.12] text-warning",
+        info: "border-accent/20 bg-accent-soft text-accent",
       },
     },
     defaultVariants: { variant: "default" },

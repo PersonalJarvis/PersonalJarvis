@@ -15,12 +15,12 @@
     align-items: center;
     justify-content: center;
   }
-  /* one soft gold glow from above — the brand's single accent, never a fill */
+  /* one soft accent glow from above — the brand's single accent, never a fill */
   .glow {
     position: absolute; inset: 0;
     background:
-      radial-gradient(ellipse 90% 55% at 50% -8%, rgba(255, 214, 10, 0.10), transparent 62%),
-      radial-gradient(ellipse 120% 40% at 50% 112%, rgba(255, 214, 10, 0.04), transparent 60%);
+      radial-gradient(ellipse 90% 55% at 50% -8%, rgba(61, 139, 255, 0.10), transparent 62%),
+      radial-gradient(ellipse 120% 40% at 50% 112%, rgba(61, 139, 255, 0.04), transparent 60%);
   }
   .card {
     position: relative;
@@ -32,13 +32,13 @@
   .mascot-wrap { position: relative; width: 128px; height: 128px; }
   .mascot-wrap .ring {
     position: absolute; border-radius: 50%;
-    border: 1px solid rgba(255, 214, 10, 0.32);
+    border: 1px solid rgba(250, 250, 250, 0.32);
   }
   .ring.r1 { inset: -14px; }
-  .ring.r2 { inset: -30px; border-color: rgba(255, 214, 10, 0.16); }
+  .ring.r2 { inset: -30px; border-color: rgba(250, 250, 250, 0.16); }
   .mascot {
     width: 128px; height: 128px; object-fit: contain;
-    filter: drop-shadow(0 0 26px rgba(255, 214, 10, 0.30));
+    filter: drop-shadow(0 0 26px rgba(61, 139, 255, 0.30));
   }
   .wordmark {
     width: 760px; display: block;
@@ -50,15 +50,15 @@
   .tagline {
     font-family: 'Inter', sans-serif;
     font-size: 27px; font-weight: 600;
-    color: #F4F4F5; letter-spacing: -0.01em;
+    color: #FAFAFA; letter-spacing: -0.01em;
     text-align: center;
   }
-  .tagline .gold { color: #FFD60A; }
+  .tagline .accent { color: #3D8BFF; }
   .meta {
     font-family: 'JetBrains Mono', monospace;
     font-size: 16px; font-weight: 500;
     letter-spacing: 0.22em;
-    color: #FFD60A;
+    color: #A1A1A1;
   }
 </style>
 </head>
@@ -71,7 +71,7 @@
       <img class="mascot" src="../icons/jarvis-gigi-256.png" alt="" />
     </div>
     <img class="wordmark" src="banner.png" alt="Personal Jarvis" />
-    <div class="tagline">Talk to your computer — <span class="gold">and watch it do the work.</span></div>
+    <div class="tagline">Talk to your computer — <span class="accent">and watch it do the work.</span></div>
     <div class="meta">OPEN SOURCE · APACHE 2.0 · LINUX · MACOS · WINDOWS</div>
   </div>
 </body>

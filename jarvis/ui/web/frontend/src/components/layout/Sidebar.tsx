@@ -9,6 +9,8 @@ import {
   Plus,
 } from "lucide-react";
 import {
+  NAV_FOOTER_ITEMS,
+  NAV_GROUP_META,
   NAV_GROUPS,
   presentNavItem,
   resolveNavLabel,
@@ -38,6 +40,26 @@ import { GigiMark } from "@/components/GigiMark";
 
 /** Where the Chat row remembers whether its history is folded out. */
 const CHATS_OPEN_KEY = "jarvis.sidebar.recent-chats-open";
+
+/** Where each nav group remembers whether it is folded. One key per group. */
+const GROUP_OPEN_KEY = "jarvis.sidebar.group-open.v1";
+
+function readGroupOpen(): Record<string, boolean> {
+  try {
+    const raw = window.localStorage.getItem(GROUP_OPEN_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeGroupOpen(state: Record<string, boolean>): void {
+  try {
+    window.localStorage.setItem(GROUP_OPEN_KEY, JSON.stringify(state));
+  } catch {
+    // Storage denied: the fold still works for this visit.
+  }
+}
 
 /*
  * Why `clsx` and not `cn` on the rows below.
@@ -135,13 +157,11 @@ export interface SidebarProps {
 }
 
 /** Width the sidebar was designed at, and the one a double-click restores.
- *  320 since 2026-08-23: the front page's controls live in this column now
- *  and the maintainer dragged it wider on first use — that is the default.
- *  400 since 2026-08-27: the Agentic IDE's chat mode lists the workspace's
- *  sessions by their titles, and at 320 a title was an ellipsis after four
- *  words. The maintainer dragged the column to about 400 to read them and
- *  asked for that to be where it starts. */
-export const SIDEBAR_DEFAULT_WIDTH = 400;
+ *  240 since 2026-09-02 (v4 redesign): the Cursor / Grok column. The
+ *  navigation is a single 14 px list now, so it fits; the Agentic IDE's
+ *  chat list, which drove the older 400, is still one drag away and the
+ *  dragged width is remembered. */
+export const SIDEBAR_DEFAULT_WIDTH = 240;
 
 /**
  * localStorage key the dragged width is remembered under.
@@ -157,8 +177,10 @@ export const SIDEBAR_DEFAULT_WIDTH = 400;
  *
  * `v3` with the 400 px default (same day): the wider column is the point of
  * the change, so every existing column is re-seeded at it once more.
+ *
+ * `v4` with the 240 px default (2026-09-02): the redesign's column.
  */
-export const SIDEBAR_WIDTH_STORAGE_KEY = "jarvis.sidebar.width.v3";
+export const SIDEBAR_WIDTH_STORAGE_KEY = "jarvis.sidebar.width.v4";
 
 /**
  * Narrowest the sidebar goes: the nav icons, and nothing else.
@@ -279,6 +301,20 @@ export function Sidebar({
   useEffect(() => {
     if (chatFace) setSectionsShown(false);
   }, [chatFace]);
+  /*
+   * Which nav groups are folded. A group's default comes from NAV_GROUP_META
+   * and the user's choice outranks it, remembered per group. A group that
+   * holds the ACTIVE section is always shown open, so "where am I" is never
+   * hidden behind a fold.
+   */
+  const [groupOpen, setGroupOpen] = useState<Record<string, boolean>>(readGroupOpen);
+  const toggleGroup = useCallback((id: string, fallback: boolean) => {
+    setGroupOpen((current) => {
+      const next = { ...current, [id]: !(current[id] ?? fallback) };
+      writeGroupOpen(next);
+      return next;
+    });
+  }, []);
   const resetTranscript = useHomeStore((s) => s.resetTranscript);
   // On the voice stage: clear the lane, drop the open voice thread and let the
   // backend forget the one it was seeded with. We stay on Voice and the mic
@@ -412,10 +448,10 @@ export function Sidebar({
       {/* One 8px gutter down the whole column — header, navigation and footer
           share it, so the rows, the "+ New" button and the brain card all line
           up on the same left edge. */}
-      <div className={cn("border-b border-border px-2", railed ? "py-2.5" : "py-3")}>
+      <div className={cn("px-3", railed ? "py-2.5" : "pb-2 pt-3")}>
         <div
           className={cn(
-            "flex items-center gap-3",
+            "flex items-center gap-2.5",
             railed && "flex-col justify-center gap-1.5",
           )}
         >
@@ -423,22 +459,22 @@ export function Sidebar({
             data-testid="sidebar-style-avatar"
             data-variant="logo"
             title={railed ? `${assistantName} — ${voiceLabel}` : undefined}
-            className={cn("relative shrink-0", railed ? "h-9 w-9" : "h-11 w-11")}
+            className={cn("relative shrink-0", railed ? "h-9 w-9" : "h-7 w-7")}
           >
             {railed && devTag && (
               <span
                 data-testid="sidebar-instance-tag"
                 title={t("sidebar.instance_dev_hint")}
-                className="absolute -bottom-1 -right-1 z-10 rounded-full bg-primary px-1 text-micro font-medium leading-none text-primary-foreground"
+                className="absolute -bottom-1 -right-1 z-10 rounded-sm bg-primary px-1 text-xs font-medium leading-none text-primary-foreground"
               >
                 {devTag}
               </span>
             )}
-            <GigiMark size={railed ? 36 : 44} />
+            <GigiMark size={railed ? 36 : 28} />
           </span>
           {!railed && (
             <div className="flex min-w-0 flex-1 flex-col">
-              <span className="flex min-w-0 items-center gap-2 font-display text-title font-semibold text-foreground-strong">
+              <span className="flex min-w-0 items-center gap-2 text-base font-medium text-foreground-strong">
                 <span className="truncate">{assistantName}</span>
                 {devTag && (
                   // A mark, not a status: the fill is the neutral accent, so it
@@ -447,36 +483,51 @@ export function Sidebar({
                   <span
                     data-testid="sidebar-instance-tag"
                     title={t("sidebar.instance_dev_hint")}
-                    className="shrink-0 rounded-full bg-primary px-1.5 text-micro font-medium leading-none text-primary-foreground"
+                    className="shrink-0 rounded-sm bg-primary px-1.5 text-xs font-medium leading-none text-primary-foreground"
                   >
                     {devTag}
                   </span>
                 )}
               </span>
-              {/* The state, as a plain line rather than a tiny all-caps chip.
-                  The dot to its right already carries the colour; a pill here
-                  was a second, louder copy of the same fact. */}
-              <span className="truncate text-meta text-muted-foreground">
-                {voiceLabel}
+              {/* The state: a 6 px dot in the status colour, then the word. */}
+              <span className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
+                {showSpinner ? (
+                  <Loader2
+                    className="h-3 w-3 shrink-0 animate-spin"
+                    data-testid="voice-starting-spinner"
+                    aria-hidden
+                  />
+                ) : (
+                  <span
+                    className={cn(
+                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                      vs.dot,
+                      vs.pulse && "animate-jarvis-pulse",
+                    )}
+                    aria-hidden
+                  />
+                )}
+                <span className="truncate">{voiceLabel}</span>
               </span>
             </div>
           )}
-          {showSpinner ? (
-            <Loader2
-              className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
-              data-testid="voice-starting-spinner"
-              aria-hidden
-            />
-          ) : (
-            <span
-              className={cn(
-                "h-2 w-2 rounded-full",
-                vs.dot,
-                vs.pulse && "animate-jarvis-pulse",
-              )}
-              aria-hidden
-            />
-          )}
+          {railed &&
+            (showSpinner ? (
+              <Loader2
+                className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
+                data-testid="voice-starting-spinner"
+                aria-hidden
+              />
+            ) : (
+              <span
+                className={cn(
+                  "h-2 w-2 rounded-full",
+                  vs.dot,
+                  vs.pulse && "animate-jarvis-pulse",
+                )}
+                aria-hidden
+              />
+            ))}
           {onToggleCollapsed && (
             <button
               type="button"
@@ -492,7 +543,7 @@ export function Sidebar({
                 // over the rail — on near-black that is darker than rest, so
                 // the control dimmed under the pointer.
                 "transition-colors hover:bg-secondary hover:text-foreground",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 railed ? "h-7 w-7" : "-mr-1 h-7 w-7",
               )}
             >
@@ -511,18 +562,15 @@ export function Sidebar({
                 onto the voice stage itself, where it has the room to be read.
                 Hidden while the IDE's chats own the column: two switches with
                 "Chat" on both halves are two questions nobody asked. */}
-            <SurfaceSwitch className="mt-2" />
-            {/* An object that answers a pointer by stepping up one surface —
-                `bg-card` at rest, `bg-secondary` under the cursor. The old
-                `hover:bg-secondary/80` went the other way: it thinned the fill
-                the button already had. */}
+            <SurfaceSwitch className="mt-3" />
+            {/* A full-width outline button: the one action this column offers. */}
             <button
               type="button"
               onClick={onVoiceSurface ? startNewVoice : startNewChat}
               data-testid="sidebar-new-chat"
-              className="mt-2 flex h-9 w-full items-center gap-2 rounded-md bg-card px-3 text-body font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong"
+              className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-md border border-border-strong px-3 text-base font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
             >
-              <Plus aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <Plus aria-hidden className="h-4 w-4 shrink-0" />
               {onVoiceSurface ? t("sidebar.new_voice_chat") : t("sidebar.new_chat")}
             </button>
             <BrowserRealtimeControl />
@@ -551,9 +599,9 @@ export function Sidebar({
                 onClick={() => setSectionsShown(true)}
                 data-testid="sidebar-show-sections"
                 className={clsx(
-                  "group mx-2 mb-2 mt-3 flex h-10 shrink-0 items-center gap-2 rounded-md px-3 text-body transition-colors",
+                  "group mx-2 mb-2 mt-3 flex h-9 shrink-0 items-center gap-2 rounded-md px-3 text-base font-medium transition-colors",
                   "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 )}
               >
                 <LayoutList
@@ -578,9 +626,9 @@ export function Sidebar({
                 onClick={() => setSectionsShown(false)}
                 data-testid="sidebar-show-chats"
                 className={clsx(
-                  "group mb-2 flex h-10 w-full items-center gap-2 rounded-md px-3 text-body transition-colors",
+                  "group mb-2 flex h-9 w-full items-center gap-2 rounded-md px-3 text-base font-medium transition-colors",
                   "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 )}
               >
                 <ChevronLeft
@@ -590,17 +638,58 @@ export function Sidebar({
                 <span className="flex-1 text-left">{t("sidebar.back_to_chats")}</span>
               </button>
             )}
-            {NAV_GROUPS.map((group, groupIndex) => (
+            {NAV_GROUPS.map((group, groupIndex) => {
+              const meta = NAV_GROUP_META[groupIndex];
+              const collapsible = Boolean(meta?.labelKey);
+              const holdsActive = group.some((raw) =>
+                raw.matchIds ? raw.matchIds.includes(active) : raw.id === active,
+              );
+              const open =
+                !collapsible ||
+                holdsActive ||
+                (groupOpen[meta.id] ?? meta.defaultOpen);
+              const groupLabel = meta?.labelKey
+                ? resolveNavLabel(t, {
+                    id: "chats",
+                    labelKey: meta.labelKey,
+                    icon: Plus,
+                    fallbackLabel: meta.fallbackLabel,
+                  })
+                : null;
+              return (
               <ul
-                key={groupIndex}
-                className={cn(
-                  "space-y-0.5",
-                  // One window: groups sit in one list. A hairline here read as
-                  // a dead rule; a large gap read as separate panes.
-                  groupIndex > 0 && "mt-1",
-                )}
+                key={meta?.id ?? groupIndex}
+                data-testid={meta ? `nav-group-${meta.id}` : undefined}
+                data-open={open ? "true" : "false"}
+                className={cn("space-y-0.5", groupIndex > 0 && "mt-5")}
               >
-                {group.map((raw) => {
+                {groupLabel && (
+                  <li>
+                    {/* The group label doubles as its fold. Uppercase, faint
+                        ink, the xs step — a heading, never a row. */}
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(meta.id, meta.defaultOpen)}
+                      aria-expanded={open}
+                      data-testid={`nav-group-toggle-${meta.id}`}
+                      className={clsx(
+                        "group mb-1 flex h-6 w-full items-center gap-1 rounded-sm px-3 text-xs font-medium uppercase tracking-wide",
+                        "text-foreground-faint transition-colors hover:text-muted-foreground",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      )}
+                    >
+                      <span className="flex-1 truncate text-left">{groupLabel}</span>
+                      <ChevronDown
+                        aria-hidden
+                        className={cn(
+                          "h-3 w-3 shrink-0 opacity-0 transition-[opacity,transform] group-hover:opacity-100 group-focus-visible:opacity-100",
+                          !open && "-rotate-90 opacity-100",
+                        )}
+                      />
+                    </button>
+                  </li>
+                )}
+                {open && group.map((raw) => {
                   const item = presentNavItem(raw, surface);
                   return (
                     <NavRow
@@ -658,20 +747,45 @@ export function Sidebar({
                   );
                 })}
               </ul>
-            ))}
+              );
+            })}
           </nav>
           )}
         </div>
       )}
 
-      <div className="border-t border-border p-2">
+      <div className={cn("flex flex-col gap-1 border-t border-border", railed ? "p-2" : "p-3")}>
+        {!railed &&
+          NAV_FOOTER_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const isActive = item.id === active;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                data-testid={`nav-row-${item.id}`}
+                onClick={() => setActive(item.id)}
+                className={clsx(
+                  "group flex h-9 w-full items-center gap-2 rounded-md px-3 text-base font-medium transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  isActive
+                    ? "jarvis-nav-active bg-secondary text-foreground"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                )}
+              >
+                <Icon aria-hidden className="h-4 w-4 shrink-0" />
+                <span className="truncate">{resolveNavLabel(t, item)}</span>
+              </button>
+            );
+          })}
         <button
           type="button"
           onClick={() => setActive("apikeys")}
+          data-testid="sidebar-brain-card"
           className={cn(
-            "group flex w-full items-center rounded-lg bg-card text-left transition-colors hover:bg-secondary",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
-            railed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2",
+            "group flex w-full items-center rounded-lg border border-border bg-card text-left transition-colors hover:border-border-strong",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
+            railed ? "justify-center px-2 py-2" : "gap-3 p-3",
           )}
           // On the rail the card shrinks to its status dot, so everything it
           // would have said moves into the hover text — otherwise the dot is a
@@ -700,12 +814,12 @@ export function Sidebar({
           {!railed && (
           <div className="flex-1 min-w-0">
             <div
-              className="text-meta text-muted-foreground"
+              className="text-xs uppercase tracking-wide text-foreground-faint"
               data-testid="sidebar-footer-tier"
             >
               {footerLabel}
             </div>
-            <div className="truncate text-title font-semibold text-foreground-strong">
+            <div className="truncate text-base font-medium text-foreground-strong">
               {footerProvider}
             </div>
             {/* The model id actually in use (e.g. "claude-opus-4-8", or the
@@ -713,7 +827,7 @@ export function Sidebar({
                 model is in use, not just the provider. */}
             {footerModel && (
               <div
-                className="truncate text-meta text-muted-foreground"
+                className="truncate text-sm text-muted-foreground"
                 title={footerModel}
                 data-testid="sidebar-brain-model"
               >
@@ -796,22 +910,23 @@ function NavRow({
         onClick={onClick}
         title={hint}
         className={clsx(
-          "group relative flex h-10 w-full items-center gap-2 rounded-md px-3 text-body font-medium transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+          "group relative flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           // Leave the chevron its own column so the two buttons never overlap.
           expand && "pr-9",
+          // Rest is muted ink; hover AND active are the same lift with body
+          // ink, and only the active row carries the 2 px accent bar at the
+          // left edge (`.jarvis-nav-active`).
           active
-            ? "jarvis-nav-active bg-secondary text-foreground-strong"
-            : "text-foreground hover:bg-card",
+            ? "jarvis-nav-active bg-secondary text-foreground"
+            : "text-muted-foreground hover:bg-secondary hover:text-foreground",
         )}
       >
         <Icon
           aria-hidden
           className={cn(
             "h-4 w-4 shrink-0 transition-colors",
-            active
-              ? "text-foreground-strong"
-              : "text-muted-foreground group-hover:text-foreground",
+            active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
           )}
         />
         <span className="flex min-w-0 flex-1 items-center gap-2 text-left">
@@ -821,7 +936,7 @@ function NavRow({
           {betaLabel && (
             <span
               data-testid={`nav-beta-${item.id}`}
-              className="shrink-0 rounded-full bg-secondary px-1.5 text-micro text-muted-foreground"
+              className="shrink-0 rounded-sm border border-border bg-secondary px-1 text-xs font-medium text-muted-foreground"
             >
               {betaLabel}
             </span>
@@ -846,7 +961,7 @@ function NavRow({
           />
         )}
         {badge !== undefined && badge > 0 && (
-          <span className="shrink-0 rounded-full bg-secondary px-1.5 text-micro tabular-nums text-muted-foreground">
+          <span className="shrink-0 rounded-sm bg-secondary px-1 text-xs tabular-nums text-muted-foreground">
             {badge}
           </span>
         )}
@@ -863,8 +978,8 @@ function NavRow({
             "absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md transition-colors",
             // `hover:bg-background/60` painted the PAGE over the rail here,
             // i.e. it went darker under the pointer. Up the ladder instead.
-            "text-muted-foreground hover:bg-secondary hover:text-foreground",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+            "text-muted-foreground hover:bg-surface-raised hover:text-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           )}
         >
           <ChevronDown

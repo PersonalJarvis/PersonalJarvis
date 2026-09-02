@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -567,6 +567,9 @@ describe("Sidebar icon rail", () => {
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     expect(screen.getByTestId("sidebar").dataset.railed).toBe("false");
+    // "Tools" starts folded so the column fits 1080 px; its label is the fold.
+    expect(screen.getByTestId("nav-group-tools").dataset.open).toBe("false");
+    fireEvent.click(screen.getByTestId("nav-group-toggle-tools"));
     // The label is ON the row, and names the workspace rather than carrying
     // the retired generic "Chat" label shown in the product screenshot.
     expect(screen.getByTestId("nav-row-agentic-ide").textContent).toContain(

@@ -1,9 +1,8 @@
 # Brand Guidelines
 
-The visual language of Personal Jarvis: ink on paper, paper on ink, and a distressed
-wordmark. The interface carries no brand hue; the wordmark below is the one place a
-colour treatment survives. The goal is *confident and engineered*, never noisy or
-playful.
+The visual language of Personal Jarvis: a neutral, cool-black interface with one
+restrained accent, and a distressed wordmark. The goal is *confident and engineered*,
+never noisy or playful.
 
 <p align="center">
   <img src="../assets/brand/banner.png" alt="Personal Jarvis wordmark" width="720" />
@@ -11,68 +10,79 @@ playful.
 
 ## Color
 
-Two values and the distance between them. The primary is whichever end of the value scale
-the ground is not: ink on paper in light mode, white on charcoal in dark mode. State is not a
-colour either, so warning and success read on the same ink token. Dark does not inherit the
-paper's warmth — that was the muddy look.
+Pure neutral in both modes — every surface, rim and ink is `r = g = b`. Elevation is a
+surface colour one step lighter than the one under it (canvas → sidebar → card → popover),
+never a shadow. One accent (blue) marks links, focus rings, the active nav row, selected
+states, progress bars and informational status. Green, amber and red are status only.
 
-| Role | Hex | Chip |
+| Role | Dark | Light |
 |---|---|---|
-| Ink (light primary, light text) | `#26251E` | ![](https://img.shields.io/badge/_-26251E?style=flat-square&labelColor=26251E) |
-| Canvas / paper (light ground, dark text) | `#F7F7F4` | ![](https://img.shields.io/badge/_-F7F7F4?style=flat-square&labelColor=F7F7F4) |
-| Ground (dark canvas) | `#121212` | ![](https://img.shields.io/badge/_-121212?style=flat-square&labelColor=121212) |
-| White (dark primary, actions only) | `#FFFFFF` | ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
-| Foreground, dark | `#F0F0F0` | ![](https://img.shields.io/badge/_-F0F0F0?style=flat-square&labelColor=F0F0F0) |
-| Card, light | `#FFFFFF` | ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
-| Card, dark | `#1F1F1F` | ![](https://img.shields.io/badge/_-1F1F1F?style=flat-square&labelColor=1F1F1F) |
-| Sidebar, dark | `#171717` | ![](https://img.shields.io/badge/_-171717?style=flat-square&labelColor=171717) |
-| Hover / selected, dark | `#292929` | ![](https://img.shields.io/badge/_-292929?style=flat-square&labelColor=292929) |
-| User bubble, dark | `#2E2E2E` | ![](https://img.shields.io/badge/_-2E2E2E?style=flat-square&labelColor=2E2E2E) |
-| Hairline, light | `#DFDDD5` | ![](https://img.shields.io/badge/_-DFDDD5?style=flat-square&labelColor=DFDDD5) |
-| Hairline, dark | `#2B2B2B` | ![](https://img.shields.io/badge/_-2B2B2B?style=flat-square&labelColor=2B2B2B) |
-| Muted text, light | `#66635A` | ![](https://img.shields.io/badge/_-66635A?style=flat-square&labelColor=66635A) |
-| Muted text, dark | `#A3A3A3` | ![](https://img.shields.io/badge/_-A3A3A3?style=flat-square&labelColor=A3A3A3) |
-| Destructive, light | `#BE1744` | ![](https://img.shields.io/badge/_-BE1744?style=flat-square&labelColor=BE1744) |
-
-Surfaces, rims and ink are neutral. Colour is spent only where it carries information:
-provider logos in their real colours, the sixteen ANSI slots, and the five colour jobs
-below (signal, life, fault, degraded, info) plus coloured diffs. Everything else is ink
-and paper.
+| Canvas (`--background`) | `#0A0A0A` ![](https://img.shields.io/badge/_-0A0A0A?style=flat-square&labelColor=0A0A0A) | `#FFFFFF` ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
+| Sidebar (`--sidebar`) | `#0F0F0F` ![](https://img.shields.io/badge/_-0F0F0F?style=flat-square&labelColor=0F0F0F) | `#FAFAFA` ![](https://img.shields.io/badge/_-FAFAFA?style=flat-square&labelColor=FAFAFA) |
+| Card (`--card`) | `#171717` ![](https://img.shields.io/badge/_-171717?style=flat-square&labelColor=171717) | `#FFFFFF` ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
+| Popover (`--popover`) | `#1C1C1C` ![](https://img.shields.io/badge/_-1C1C1C?style=flat-square&labelColor=1C1C1C) | `#FFFFFF` ![](https://img.shields.io/badge/_-FFFFFF?style=flat-square&labelColor=FFFFFF) |
+| Hover / input (`--secondary`, `--muted`, `--input`) | `#1F1F1F` ![](https://img.shields.io/badge/_-1F1F1F?style=flat-square&labelColor=1F1F1F) | `#F5F5F5` ![](https://img.shields.io/badge/_-F5F5F5?style=flat-square&labelColor=F5F5F5) |
+| Raised (`--surface-raised`) | `#262626` ![](https://img.shields.io/badge/_-262626?style=flat-square&labelColor=262626) | `#EDEDED` ![](https://img.shields.io/badge/_-EDEDED?style=flat-square&labelColor=EDEDED) |
+| Hairline (`--border`) | `#262626` ![](https://img.shields.io/badge/_-262626?style=flat-square&labelColor=262626) | `#E5E5E5` ![](https://img.shields.io/badge/_-E5E5E5?style=flat-square&labelColor=E5E5E5) |
+| Strong rim (`--border-strong`) | `#383838` ![](https://img.shields.io/badge/_-383838?style=flat-square&labelColor=383838) | `#D1D1D1` ![](https://img.shields.io/badge/_-D1D1D1?style=flat-square&labelColor=D1D1D1) |
+| Foreground (`--foreground`) | `#FAFAFA` ![](https://img.shields.io/badge/_-FAFAFA?style=flat-square&labelColor=FAFAFA) | `#171717` ![](https://img.shields.io/badge/_-171717?style=flat-square&labelColor=171717) |
+| Secondary ink (`--foreground-secondary`) | `#B8B8B8` ![](https://img.shields.io/badge/_-B8B8B8?style=flat-square&labelColor=B8B8B8) | `#525252` ![](https://img.shields.io/badge/_-525252?style=flat-square&labelColor=525252) |
+| Muted ink (`--muted-foreground`) | `#A1A1A1` ![](https://img.shields.io/badge/_-A1A1A1?style=flat-square&labelColor=A1A1A1) | `#666666` ![](https://img.shields.io/badge/_-666666?style=flat-square&labelColor=666666) |
+| Faint ink (`--foreground-faint`) | `#737373` ![](https://img.shields.io/badge/_-737373?style=flat-square&labelColor=737373) | `#999999` ![](https://img.shields.io/badge/_-999999?style=flat-square&labelColor=999999) |
+| Primary fill (`--primary`) | `#FAFAFA` ![](https://img.shields.io/badge/_-FAFAFA?style=flat-square&labelColor=FAFAFA) | `#171717` ![](https://img.shields.io/badge/_-171717?style=flat-square&labelColor=171717) |
+| Accent (`--accent`) | `#3D8BFF` ![](https://img.shields.io/badge/_-3D8BFF?style=flat-square&labelColor=3D8BFF) | `#0A6FF5` ![](https://img.shields.io/badge/_-0A6FF5?style=flat-square&labelColor=0A6FF5) |
+| Success (`--success`) | `#22C35E` ![](https://img.shields.io/badge/_-22C35E?style=flat-square&labelColor=22C35E) | `#15803D` ![](https://img.shields.io/badge/_-15803D?style=flat-square&labelColor=15803D) |
+| Warning (`--warning`) | `#F59E0B` ![](https://img.shields.io/badge/_-F59E0B?style=flat-square&labelColor=F59E0B) | `#BD5E05` ![](https://img.shields.io/badge/_-BD5E05?style=flat-square&labelColor=BD5E05) |
+| Destructive (`--destructive`) | `#DC2828` ![](https://img.shields.io/badge/_-DC2828?style=flat-square&labelColor=DC2828) | `#C52020` ![](https://img.shields.io/badge/_-C52020?style=flat-square&labelColor=C52020) |
 
 These are the exact tokens from the desktop app
-(`jarvis/ui/web/frontend/src/index.css`). The README, the product, and any brand asset
-must stay on the same values so nothing drifts.
+(`jarvis/ui/web/frontend/src/index.css`). `jarvis/ui/theme.py` (`WINDOW_BACKGROUND`),
+the boot splash tokens in `frontend/index.html` (`--jbs-*`), the README, and any brand
+asset must stay on the same values so nothing drifts.
 
 ### Rules
 
-- **Full white is for actions.** On the dark ground, white is the primary. Spend it on
-  something the reader can press, not on an indicator that is merely reporting a fact.
-- **Dark is graphite, not a void and not inverted cream.** Light mode is the Design.md
-  paper (`#F7F7F4` canvas, warm ink). Dark mode does not flip that page: greys are
-  `r = g = b`, the room is `#121212` (never `#0A0A0A` — that read as a skeleton), body
-  text is `#F0F0F0` not cream, muted is `#A3A3A3` not taupe, every card has a visible
-  hairline, and chat bubbles are quiet fills (`#1F1F1F` in, `#2E2E2E` out).
+- **Neutral, both modes.** Surfaces, rims and ink carry zero saturation. Dark is a
+  cool black room (`#0A0A0A`) with objects one step lighter each; light is the same ladder
+  inverted on white. No warm cast, no blue-black, no cream.
+- **One accent.** Blue (`#3D8BFF` dark / `#0A6FF5` light) is the only hue that means
+  "interactive or selected": links, focus rings, the active nav row's bar, selected rows
+  (`--accent` at 12 % as the wash), progress bars, informational callouts. It never fills a
+  primary button — that stays white on dark and black on light.
+- **Status colours are for status.** Green for live dots and "running", amber for paused or
+  quota, red for failed and destructive actions. Provider logos keep their real colours,
+  the sixteen ANSI slots stay coloured, diffs stay green/red.
+- **Elevation by surface, not shadow.** Shadows exist only on popovers, dialogs and the
+  composer. No glows.
 - **Both modes, always.** A colour comes from a theme token or from the per-appearance
   tables in `terminalThemes.ts`. Never hardcode one mode's value.
-- **One signal hue, five colour jobs, no brand hue.** Surfaces and rims stay neutral. Colour
-  appears only where it means something: `signal` blue (`#81A1C1` dark / `#2778C1` light)
-  for links, focus and the active row's bar; `life` green, `fault` rose, `degraded` amber and
-  `info` cyan for state; green/rose grounds under diffs. All of it on Cursor's desaturated
-  values so the set reads as one family. The cyan and magenta in the wordmark are a *glitch
-  artifact*, never UI colours. **Gigi** is black-and-white: a black body, white eyes and
-  outline, no disc behind it.
+- **Gigi** is black-and-white: a black body, white eyes and outline, no disc behind it.
 - **Rasters convert on max(r, g, b), the orb on luma.** That is what keeps a mark legible
   after it loses its colour.
 
 ## Typography
 
+One family. Six sizes. Three weights.
+
 | Use | Typeface | Notes |
 |---|---|---|
-| Display / wordmark | **Space Grotesk** (700) | Uppercase, tight tracking (`-4 to -5px` at hero size) |
-| Body / UI | **Inter Variable** | The product UI font, −0.01 em tracking at interface sizes |
+| Interface and display | **Inter Variable** | 400 body, 500 labels / nav / buttons, 600 titles. Display text is the same family with `-0.02em` tracking. No 700 in UI text. |
 | Code / mono / tagline | **JetBrains Mono** (500) | Letter-spaced caps for taglines and labels |
 
-All three ship inside the app bundle (`@fontsource` packages, SIL OFL 1.1); nothing is
+| Step | Size / line | Use |
+|---|---|---|
+| `text-xs` | 12 / 16 | badges, keyboard hints, table meta — the only 12 px |
+| `text-sm` | 13 / 18 | dense table cells, chip labels, code |
+| `text-base` | 14 / 20 | body, sidebar items, inputs, buttons |
+| `text-lg` | 16 / 24 | card and list titles, composer text |
+| `text-xl` | 20 / 28 | view titles |
+| `text-2xl` | 28 / 34 | home greeting only |
+
+Spacing sits on a 4 px grid. Radii: 4 px badges, 8 px buttons / inputs / chips / menu
+items, 12 px cards / panels / dialogs, 16 px only the composer and hero cards, full only
+avatars and status dots. No pill-shaped buttons or chips.
+
+Both families ship inside the app bundle (`@fontsource` packages, SIL OFL 1.1); nothing is
 fetched from a remote host.
 
 ## The wordmark

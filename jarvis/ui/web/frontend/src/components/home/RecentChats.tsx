@@ -8,7 +8,7 @@ import { AllChatsDialog } from "@/components/home/AllChatsDialog";
 import { formatChatWhen, useChatRows, type ChatRow } from "@/components/home/chatRows";
 import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
 
-export const RECENT_CHATS_FOLDED = 3;
+export const RECENT_CHATS_FOLDED = 5;
 export const RECENT_CHATS_UNFOLDED = 15;
 
 /**
@@ -67,7 +67,7 @@ export function RecentChats() {
     <>
       <div data-testid="recent-chats" className="pb-1 pt-0.5">
         {shown.length === 0 ? (
-          <p className="py-1 pl-9 pr-2 text-[11px] text-muted-foreground/70">
+          <p className="py-1 pl-9 pr-2 text-sm text-foreground-faint">
             {t("sidebar.no_chats")}
           </p>
         ) : (
@@ -95,7 +95,7 @@ export function RecentChats() {
               aria-hidden
               className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")}
             />
-            <span className="min-w-0 flex-1 truncate text-xs">
+            <span className="min-w-0 flex-1 truncate text-sm">
               {open ? t("sidebar.show_less") : t("sidebar.show_all")}
             </span>
             {!open && hidden > 0 && <Count n={hidden} />}
@@ -109,7 +109,7 @@ export function RecentChats() {
             className={TAIL_ROW}
           >
             <Archive aria-hidden className="h-3.5 w-3.5 shrink-0" />
-            <span className="min-w-0 flex-1 truncate text-xs">{t("sidebar.see_all_chats")}</span>
+            <span className="min-w-0 flex-1 truncate text-sm">{t("sidebar.see_all_chats")}</span>
             {open && hidden > 0 && <Count n={hidden} />}
           </button>
         )}
@@ -130,14 +130,14 @@ const TREE_GUIDE =
 
 /** "Show all" and "See all chats": the two quiet rows that close the list. */
 const TAIL_ROW = cn(
-  "flex w-full items-center gap-2 rounded-lg py-1.5 pl-9 pr-2 text-left transition-colors",
-  "text-muted-foreground hover:bg-background/60 hover:text-foreground",
-  "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+  "flex h-8 w-full items-center gap-2 rounded-md pl-9 pr-2 text-left transition-colors",
+  "text-muted-foreground hover:bg-secondary hover:text-foreground",
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 );
 
 function Count({ n }: { n: number }) {
   return (
-    <span className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground/70">
+    <span className="shrink-0 text-sm tabular-nums text-foreground-faint">
       +{n}
     </span>
   );
@@ -167,21 +167,19 @@ function ChatRowItem({
         data-testid="recent-chat-row"
         data-kind={row.kind}
         className={cn(
-          "flex w-full items-center gap-2 rounded-lg py-1.5 pl-9 pr-2 text-left transition-colors",
-          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-          // The open one wears the same yellow edge as the active nav row, so
+          "flex h-8 w-full items-center gap-2 rounded-md pl-9 pr-2 text-left transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          // The open one wears the same accent edge as the active nav row, so
           // "where am I" is said in one voice all the way down the column.
-          active
-            ? "bg-card text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
-            : "hover:bg-background/60",
+          active ? "jarvis-nav-active bg-secondary text-foreground" : "hover:bg-secondary",
         )}
       >
         <Icon
           aria-hidden
-          className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground")}
+          className={cn("h-3.5 w-3.5 shrink-0", active ? "text-foreground" : "text-muted-foreground")}
         />
-        <span className="min-w-0 flex-1 truncate text-xs text-foreground">{title}</span>
-        <span className="shrink-0 font-mono text-micro tabular-nums text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate text-base text-foreground">{title}</span>
+        <span className="shrink-0 text-sm tabular-nums text-foreground-faint">
           {formatChatWhen(row.updatedMs)}
         </span>
       </button>

@@ -38,7 +38,9 @@ export function CodingModeBadge({ className }: { className?: string }) {
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const activeSection = useEventStore((s) => s.activeSection);
 
-  if (!mode.hasWorkspace) return null;
+  // Only while the mode is ON. An "OFF" pill in the chrome of every screen
+  // was a permanent reminder of a thing that was not happening.
+  if (!mode.hasWorkspace || !mode.active) return null;
 
   const label = mode.active
     ? t("topbar.coding_mode_on")
@@ -67,24 +69,16 @@ export function CodingModeBadge({ className }: { className?: string }) {
       // would drop it in favour of the state colour below, leaving the chip at
       // the inherited 16 px.
       className={clsx(
-        "inline-flex h-8 items-center gap-2 rounded-md px-3",
-        "text-body font-medium transition-colors disabled:cursor-default",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
-        // ON is a live state, so it says so in the one hue that means "this is
-        // running" — a green dot beside plain ink, rather than a whole chip
-        // recoloured in the accent, which put the loudest mark in the window
-        // on a status. OFF keeps the quiet chrome shape.
-        mode.active
-          ? "bg-card text-foreground hover:bg-secondary"
-          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+        // A `success` badge with a glyph: ON is a live state, and the soft
+        // green wash is the one hue that means "this is running".
+        "inline-flex h-6 items-center gap-1.5 rounded-md border border-success/20 bg-success/[0.12] px-2",
+        "text-xs font-medium text-success transition-colors disabled:cursor-default",
+        "hover:bg-success/20",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
     >
-      {mode.active ? (
-        <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-success" />
-      ) : (
-        <Brain aria-hidden className="h-4 w-4 shrink-0" />
-      )}
+      <Brain aria-hidden className="h-3.5 w-3.5 shrink-0" />
       {label}
     </button>
   );

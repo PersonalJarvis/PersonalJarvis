@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppWindow, Download, RotateCw } from "lucide-react";
 
 import { useEventStore, type SectionId } from "@/store/events";
+import { NAV_FOOTER_ITEMS, NAV_GROUPS, resolveNavLabel } from "@/components/layout/navGroups";
 import {
   fetchUpdateProgress,
   useUpdate,
@@ -65,10 +66,10 @@ const CONFIRM_TIMEOUT_MS = 4000;
  * change.)
  */
 const CHROME_BUTTON =
-  "inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-3 text-body font-medium " +
+  "inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-3 text-base font-medium " +
   "transition-[background-color,color,transform] duration-150 " +
   "motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 " +
-  "focus-visible:ring-border-strong disabled:cursor-default disabled:opacity-70";
+  "focus-visible:ring-ring disabled:cursor-default disabled:opacity-70";
 
 /** Resting chrome: no fill of its own, one step up under the pointer. */
 const CHROME_QUIET = "text-muted-foreground hover:bg-secondary hover:text-foreground";
@@ -86,10 +87,20 @@ const CODING_SECTIONS = new Set<SectionId>([
   "chat-workspace",
 ]);
 
+/** The active section's own nav label — the bar's breadcrumb-style title. */
+function useViewTitle(activeSection: SectionId): string {
+  const t = useT();
+  const item = [...NAV_GROUPS.flat(), ...NAV_FOOTER_ITEMS].find((row) =>
+    row.matchIds ? row.matchIds.includes(activeSection) : row.id === activeSection,
+  );
+  return item ? resolveNavLabel(t, item) : "";
+}
+
 export function TopBar() {
   const activeSection = useEventStore((s) => s.activeSection);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
+  const viewTitle = useViewTitle(activeSection);
   // The coding workspace takes the actions into its own toolbar row, under
   // every id that reaches it. The rule is "the section carries the actions
   // itself" — a section that does not would lose Restart, which is the one
@@ -114,14 +125,21 @@ export function TopBar() {
   }
 
   return (
-    // 44px, so a 32px control has room to breathe in it. At 40px the buttons
-    // filled the bar edge to edge and the strip read as a container that had
-    // burst rather than as chrome.
-    <div className="jarvis-shell-surface flex h-11 shrink-0 items-center justify-end gap-2 border-b border-border px-4 backdrop-blur-md">
-      {/* Status, not an action — `mr-auto` pins it left so it never crowds
-          the buttons. The deck header does not pass this: it already sits
-          in a right-hand cluster. */}
-      <CodingModeBadge className="mr-auto" />
+    // 48 px on the page ground with a hairline beneath. Left: the view's
+    // name, and the coding-mode badge only while the mode is ON. Right: the
+    // app-chrome actions.
+    <div className="jarvis-shell-surface flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
+      <div className="mr-auto flex min-w-0 items-center gap-3">
+        {viewTitle && (
+          <span
+            data-testid="topbar-view-title"
+            className="truncate text-base font-medium text-foreground"
+          >
+            {viewTitle}
+          </span>
+        )}
+        <CodingModeBadge />
+      </div>
       <TopBarActions />
     </div>
   );

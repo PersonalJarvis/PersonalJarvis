@@ -10,6 +10,7 @@ import {
 } from "framer-motion";
 import { useEventStore, type SectionId } from "@/store/events";
 import {
+  NAV_FOOTER_ITEMS,
   NAV_GROUPS,
   presentNavItem,
   resolveNavLabel,
@@ -79,7 +80,8 @@ export function DockRail({ className }: { className?: string }) {
   // expanded sidebar says "Voice".
   const surface = useHomeStore((s) => s.surface);
   const items = useMemo(
-    () => NAV_GROUPS.flat().map((item) => presentNavItem(item, surface)),
+    () =>
+      [...NAV_GROUPS.flat(), ...NAV_FOOTER_ITEMS].map((item) => presentNavItem(item, surface)),
     [surface],
   );
   const groupBreaks = useMemo(() => {
@@ -91,6 +93,8 @@ export function DockRail({ className }: { className?: string }) {
       if (g > 0) breaks.add(n);
       n += NAV_GROUPS[g].length;
     }
+    // The footer items (Feedback) sit behind one more hairline.
+    breaks.add(n);
     return breaks;
   }, []);
 
