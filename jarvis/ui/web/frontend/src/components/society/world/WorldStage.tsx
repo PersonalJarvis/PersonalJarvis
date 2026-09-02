@@ -35,6 +35,8 @@ import { MemoryDrawer } from "./MemoryDrawer";
 import { PlaceLabels } from "./PlaceLabels";
 import { HubDrawer } from "./HubDrawer";
 import { QuestBoardDrawer } from "./QuestBoardDrawer";
+import { ACTIVE_STATES } from "./questBoard";
+import { useSocietyQuests } from "./questsData";
 import { Shadowed } from "./Shadowed";
 import { SunRig } from "./SunRig";
 import { Terrain, Water } from "./Terrain";
@@ -83,6 +85,8 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
   const [selected, setSelected] = useState<string | null>(null);
   const [openHub, setOpenHub] = useState<KitPlace | null>(null);
   const [questOpen, setQuestOpen] = useState(false);
+  const quests = useSocietyQuests(webgl);
+  const questsOnBoard = (quests.data ?? []).filter((q) => ACTIVE_STATES.has(q.state)).length;
   const [memoryOpen, setMemoryOpen] = useState(false);
 
   useWorldControls(hostRef, webgl);
@@ -184,7 +188,20 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
         </Canvas>
       </div>
       {ready && (
-        <WorldHud agents={agents} sample={sample} awake={awake} reducedMotion={reduced} topRight={topRight} />
+        <WorldHud
+          agents={agents}
+          sample={sample}
+          awake={awake}
+          reducedMotion={reduced}
+          topRight={topRight}
+          questsOnBoard={questsOnBoard}
+          questsOpen={questOpen}
+          onOpenQuests={() => {
+            setOpenHub(null);
+            setMemoryOpen(false);
+            setQuestOpen((cur) => !cur);
+          }}
+        />
       )}
       {/* Every hub lists what it stands for; the foundry also BUILDS, so it
           has its own drawer with the creator in it. */}

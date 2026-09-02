@@ -31,6 +31,7 @@
       "drawer_open_section": "Open the Plugins section",
       "drawer_close": "Close",
       "place_quests": "Quest Board",
+      "hud_quests": "Quests",
       "drawer_quests_title": "Quest Board",
       "drawer_quests_hint": "Post a job. The agent who fits takes it — when nobody fits, the Foundry forges one.",
       "quest_compose_placeholder": "What should be done? For example: the five most important mails of today",

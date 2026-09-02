@@ -5145,6 +5145,7 @@
       "webgl_missing_body": "Dieses Fenster kann gerade kein 3D zeichnen. Das Register zeigt dieselben Agenten als Tabelle.",
       "open_ledger": "Register öffnen",
       "place_quests": "Questtafel",
+      "hud_quests": "Quests",
       "drawer_quests_title": "Questtafel",
       "drawer_quests_hint": "Gib einen Auftrag auf. Der passende Agent übernimmt ihn – passt niemand, schmiedet die Foundry einen.",
       "quest_compose_placeholder": "Was soll erledigt werden? Zum Beispiel: die fünf wichtigsten Mails von heute",

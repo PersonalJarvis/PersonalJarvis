@@ -5,7 +5,7 @@
  * buttons and the minimap (bottom-right).
  */
 import type { ReactNode } from "react";
-import { Minus, Plus } from "lucide-react";
+import { Minus, Plus, ScrollText } from "lucide-react";
 
 import { fill, useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
@@ -19,9 +19,22 @@ interface Props {
   awake: boolean;
   reducedMotion: boolean;
   topRight?: ReactNode;
+  /** The Quest Board button: how many quests are on the board and whether its drawer is open. */
+  questsOnBoard?: number;
+  questsOpen?: boolean;
+  onOpenQuests?: () => void;
 }
 
-export function WorldHud({ agents, sample, awake, reducedMotion, topRight }: Props) {
+export function WorldHud({
+  agents,
+  sample,
+  awake,
+  reducedMotion,
+  topRight,
+  questsOnBoard = 0,
+  questsOpen = false,
+  onOpenQuests,
+}: Props) {
   const t = useT();
   const zoom = useCameraStore((s) => s.zoom);
   const zoomStep = useCameraStore((s) => s.zoomStep);
@@ -38,6 +51,24 @@ export function WorldHud({ agents, sample, awake, reducedMotion, topRight }: Pro
             <span className="sw-chip-sep" />
             <span>{count("society.world.hud_active", active)}</span>
           </div>
+          {onOpenQuests && (
+            <button
+              type="button"
+              className="sw-chip sw-chip-btn"
+              onClick={onOpenQuests}
+              aria-pressed={questsOpen}
+              title={t("society.world.drawer_quests_hint")}
+            >
+              <ScrollText size={14} aria-hidden />
+              <strong>{t("society.world.hud_quests")}</strong>
+              {questsOnBoard > 0 && (
+                <>
+                  <span className="sw-chip-sep" />
+                  <span>{questsOnBoard}</span>
+                </>
+              )}
+            </button>
+          )}
           {sample && <div className="sw-chip sw-chip-note">{t("society.world.sample_badge")}</div>}
           {reducedMotion && <div className="sw-chip sw-chip-note">{t("society.world.reduced_motion_note")}</div>}
         </div>

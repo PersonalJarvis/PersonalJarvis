@@ -5145,6 +5145,7 @@
       "webgl_missing_body": "Esta ventana no puede dibujar 3D ahora. El registro muestra los mismos agentes como tabla.",
       "open_ledger": "Abrir el registro",
       "place_quests": "Tablón de misiones",
+      "hud_quests": "Misiones",
       "drawer_quests_title": "Tablón de misiones",
       "drawer_quests_hint": "Publica un encargo. El agente adecuado lo toma; si nadie encaja, la Fundición forja uno.",
       "quest_compose_placeholder": "¿Qué hay que hacer? Por ejemplo: los cinco correos más importantes de hoy",

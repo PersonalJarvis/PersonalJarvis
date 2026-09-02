@@ -136,6 +136,22 @@
 .sw-chip strong {
   font-weight: 600;
 }
+.sw-chip-btn {
+  cursor: pointer;
+  pointer-events: auto;
+  font: inherit;
+  transition: transform 80ms ease, background-color 120ms ease;
+}
+.sw-chip-btn:hover {
+  background: rgba(255, 248, 220, 0.96);
+}
+.sw-chip-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 rgba(31, 42, 58, 0.25);
+}
+.sw-chip-btn[aria-pressed="true"] {
+  background: #ffd166;
+}
 .sw-chip-sep {
   width: 1px;
   height: 12px;

@@ -31,6 +31,7 @@
       "drawer_open_section": "Bereich Plugins öffnen",
       "drawer_close": "Schließen",
       "place_quests": "Questtafel",
+      "hud_quests": "Quests",
       "drawer_quests_title": "Questtafel",
       "drawer_quests_hint": "Gib einen Auftrag auf. Der passende Agent übernimmt ihn – passt niemand, schmiedet die Foundry einen.",
       "quest_compose_placeholder": "Was soll erledigt werden? Zum Beispiel: die fünf wichtigsten Mails von heute",
