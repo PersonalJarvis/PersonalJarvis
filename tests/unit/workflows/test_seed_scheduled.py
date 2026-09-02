@@ -118,6 +118,9 @@ def test_the_briefing_prompt_grounds_itself_and_greets_by_time_of_day() -> None:
     assert "Never invent" in prompt
     assert "time of day" in prompt
     assert "not connected" in prompt, "a disconnected area is skipped, not faked"
+    # Live dev run 2026-09-02 11:43: with "if the user's city is known from
+    # memory" the model reported San Francisco weather to a user in Germany.
+    assert "Never choose a city yourself" in prompt
     assert "Compose a short, friendly morning announcement" not in prompt
 
 
