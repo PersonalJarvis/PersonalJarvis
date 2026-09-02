@@ -66,6 +66,24 @@ describe("brainSeats", () => {
     ]);
   });
 
+  it("lists a keyless row only when it answers with models, and offers those models", () => {
+    const rows = [
+      option({ id: "ollama", label: "Ollama", runner: "api", keyless: true }),
+      option({ id: "local-openai", label: "Local OpenAI-compatible", runner: "api", keyless: true }),
+      option({ id: "openai", label: "OpenAI" }),
+    ];
+    // Nothing fetched yet: no local seat is listed, the keyed one is.
+    expect(brainSeats(rows, []).map((s) => s.provider.id)).toEqual(["openai"]);
+    const seats = brainSeats(rows, [], {
+      ollama: [{ id: "qwen3:8b", label: "qwen3:8b" }],
+      "local-openai": [],
+      openai: [{ id: "gpt-5", label: "GPT-5" }],
+    });
+    expect(seats.map((s) => s.provider.id)).toEqual(["openai", "ollama"]);
+    expect(seats[1].provider.curated_models.map((m) => m.id)).toEqual(["qwen3:8b"]);
+    expect(seats[0].provider.curated_models.map((m) => m.id)).toEqual(["gpt-5"]);
+  });
+
   it("decides the kind from the runner when the society route is missing", () => {
     const seats = brainSeats(
       [option({ id: "openai-codex", label: "Codex", runner: "codex-cli", cli_installed: true })],

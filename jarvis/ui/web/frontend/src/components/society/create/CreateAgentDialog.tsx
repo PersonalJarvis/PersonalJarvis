@@ -7,12 +7,13 @@
  * Bot" sheet): name, title, description; "Runs on" — ONLY the seats that are
  * connected on this machine, subscriptions first (a CLI on a plan bills the
  * plan, not per token), then saved API keys, then local models, with the
- * login to use when a CLI has more than one, the model and the effort; a
- * visible "Focus" chip row (what the agent reaches for first — everything
- * Jarvis has connected stays available); and a "More" disclosure for the
- * permission ceiling, the tool-access mode and the daily budget. A provider
- * that is not connected is not listed: one sentence says where to connect it.
- * Everything else the agent is told in its own chat afterwards.
+ * login to use when a CLI has more than one, the model (a keyed row's live
+ * list, Ollama's installed models) and the effort; and a "More" disclosure
+ * for the permission ceiling and the daily budget. A provider that is not
+ * connected is not listed — a local row counts as connected only when it
+ * answers with models — and one sentence says where to connect it. No tool
+ * picking here: every agent has everything Jarvis has connected, and what it
+ * reaches for first is settled in its own chat afterwards.
  *
  * Everything a person changes is visible in the preview the same frame: a
  * preset, a colour, the build, the height. What is not built yet is shown
@@ -37,13 +38,15 @@ import { useT } from "@/i18n";
 import {
   fetchAgentChatCatalog,
   fetchAgentConnections,
+  fetchProviderModels,
+  type AgentChatProvider,
   type AgentConnectionRow,
+  type CuratedModel,
 } from "@/lib/agentChatApi";
 import { fetchSocietyProviders, type SocietyProviderRow } from "@/lib/societyApi";
 import { cn } from "@/lib/utils";
 import { joinProviderOptions } from "@/store/agentChat";
 
-import { CapabilityChip } from "../CapabilityChip";
 import {
   accountChoice,
   accountHint,
@@ -54,13 +57,7 @@ import {
   type BrainKind,
   type BrainSeat,
 } from "./brainPicker";
-import {
-  useCreateAgent,
-  useSocietyCapabilities,
-  type Capability,
-  type GrantMode,
-  type PermissionCeiling,
-} from "../data";
+import { useCreateAgent, type PermissionCeiling } from "../data";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
 import {
   EDITABLE_CELLS,
@@ -74,7 +71,6 @@ import {
 import { basesForStyle, partsForSlot, slotsWithParts, stylesWithBases, CATALOG } from "../figures/figureRegistry";
 
 const CEILINGS: readonly PermissionCeiling[] = ["safe", "monitor", "ask"];
-const GRANTS: readonly GrantMode[] = ["all", "allowlist"];
 const HEIGHT_MIN = 1.5;
 const HEIGHT_MAX = 2.1;
 
@@ -97,15 +93,11 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [effort, setEffort] = useState("");
   const [accountId, setAccountId] = useState("");
   const [ceiling, setCeiling] = useState<PermissionCeiling>("monitor");
-  const [grantMode, setGrantMode] = useState<GrantMode>("all");
   const [budget, setBudget] = useState("2");
-  const [focus, setFocus] = useState<string[]>([]);
-  const [toolQuery, setToolQuery] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const [importProblems, setImportProblems] = useState<string[] | null>(null);
   const [importedName, setImportedName] = useState<string | null>(null);
-  const capabilities = useSocietyCapabilities(open);
   const [advanced, setAdvanced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -132,16 +124,44 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     enabled: open,
     staleTime: 60_000,
   });
-  const seatsLoading = catalog.isLoading || connections.isLoading || societyProviders.isLoading;
-  // Joined only once all three answers are in (each query settles to [] on
-  // a failure): a join over a catalog without the credential rows would call
+  // A keyless row (Ollama, a local server) is listed only when it answers
+  // with models, so those lists are fetched before the picker fills; a keyed
+  // row's live list is fetched once it is picked, like the composer does.
+  const keylessIds = useMemo(
+    () => (catalog.data?.providers ?? []).filter((p) => p.keyless && p.models_source === "live").map((p) => p.id),
+    [catalog.data],
+  );
+  const keylessModels = useQuery({
+    queryKey: ["agent-chat", "live-models", "keyless", keylessIds],
+    queryFn: () => fetchModelLists(keylessIds),
+    enabled: open && catalog.isSuccess,
+    staleTime: 60_000,
+  });
+  const pickedLive: AgentChatProvider | undefined = (catalog.data?.providers ?? []).find(
+    (p) => p.id === providerId && p.models_source === "live" && !p.keyless,
+  );
+  const pickedModels = useQuery({
+    queryKey: ["agent-chat", "live-models", pickedLive?.id ?? ""],
+    queryFn: () => fetchModelLists(pickedLive ? [pickedLive.id] : []),
+    enabled: open && Boolean(pickedLive),
+    staleTime: 60_000,
+  });
+  const liveModels = useMemo(
+    () => ({ ...(keylessModels.data ?? {}), ...(pickedModels.data ?? {}) }),
+    [keylessModels.data, pickedModels.data],
+  );
+
+  const seatsLoading =
+    catalog.isLoading || connections.isLoading || societyProviders.isLoading || keylessModels.isLoading;
+  // Joined only once every answer is in (each query settles to [] on a
+  // failure): a join over a catalog without the credential rows would call
   // every API seat unconnected, list the local rows alone, and the default
   // pick would land on one of them before the keys arrive.
   const seats = useMemo<BrainSeat[]>(() => {
     const providers = catalog.data?.providers ?? [];
-    if (!providers.length || !connections.data || !societyProviders.data) return [];
-    return brainSeats(joinProviderOptions(providers, connections.data), societyProviders.data);
-  }, [catalog.data, connections.data, societyProviders.data]);
+    if (!providers.length || !connections.data || !societyProviders.data || !keylessModels.data) return [];
+    return brainSeats(joinProviderOptions(providers, connections.data), societyProviders.data, liveModels);
+  }, [catalog.data, connections.data, societyProviders.data, keylessModels.data, liveModels]);
   const seat = seats.find((s) => s.provider.id === providerId) ?? null;
   const accounts = accountChoice(seat);
   const efforts = effortsFor(seat, model);
@@ -177,9 +197,6 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setModel("");
     setEffort("");
     setAccountId("");
-    setGrantMode("all");
-    setFocus([]);
-    setToolQuery("");
     setImportProblems(null);
     setImportedName(null);
     setError(null);
@@ -250,10 +267,11 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         model,
         effort,
         accountId,
-        grantMode,
-        // "Only the highlighted tools": the focus list IS the allow-list.
-        toolGrants: grantMode === "allowlist" ? focus : [],
-        focus,
+        // Every tool Jarvis has connected; what the agent reaches for first
+        // is settled in its own chat afterwards (maintainer, 2026-09-02).
+        grantMode: "all",
+        toolGrants: [],
+        focus: [],
         permissionCeiling: ceiling,
         dailyBudgetUsd: Math.max(0, Number.parseFloat(budget) || 0),
       });
@@ -265,8 +283,8 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   };
 
   const fieldClass =
-    "w-full rounded-md border border-border bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong";
-  const labelClass = "mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground";
+    "w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong";
+  const labelClass = "mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground";
 
   return (
     <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
@@ -341,7 +359,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder={t("society.create.description_placeholder")}
                   />
-                  <p className="mt-1 text-[11px] text-muted-foreground">{t("society.create.description_hint")}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t("society.create.description_hint")}</p>
                 </div>
 
                 {/* ---- Runs on: only what is connected on this machine ---- */}
@@ -439,51 +457,14 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                       </div>
                     </div>
                   )}
-                  <p className="mt-1 text-[11px] text-muted-foreground">{t("society.create.brain_hint")}</p>
-                </div>
-
-                {/* ---- Focus: what the agent reaches for first ---- */}
-                <div data-testid="society-create-focus">
-                  <span className={labelClass}>{t("society.create.focus_title")}</span>
-                  <p className="mb-2 text-[11px] text-muted-foreground">
-                    {grantMode === "allowlist" ? t("society.create.allowlist_hint") : t("society.create.focus_hint")}
-                  </p>
-                  <input
-                    type="search"
-                    value={toolQuery}
-                    onChange={(e) => setToolQuery(e.target.value)}
-                    placeholder={t("society.create.tools_search")}
-                    aria-label={t("society.create.tools_search")}
-                    className={cn(fieldClass, "mb-2")}
-                  />
-                  {capabilities.isLoading ? (
-                    <p className="text-xs text-muted-foreground">{t("society.create.tools_loading")}</p>
-                  ) : capabilities.isError || (capabilities.data ?? []).length === 0 ? (
-                    <p className="text-xs text-muted-foreground">{t("society.create.tools_unavailable")}</p>
-                  ) : (
-                    <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
-                      {filterCapabilities(capabilities.data ?? [], toolQuery).map((cap) => {
-                        const on = focus.includes(cap.id);
-                        return (
-                          <CapabilityChip
-                            key={cap.id}
-                            id={cap.id}
-                            capability={cap}
-                            selected={on}
-                            disconnectedHint={t("society.card.not_connected")}
-                            onClick={() => setFocus(on ? focus.filter((x) => x !== cap.id) : [...focus, cap.id])}
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
+                  <p className="mt-1 text-xs text-muted-foreground">{t("society.create.brain_hint")}</p>
                 </div>
 
                 <Collapsible.Root open={advanced} onOpenChange={setAdvanced}>
                   <Collapsible.Trigger asChild>
                     <button
                       type="button"
-                      className="flex w-full items-center justify-between rounded-md border border-border px-3 py-2 text-[13px] font-medium text-foreground hover:bg-secondary"
+                      className="flex w-full items-center justify-between rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-secondary"
                     >
                       {t("society.create.advanced")}
                       <ChevronDown
@@ -500,15 +481,6 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                         options={CEILINGS.map((c) => ({ value: c, label: t(`society.ceiling.${c}`) }))}
                         onChange={(v) => setCeiling(v as PermissionCeiling)}
                       />
-                    </div>
-                    <div>
-                      <span className={labelClass}>{t("society.create.grant_mode")}</span>
-                      <Segmented
-                        value={grantMode}
-                        options={GRANTS.map((g) => ({ value: g, label: t(`society.grant.${g}`) }))}
-                        onChange={(v) => setGrantMode(v as GrantMode)}
-                      />
-                      <p className="mt-1 text-[11px] text-muted-foreground">{t("society.create.grant_mode_hint")}</p>
                     </div>
                     <div>
                       <label htmlFor="society-create-budget" className={labelClass}>
@@ -584,7 +556,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   </div>
                 </div>
                 {importProblems ? (
-                  <div role="alert" className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-[11px] text-foreground">
+                  <div role="alert" className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-foreground">
                     <p className="mb-1 font-medium">{t("society.create.import_rejected")}</p>
                     <ul className="list-disc pl-4">
                       {importProblems.map((p) => (
@@ -594,7 +566,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   </div>
                 ) : null}
                 {importedName && recipe.model ? (
-                  <p className="mb-3 text-[11px] text-muted-foreground">
+                  <p className="mb-3 text-xs text-muted-foreground">
                     {t("society.create.import_ok").replace("{0}", importedName)}{" "}
                     <button
                       type="button"
@@ -615,7 +587,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                 ) : null}
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center gap-3">
-                    <span className="w-16 text-[11px] text-muted-foreground">{t("society.create.style")}</span>
+                    <span className="w-16 text-xs text-muted-foreground">{t("society.create.style")}</span>
                     <Segmented
                       value={style}
                       options={Object.keys(CATALOG.styles).map((id) => ({
@@ -634,7 +606,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                     />
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="w-16 text-[11px] text-muted-foreground">{t("society.create.base")}</span>
+                    <span className="w-16 text-xs text-muted-foreground">{t("society.create.base")}</span>
                     <Segmented
                       value={recipe.base}
                       options={basesForStyle(style).map((b) => ({ value: b.base, label: b.label }))}
@@ -643,7 +615,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   </div>
                   {slotsWithParts("biped").map((slot) => (
                     <div key={slot} className="flex items-center gap-3">
-                      <span className="w-16 text-[11px] text-muted-foreground">{t(`society.slot.${slot}`)}</span>
+                      <span className="w-16 text-xs text-muted-foreground">{t(`society.slot.${slot}`)}</span>
                       <div className="flex flex-wrap gap-1">
                         <Segmented
                           value={recipe.parts[slot] ?? ""}
@@ -664,7 +636,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                     </div>
                   ))}
                   <div className="flex items-center gap-3">
-                    <span className="w-16 text-[11px] text-muted-foreground">{t("society.create.presets")}</span>
+                    <span className="w-16 text-xs text-muted-foreground">{t("society.create.presets")}</span>
                     <div className="flex flex-wrap gap-1.5">
                       {PALETTE_PRESETS.map((preset) => {
                         const p = resolvePalette({ palette: preset.palette });
@@ -686,10 +658,10 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                     </div>
                   </div>
                   <div className="flex items-start gap-3">
-                    <span className="w-16 pt-1 text-[11px] text-muted-foreground">{t("society.create.colours")}</span>
+                    <span className="w-16 pt-1 text-xs text-muted-foreground">{t("society.create.colours")}</span>
                     <div className="grid flex-1 grid-cols-3 gap-x-3 gap-y-1.5 sm:grid-cols-6">
                       {EDITABLE_CELLS.map((cell) => (
-                        <label key={cell} className="flex flex-col items-start gap-0.5 text-[10px] text-muted-foreground">
+                        <label key={cell} className="flex flex-col items-start gap-0.5 text-xs text-muted-foreground">
                           <input
                             type="color"
                             value={palette[cell]}
@@ -703,7 +675,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <label htmlFor="society-create-height" className="w-16 text-[11px] text-muted-foreground">
+                    <label htmlFor="society-create-height" className="w-16 text-xs text-muted-foreground">
                       {t("society.create.height")}
                     </label>
                     <input
@@ -716,7 +688,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                       onChange={(e) => setRecipe((r) => ({ ...r, heightM: Number.parseFloat(e.target.value) }))}
                       className="flex-1"
                     />
-                    <span className="w-14 text-right font-mono text-[11px] text-muted-foreground">
+                    <span className="w-14 text-right font-mono text-xs text-muted-foreground">
                       {(recipe.heightM ?? 1.75).toFixed(2)} m
                     </span>
                   </div>
@@ -770,13 +742,18 @@ function seatGroups(seats: BrainSeat[], t: (key: string) => string): ComboboxGro
   return groups;
 }
 
-/** Connected first, then by label; a query narrows by label, id and one-liner. */
-function filterCapabilities(rows: Capability[], query: string): Capability[] {
-  const q = query.trim().toLowerCase();
-  return rows
-    .filter((c) => !q || `${c.label} ${c.id} ${c.one_liner}`.toLowerCase().includes(q))
-    .sort((a, b) => Number(b.connected) - Number(a.connected) || a.label.localeCompare(b.label))
-    .slice(0, 80);
+/**
+ * The live model lists of `ids`, fetched together; a provider that answers
+ * nothing (not running, nothing installed, route missing) maps to [].
+ */
+async function fetchModelLists(ids: string[]): Promise<Record<string, CuratedModel[]>> {
+  const lists = await Promise.all(
+    ids.map(async (id) => {
+      const rows = await fetchProviderModels(id).catch(() => []);
+      return [id, rows.map((m) => ({ id: m.id, label: m.label ?? m.name ?? m.id }))] as const;
+    }),
+  );
+  return Object.fromEntries(lists);
 }
 
 interface SegmentedOption {

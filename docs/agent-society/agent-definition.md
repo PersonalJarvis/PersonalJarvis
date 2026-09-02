@@ -71,11 +71,13 @@ card; nothing hidden drives behavior.
 - **The creator lists only connected seats** (maintainer, 2026-09-02, after Grok Bot's "New
   Bot" sheet): the catalog joined with the Agents tab's credential truth (the same
   `joinProviderOptions` join the chat's composer uses), grouped subscription → API key → local,
-  with a login picker only when a CLI has more than one signed-in account, the model and the
-  effort. A provider that is not connected is not shown; one sentence says where to connect it.
-  Name, title, description, "Runs on" and a visible **Focus** chip row are the whole sheet —
-  ceiling, tool-access mode and budget sit under "More". Everything else the agent is told in
-  its own chat afterwards (`components/society/create/CreateAgentDialog.tsx`, `brainPicker.ts`).
+  with a login picker only when a CLI has more than one signed-in account, the model (a keyed
+  row's live list, Ollama's installed models) and the effort. A provider that is not connected
+  is not shown — a keyless local row counts as connected only when it answers with at least one
+  model — and one sentence says where to connect it. Name, title, description and "Runs on"
+  are the whole sheet; ceiling and budget sit under "More". No tool picking at creation:
+  `grant_mode = all`, and what the agent reaches for first is settled in its own chat
+  afterwards (`components/society/create/CreateAgentDialog.tsx`, `brainPicker.ts`).
 - Reference check (2026-09-02): Hermes Agent switches with `hermes model` / `/model provider:name`
   and offers Codex/ChatGPT device-code OAuth, xAI SuperGrok OAuth and Claude OAuth (Max only);
   OpenClaw selects `agents.entries.*.model` as `provider/model`, reuses `claude -p` for the

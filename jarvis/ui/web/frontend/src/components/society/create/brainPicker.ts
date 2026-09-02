@@ -36,15 +36,28 @@ function kindOf(option: ProviderOption, row: SocietyProviderRow | undefined): Br
   return option.keyless ? "local" : "api";
 }
 
-/** The connected seats, subscriptions first, each kind sorted by label. */
+/**
+ * The connected seats, subscriptions first, each kind sorted by label.
+ *
+ * A keyless row (Ollama, a local server) has no credential to prove itself
+ * with, so "connected" there means "answers with at least one model": pass
+ * each such row's live list in `liveModels` (the brain catalog route), and a
+ * local seat with nothing installed or nothing running is not listed
+ * (maintainer, 2026-09-02: an empty "Local server" row beside Ollama is
+ * noise). Rows whose list has not arrived yet are left out until it does.
+ */
 export function brainSeats(
   options: ProviderOption[],
   society: SocietyProviderRow[],
+  liveModels: Record<string, CuratedModel[]> = {},
 ): BrainSeat[] {
   const byId = new Map(society.map((r) => [r.id, r]));
   return options
     .filter((o) => o.connected)
-    .map((provider) => {
+    .filter((o) => !o.keyless || (liveModels[o.id]?.length ?? 0) > 0)
+    .map((option) => {
+      const live = liveModels[option.id];
+      const provider = live?.length ? { ...option, curated_models: live } : option;
       const row = byId.get(provider.id);
       const kind = kindOf(provider, row);
       const accounts = kind === "subscription" ? (row?.accounts ?? []).filter((a) => a.connected) : [];
