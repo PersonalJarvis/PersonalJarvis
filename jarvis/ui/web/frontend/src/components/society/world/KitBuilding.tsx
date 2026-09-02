@@ -55,7 +55,12 @@ export const KIT_PLACEMENTS: ReadonlyArray<{ kit: KitId; place: KitPlace }> = [
 /** Emission above this strength renders unlit (a lamp, a neon tube), below it stays a lit toon. */
 const GLOW_STRENGTH = 1.5;
 
-function restyle(root: Object3D, ramp: ReturnType<typeof createToonRamp>): void {
+/**
+ * Restyle a kit GLB's Standard materials to the island's toon ramp. Shared
+ * with the building card's viewer, so a building looks the same on its card
+ * as on the island.
+ */
+export function restyle(root: Object3D, ramp: ReturnType<typeof createToonRamp>): void {
   root.traverse((o) => {
     if (!(o instanceof Mesh)) return;
     const src = o.material as MeshStandardMaterial;

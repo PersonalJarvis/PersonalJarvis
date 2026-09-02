@@ -14,7 +14,10 @@ import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 
 import { useT } from "@/i18n";
 import { AgentCardOverlay } from "@/components/society/card/AgentCardOverlay";
+import { BuildingCardOverlay } from "@/components/society/card/BuildingCardOverlay";
+import { isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
 import { CreateAgentDialog } from "@/components/society/create/CreateAgentDialog";
+import type { PlaceId } from "@/components/society/world/islandLayout";
 import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 
@@ -48,6 +51,13 @@ export function SocietyView() {
     if (agentId) setOpenAgentId(agentId);
   }, []);
 
+  // A building clicked on the island opens its own card: the building
+  // rendered as it stands on the map, and beside it what it does.
+  const [openPlace, setOpenPlace] = useState<BuildingPlace | null>(null);
+  const onIslandPlace = useCallback((place: PlaceId) => {
+    if (isBuildingPlace(place)) setOpenPlace(place);
+  }, []);
+
   return (
     <div className="flex h-full min-h-0 w-full" data-testid="society-view">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -60,7 +70,7 @@ export function SocietyView() {
         </div>
         <div className="relative min-h-0 flex-1">
           <Suspense fallback={null}>
-            <JarvisAgentsBoard onSelectAgent={onIslandSelect} />
+            <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} />
           </Suspense>
         </div>
       </div>
@@ -73,6 +83,14 @@ export function SocietyView() {
         onCreate={() => setCreating(true)}
       />
       <AgentCardOverlay agent={openAgent} roster={agents} onClose={() => setOpenAgentId(null)} />
+      <BuildingCardOverlay
+        place={openPlace}
+        onClose={() => setOpenPlace(null)}
+        onCreateAgent={() => {
+          setOpenPlace(null);
+          setCreating(true);
+        }}
+      />
       <CreateAgentDialog open={creating} onClose={() => setCreating(false)} onCreated={onCreated} />
     </div>
   );

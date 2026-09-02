@@ -67,11 +67,17 @@ export interface WorldStageProps {
   onOpenLedger: () => void;
   /** A figure was clicked (or the selection cleared). The model card hooks in here. */
   onSelectAgent?: (agentId: string | null) => void;
+  /**
+   * A building with a card of its own was clicked (the kit hubs, the Memory
+   * House). When set, the building card opens instead of the drawer — the
+   * society view hooks in here; standalone, the drawers stay.
+   */
+  onSelectPlace?: (place: PlaceId) => void;
 }
 
 const CAMERA_START = cameraOffset();
 
-export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStageProps) {
+export function WorldStage({ topRight, onOpenLedger, onSelectAgent, onSelectPlace }: WorldStageProps) {
   const t = useT();
   const ready = useLocaleChunk("society");
   const hostRef = useRef<HTMLDivElement>(null);
@@ -171,6 +177,12 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
                 paused={reduced}
                 onHubClick={(p) => {
                   setQuestOpen(false);
+                  if (onSelectPlace && (isKitPlace(p) || p === "archive")) {
+                    setOpenHub(null);
+                    setMemoryOpen(false);
+                    onSelectPlace(p);
+                    return;
+                  }
                   if (p === "archive") {
                     setOpenHub(null);
                     setMemoryOpen((cur) => !cur);

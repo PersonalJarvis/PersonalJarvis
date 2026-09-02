@@ -11,6 +11,11 @@ import { describe, expect, it } from "vitest";
 import en from "./locales/en.json";
 import de from "./locales/de.json";
 import es from "./locales/es.json";
+// The island's strings live in the lazy `society` chunk (world README); a
+// key may come from either file, and the chunk mirrors across locales too.
+import enWorld from "./locales/society/en.json";
+import deWorld from "./locales/society/de.json";
+import esWorld from "./locales/society/es.json";
 
 function flatten(obj: Record<string, unknown>, prefix = ""): string[] {
   const out: string[] = [];
@@ -25,10 +30,14 @@ function flatten(obj: Record<string, unknown>, prefix = ""): string[] {
   return out;
 }
 
-function blockKeys(loc: Record<string, unknown>): Set<string> {
-  const sub = loc.society;
-  if (!sub || typeof sub !== "object") return new Set();
-  return new Set(flatten(sub as Record<string, unknown>, "society"));
+function blockKeys(...locs: Record<string, unknown>[]): Set<string> {
+  const out = new Set<string>();
+  for (const loc of locs) {
+    const sub = loc.society;
+    if (!sub || typeof sub !== "object") continue;
+    for (const k of flatten(sub as Record<string, unknown>, "society")) out.add(k);
+  }
+  return out;
 }
 
 const SRC = join(__dirname, "..");
@@ -57,7 +66,7 @@ function usedKeys(): { literal: Set<string>; prefixes: Set<string> } {
 }
 
 describe("society i18n parity", () => {
-  const enKeys = blockKeys(en as Record<string, unknown>);
+  const enKeys = blockKeys(en as Record<string, unknown>, enWorld as Record<string, unknown>);
 
   it("en carries a society block", () => {
     expect(enKeys.size).toBeGreaterThan(20);
@@ -79,11 +88,11 @@ describe("society i18n parity", () => {
   });
 
   it("de and es carry exactly the society keys en carries", () => {
-    for (const [name, loc] of [
-      ["de", de],
-      ["es", es],
+    for (const [name, loc, world] of [
+      ["de", de, deWorld],
+      ["es", es, esWorld],
     ] as const) {
-      const keys = blockKeys(loc as Record<string, unknown>);
+      const keys = blockKeys(loc as Record<string, unknown>, world as Record<string, unknown>);
       const missing = [...enKeys].filter((k) => !keys.has(k));
       const extra = [...keys].filter((k) => !enKeys.has(k));
       expect({ locale: name, missing, extra }).toEqual({ locale: name, missing: [], extra: [] });

@@ -31,6 +31,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { useSubAgentStore, type SubAgentNode, type SubAgentTreeSnapshot } from "@/store/jarvisAgents";
 import { useEventStore } from "@/store/events";
+import type { PlaceId } from "@/components/society/world/islandLayout";
 import { DepartureBoard } from "./sub-agents/DepartureBoard";
 import { AgentInsight } from "./sub-agents/AgentInsight";
 import { selectTaskRows } from "./sub-agents/rows";
@@ -108,9 +109,11 @@ export interface JarvisAgentsViewProps {
    * society view hooks its model card in here; standalone, nothing listens.
    */
   onSelectAgent?: (agentId: string | null) => void;
+  /** A building with a card was clicked on the island; the society view opens its card. */
+  onSelectPlace?: (place: PlaceId) => void;
 }
 
-export function JarvisAgentsView({ onSelectAgent }: JarvisAgentsViewProps = {}) {
+export function JarvisAgentsView({ onSelectAgent, onSelectPlace }: JarvisAgentsViewProps = {}) {
   const { health } = useSectionHealth();
   const subAgents = useSubAgentStore((s) => s.subAgents);
   const sweepExpired = useSubAgentStore((s) => s.sweepExpired);
@@ -259,6 +262,7 @@ export function JarvisAgentsView({ onSelectAgent }: JarvisAgentsViewProps = {}) 
             topRight={modeSwitch}
             onOpenLedger={() => switchMode("ledger")}
             onSelectAgent={onSelectAgent}
+            onSelectPlace={onSelectPlace}
           />
         </Suspense>
       </div>

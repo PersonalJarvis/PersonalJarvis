@@ -13,14 +13,14 @@ import { useT } from "@/i18n";
 import { useEventStore, type SectionId } from "@/store/events";
 import type { KitPlace } from "./islandLayout";
 
-interface Group {
+export interface Group {
   /** Locale key suffix under `society.world.` */
   labelKey: string;
   color: string;
   items: string[];
 }
 
-interface HubConfig {
+export interface HubConfig {
   titleKey: string;
   hintKey: string;
   section: SectionId;
@@ -46,7 +46,8 @@ async function getJson<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-const HUBS: Record<KitPlace, HubConfig> = {
+/** Per hub: strings, section and the loader — shared with the building card. */
+export const HUBS: Record<KitPlace, HubConfig> = {
   plugins: {
     titleKey: "drawer_plugins_title",
     hintKey: "drawer_plugins_hint",
