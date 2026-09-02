@@ -5130,6 +5130,7 @@ class DesktopApp:
                 debug=debug,
                 private_mode=storage_dir is None,
                 storage_path=str(storage_dir) if storage_dir is not None else None,
+                icon=self._native_window_icon(),
             )
         except webview.WebViewException as exc:
             # Not swallowed: the exception is handed to the degrade path, which
@@ -5224,6 +5225,39 @@ class DesktopApp:
         except KeyboardInterrupt:
             _logger.info("Interrupted — shutting the browser-UI fallback down.")
         return self.shutdown() or 0
+
+    @staticmethod
+    def _native_window_icon() -> str | None:
+        """Icon path handed to ``webview.start(icon=...)`` — Linux/macOS only.
+
+        The WM_CLASS ↔ ``.desktop`` ``StartupWMClass`` handshake only feeds the
+        dock/taskbar. The window's own TITLE BAR is drawn by the window manager
+        (xfwm4, Mutter, KWin, …) from ``_NET_WM_ICON`` on the window itself; it
+        never consults a ``.desktop`` file. Without the ``icon=`` argument
+        pywebview's GTK/Qt backend leaves that property unset and the title bar
+        shows the WM's generic window glyph (forensic 2026-09-02, Linux VM).
+        pywebview applies the file via ``set_icon_from_file`` +
+        ``set_default_icon_from_file``, so detached windows inherit it too.
+
+        Windows is deliberately excluded: pywebview's WinForms backend would
+        construct ``System.Drawing.Icon`` from the PNG (which throws), and the
+        Win32 ``WM_SETICON`` poll in ``_start_icon_setter_thread`` already owns
+        that surface with the multi-resolution ``.ico``.
+        """
+        if sys.platform == "win32":
+            return None
+        try:
+            from jarvis.assets import bundled_app_icon_png
+
+            png = bundled_app_icon_png()
+        except Exception as exc:  # noqa: BLE001 — icon is cosmetic, never blocks the window
+            from loguru import logger
+
+            logger.debug("bundled PNG icon lookup failed: {}", exc)
+            return None
+        if png is None or not png.is_file():
+            return None
+        return str(png)
 
     def _start_icon_setter_thread(self) -> None:
         """Polling thread: sets the taskbar/titlebar icon once the HWND exists.
