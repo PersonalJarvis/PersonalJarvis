@@ -93,12 +93,20 @@ describe("brainSeats", () => {
     expect(accountChoice(single)).toEqual([]);
   });
 
-  it("starts on the active brain, else the first seat", () => {
+  it("starts on a subscription, else the active brain, else the first seat", () => {
     const seats = brainSeats(
       [option({ id: "openai" }), option({ id: "grok", label: "xAI Grok", active: true })],
       [],
     );
     expect(defaultSeat(seats)?.provider.id).toBe("grok");
+    const withSeat = brainSeats(
+      [
+        option({ id: "grok", label: "xAI Grok", active: true }),
+        option({ id: "openai-codex", label: "Codex", runner: "codex-cli", cli_installed: true }),
+      ],
+      [],
+    );
+    expect(defaultSeat(withSeat)?.provider.id).toBe("openai-codex");
     expect(defaultSeat(brainSeats([option({ id: "openai" })], []))?.provider.id).toBe("openai");
     expect(defaultSeat([])).toBeNull();
   });

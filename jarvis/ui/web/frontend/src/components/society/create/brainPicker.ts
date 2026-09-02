@@ -56,9 +56,18 @@ export function brainSeats(
     );
 }
 
-/** The seat a fresh agent starts on: the brain marked active, else the first listed. */
+/**
+ * The seat a fresh agent starts on: the first subscription (a plan already
+ * paid for beats a metered key — the maintainer's stated preference), else
+ * the brain marked active, else the first listed.
+ */
 export function defaultSeat(seats: BrainSeat[]): BrainSeat | null {
-  return seats.find((s) => s.provider.active) ?? seats[0] ?? null;
+  return (
+    seats.find((s) => s.kind === "subscription") ??
+    seats.find((s) => s.provider.active) ??
+    seats[0] ??
+    null
+  );
 }
 
 /** The models this seat offers; empty means "type one" (a live list not yet fetched). */

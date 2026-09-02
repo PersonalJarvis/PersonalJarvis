@@ -133,13 +133,14 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     staleTime: 60_000,
   });
   const seatsLoading = catalog.isLoading || connections.isLoading || societyProviders.isLoading;
+  // Joined only once all three answers are in (each query settles to [] on
+  // a failure): a join over a catalog without the credential rows would call
+  // every API seat unconnected, list the local rows alone, and the default
+  // pick would land on one of them before the keys arrive.
   const seats = useMemo<BrainSeat[]>(() => {
     const providers = catalog.data?.providers ?? [];
-    if (!providers.length) return [];
-    return brainSeats(
-      joinProviderOptions(providers, connections.data ?? []),
-      societyProviders.data ?? [],
-    );
+    if (!providers.length || !connections.data || !societyProviders.data) return [];
+    return brainSeats(joinProviderOptions(providers, connections.data), societyProviders.data);
   }, [catalog.data, connections.data, societyProviders.data]);
   const seat = seats.find((s) => s.provider.id === providerId) ?? null;
   const accounts = accountChoice(seat);
