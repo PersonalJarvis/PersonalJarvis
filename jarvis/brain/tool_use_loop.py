@@ -604,6 +604,9 @@ class ToolUseLoop:
         # Caller-supplied keys for every tool's ``ExecutionContext.config``
         # (see BrainDispatcher.tool_context). Per-turn keys set below win.
         self._tool_context = dict(tool_context or {})
+        # A scheduled/background turn (BUG-212): an unknown tool name is fed
+        # back and the loop continues — no listener to keep from silence.
+        self._unattended = bool(self._tool_context.get("unattended"))
         # Canonical form → registered name, for hyphen/underscore-tolerant
         # lookup. A canonical collision (two registered tools differing only in
         # separator/case) maps to None: an inexact name must never guess
@@ -1107,7 +1110,18 @@ class ToolUseLoop:
                         "(model-invented or gated off this turn)",
                         tid,
                     )
-                    tool_result_payload = {"error": f"Tool '{tool_name}' not available"}
+                    # Name what IS available: a scheduled turn whose system
+                    # prompt advertises skills/CLIs it was not granted recovers
+                    # from "run-skill is not here" only if it learns what is
+                    # (BUG-212 — the briefing ended on the fallback phrase).
+                    available = ", ".join(sorted(self._tools)) or "none"
+                    tool_result_payload = {
+                        "error": (
+                            f"Tool '{tool_name}' is not available in this turn. "
+                            f"Available tools: {available}. Continue with those "
+                            "and answer from what they return."
+                        ),
+                    }
                     unknown_tool_requested = True
                 elif (
                     tool_name == "spawn_worker"
@@ -1450,10 +1464,15 @@ class ToolUseLoop:
             # overwrite successful evidence from another call with the generic
             # "missing tool" phrase. Feed both results back to the model so it
             # can report the partial outcome honestly.
+            # An unattended turn (a scheduled task or routine, BUG-212) has no
+            # listener to protect from silence and nobody to re-ask: the error
+            # is already in the history, so let the model take another round
+            # with the tools it does have instead of ending on the phrase.
             if (
                 unknown_tool_requested
                 and suppress_output is None
                 and not final_agg.executed_tool_names
+                and not self._unattended
             ):
                 suppress_output = _anti_silence_phrase(
                     user_utterance, reply_language

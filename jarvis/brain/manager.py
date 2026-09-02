@@ -13227,11 +13227,14 @@ class BrainManager:
                 brain = self._get_brain(name, model)
                 dispatcher = self._build_dispatcher(
                     brain, tools_override=tools,
-                    tool_context={"delivery": "written"},
+                    # ``unattended``: the tool-use loop feeds an unknown tool
+                    # name back and continues instead of ending the turn on
+                    # the spoken "missing tool" phrase (BUG-212).
+                    tool_context={"delivery": "written", "unattended": True},
                 )
                 agg = await dispatcher.dispatch(
                     prompt, history=[], intent_level=intent, trace_id=trace_id,
-                    turn_context=turn_context,
+                    turn_context=_scheduled_turn_context(turn_context, tools),
                 )
                 return agg.text or ""
             except Exception as exc:
@@ -13285,6 +13288,27 @@ _TASK_FALLBACK_KINDS: frozenset[str] = frozenset(
 _TASK_FALLBACK_ORDER: tuple[str, ...] = (
     "gemini", "claude-api", "openai", "openrouter", "grok", "nvidia",
 )
+
+
+def _scheduled_turn_context(turn_context: str, tools: dict[str, Any]) -> str:
+    """The per-turn context of an unattended scheduled turn.
+
+    The cached system prompt advertises skills, CLIs and the full tool
+    surface of a live conversation; a scheduled turn sees only its allowlist
+    and has nobody to ask. Say so ON the turn (never in the cached prefix),
+    naming the tools that exist, so the model neither reaches for ``run-skill``
+    nor ends with a question (BUG-212: the briefing tried the morning-routine
+    skill the prompt had advertised and died on "missing tool").
+    """
+    names = ", ".join(sorted(tools)) or "none"
+    block = (
+        "[Scheduled run — unattended] This turn runs on a schedule with no one "
+        f"listening. The only tools that exist in this turn are: {names}. Skills, "
+        "CLIs and any other tool the instructions mention are NOT available here — "
+        "do not call them. Do not ask questions or request permission; work with "
+        "the tools listed and answer with the finished result."
+    )
+    return f"{turn_context}\n\n{block}" if turn_context else block
 
 
 def _short_provider_error(exc: Exception) -> str:

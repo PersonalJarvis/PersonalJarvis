@@ -643,6 +643,76 @@ async def test_unknown_tool_cannot_overwrite_successful_call() -> None:
     assert len(brain.requests) == 2
 
 
+class _SkillThenSearchBrain:
+    """Round 1 reaches for ``run-skill`` (advertised by the system prompt, not
+    granted to the turn); round 2 uses the granted tool; round 3 answers."""
+
+    def __init__(self) -> None:
+        self.requests: list[BrainRequest] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            yield BrainDelta(tool_call={"id": "s", "name": "run-skill",
+                                        "input": {"skill_name": "morning-routine"}})
+            yield BrainDelta(finish_reason="tool_use")
+            return
+        if len(self.requests) == 2:
+            yield BrainDelta(tool_call={"id": "w", "name": "search_web",
+                                        "input": {"query": "headlines"}})
+            yield BrainDelta(finish_reason="tool_use")
+            return
+        yield BrainDelta(content="Good morning. Two headlines matter today.")
+        yield BrainDelta(finish_reason="stop")
+
+
+class _SearchTool:
+    name = "search_web"
+    schema: dict[str, Any] = {}
+
+
+@pytest.mark.asyncio
+async def test_unattended_turn_recovers_from_an_unknown_tool() -> None:
+    """BUG-212: the scheduled Morning Briefing tried ``run-skill`` and the
+    turn ended on the spoken "missing tool" phrase. Unattended, the loop
+    feeds the error back — naming what IS available — and keeps going."""
+    brain = _SkillThenSearchBrain()
+    executor = _ExecWithDeniedLog()
+    loop = ToolUseLoop(
+        brain,
+        {"search_web": _SearchTool()},
+        executor,  # type: ignore[arg-type]
+        tool_context={"delivery": "written", "unattended": True},
+    )
+
+    result = await loop.run([], user_utterance="compile the morning briefing")
+
+    assert executor.denied and executor.denied[0][0] == "run-skill"
+    assert executor.calls and executor.calls[0][0].name == "search_web"
+    assert "Two headlines" in result.text
+    assert "missing" not in result.text.lower()
+    assert len(brain.requests) == 3
+    # The model learned what it may use from the error it was handed.
+    fed_back = str(brain.requests[1].messages[-1].content)
+    assert "search_web" in fed_back and "not available" in fed_back
+
+
+@pytest.mark.asyncio
+async def test_attended_turn_keeps_the_spoken_missing_tool_phrase() -> None:
+    """A live voice turn must still never end in silence."""
+    brain = _AliasCallingBrain("totally_made_up_tool")
+    executor = _ExecWithDeniedLog()
+    loop = ToolUseLoop(
+        brain,
+        {"run_shell": _RunShellTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="show me the last commit")
+
+    assert "missing the right tool" in result.text
+
+
 @pytest.mark.asyncio
 async def test_howto_guard_publishes_guard_denied_event() -> None:
     brain = _Brain()
