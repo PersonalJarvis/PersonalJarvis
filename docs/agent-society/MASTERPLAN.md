@@ -13,8 +13,12 @@ model, tools and briefing apply in full; the turn's end is a RESULT on the board
 stack stays available via `payload.runner = "mission"`), the starter team Scout + Archivist is
 seeded once per install, seed proposals come from connected capabilities
 (`GET /api/society/seeds`), and the voice front door exists: router tools `delegate-to-agent`
-and `society-status` (ADR-0011 amendment). **M3 world** is the maintainer's parallel track.
-Open in M4: rooms live under the scheduler, the curator.
+and `society-status` (ADR-0011 amendment). **Agent mechanics wave (2026-09-02):** every agent
+has its own contained shell and file hands, its own persistent browser through browser-use
+(out of process, login sessions for the user's accounts, attach mode), and learns
+automatically — finished tasks become skills in its own namespace (see
+`agent-definition.md` §3.1). **M3 world** is the maintainer's parallel track. Open in M4:
+rooms live under the scheduler, the curator.
 
 The research behind every claim here lives in [`research/`](research/):
 [Branch A — product & UI](research/branch-a-product-ui.md) (Hermes Agent, Grok Bot, 3D stack,

@@ -96,6 +96,22 @@ read-only view over them — `jarvis/society/capabilities.py` — that returns t
 | `skill` | `skill:<slug>` | `jarvis/skills/registry.py`, `active` lifecycle only | always (skills are text) |
 | `core` | `core:<tool>` (`core:search-web`, `core:wiki-recall`, `core:run-shell`, `core:computer-use`, `core:read/write/edit` folder tools) | the built-in tool set minus the router-only dispatch tools | always |
 
+**The agent's own hands (built 2026-09-02, all in `jarvis/society/`):**
+
+| tool | what | gate |
+|---|---|---|
+| `society_shell` | commands in the agent's OWN workspace folder (`data/society/<id>/workspace`), path containment, output cap, timeout — local by decision (Hermes' default backend is local, OpenClaw's sandbox is off by default); `ShellBackend` is the seam for a later Docker backend | destructive class → `ask`; `approvals.decide` on `core:shell` |
+| `Read/Write/Edit/Ls/Glob/Grep` | the chat's folder tools, wrapped so every path stays inside the workspace | folder tiers |
+| `society_browser` | one browser-use run in the agent's persistent Chromium profile (or its attached Chrome), out of process in a managed venv (`jarvis/society/browser/`), capped steps and time, results and cost on the board | send/buy/delete/publish wording → `ask`; `approvals.decide` on `core:browser`; `browser_allowed_domains` |
+| `society_run_skill` | loads one of the agent's learned skills as instructions | monitor |
+| `society_message_agent`, `society_wiki_note` | see §4 and §5 | monitor |
+
+**Learning (automatic, maintainer decision 2026-09-02):** after a finished chat-run task the
+turn is digested and, when a procedure emerged, authored into `data/society/<id>/skills/<slug>/`
+— active for that agent immediately, listed in its briefing, promotable to the global user
+skills as a draft (`POST /agents/{id}/skills/{slug}/promote`). Daily cap per agent; a memory
+line on the agent's wiki page; a notice in its chat.
+
 Never in any society tool set, structurally (AP-5/AP-14): `spawn-worker`, `spawn-subagents`,
 `multi-spawn`, `dispatch-*`, `create-artifact`, `navigate`, `switch-provider`,
 `manage-mcp-server`, `app-command`. Dispatch is the scheduler's privilege; app control stays
