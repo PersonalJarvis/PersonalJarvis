@@ -55,7 +55,13 @@ describe("brainSeats", () => {
         option({ id: "claude-api", label: "Anthropic Claude", runner: "claude-cli", cli_installed: true }),
       ],
       [
-        societyRow({ id: "claude-api", runner: "claude-cli", subscription: true, platform: "claude" }),
+        societyRow({
+          id: "claude-api",
+          runner: "claude-cli",
+          subscription: true,
+          platform: "claude",
+          accounts: [account("artner")],
+        }),
         societyRow({ id: "ollama", runner: "brain", keyless: true }),
       ],
       { ollama: [{ id: "qwen3:8b", label: "qwen3:8b" }] },
@@ -142,6 +148,8 @@ describe("brainSeats", () => {
         option({ id: "openai-codex", label: "Codex", runner: "codex-cli", cli_installed: true }),
       ],
       [],
+      {},
+      new Set(["openai-codex"]),
     );
     expect(defaultSeat(withSeat)?.provider.id).toBe("openai-codex");
     expect(defaultSeat(brainSeats([option({ id: "openai" })], []))?.provider.id).toBe("openai");
@@ -163,6 +171,8 @@ describe("brainSeats", () => {
         }),
       ],
       [],
+      {},
+      new Set(["agy"]),
     );
     expect(effortsFor(seat, "pro")).toEqual(["low", "high"]);
     expect(effortsFor(seat, "flash")).toEqual(["low", "medium", "high"]);
