@@ -37,6 +37,9 @@ export type Checkpoint = (typeof CHECKPOINTS)[number];
 export const PERMISSION_CEILINGS = ["safe", "monitor", "ask"] as const;
 export type PermissionCeiling = (typeof PERMISSION_CEILINGS)[number];
 
+export const BROWSER_MODES = ["own", "attach"] as const;
+export type BrowserMode = (typeof BROWSER_MODES)[number];
+
 export const GRANT_MODES = ["all", "allowlist"] as const;
 export type GrantMode = (typeof GRANT_MODES)[number];
 
@@ -98,6 +101,8 @@ export interface SocietyAgentRow {
   approval_rules: ApprovalRules;
   daily_budget_usd: number;
   max_concurrent_runs: number;
+  browser_mode: BrowserMode;
+  browser_allowed_domains: string[];
   session_id: string;
   created_ms: number;
   updated_ms: number;

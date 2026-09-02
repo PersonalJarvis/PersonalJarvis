@@ -94,10 +94,20 @@ class SocietyStore:
         rows = await cur.fetchall()
         await cur.close()
         existing = {str(r[1]) for r in rows}
-        # No migrations yet — the hook exists so the first one is a two-line
-        # change, exactly like the missions store.
         if not existing:  # pragma: no cover — schema always creates the table
             raise RuntimeError("society_agents table missing after schema load")
+        if "browser_mode" not in existing:
+            await self.conn.execute(
+                "ALTER TABLE society_agents ADD COLUMN browser_mode TEXT NOT NULL "
+                "DEFAULT 'own' CHECK (browser_mode IN ('own', 'attach'))"
+            )
+            log.info("society store: migration applied — added browser_mode")
+        if "browser_allowed_domains_json" not in existing:
+            await self.conn.execute(
+                "ALTER TABLE society_agents ADD COLUMN browser_allowed_domains_json "
+                "TEXT NOT NULL DEFAULT '[]'"
+            )
+            log.info("society store: migration applied — added browser_allowed_domains")
 
     async def _ensure_fts(self) -> None:
         """FTS5 over knowledge summaries; optional — a sqlite without FTS5 still

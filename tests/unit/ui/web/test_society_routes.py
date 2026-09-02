@@ -268,3 +268,32 @@ def test_routines_over_rest(client):
     )
     assert bad.status_code == 422
     assert c.get("/api/society/agents/ghost/routines").status_code == 404
+
+
+def test_browser_routes(client, tmp_path, monkeypatch):
+    c, _ = client
+    status = c.get("/api/society/browser/status").json()
+    assert status["installed"] is False and status["phase"] == "idle"
+    c.post("/api/society/agents", json={"name": "Scout"})
+    per_agent = c.get("/api/society/agents/scout/browser").json()
+    assert per_agent["installed"] is False and per_agent["mode"] == "own"
+    assert per_agent["logged_in_profile"] is False
+    # Not installed: a login session is refused with a typed reason.
+    refused = c.post("/api/society/agents/scout/browser/login", json={})
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["reason"] == "blocked_by_policy"
+    assert c.post("/api/society/agents/scout/browser/login/done").json()["closed"] is False
+    # Attach mode is a roster field with its own check.
+    patched = c.patch("/api/society/agents/scout", json={"browser_mode": "attach"}).json()
+    assert patched["agent"]["browser_mode"] == "attach"
+    assert c.patch("/api/society/agents/scout", json={"browser_mode": "cloud"}).status_code == 409
+    domains = c.patch(
+        "/api/society/agents/scout", json={"browser_allowed_domains": ["Mail.Google.com", "x.com"]}
+    ).json()
+    assert domains["agent"]["browser_allowed_domains"] == ["mail.google.com", "x.com"]
+    # Install kicks off a background thread; a stub keeps the test offline.
+    from jarvis.society.browser import install as install_mod
+
+    monkeypatch.setattr(install_mod, "start_install", lambda data_dir=None: (True, "stubbed"))
+    started = c.post("/api/society/browser/install").json()
+    assert started["started"] is True and started["message"] == "stubbed"

@@ -27,6 +27,7 @@ _PINS = [
     (events.Checkpoint, "checkpoint", "CHECKPOINTS"),
     (events.PermissionCeiling, "permission_ceiling", "PERMISSION_CEILINGS"),
     (events.GrantMode, "grant_mode", "GRANT_MODES"),
+    (events.BrowserMode, "browser_mode", "BROWSER_MODES"),
     (events.KnowledgeScope, "knowledge_scope", "KNOWLEDGE_SCOPES"),
     (events.KnowledgeOrigin, "origin", "KNOWLEDGE_ORIGINS"),
     (events.RoomState, None, "ROOM_STATES"),

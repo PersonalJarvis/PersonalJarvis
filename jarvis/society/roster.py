@@ -21,6 +21,7 @@ from typing import Any, Final
 
 from .events import (
     AgentState,
+    BrowserMode,
     Checkpoint,
     GrantMode,
     KnowledgeScope,
@@ -106,6 +107,8 @@ class AgentRecord:
     approval_rules: dict[str, list[str]]
     daily_budget_usd: float
     max_concurrent_runs: int
+    browser_mode: BrowserMode
+    browser_allowed_domains: list[str]
     created_ms: int
     updated_ms: int
     stats: dict[str, Any] = field(default_factory=dict)
@@ -147,6 +150,8 @@ class AgentRecord:
             },
             "daily_budget_usd": self.daily_budget_usd,
             "max_concurrent_runs": self.max_concurrent_runs,
+            "browser_mode": str(self.browser_mode),
+            "browser_allowed_domains": list(self.browser_allowed_domains),
             "session_id": self.session_id,
             "created_ms": self.created_ms,
             "updated_ms": self.updated_ms,
@@ -188,6 +193,10 @@ class AgentRecord:
             },
             daily_budget_usd=float(row.get("daily_budget_usd") or 0.0),
             max_concurrent_runs=int(row.get("max_concurrent_runs") or 1),
+            browser_mode=BrowserMode(str(row.get("browser_mode") or "own")),
+            browser_allowed_domains=[
+                str(x) for x in _loads(row.get("browser_allowed_domains_json"), [])
+            ],
             created_ms=int(row.get("created_ms") or 0),
             updated_ms=int(row.get("updated_ms") or 0),
         )
@@ -217,6 +226,8 @@ _EDITABLE: Final[frozenset[str]] = frozenset(
         "approval_rules",
         "daily_budget_usd",
         "max_concurrent_runs",
+        "browser_mode",
+        "browser_allowed_domains",
     }
 )
 
@@ -227,6 +238,7 @@ _JSON_FIELDS: Final[dict[str, str]] = {
     "denies": "denies_json",
     "skills": "skills_json",
     "approval_rules": "approval_rules_json",
+    "browser_allowed_domains": "browser_allowed_domains_json",
 }
 
 
@@ -284,6 +296,14 @@ def _coerce(field_name: str, value: Any) -> Any:
         return _enum(KnowledgeScope, value, field_name)
     if field_name == "permission_ceiling":
         return _enum(PermissionCeiling, value, field_name)
+    if field_name == "browser_mode":
+        return _enum(BrowserMode, value, field_name)
+    if field_name == "browser_allowed_domains":
+        if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+            raise RosterError(
+                FailureReason.BLOCKED_BY_POLICY, "browser_allowed_domains must be a list"
+            )
+        return json.dumps(sorted({x.strip().lower() for x in value if x.strip()}))
     if field_name in ("grants", "focus", "denies"):
         if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
             raise RosterError(

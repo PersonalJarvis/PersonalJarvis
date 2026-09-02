@@ -128,6 +128,10 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
             ShellTool.name: cast(Tool, ShellTool(rt, agent_id, workspace=workspace)),
         }
     )
+    if rt.browser.is_installed():
+        from .browser.tool import BrowserTool
+
+        tools[BrowserTool.name] = cast(Tool, BrowserTool(rt, agent_id, rt.browser))
     return tools
 
 
@@ -226,7 +230,8 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     rt.cache_agent(agent)
     catalog = rt.catalog()
     roster = await rt.roster.list()
-    return build_briefing(agent, catalog, roster)
+    browser = rt.browser.status_for(agent)
+    return build_briefing(agent, catalog, roster, browser=browser)
 
 
 # ------------------------------------------------------------------ briefing
@@ -243,7 +248,11 @@ def _kind_label(kind: CapabilityKind) -> str:
 
 
 def build_briefing(
-    agent: AgentRecord, catalog: list[CapabilityRow], roster: list[AgentRecord]
+    agent: AgentRecord,
+    catalog: list[CapabilityRow],
+    roster: list[AgentRecord],
+    *,
+    browser: dict[str, Any] | None = None,
 ) -> str:
     """The per-agent system-prompt addendum (agent-definition §3.3).
 
@@ -300,6 +309,7 @@ def build_briefing(
     hands.append(f"Capability epoch: {capability_epoch(catalog)}")
     parts.append("\n".join(hands))
 
+    parts.append(_browser_line(browser))
     parts.append(_ECOSYSTEM_CARD)
 
     mates = [a for a in roster if a.agent_id != agent.agent_id and str(a.state) == "active"]
@@ -313,6 +323,30 @@ def build_briefing(
             lines.append(line)
         parts.append("\n".join(lines))
     return "\n\n".join(parts)
+
+
+def _browser_line(browser: dict[str, Any] | None) -> str:
+    """One byte-stable line about the agent's browser (agent-definition §3)."""
+    if not browser or not browser.get("installed"):
+        return (
+            "## Your browser\nNot set up on this machine yet — the user can install it from your "
+            "card. Until then use plugins, CLIs and search-web for the web."
+        )
+    if browser.get("mode") == "attach":
+        return (
+            "## Your browser\nsociety_browser drives the user's own running Chrome (attached), "
+            "with their logins. One task per call, capped steps."
+        )
+    logged = (
+        "signed-in profile present"
+        if browser.get("logged_in_profile")
+        else ("no logins yet — ask the user for a login session when a site needs one")
+    )
+    return (
+        "## Your browser\nsociety_browser runs in your own persistent browser profile "
+        f"({logged}). One task per call, capped steps; sending, buying, deleting or "
+        "publishing asks the user first."
+    )
 
 
 def session_id_for(agent_id: str) -> str:

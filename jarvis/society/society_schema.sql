@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS society_agents (
                         CHECK (permission_ceiling IN ('safe', 'monitor', 'ask')),
     approval_rules_json TEXT NOT NULL DEFAULT '{}',
     daily_budget_usd    REAL NOT NULL DEFAULT 2.0,
+    browser_mode        TEXT NOT NULL DEFAULT 'own'
+                        CHECK (browser_mode IN ('own', 'attach')),
+    browser_allowed_domains_json TEXT NOT NULL DEFAULT '[]',
     max_concurrent_runs INTEGER NOT NULL DEFAULT 1,
     created_ms          INTEGER NOT NULL,
     updated_ms          INTEGER NOT NULL

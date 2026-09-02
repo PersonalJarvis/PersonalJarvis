@@ -23,6 +23,7 @@ from jarvis.missions.ids import uuid7_str
 __all__ = [
     "AgentState",
     "ApprovalState",
+    "BrowserMode",
     "Checkpoint",
     "GrantMode",
     "KnowledgeOrigin",
@@ -98,6 +99,14 @@ class PermissionCeiling(StrEnum):
     SAFE = "safe"
     MONITOR = "monitor"
     ASK = "ask"
+
+
+class BrowserMode(StrEnum):
+    """``own`` = the agent's persistent Chromium profile; ``attach`` = the
+    person's running Chrome over CDP."""
+
+    OWN = "own"
+    ATTACH = "attach"
 
 
 class GrantMode(StrEnum):

@@ -25,6 +25,7 @@ from typing import Any
 
 from .approvals import Approvals
 from .bridge import MissionBridge
+from .browser.session import BrowserJobs
 from .capabilities import CapabilityRow, build_catalog
 from .events import MsgType, RoomState, SocietyEnvelope, Tier
 from .focus import derive_approval_rules, derive_focus
@@ -97,6 +98,7 @@ class SocietyRuntime:
         self.roster = Roster(self.store)
         self.rooms = Rooms(self.store)
         self.approvals = Approvals(self.store)
+        self.browser = BrowserJobs(self._data_dir)
         self.scheduler = SocietyScheduler(
             self.store,
             self.roster,
@@ -134,7 +136,12 @@ class SocietyRuntime:
         log.info("society runtime started (%s)", self.store.path)
         return self
 
+    @property
+    def data_dir(self) -> Path:
+        return self._data_dir
+
     async def close(self) -> None:
+        await self.browser.close()
         for task in list(self._watchers):
             task.cancel()
         self._watchers.clear()
@@ -309,6 +316,7 @@ class SocietyRuntime:
     async def engage_kill_switch(self) -> dict[str, Any]:
         await self.store.set_kill_switch(True)
         halted = await self.scheduler.halt_all()
+        await self.browser.close()
         settled = 0
         for room in await self.rooms.list(state=RoomState.RUNNING):
             await self.rooms.settle(room.room_id, reason="kill_switch")

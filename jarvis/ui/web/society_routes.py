@@ -80,6 +80,8 @@ class CreateAgentBody(BaseModel):
     daily_budget_usd: float | None = None
     max_concurrent_runs: int | None = None
     avatar: dict[str, Any] | None = None
+    browser_mode: str | None = None
+    browser_allowed_domains: list[str] | None = None
 
 
 class PatchAgentBody(BaseModel):
@@ -103,6 +105,8 @@ class PatchAgentBody(BaseModel):
     max_concurrent_runs: int | None = None
     avatar: dict[str, Any] | None = None
     checkpoint: str | None = None
+    browser_mode: str | None = None
+    browser_allowed_domains: list[str] | None = None
 
 
 class MessageBody(BaseModel):
@@ -374,6 +378,66 @@ async def apply_seed_proposals(body: ApplySeedsBody, request: Request) -> dict[s
         if was_created:
             created.append(agent.to_dict())
     return {"agents": created, "total": len(created)}
+
+
+# ----------------------------------------------------------------- browser
+
+
+class LoginBody(BaseModel):
+    start_url: str = ""
+
+
+@router.get("/browser/status")
+async def browser_status(request: Request) -> dict[str, Any]:
+    """Is the managed browser environment installed, is an install running."""
+    from jarvis.society.browser import install as install_mod
+
+    rt = await _runtime(request)
+    return install_mod.snapshot(rt.data_dir)
+
+
+@router.post("/browser/install")
+async def browser_install(request: Request) -> dict[str, Any]:
+    """One-click install of browser-use into its own environment (background)."""
+    from jarvis.society.browser import install as install_mod
+
+    rt = await _runtime(request)
+    ok, message = install_mod.start_install(rt.data_dir)
+    return {"started": ok, "message": message, **install_mod.snapshot(rt.data_dir)}
+
+
+@router.get("/agents/{agent_id}/browser")
+async def agent_browser_status(agent_id: str, request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    return rt.browser.status_for(agent)
+
+
+@router.post("/agents/{agent_id}/browser/login", openapi_extra={"x-jarvis-dangerous": True})
+async def agent_browser_login(agent_id: str, body: LoginBody, request: Request) -> dict[str, Any]:
+    """Open the agent's browser profile headed so the person can sign in once.
+    Returns when the window is closed, /login/done is called, or 15 minutes pass."""
+    from jarvis.society.browser.session import BrowserUnavailable
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        return await rt.browser.login(agent, start_url=body.start_url)
+    except BrowserUnavailable as exc:
+        raise HTTPException(409, {"reason": str(exc.reason), "detail": str(exc)}) from exc
+
+
+@router.post("/agents/{agent_id}/browser/login/done")
+async def agent_browser_login_done(agent_id: str, request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    return {"closed": await rt.browser.end_login(agent.agent_id)}
 
 
 # ----------------------------------------------------------------- catalog
