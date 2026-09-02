@@ -103,7 +103,8 @@ export type PlaceId =
   | "harbor"
   | "lighthouse"
   | "gardens"
-  | "solar";
+  | "solar"
+  | "plugins";
 
 export interface Place {
   id: PlaceId;
@@ -279,6 +280,8 @@ const PLACE_TILES: Record<PlaceId, [number, number]> = {
   lighthouse: [CENTER_TILE + 62, CENTER_TILE],
   gardens: [CENTER_TILE + 30, CENTER_TILE + 34],
   solar: [CENTER_TILE - 32, CENTER_TILE - 32],
+  // The Plugin Docks: first World Kit building, north of the west spoke.
+  plugins: [CENTER_TILE - 42, CENTER_TILE - 9],
 };
 
 /** Half extents (tiles) of the flat plots each place is built on. */
@@ -291,6 +294,7 @@ const PLOT_HALF: Record<PlaceId, [number, number]> = {
   lighthouse: [3, 3],
   gardens: [9, 7],
   solar: [8, 6],
+  plugins: [6, 5],
 };
 
 /** Building footprints (half extents, tiles) that block walking. */
@@ -299,6 +303,7 @@ const BUILDING_HALF: Partial<Record<PlaceId, [number, number]>> = {
   archive: [3, 3],
   workshop: [6, 3],
   lighthouse: [1, 1],
+  plugins: [4, 3],
 };
 
 /** Where the dock reaches into the bay: from the harbor plot southward. */
@@ -637,6 +642,8 @@ function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
     lighthouse: place("lighthouse", [PLACE_TILES.lighthouse[0] - 3, C], Math.PI / 2),
     gardens: place("gardens", [PLACE_TILES.gardens[0], PLACE_TILES.gardens[1]], 0),
     solar: place("solar", [PLACE_TILES.solar[0] + 1, PLACE_TILES.solar[1] + 8], Math.PI),
+    // In front of the docks' bays, facing the building (north).
+    plugins: place("plugins", [PLACE_TILES.plugins[0], PLACE_TILES.plugins[1] + 5], Math.PI),
   };
   void facingCentre;
   // Make sure every stand tile is walkable — a place nobody can reach is a bug.

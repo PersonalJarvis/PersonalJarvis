@@ -18,6 +18,7 @@ const LABEL_Y: Record<PlaceId, number> = {
   lighthouse: 16,
   gardens: 6,
   solar: 5,
+  plugins: 13,
 };
 
 export function PlaceLabels() {

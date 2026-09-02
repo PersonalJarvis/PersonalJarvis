@@ -1,0 +1,128 @@
+# World Behaviour Manual — how agents live on the island
+
+Status: **binding for M3c/M3d, written 2026-09-02.** Subordinate to [`MASTERPLAN.md`](MASTERPLAN.md)
+§2 (the world is a projection; idle is LLM-free; dispatch is the scheduler's privilege) and to
+[`world-masterplan-v2.md`](world-masterplan-v2.md) §5–6, which this manual turns into rules a
+programmer, an agent prompt and a tester can each check. The maintainer's ask: *"the agents must
+know the world — when one uses a plugin it goes to the Plugin Store; the world has to work."*
+
+## 1. Two truths, one picture
+
+The island shows two things and never invents a third:
+
+1. **What the backend says an agent IS doing** — its `checkpoint` (the semantic place) and its
+   `state`. This comes from the society event log through the bridge; the world only reads it.
+2. **How the island shows it** — the walk, the pose, the bubble. This is client-side and cosmetic.
+
+Nothing an agent *says* moves it. Nothing the *viewer* does moves it directly either (§5): every
+gesture becomes a typed event, and the figure follows because the truth changed.
+
+## 2. Places — the vocabulary
+
+| checkpoint | island place | the agent is… |
+|---|---|---|
+| `home` | its own house on the ring | off duty: paused, or between runs at night |
+| `square` | the table under the tree | in a bounded room (`ROOM_OPEN … ROOM_SETTLE`), or idling on the square |
+| `hub:plugins` | **Plugin Docks** | running a task whose dominant hands are **plugin tools** (Gmail, calendar, files via a plugin…) |
+| `hub:skills` | Skill Forge | running a task whose dominant hands are skills |
+| `hub:mcp` | Relay Tower | calling MCP servers |
+| `hub:cli` | Terminal Cantina | working through a CLI seat (Claude Code, Codex, …) |
+| `hub:workshop` | Workshop | core file/shell work, no dominant family |
+| `hub:models` | Model Foundry | its brain is a local model that is currently inferring |
+| `archive` | Archive | writing knowledge / a reviewed promotion |
+| `gallery` | Gallery | delivering a `RESULT` (carries the crate) |
+| `gate` | Harbor Gate | waiting for an `ask`-tier approval |
+| `foundry` | Agent Foundry | being created (3 s), or changing its avatar |
+| `wander` | the square and its own street | idle; the rest-biased model picks the beats |
+
+V1 ships `desk | meeting | archive | gate | idle` (`data.ts`); this table is the M3d superset.
+`hub:*` values join the five-layer parity set (Python enum ↔ SQL CHECK ↔ Pydantic ↔ TS ↔ UI, AP-4)
+when they land in the schema — never as free strings.
+
+## 3. Derivation — who decides the place (trusted Python, no LLM)
+
+The **society bridge** (`jarvis/society/bridge.py`, M1) derives `checkpoint` from events it already
+sees. Rules, in priority order; the first that matches wins:
+
+1. `state == paused` → `home`.
+2. An open approval for the agent → `gate`.
+3. The agent is a member of an open room → `square`.
+4. A `RESULT` was emitted in the last 6 s → `gallery` (then rule 6 or 8 applies).
+5. A worker runs under the agent's identity → `hub:<family>` where family is the **dominant
+   capability family of its last 8 tool calls** (`plugin | skill | mcp | cli | core`, from the ONE
+   capability catalog of `agent-definition.md` §3.1). The place changes only when a different
+   family has dominated for **≥ 20 s** — hysteresis, so a figure never ping-pongs between shops.
+   A local-brain agent whose model is inferring right now → `hub:models` outranks the family.
+6. A knowledge write in the last 6 s → `archive`.
+7. Being created / avatar change → `foundry`.
+8. Otherwise → `wander`.
+
+The rule set is pure and unit-tested (`tests/unit/society/test_checkpoint_rules.py`, M3d): given a
+list of events with timestamps, it returns one checkpoint. The world never runs it.
+
+## 4. What the agent itself knows — the "world card"
+
+Agents do not need the map to work, but they should be able to **talk about where they are**
+("I'm at the Plugin Docks, sending the mail through the Gmail plugin") and to reason about the
+society's places when the user asks. The prompt assembly of `agent-definition.md` §3.3 gains one
+short, cached section — the world card — and nothing else:
+
+```
+You live in a small island village with your fellow agents. Places: your house (rest),
+the market square (group discussions), the Plugin Docks (plugin tools), the Skill
+Forge (skills), the Relay Tower (MCP servers), the Terminal Cantina (coding CLIs),
+the Workshop (files and shell), the Archive (shared memory), the Gallery (finished
+work), the Harbor Gate (waiting for approval), the Agent Foundry (where agents are
+created). You are placed by what you actually do; you cannot move yourself. When you
+mention your location, use these names.
+```
+
+Rules: prefix-stable (cached), ≤ 120 tokens, identical for every agent, never carries live state
+(the place is a fact the runtime knows; the agent narrates, it does not decide). Runtime output
+language stays with `turn_language.py` — the card is English in the prompt; the agent answers
+in the turn's language.
+
+## 5. Steering — how a viewer moves an agent
+
+| Gesture in the world | Event | Guard |
+|---|---|---|
+| card → "Assign task" | `ASSIGN` through the scheduler | tier wall (§2.5), budget pre-check |
+| drag a figure onto a hub | `ASSIGN` with the hub's capability as `focus`; the card opens pre-filled, the user confirms | user confirms every time |
+| right-click → "Pause" / "Go home" | `state = paused` / `active` | — |
+| voice via Jarvis: "send Scout to the Plugin Docks and …" | router's `delegate-to-agent` (M4) → `ASSIGN` | voice ACK ≤ 5 s |
+| click a building → "Send someone here" | pick an agent → as drag | — |
+| follow-cam, select, hover | none — camera only | — |
+
+The figure walks when, and only when, the derived checkpoint changes. A rejected `ASSIGN` (tier,
+budget, kill switch) never moves anyone; the card shows the typed failure reason.
+
+## 6. What the buildings do
+
+Every hub has three faces, and all three are required before a building ships (finish-it-everywhere):
+
+| Face | Plugin Docks (the first, shipped in M3b/M3c) | Every other hub |
+|---|---|---|
+| **for the agent** | stand point in front of the bays; `work` clip while there | stand point + clip from the kit contract |
+| **for the viewer** | click → drawer listing every installed plugin by family (`/api/plugins`), link to the Plugins section | click → drawer for that section, deep link |
+| **live signal** | (M3d) bay stripe of the active family glows while an agent works there | per §5 of the v2 plan |
+
+Bay colours are the family colours everywhere — the building, the drawer swatches, later the
+bubbles: brains violet, tools teal, speech-to-text coral, text-to-speech amber, channels mint,
+realtime sky.
+
+## 7. Zero-cost guarantees (unchanged)
+
+- Idle costs nothing: wander is a timer and a random tile; no LLM is ever called to "look alive".
+- A closed app freezes the society; the island shows the last derived places on reopen.
+- Two windows show the same places; footsteps differ by design.
+- Reduced motion: figures stand at their places; the Ledger stays the declared equivalent.
+
+## 8. Test plan (M3d exit)
+
+1. Unit: `checkpoint_rules` — the eight rules, the hysteresis, the priority order.
+2. Contract: a fake worker run with 10 plugin tool calls → the agent's row reads `hub:plugins`
+   within one bridge tick; a `RESULT` → `gallery` then `wander`.
+3. Screenshot (headless Chrome, recipe in project memory): the walker stands in front of the
+   Plugin Docks' bays, facing north, nameplate visible.
+4. Steering: drag Scout onto the Docks → an `ASSIGN` with `focus=[plugin:*]` appears in the log;
+   a specialist dragging (via API) is refused with the typed reason.

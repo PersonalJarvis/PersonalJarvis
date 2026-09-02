@@ -9,6 +9,7 @@ import { useFrame } from "@react-three/fiber";
 import { InstancedMesh, Mesh, Object3D } from "three";
 
 import { buildIsland, groundY, tileToWorld, type PlaceId, type Post } from "./islandLayout";
+import { KIT_PLACEMENTS, KitBuilding } from "./KitBuilding";
 import { Block, useKit, type Kit } from "./WorldKit";
 import { PAL } from "./worldMaterials";
 
@@ -165,11 +166,23 @@ function SolarField({ kit, posts }: { kit: Kit; posts: Post[] }) {
   );
 }
 
-export function Landmarks({ paused }: { paused: boolean }) {
+export function Landmarks({
+  paused,
+  onHubClick,
+  openHub,
+}: {
+  paused: boolean;
+  /** A kit building was clicked — the stage opens that hub's drawer. */
+  onHubClick?: (place: PlaceId) => void;
+  openHub?: PlaceId | null;
+}) {
   const kit = useKit();
   const { content } = buildIsland();
   return (
     <group>
+      {KIT_PLACEMENTS.map((k) => (
+        <KitBuilding key={k.kit} kit={k.kit} place={k.place} rotation={k.rotation} onClick={onHubClick} selected={openHub === k.place} />
+      ))}
       <Workshop kit={kit} />
       <Archive kit={kit} />
       <Harbor kit={kit} paused={paused} />

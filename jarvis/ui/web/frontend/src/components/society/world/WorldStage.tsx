@@ -31,6 +31,7 @@ import { useCameraStore } from "./cameraStore";
 import { Clouds } from "./Clouds";
 import { Landmarks } from "./Landmarks";
 import { PlaceLabels } from "./PlaceLabels";
+import { PluginStoreDrawer } from "./PluginStoreDrawer";
 import { Shadowed } from "./Shadowed";
 import { SunRig } from "./SunRig";
 import { Terrain, Water } from "./Terrain";
@@ -42,6 +43,7 @@ import { WorldCameraRig } from "./WorldCameraRig";
 import { WorldComposer } from "./WorldComposer";
 import { WorldHud } from "./WorldHud";
 import { WorldKitProvider } from "./WorldKit";
+import type { PlaceId } from "./islandLayout";
 import { cameraOffset } from "./worldCamera";
 import { SKY } from "./worldPalette";
 import { useWorldSettings } from "./worldSettings";
@@ -71,6 +73,7 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
   const agents = roster.data?.agents ?? [];
   const sample = roster.data?.sample ?? true;
   const [selected, setSelected] = useState<string | null>(null);
+  const [openHub, setOpenHub] = useState<PlaceId | null>(null);
 
   useWorldControls(hostRef, webgl);
 
@@ -135,11 +138,11 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
             <Water paused={reduced} />
             <Shadowed>
               <Village paused={reduced} />
-              <Landmarks paused={reduced} />
+              <Landmarks paused={reduced} onHubClick={(p) => setOpenHub((cur) => (cur === p ? null : p))} openHub={openHub} />
               <Trees />
               <Walkers agents={agents} paused={reduced} selectedId={selected} onSelect={select} />
             </Shadowed>
-            <Clouds paused={reduced} />
+            {shadows && <Clouds paused={reduced} />}
             {ready && <PlaceLabels />}
           </WorldKitProvider>
           <WorldCameraRig />
@@ -149,6 +152,7 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
       {ready && (
         <WorldHud agents={agents} sample={sample} awake={awake} reducedMotion={reduced} topRight={topRight} />
       )}
+      {ready && openHub === "plugins" && <PluginStoreDrawer onClose={() => setOpenHub(null)} />}
     </div>
   );
 }

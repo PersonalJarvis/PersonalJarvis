@@ -66,7 +66,9 @@ export const useWorldSettings = create<WorldSettings>((set, get) => ({
   grain: normalizeGrain(initial.grain),
   scale: normalizeScale(initial.scale),
   bloom: initial.bloom ?? false,
-  shadows: initial.shadows ?? true,
+  // Off by default (maintainer, 2026-09-02): the sun shadows read as noise on
+  // his machine; the setting stays for those who want them.
+  shadows: initial.shadows ?? false,
   setGrain: (grain) => {
     set({ grain });
     persist(get());
