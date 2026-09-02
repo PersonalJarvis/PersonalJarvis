@@ -64,7 +64,12 @@ def test_serve_answers_ready_then_transcribes(monkeypatch: pytest.MonkeyPatch) -
 
     ready, first, second = _messages_from(stdout.getvalue())
     assert ready == {"ready": True, "device": "cpu", "compute": "int8"}
-    assert first == {"text": "heard 200 bytes", "language": "de", "probability": 0.9}
+    assert first == {
+        "text": "heard 200 bytes",
+        "language": "de",
+        "probability": 0.9,
+        "segments": [],
+    }
     assert second["text"] == "heard 0 bytes"
     assert engine.requests[0][1] == "de"
 

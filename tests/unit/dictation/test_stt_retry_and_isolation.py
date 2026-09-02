@@ -457,6 +457,11 @@ def test_the_dictation_provider_arms_the_cross_family_chain(
     # on whether THIS host has dictionary entries; stand it down so the test
     # asserts about the chain and not about the developer's vocabulary.
     monkeypatch.setattr(dictionary, "wrap_stt_with_dictionary", lambda provider: provider)
+    # The on-device final pass would take the front of the chain on a host
+    # with the local runtime; this test is about the CLOUD chain behind it.
+    import jarvis.dictation.local_preview as preview_mod
+
+    monkeypatch.setattr(preview_mod, "faster_whisper_available", lambda: False)
     pipe = _pipeline_with_config(provider="groq-api")
 
     instance = pipe._dictation_stt()

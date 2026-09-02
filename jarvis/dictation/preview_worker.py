@@ -21,9 +21,13 @@ Protocol (stdin/stdout, binary, length-prefixed):
 * worker → parent, once, after the engine built and warmed:
   ``{"ready": true, "device": ..., "compute": ...}`` or
   ``{"ready": false, "error": ...}`` (the worker then exits)
-* parent → worker: ``{"n": <pcm byte count>, "language": <code or null>}``
-* worker → parent: ``{"text": ..., "language": ..., "probability": ...}``
-  or ``{"error": ...}``
+* parent → worker: ``{"n": <pcm byte count>, "language": <code or null>}``,
+  optionally with ``"beam_size"`` (default 1 — greedy, the preview's choice;
+  the dictation final pass asks for a real beam)
+* worker → parent: ``{"text": ..., "language": ..., "probability": ...,
+  "segments": [{"start": s, "end": s, "text": ...}, ...]}`` or
+  ``{"error": ...}`` — ``segments`` carry the decoder's own timings so the
+  final pass can tell a dropped tail from a slow speaker
 
 stdout carries ONLY the protocol (stderr is discarded by the parent). The
 worker exits when its stdin closes — parent exit or kill — so no orphan can
@@ -69,11 +73,20 @@ def write_message(stream: IO[bytes], message: dict[str, Any]) -> None:
     stream.flush()
 
 
-def serve(stdin: IO[bytes], stdout: IO[bytes], model_name: str) -> int:
-    """Build the engine, report readiness, then answer requests until EOF."""
+def serve(stdin: IO[bytes], stdout: IO[bytes], model_name: str, compute: str | None = None) -> int:
+    """Build the engine, report readiness, then answer requests until EOF.
+
+    ``compute`` pins the CUDA compute type (``"int8_float16"`` for the final
+    pass, which shares the card with the wake model and the voice stack);
+    ``None`` keeps the preview's own ladder.
+    """
     from jarvis.dictation.local_preview import LocalPreviewTranscriber
 
-    engine = LocalPreviewTranscriber(model_name)
+    engine = (
+        LocalPreviewTranscriber(model_name, compute_override=compute)
+        if compute
+        else LocalPreviewTranscriber(model_name)
+    )
     engine._load_model()  # noqa: SLF001 — the worker IS the engine's host
     if not engine.ready:
         write_message(stdout, {"ready": False, "error": "no usable local engine"})
@@ -94,12 +107,26 @@ def serve(stdin: IO[bytes], stdout: IO[bytes], model_name: str) -> int:
         if pcm is None:
             return 0
         try:
-            text, language, probability = engine._transcribe_sync(  # noqa: SLF001
-                pcm, request.get("language") or None
-            )
+            language_hint = request.get("language") or None
+            beam_size = max(1, int(request.get("beam_size", 1) or 1))
+            detailed = getattr(engine, "_transcribe_sync_detailed", None)
+            segments: list[dict[str, Any]] = []
+            if callable(detailed):
+                text, language, probability, segments = detailed(
+                    pcm, language_hint, beam_size=beam_size
+                )
+            else:  # an engine without timings still answers the preview
+                text, language, probability = engine._transcribe_sync(  # noqa: SLF001
+                    pcm, language_hint
+                )
             write_message(
                 stdout,
-                {"text": text, "language": language, "probability": probability},
+                {
+                    "text": text,
+                    "language": language,
+                    "probability": probability,
+                    "segments": list(segments),
+                },
             )
         except Exception as exc:  # noqa: BLE001 — one bad clip must not kill the worker
             write_message(stdout, {"error": f"{type(exc).__name__}: {exc}"})
@@ -107,7 +134,8 @@ def serve(stdin: IO[bytes], stdout: IO[bytes], model_name: str) -> int:
 
 def main() -> int:
     model_name = sys.argv[1] if len(sys.argv) > 1 else "base"
-    return serve(sys.stdin.buffer, sys.stdout.buffer, model_name)
+    compute = sys.argv[2] if len(sys.argv) > 2 else None
+    return serve(sys.stdin.buffer, sys.stdout.buffer, model_name, compute)
 
 
 if __name__ == "__main__":

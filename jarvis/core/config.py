@@ -3540,6 +3540,25 @@ class DictationConfig(BaseModel):
     #: recovering half a word is not. ``0`` disables the overlap.
     final_overlap_seconds: float = Field(default=1.5, ge=0.0, le=5.0)
 
+    #: Read the final pass on THIS machine, in a worker process, before any
+    #: configured cloud provider — when the local speech engine is installed
+    #: and the card has room. The worker declines itself (full card, CPU-only
+    #: host, missing runtime) with a crossable failure, so the configured
+    #: provider is one step behind on every press. Off = the configured
+    #: provider is in front, as before.
+    local_engine: bool = True
+
+    #: faster-whisper checkpoint for the local final pass. ``large-v3-turbo``
+    #: is the accuracy of ``large-v3`` at a fraction of the decode time and
+    #: ~1 GB of accelerator memory. Independent of ``[stt].model``, which the
+    #: voice lane owns.
+    local_model: str = "large-v3-turbo"
+
+    #: Free accelerator memory the local final pass needs before it starts;
+    #: below it the configured provider takes the dictation. ``0`` skips the
+    #: check. Unknown free memory (no NVIDIA tooling) never blocks the start.
+    local_min_free_gb: float = Field(default=1.5, ge=0.0, le=64.0)
+
     #: Allow the language to change WITHIN one dictation.
     #:
     #: While this is on (the default), the final pass asks the recognizer to

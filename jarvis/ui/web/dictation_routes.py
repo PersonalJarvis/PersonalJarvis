@@ -458,6 +458,25 @@ class SettingsBody(BaseModel):
         default=None,
         description="Audio shared by adjacent final windows (0-5 seconds)",
     )
+    local_engine: bool | None = Field(
+        default=None,
+        description=(
+            "Read the final pass on this machine in a worker process before "
+            "any configured cloud provider (declines itself on a full card, "
+            "a CPU-only host or a missing local runtime)"
+        ),
+    )
+    local_model: str | None = Field(
+        default=None,
+        description="faster-whisper checkpoint for the local final pass",
+    )
+    local_min_free_gb: float | None = Field(
+        default=None,
+        description=(
+            "Free accelerator memory the local final pass needs before it "
+            "starts (0-64 GB; 0 skips the check)"
+        ),
+    )
     code_switching: bool | None = Field(
         default=None,
         description=(

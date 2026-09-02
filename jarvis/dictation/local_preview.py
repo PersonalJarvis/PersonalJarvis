@@ -132,7 +132,11 @@ class _WorkerModel:
         self.compute = compute
 
     def transcribe(
-        self, samples: Any, language: str | None = None, **_ignored: Any
+        self,
+        samples: Any,
+        language: str | None = None,
+        beam_size: int = 1,
+        **_ignored: Any,
     ) -> tuple[list[Any], Any]:
         import numpy as np
 
@@ -142,7 +146,10 @@ class _WorkerModel:
         stdin, stdout = self._proc.stdin, self._proc.stdout
         if stdin is None or stdout is None:  # pragma: no cover — Popen(PIPE) guarantees both
             raise RuntimeError("preview worker pipes are gone")
-        write_message(stdin, {"n": len(pcm), "language": language})
+        request: dict[str, Any] = {"n": len(pcm), "language": language}
+        if beam_size and int(beam_size) > 1:
+            request["beam_size"] = int(beam_size)
+        write_message(stdin, request)
         stdin.write(pcm)
         stdin.flush()
         response = read_message(stdout)
@@ -150,7 +157,16 @@ class _WorkerModel:
             raise RuntimeError("preview worker exited")
         if "error" in response:
             raise RuntimeError(str(response["error"]))
-        segments = [SimpleNamespace(text=str(response.get("text", "")))]
+        timings = response.get("segments") or []
+        segments = [
+            SimpleNamespace(
+                start=item.get("start"),
+                end=item.get("end"),
+                text=str(item.get("text", "") or ""),
+            )
+            for item in timings
+            if isinstance(item, dict)
+        ] or [SimpleNamespace(start=None, end=None, text=str(response.get("text", "")))]
         info = SimpleNamespace(
             language=str(response.get("language", "") or ""),
             language_probability=float(response.get("probability", 0.0) or 0.0),
@@ -165,19 +181,23 @@ class _WorkerModel:
             log.debug("Preview worker kill skipped: %s", exc)
 
 
-def _spawn_worker_model(model_name: str) -> _WorkerModel | None:
+def _spawn_worker_model(model_name: str, *, compute: str | None = None) -> _WorkerModel | None:
     """Start the out-of-process engine; ``None`` when this host cannot.
 
     A refused spawn is not an error — the caller falls back to the in-process
     CPU floor, which never touches the CUDA DLLs and therefore never holds
-    the loader lock.
+    the loader lock. ``compute`` pins the CUDA compute type for the worker
+    (the dictation final pass shares the card and asks for ``int8_float16``).
     """
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
     from jarvis.dictation.preview_worker import read_message
 
+    argv = [_child_python(), "-X", "utf8", "-m", "jarvis.dictation.preview_worker", model_name]
+    if compute:
+        argv.append(compute)
     try:
         proc = subprocess.Popen(  # noqa: S603 — our own interpreter + module, no user input
-            [_child_python(), "-X", "utf8", "-m", "jarvis.dictation.preview_worker", model_name],
+            argv,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -235,8 +255,18 @@ class LocalPreviewTranscriber:
     preview away is free; the next tick asks again.
     """
 
-    def __init__(self, model_name: str = PREVIEW_MODEL, *, prefer_worker: bool = False) -> None:
+    def __init__(
+        self,
+        model_name: str = PREVIEW_MODEL,
+        *,
+        prefer_worker: bool = False,
+        compute_override: str | None = None,
+    ) -> None:
         self._model_name = model_name
+        #: CUDA compute type to try first instead of the probe's pick — the
+        #: dictation final pass asks for ``int8_float16`` so a second model
+        #: fits beside the wake engine and the voice stack. CPU is unaffected.
+        self._compute_override = (compute_override or "").strip() or None
         #: True in the DESKTOP process (set by the ``local_preview`` factory):
         #: the engine is hosted out of process so the CUDA DLL load never
         #: holds this process's loader lock. False inside the worker itself
@@ -301,6 +331,8 @@ class LocalPreviewTranscriber:
                 preferred = ("cpu", "int8")
             else:
                 preferred = self._pick_device()
+                if self._compute_override and preferred[0] == "cuda":
+                    preferred = ("cuda", self._compute_override)
             attempts = [preferred]
             if preferred == ("cuda", "float16"):
                 # The quantized pair is the old GPU default and still the
@@ -432,25 +464,40 @@ class LocalPreviewTranscriber:
         which no downstream text inspection can reconstruct once a provider
         has translated the words.
         """
+        text, detected, probability, _timings = self._transcribe_sync_detailed(pcm, language)
+        return text, detected, probability
+
+    def _transcribe_sync_detailed(
+        self, pcm: bytes, language: str | None, *, beam_size: int = 1
+    ) -> tuple[str, str, float, list[dict[str, Any]]]:
+        """:meth:`_transcribe_sync` plus the decoder's own segment timings.
+
+        ``beam_size`` defaults to greedy — the preview trades a little accuracy
+        for latency — and the dictation final pass, read once after release,
+        asks for a real beam. The segments carry ``start``/``end`` on the
+        recognizer's clock so a caller can tell a dropped tail from a slow
+        speaker, which the joined text alone cannot.
+        """
         import numpy as np
 
         samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         if samples.size == 0:
-            return "", "", 0.0
+            return "", "", 0.0, []
         model = self._model
         if model is None:  # pragma: no cover — transcribe() gates on ready
-            return "", "", 0.0
+            return "", "", 0.0, []
         segments, info = model.transcribe(
             samples,
             language=language,
-            beam_size=1,  # greedy: the preview trades a little accuracy for latency
+            beam_size=max(1, int(beam_size)),
             # A tuple/default enables Whisper's temperature fallback ladder and
-            # may decode the same stale preview repeatedly. One fixed greedy
-            # pass keeps the measured path in the tens-of-milliseconds range.
+            # may decode the same stale preview repeatedly. One fixed pass
+            # keeps the measured preview path in the tens-of-milliseconds range.
             temperature=0.0,
             condition_on_previous_text=False,
         )
-        text = " ".join(seg.text for seg in segments).strip()
+        decoded = list(segments)
+        text = " ".join(seg.text for seg in decoded).strip()
         # A language the CALLER pinned is not a detection — reporting it back as
         # one would let a pin confirm itself forever.
         detected = "" if language else str(getattr(info, "language", "") or "")
@@ -462,7 +509,15 @@ class LocalPreviewTranscriber:
             # reject the detection — the same outcome a log line would only
             # narrate, once per preview tick.
             probability = 0.0
-        return text, detected, probability
+        timings = [
+            {
+                "start": getattr(seg, "start", None),
+                "end": getattr(seg, "end", None),
+                "text": str(getattr(seg, "text", "") or ""),
+            }
+            for seg in decoded
+        ]
+        return text, detected, probability, timings
 
     async def transcribe(self, pcm: bytes, language: str | None = None) -> str | None:
         """Preview text, or ``None`` when this tick has none.

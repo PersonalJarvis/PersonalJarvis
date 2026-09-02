@@ -286,6 +286,12 @@ export interface DictationSettings {
   final_window_seconds: number;
   /** Overlap between adjacent final windows in seconds. */
   final_overlap_seconds: number;
+  /** Read the final pass on this machine (worker process) before any cloud provider. */
+  local_engine: boolean;
+  /** faster-whisper checkpoint for the local final pass. */
+  local_model: string;
+  /** Free accelerator memory the local final pass needs before it starts (GB). */
+  local_min_free_gb: number;
   /** Auto-detect within the recording instead of sending a hard language lock. */
   code_switching: boolean;
   history_enabled: boolean;

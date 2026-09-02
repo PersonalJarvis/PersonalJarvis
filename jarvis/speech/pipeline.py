@@ -10804,13 +10804,42 @@ class SpeechPipeline:
 
             configured = str(getattr(stt_cfg, "provider", "") or "").strip()
             alternates = list(_resolve_stt_fallback_chain(stt_cfg, configured))
-            if alternates:
+            configured_instance = instance
+
+            def _build(name: str) -> Any:
+                if name == configured:
+                    return configured_instance
+                return build_named_stt_provider(name, patched, dictionary_bias=False)
+
+            # The on-device final pass goes IN FRONT of whatever the voice lane
+            # uses, hosted out of process (2026-09-02 forensics: 220 of 220
+            # dictations ran on a cloud recognizer the settings did not name,
+            # because the voice lane had been moved there to keep CUDA out of
+            # this process — the dictation lane inherited that move and paid
+            # for it in round-trips and truncated windows). The worker declines
+            # itself on a full card, a CPU-only host or a missing runtime with
+            # a crossable failure, so the configured provider is one step
+            # behind on every press (AP-22) and never a restart away.
+            local_final = self._dictation_local_final(dictation_cfg)
+            if local_final is not None:
                 from jarvis.speech.stt_fallback import FallbackSTT
 
-                def _build(name: str) -> Any:
-                    return build_named_stt_provider(
-                        name, patched, dictionary_bias=False
-                    )
+                chain = [configured, *alternates] if configured else alternates
+                instance = FallbackSTT(
+                    local_final,
+                    chain,
+                    _build,
+                    primary_name=local_final.provider_label,
+                )
+                log.info(
+                    "Dictation STT chain armed: %s/%s (out of process) -> %s "
+                    "(no voice bias prompt).",
+                    local_final.provider_label,
+                    local_final.last_used_model,
+                    ", ".join(chain) or "<no cloud family keyed>",
+                )
+            elif alternates:
+                from jarvis.speech.stt_fallback import FallbackSTT
 
                 instance = FallbackSTT(
                     instance, alternates, _build, primary_name=configured
@@ -11022,6 +11051,42 @@ class SpeechPipeline:
             self._dictation_warmup_provider = None
             self._dictation_warmup_task = None
             return fresh
+
+    def _dictation_local_final(self, dictation_cfg: Any) -> Any:
+        """The out-of-process on-device final-pass provider, or ``None``.
+
+        ``None`` when the user switched it off (``[dictation].local_engine``)
+        or the local runtime is not importable here — the cheap, static
+        reasons. The expensive, changing ones (free accelerator memory, a
+        CPU-only worker, a spawn that fails) are the provider's own business:
+        it answers every call it cannot take with a CROSSABLE failure, so the
+        chain behind it decides per press, not per boot.
+        """
+        if not bool(getattr(dictation_cfg, "local_engine", True)):
+            return None
+        try:
+            from jarvis.dictation.local_final import (
+                DEFAULT_FINAL_MODEL,
+                DEFAULT_MIN_FREE_GB,
+                LocalFinalSTT,
+            )
+            from jarvis.dictation.local_preview import faster_whisper_available
+
+            if not faster_whisper_available():
+                log.info(
+                    "Dictation stays on the configured provider: the local speech "
+                    "engine (faster-whisper) is not installed in this Python."
+                )
+                return None
+            model = str(getattr(dictation_cfg, "local_model", "") or "").strip()
+            min_free = getattr(dictation_cfg, "local_min_free_gb", DEFAULT_MIN_FREE_GB)
+            return LocalFinalSTT(
+                model or DEFAULT_FINAL_MODEL,
+                min_free_gb=float(min_free if min_free is not None else 0.0),
+            )
+        except Exception as exc:  # noqa: BLE001 — the cloud chain is still a chain
+            log.warning("Local dictation engine unavailable (%s); using the chain.", exc)
+            return None
 
     def _reset_dictation_stt(self) -> None:
         """Drop every cached STT fallback so the next use resolves them again.
