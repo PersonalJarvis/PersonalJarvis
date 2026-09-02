@@ -196,6 +196,46 @@ function connectionFor(
   return rows.find((r) => r.jarvis === provider.id);
 }
 
+/**
+ * The catalog joined with the Agents tab's credential truth — one row per
+ * provider with `connected` decided here and nowhere else. Pure, so a surface
+ * without a chat store (the society's creator) joins the same way and the
+ * two pickers can never disagree about what is usable.
+ */
+export function joinProviderOptions(
+  providers: AgentChatProvider[],
+  connections: AgentConnectionRow[],
+): ProviderOption[] {
+  return providers.map((p) => {
+    const row = connectionFor(p, connections);
+    // An API seat needs an API KEY, not just any credential. The Agents
+    // tab counts a subscription login as connected — right for a row a
+    // CLI runs — but the brain runner calls the provider's endpoint,
+    // where a Claude Code login buys nothing. `key_set` stands in when
+    // an older backend does not report the finer field.
+    // A coding CLI the Agents tab has no card for — OpenCode, Kimi,
+    // GLM Coding Plan, the DeepSeek harness — keeps its own login where
+    // this app has no verified reader; installed is all it can know,
+    // and the live sweep says the rest.
+    const credentialed = p.keyless
+      ? true
+      : isApiRunner(p.runner)
+        ? Boolean(row?.api_key_set ?? row?.key_set)
+        : row
+          ? Boolean(row.key_set)
+          : true;
+    const installed = p.cli_installed === null ? true : p.cli_installed;
+    return {
+      ...p,
+      connected: credentialed && installed,
+      active: Boolean(row?.is_active_brain),
+      // The IDE's mark for the CLI behind a CLI row; an API row keeps
+      // its provider-family logo.
+      agentMark: p.agent || undefined,
+    };
+  });
+}
+
 /** A session patch the composer's draft must mirror. */
 function draftFromSession(session: AgentChatSession, prev: ComposerDraft): ComposerDraft {
   const plan = session.permission_mode === "plan";
@@ -444,34 +484,7 @@ export function createAgentChatStore(surface: AgentChatSurface) {
       providerOptions: () => {
         const { catalog, connections } = get();
         if (!catalog) return [];
-        return catalog.providers.map((p) => {
-          const row = connectionFor(p, connections);
-          // An API seat needs an API KEY, not just any credential. The Agents
-          // tab counts a subscription login as connected — right for a row a
-          // CLI runs — but the brain runner calls the provider's endpoint,
-          // where a Claude Code login buys nothing. `key_set` stands in when
-          // an older backend does not report the finer field.
-          // A coding CLI the Agents tab has no card for — OpenCode, Kimi,
-          // GLM Coding Plan, the DeepSeek harness — keeps its own login where
-          // this app has no verified reader; installed is all it can know,
-          // and the live sweep says the rest.
-          const credentialed = p.keyless
-            ? true
-            : isApiRunner(p.runner)
-              ? Boolean(row?.api_key_set ?? row?.key_set)
-              : row
-                ? Boolean(row.key_set)
-                : true;
-          const installed = p.cli_installed === null ? true : p.cli_installed;
-          return {
-            ...p,
-            connected: credentialed && installed,
-            active: Boolean(row?.is_active_brain),
-            // The IDE's mark for the CLI behind a CLI row; an API row keeps
-            // its provider-family logo.
-            agentMark: p.agent || undefined,
-          };
-        });
+        return joinProviderOptions(catalog.providers, connections);
       },
 
       providerById: (id) => get().providerOptions().find((p) => p.id === id) ?? null,

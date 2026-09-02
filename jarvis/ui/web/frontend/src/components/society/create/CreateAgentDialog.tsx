@@ -1,7 +1,18 @@
 /**
- * Create an agent: three fields and an Advanced disclosure on the left, the
+ * Create an agent: the left column is what a person actually decides, the
  * character on the right — live, turnable, from above and below — with the
  * look editor under it (MASTERPLAN §4.2, agent-definition §6: no wizard).
+ *
+ * Left, top to bottom (maintainer, 2026-09-02, modelled on Grok Bot's "New
+ * Bot" sheet): name, title, description; "Runs on" — ONLY the seats that are
+ * connected on this machine, subscriptions first (a CLI on a plan bills the
+ * plan, not per token), then saved API keys, then local models, with the
+ * login to use when a CLI has more than one, the model and the effort; a
+ * visible "Focus" chip row (what the agent reaches for first — everything
+ * Jarvis has connected stays available); and a "More" disclosure for the
+ * permission ceiling, the tool-access mode and the daily budget. A provider
+ * that is not connected is not listed: one sentence says where to connect it.
+ * Everything else the agent is told in its own chat afterwards.
  *
  * Everything a person changes is visible in the preview the same frame: a
  * preset, a colour, the build, the height. What is not built yet is shown
@@ -16,14 +27,33 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Shuffle, Upload, X } from "lucide-react";
 
+import { effortLabel } from "@/components/agentchat/AgentComposer";
+import { AgentMark } from "@/components/agentic/AgentMark";
+import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { Button } from "@/components/ui/button";
-import { Combobox } from "@/components/ui/combobox";
+import { Combobox, type ComboboxGroup } from "@/components/ui/combobox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
-import { fetchAgentChatCatalog, type AgentChatProvider } from "@/lib/agentChatApi";
+import {
+  fetchAgentChatCatalog,
+  fetchAgentConnections,
+  type AgentConnectionRow,
+} from "@/lib/agentChatApi";
+import { fetchSocietyProviders, type SocietyProviderRow } from "@/lib/societyApi";
 import { cn } from "@/lib/utils";
+import { joinProviderOptions } from "@/store/agentChat";
 
 import { CapabilityChip } from "../CapabilityChip";
+import {
+  accountChoice,
+  accountHint,
+  brainSeats,
+  defaultSeat,
+  effortsFor,
+  modelsFor,
+  type BrainKind,
+  type BrainSeat,
+} from "./brainPicker";
 import {
   useCreateAgent,
   useSocietyCapabilities,
@@ -64,11 +94,12 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [style, setStyle] = useState<string>("modern");
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
+  const [accountId, setAccountId] = useState("");
   const [ceiling, setCeiling] = useState<PermissionCeiling>("monitor");
   const [grantMode, setGrantMode] = useState<GrantMode>("all");
   const [budget, setBudget] = useState("2");
   const [focus, setFocus] = useState<string[]>([]);
-  const [grants, setGrants] = useState<string[]>([]);
   const [toolQuery, setToolQuery] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
@@ -79,23 +110,61 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // The same catalog the typed chat offers — API families, CLI seats, local
-  // models — filtered by the society surface on the backend.
+  // The seats: the same catalog the typed chat offers — API families, CLI
+  // seats, local models, filtered by the society surface on the backend —
+  // joined with the Agents tab's credential truth exactly as the chat's
+  // composer joins it, plus the subscription logins stored per CLI.
   const catalog = useQuery({
     queryKey: ["agent-chat", "catalog", "society"],
     queryFn: () => fetchAgentChatCatalog("society"),
     enabled: open,
     staleTime: 60_000,
   });
-  const providers: AgentChatProvider[] = catalog.data?.providers ?? [];
-  const provider = providers.find((p) => p.id === providerId) ?? providers[0] ?? null;
+  const connections = useQuery({
+    queryKey: ["agent-chat", "connections"],
+    queryFn: () => fetchAgentConnections().catch(() => [] as AgentConnectionRow[]),
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const societyProviders = useQuery({
+    queryKey: ["society", "providers"],
+    queryFn: () => fetchSocietyProviders().catch(() => [] as SocietyProviderRow[]),
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const seatsLoading = catalog.isLoading || connections.isLoading || societyProviders.isLoading;
+  const seats = useMemo<BrainSeat[]>(() => {
+    const providers = catalog.data?.providers ?? [];
+    if (!providers.length) return [];
+    return brainSeats(
+      joinProviderOptions(providers, connections.data ?? []),
+      societyProviders.data ?? [],
+    );
+  }, [catalog.data, connections.data, societyProviders.data]);
+  const seat = seats.find((s) => s.provider.id === providerId) ?? null;
+  const accounts = accountChoice(seat);
+  const efforts = effortsFor(seat, model);
 
+  const pickSeat = (next: BrainSeat | null) => {
+    setProviderId(next?.provider.id ?? "");
+    setModel(next ? next.provider.default_model || modelsFor(next)[0]?.id || "" : "");
+    setEffort(next?.provider.default_effort ?? "");
+    setAccountId("");
+  };
+
+  // A fresh dialog starts on the brain marked active, else the first seat —
+  // never on a row that is not connected, because none is listed.
   useEffect(() => {
-    if (!providerId && provider) {
-      setProviderId(provider.id);
-      setModel(provider.default_model || provider.curated_models[0]?.id || "");
-    }
-  }, [provider, providerId]);
+    if (!providerId && seats.length) pickSeat(defaultSeat(seats));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seats, providerId]);
+
+  // A model change can leave the picked effort off that model's ladder.
+  useEffect(() => {
+    if (efforts.length && !efforts.includes(effort)) setEffort(seat?.provider.default_effort ?? efforts[0]);
+    if (!efforts.length && effort) setEffort("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [efforts.join("|")]);
 
   useEffect(() => {
     if (!open) return;
@@ -103,8 +172,12 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setTitle("");
     setDescription("");
     setRecipe(defaultRecipe("ranger"));
+    setProviderId("");
+    setModel("");
+    setEffort("");
+    setAccountId("");
+    setGrantMode("all");
     setFocus([]);
-    setGrants([]);
     setToolQuery("");
     setImportProblems(null);
     setImportedName(null);
@@ -171,11 +244,14 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         description,
         figure: recipe,
         palette: { primary: palette.primary, secondary: palette.secondary, accent: palette.accent },
-        provider: provider?.id ?? "",
-        providerLabel: provider?.label ?? t("society.create.provider_unknown"),
+        provider: seat?.provider.id ?? "",
+        providerLabel: seat?.provider.label ?? t("society.create.provider_unknown"),
         model,
+        effort,
+        accountId,
         grantMode,
-        toolGrants: grants,
+        // "Only the highlighted tools": the focus list IS the allow-list.
+        toolGrants: grantMode === "allowlist" ? focus : [],
         focus,
         permissionCeiling: ceiling,
         dailyBudgetUsd: Math.max(0, Number.parseFloat(budget) || 0),
@@ -267,6 +343,141 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   <p className="mt-1 text-[11px] text-muted-foreground">{t("society.create.description_hint")}</p>
                 </div>
 
+                {/* ---- Runs on: only what is connected on this machine ---- */}
+                <div data-testid="society-create-brain">
+                  <span className={labelClass}>{t("society.create.brain")}</span>
+                  {seatsLoading && seats.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">{t("society.create.catalog_loading")}</p>
+                  ) : seats.length === 0 ? (
+                    <p
+                      data-testid="society-create-nothing-connected"
+                      className="rounded-md border border-dashed border-border px-3 py-2 text-xs leading-relaxed text-muted-foreground"
+                    >
+                      {t("society.create.nothing_connected")}
+                    </p>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <Combobox
+                        value={seat?.provider.id ?? ""}
+                        groups={seatGroups(seats, t)}
+                        onChange={(id) => pickSeat(seats.find((s) => s.provider.id === id) ?? null)}
+                        ariaLabel={t("society.create.brain")}
+                      />
+                      {accounts.length > 0 ? (
+                        <div>
+                          <span className={labelClass}>{t("society.create.account")}</span>
+                          <Combobox
+                            value={accountId}
+                            groups={[
+                              {
+                                id: "accounts",
+                                options: [
+                                  { value: "", label: t("society.create.account_active") },
+                                  ...accounts.map((a) => ({
+                                    value: a.id,
+                                    label: a.label,
+                                    hint: accountHint(a),
+                                  })),
+                                ],
+                              },
+                            ]}
+                            onChange={setAccountId}
+                            ariaLabel={t("society.create.account")}
+                          />
+                        </div>
+                      ) : null}
+                      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                        <div className="min-w-0">
+                          <label htmlFor="society-create-model" className={labelClass}>
+                            {t("society.create.model")}
+                          </label>
+                          {modelsFor(seat).length > 0 ? (
+                            <Combobox
+                              id="society-create-model"
+                              value={model}
+                              groups={[
+                                {
+                                  id: "models",
+                                  options: modelsFor(seat).map((m) => ({
+                                    value: m.id,
+                                    label: m.label,
+                                    hint: m.note,
+                                  })),
+                                },
+                              ]}
+                              onChange={setModel}
+                              ariaLabel={t("society.create.model")}
+                            />
+                          ) : (
+                            <input
+                              id="society-create-model"
+                              className={cn(fieldClass, "font-mono")}
+                              value={model}
+                              onChange={(e) => setModel(e.target.value)}
+                              placeholder={t("society.create.model_placeholder")}
+                              autoComplete="off"
+                            />
+                          )}
+                        </div>
+                        {efforts.length > 0 ? (
+                          <div>
+                            <span className={labelClass}>{t("society.create.effort")}</span>
+                            <Combobox
+                              value={effort}
+                              groups={[
+                                {
+                                  id: "efforts",
+                                  options: efforts.map((lvl) => ({ value: lvl, label: effortLabel(lvl, t) })),
+                                },
+                              ]}
+                              onChange={setEffort}
+                              ariaLabel={t("society.create.effort")}
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
+                  <p className="mt-1 text-[11px] text-muted-foreground">{t("society.create.brain_hint")}</p>
+                </div>
+
+                {/* ---- Focus: what the agent reaches for first ---- */}
+                <div data-testid="society-create-focus">
+                  <span className={labelClass}>{t("society.create.focus_title")}</span>
+                  <p className="mb-2 text-[11px] text-muted-foreground">
+                    {grantMode === "allowlist" ? t("society.create.allowlist_hint") : t("society.create.focus_hint")}
+                  </p>
+                  <input
+                    type="search"
+                    value={toolQuery}
+                    onChange={(e) => setToolQuery(e.target.value)}
+                    placeholder={t("society.create.tools_search")}
+                    aria-label={t("society.create.tools_search")}
+                    className={cn(fieldClass, "mb-2")}
+                  />
+                  {capabilities.isLoading ? (
+                    <p className="text-xs text-muted-foreground">{t("society.create.tools_loading")}</p>
+                  ) : capabilities.isError || (capabilities.data ?? []).length === 0 ? (
+                    <p className="text-xs text-muted-foreground">{t("society.create.tools_unavailable")}</p>
+                  ) : (
+                    <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
+                      {filterCapabilities(capabilities.data ?? [], toolQuery).map((cap) => {
+                        const on = focus.includes(cap.id);
+                        return (
+                          <CapabilityChip
+                            key={cap.id}
+                            id={cap.id}
+                            capability={cap}
+                            selected={on}
+                            disconnectedHint={t("society.card.not_connected")}
+                            onClick={() => setFocus(on ? focus.filter((x) => x !== cap.id) : [...focus, cap.id])}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
                 <Collapsible.Root open={advanced} onOpenChange={setAdvanced}>
                   <Collapsible.Trigger asChild>
                     <button
@@ -282,62 +493,6 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   </Collapsible.Trigger>
                   <Collapsible.Content className="flex flex-col gap-4 pt-4">
                     <div>
-                      <span className={labelClass}>{t("society.create.provider")}</span>
-                      {providers.length > 0 ? (
-                        <Combobox
-                          value={provider?.id ?? ""}
-                          groups={[
-                            {
-                              id: "providers",
-                              options: providers.map((p) => ({ value: p.id, label: p.label })),
-                            },
-                          ]}
-                          onChange={(id) => {
-                            setProviderId(id);
-                            const next = providers.find((p) => p.id === id);
-                            setModel(next?.default_model || next?.curated_models[0]?.id || "");
-                          }}
-                          ariaLabel={t("society.create.provider")}
-                        />
-                      ) : (
-                        <p className="text-xs text-muted-foreground">
-                          {catalog.isLoading ? t("society.create.catalog_loading") : t("society.create.provider_unknown")}
-                        </p>
-                      )}
-                    </div>
-                    <div>
-                      <label htmlFor="society-create-model" className={labelClass}>
-                        {t("society.create.model")}
-                      </label>
-                      {provider && provider.curated_models.length > 0 ? (
-                        <Combobox
-                          id="society-create-model"
-                          value={model}
-                          groups={[
-                            {
-                              id: "models",
-                              options: provider.curated_models.map((m) => ({
-                                value: m.id,
-                                label: m.label,
-                                hint: m.note,
-                              })),
-                            },
-                          ]}
-                          onChange={setModel}
-                          ariaLabel={t("society.create.model")}
-                        />
-                      ) : (
-                        <input
-                          id="society-create-model"
-                          className={cn(fieldClass, "font-mono")}
-                          value={model}
-                          onChange={(e) => setModel(e.target.value)}
-                          placeholder={t("society.create.model_placeholder")}
-                          autoComplete="off"
-                        />
-                      )}
-                    </div>
-                    <div>
                       <span className={labelClass}>{t("society.create.ceiling")}</span>
                       <Segmented
                         value={ceiling}
@@ -352,43 +507,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                         options={GRANTS.map((g) => ({ value: g, label: t(`society.grant.${g}`) }))}
                         onChange={(v) => setGrantMode(v as GrantMode)}
                       />
-                    </div>
-                    <div>
-                      <span className={labelClass}>{t("society.create.tools_title")}</span>
-                      <p className="mb-2 text-[11px] text-muted-foreground">
-                        {grantMode === "allowlist" ? t("society.create.allowlist_hint") : t("society.create.focus_hint")}
-                      </p>
-                      <input
-                        type="search"
-                        value={toolQuery}
-                        onChange={(e) => setToolQuery(e.target.value)}
-                        placeholder={t("society.create.tools_search")}
-                        aria-label={t("society.create.tools_search")}
-                        className={cn(fieldClass, "mb-2")}
-                      />
-                      {capabilities.isLoading ? (
-                        <p className="text-xs text-muted-foreground">{t("society.create.tools_loading")}</p>
-                      ) : capabilities.isError || (capabilities.data ?? []).length === 0 ? (
-                        <p className="text-xs text-muted-foreground">{t("society.create.tools_unavailable")}</p>
-                      ) : (
-                        <div className="flex max-h-48 flex-wrap gap-1.5 overflow-y-auto">
-                          {filterCapabilities(capabilities.data ?? [], toolQuery).map((cap) => {
-                            const list = grantMode === "allowlist" ? grants : focus;
-                            const setList = grantMode === "allowlist" ? setGrants : setFocus;
-                            const on = list.includes(cap.id);
-                            return (
-                              <CapabilityChip
-                                key={cap.id}
-                                id={cap.id}
-                                capability={cap}
-                                selected={on}
-                                disconnectedHint={t("society.card.not_connected")}
-                                onClick={() => setList(on ? list.filter((x) => x !== cap.id) : [...list, cap.id])}
-                              />
-                            );
-                          })}
-                        </div>
-                      )}
+                      <p className="mt-1 text-[11px] text-muted-foreground">{t("society.create.grant_mode_hint")}</p>
                     </div>
                     <div>
                       <label htmlFor="society-create-budget" className={labelClass}>
@@ -608,6 +727,46 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
       </Dialog.Portal>
     </Dialog.Root>
   );
+}
+
+const KIND_KEYS: Record<BrainKind, string> = {
+  subscription: "society.create.kind_subscription",
+  api: "society.create.kind_api",
+  local: "society.create.kind_local",
+};
+
+/**
+ * The "Runs on" list: one group per kind, subscriptions first. A row wears
+ * its real mark (the IDE's for a CLI seat, the provider family's for an API
+ * row) and says what it bills — the one signed-in login's e-mail on a
+ * subscription, else the kind.
+ */
+function seatGroups(seats: BrainSeat[], t: (key: string) => string): ComboboxGroup[] {
+  const groups: ComboboxGroup[] = [];
+  for (const kind of ["subscription", "api", "local"] as const) {
+    const rows = seats.filter((s) => s.kind === kind);
+    if (!rows.length) continue;
+    groups.push({
+      id: kind,
+      label: t(KIND_KEYS[kind]),
+      options: rows.map((s) => {
+        const p = s.provider;
+        const only = s.accounts.length === 1 ? accountHint(s.accounts[0]) : "";
+        return {
+          value: p.id,
+          label: p.label,
+          hint: only || t(KIND_KEYS[kind]),
+          searchText: `${p.family} ${p.runner} ${s.accounts.map((a) => a.email ?? "").join(" ")}`,
+          icon: p.agentMark ? (
+            <AgentMark agent={p.agentMark} label={p.label} logoUrl={p.logoUrl} variant="plain" size="sm" />
+          ) : (
+            <ProviderLogo providerId={p.id} label={p.label} size="sm" />
+          ),
+        };
+      }),
+    });
+  }
+  return groups;
 }
 
 /** Connected first, then by label; a query narrows by label, id and one-liner. */

@@ -75,6 +75,43 @@ export interface ApprovalRules {
   always_allow: string[];
 }
 
+/**
+ * One stored subscription login of a vendor CLI, display-safe
+ * (jarvis/agent_accounts.py AccountSnapshot — never a token).
+ */
+export interface SocietyAccount {
+  id: string;
+  label: string;
+  connected: boolean;
+  /** "subscription" | "api_key" | "expired" | "unknown" */
+  mode: string;
+  message: string;
+  email: string | null;
+  tier: string | null;
+  warning: string | null;
+}
+
+/** One row of GET /api/society/providers: which runner answers on this box and its seats. */
+export interface SocietyProviderRow {
+  id: string;
+  label: string;
+  family: string;
+  runner: string;
+  /** The runner is a vendor CLI on a plan, not an API behind a key. */
+  subscription: boolean;
+  keyless: boolean;
+  /** The agent-accounts platform of that CLI; null on an API row. */
+  platform: string | null;
+  accounts: SocietyAccount[];
+}
+
+export async function fetchSocietyProviders(): Promise<SocietyProviderRow[]> {
+  const res = await fetch("/api/society/providers");
+  if (!res.ok) throw new Error(`society providers ${res.status}`);
+  const body = (await res.json()) as { providers?: SocietyProviderRow[] };
+  return Array.isArray(body.providers) ? body.providers : [];
+}
+
 /** One roster row as GET /api/society/agents returns it (agent-definition §2). */
 export interface SocietyAgentRow {
   agent_id: string;

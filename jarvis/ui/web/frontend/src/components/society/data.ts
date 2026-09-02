@@ -116,6 +116,10 @@ export interface NewAgentInput {
   provider: string;
   providerLabel: string;
   model: string;
+  /** "" = the provider's default effort. */
+  effort: string;
+  /** The stored subscription login of a CLI seat; "" = that platform's active account. */
+  accountId: string;
   grantMode: GrantMode;
   toolGrants: string[];
   focus: string[];
@@ -310,6 +314,8 @@ export function useCreateAgent() {
         tier: "specialist",
         provider: input.provider || undefined,
         model: input.model || undefined,
+        effort: input.effort || undefined,
+        account_id: input.accountId || undefined,
         avatar: input.figure,
         grant_mode: input.grantMode,
         grants: input.grantMode === "allowlist" ? input.toolGrants : undefined,
@@ -346,7 +352,7 @@ export function useCreateAgent() {
         provider: input.provider,
         providerLabel: input.providerLabel,
         model: input.model,
-        effort: "",
+        effort: input.effort,
         figure: input.figure,
         palette: input.palette,
         grantMode: input.grantMode,
