@@ -1,0 +1,510 @@
+{
+  "contract": 1,
+  "styles": {
+    "modern": "Everyday people \u2014 offices, streets, workshops",
+    "fantasy": "Knights, mages, rangers, barbarians, undead",
+    "cartoon": "Chunky, big-headed, kart-racer proportions",
+    "animal": "Four-legged companions",
+    "scifi": "Robots, suits, visors",
+    "spirit": "Ghosts and familiars",
+    "custom": "Imported by the person"
+  },
+  "bases": [
+    {
+      "id": "biped/barbarian",
+      "file": "biped-barbarian.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "barbarian",
+      "label": "Barbarian",
+      "styles": [
+        "fantasy"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#f6bf9a",
+        "skin_shade": "#d9a37c",
+        "hair": "#918880",
+        "eyes": "#141a1c",
+        "primary": "#4f6f86",
+        "primary_shade": "#3a5266",
+        "secondary": "#978f86",
+        "secondary_shade": "#665850",
+        "accent": "#e8c46b",
+        "metal": "#7a8388",
+        "leather": "#93523e",
+        "fur": "#c5cfd3",
+        "fur_shade": "#8e857d",
+        "shoes": "#675950",
+        "eye_white": "#e6ecef",
+        "emissive": "#ffd166"
+      },
+      "source": "KayKit Character Pack: Adventurers 1.0 / Barbarian",
+      "license": "CC0-1.0",
+      "triangles": 4045,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.1863
+    },
+    {
+      "id": "biped/knight",
+      "file": "biped-knight.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "knight",
+      "label": "Knight",
+      "styles": [
+        "fantasy"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#f6c19d",
+        "skin_shade": "#d9a37c",
+        "hair": "#e0b989",
+        "eyes": "#141a1c",
+        "primary": "#c4212b",
+        "primary_shade": "#3f4549",
+        "secondary": "#95a1a7",
+        "secondary_shade": "#b9c5c8",
+        "accent": "#e8c46b",
+        "metal": "#727c80",
+        "leather": "#9c5b45",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#484f53",
+        "eye_white": "#e6ecef",
+        "emissive": "#ffd166"
+      },
+      "source": "KayKit Character Pack: Adventurers 1.0 / Knight",
+      "license": "CC0-1.0",
+      "triangles": 4148,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.3145
+    },
+    {
+      "id": "biped/mage",
+      "file": "biped-mage.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "mage",
+      "label": "Mage",
+      "styles": [
+        "fantasy"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#f5ba95",
+        "skin_shade": "#d99a75",
+        "hair": "#252124",
+        "eyes": "#1b2427",
+        "primary": "#4a4673",
+        "primary_shade": "#242242",
+        "secondary": "#b25729",
+        "secondary_shade": "#cfd7da",
+        "accent": "#2f6c73",
+        "metal": "#8d989e",
+        "leather": "#9a5944",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#995843",
+        "eye_white": "#e6ecef",
+        "emissive": "#ffd166"
+      },
+      "source": "KayKit Character Pack: Adventurers 1.0 / Mage",
+      "license": "CC0-1.0",
+      "triangles": 4029,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.2027
+    },
+    {
+      "id": "biped/rogue",
+      "file": "biped-rogue.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "rogue",
+      "label": "Ranger",
+      "styles": [
+        "modern",
+        "fantasy"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#f4b68f",
+        "skin_shade": "#d99a75",
+        "hair": "#9e5d47",
+        "eyes": "#1b2427",
+        "primary": "#096153",
+        "primary_shade": "#07483d",
+        "secondary": "#b16f51",
+        "secondary_shade": "#008c55",
+        "accent": "#e8c46b",
+        "metal": "#919da2",
+        "leather": "#9a5944",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#4a2e22",
+        "eye_white": "#e6ecef",
+        "emissive": "#ffd166"
+      },
+      "source": "KayKit Character Pack: Adventurers 1.0 / Rogue",
+      "license": "CC0-1.0",
+      "triangles": 4263,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.187
+    }
+  ],
+  "parts": [
+    {
+      "id": "back-fur-cape",
+      "file": "parts/biped/back-fur-cape.glb",
+      "archetype": "biped",
+      "slot": "back",
+      "attach": "chest",
+      "label": "Fur cape",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [],
+      "from_base": "barbarian",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Barbarian_Cape",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "secondary_shade": 78
+      },
+      "triangles": 78
+    },
+    {
+      "id": "back-knight-cape",
+      "file": "parts/biped/back-knight-cape.glb",
+      "archetype": "biped",
+      "slot": "back",
+      "attach": "chest",
+      "label": "Knight cape",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [],
+      "from_base": "knight",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Knight_Cape",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "primary": 84
+      },
+      "triangles": 84
+    },
+    {
+      "id": "back-mage-cape",
+      "file": "parts/biped/back-mage-cape.glb",
+      "archetype": "biped",
+      "slot": "back",
+      "attach": "chest",
+      "label": "Mage cape",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [],
+      "from_base": "mage",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Mage_Cape",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "metal": 84
+      },
+      "triangles": 84
+    },
+    {
+      "id": "back-rogue-cape",
+      "file": "parts/biped/back-rogue-cape.glb",
+      "archetype": "biped",
+      "slot": "back",
+      "attach": "chest",
+      "label": "Ranger cape",
+      "styles": [
+        "fantasy",
+        "modern"
+      ],
+      "hides": [],
+      "from_base": "rogue",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Rogue_Cape",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "secondary_shade": 84
+      },
+      "triangles": 84
+    },
+    {
+      "id": "hand_l-round-shield",
+      "file": "parts/biped/hand_l-round-shield.glb",
+      "archetype": "biped",
+      "slot": "hand_l",
+      "attach": "handslot_l",
+      "label": "Round shield",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [],
+      "from_base": "knight",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Round_Shield",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "leather": 110,
+        "metal": 174
+      },
+      "triangles": 284
+    },
+    {
+      "id": "hand_l-spellbook",
+      "file": "parts/biped/hand_l-spellbook.glb",
+      "archetype": "biped",
+      "slot": "hand_l",
+      "attach": "handslot_l",
+      "label": "Spellbook",
+      "styles": [
+        "fantasy",
+        "modern"
+      ],
+      "hides": [],
+      "from_base": "mage",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Spellbook",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "accent": 82,
+        "secondary_shade": 6,
+        "leather": 132,
+        "metal": 72
+      },
+      "triangles": 292
+    },
+    {
+      "id": "hand_l-wooden-shield",
+      "file": "parts/biped/hand_l-wooden-shield.glb",
+      "archetype": "biped",
+      "slot": "hand_l",
+      "attach": "handslot_l",
+      "label": "Wooden shield",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [],
+      "from_base": "barbarian",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Barbarian_Round_Shield",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "accent": 30,
+        "secondary_shade": 30,
+        "metal": 174,
+        "leather": 50
+      },
+      "triangles": 284
+    },
+    {
+      "id": "hand_r-axe",
+      "file": "parts/biped/hand_r-axe.glb",
+      "archetype": "biped",
+      "slot": "hand_r",
+      "attach": "handslot_r",
+      "label": "Axe",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [],
+      "from_base": "barbarian",
+      "source": "KayKit Character Pack: Adventurers 1.0 / 1H_Axe",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "leather": 80,
+        "accent": 112,
+        "metal": 82
+      },
+      "triangles": 274
+    },
+    {
+      "id": "hand_r-knife",
+      "file": "parts/biped/hand_r-knife.glb",
+      "archetype": "biped",
+      "slot": "hand_r",
+      "attach": "handslot_r",
+      "label": "Knife",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [],
+      "from_base": "rogue",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Knife",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "metal": 156,
+        "leather": 16
+      },
+      "triangles": 172
+    },
+    {
+      "id": "hand_r-mug",
+      "file": "parts/biped/hand_r-mug.glb",
+      "archetype": "biped",
+      "slot": "hand_r",
+      "attach": "handslot_r",
+      "label": "Mug",
+      "styles": [
+        "modern",
+        "fantasy"
+      ],
+      "hides": [],
+      "from_base": "barbarian",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Mug",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "leather": 144,
+        "secondary": 84,
+        "metal": 198
+      },
+      "triangles": 426
+    },
+    {
+      "id": "hand_r-staff",
+      "file": "parts/biped/hand_r-staff.glb",
+      "archetype": "biped",
+      "slot": "hand_r",
+      "attach": "handslot_r",
+      "label": "Staff",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [],
+      "from_base": "mage",
+      "source": "KayKit Character Pack: Adventurers 1.0 / 2H_Staff",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "accent": 64,
+        "leather": 216,
+        "metal": 160
+      },
+      "triangles": 440
+    },
+    {
+      "id": "hand_r-sword",
+      "file": "parts/biped/hand_r-sword.glb",
+      "archetype": "biped",
+      "slot": "hand_r",
+      "attach": "handslot_r",
+      "label": "Sword",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [],
+      "from_base": "knight",
+      "source": "KayKit Character Pack: Adventurers 1.0 / 1H_Sword",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "leather": 80,
+        "metal": 220
+      },
+      "triangles": 300
+    },
+    {
+      "id": "headgear-horned-hat",
+      "file": "parts/biped/headgear-horned-hat.glb",
+      "archetype": "biped",
+      "slot": "headgear",
+      "attach": "head",
+      "label": "Horned hat",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [
+        "hair"
+      ],
+      "from_base": "barbarian",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Barbarian_Hat",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "eyes": 168,
+        "secondary_shade": 392,
+        "fur": 94
+      },
+      "triangles": 654
+    },
+    {
+      "id": "headgear-knight-helmet",
+      "file": "parts/biped/headgear-knight-helmet.glb",
+      "archetype": "biped",
+      "slot": "headgear",
+      "attach": "head",
+      "label": "Knight helmet",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [
+        "hair"
+      ],
+      "from_base": "knight",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Knight_Helmet",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "metal": 480
+      },
+      "triangles": 480
+    },
+    {
+      "id": "headgear-mage-hat",
+      "file": "parts/biped/headgear-mage-hat.glb",
+      "archetype": "biped",
+      "slot": "headgear",
+      "attach": "head",
+      "label": "Wizard hat",
+      "styles": [
+        "fantasy"
+      ],
+      "hides": [
+        "hair"
+      ],
+      "from_base": "mage",
+      "source": "KayKit Character Pack: Adventurers 1.0 / Mage_Hat",
+      "license": "CC0-1.0",
+      "palette_cells": {
+        "primary": 260,
+        "secondary": 72,
+        "metal": 64
+      },
+      "triangles": 396
+    }
+  ]
+}

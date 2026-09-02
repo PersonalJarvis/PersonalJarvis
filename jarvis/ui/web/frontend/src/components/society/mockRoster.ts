@@ -21,8 +21,8 @@ const SAMPLE_CREATED_MS = Date.UTC(2026, 7, 1, 9, 0, 0);
 const LEAD_FIGURE: FigureRecipe = {
   contract: 1,
   archetype: "biped",
-  base: "medium",
-  parts: {},
+  base: "rogue",
+  parts: { hand_r: "hand_r-mug" },
   palette: {
     skin: "#f1c4a0",
     hair: "#3b2a20",
@@ -39,8 +39,8 @@ const LEAD_FIGURE: FigureRecipe = {
 const SCOUT_FIGURE: FigureRecipe = {
   contract: 1,
   archetype: "biped",
-  base: "medium",
-  parts: {},
+  base: "rogue",
+  parts: { back: "back-rogue-cape" },
   palette: {
     skin: "#d8a37c",
     hair: "#2a1d15",
@@ -54,8 +54,8 @@ const SCOUT_FIGURE: FigureRecipe = {
 const ARCHIVIST_FIGURE: FigureRecipe = {
   contract: 1,
   archetype: "biped",
-  base: "medium",
-  parts: {},
+  base: "mage",
+  parts: { hand_l: "hand_l-spellbook" },
   palette: {
     skin: "#e9c3a3",
     hair: "#6b6b6b",

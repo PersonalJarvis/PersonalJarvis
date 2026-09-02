@@ -1,5 +1,5 @@
 {
-  "$comment": "Figure asset contract v1 — docs/agent-society/character-pipeline.md §4/§5. The build (build_figures.py) and the CI gate (scripts/ci/check_society_figures.py) both read this file; the runtime reads the extras the build writes from it.",
+  "$comment": "Figure asset contract v1 — docs/agent-society/character-pipeline.md §4/§5. The build (build_figures.py) and the CI gate (scripts/ci/check_society_figures.py) both read this file; the runtime reads the extras the build writes from it and the catalog.json the build generates.",
   "contract": 1,
   "sheet": {
     "size": 128,
@@ -23,6 +23,16 @@
       "eye_white",
       "emissive"
     ]
+  },
+  "styles": {
+    "$comment": "Every base and part carries one or more style tags; the creator filters by them. Keep the ids stable — recipes and the catalog reference them.",
+    "modern": "Everyday people — offices, streets, workshops",
+    "fantasy": "Knights, mages, rangers, barbarians, undead",
+    "cartoon": "Chunky, big-headed, kart-racer proportions",
+    "animal": "Four-legged companions",
+    "scifi": "Robots, suits, visors",
+    "spirit": "Ghosts and familiars",
+    "custom": "Imported by the person"
   },
   "archetypes": {
     "biped": {
@@ -52,6 +62,17 @@
         "toes_r"
       ],
       "feet": ["toes_l", "toes_r"],
+      "slots": {
+        "hair": { "attach": "head" },
+        "headgear": { "attach": "head" },
+        "face_extra": { "attach": "head" },
+        "torso_over": { "attach": "chest" },
+        "belt": { "attach": "hips" },
+        "back": { "attach": "chest" },
+        "hand_l": { "attach": "handslot_l" },
+        "hand_r": { "attach": "handslot_r" },
+        "feet": { "attach": "hips" }
+      },
       "clips": {
         "idle": { "loop": true, "duration": [0.8, 6.0] },
         "walk": { "loop": true, "duration": [0.8, 1.2], "stride": true },
@@ -68,7 +89,7 @@
         "medium": { "height_m": 1.75 },
         "large": { "height_m": 2.3 }
       },
-      "budget": { "triangles": 4500, "materials": 1, "primitives": 1 }
+      "budget": { "triangles": 4500, "materials": 2, "primitives": 2 }
     },
     "quadruped": {
       "bones": [
@@ -96,6 +117,12 @@
       ],
       "optional_bones": ["ear_l", "ear_r", "wing_l", "wing_r"],
       "feet": ["foot_fl", "foot_fr", "foot_bl", "foot_br"],
+      "slots": {
+        "headgear": { "attach": "head" },
+        "collar": { "attach": "neck" },
+        "back": { "attach": "chest" },
+        "tail_extra": { "attach": "tail_2" }
+      },
       "clips": {
         "idle": { "loop": true, "duration": [0.8, 6.0] },
         "walk": { "loop": true, "duration": [0.6, 1.4], "stride": true },
@@ -106,11 +133,16 @@
         "celebrate": { "loop": false, "duration": [0.5, 4.0] }
       },
       "variants": { "default": { "height_m": 0.9 } },
-      "budget": { "triangles": 4500, "materials": 1, "primitives": 1 }
+      "budget": { "triangles": 4500, "materials": 2, "primitives": 2 }
     },
     "spirit": {
       "bones": ["root", "body", "face"],
       "feet": [],
+      "slots": {
+        "headgear": { "attach": "body" },
+        "hand_l": { "attach": "body" },
+        "hand_r": { "attach": "body" }
+      },
       "clips": {
         "idle": { "loop": true, "duration": [0.8, 6.0] },
         "walk": { "loop": true, "duration": [0.6, 2.0], "stride": false },
@@ -124,7 +156,7 @@
     }
   },
   "limits": {
-    "part_triangles": 600,
+    "part_triangles": 900,
     "base_file_kb": 512,
     "part_file_kb": 120,
     "max_texture": 256,
@@ -132,16 +164,49 @@
     "loop_epsilon": 0.002,
     "loop_epsilon_deg": 1.0,
     "origin_epsilon": 0.01,
-    "center_epsilon": 0.1,
+    "center_epsilon": 0.2,
     "scale_epsilon": 0.0001
   },
   "targets": [
     {
-      "id": "biped-medium",
+      "id": "biped-rogue",
       "archetype": "biped",
       "variant": "medium",
+      "base": "rogue",
       "source": "kaykit-adventurers",
-      "character": "Rogue"
+      "character": "Rogue",
+      "label": "Ranger",
+      "styles": ["modern", "fantasy"]
+    },
+    {
+      "id": "biped-knight",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "knight",
+      "source": "kaykit-adventurers",
+      "character": "Knight",
+      "label": "Knight",
+      "styles": ["fantasy"]
+    },
+    {
+      "id": "biped-mage",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "mage",
+      "source": "kaykit-adventurers",
+      "character": "Mage",
+      "label": "Mage",
+      "styles": ["fantasy"]
+    },
+    {
+      "id": "biped-barbarian",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "barbarian",
+      "source": "kaykit-adventurers",
+      "character": "Barbarian",
+      "label": "Barbarian",
+      "styles": ["fantasy"]
     }
   ]
 }

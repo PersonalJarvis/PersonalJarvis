@@ -1,5 +1,5 @@
 {
-  "$comment": "KayKit Character Pack: Adventurers 1.0 by Kay Lousberg — CC0 (LICENSE.txt in the repo). Used as the biped skeleton + clip base (character-pipeline.md §8 route A, §11). Every file is fetched by URL into scripts/figures/cache/ and verified by sha256 before the build touches it.",
+  "$comment": "KayKit Character Pack: Adventurers 1.0 by Kay Lousberg — CC0 (LICENSE.txt in the repo). The biped skeleton + clip base and the first four bodies and fifteen parts (character-pipeline.md §8 route A, §11). Every file is fetched by URL into scripts/figures/cache/ and verified by sha256 before the build touches it.",
   "name": "KayKit Character Pack: Adventurers 1.0",
   "author": "Kay Lousberg (kaylousberg.com)",
   "license": "CC0-1.0",
@@ -8,7 +8,8 @@
   "files": {
     "Rogue.glb": "e825437cd4d2ee9c1960b517a74a69101e33eb409ae7fa8cedc7134a998fbb7d",
     "Knight.glb": "60428e3abc09ba83e595d256e3af8c5c976b46cdae599f0802fc82b4a3445168",
-    "Mage.glb": "cf898585da33fab50c724d31605fb931eb2912e6d2280092141e98ca81ad507d"
+    "Mage.glb": "cf898585da33fab50c724d31605fb931eb2912e6d2280092141e98ca81ad507d",
+    "Barbarian.glb": "cefc311a0e10c7858b6141f5ada7e33268727564fb8ac1347aab97d000669cc6"
   },
   "atlas_grid": { "columns": 8, "rows": 4 },
   "fps": 30,
@@ -48,6 +49,26 @@
     "sleep": "Lie_Idle",
     "celebrate": "Cheer",
     "wave": "Interact"
+  },
+  "part_cell_map": {
+    "$comment": "Weapons, shields, hats and capes share the atlas rows the bodies leave free.",
+    "c3r1": "metal",
+    "c2r1": "metal",
+    "c4r1": "metal",
+    "c5r1": "leather",
+    "c6r1": "leather",
+    "c2r2": "accent",
+    "c0r2": "secondary_shade",
+    "c1r2": "accent",
+    "c1r3": "secondary",
+    "c6r2": "leather",
+    "c7r2": "fur_shade",
+    "c0r1": "primary",
+    "c1r1": "primary_shade",
+    "c3r0": "metal",
+    "c7r0": "metal",
+    "c5r0": "accent",
+    "c2r0": "eyes"
   },
   "characters": {
     "Rogue": {
@@ -94,7 +115,163 @@
         "shoes": "#4a2e22",
         "eye_white": "#e6ecef",
         "emissive": "#ffd166"
-      }
+      },
+      "parts": [
+        { "object": "Rogue_Cape", "id": "back-rogue-cape", "slot": "back", "label": "Ranger cape", "styles": ["fantasy", "modern"] },
+        { "object": "Knife", "id": "hand_r-knife", "slot": "hand_r", "label": "Knife", "styles": ["fantasy"] }
+      ]
+    },
+    "Knight": {
+      "body_meshes": [
+        "Knight_Body",
+        "Knight_Head",
+        "Knight_ArmLeft",
+        "Knight_ArmRight",
+        "Knight_LegLeft",
+        "Knight_LegRight"
+      ],
+      "cell_map": {
+        "*": {
+          "c0r0": "skin",
+          "c1r0": "hair",
+          "c2r0": "eyes",
+          "c3r0": "metal",
+          "c7r0": "metal",
+          "c4r0": "primary_shade",
+          "c6r0": "leather",
+          "c7r1": "primary_shade",
+          "c2r1": "secondary",
+          "c0r1": "primary",
+          "c1r1": "secondary_shade"
+        },
+        "Knight_Head": { "c1r0": "hair" }
+      },
+      "default_palette": {
+        "skin": "#f6c19d",
+        "skin_shade": "#d9a37c",
+        "hair": "#e0b989",
+        "eyes": "#141a1c",
+        "primary": "#c4212b",
+        "primary_shade": "#3f4549",
+        "secondary": "#95a1a7",
+        "secondary_shade": "#b9c5c8",
+        "accent": "#e8c46b",
+        "metal": "#727c80",
+        "leather": "#9c5b45",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#484f53",
+        "eye_white": "#e6ecef",
+        "emissive": "#ffd166"
+      },
+      "parts": [
+        { "object": "Knight_Helmet", "id": "headgear-knight-helmet", "slot": "headgear", "label": "Knight helmet", "styles": ["fantasy"], "hides": ["hair"] },
+        { "object": "Knight_Cape", "id": "back-knight-cape", "slot": "back", "label": "Knight cape", "styles": ["fantasy"] },
+        { "object": "1H_Sword", "id": "hand_r-sword", "slot": "hand_r", "label": "Sword", "styles": ["fantasy"] },
+        { "object": "Round_Shield", "id": "hand_l-round-shield", "slot": "hand_l", "label": "Round shield", "styles": ["fantasy"] }
+      ]
+    },
+    "Mage": {
+      "body_meshes": [
+        "Mage_Body",
+        "Mage_Head",
+        "Mage_ArmLeft",
+        "Mage_ArmRight",
+        "Mage_LegLeft",
+        "Mage_LegRight"
+      ],
+      "cell_map": {
+        "*": {
+          "c0r0": "skin",
+          "c1r0": "hair",
+          "c2r0": "eyes",
+          "c1r1": "primary",
+          "c0r1": "primary",
+          "c3r0": "metal",
+          "c4r0": "metal",
+          "c5r0": "secondary",
+          "c7r1": "primary_shade",
+          "c2r2": "accent",
+          "c0r2": "secondary_shade",
+          "c7r2": "skin",
+          "c3r2": "shoes"
+        }
+      },
+      "default_palette": {
+        "skin": "#f5ba95",
+        "skin_shade": "#d99a75",
+        "hair": "#252124",
+        "eyes": "#1b2427",
+        "primary": "#4a4673",
+        "primary_shade": "#242242",
+        "secondary": "#b25729",
+        "secondary_shade": "#cfd7da",
+        "accent": "#2f6c73",
+        "metal": "#8d989e",
+        "leather": "#9a5944",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#995843",
+        "eye_white": "#e6ecef",
+        "emissive": "#ffd166"
+      },
+      "parts": [
+        { "object": "Mage_Hat", "id": "headgear-mage-hat", "slot": "headgear", "label": "Wizard hat", "styles": ["fantasy"], "hides": ["hair"] },
+        { "object": "Mage_Cape", "id": "back-mage-cape", "slot": "back", "label": "Mage cape", "styles": ["fantasy"] },
+        { "object": "2H_Staff", "id": "hand_r-staff", "slot": "hand_r", "label": "Staff", "styles": ["fantasy"] },
+        { "object": "Spellbook", "id": "hand_l-spellbook", "slot": "hand_l", "label": "Spellbook", "styles": ["fantasy", "modern"] }
+      ]
+    },
+    "Barbarian": {
+      "body_meshes": [
+        "Barbarian_Body",
+        "Barbarian_Head",
+        "Barbarian_ArmLeft",
+        "Barbarian_ArmRight",
+        "Barbarian_LegLeft",
+        "Barbarian_LegRight"
+      ],
+      "cell_map": {
+        "*": {
+          "c0r0": "skin",
+          "c1r0": "hair",
+          "c2r0": "eyes",
+          "c6r0": "leather",
+          "c0r1": "primary",
+          "c1r1": "primary",
+          "c2r1": "fur",
+          "c7r0": "secondary_shade",
+          "c7r1": "secondary",
+          "c3r0": "metal",
+          "c7r2": "fur_shade",
+          "c3r2": "shoes"
+        }
+      },
+      "default_palette": {
+        "skin": "#f6bf9a",
+        "skin_shade": "#d9a37c",
+        "hair": "#918880",
+        "eyes": "#141a1c",
+        "primary": "#4f6f86",
+        "primary_shade": "#3a5266",
+        "secondary": "#978f86",
+        "secondary_shade": "#665850",
+        "accent": "#e8c46b",
+        "metal": "#7a8388",
+        "leather": "#93523e",
+        "fur": "#c5cfd3",
+        "fur_shade": "#8e857d",
+        "shoes": "#675950",
+        "eye_white": "#e6ecef",
+        "emissive": "#ffd166"
+      },
+      "parts": [
+        { "object": "Barbarian_Hat", "id": "headgear-horned-hat", "slot": "headgear", "label": "Horned hat", "styles": ["fantasy"], "hides": ["hair"] },
+        { "object": "Barbarian_Cape", "id": "back-fur-cape", "slot": "back", "label": "Fur cape", "styles": ["fantasy"] },
+        { "object": "1H_Axe", "id": "hand_r-axe", "slot": "hand_r", "label": "Axe", "styles": ["fantasy"] },
+        { "object": "Mug", "id": "hand_r-mug", "slot": "hand_r", "label": "Mug", "styles": ["modern", "fantasy"] },
+        { "object": "Barbarian_Round_Shield", "id": "hand_l-wooden-shield", "slot": "hand_l", "label": "Wooden shield", "styles": ["fantasy"] }
+      ]
     }
   }
 }

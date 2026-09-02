@@ -5092,6 +5092,26 @@
     "mode_pipeline": "Stimme rein und raus"
   },
   "society": {
+    "style": {
+      "modern": "Modern",
+      "fantasy": "Fantasy",
+      "cartoon": "Cartoon",
+      "animal": "Tier",
+      "scifi": "Sci-Fi",
+      "spirit": "Geist",
+      "custom": "Importiert"
+    },
+    "slot": {
+      "hair": "Haare",
+      "headgear": "Kopfbedeckung",
+      "face_extra": "Gesicht",
+      "torso_over": "Überwurf",
+      "belt": "Gürtel",
+      "back": "Rücken",
+      "hand_l": "Linke Hand",
+      "hand_r": "Rechte Hand",
+      "feet": "Füße"
+    },
     "sample_badge": "Beispieldaten",
     "roster": {
       "title": "Agenten",
@@ -5181,6 +5201,9 @@
       "shoes": "Schuhe"
     },
     "create": {
+      "style": "Stil",
+      "style_soon": "Noch keine Figuren in diesem Stil — die Pipeline nimmt jeden Stil, der die Prüfung besteht",
+      "none": "Keins",
       "title": "Agent erstellen",
       "subtitle": "Name, Aufgabe und Regelwerk — die Figur rechts ist, wie das Team ihn sehen wird.",
       "name": "Name",

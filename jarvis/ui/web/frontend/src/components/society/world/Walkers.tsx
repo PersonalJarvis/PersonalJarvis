@@ -34,7 +34,7 @@ import {
   stepAlong,
   turnToward,
 } from "./walkerKinematics";
-import { WalkerFigure, type WalkerAnim, type WalkerMode } from "./WalkerFigure";
+import { WORLD_HERO_SCALE, WalkerFigure, type WalkerAnim, type WalkerMode } from "./WalkerFigure";
 import { clearWalkerPin, setWalkerPin } from "./walkerRegistry";
 import { mulberry32, nextBeat, seedFromString } from "./wander";
 
@@ -223,8 +223,8 @@ function Walker({
       }}
       onPointerOut={() => setHover(false)}
     >
-      <WalkerFigure palette={agent.palette} anim={anim} paused={paused} selected={selected} />
-      <Html position={[0, 2.35, 0]} center zIndexRange={[30, 10]} style={{ pointerEvents: "none" }}>
+      <WalkerFigure palette={agent.palette} anim={anim} paused={paused} selected={selected} recipe={agent.figure} />
+      <Html position={[0, (agent.figure ? (agent.figure.heightM ?? 1.75) * WORLD_HERO_SCALE : 2.0) + 0.35, 0]} center zIndexRange={[30, 10]} style={{ pointerEvents: "none" }}>
         <div className="sw-nameplate" data-state={agent.state} data-selected={selected || undefined}>
           <span className="sw-nameplate-dot" style={{ background: agent.palette.accent }} />
           {agent.name}

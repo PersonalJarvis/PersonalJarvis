@@ -34,9 +34,8 @@ import {
   type FigureRecipe,
   type PaletteCell,
 } from "../figures/figureRecipe";
-import { AVAILABLE_BASES } from "../figures/figureRegistry";
+import { basesForStyle, partsForSlot, slotsWithParts, stylesWithBases, CATALOG } from "../figures/figureRegistry";
 
-const BASES = ["small", "medium", "large"] as const;
 const CEILINGS: readonly PermissionCeiling[] = ["safe", "monitor", "ask"];
 const GRANTS: readonly GrantMode[] = ["all", "allowlist"];
 const HEIGHT_MIN = 1.5;
@@ -55,6 +54,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [recipe, setRecipe] = useState<FigureRecipe>(() => defaultRecipe("ranger"));
+  const [style, setStyle] = useState<string>("modern");
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState("");
   const [ceiling, setCeiling] = useState<PermissionCeiling>("monitor");
@@ -348,18 +348,54 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                 </div>
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center gap-3">
+                    <span className="w-16 text-[11px] text-muted-foreground">{t("society.create.style")}</span>
+                    <Segmented
+                      value={style}
+                      options={Object.keys(CATALOG.styles).map((id) => ({
+                        value: id,
+                        label: t(`society.style.${id}`),
+                        disabled: !stylesWithBases().includes(id),
+                        hint: stylesWithBases().includes(id) ? undefined : t("society.create.style_soon"),
+                      }))}
+                      onChange={(next) => {
+                        setStyle(next);
+                        const first = basesForStyle(next)[0];
+                        if (first && !basesForStyle(next).some((b) => b.base === recipe.base)) {
+                          setRecipe((r) => ({ ...r, base: first.base, parts: {}, style: next }));
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center gap-3">
                     <span className="w-16 text-[11px] text-muted-foreground">{t("society.create.base")}</span>
                     <Segmented
                       value={recipe.base}
-                      options={BASES.map((b) => ({
-                        value: b,
-                        label: t(`society.base.${b}`),
-                        disabled: !AVAILABLE_BASES.biped.includes(b),
-                        hint: AVAILABLE_BASES.biped.includes(b) ? undefined : t("society.create.base_soon"),
-                      }))}
-                      onChange={(base) => setRecipe((r) => ({ ...r, base }))}
+                      options={basesForStyle(style).map((b) => ({ value: b.base, label: b.label }))}
+                      onChange={(base) => setRecipe((r) => ({ ...r, base, style }))}
                     />
                   </div>
+                  {slotsWithParts("biped").map((slot) => (
+                    <div key={slot} className="flex items-center gap-3">
+                      <span className="w-16 text-[11px] text-muted-foreground">{t(`society.slot.${slot}`)}</span>
+                      <div className="flex flex-wrap gap-1">
+                        <Segmented
+                          value={recipe.parts[slot] ?? ""}
+                          options={[
+                            { value: "", label: t("society.create.none") },
+                            ...partsForSlot(slot, "biped", null).map((part) => ({ value: part.id, label: part.label })),
+                          ]}
+                          onChange={(id) =>
+                            setRecipe((r) => {
+                              const parts = { ...r.parts };
+                              if (id) parts[slot] = id;
+                              else delete parts[slot];
+                              return { ...r, parts };
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                  ))}
                   <div className="flex items-center gap-3">
                     <span className="w-16 text-[11px] text-muted-foreground">{t("society.create.presets")}</span>
                     <div className="flex flex-wrap gap-1.5">

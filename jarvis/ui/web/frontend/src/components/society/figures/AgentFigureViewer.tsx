@@ -16,7 +16,6 @@
 import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useGLTF } from "@react-three/drei";
 import { useReducedMotion } from "framer-motion";
 import * as THREE from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
@@ -28,9 +27,10 @@ import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
-import { assembleFigure, playClip, type AssembledFigure, type LoadedGltf } from "./assembleFigure";
+import { assembleFigure, playClip, type AssembledFigure } from "./assembleFigure";
 import { recipeKey, resolvePalette, type FigureRecipe } from "./figureRecipe";
 import { figureAssetFor } from "./figureRegistry";
+import { useFigureAssets } from "./useFigureAssets";
 
 /** Target resolution the pixel pass renders the column at (docs §9.3). */
 const PIXEL_TARGET_WIDTH = 240;
@@ -137,7 +137,7 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
           >
             <Suspense fallback={null}>
               <FigureScene
-                url={asset.url}
+                recipe={recipe}
                 look={look}
                 palette={palette}
                 heightM={heightM}
@@ -166,7 +166,7 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
 // ---------------------------------------------------------------------------
 
 interface SceneProps {
-  url: string;
+  recipe: FigureRecipe;
   look: string;
   palette: ReturnType<typeof resolvePalette>;
   heightM: number;
@@ -177,8 +177,9 @@ interface SceneProps {
   orbitTick: number;
 }
 
-function FigureScene({ url, look, palette, heightM, clip, quiet, paused, orbit, orbitTick }: SceneProps) {
-  const gltf = useGLTF(url) as unknown as LoadedGltf;
+function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbit, orbitTick }: SceneProps) {
+  const assets = useFigureAssets(recipe);
+  const gltf = assets.base;
   const camera = useThree((s) => s.camera);
   const invalidate = useThree((s) => s.invalidate);
   const groupRef = useRef<THREE.Group>(null);
@@ -186,7 +187,12 @@ function FigureScene({ url, look, palette, heightM, clip, quiet, paused, orbit, 
 
   // One assembled figure per look; the previous one is disposed first.
   useEffect(() => {
-    const figure = assembleFigure(gltf, palette, heightM);
+    const figure = assembleFigure(
+      gltf,
+      palette,
+      heightM,
+      assets.parts.map((p) => p.gltf),
+    );
     figureRef.current = figure;
     const group = groupRef.current;
     if (figure && group) group.add(figure.root);

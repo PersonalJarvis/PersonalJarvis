@@ -5092,6 +5092,26 @@
     "mode_pipeline": "voz de entrada y salida"
   },
   "society": {
+    "style": {
+      "modern": "Moderno",
+      "fantasy": "Fantasía",
+      "cartoon": "Caricatura",
+      "animal": "Animal",
+      "scifi": "Ciencia ficción",
+      "spirit": "Espíritu",
+      "custom": "Importado"
+    },
+    "slot": {
+      "hair": "Pelo",
+      "headgear": "Sombrero",
+      "face_extra": "Cara",
+      "torso_over": "Capa superior",
+      "belt": "Cinturón",
+      "back": "Espalda",
+      "hand_l": "Mano izquierda",
+      "hand_r": "Mano derecha",
+      "feet": "Pies"
+    },
     "sample_badge": "Datos de ejemplo",
     "roster": {
       "title": "Agentes",
@@ -5181,6 +5201,9 @@
       "shoes": "Zapatos"
     },
     "create": {
+      "style": "Estilo",
+      "style_soon": "Aún no hay figuras de este estilo — la canalización acepta cualquier estilo que pase la revisión",
+      "none": "Ninguno",
       "title": "Crear un agente",
       "subtitle": "Nombre, cargo y reglas — la figura de la derecha es como lo verá el equipo.",
       "name": "Nombre",

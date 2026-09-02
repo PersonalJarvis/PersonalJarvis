@@ -10,6 +10,8 @@
  * runtime repaints exactly those cells to recolour a figure.
  */
 
+import { catalogBaseFor } from "./figureRegistry";
+
 export const PALETTE_CELLS = [
   "skin",
   "skin_shade",
@@ -37,14 +39,18 @@ export type FigureArchetype = "biped" | "quadruped" | "spirit";
 export interface FigureRecipe {
   contract: 1;
   archetype: FigureArchetype;
-  /** Base id: "small" | "medium" | "large" for a biped; an animal id for a quadruped. */
+  /** Catalog base id: "rogue" | "knight" | "mage" | "barbarian" …; an animal id for a quadruped. */
   base: string;
-  /** slot → part id; an empty object is a complete, plainly dressed figure. */
+  /** slot → catalog part id; an empty object is a complete, plainly dressed figure. */
   parts: Record<string, string>;
-  /** Cells to repaint; every cell missing here keeps the archetype default. */
+  /** Cells to repaint; every cell missing here keeps the base's default. */
   palette?: Partial<Palette>;
   /** Rendered height in metres; the archetype/base default when absent. */
   heightM?: number;
+  /** A person's own imported GLB (route C / the import lane): its URL replaces the catalog base. */
+  model?: string;
+  /** The style the look was picked from — metadata for the creator, never read by the runtime. */
+  style?: string;
 }
 
 /** The biped's default look — the built sheet's own strip, for a natural first figure. */
@@ -173,9 +179,15 @@ export function rgbToHex(r: number, g: number, b: number): string {
  * recipe's cells on top, and the shade cells derived from their base cell
  * unless the recipe set them explicitly.
  */
-export function resolvePalette(recipe: Pick<FigureRecipe, "palette"> | null | undefined): Palette {
+export function resolvePalette(
+  recipe: (Pick<FigureRecipe, "palette"> & Partial<Pick<FigureRecipe, "archetype" | "base">>) | null | undefined,
+): Palette {
   const explicit = recipe?.palette ?? {};
-  const out: Palette = { ...BIPED_DEFAULT_PALETTE, ...explicit };
+  const baseDefaults =
+    recipe?.archetype && recipe.base
+      ? (catalogBaseFor({ archetype: recipe.archetype, base: recipe.base })?.palette ?? null)
+      : null;
+  const out: Palette = { ...BIPED_DEFAULT_PALETTE, ...(baseDefaults ?? {}), ...explicit };
   if (!explicit.skin_shade && explicit.skin) out.skin_shade = shade(explicit.skin, 0.18);
   if (!explicit.primary_shade && explicit.primary) out.primary_shade = shade(explicit.primary, 0.22);
   if (!explicit.secondary_shade && explicit.secondary) {
@@ -188,17 +200,18 @@ export function resolvePalette(recipe: Pick<FigureRecipe, "palette"> | null | un
 /** A stable key for caching painted sheets and face crops per look. */
 export function recipeKey(recipe: FigureRecipe): string {
   const palette = PALETTE_CELLS.map((c) => recipe.palette?.[c] ?? "").join(",");
-  const parts = Object.entries(recipe.parts)
+  const parts = Object.entries(recipe.parts ?? {})
+    .filter(([, v]) => Boolean(v))
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${k}=${v}`)
     .join(";");
-  return `${recipe.archetype}/${recipe.base}|${parts}|${palette}|${recipe.heightM ?? ""}`;
+  return `${recipe.archetype}/${recipe.base}|${recipe.model ?? ""}|${parts}|${palette}|${recipe.heightM ?? ""}`;
 }
 
-/** The recipe a brand-new biped starts from: the default base, one preset, no parts. */
-export function defaultRecipe(presetId = "ranger"): FigureRecipe {
+/** The recipe a brand-new biped starts from: the ranger base, one preset, no parts. */
+export function defaultRecipe(presetId = "ranger", base = "rogue"): FigureRecipe {
   const preset = PALETTE_PRESETS.find((p) => p.id === presetId) ?? PALETTE_PRESETS[0];
-  return { contract: 1, archetype: "biped", base: "medium", parts: {}, palette: { ...preset.palette } };
+  return { contract: 1, archetype: "biped", base, parts: {}, palette: { ...preset.palette } };
 }
 
 /** The three legacy roster colours (primary/secondary/accent) as recipe cells. */

@@ -14,6 +14,9 @@ import { useFrame } from "@react-three/fiber";
 import type { Group } from "three";
 
 import type { AgentPalette } from "../data";
+import { FigureRig, type FigureDrive, type FigureMode } from "../figures/FigureRig";
+import type { FigureRecipe } from "../figures/figureRecipe";
+import { figureAssetFor } from "../figures/figureRegistry";
 import { useKit } from "./WorldKit";
 
 /** A warm neutral for head and hands — a doll, not a skin tone. */
@@ -32,9 +35,64 @@ interface Props {
   anim: { current: WalkerAnim };
   paused: boolean;
   selected: boolean;
+  /** The agent's character; null keeps the box stand-in. */
+  recipe?: FigureRecipe | null;
 }
 
-export function WalkerFigure({ palette, anim, paused, selected }: Props) {
+/**
+ * Walkers are drawn larger than life: seen 50° from above at 64 m across the
+ * stage a true-scale person is a 20 px sliver, and every isometric game with
+ * readable characters cheats the same way. The card keeps true scale.
+ */
+export const WORLD_HERO_SCALE = 1.6;
+
+const MODE_TO_CLIP: Record<WalkerMode, FigureMode> = {
+  rest: "idle",
+  walk: "walk",
+  work: "work",
+  sleep: "sleep",
+};
+
+/**
+ * The shipped character when the roster row carries a recipe whose base is
+ * built; the box stand-in otherwise. Both take the same sim-driven `anim`.
+ */
+export function WalkerFigure(props: Props) {
+  const recipe = props.recipe ?? null;
+  if (recipe && figureAssetFor(recipe)) {
+    return <RiggedWalkerFigure {...props} recipe={recipe} />;
+  }
+  return <BoxWalkerFigure {...props} />;
+}
+
+function RiggedWalkerFigure({ palette, anim, paused, selected, recipe }: Props & { recipe: FigureRecipe }) {
+  const kit = useKit();
+  const ring = useRef<Group>(null);
+  const drive = useRef<FigureDrive>({ mode: "idle", speed: 0 });
+
+  useFrame(({ clock }) => {
+    const a = anim.current;
+    drive.current.mode = MODE_TO_CLIP[a.mode];
+    drive.current.speed = a.speed;
+    if (ring.current && !paused) {
+      const s = 1 + Math.sin(clock.getElapsedTime() * 3) * 0.06;
+      ring.current.scale.set(s, 1, s);
+    }
+  });
+
+  return (
+    <group>
+      {selected && (
+        <group ref={ring} position={[0, 0.04, 0]}>
+          <mesh geometry={kit.g.ring} material={kit.m.glow(palette.accent)} rotation={[Math.PI / 2, 0, 0]} scale={[1.9, 1.9, 1.2]} />
+        </group>
+      )}
+      <FigureRig recipe={recipe} drive={drive} paused={paused} heightM={(recipe.heightM ?? 1.75) * WORLD_HERO_SCALE} />
+    </group>
+  );
+}
+
+function BoxWalkerFigure({ palette, anim, paused, selected }: Props) {
   const kit = useKit();
   const body = useRef<Group>(null);
   const legL = useRef<Group>(null);

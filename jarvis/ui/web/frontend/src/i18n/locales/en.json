@@ -5092,6 +5092,26 @@
     "mode_pipeline": "voice in and out"
   },
   "society": {
+    "style": {
+      "modern": "Modern",
+      "fantasy": "Fantasy",
+      "cartoon": "Cartoon",
+      "animal": "Animal",
+      "scifi": "Sci-fi",
+      "spirit": "Spirit",
+      "custom": "Imported"
+    },
+    "slot": {
+      "hair": "Hair",
+      "headgear": "Headgear",
+      "face_extra": "Face",
+      "torso_over": "Over",
+      "belt": "Belt",
+      "back": "Back",
+      "hand_l": "Left hand",
+      "hand_r": "Right hand",
+      "feet": "Feet"
+    },
     "sample_badge": "Sample data",
     "roster": {
       "title": "Agents",
@@ -5181,6 +5201,9 @@
       "shoes": "Shoes"
     },
     "create": {
+      "style": "Style",
+      "style_soon": "No figures in this style yet — the pipeline takes any style that passes the gate",
+      "none": "None",
       "title": "Create an agent",
       "subtitle": "Name, job and rulebook — the character on the right is how the team will see it.",
       "name": "Name",

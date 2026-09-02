@@ -27,14 +27,28 @@ export interface FigureExtras {
 /** The sheet layout the build wrote — mirrors scripts/figures/contract.json. */
 export const SHEET = { size: 128, cellWidth: 8, cellHeight: 16 } as const;
 
+/** `asset.extras.jarvis_part`, as the build writes it. */
+export interface PartExtras {
+  contract: number;
+  archetype: string;
+  slot: string;
+  attach: string;
+  hides: string[];
+  label: string;
+}
+
 export interface LoadedGltf {
   scene: THREE.Object3D;
   animations: THREE.AnimationClip[];
-  parser: { json: { asset?: { extras?: { jarvis_figure?: FigureExtras } } } };
+  parser: { json: { asset?: { extras?: { jarvis_figure?: FigureExtras; jarvis_part?: PartExtras } } } };
 }
 
 export function readFigureExtras(gltf: LoadedGltf): FigureExtras | null {
   return gltf.parser.json.asset?.extras?.jarvis_figure ?? null;
+}
+
+export function readPartExtras(gltf: LoadedGltf): PartExtras | null {
+  return gltf.parser.json.asset?.extras?.jarvis_part ?? null;
 }
 
 /** Pixel sheets sample nearest, carry no mipmaps and live in sRGB — re-asserted on every load. */
@@ -89,6 +103,7 @@ export function assembleFigure(
   gltf: LoadedGltf,
   palette: Palette,
   heightM: number,
+  parts: LoadedGltf[] = [],
 ): AssembledFigure | null {
   const extras = readFigureExtras(gltf);
   if (!extras) return null;
@@ -101,6 +116,8 @@ export function assembleFigure(
 
   const owned: Array<{ dispose(): void }> = [];
   let painted: THREE.CanvasTexture | null = null;
+  const skinned: THREE.SkinnedMesh[] = [];
+  const bodyMeshes: THREE.Mesh[] = [];
   body.traverse((node) => {
     if (node.name === "FWD") node.visible = false;
     if (!(node instanceof THREE.Mesh)) return;
@@ -113,6 +130,7 @@ export function assembleFigure(
       map: painted ?? map,
       color: 0xffffff,
     });
+    material.name = original.name;
     node.material = material;
     // A skinned mesh's bounds ignore its bones; culling it by the rest pose
     // hides a figure whose arms leave the box. Two draw calls are cheaper.
@@ -120,8 +138,34 @@ export function assembleFigure(
     node.castShadow = false;
     node.receiveShadow = false;
     owned.push(material);
+    bodyMeshes.push(node);
+    if (node instanceof THREE.SkinnedMesh) skinned.push(node);
   });
   if (painted) owned.push(painted);
+
+  // Parts: skinned to the same 23 bones in the same order, so a part binds to
+  // the body's skeleton with the body's bind matrix and follows every clip.
+  const anchor = skinned[0] ?? null;
+  const hidden = new Set<string>();
+  for (const partGltf of parts) {
+    const partExtras = readPartExtras(partGltf);
+    if (!anchor || !partExtras) continue;
+    partGltf.scene.traverse((node) => {
+      if (!(node instanceof THREE.SkinnedMesh)) return;
+      const material = new THREE.MeshLambertMaterial({ map: painted ?? undefined, color: 0xffffff });
+      const mesh = new THREE.SkinnedMesh(node.geometry, material);
+      mesh.name = `part:${partExtras.slot}`;
+      mesh.frustumCulled = false;
+      mesh.bind(anchor.skeleton, anchor.bindMatrix);
+      anchor.parent?.add(mesh);
+      owned.push(material);
+    });
+    for (const hide of partExtras.hides ?? []) hidden.add(hide);
+  }
+  for (const mesh of bodyMeshes) {
+    const materialName = (mesh.material as THREE.Material).name ?? "";
+    if (hidden.has("hair") && materialName.endsWith("-hair")) mesh.visible = false;
+  }
 
   const mixer = new THREE.AnimationMixer(body);
   const actions: Record<string, THREE.AnimationAction> = {};
