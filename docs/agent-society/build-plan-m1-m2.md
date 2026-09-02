@@ -1,5 +1,10 @@
 # Build Plan — M1 + M2 (recovered draft, revised)
 
+Status 2026-09-02: waves 1–6 and the backend half of wave 9 are landed on `main` (see
+`jarvis/society/README.md` for the module map and the commit log for the per-wave commits);
+wave 2b (capability catalog + focus) and 6b (ecosystem card) landed with them. Open: wave 7–8
+(frontend section, roster rail, card) and the frontend half of wave 9, wave 10 cleanup.
+
 Status: **draft, recovered 2026-09-01** from the kickoff session's design agent — that session
 hit its seat limit the moment this plan arrived, so the maintainer never saw it. It is kept as the
 wave breakdown for M1 (substrate) and M2 (identity, chat, Agents section UI) and is subordinate to

@@ -1,7 +1,15 @@
 # Agent Society — Master Plan
 
-Status: **planning approved for build, not yet started. Nothing ships or gets pushed until the
-maintainer says so.** Working codename: `society` (product name TBD, see Open Questions).
+Status: **building. Nothing ships or gets pushed until the maintainer says so.** Working
+codename: `society`; the section keeps the name "Jarvis Agents" (§10).
+
+Progress (2026-09-01/02): **M1 done** — `jarvis/society/` substrate, `/api/society`, the
+headless contract test. **M2 backend done** — the `society` chat surface with per-agent hands
+and briefing, canonical chat binding, `society_message_agent` / `society_wiki_note`, the
+approvals queue, `[agent:*]` routines. **M2 frontend open** — the section (sidebar | stage |
+roster rail), the model card (Specs | 3D | Chat) on `components/society/data.ts`, seed
+proposals. **M3 world** is the maintainer's parallel track. M4 (rooms live under the scheduler,
+curator, `delegate-to-agent` voice tool) not started.
 
 The research behind every claim here lives in [`research/`](research/):
 [Branch A — product & UI](research/branch-a-product-ui.md) (Hermes Agent, Grok Bot, 3D stack,
