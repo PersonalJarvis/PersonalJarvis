@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { assembleFigure, playClip, type AssembledFigure } from "./assembleFigure";
 import { recipeKey, resolvePalette, type FigureRecipe } from "./figureRecipe";
 import { figureAssetFor } from "./figureRegistry";
+import { LobbyStage } from "./LobbyStage";
 import { useFigureAssets } from "./useFigureAssets";
 
 /** Target resolution the pixel pass renders the column at (docs §9.3). */
@@ -261,11 +262,8 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
       <directionalLight position={[2.2, 4.5, 3.2]} intensity={1.9} />
       <directionalLight position={[-3, 2, -2]} intensity={0.45} />
       <group ref={groupRef} />
-      {/* A soft blob under the feet reads better than a shadow map at 22 px. */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.005, 0]}>
-        <circleGeometry args={[heightM * 0.26, 24]} />
-        <meshBasicMaterial color={0x1a2230} transparent opacity={0.22} depthWrite={false} />
-      </mesh>
+      {/* The room the agent spawns into: podium, floor, back wall, beams (LobbyStage). */}
+      <LobbyStage heightM={heightM} accent={palette.accent} paused={paused} />
     </>
   );
 }
