@@ -32,7 +32,7 @@ import { effortLabel } from "@/components/agentchat/AgentComposer";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { Button } from "@/components/ui/button";
-import { Combobox, type ComboboxGroup } from "@/components/ui/combobox";
+import { Combobox, isComboboxPanelEvent, type ComboboxGroup } from "@/components/ui/combobox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
 import {
@@ -374,9 +374,18 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none" />
         <Dialog.Content
           data-testid="create-agent-dialog"
-          className="fixed inset-4 z-50 flex flex-col overflow-hidden rounded-lg border border-border bg-card shadow-float focus:outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none lg:inset-y-8 lg:inset-x-16"
+          className="fixed inset-4 z-50 flex flex-col rounded-lg border border-border bg-card shadow-float focus:outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none lg:inset-y-8 lg:inset-x-16"
+          onPointerDownOutside={(event) => {
+            if (isComboboxPanelEvent(event)) event.preventDefault();
+          }}
+          onFocusOutside={(event) => {
+            if (isComboboxPanelEvent(event)) event.preventDefault();
+          }}
+          onInteractOutside={(event) => {
+            if (isComboboxPanelEvent(event)) event.preventDefault();
+          }}
         >
-          <header className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-3">
+          <header className="flex shrink-0 items-center gap-3 overflow-hidden rounded-t-lg border-b border-border px-5 py-3">
             <div className="min-w-0 flex-1">
               <Dialog.Title className="font-display text-base font-semibold tracking-tight text-foreground">
                 {t("society.create.title")}
@@ -393,7 +402,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
             </Dialog.Close>
           </header>
 
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(320px,1fr)_minmax(360px,1.1fr)]">
+          <div className="grid min-h-0 flex-1 overflow-hidden rounded-b-lg grid-cols-[minmax(320px,1fr)_minmax(360px,1.1fr)]">
             {/* ---- left: the three fields + Advanced ---- */}
             <ScrollArea className="min-h-0 border-r border-border">
               <form
@@ -463,6 +472,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                         groups={seatGroups(seats, t)}
                         onChange={(id) => pickSeat(seats.find((s) => s.provider.id === id) ?? null)}
                         ariaLabel={t("society.create.brain")}
+                        testId="society-create-provider"
                       />
                       {accounts.length > 0 ? (
                         <div>

@@ -30,9 +30,13 @@ import { cn } from "@/lib/utils";
  * which dissolves the group order this control is built around. The list here
  * filters and never reorders, so "the third entry" stays the third entry.
  *
- * The panel is portalled to `document.body` and positioned fixed, because every
- * screen that uses it sits inside an `overflow-y-auto` column that would
- * otherwise clip it.
+ * The panel is positioned fixed and portalled out of the trigger's overflow
+ * column (every screen that uses this sits in one, and a native parent clip
+ * would cut the list off). A modal dialog sets `pointer-events: none` on
+ * `document.body` and only restores it on its own layer, so a panel dumped
+ * onto `body` paints on top of the dialog and receives no clicks — every
+ * option visible, none selectable. When the trigger lives in a dialog the
+ * panel lands inside that layer instead.
  */
 
 export interface ComboboxOption {
@@ -86,6 +90,31 @@ export interface ComboboxProps {
 const MAX_PANEL_HEIGHT = 340;
 const MIN_PANEL_WIDTH = 288;
 const VIEWPORT_MARGIN = 8;
+
+/** Marks the portalled list so a wrapping dialog can treat it as inside. */
+export const COMBOBOX_PANEL_ATTR = "data-combobox-panel";
+
+/**
+ * True when a Dialog outside-event originated on a Combobox panel (the
+ * original click target, not the dialog node the custom event is dispatched
+ * on). Used by dialogs that host a Combobox so picking an option does not
+ * count as "click outside" and close the sheet.
+ */
+export function isComboboxPanelEvent(event: {
+  target?: EventTarget | null;
+  detail?: { originalEvent?: Event };
+}): boolean {
+  const node = event.detail?.originalEvent?.target ?? event.target;
+  return node instanceof Element && node.closest(`[${COMBOBOX_PANEL_ATTR}]`) !== null;
+}
+
+/**
+ * Where the list mounts. A modal dialog is the clickable layer; `body` is
+ * not, while the dialog is open.
+ */
+function panelHost(trigger: HTMLElement | null): HTMLElement {
+  return trigger?.closest<HTMLElement>('[role="dialog"]') ?? document.body;
+}
 
 function fold(value: string): string {
   return value
@@ -435,6 +464,7 @@ export function Combobox({
           <div
             ref={panelRef}
             data-testid={testId ? `${testId}-panel` : undefined}
+            data-combobox-panel=""
             style={{
               left: position.left,
               top: position.top,
@@ -446,7 +476,9 @@ export function Combobox({
             // The one place a real shadow is allowed: this layer leaves the
             // plane. Opaque --popover rather than a blurred translucent wash,
             // so the list has a predictable ground whatever it covers.
-            className="fixed z-[70] flex flex-col overflow-hidden rounded-lg border border-border-strong bg-popover shadow-float"
+            // pointer-events-auto: a modal dialog sets none on body, and this
+            // panel must still take the click even if it fell back to body.
+            className="pointer-events-auto fixed z-[70] flex flex-col overflow-hidden rounded-lg border border-border-strong bg-popover shadow-float"
           >
             {searchable && (
               <div className="flex items-center gap-2 border-b border-border px-3 py-2">
@@ -567,7 +599,7 @@ export function Combobox({
               ))}
             </div>
           </div>,
-          document.body,
+          panelHost(triggerRef.current),
         )}
     </>
   );

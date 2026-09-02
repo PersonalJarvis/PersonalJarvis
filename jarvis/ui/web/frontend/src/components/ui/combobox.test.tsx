@@ -1,7 +1,9 @@
+import * as Dialog from "@radix-ui/react-dialog";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { Combobox } from "@/components/ui/combobox";
+import { Combobox, isComboboxPanelEvent } from "@/components/ui/combobox";
 
 const GROUPS = [
   {
@@ -141,5 +143,92 @@ describe("Combobox panel placement", () => {
     expect(panel.style.bottom).toBe("94px");
     expect(panel.style.top).toBe("");
     expect(parseInt(panel.style.maxHeight, 10)).toBeGreaterThanOrEqual(160);
+  });
+});
+
+describe("Combobox inside a modal dialog", () => {
+  it("marks the panel so a dialog can treat it as inside, and keeps pointer events", async () => {
+    render(<Combobox value="alpha" groups={GROUPS} onChange={() => {}} ariaLabel="Pick" testId="pick" />);
+    fireEvent.click(screen.getByTestId("pick"));
+    const panel = await screen.findByTestId("pick-panel");
+    expect(panel.getAttribute("data-combobox-panel")).toBe("");
+    expect(panel.className).toContain("pointer-events-auto");
+  });
+
+  it("mounts the list inside the nearest dialog so a modal can click it", async () => {
+    render(
+      <div role="dialog" data-testid="host-dialog">
+        <Combobox value="alpha" groups={GROUPS} onChange={() => {}} ariaLabel="Pick" testId="inside" />
+      </div>,
+    );
+    fireEvent.click(screen.getByTestId("inside"));
+    const panel = await screen.findByTestId("inside-panel");
+    expect(screen.getByTestId("host-dialog").contains(panel)).toBe(true);
+    expect(panel.parentElement).not.toBe(document.body);
+  });
+
+  it("lets a pick land without dismissing the wrapping Radix dialog", async () => {
+    const onChange = vi.fn();
+    function App() {
+      const [open, setOpen] = useState(true);
+      const [value, setValue] = useState("alpha");
+      return (
+        <Dialog.Root open={open} onOpenChange={setOpen}>
+          <Dialog.Portal>
+            <Dialog.Overlay />
+            <Dialog.Content
+              aria-describedby={undefined}
+              onPointerDownOutside={(event) => {
+                if (isComboboxPanelEvent(event)) event.preventDefault();
+              }}
+              onFocusOutside={(event) => {
+                if (isComboboxPanelEvent(event)) event.preventDefault();
+              }}
+              onInteractOutside={(event) => {
+                if (isComboboxPanelEvent(event)) event.preventDefault();
+              }}
+            >
+              <Dialog.Title>Create</Dialog.Title>
+              <Combobox
+                value={value}
+                groups={GROUPS}
+                onChange={(next) => {
+                  setValue(next);
+                  onChange(next);
+                }}
+                ariaLabel="Pick"
+                testId="modal-pick"
+              />
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      );
+    }
+    render(<App />);
+    fireEvent.click(screen.getByTestId("modal-pick"));
+    const option = await screen.findByRole("option", { name: "Charlie" });
+    fireEvent.pointerDown(option);
+    fireEvent.click(option);
+    expect(onChange).toHaveBeenCalledWith("charlie");
+    expect(screen.getByText("Create")).toBeTruthy();
+    expect(screen.getByTestId("modal-pick").getAttribute("data-value")).toBe("charlie");
+  });
+});
+
+describe("isComboboxPanelEvent", () => {
+  it("reads the original click target, not the node the custom event is dispatched on", () => {
+    const panel = document.createElement("div");
+    panel.setAttribute("data-combobox-panel", "");
+    const option = document.createElement("div");
+    panel.appendChild(option);
+    const original = new Event("pointerdown");
+    Object.defineProperty(original, "target", { value: option });
+    expect(
+      isComboboxPanelEvent({
+        target: document.createElement("div"),
+        detail: { originalEvent: original },
+      }),
+    ).toBe(true);
+    expect(isComboboxPanelEvent({ target: document.createElement("div") })).toBe(false);
   });
 });
