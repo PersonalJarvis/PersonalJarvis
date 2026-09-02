@@ -385,8 +385,8 @@ def build_terminal_cantina(k) -> bpy.types.Object:
         key = "fam_cli" if i % 2 == 0 else "wall"
         k.box(
             f"awning_{i}",
-            ((W - 0.8) / 10, D * 0.4, 0.12),
-            (x, y_front + D * 0.18, 0.35 + 3.5),
+            ((W - 0.8) / 10, D * 0.22, 0.12),
+            (x, y_front + D * 0.27, 0.35 + 3.5),
             key,
             root,
             bevel=0.02,
