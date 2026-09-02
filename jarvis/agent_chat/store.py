@@ -74,8 +74,10 @@ _PREVIEW_MAX_CHARS = 120
 #: ``tests/unit/agent_chat/test_agent_chat_surface_parity.py`` keeps the three
 #: in step (AP-4). ``"local-models"`` is the Local models section's setup
 #: assistant: one session per install, its own hands, never in either chat's
-#: session list.
-SURFACES: Final[tuple[str, ...]] = ("jarvis", "agent", "local-models")
+#: session list. ``"society"`` is an agent's one canonical chat (session id
+#: ``society:<agent_id>``, see ``jarvis/society/chat_binding.py``): Jarvis'
+#: brain runner with the agent's own hands, listed only inside the society.
+SURFACES: Final[tuple[str, ...]] = ("jarvis", "agent", "local-models", "society")
 DEFAULT_SURFACE: Final[str] = "agent"
 
 

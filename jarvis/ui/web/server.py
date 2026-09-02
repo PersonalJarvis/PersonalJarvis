@@ -3546,6 +3546,16 @@ class WebServer:
             except Exception:  # noqa: BLE001 — the catalog then shows no skills
                 return None
 
+        from jarvis.society.chat_binding import make_deliver_hook
+
+        from .agent_chat_routes import _service_from_state
+
+        # Board messages addressed to an agent wake its canonical chat on the
+        # agent-chat service (built lazily by its own factory).
+        deliver = make_deliver_hook(
+            lambda: _service_from_state(state),
+            lambda: self.cfg,
+        )
         return SocietyRuntime(
             data_dir,
             mission_manager=_manager,
@@ -3553,6 +3563,7 @@ class WebServer:
             budget_tracker=_budget,
             brain_tools=_tools,
             skills=_skills,
+            deliver=deliver,
         )
 
     def _build_agent_chat_service(self) -> Any:

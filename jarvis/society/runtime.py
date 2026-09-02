@@ -33,9 +33,21 @@ from .store import SocietyStore
 
 log = logging.getLogger(__name__)
 
-__all__ = ["SocietyRuntime"]
+__all__ = ["SocietyRuntime", "current_runtime", "set_current_runtime"]
 
 _DB_NAME = "society.db"
+
+_current: SocietyRuntime | None = None
+
+
+def current_runtime() -> SocietyRuntime | None:
+    """The runtime the app built (the society surface reaches it through here)."""
+    return _current
+
+
+def set_current_runtime(runtime: SocietyRuntime | None) -> None:
+    global _current  # noqa: PLW0603 - one process, one society
+    _current = runtime
 
 
 def _agent_frame(agent: AgentRecord, task: str) -> str:
@@ -85,6 +97,9 @@ class SocietyRuntime:
             self.store, owner_of=self.owner_of, on_run_ended=self.scheduler.note_run_ended
         )
         self._owners: dict[str, str] = {}
+        #: Roster rows the society surface read for a turn - the sync tool
+        #: filter reads them here (the briefing fills the cache first).
+        self._agent_cache: dict[str, AgentRecord] = {}
         self._started = False
 
     # ------------------------------------------------------------ lifecycle
@@ -100,6 +115,7 @@ class SocietyRuntime:
             self.bridge.attach(bus)
         await self.seed_lead()
         self._started = True
+        set_current_runtime(self)
         log.info("society runtime started (%s)", self.store.path)
         return self
 
@@ -108,6 +124,14 @@ class SocietyRuntime:
         self.bridge.detach()
         await self.store.close()
         self._started = False
+        if current_runtime() is self:
+            set_current_runtime(None)
+
+    def cache_agent(self, agent: AgentRecord) -> None:
+        self._agent_cache[agent.agent_id] = agent
+
+    def cached_agent(self, agent_id: str) -> AgentRecord | None:
+        return self._agent_cache.get(agent_id)
 
     def set_deliver(self, deliver: DeliverHook | None) -> None:
         """The chat binding (M2) installs the canonical-chat deliverer here."""

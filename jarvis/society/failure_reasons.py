@@ -127,6 +127,10 @@ _PATTERNS: Final[tuple[tuple[FailureReason, re.Pattern[str]], ...]] = (
         ),
     ),
     (
+        FailureReason.TARGET_BUSY,
+        re.compile(r"(session ?busy|target busy|already running a turn)", re.I),
+    ),
+    (
         FailureReason.TARGET_OFFLINE,
         re.compile(r"(connection refused|not reachable|unreachable|offline|econnrefused)", re.I),
     ),

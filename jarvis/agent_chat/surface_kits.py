@@ -35,6 +35,12 @@ _JARVIS_LADDER: Final[str] = "jarvis"
 
 ToolsBuilder = Callable[[Any, Any], dict[str, Tool]]
 ExtraBuilder = Callable[[Any, Any], Awaitable[str]]
+#: Session-aware twins: ``(cfg, brain, session)``. A surface whose hands and
+#: briefing depend on WHICH session is talking (one chat per society agent)
+#: uses these; ``kit_payload`` prefers them over the session-blind builders.
+SessionToolsBuilder = Callable[[Any, Any, Any], dict[str, Tool]]
+SessionExtraBuilder = Callable[[Any, Any, Any], Awaitable[str]]
+SessionFilterBuilder = Callable[[Any], Callable[[dict[str, Tool]], dict[str, Tool]] | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +93,11 @@ class SurfaceKit:
     #: which is what the IDE's chat wants: a coding agent is pointed at a
     #: project, and its composer shows the folder chip so it can be moved.
     workspace_dir: Callable[[], Path] | None = None
+    #: Session-aware builders (see the type aliases above). ``None`` = use the
+    #: session-blind ``tools`` / ``system_extra`` / ``tool_filter``.
+    session_tools: SessionToolsBuilder | None = None
+    session_system_extra: SessionExtraBuilder | None = None
+    session_tool_filter: SessionFilterBuilder | None = None
 
 
 def _chat_workspace() -> Path:
@@ -115,6 +126,27 @@ async def _local_models_extra(cfg: Any, _brain: Any) -> str:
     from jarvis.local_models.health_monitor import server_root
 
     return await build_system_extra(cfg, root=server_root(cfg))
+
+
+def _society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
+    """The agent's own hands - teammate messaging and its wiki namespace (lazy)."""
+    from jarvis.society.surface import society_tools
+
+    return society_tools(cfg, brain, session)
+
+
+async def _society_extra(cfg: Any, brain: Any, session: Any) -> str:
+    """Who the agent is, what it reaches for, how the ecosystem works (lazy)."""
+    from jarvis.society.surface import society_system_extra
+
+    return await society_system_extra(cfg, brain, session)
+
+
+def _society_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, Tool]] | None:
+    """Grant / focus / deny over the merged tool set (lazy)."""
+    from jarvis.society.surface import society_tool_filter
+
+    return society_tool_filter(session)
 
 
 def _only_local_models(tools: dict[str, Tool]) -> dict[str, Tool]:
@@ -169,6 +201,24 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         tool_filter=_only_local_models,
         # No folder: this surface never touches a checkout. Its hands talk to
         # the local server and the config, and the composer shows no chip.
+        workspace_dir=_chat_workspace,
+    ),
+    # An agent-society member's canonical chat (jarvis/society). Jarvis' own
+    # harness on an API provider (the roster row's pick, else the Agents
+    # tier), the Jarvis ladder as stances, and per-session hands: the agent's
+    # grant/focus/deny over the brain's tool set plus its two society tools.
+    # The briefing is assembled per session from the roster row and the
+    # capability catalog (agent-definition section 3.3).
+    "society": SurfaceKit(
+        surface="society",
+        brain_runner=True,
+        cli_seats=False,
+        ladder=_JARVIS_LADDER,
+        uses_stance=True,
+        tool_origin="society",
+        session_tools=_society_tools,
+        session_system_extra=_society_extra,
+        session_tool_filter=_society_filter,
         workspace_dir=_chat_workspace,
     ),
 }

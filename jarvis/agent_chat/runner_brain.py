@@ -161,7 +161,9 @@ def build_override(
             dict(kit_tools) if kit_tools is not None else folder_tools(cwd, stance=stance)
         ),
         tool_filter=_compose_filters(
-            kit.tool_filter, plan_filter if stance == PLAN_STANCE else None
+            kit.tool_filter,
+            kit.session_tool_filter(session) if kit.session_tool_filter is not None else None,
+            plan_filter if stance == PLAN_STANCE else None,
         ),
         credential_scope=kit.credential_scope,
         system_extra=system_extra,
@@ -206,13 +208,26 @@ async def kit_payload(session: AgentChatSession, brain: Any) -> tuple[dict[str, 
     cfg = getattr(brain, "_config", None)
     tools: dict[str, Tool] | None = None
     extra = ""
-    if kit.tools is not None:
+    if kit.session_tools is not None:
+        try:
+            tools = kit.session_tools(cfg, brain, session)
+        except Exception as exc:  # noqa: BLE001 - the turn runs without the kit's hands
+            log.warning("surface %s: kit tools not built: %s", session.surface, exc, exc_info=True)
+            tools = {}
+    elif kit.tools is not None:
         try:
             tools = kit.tools(cfg, brain)
         except Exception as exc:  # noqa: BLE001 — the turn runs without the kit's hands
             log.warning("surface %s: kit tools not built: %s", session.surface, exc, exc_info=True)
             tools = {}
-    if kit.system_extra is not None:
+    if kit.session_system_extra is not None:
+        try:
+            extra = await kit.session_system_extra(cfg, brain, session)
+        except Exception as exc:  # noqa: BLE001 - the turn runs without the briefing
+            log.warning(
+                "surface %s: kit briefing not built: %s", session.surface, exc, exc_info=True
+            )
+    elif kit.system_extra is not None:
         try:
             extra = await kit.system_extra(cfg, brain)
         except Exception as exc:  # noqa: BLE001 — the turn runs without the briefing
