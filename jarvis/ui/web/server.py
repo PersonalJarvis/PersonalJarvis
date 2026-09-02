@@ -331,6 +331,7 @@ class WebServer:
 
         from .agent_accounts_routes import router as agent_accounts_router
         from .agent_chat_routes import router as agent_chat_router
+        from .agent_mcp_routes import router as agent_mcp_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
         from .board_routes import (
@@ -418,6 +419,9 @@ class WebServer:
             logger.warning("Conductor module not available: {} — Conductor view stays empty", exc)
             conductor_router = None
         app.include_router(mcp_router)
+        # Connect-flow for the Agent MCP surface: what it offers, which
+        # clients this box has, and writing the entry into their config.
+        app.include_router(agent_mcp_router)
         app.include_router(tools_router)
         app.include_router(tool_model_router)
         # Jarvis' OWN tools, offered outwards over MCP so an agent-chat session
@@ -425,6 +429,10 @@ class WebServer:
         # the Control API; mounted raw because the transport streams.
         from jarvis.ui.web.mcp_server_routes import build_mcp_asgi_app
 
+        # ONE mount, two surfaces, dispatched inside on the rest of the path:
+        # "" is Jarvis' own tools, "/agents" is the agent ecosystem. A second
+        # Starlette mount on the longer path would never match a request
+        # without a trailing slash — see mcp_server_routes._surface_for.
         app.mount("/api/control/mcp", build_mcp_asgi_app())
         # Event-loop diagnostics (read-only) — names the owner of an AP-20
         # cancellation busy-loop from inside the loop; see diagnostics_routes.
