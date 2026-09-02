@@ -22,6 +22,11 @@ Both are Streamable HTTP, both authenticate with the Control API's bearer key,
 and **loopback does not bypass it**: anything on the machine could otherwise
 open a socket and start driving somebody's team.
 
+Note the trailing slash: the tools surface is addressed as
+`/api/control/mcp/` (what `jarvis_harness` has always sent). Without it
+Starlette answers a redirect that MCP clients do not follow. The agents URL
+needs no slash — `/api/control/mcp/agents` is a path *inside* the mount.
+
 They share one Starlette mount and dispatch on the rest of the path. This is
 not a stylistic choice. A `Mount` on `/api/control/mcp/agents` compiles to
 `^/api/control/mcp/agents(?P<path>/.*)$` — it requires a segment *after* the
@@ -160,7 +165,20 @@ The safety seam is the house's, not a new one:
   surface through `approvals_list` and are answered with `approval_resolve` —
   the same path a person at the keyboard uses.
 
-## 7. Where the code is
+## 7. Verified end to end
+
+Against a running instance (headless, port 47941), a real MCP client saw:
+
+* `/api/control/mcp/agents` → server `jarvis-agents`, 16 tools, the three
+  fixed resources plus one per agent on the roster, 3 prompts, and live
+  `ecosystem_status` data;
+* `/api/control/mcp/` → server `jarvis`, 89 tools, **no** `agent_chat` — the
+  surfaces do not leak into each other;
+* the stdio bridge (`python -m jarvis.mcp.agents.bridge`) → the same catalog
+  and the same live answers, which is the path a desktop client takes;
+* an unauthenticated POST → rejected before it reaches either surface.
+
+## 8. Where the code is
 
 | File | Role |
 |---|---|
