@@ -23,7 +23,14 @@ import { useT } from "@/i18n";
 import { fetchAgentChatCatalog, type AgentChatProvider } from "@/lib/agentChatApi";
 import { cn } from "@/lib/utils";
 
-import { useCreateAgent, type GrantMode, type PermissionCeiling } from "../data";
+import { CapabilityChip } from "../CapabilityChip";
+import {
+  useCreateAgent,
+  useSocietyCapabilities,
+  type Capability,
+  type GrantMode,
+  type PermissionCeiling,
+} from "../data";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
 import {
   EDITABLE_CELLS,
@@ -60,6 +67,10 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [ceiling, setCeiling] = useState<PermissionCeiling>("monitor");
   const [grantMode, setGrantMode] = useState<GrantMode>("all");
   const [budget, setBudget] = useState("2");
+  const [focus, setFocus] = useState<string[]>([]);
+  const [grants, setGrants] = useState<string[]>([]);
+  const [toolQuery, setToolQuery] = useState("");
+  const capabilities = useSocietyCapabilities(open);
   const [advanced, setAdvanced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +99,9 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setTitle("");
     setDescription("");
     setRecipe(defaultRecipe("ranger"));
+    setFocus([]);
+    setGrants([]);
+    setToolQuery("");
     setError(null);
     setSubmitting(false);
   }, [open]);
@@ -119,6 +133,8 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         providerLabel: provider?.label ?? t("society.create.provider_unknown"),
         model,
         grantMode,
+        toolGrants: grants,
+        focus,
         permissionCeiling: ceiling,
         dailyBudgetUsd: Math.max(0, Number.parseFloat(budget) || 0),
       });
@@ -296,6 +312,43 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                       />
                     </div>
                     <div>
+                      <span className={labelClass}>{t("society.create.tools_title")}</span>
+                      <p className="mb-2 text-[11px] text-muted-foreground">
+                        {grantMode === "allowlist" ? t("society.create.allowlist_hint") : t("society.create.focus_hint")}
+                      </p>
+                      <input
+                        type="search"
+                        value={toolQuery}
+                        onChange={(e) => setToolQuery(e.target.value)}
+                        placeholder={t("society.create.tools_search")}
+                        aria-label={t("society.create.tools_search")}
+                        className={cn(fieldClass, "mb-2")}
+                      />
+                      {capabilities.isLoading ? (
+                        <p className="text-xs text-muted-foreground">{t("society.create.tools_loading")}</p>
+                      ) : capabilities.isError || (capabilities.data ?? []).length === 0 ? (
+                        <p className="text-xs text-muted-foreground">{t("society.create.tools_unavailable")}</p>
+                      ) : (
+                        <div className="flex max-h-48 flex-wrap gap-1.5 overflow-y-auto">
+                          {filterCapabilities(capabilities.data ?? [], toolQuery).map((cap) => {
+                            const list = grantMode === "allowlist" ? grants : focus;
+                            const setList = grantMode === "allowlist" ? setGrants : setFocus;
+                            const on = list.includes(cap.id);
+                            return (
+                              <CapabilityChip
+                                key={cap.id}
+                                id={cap.id}
+                                capability={cap}
+                                selected={on}
+                                disconnectedHint={t("society.card.not_connected")}
+                                onClick={() => setList(on ? list.filter((x) => x !== cap.id) : [...list, cap.id])}
+                              />
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <div>
                       <label htmlFor="society-create-budget" className={labelClass}>
                         {t("society.create.budget")}
                       </label>
@@ -461,6 +514,15 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
       </Dialog.Portal>
     </Dialog.Root>
   );
+}
+
+/** Connected first, then by label; a query narrows by label, id and one-liner. */
+function filterCapabilities(rows: Capability[], query: string): Capability[] {
+  const q = query.trim().toLowerCase();
+  return rows
+    .filter((c) => !q || `${c.label} ${c.id} ${c.one_liner}`.toLowerCase().includes(q))
+    .sort((a, b) => Number(b.connected) - Number(a.connected) || a.label.localeCompare(b.label))
+    .slice(0, 80);
 }
 
 interface SegmentedOption {

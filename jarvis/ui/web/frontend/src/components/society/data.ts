@@ -2,22 +2,22 @@
  * The society frontend's data seam — every card, roster row and world walker
  * reads agents through the hooks in this file and nothing else.
  *
- * The M1 backend (docs/agent-society/MASTERPLAN.md §3.1: society.db roster +
- * /api/society routes) is being built in a parallel session. Until the two
- * sides are wired, `fetchSocietyRoster` resolves the clearly-labeled sample
- * roster from ./mockRoster plus whatever this window created — the ONE swap
- * point. Nothing else in the society components may know where agents come
+ * Source of truth is `/api/society` (jarvis/ui/web/society_routes.py, rows
+ * typed in lib/societyApi.ts). When the backend is unreachable or has no
+ * agents yet, the clearly-labeled sample roster stands in and the rail says
+ * so — nothing else in the society components may know where agents come
  * from.
  *
  * The enums here mirror the roster schema (MASTERPLAN §3.1, agent-definition.md
- * §2) and cross Python ↔ SQL ↔ Pydantic ↔ TS ↔ UI once the backend is bound —
- * at that point they join the five-layer parity tests (AP-4). Keep names in
- * lockstep with the plan, not with what reads nicely in TS.
+ * §2); the const arrays in lib/societyApi.ts are pinned to the Python enums by
+ * the five-layer parity test (AP-4).
  */
 import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { FigureRecipe } from "./figures/figureRecipe";
+import type { SocietyAgentRow } from "@/lib/societyApi";
+
+import { PALETTE_PRESETS, resolvePalette, type FigureRecipe } from "./figures/figureRecipe";
 import { SAMPLE_ROSTER } from "./mockRoster";
 
 /** MASTERPLAN §2.5 — exactly one lead (Jarvis), orchestrators may ASSIGN. */
@@ -37,8 +37,7 @@ export type GrantMode = "all" | "allowlist";
 
 /**
  * Per-agent accent colours for flat UI (roster swatch, chat avatar ring).
- * The figure's own colours live in `figure.palette`; these three are derived
- * from it so the rail and the character always agree.
+ * Derived from the figure's palette so the rail and the character agree.
  */
 export interface AgentPalette {
   primary: string;
@@ -62,6 +61,12 @@ export interface AgentStats {
   lastActiveMs: number | null;
 }
 
+/** Grok-style rules under the ceiling (agent-definition §3.4); require wins. */
+export interface ApprovalRules {
+  requireApproval: string[];
+  alwaysAllow: string[];
+}
+
 /** One roster row — the model card's whole world (MASTERPLAN §3.1, agent-definition §2). */
 export interface SocietyAgent {
   agentId: string;
@@ -71,26 +76,31 @@ export interface SocietyAgent {
   /** Standing instructions, Markdown — the agent's own rulebook. */
   description: string;
   tier: AgentTier;
-  /** Provider id as the agent-chat catalog knows it (e.g. "anthropic"). */
+  /** Provider id as the agent-chat catalog knows it (e.g. "anthropic"); "" = Jarvis' default brain. */
   provider: string;
   /** Display label for the provider, until the catalog lookup is wired. */
   providerLabel: string;
   model: string;
+  effort: string;
   /** The character: archetype, base, parts, palette. null = the palette tile. */
   figure: FigureRecipe | null;
   palette: AgentPalette;
   grantMode: GrantMode;
+  /** Capability ids on the allow-list (read only when grantMode = allowlist). */
   toolGrants: string[];
+  /** Capability ids the agent reaches for first (derived from the description, editable). */
+  focus: string[];
+  /** Capability ids never offered to this agent. */
+  denies: string[];
+  approvalRules: ApprovalRules;
   permissionCeiling: PermissionCeiling;
   dailyBudgetUsd: number;
   checkpoint: AgentCheckpoint;
   state: AgentRunState;
+  /** The durable lifecycle state behind `state` ("active" | "paused" | "archived"). */
+  lifecycle: "active" | "paused" | "archived";
   createdMs: number;
-  /**
-   * The canonical agent_chat session bound to this agent (M2). Sample rows
-   * carry null — the card then shows the honest empty state instead of an
-   * invented transcript.
-   */
+  /** The canonical agent_chat session bound to this agent; null on sample rows. */
   chatSessionId: string | null;
   routines: AgentRoutine[];
   stats: AgentStats;
@@ -107,29 +117,129 @@ export interface NewAgentInput {
   providerLabel: string;
   model: string;
   grantMode: GrantMode;
+  toolGrants: string[];
+  focus: string[];
   permissionCeiling: PermissionCeiling;
   dailyBudgetUsd: number;
 }
 
-/** Agents created in THIS window before the backend exists — sample data, not persisted. */
-const LOCAL_ROSTER: SocietyAgent[] = [];
-
-/**
- * THE swap point: replace the sample resolve with
- * `fetch("/api/society/agents")` once the M1 routes are bound. Async already,
- * so the swap touches no caller.
- */
-async function fetchSocietyRoster(): Promise<SocietyAgent[]> {
-  return [...SAMPLE_ROSTER, ...LOCAL_ROSTER];
+export interface RosterData {
+  agents: SocietyAgent[];
+  /** True while rows come from the sample roster rather than society.db. */
+  sample: boolean;
 }
 
+/** Agents created in THIS window while the backend is unreachable — sample data, not persisted. */
+const LOCAL_ROSTER: SocietyAgent[] = [];
+
+// ---------------------------------------------------------------------------
+// row ↔ agent
+// ---------------------------------------------------------------------------
+
+/** A default look for a backend row that never chose one: deterministic per id, so it stays. */
+export function defaultFigureFor(agentId: string, tier: AgentTier): FigureRecipe {
+  if (tier === "lead") {
+    return SAMPLE_ROSTER[0].figure ?? { contract: 1, archetype: "biped", base: "rogue", parts: {} };
+  }
+  let h = 0;
+  for (let i = 0; i < agentId.length; i++) h = (h * 31 + agentId.charCodeAt(i)) | 0;
+  const preset = PALETTE_PRESETS[Math.abs(h) % PALETTE_PRESETS.length];
+  return { contract: 1, archetype: "biped", base: "rogue", parts: {}, palette: { ...preset.palette } };
+}
+
+function recipeFromAvatar(avatar: Record<string, unknown> | null | undefined): FigureRecipe | null {
+  if (!avatar || avatar.contract !== 1 || typeof avatar.base !== "string") return null;
+  return avatar as unknown as FigureRecipe;
+}
+
+function paletteFor(figure: FigureRecipe | null): AgentPalette {
+  const p = resolvePalette(figure);
+  return { primary: p.primary, secondary: p.secondary, accent: p.accent };
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google",
+  gemini: "Google Gemini",
+  xai: "xAI",
+  groq: "Groq",
+  mistral: "Mistral",
+  deepseek: "DeepSeek",
+  ollama: "Ollama (local)",
+  "local-openai": "Local server",
+};
+
+export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
+  const tier = row.tier as AgentTier;
+  const figure = recipeFromAvatar(row.avatar) ?? defaultFigureFor(row.agent_id, tier);
+  const runState: AgentRunState =
+    row.state === "paused" ? "paused" : ((row.run_state as AgentRunState | undefined) ?? "idle");
+  return {
+    agentId: row.agent_id,
+    name: row.name,
+    title: row.title,
+    description: row.description,
+    tier,
+    provider: row.provider,
+    providerLabel: row.provider ? (PROVIDER_LABELS[row.provider] ?? row.provider) : "",
+    model: row.model,
+    effort: row.effort,
+    figure,
+    palette: paletteFor(figure),
+    grantMode: row.grant_mode as GrantMode,
+    toolGrants: row.grants ?? [],
+    focus: row.focus ?? [],
+    denies: row.denies ?? [],
+    approvalRules: {
+      requireApproval: row.approval_rules?.require_approval ?? [],
+      alwaysAllow: row.approval_rules?.always_allow ?? [],
+    },
+    permissionCeiling: row.permission_ceiling as PermissionCeiling,
+    dailyBudgetUsd: row.daily_budget_usd,
+    checkpoint: row.checkpoint as AgentCheckpoint,
+    state: runState,
+    lifecycle: row.state,
+    createdMs: row.created_ms,
+    chatSessionId: row.session_id || null,
+    routines: [],
+    stats: {
+      runs: row.stats?.runs ?? 0,
+      totalCostUsd: row.stats?.total_cost_usd ?? 0,
+      lastActiveMs: row.stats?.last_active_ms ?? null,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// queries
+// ---------------------------------------------------------------------------
+
 const ROSTER_QUERY_KEY = ["society", "roster"] as const;
+const CAPABILITIES_QUERY_KEY = ["society", "capabilities"] as const;
+
+async function fetchSocietyRoster(): Promise<RosterData> {
+  try {
+    const res = await fetch("/api/society/agents");
+    if (res.ok) {
+      const body = (await res.json()) as { agents?: SocietyAgentRow[] };
+      const rows = body.agents ?? [];
+      if (rows.length > 0) {
+        return { agents: rows.map(rowToAgent), sample: false };
+      }
+    }
+  } catch {
+    // Unreachable backend: the sample roster below says so on the rail.
+  }
+  return { agents: [...SAMPLE_ROSTER, ...LOCAL_ROSTER], sample: true };
+}
 
 export function useSocietyRoster() {
   return useQuery({
     queryKey: ROSTER_QUERY_KEY,
     queryFn: fetchSocietyRoster,
-    staleTime: 30_000,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
   });
 }
 
@@ -137,8 +247,36 @@ export function useSocietyRoster() {
 export function useSocietyAgent(agentId: string | null) {
   const roster = useSocietyRoster();
   const agent =
-    agentId === null ? null : (roster.data?.find((a) => a.agentId === agentId) ?? null);
+    agentId === null ? null : (roster.data?.agents.find((a) => a.agentId === agentId) ?? null);
   return { ...roster, agent };
+}
+
+/** One capability of the catalog (agent-definition §3.1) as GET /api/society/capabilities lists it. */
+export interface Capability {
+  id: string;
+  kind: "plugin" | "cli" | "mcp" | "skill" | "core" | string;
+  label: string;
+  one_liner: string;
+  risk_tier: string;
+  connected: boolean;
+  tool_name: string;
+}
+
+async function fetchCapabilities(): Promise<Capability[]> {
+  const res = await fetch("/api/society/capabilities");
+  if (!res.ok) throw new Error(`capabilities ${res.status}`);
+  const body = (await res.json()) as { capabilities?: Capability[] };
+  return body.capabilities ?? [];
+}
+
+export function useSocietyCapabilities(enabled = true) {
+  return useQuery({
+    queryKey: CAPABILITIES_QUERY_KEY,
+    queryFn: fetchCapabilities,
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  });
 }
 
 /** A URL-safe id from a display name, unique against the rows already known. */
@@ -157,16 +295,48 @@ export function slugifyAgentName(name: string, taken: ReadonlySet<string>): stri
 }
 
 /**
- * Create an agent. Today this appends a sample row for this window and
- * refreshes the roster; the swap to `POST /api/society/agents` changes only
- * the body of `create`.
+ * Create an agent through `POST /api/society/agents`. When the backend is not
+ * there, a sample row is appended for this window so the flow still works.
  */
 export function useCreateAgent() {
   const client = useQueryClient();
   const { data } = useSocietyRoster();
   return useCallback(
     async (input: NewAgentInput): Promise<SocietyAgent> => {
-      const taken = new Set((data ?? []).map((a) => a.agentId));
+      const body = {
+        name: input.name.trim(),
+        title: input.title.trim(),
+        description: input.description.trim(),
+        tier: "specialist",
+        provider: input.provider || undefined,
+        model: input.model || undefined,
+        avatar: input.figure,
+        grant_mode: input.grantMode,
+        grants: input.grantMode === "allowlist" ? input.toolGrants : undefined,
+        focus: input.focus.length ? input.focus : undefined,
+        permission_ceiling: input.permissionCeiling,
+        daily_budget_usd: input.dailyBudgetUsd,
+      };
+      try {
+        const res = await fetch("/api/society/agents", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) {
+          const created = (await res.json()) as { agent: SocietyAgentRow };
+          await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+          return rowToAgent(created.agent);
+        }
+        if (res.status !== 404 && res.status !== 503) {
+          const detail = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+          throw new Error(typeof detail?.detail === "string" ? detail.detail : `create ${res.status}`);
+        }
+      } catch (err) {
+        if (err instanceof Error && !/fetch/i.test(err.message)) throw err;
+        // Network failure: fall through to the sample row.
+      }
+      const taken = new Set((data?.agents ?? []).map((a) => a.agentId));
       const agent: SocietyAgent = {
         agentId: slugifyAgentName(input.name, taken),
         name: input.name.trim(),
@@ -176,14 +346,19 @@ export function useCreateAgent() {
         provider: input.provider,
         providerLabel: input.providerLabel,
         model: input.model,
+        effort: "",
         figure: input.figure,
         palette: input.palette,
         grantMode: input.grantMode,
-        toolGrants: [],
+        toolGrants: input.toolGrants,
+        focus: input.focus,
+        denies: [],
+        approvalRules: { requireApproval: [], alwaysAllow: [] },
         permissionCeiling: input.permissionCeiling,
         dailyBudgetUsd: input.dailyBudgetUsd,
         checkpoint: "idle",
         state: "idle",
+        lifecycle: "active",
         createdMs: Date.now(),
         chatSessionId: null,
         routines: [],
@@ -194,5 +369,28 @@ export function useCreateAgent() {
       return agent;
     },
     [client, data],
+  );
+}
+
+/** Pause or resume an agent (`PATCH /api/society/agents/{id}`); sample rows flip locally. */
+export function useSetAgentPaused() {
+  const client = useQueryClient();
+  return useCallback(
+    async (agent: SocietyAgent, paused: boolean): Promise<void> => {
+      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      if (!sample) {
+        const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state: paused ? "paused" : "active" }),
+        });
+        if (!res.ok) throw new Error(`pause ${res.status}`);
+      } else {
+        agent.state = paused ? "paused" : "idle";
+        agent.lifecycle = paused ? "paused" : "active";
+      }
+      await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+    },
+    [client],
   );
 }

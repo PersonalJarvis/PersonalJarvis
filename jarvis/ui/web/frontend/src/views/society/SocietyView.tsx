@@ -24,7 +24,8 @@ const JarvisAgentsBoard = lazy(() =>
 export function SocietyView() {
   const t = useT();
   const roster = useSocietyRoster();
-  const agents = useMemo(() => roster.data ?? [], [roster.data]);
+  const agents = useMemo(() => roster.data?.agents ?? [], [roster.data]);
+  const sample = roster.data?.sample ?? true;
   const [openAgentId, setOpenAgentId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -58,7 +59,7 @@ export function SocietyView() {
       <RosterRail
         agents={agents}
         loading={roster.isLoading}
-        sample
+        sample={sample}
         activeAgentId={openAgentId}
         onOpen={setOpenAgentId}
         onCreate={() => setCreating(true)}

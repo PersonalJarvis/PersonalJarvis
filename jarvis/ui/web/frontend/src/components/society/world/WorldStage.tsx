@@ -27,7 +27,6 @@ import { useCanvasAwake } from "@/hooks/useCanvasAwake";
 import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useWebglSupported } from "@/lib/graphDimension";
 import { useSocietyRoster } from "../data";
-import { SAMPLE_ROSTER } from "../mockRoster";
 import { useCameraStore } from "./cameraStore";
 import { Clouds } from "./Clouds";
 import { Landmarks } from "./Landmarks";
@@ -69,8 +68,8 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
   const grain = useWorldSettings((s) => s.grain);
   const shadows = useWorldSettings((s) => s.shadows);
   const roster = useSocietyRoster();
-  const agents = roster.data ?? [];
-  const sample = roster.data === SAMPLE_ROSTER;
+  const agents = roster.data?.agents ?? [];
+  const sample = roster.data?.sample ?? true;
   const [selected, setSelected] = useState<string | null>(null);
 
   useWorldControls(hostRef, webgl);
