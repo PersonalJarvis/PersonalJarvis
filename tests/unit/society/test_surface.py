@@ -36,7 +36,7 @@ TOOLS = {
 
 @pytest.fixture
 async def rt(tmp_path: Path):
-    runtime = SocietyRuntime(tmp_path, brain_tools=lambda: TOOLS)
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False, brain_tools=lambda: TOOLS)
     await runtime.ensure_started()
     try:
         yield runtime

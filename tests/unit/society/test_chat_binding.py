@@ -32,7 +32,7 @@ class FakeService:
 
 @pytest.fixture
 async def world(tmp_path: Path):
-    runtime = SocietyRuntime(tmp_path)
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
     await runtime.ensure_started()
     svc = FakeService(AgentChatStore(tmp_path / "agent_chat.db"))
     cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
@@ -170,3 +170,85 @@ def test_unfiltered_session_list_hides_society_sessions(tmp_path: Path):
         assert [s["surface"] for s in everything] == ["agent"]
         only = c.get("/api/agent-chat/sessions", params={"surface": "society"}).json()["sessions"]
         assert [s["session_id"] for s in only] == ["society:x"]
+
+
+class FakeTurnService(FakeService):
+    """A service whose turns end: the watcher must write a RESULT and free the slot."""
+
+    def __init__(self, store: AgentChatStore) -> None:
+        super().__init__(store)
+        self.queues: dict[str, list] = {}
+
+    def subscribe(self, session_id: str):
+        import asyncio
+
+        q = asyncio.Queue()
+        self.queues.setdefault(session_id, []).append(q)
+        return q
+
+    def unsubscribe(self, session_id: str, q) -> None:
+        self.queues.get(session_id, []).remove(q)
+
+    async def send(self, session_id: str, text: str, attachments=None) -> str:
+        self.sent.append((session_id, text))
+        return "turn-1"
+
+    async def finish(self, session_id: str, text: str, *, status: str = "ok") -> None:
+        for q in list(self.queues.get(session_id, [])):
+            q.put_nowait({"kind": "assistant_text", "payload": {"turn_id": "turn-1", "text": text}})
+            q.put_nowait(
+                {"kind": "turn_finished", "payload": {"turn_id": "turn-1", "status": status}}
+            )
+
+
+async def test_assign_runs_in_the_canonical_chat_and_ends_as_a_result(tmp_path: Path):
+    import asyncio
+
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai", model="gpt-5.2")
+        env = await rt.say(
+            from_agent="user", to_agent="scout", text="Find the best VPS.", msg_type=MsgType.ASSIGN
+        )
+        # The assignment became a framed chat turn on Scout's own session.
+        assert svc.sent[0][0] == "society:scout"
+        assert svc.sent[0][1].startswith("[assignment from the user]\nFind the best VPS.")
+        assert "handoff" in svc.sent[0][1]
+        assert rt.scheduler.running == {"turn:turn-1": "scout"}
+        await svc.finish("society:scout", "Hetzner CX22 wins. Done.")
+        await asyncio.sleep(0.05)
+        assert rt.scheduler.running == {}
+        thread = await rt.store.events_for_trace(env.trace_id)
+        assert [e.msg_type for e in thread] == [MsgType.ASSIGN, MsgType.CLAIM, MsgType.RESULT]
+        result = thread[-1]
+        assert result.from_agent == "scout" and result.payload["status"] == "done"
+        assert result.payload["done"] == "Hetzner CX22 wins. Done."
+        assert result.payload["output"] == ["chat:society:scout"]
+    finally:
+        await rt.close()
+
+
+async def test_failed_turn_becomes_a_blocked_result(tmp_path: Path):
+    import asyncio
+
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        env = await rt.say(from_agent="user", to_agent="scout", text="x", msg_type=MsgType.ASSIGN)
+        await svc.finish("society:scout", "", status="error")
+        await asyncio.sleep(0.05)
+        result = (await rt.store.events_for_trace(env.trace_id))[-1]
+        assert result.msg_type is MsgType.RESULT and result.payload["status"] == "blocked"
+        assert result.payload["open"]
+    finally:
+        await rt.close()

@@ -6,17 +6,18 @@ Built on the first REST call (``app.state.society_factory``), never at boot
 be constructed in a test with fakes and in the server with the live
 mission manager, budget tracker, brain tool registry and skill registry.
 
-Dispatch (M1): an ``ASSIGN`` becomes a mission through the existing
-``MissionManager.dispatch`` — the worker runs under the agent's identity by
-prompt framing (name, title, standing instructions), and the ownership map
-lets the bridge attribute every mission event back to the agent. Per-agent
-model and tool grants ride the canonical chat (M2); missions inherit the
-global worker configuration until the worker runtime learns a per-agent
-override.
+Dispatch: an ``ASSIGN`` becomes, by default, one turn in the target's
+canonical chat — Jarvis' brain runner with the roster row's provider, model,
+tools and briefing, so per-agent customization applies in full; the turn's
+end is written back as a RESULT on the board. ``payload.runner == "mission"``
+(or no chat service at all) routes to the mission stack instead: worktree
+isolation for heavy coding work, the agent's identity carried by the prompt,
+the ownership map letting the bridge attribute every mission event back.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
@@ -30,6 +31,7 @@ from .focus import derive_approval_rules, derive_focus
 from .rooms import Rooms
 from .roster import LEAD_AGENT_ID, AgentRecord, Roster
 from .scheduler import DeliverHook, SocietyScheduler
+from .seeds import seed_first_run
 from .store import SocietyStore
 
 log = logging.getLogger(__name__)
@@ -76,6 +78,9 @@ class SocietyRuntime:
         brain_tools: Callable[[], Mapping[str, Any] | None] | None = None,
         skills: Callable[[], Iterable[Any] | None] | None = None,
         deliver: DeliverHook | None = None,
+        chat_service: Callable[[], Any | None] | None = None,
+        cfg: Callable[[], Any] | None = None,
+        seed_starter_team: bool = True,
     ) -> None:
         self._data_dir = Path(data_dir)
         self._get_manager = mission_manager or (lambda: None)
@@ -84,6 +89,10 @@ class SocietyRuntime:
         self._get_tools = brain_tools or (lambda: None)
         self._get_skills = skills or (lambda: None)
         self._deliver = deliver
+        self._get_chat = chat_service or (lambda: None)
+        self._get_cfg = cfg or (lambda: None)
+        self._seed_starter_team = seed_starter_team
+        self._watchers: set[asyncio.Task[None]] = set()
         self.store = SocietyStore(self._data_dir / _DB_NAME)
         self.roster = Roster(self.store)
         self.rooms = Rooms(self.store)
@@ -116,12 +125,19 @@ class SocietyRuntime:
         if bus is not None:
             self.bridge.attach(bus)
         await self.seed_lead()
+        if self._seed_starter_team:
+            created = await seed_first_run(self.roster, self.store)
+            if created:
+                log.info("society: starter team seeded: %s", ", ".join(created))
         self._started = True
         set_current_runtime(self)
         log.info("society runtime started (%s)", self.store.path)
         return self
 
     async def close(self) -> None:
+        for task in list(self._watchers):
+            task.cancel()
+        self._watchers.clear()
         self.scheduler.detach()
         self.bridge.detach()
         await self.store.close()
@@ -174,6 +190,105 @@ class SocietyRuntime:
         return self._owners.get(mission_id)
 
     async def _dispatch(self, target: AgentRecord, env: SocietyEnvelope) -> str:
+        """Start work under ``target``'s identity.
+
+        Default runner is the agent's canonical chat: one turn on Jarvis' brain
+        runner with the roster row's provider, model, tools and briefing, so
+        per-agent customization applies in full. ``payload.runner == "mission"``
+        routes to the mission stack instead (worktree isolation for heavy
+        coding work; the worker then inherits the global worker configuration
+        and only the prompt carries the agent's identity).
+        """
+        runner = str(env.payload.get("runner") or "")
+        if not runner:
+            runner = "chat" if self._get_chat() is not None else "mission"
+        if runner == "mission":
+            return await self._dispatch_mission(target, env)
+        return await self._dispatch_chat(target, env)
+
+    async def _dispatch_chat(self, target: AgentRecord, env: SocietyEnvelope) -> str:
+        svc = self._get_chat()
+        if svc is None:
+            raise RuntimeError("agent chat service unavailable: the society cannot start work")
+        from .chat_binding import ensure_session, frame_assignment
+
+        session = ensure_session(svc, self._get_cfg(), target)
+        if svc.is_running(session.session_id):
+            raise RuntimeError(f"target busy: {target.name} is running a turn")
+        queue = svc.subscribe(session.session_id)
+        try:
+            turn_id = await svc.send(session.session_id, frame_assignment(env))
+        except Exception:
+            svc.unsubscribe(session.session_id, queue)
+            raise
+        run_id = f"turn:{turn_id}"
+        watcher = asyncio.create_task(
+            self._watch_turn(svc, session.session_id, queue, turn_id, run_id, target, env)
+        )
+        self._watchers.add(watcher)
+        watcher.add_done_callback(self._watchers.discard)
+        return run_id
+
+    async def _watch_turn(
+        self,
+        svc: Any,
+        session_id: str,
+        queue: Any,
+        turn_id: str,
+        run_id: str,
+        target: AgentRecord,
+        env: SocietyEnvelope,
+    ) -> None:
+        """Turn the chat turn's end into a RESULT on the board and free the slot."""
+        final_text = ""
+        status = "done"
+        error = ""
+        try:
+            while True:
+                event = await queue.get()
+                kind = event.get("kind")
+                payload = event.get("payload") or {}
+                if payload.get("turn_id") not in (None, turn_id):
+                    continue
+                if kind == "assistant_text":
+                    final_text = str(payload.get("text") or final_text)
+                elif kind == "error":
+                    status, error = "blocked", str(payload.get("message") or "error")
+                elif kind == "turn_finished":
+                    if payload.get("status") not in (None, "ok", "done", "completed"):
+                        status = "blocked"
+                        error = str(payload.get("error") or payload.get("status") or "")
+                    break
+        except asyncio.CancelledError:
+            return
+        finally:
+            svc.unsubscribe(session_id, queue)
+        self.scheduler.note_run_ended(run_id)
+        summary = (final_text or error or "turn finished").strip()
+        try:
+            await self.store.append_and_publish(
+                SocietyEnvelope(
+                    msg_type=MsgType.RESULT,
+                    from_agent=target.agent_id,
+                    to_agent=env.from_agent if env.from_agent != "user" else None,
+                    trace_id=env.trace_id,
+                    parent_event_id=env.event_id,
+                    payload={
+                        "run_id": run_id,
+                        "status": status,
+                        "done": summary[:2000],
+                        "output": [f"chat:{session_id}"],
+                        "evidence": [],
+                        "open": [] if status == "done" else [error[:500] or "turn failed"],
+                        "next_owner": None,
+                        "text": summary[:500],
+                    },
+                )
+            )
+        except Exception:  # noqa: BLE001 - the slot is free either way; the loss is one RESULT row
+            log.warning("society: RESULT for %s could not be written", run_id, exc_info=True)
+
+    async def _dispatch_mission(self, target: AgentRecord, env: SocietyEnvelope) -> str:
         manager = self._get_manager()
         if manager is None:
             raise RuntimeError("mission manager unavailable: the society cannot start work")

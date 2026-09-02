@@ -16,7 +16,7 @@ from jarvis.society.runtime import SocietyRuntime
 
 @pytest.fixture
 async def rt(tmp_path: Path):
-    runtime = SocietyRuntime(tmp_path)
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
     await runtime.ensure_started()
     await runtime.roster.create(name="Scout")
     await runtime.roster.create(name="Archivist")

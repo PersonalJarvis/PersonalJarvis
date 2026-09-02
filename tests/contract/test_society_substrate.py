@@ -21,7 +21,7 @@ class FakeManager:
 
 def test_two_agents_exchange_typed_messages_headless(tmp_path: Path) -> None:
     manager = FakeManager()
-    runtime = SocietyRuntime(tmp_path, mission_manager=lambda: manager)
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False, mission_manager=lambda: manager)
     app = FastAPI()
     app.include_router(router)
     app.state.society_factory = lambda: runtime

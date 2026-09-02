@@ -43,6 +43,7 @@ def client(tmp_path: Path):
     manager = FakeManager()
     runtime = SocietyRuntime(
         tmp_path,
+        seed_starter_team=False,
         mission_manager=lambda: manager,
         mission_bus=lambda: manager.bus,
         brain_tools=lambda: TOOLS,

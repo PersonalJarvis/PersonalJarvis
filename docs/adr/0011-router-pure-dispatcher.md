@@ -1294,3 +1294,33 @@ the feature.
 
 - `tests/unit/brain/test_routing.py` (the set no longer names the tool)
 - `tests/missions/test_worker_capability_parity.py` (the worker grant)
+
+## Amendment 2026-09-02 — Agent society voice tools
+
+`delegate-to-agent` (risk `monitor`) and `society-status` (risk `safe`) join
+`ROUTER_TOOLS`. They are the voice front door of the agent society
+(`docs/agent-society/MASTERPLAN.md` §3.2): "Jarvis, let Scout research that"
+becomes ONE typed `ASSIGN` envelope on the society board, acknowledged inside
+the 5-second voice budget; "what is Scout doing?" is answered from the roster
+and the last board events without a model call.
+
+### Pure-Dispatcher spirit is preserved
+
+- Neither tool spawns. `delegate-to-agent` appends an envelope; the society
+  scheduler (`jarvis/society/scheduler.py`, trusted Python) applies the kill
+  switch, the tier wall, delegation depth, budgets and caps and only then
+  starts work under the target agent's identity. A refusal is a typed `VETO`
+  the tool reads back as a spoken reason.
+- Both stay out of every worker set (AP-5/AP-14): they are loaded through the
+  `ROUTER_TOOLS` filter only and the society's own capability catalog lists
+  them under `NEVER_GRANTED`.
+- The runtime is reached through a lazy resolver (AD-OC1), so the tools are
+  registered at brain build time and answer an honest "not ready" until the
+  server has built the society.
+
+### Regression guards
+
+- `tests/unit/brain/test_routing.py` (both names in `ROUTER_TOOLS`)
+- `tests/unit/plugins/tool/test_delegate_to_agent.py` (ack, unknown agent,
+  veto read-back, status answers, not-ready path)
+- `tests/unit/society/test_scheduler.py` (the wall the tool relies on)

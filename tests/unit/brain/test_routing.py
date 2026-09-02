@@ -1993,6 +1993,14 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # jarvis/brain/artifact_gate.py), because the mandate is that an
             # artifact is asked for, never volunteered.
             "create-artifact",
+            # Agent society voice tools (2026-09-02): ONE typed ASSIGN to a
+            # named agent with an immediate ack (monitor) and a read-only
+            # status answer (safe). The society scheduler, not the tool,
+            # decides whether work starts - never a spawn, never in a
+            # worker set (AP-5/AP-14). See ADR-0011 amendment
+            # "Agent society voice tools".
+            "delegate-to-agent",
+            "society-status",
         }
     )
     assert ROUTER_TOOLS == expected, (
@@ -2004,6 +2012,16 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
         "sind deterministische Tools mit eigenem ADR-0011-Eintrag "
         "(wiki-ingest, update-profile, search-web)."
     )
+
+
+def test_society_voice_tools_in_router_tools() -> None:
+    """``delegate-to-agent`` and ``society-status`` must live in ROUTER_TOOLS
+    (2026-09-02): the router reaches the agent society only through these
+    two names. Neither spawns - the society scheduler owns dispatch."""
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "delegate-to-agent" in ROUTER_TOOLS
+    assert "society-status" in ROUTER_TOOLS
 
 
 def test_search_web_in_router_tools() -> None:

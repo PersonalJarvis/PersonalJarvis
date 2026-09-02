@@ -746,6 +746,11 @@ app-command = "jarvis.plugins.tool.app_command:AppCommandTool"
 awareness-snapshot = "jarvis.plugins.tool.awareness_snapshot:AwarenessSnapshotTool"
 # Phase A3 — Awareness-Layer L3 (BM25 search across recent episodes).
 awareness-recall = "jarvis.plugins.tool.awareness_recall:AwarenessRecallTool"
+# Agent society voice tools (2026-09-02): ONE typed ASSIGN to a named agent
+# with an immediate spoken ack, and a read-only status answer. Router-tier
+# only (ADR-0011 amendment); never in a worker set (AP-5/AP-14).
+delegate-to-agent = "jarvis.plugins.tool.delegate_to_agent:DelegateToAgentTool"
+society-status = "jarvis.plugins.tool.delegate_to_agent:SocietyStatusTool"
 # Skills-Brain-Integration — Brain-callable executor for installed user skills.
 run-skill = "jarvis.plugins.tool.run_skill:RunSkillTool"
 # Phase B5 — long-term wiki recall (router-tier, read-only).

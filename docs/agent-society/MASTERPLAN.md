@@ -7,9 +7,14 @@ Progress (2026-09-01/02): **M1 done** — `jarvis/society/` substrate, `/api/soc
 headless contract test. **M2 backend done** — the `society` chat surface with per-agent hands
 and briefing, canonical chat binding, `society_message_agent` / `society_wiki_note`, the
 approvals queue, `[agent:*]` routines. **M2 frontend open** — the section (sidebar | stage |
-roster rail), the model card (Specs | 3D | Chat) on `components/society/data.ts`, seed
-proposals. **M3 world** is the maintainer's parallel track. M4 (rooms live under the scheduler,
-curator, `delegate-to-agent` voice tool) not started.
+roster rail), the model card (Specs | 3D | Chat) on `components/society/data.ts`. **Also done
+(2026-09-02):** an ASSIGN runs by default as a turn in the agent's canonical chat (per-agent
+model, tools and briefing apply in full; the turn's end is a RESULT on the board; the mission
+stack stays available via `payload.runner = "mission"`), the starter team Scout + Archivist is
+seeded once per install, seed proposals come from connected capabilities
+(`GET /api/society/seeds`), and the voice front door exists: router tools `delegate-to-agent`
+and `society-status` (ADR-0011 amendment). **M3 world** is the maintainer's parallel track.
+Open in M4: rooms live under the scheduler, the curator.
 
 The research behind every claim here lives in [`research/`](research/):
 [Branch A — product & UI](research/branch-a-product-ui.md) (Hermes Agent, Grok Bot, 3D stack,

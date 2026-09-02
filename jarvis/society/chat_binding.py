@@ -28,7 +28,14 @@ from .scheduler import DeliverHook
 
 log = logging.getLogger(__name__)
 
-__all__ = ["SURFACE", "ensure_session", "frame_incoming", "make_deliver_hook", "pair_for"]
+__all__ = [
+    "SURFACE",
+    "ensure_session",
+    "frame_assignment",
+    "frame_incoming",
+    "make_deliver_hook",
+    "pair_for",
+]
 
 SURFACE: Final[str] = "society"
 
@@ -110,6 +117,21 @@ def frame_incoming(env: SocietyEnvelope, sender_name: str) -> str:
     refs = env.payload.get("refs")
     if isinstance(refs, list) and refs:
         lines.append("Refs: " + ", ".join(str(r) for r in refs))
+    return "\n".join(lines)
+
+
+def frame_assignment(env: SocietyEnvelope) -> str:
+    """An ASSIGN as the receiving agent's chat turn — with the handoff ask."""
+    sender = env.from_agent if env.from_agent != "user" else "the user"
+    task = env.text or str(env.payload.get("task") or "")
+    lines = [f"[assignment from {sender}]", task.strip()]
+    refs = env.payload.get("refs")
+    if isinstance(refs, list) and refs:
+        lines.append("Refs: " + ", ".join(str(r) for r in refs))
+    lines.append(
+        "When you are done, end with a handoff: what is done, where the output is, "
+        "what evidence you used, what remains open, who should own the next step."
+    )
     return "\n".join(lines)
 
 

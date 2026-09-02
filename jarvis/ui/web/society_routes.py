@@ -333,6 +333,49 @@ async def agent_inbox(agent_id: str, request: Request, after_seq: int = 0) -> di
     return {"events": [e.model_dump() for e in events]}
 
 
+# ------------------------------------------------------------------- seeds
+
+
+@router.get("/seeds")
+async def list_seed_proposals(request: Request) -> dict[str, Any]:
+    """Teammates worth creating on this box — one per connected capability."""
+    from jarvis.society.seeds import propose_seeds
+
+    rt = await _runtime(request)
+    taken = {a.name for a in await rt.roster.list(include_archived=True)}
+    proposals = propose_seeds(rt.catalog(), taken)
+    return {"proposals": proposals, "total": len(proposals)}
+
+
+class ApplySeedsBody(BaseModel):
+    names: list[str] = Field(default_factory=list)
+
+
+@router.post("/seeds/apply")
+async def apply_seed_proposals(body: ApplySeedsBody, request: Request) -> dict[str, Any]:
+    """Create the picked proposals (all of them when ``names`` is empty)."""
+    from jarvis.society.seeds import propose_seeds
+
+    rt = await _runtime(request)
+    taken = {a.name for a in await rt.roster.list(include_archived=True)}
+    wanted = {n.lower() for n in body.names}
+    created = []
+    for proposal in propose_seeds(rt.catalog(), taken):
+        if wanted and proposal["name"].lower() not in wanted:
+            continue
+        fields = {k: v for k, v in proposal.items() if k in ("focus", "approval_rules")}
+        agent, was_created = await rt.roster.create(
+            name=proposal["name"],
+            title=proposal["title"],
+            description=proposal["description"],
+            tier=proposal["tier"],
+            **fields,
+        )
+        if was_created:
+            created.append(agent.to_dict())
+    return {"agents": created, "total": len(created)}
+
+
 # ----------------------------------------------------------------- catalog
 
 

@@ -567,6 +567,11 @@ class WebServer:
         # the boot path (AP-26).
         app.state.society = None
         app.state.society_factory = self._build_society_runtime
+        # The router-tier voice tools reach the same runtime through the
+        # brain factory's lazy resolver (AD-OC1).
+        from jarvis.brain.factory import set_society_factory
+
+        set_society_factory(self._build_society_runtime)
         app.include_router(society_router)
         app.include_router(drop_router)
         # Default: no recorder wired up — _init_session_stack() in start()
@@ -3564,6 +3569,8 @@ class WebServer:
             brain_tools=_tools,
             skills=_skills,
             deliver=deliver,
+            chat_service=lambda: _service_from_state(state),
+            cfg=lambda: self.cfg,
         )
 
     def _build_agent_chat_service(self) -> Any:

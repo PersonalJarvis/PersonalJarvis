@@ -106,6 +106,16 @@ ROUTER_TOOLS = frozenset({
     # call without confirmation. See ADR on awareness routing for the
     # placement rationale.
     "awareness-recall",
+    # Agent society (2026-09-02): the voice front door of the user's named
+    # agents. ``delegate-to-agent`` appends ONE ASSIGN envelope to the
+    # society board and acknowledges inside the voice budget; the society
+    # scheduler (trusted Python) decides whether work starts - the tool
+    # itself never spawns (risk monitor, like spawn-worker; never in a
+    # worker set, AP-5/AP-14). ``society-status`` reads the roster and the
+    # last events - no model call, risk safe. See ADR-0011 amendment
+    # "Agent society voice tools".
+    "delegate-to-agent",
+    "society-status",
     # Skills-Brain-Integration: Brain-callable executor for installed user
     # skills. D9-recursion-protection is structural — SkillRunner is constructed
     # without a tool_registry that would re-expose run-skill recursively.
@@ -473,6 +483,11 @@ def _load_tools_for_tier(
                     kontrollierer_resolver=_resolve_kontrollierer,
                     announcer=build_spawn_announcer(config),
                 )
+            elif ep.name in ("delegate-to-agent", "society-status"):
+                # Agent society (2026-09-02): same lazy-resolver pattern as
+                # spawn-worker - the society runtime is built by the server
+                # on first use, after the brain exists.
+                inst = cls(runtime_resolver=_resolve_society_runtime)
             elif ep.name == "computer-use":
                 # Wave 1: wraps the harness-dispatch plumbing with a fixed
                 # computer-use harness identity (see computer_use_tool.py).
@@ -693,6 +708,31 @@ def _build_contact_store() -> Any:
     except Exception as exc:  # noqa: BLE001 — constructor mismatch must not crash boot
         log.warning("ContactStore could not be built: %s", exc)
         return None
+
+
+_SOCIETY_FACTORY_REF: list[Any] = []
+
+
+def set_society_factory(factory: Any) -> None:
+    """Register the server's society-runtime factory (see server.py)."""
+    _SOCIETY_FACTORY_REF[:] = [factory]
+
+
+def _resolve_society_runtime() -> Any:
+    """Resolve the agent-society runtime for the voice tools (AD-OC1).
+
+    The runtime the server already built wins; otherwise the registered
+    factory builds it on this first use. ``None`` means the server has not
+    registered a factory yet - the tools answer with an honest 'not ready'.
+    """
+    from jarvis.society.runtime import current_runtime
+
+    runtime = current_runtime()
+    if runtime is not None:
+        return runtime
+    if not _SOCIETY_FACTORY_REF:
+        return None
+    return _SOCIETY_FACTORY_REF[0]()
 
 
 def _resolve_mission_manager() -> Any:
