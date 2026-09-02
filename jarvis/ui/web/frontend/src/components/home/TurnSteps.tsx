@@ -248,7 +248,7 @@ function ThoughtRow({ step, compact }: { step: ThinkingStep; compact: boolean })
       <span
         className={cn(
           "min-w-0 flex-1 italic leading-5 text-muted-foreground/85",
-          compact ? "text-xs" : "text-[13px]",
+          compact ? "text-xs" : "text-sm",
         )}
       >
         {step.detail}
@@ -266,7 +266,7 @@ function ToolDetails({ step, compact }: { step: ThinkingStep; compact: boolean }
       data-testid="turn-step-details"
       className={cn(
         "mb-1 ml-[30px] mr-1 flex flex-col gap-1 rounded-md border border-border/70 bg-secondary/40 px-2.5 py-2",
-        compact ? "text-[11px]" : "text-xs",
+        compact ? "text-xs" : "text-xs",
       )}
     >
       {args.length > 0 && (
@@ -333,7 +333,7 @@ function ToolRow({ step, compact }: { step: ThinkingStep; compact: boolean }) {
       <span
         className={cn(
           "min-w-0 flex-1 truncate leading-5",
-          compact ? "text-xs" : "text-[13px]",
+          compact ? "text-xs" : "text-sm",
           error ? "text-destructive" : "text-foreground/85",
           active && "thinking-shimmer font-medium",
         )}
@@ -423,7 +423,7 @@ function StepRow({ step, compact }: { step: ThinkingStep; compact: boolean }) {
       <span
         className={cn(
           "min-w-0 flex-1 truncate leading-5",
-          compact ? "text-xs" : "text-[13px]",
+          compact ? "text-xs" : "text-sm",
           error ? "text-destructive" : "text-muted-foreground",
           active && "thinking-shimmer font-medium",
         )}
@@ -511,7 +511,7 @@ export function TurnSteps({
         data-testid="turn-steps-toggle"
         className={cn(
           "group -ml-1 flex w-fit max-w-full items-center gap-1.5 rounded-md px-1 text-left text-muted-foreground transition-colors hover:text-foreground",
-          compact ? "py-0.5 text-xs" : "py-1 text-[13px]",
+          compact ? "py-0.5 text-xs" : "py-1 text-sm",
         )}
       >
         {live ? (
@@ -521,7 +521,7 @@ export function TurnSteps({
         )}
         <span className={cn("truncate", live && "thinking-shimmer font-medium")}>{headerText}</span>
         {elapsed && (
-          <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/70">
+          <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground/70">
             {elapsed}
           </span>
         )}

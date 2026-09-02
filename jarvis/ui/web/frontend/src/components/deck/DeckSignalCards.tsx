@@ -133,7 +133,7 @@ export function CaptureCard({ className }: { className?: string }) {
         ) : captures.length > 0 ? (
           <CaptureLedger captures={captures} t={t} />
         ) : (
-          <div className="flex h-full items-center justify-center px-3 text-center text-[11px] text-muted-foreground">
+          <div className="flex h-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
             {t("deck.shot_empty")}
           </div>
         )}
@@ -220,7 +220,7 @@ export function ApiStatsCard({ className }: { className?: string }) {
       className={className}
     >
       {usage.turns === 0 ? (
-        <p className="text-[11px] text-muted-foreground">{t("deck.api_empty")}</p>
+        <p className="text-xs text-muted-foreground">{t("deck.api_empty")}</p>
       ) : (
         <div className="flex h-full min-h-0 items-center gap-3">
           <HudGauge value={outShare} size={62} label={t("deck.api_out")} readout={fmtTokens(total)} />

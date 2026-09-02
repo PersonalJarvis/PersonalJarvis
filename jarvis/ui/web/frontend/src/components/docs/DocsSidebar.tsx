@@ -103,7 +103,7 @@ export function DocsSidebar({
         />
         {isLoading ? (
           <div
-            className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground"
+            className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"
             role="status"
           >
             <Loader2 className="h-3 w-3 animate-spin text-primary motion-reduce:animate-none" aria-hidden="true" />
@@ -113,7 +113,7 @@ export function DocsSidebar({
           <button
             type="button"
             onClick={() => void refetch()}
-            className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-destructive transition hover:text-destructive/80"
+            className="mt-2 inline-flex items-center gap-1.5 text-xs text-destructive transition hover:text-destructive/80"
           >
             <RefreshCw
               className={cn(
@@ -125,7 +125,7 @@ export function DocsSidebar({
             {t("docs_sidebar.retry")}
           </button>
         ) : (
-          <p className="mt-1 text-[11px] text-muted-foreground">
+          <p className="mt-1 text-xs text-muted-foreground">
             {totalCount} {t("docs_sidebar.documents")}
           </p>
         )}
@@ -139,7 +139,7 @@ export function DocsSidebar({
           {/* Recent docs — only when not filtered + at least 1 entry */}
           {!isLoading && !query && recent.length > 0 && (
             <div className="mb-2">
-              <div className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <div className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <Clock className="h-3 w-3" aria-hidden="true" />
                 <span>{t("docs.recent")}</span>
                 <span className="ml-auto text-micro font-normal text-muted-foreground/70">
@@ -183,7 +183,7 @@ export function DocsSidebar({
                       setCollapsed(next);
                     }}
                     aria-expanded={!isCollapsed}
-                    className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted/50"
+                    className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted/50"
                   >
                     {isCollapsed ? (
                       <ChevronRight className="h-3 w-3" aria-hidden="true" />

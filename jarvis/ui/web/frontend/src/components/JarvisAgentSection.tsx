@@ -584,7 +584,7 @@ function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
           className={cn(
             "h-[7px] w-[7px] shrink-0 rounded-full",
             live
-              ? "bg-muted-foreground shadow-[0_0_0_3px_rgb(16_185_129/0.18)]"
+              ? "bg-muted-foreground"
               : "bg-foreground",
           )}
         />
@@ -750,7 +750,7 @@ function AgentRow({
         <ProviderLogo providerId={slug ?? label} label={label} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="truncate font-display text-[13.5px] font-semibold tracking-tight">
+            <span className="truncate font-display text-sm font-semibold tracking-tight">
               {title}
             </span>
             {/* The active row says so on its left edge and in the Use control;

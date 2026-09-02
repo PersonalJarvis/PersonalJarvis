@@ -281,7 +281,7 @@ export function DepartureBoard({
                     // as a calm "nothing yet".
                     <div className="flex flex-col items-center px-8 py-14 text-center">
                       <Bot className="mb-3.5 h-7 w-7 text-muted-foreground/60" />
-                      <div className="font-display text-[15px] font-semibold text-foreground">
+                      <div className="font-display text-lg font-semibold text-foreground">
                         {fill(t("subagents_view.empty_title"), {
                           agents: agentsBrand(assistantName),
                         })}
@@ -366,7 +366,7 @@ function AgentRow({
   return (
     <TableRow columns={columns} onClick={onOpen} ariaLabel={task}>
       <Cell>
-        <div className="truncate text-[15px] font-medium text-foreground">
+        <div className="truncate text-lg font-medium text-foreground">
           {displayAgentName(agent, assistantName, t)}
         </div>
         <div className="truncate text-xs text-muted-foreground">

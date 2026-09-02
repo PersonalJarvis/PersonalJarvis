@@ -112,7 +112,7 @@ export function JarvisBar({ phase, hint }: { phase: WaveformPhase; hint: string 
       data-phase={phase}
       data-active={callActive || undefined}
       className={cn(
-        "group flex w-full cursor-pointer select-none flex-col gap-2 rounded-2xl border border-border bg-card px-4 pb-2.5 pt-4 text-left dark:border-transparent",
+        "group flex w-full cursor-pointer select-none flex-col gap-2 rounded-2xl border border-border-strong bg-card px-4 pb-2.5 pt-4 text-left",
         "transition-[border-color,box-shadow]",
         "hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         "aria-disabled:cursor-default aria-disabled:opacity-80 aria-disabled:hover:border-border",

@@ -161,7 +161,7 @@ export function OnboardingFlow({
   return (
     <div
       data-testid="onboarding-flow"
-      className="flex h-full min-h-0 flex-col font-display text-[15px]"
+      className="flex h-full min-h-0 flex-col font-display text-lg"
     >
       <header className="shrink-0 border-b border-border/70 px-6 py-6 sm:px-12 xl:py-8">
         <div className="mx-auto flex w-full max-w-[1400px] items-start justify-between gap-6">
@@ -185,7 +185,7 @@ export function OnboardingFlow({
             <h1 className="mt-2 text-2xl tracking-tight text-foreground [text-wrap:balance] sm:text-3xl xl:text-4xl">
               {title}
             </h1>
-            <p className="mt-2 max-w-3xl text-[15px] leading-relaxed text-muted-foreground xl:text-base">
+            <p className="mt-2 max-w-3xl text-lg leading-relaxed text-muted-foreground xl:text-base">
               {hint}
             </p>
           </div>
@@ -227,10 +227,10 @@ export function OnboardingFlow({
                           selected ? "bg-foreground/70" : "bg-transparent",
                         )}
                       />
-                      <span className="block font-mono text-[11px] tabular-nums text-muted-foreground/70">
+                      <span className="block font-mono text-xs tabular-nums text-muted-foreground/70">
                         {(index + 1).toString().padStart(2, "0")}
                       </span>
-                      <span className="mt-1 block truncate text-[15px] font-medium">
+                      <span className="mt-1 block truncate text-lg font-medium">
                         {t(`onboarding.steps.${key}.label`)}
                       </span>
                       <span className="mt-0.5 hidden truncate text-xs text-muted-foreground lg:block">

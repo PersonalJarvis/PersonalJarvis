@@ -612,7 +612,7 @@ export function CostsView() {
           cannot make yet.
         */}
         {data ? (
-          <p className="px-1 pb-2 text-[11px] leading-relaxed text-muted-foreground">
+          <p className="px-1 pb-2 text-xs leading-relaxed text-muted-foreground">
             {fill(t("costs_view.footnote"), {
               sources: data.sources_present.join(", ") || "—",
               rate: eurPerUsd.toFixed(2),
@@ -1480,7 +1480,7 @@ function DailyTable({
                 </div>
                 {seat > 0 ? (
                   <div
-                    className="text-[11px] tabular-nums text-muted-foreground"
+                    className="text-xs tabular-nums text-muted-foreground"
                     title={t("costs_view.day_stat_billed")}
                   >
                     {money(billed)}

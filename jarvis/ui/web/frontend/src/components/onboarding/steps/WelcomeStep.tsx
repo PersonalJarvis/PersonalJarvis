@@ -107,7 +107,7 @@ export function WelcomeStep({ onb, goNext, setSummary }: StepProps) {
         </p>
         <button
           type="button"
-          className="text-[13px] text-muted-foreground underline underline-offset-4 hover:text-foreground"
+          className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
           onClick={() => void toggleTerms()}
         >
           {showTerms ? t("onboarding.welcome.hide_terms") : t("onboarding.welcome.view_terms")}

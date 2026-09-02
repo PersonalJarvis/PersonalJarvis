@@ -109,7 +109,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
       </div>
       <Transcript items={items} agent={agent} busy={busy} onDecide={decide} />
       {lastError ? (
-        <p role="alert" className="px-4 pb-1 text-[11px] text-destructive">
+        <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
         </p>
       ) : null}
@@ -184,11 +184,11 @@ function ModelPicker() {
           setProviderId(current?.id ?? providers[0]?.id ?? null);
           setOpen((v) => !v);
         }}
-        className="flex max-w-[260px] items-center gap-1.5 rounded-full border border-border px-2 py-1 text-[12px] text-foreground hover:bg-secondary disabled:opacity-60"
+        className="flex max-w-[260px] items-center gap-1.5 rounded-full border border-border px-2 py-1 text-xs text-foreground hover:bg-secondary disabled:opacity-60"
       >
         {current ? <ProviderLogo providerId={current.id} label={current.label} size="sm" /> : null}
         <span className="truncate">{label}</span>
-        <span className="truncate font-mono text-[11px] text-muted-foreground">{modelLabel}</span>
+        <span className="truncate font-mono text-xs text-muted-foreground">{modelLabel}</span>
       </button>
       {open ? (
         <div className="absolute left-0 top-full z-20 mt-1 flex w-[440px] max-w-[80vw] overflow-hidden rounded-lg border border-border bg-popover shadow-float">
@@ -199,7 +199,7 @@ function ModelPicker() {
                   type="button"
                   onClick={() => setProviderId(p.id)}
                   className={cn(
-                    "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] hover:bg-secondary",
+                    "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-secondary",
                     chosen?.id === p.id && "bg-secondary",
                     !p.connected && "opacity-50",
                   )}
@@ -221,7 +221,7 @@ function ModelPicker() {
                     setOpen(false);
                   }}
                   className={cn(
-                    "w-full px-2.5 py-1.5 text-left text-[12px] hover:bg-secondary",
+                    "w-full px-2.5 py-1.5 text-left text-xs hover:bg-secondary",
                     draft.provider === chosen.id && !draft.model && "bg-secondary",
                   )}
                 >
@@ -239,17 +239,17 @@ function ModelPicker() {
                   }}
                   title={m.note}
                   className={cn(
-                    "w-full px-2.5 py-1.5 text-left text-[12px] hover:bg-secondary",
+                    "w-full px-2.5 py-1.5 text-left text-xs hover:bg-secondary",
                     draft.provider === chosen?.id && draft.model === m.id && "bg-secondary",
                   )}
                 >
                   <span className="block truncate">{m.label}</span>
-                  {m.note ? <span className="block truncate text-[10px] text-muted-foreground">{m.note}</span> : null}
+                  {m.note ? <span className="block truncate text-xs text-muted-foreground">{m.note}</span> : null}
                 </button>
               </li>
             ))}
             {chosen && models.length === 0 ? (
-              <li className="px-2.5 py-1.5 text-[11px] text-muted-foreground">{t("society.chat.models_loading")}</li>
+              <li className="px-2.5 py-1.5 text-xs text-muted-foreground">{t("society.chat.models_loading")}</li>
             ) : null}
           </ul>
         </div>
@@ -281,7 +281,7 @@ function EffortPicker() {
             disabled={Boolean(locks?.effort)}
             onClick={() => void setDraft({ effort: value })}
             className={cn(
-              "rounded-full px-2 py-0.5 text-[11px] capitalize transition-colors disabled:opacity-60",
+              "rounded-full px-2 py-0.5 text-xs capitalize transition-colors disabled:opacity-60",
               on ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -340,7 +340,7 @@ function Transcript({
               ) : item.type === "turn" ? (
                 <TurnBubble item={item} onDecide={onDecide} />
               ) : (
-                <p className="self-start rounded-2xl bg-destructive/10 px-3 py-2 text-[12px] text-destructive">{item.text}</p>
+                <p className="self-start rounded-2xl bg-destructive/10 px-3 py-2 text-xs text-destructive">{item.text}</p>
               )}
             </div>
           );
@@ -357,7 +357,7 @@ function TimeStamp({ ms }: { ms: number }) {
   const today = new Date().toDateString() === date.toDateString();
   const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   const day = today ? t("society.chat.today") : date.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
-  return <p className="my-1 text-center text-[11px] text-muted-foreground">{`${day} ${time}`}</p>;
+  return <p className="my-1 text-center text-xs text-muted-foreground">{`${day} ${time}`}</p>;
 }
 
 /** What the person typed, without the delegation line the composer added. */
@@ -372,13 +372,13 @@ function visibleUserText(text: string): string {
 function UserBubble({ item }: { item: UserItem }) {
   return (
     <div className="flex max-w-[85%] flex-col items-end gap-1 self-end">
-      <div className="whitespace-pre-wrap rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-[13px] leading-relaxed text-foreground">
+      <div className="whitespace-pre-wrap rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-sm leading-relaxed text-foreground">
         {visibleUserText(item.text)}
       </div>
       {item.attachments.length > 0 ? (
         <div className="flex flex-wrap justify-end gap-1">
           {item.attachments.map((a) => (
-            <span key={a.name} className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+            <span key={a.name} className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
               {a.name}
             </span>
           ))}
@@ -406,7 +406,7 @@ function TurnBubble({
         return (
           <div
             key={block.id}
-            className="society-prose rounded-2xl rounded-bl-md bg-popover px-3.5 py-2 text-[13px] leading-relaxed text-foreground"
+            className="society-prose rounded-2xl rounded-bl-md bg-popover px-3.5 py-2 text-sm leading-relaxed text-foreground"
           >
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
           </div>
@@ -419,7 +419,7 @@ function TurnBubble({
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:300ms]" />
         </div>
       ) : null}
-      {item.error ? <p className="text-[12px] text-destructive">{item.error}</p> : null}
+      {item.error ? <p className="text-xs text-destructive">{item.error}</p> : null}
     </div>
   );
 }
@@ -433,16 +433,16 @@ function Thinking({ block }: { block: ReasoningBlock }) {
       ? t("society.chat.thought_for").replace("{0}", String(seconds))
       : t("society.chat.thought");
   return (
-    <details className="group text-[12px] text-muted-foreground">
+    <details className="group text-xs text-muted-foreground">
       <summary className="cursor-pointer select-none list-none px-1 hover:text-foreground">
         <span className={cn(block.live && "animate-pulse")}>{label}</span>
       </summary>
       {block.text.trim() ? (
-        <div className="mt-1 whitespace-pre-wrap rounded-xl border border-border px-3 py-2 text-[12px] leading-relaxed">
+        <div className="mt-1 whitespace-pre-wrap rounded-xl border border-border px-3 py-2 text-xs leading-relaxed">
           {block.text}
         </div>
       ) : (
-        <p className="px-3 py-1 text-[11px] italic">{t("society.chat.thought_hidden")}</p>
+        <p className="px-3 py-1 text-xs italic">{t("society.chat.thought_hidden")}</p>
       )}
     </details>
   );
@@ -465,7 +465,7 @@ function ToolLine({
         ? t("society.chat.tool_waiting")
         : t("society.chat.tool_done");
   return (
-    <div className="flex flex-wrap items-center gap-2 px-1 text-[11px] text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground">
       <span className="font-mono">{block.name}</span>
       <span>· {state}</span>
       {pending && block.approval ? (
@@ -566,7 +566,7 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, onSend, 
 
   return (
     <div className="shrink-0 border-t border-border px-3 pb-3 pt-2">
-      {problem ? <p className="mb-1 px-1 text-[11px] text-destructive">{problem}</p> : null}
+      {problem ? <p className="mb-1 px-1 text-xs text-destructive">{problem}</p> : null}
       <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
       {matches.length > 0 ? (
         <ul className="mb-1 flex flex-wrap gap-1 px-1" role="listbox" aria-label={t("society.chat.mention_hint")}>
@@ -577,7 +577,7 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, onSend, 
                 role="option"
                 aria-selected={false}
                 onClick={() => insertMention(a.name)}
-                className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-secondary"
+                className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs text-foreground hover:bg-secondary"
               >
                 <AgentSwatch agent={a} size={16} />
                 {a.name}
@@ -611,7 +611,7 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, onSend, 
                   setPlusOpen(false);
                   fileInput.current?.click();
                 }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-foreground hover:bg-secondary"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground hover:bg-secondary"
               >
                 <Paperclip className="h-3.5 w-3.5" aria-hidden />
                 {t("society.chat.attach")}
@@ -622,7 +622,7 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, onSend, 
                   setPlusOpen(false);
                   dictation.toggle();
                 }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-foreground hover:bg-secondary"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground hover:bg-secondary"
               >
                 <Mic className="h-3.5 w-3.5" aria-hidden />
                 {dictation.dictating ? t("society.chat.stop_recording") : t("society.chat.record")}
@@ -656,7 +656,7 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, onSend, 
             }
             if (e.key === "Escape" && mention) setMention(null);
           }}
-          className="max-h-[180px] min-h-[32px] flex-1 resize-none bg-transparent px-1 py-1.5 text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none"
+          className="max-h-[180px] min-h-[32px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none"
         />
         <button
           type="button"

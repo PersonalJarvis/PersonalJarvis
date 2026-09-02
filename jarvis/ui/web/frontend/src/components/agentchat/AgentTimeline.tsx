@@ -827,7 +827,7 @@ function DiffRow({ line }: { line: DiffLine }) {
     <div
       data-diff={line.kind}
       className={cn(
-        "flex whitespace-pre-wrap break-words px-2 font-mono text-[11.5px] leading-relaxed",
+        "flex whitespace-pre-wrap break-words px-2 font-mono text-xs leading-relaxed",
         line.kind === "add" && "diff-line-add",
         line.kind === "del" && "diff-line-del",
         line.kind === "ctx" && "text-muted-foreground",
@@ -1234,7 +1234,7 @@ function Detail({ label, text, error }: { label: string; text: string; error?: b
       </span>
       <pre
         className={cn(
-          "scrollbar-jarvis max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed",
+          "scrollbar-jarvis max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed",
           error ? "text-destructive" : "text-muted-foreground",
         )}
       >

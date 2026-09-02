@@ -217,7 +217,7 @@ export function WakeWordStep({ onb, goNext, goBack, skip, setSummary, setGap }: 
         <Button variant="quiet" onClick={skipAfterError} data-testid="wake-skip-after-error">
           {t("onboarding.nav.skip")}
         </Button>
-        <p className="text-[13px] text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           {t("onboarding.wake_word.error_skip_hint")}
         </p>
       </div>
@@ -264,7 +264,7 @@ export function WakeWordStep({ onb, goNext, goBack, skip, setSummary, setGap }: 
         <>
           <StepSection label={t("onboarding.wake_word.word_label")}>
             <div className="space-y-3 border-y border-border/70 py-4">
-              <p className="text-[13px] text-muted-foreground">{t("onboarding.wake_word.body")}</p>
+              <p className="text-sm text-muted-foreground">{t("onboarding.wake_word.body")}</p>
               <div className="flex items-center gap-2">
                 <span className="inline-flex h-8 items-center rounded-control bg-secondary px-3 text-sm font-medium text-foreground">
                   {t("onboarding.wake_word.prefix")}
@@ -281,11 +281,11 @@ export function WakeWordStep({ onb, goNext, goBack, skip, setSummary, setGap }: 
                 />
               </div>
               {trimmed.length >= 2 && derivedName ? (
-                <p className="text-[13px] text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   {t("onboarding.wake_word.derived_name").replace("{0}", derivedName)}
                 </p>
               ) : null}
-              <p className="text-[13px] text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 {t("onboarding.wake_word.notice")}{" "}
                 <button
                   type="button"
@@ -296,7 +296,7 @@ export function WakeWordStep({ onb, goNext, goBack, skip, setSummary, setGap }: 
                 </button>
               </p>
               {showRefs && refs.length > 0 && (
-                <div className="border-l-2 border-border pl-3 text-[13px]">
+                <div className="border-l-2 border-border pl-3 text-sm">
                   <div className="font-medium">{t("onboarding.wake_word.references_title")}</div>
                   <ul className="mt-1 space-y-0.5">
                     {refs.map((r) => (

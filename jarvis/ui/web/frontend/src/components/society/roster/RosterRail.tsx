@@ -61,7 +61,7 @@ export function RosterRail({ agents, loading, sample, activeAgentId, onOpen, onC
             {t("society.roster.title")}
           </h2>
           {sample ? (
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-xs">
               {t("society.sample_badge")}
             </Badge>
           ) : null}
@@ -88,7 +88,7 @@ export function RosterRail({ agents, loading, sample, activeAgentId, onOpen, onC
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t("society.roster.search")}
           aria-label={t("society.roster.search")}
-          className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-2 text-[13px] text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong"
+          className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong"
         />
       </label>
       <ScrollArea className="mt-2 min-h-0 flex-1">
@@ -113,14 +113,14 @@ export function RosterRail({ agents, loading, sample, activeAgentId, onOpen, onC
                 <AgentSwatch agent={agent} size={34} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
-                    <span className="truncate text-[13px] font-medium text-foreground">{agent.name}</span>
+                    <span className="truncate text-sm font-medium text-foreground">{agent.name}</span>
                     {agent.tier === "lead" ? (
-                      <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                      <Badge variant="secondary" className="px-1.5 py-0 text-xs">
                         {t("society.tier.lead")}
                       </Badge>
                     ) : null}
                   </span>
-                  <span className="block truncate text-[11px] text-muted-foreground">{agent.title}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{agent.title}</span>
                 </span>
                 <span
                   className={cn("h-2 w-2 shrink-0 rounded-full", STATE_DOT[agent.state])}

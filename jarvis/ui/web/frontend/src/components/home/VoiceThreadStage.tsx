@@ -69,7 +69,7 @@ export function VoiceThreadStage() {
               <span className="block truncate font-display text-sm font-semibold tracking-tight text-foreground">
                 {title || t("voice_thread.untitled")}
               </span>
-              <span className="block text-[11px] text-muted-foreground">
+              <span className="block text-xs text-muted-foreground">
                 {fill(t("voice_thread.subtitle"), { count: String(messages.length) })}
               </span>
             </span>

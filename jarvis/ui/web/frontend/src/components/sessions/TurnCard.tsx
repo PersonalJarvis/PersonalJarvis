@@ -176,7 +176,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
         {/* User */}
         {turn.user_text && (
           <div className="space-y-1">
-            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
+            <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground">
               <Mic2 className="h-3 w-3" />
               User
               <Badge variant="secondary" className="ml-1 text-micro">
@@ -204,7 +204,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
               <button
                 type="button"
                 onClick={() => setShowRaw((v) => !v)}
-                className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
                 data-testid="turn-polished-toggle"
               >
                 {showRaw
@@ -214,7 +214,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
             )}
             {polished && showRaw && (
               <div
-                className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-border/60 bg-background/40 p-2 text-[13px] text-muted-foreground [overflow-wrap:anywhere]"
+                className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-border/60 bg-background/40 p-2 text-sm text-muted-foreground [overflow-wrap:anywhere]"
                 data-testid="turn-raw-text"
               >
                 {turn.user_text}
@@ -228,7 +228,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
           turn.provider ||
           turn.tokens_in > 0 ||
           turn.cost_usd > 0) && (
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <Brain className="h-3 w-3 text-primary" />
             {turn.tier && (
               <Badge variant="outline" className="text-micro">
@@ -260,7 +260,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
 
         {/* Tools */}
         {turn.tool_calls.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <Wrench className="h-3 w-3 text-foreground" />
             <span className="text-muted-foreground">Tools:</span>
             {turn.tool_calls.map((tc) => (
@@ -278,7 +278,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
         {/* Jarvis */}
         {audibleReply && (
           <div className="space-y-1">
-            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-primary">
+            <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-primary">
               <Volume2 className="h-3 w-3" />
               {assistantName}
               <Badge variant="secondary" className="ml-1 text-micro">
@@ -325,7 +325,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
             distinct here while preserving their audible order. */}
         {auxiliarySpoken.length > 0 && (
           <div className="space-y-1.5 border-t border-border/50 pt-2">
-            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-sky-300">
+            <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-sky-300">
               <MessageSquareWarning className="h-3 w-3" />
               Spoken output
             </div>
@@ -374,7 +374,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
 
         {/* Latency breakdown — how long Jarvis thought / spoke */}
         {(turn.think_ms > 0 || turn.speak_ms > 0) && (
-          <div className="grid grid-cols-2 gap-2 border-t border-border/50 pt-2 text-[11px]">
+          <div className="grid grid-cols-2 gap-2 border-t border-border/50 pt-2 text-xs">
             <div className="flex items-center gap-1.5">
               <Hourglass className="h-3 w-3 text-foreground" />
               <span className="text-muted-foreground">{t("turn_card.thought")}</span>

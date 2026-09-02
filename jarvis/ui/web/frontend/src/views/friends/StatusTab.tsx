@@ -71,7 +71,7 @@ export function StatusTab() {
         </div>
       )}
 
-      <div className="rounded-md border border-foreground/40 bg-foreground/10 px-4 py-3 text-[11px] text-foreground">
+      <div className="rounded-md border border-foreground/40 bg-foreground/10 px-4 py-3 text-xs text-foreground">
         <div className="flex items-center gap-2 font-display text-xs font-semibold text-foreground">
           <ShieldAlert className="h-3.5 w-3.5" />
           {t("status_tab.hard_blacklist_title")}
@@ -122,7 +122,7 @@ function FriendPermissionRow({ friend }: { friend: FriendItem }) {
             )}
           </div>
           {friend.note && (
-            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+            <div className="mt-0.5 truncate text-xs text-muted-foreground">
               {friend.note}
             </div>
           )}
@@ -131,7 +131,7 @@ function FriendPermissionRow({ friend }: { friend: FriendItem }) {
 
       <div className="mt-3">
         {permission.isLoading ? (
-          <div className="flex items-center text-[11px] text-muted-foreground">
+          <div className="flex items-center text-xs text-muted-foreground">
             <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
             {t("status_tab.loading_permission")}
           </div>
@@ -195,7 +195,7 @@ function ProfileCard({
           </span>
         )}
       </div>
-      <div className="mt-1 text-[11px] uppercase tracking-wider text-muted-foreground">
+      <div className="mt-1 text-xs uppercase tracking-wider text-muted-foreground">
         {subline}
       </div>
       <p className="mt-2 text-xs text-foreground/80">{description}</p>

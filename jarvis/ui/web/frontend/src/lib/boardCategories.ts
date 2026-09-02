@@ -32,7 +32,7 @@ export const CATEGORY_META: Record<
   BoardCategoryKey,
   { icon: LucideIcon; accent: string; bar: string; glow: string }
 > = {
-  agents: { icon: Bot, accent: "text-primary", bar: "bg-primary", glow: "shadow-[0_0_12px_-2px] shadow-primary/50" },
+  agents: { icon: Bot, accent: "text-primary", bar: "bg-primary", glow: "" },
   browser: { icon: Globe, accent: "text-sky-400", bar: "bg-sky-400", glow: "" },
   mail: { icon: Mail, accent: "text-rose-400", bar: "bg-rose-400", glow: "" },
   community: { icon: Users, accent: "text-violet-400", bar: "bg-violet-400", glow: "" },

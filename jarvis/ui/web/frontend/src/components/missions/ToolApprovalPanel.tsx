@@ -150,7 +150,7 @@ export function ToolApprovalPanel({
           <p className="text-xs font-medium text-foreground">
             {t("mission_tool_approvals.load_error")}
           </p>
-          <p className="mt-1 break-words text-[11px] text-muted-foreground">
+          <p className="mt-1 break-words text-xs text-muted-foreground">
             {query.error.message}
           </p>
         </div>
@@ -169,7 +169,7 @@ export function ToolApprovalPanel({
         <p className="text-xs font-medium text-foreground/80">
           {t("mission_tool_approvals.empty_title")}
         </p>
-        <p className="max-w-56 text-[11px] text-muted-foreground">
+        <p className="max-w-56 text-xs text-muted-foreground">
           {t("mission_tool_approvals.empty_body")}
         </p>
       </div>
@@ -179,7 +179,7 @@ export function ToolApprovalPanel({
   return (
     <ScrollArea className="h-full">
       <div className="space-y-3 p-3">
-        <div className="rounded-md border border-foreground/30 bg-foreground/10 p-2.5 text-[11px] text-foreground/90">
+        <div className="rounded-md border border-foreground/30 bg-foreground/10 p-2.5 text-xs text-foreground/90">
           {t("mission_tool_approvals.scope_notice")}
         </div>
 
@@ -228,7 +228,7 @@ export function ToolApprovalPanel({
                 </Badge>
               </div>
 
-              <dl className="mt-3 space-y-2 text-[11px]">
+              <dl className="mt-3 space-y-2 text-xs">
                 <DetailRow
                   label={t("mission_tool_approvals.reason")}
                   value={formatReason(approval.reason, t)}

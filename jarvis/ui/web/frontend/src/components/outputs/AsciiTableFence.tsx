@@ -84,9 +84,9 @@ export function AsciiTableFence({ grid, code }: { grid: AsciiGrid; code: string 
         <CodeBlock language="text" code={code} chrome={false} />
       ) : (
         <div className="overflow-x-auto bg-card">
-          <table className="w-full border-collapse text-[13px] leading-snug">
+          <table className="w-full border-collapse text-sm leading-snug">
             {grid.caption !== null && (
-              <caption className="border-b border-border/40 bg-muted/20 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <caption className="border-b border-border/40 bg-muted/20 px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {grid.caption}
               </caption>
             )}

@@ -353,7 +353,7 @@ function SetupGuideCard({ status }: { status: TelephonyStatus | null }) {
       <ol className="space-y-3">
         {steps.map((s, i) => (
           <li key={i} className="flex gap-3">
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
               {i + 1}
             </span>
             <div className="min-w-0 flex-1">
@@ -980,7 +980,7 @@ function ScriptRow({ script }: { script: TelephonyScript }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="font-medium break-words">{script.name}</div>
-          <p className="mt-0.5 text-[11px] text-muted-foreground break-words">
+          <p className="mt-0.5 text-xs text-muted-foreground break-words">
             {script.description}
           </p>
           <p className="mt-0.5 font-mono text-micro text-muted-foreground/70 break-all">

@@ -51,18 +51,13 @@ export function TabBar({
   className?: string;
 }) {
   return (
-    <div
-      role="tablist"
-      className={cn("flex items-center gap-6 border-b border-border", className)}
-    >
+    <div className={cn("flex items-center gap-6 border-b border-border", className)}>
       {tabs.map((tab) => {
         const isActive = active === tab.id;
         return (
           <button
             key={tab.id}
             type="button"
-            role="tab"
-            aria-selected={isActive}
             aria-current={isActive ? "page" : undefined}
             onClick={() => onChange(tab.id)}
             className={cn(

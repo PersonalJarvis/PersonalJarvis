@@ -35,7 +35,7 @@
 
 .sw-nameplate,
 .sw-placelabel {
-  font-family: "Pixelify Sans", "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  font-family: "Pixelify Sans", "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
   color: #1f2a3a;
   white-space: nowrap;
   line-height: 1;
@@ -101,7 +101,7 @@
   justify-content: space-between;
   padding: 12px;
   pointer-events: none;
-  font-family: "Pixelify Sans", "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  font-family: "Pixelify Sans", "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 .sw-hud > * > * {
   pointer-events: auto;

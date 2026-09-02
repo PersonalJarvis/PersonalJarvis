@@ -33,7 +33,7 @@ export function renderInline(text: string): ReactNode[] {
       out.push(
         <code
           key={key++}
-          className="rounded bg-muted px-1 py-0.5 font-mono text-[12.5px] text-foreground"
+          className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground"
         >
           {token.slice(1, -1)}
         </code>,

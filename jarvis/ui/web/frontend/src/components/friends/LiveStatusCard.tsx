@@ -53,7 +53,7 @@ export function LiveStatusCard({ update }: { update: StatusUpdateView }) {
         </div>
       </div>
       {fieldEntries.length > 0 && (
-        <dl className="mt-2 space-y-0.5 text-[11px]">
+        <dl className="mt-2 space-y-0.5 text-xs">
           {fieldEntries.map(([key, value]) => (
             <div key={key} className="flex gap-2">
               <dt className="text-muted-foreground">{key}:</dt>

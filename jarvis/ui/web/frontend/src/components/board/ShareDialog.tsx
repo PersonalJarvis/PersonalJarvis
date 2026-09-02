@@ -238,7 +238,7 @@ export function ShareDialog({ open, onOpenChange, stats }: Props) {
 
           {/* Handle */}
           <label className="mb-3 block">
-            <span className="mb-1 block text-[11px] text-muted-foreground">
+            <span className="mb-1 block text-xs text-muted-foreground">
               {t("board_view.share.handle_label")}
             </span>
             <div className="flex items-center rounded-lg border border-sheen/[0.08] bg-sheen/[0.03] px-2.5">
@@ -282,7 +282,7 @@ export function ShareDialog({ open, onOpenChange, stats }: Props) {
           {status.kind !== "idle" && (
             <p
               className={cn(
-                "mt-3 text-[11px]",
+                "mt-3 text-xs",
                 status.kind === "error" ? "text-destructive" : "text-muted-foreground",
               )}
               data-testid="share-status"
@@ -318,7 +318,7 @@ function ActionButton({
       disabled={disabled}
       data-testid={testId}
       className={cn(
-        "inline-flex flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2.5 text-[11px] font-medium transition-colors",
+        "inline-flex flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2.5 text-xs font-medium transition-colors",
         primary
           ? "border-primary/40 bg-primary/[0.10] text-primary hover:bg-primary/[0.16]"
           : "border-sheen/[0.08] bg-sheen/[0.03] hover:border-primary/40 hover:bg-primary/[0.06]",

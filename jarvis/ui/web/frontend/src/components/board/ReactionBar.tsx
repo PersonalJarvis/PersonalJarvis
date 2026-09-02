@@ -36,7 +36,7 @@ export function ReactionBar({ counts, hasReactions, onReact, disabled }: Reactio
             onClick={() => onReact(r)}
             title={isOwner ? `${LABELS[r]} (${cnt})` : "Click to react"}
             className={cn(
-              "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/40 px-2 py-1 text-[11px] transition-colors",
+              "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/40 px-2 py-1 text-xs transition-colors",
               "hover:border-primary/40 hover:bg-background/60",
               disabled && "cursor-not-allowed opacity-50",
             )}

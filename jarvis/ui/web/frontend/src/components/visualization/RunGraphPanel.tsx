@@ -344,7 +344,7 @@ export function RunGraphPanel({ run }: { run: OutputSummary }) {
 
             <footer className="flex shrink-0 items-center gap-3 border-t border-border px-4 py-2">
               {/* The honesty line: what this graph could and could not read. */}
-              <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+              <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                 {plan.data && plan.data.plan === null
                   ? t("visualization.no_steps")
                   : graph.droppedSteps > 0
@@ -372,7 +372,7 @@ export function RunGraphPanel({ run }: { run: OutputSummary }) {
                   }}
                   title={t("visualization.zoom_reset")}
                   aria-label={t("visualization.zoom_reset")}
-                  className="w-12 text-center text-[11px] tabular-nums text-muted-foreground transition-colors hover:text-foreground"
+                  className="w-12 text-center text-xs tabular-nums text-muted-foreground transition-colors hover:text-foreground"
                 >
                   {`${Math.round(zoom * 100)}%`}
                 </button>
@@ -623,7 +623,7 @@ function GraphCanvas({
                   {title}
                 </span>
                 {subtitle && (
-                  <span className="block truncate text-[11px] text-muted-foreground">
+                  <span className="block truncate text-xs text-muted-foreground">
                     {subtitle}
                   </span>
                 )}
@@ -714,20 +714,20 @@ function NodeInspector({
                 {node.step.tool_name ?? "—"}
               </InspectorField>
               <InspectorField label={t("visualization.field_detail")}>
-                <code className="block whitespace-pre-wrap break-words text-[11px]">
+                <code className="block whitespace-pre-wrap break-words text-xs">
                   {node.step.name}
                 </code>
               </InspectorField>
               {node.step.output && (
                 <InspectorField label={t("visualization.field_output")}>
-                  <code className="block whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
+                  <code className="block whitespace-pre-wrap break-words text-xs text-muted-foreground">
                     {node.step.output}
                   </code>
                 </InspectorField>
               )}
               {node.step.error && (
                 <InspectorField label={t("visualization.field_error")}>
-                  <code className="block whitespace-pre-wrap break-words text-[11px] text-destructive">
+                  <code className="block whitespace-pre-wrap break-words text-xs text-destructive">
                     {node.step.error}
                   </code>
                 </InspectorField>
@@ -770,7 +770,7 @@ function NodeInspector({
                 <ArtifactPreview slug={slug} artifact={artifact} kind={visualKind} />
               )}
               <InspectorField label={t("visualization.field_file")}>
-                <code className="block break-words text-[11px]">
+                <code className="block break-words text-xs">
                   {artifact.path}
                 </code>
               </InspectorField>
@@ -830,7 +830,7 @@ function InspectorField({
 }) {
   return (
     <div>
-      <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
       <div className="text-xs">{children}</div>
@@ -897,7 +897,7 @@ function ArtifactPreview({
         sandbox=""
         className="h-72 w-full rounded-md border border-border bg-white"
       />
-      <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <ShieldAlert className="h-3 w-3 shrink-0" aria-hidden />
         {t("visualization.sandbox_note")}
       </p>

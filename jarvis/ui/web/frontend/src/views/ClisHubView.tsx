@@ -54,7 +54,7 @@ export function ClisHubView() {
         aria-label={t("clis_view.group_label")}
         className="flex w-[200px] shrink-0 flex-col border-r border-border px-3 py-3"
       >
-        <p className="px-2.5 pb-2 text-micro font-medium text-foreground">
+        <p className="px-2.5 pb-2 text-xs font-medium uppercase tracking-wide text-foreground-faint">
           {t("clis_view.group_label")}
         </p>
         <ul className="space-y-0.5">

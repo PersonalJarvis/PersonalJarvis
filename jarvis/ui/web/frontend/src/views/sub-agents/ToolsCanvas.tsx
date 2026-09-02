@@ -195,7 +195,7 @@ export function ToolsCanvas({
               <div className="text-sm font-semibold text-zinc-100 truncate">
                 {agent.name}
               </div>
-              <div className="text-[11px] text-zinc-500 truncate">
+              <div className="text-xs text-zinc-500 truncate">
                 {toolCalls.length} {t("tools_canvas.tool_calls")} · {runningCount}{" "}
                 {t("tools_canvas.active")}
                 {agent.utterance && <> · „{agent.utterance}"</>}
@@ -203,7 +203,7 @@ export function ToolsCanvas({
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-3 text-[11px] text-zinc-400 shrink-0">
+        <div className="flex items-center gap-3 text-xs text-zinc-400 shrink-0">
           {agent.tokens_out > 0 && <span>{agent.tokens_out} tok</span>}
           {agent.cost_usd > 0 && <span>${agent.cost_usd.toFixed(4)}</span>}
         </div>
@@ -288,7 +288,7 @@ function ToolDetailSheet({
             <div className="text-sm font-semibold text-zinc-100 truncate">
               {appearance.label}
             </div>
-            <div className="text-[11px] text-zinc-500 font-mono truncate">
+            <div className="text-xs text-zinc-500 font-mono truncate">
               {tool.tool_name}
             </div>
           </div>
@@ -317,7 +317,7 @@ function ToolDetailSheet({
             <div className="text-micro uppercase text-zinc-500 mb-1">
               Arguments
             </div>
-            <pre className="rounded bg-zinc-800/60 p-2 text-[11px] whitespace-pre-wrap text-zinc-200 break-all">
+            <pre className="rounded bg-zinc-800/60 p-2 text-xs whitespace-pre-wrap text-zinc-200 break-all">
               {tool.args_preview || t("tools_canvas.empty")}
             </pre>
           </div>
@@ -327,7 +327,7 @@ function ToolDetailSheet({
               <div className="text-micro uppercase text-zinc-500 mb-1">
                 Output
               </div>
-              <pre className="rounded bg-zinc-800/60 p-2 text-[11px] whitespace-pre-wrap text-zinc-200 break-all">
+              <pre className="rounded bg-zinc-800/60 p-2 text-xs whitespace-pre-wrap text-zinc-200 break-all">
                 {tool.output_preview}
               </pre>
             </div>

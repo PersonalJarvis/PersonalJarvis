@@ -31,7 +31,7 @@ function Cap({ children }: { children: React.ReactNode }) {
     <kbd
       className={cn(
         "inline-flex min-w-[1.75rem] items-center justify-center rounded-md border border-border",
-        "bg-muted px-1.5 py-0.5 font-mono text-[11px] font-medium text-foreground",
+        "bg-muted px-1.5 py-0.5 font-mono text-xs font-medium text-foreground",
         "shadow-[inset_0_-1px_0_rgba(0,0,0,0.12)]",
       )}
     >
@@ -94,7 +94,7 @@ function ShortcutRow({ shortcut, isMac }: { shortcut: Shortcut; isMac: boolean }
     chord = combo ? (
       <Chord keys={comboTokens(combo)} isMac={isMac} />
     ) : (
-      <span className="text-[11px] italic text-muted-foreground">
+      <span className="text-xs italic text-muted-foreground">
         {t("shortcut_overlay.unassigned")}
       </span>
     );
@@ -114,7 +114,7 @@ function Section({ area, isMac }: { area: ShortcutArea; isMac: boolean }) {
   if (rows.length === 0) return null;
   return (
     <section>
-      <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         {t(`shortcut_overlay.area.${area}`)}
       </h3>
       <ul className="divide-y divide-border/60">
@@ -178,7 +178,7 @@ export function ShortcutOverlay({
             ))}
           </div>
 
-          <footer className="border-t border-border px-5 py-3 text-[11px] text-muted-foreground">
+          <footer className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
             {t("shortcut_overlay.footer")}
           </footer>
         </Dialog.Content>

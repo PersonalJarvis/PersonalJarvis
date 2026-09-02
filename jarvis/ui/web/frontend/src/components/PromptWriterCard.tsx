@@ -86,7 +86,7 @@ export function PromptWriterCard() {
 
   if (loading) {
     return (
-      <div className="card-outline flex items-center gap-2 p-4 text-[11px] text-muted-foreground">
+      <div className="card-outline flex items-center gap-2 p-4 text-xs text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
         {t("prompt_writer.loading")}
       </div>
@@ -100,8 +100,8 @@ export function PromptWriterCard() {
   return (
     <div className="card-outline space-y-3 p-4" data-testid="prompt-writer-card">
       <div className="space-y-1">
-        <h4 className="text-[12px] font-medium">{t("prompt_writer.title")}</h4>
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <h4 className="text-xs font-medium">{t("prompt_writer.title")}</h4>
+        <p className="text-xs leading-relaxed text-muted-foreground">
           {t("prompt_writer.description")}
         </p>
       </div>
@@ -138,7 +138,7 @@ export function PromptWriterCard() {
       )}
 
       {error && (
-        <p role="alert" className="text-[11px] leading-relaxed text-destructive">
+        <p role="alert" className="text-xs leading-relaxed text-destructive">
           {error}
         </p>
       )}
@@ -190,7 +190,7 @@ function WriterRow({
       )}
     >
       <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 text-[11px] leading-snug">
+      <span className="min-w-0 flex-1 text-xs leading-snug">
         <span className="block truncate">{option.label}</span>
         {blocked && (
           <span className="block text-micro text-muted-foreground">

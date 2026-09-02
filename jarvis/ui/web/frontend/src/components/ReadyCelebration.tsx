@@ -91,7 +91,7 @@ export function ReadyCelebration({ inline = false }: { inline?: boolean }) {
       <Sparkles aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
       <div className="min-w-0 flex-1 space-y-0.5">
         <p className="text-sm font-medium">{t("ready_note.title")}</p>
-        <p className="text-[13px] leading-relaxed text-muted-foreground">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           {t("ready_note.body").replace("{0}", modeLabel)}
         </p>
       </div>

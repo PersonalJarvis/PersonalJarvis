@@ -591,7 +591,7 @@ export function VoiceEngineContext({
               transitioning || connecting
                 ? "animate-pulse bg-foreground motion-reduce:animate-none"
                 : runtimeMatchesSelection
-                  ? "bg-muted-foreground shadow-[0_0_0_3px_rgb(16_185_129/0.18)]"
+                  ? "bg-muted-foreground"
                   : "bg-foreground",
             )}
           />
@@ -1382,7 +1382,7 @@ export function ProviderCard({
 
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="truncate font-display text-[13.5px] font-semibold tracking-tight">
+            <span className="truncate font-display text-sm font-semibold tracking-tight">
               {descriptor.label}
             </span>
             {!descriptor.active && <StatusBadge descriptor={descriptor} />}

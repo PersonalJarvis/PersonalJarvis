@@ -191,7 +191,7 @@ export function ChatStage() {
   if (!hasContent) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center" data-testid="chat-stage" data-empty="true">
-        <div className="flex w-full max-w-[760px] flex-1 flex-col justify-center gap-8 px-6 pb-20">
+        <div className="flex w-full max-w-[720px] flex-1 flex-col justify-center gap-8 px-6 pb-20">
           {isJarvis ? (
             <Greeting subtitle={subtitle} />
           ) : (
@@ -208,7 +208,7 @@ export function ChatStage() {
       <ScrollArea ref={setRoot} className="min-h-0 w-full flex-1">
         <div
           ref={columnRef}
-          className="relative mx-auto flex w-full max-w-[760px] flex-col gap-5 px-6 pb-6 pt-8"
+          className="relative mx-auto flex w-full max-w-[720px] flex-col gap-5 px-6 pb-6 pt-8"
         >
           <AgentTimeline
             items={items}
@@ -219,7 +219,7 @@ export function ChatStage() {
           <div ref={spacerRef} aria-hidden data-testid="chat-bottom-spacer" className="shrink-0" />
         </div>
       </ScrollArea>
-      <div className="relative w-full max-w-[760px] px-6 pb-5 pt-2">
+      <div className="relative w-full max-w-[720px] px-6 pb-5 pt-2">
         {!atEnd && <ScrollToEndButton onClick={jumpToEnd} testId="chat-scroll-end" />}
         <AgentComposer />
       </div>
@@ -239,11 +239,11 @@ function FolderHeadline({ folder, subtitle }: { folder: string; subtitle: string
   const t = useT();
   return (
     <div className="flex flex-col items-center text-center" data-testid="chat-folder-headline">
-      <h1 className="flex items-center gap-3 font-display text-3xl tracking-tight text-foreground [text-wrap:balance]">
+      <h1 className="flex items-center gap-3 text-2xl font-semibold text-foreground-strong [text-wrap:balance]">
         <FolderCode className="h-[30px] w-[30px] shrink-0 text-muted-foreground" aria-hidden />
         <span>{fill(t("agent_chat.empty_title_agent"), { folder: folderLeaf(folder) })}</span>
       </h1>
-      <p className="mt-2 max-w-md text-sm text-muted-foreground">{subtitle}</p>
+      <p className="mt-2 max-w-md text-base text-muted-foreground">{subtitle}</p>
     </div>
   );
 }

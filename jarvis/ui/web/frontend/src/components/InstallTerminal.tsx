@@ -80,7 +80,7 @@ export function InstallTerminal({
                 setCopied(false);
               }}
               className={cn(
-                "rounded-md border px-2 py-1 font-mono text-[11px] transition-colors",
+                "rounded-md border px-2 py-1 font-mono text-xs transition-colors",
                 cmd.id === active.id
                   ? "border-accent bg-accent/10 text-foreground"
                   : "border-border text-muted-foreground hover:text-foreground",
@@ -106,7 +106,7 @@ export function InstallTerminal({
             <i className="h-2 w-2 rounded-full bg-muted-foreground/30" />
             <i className="h-2 w-2 rounded-full bg-muted-foreground/30" />
           </span>
-          <span className="truncate font-mono text-[11px] text-muted-foreground">
+          <span className="truncate font-mono text-xs text-muted-foreground">
             {path}
           </span>
           <button
@@ -114,7 +114,7 @@ export function InstallTerminal({
             onClick={onCopy}
             aria-label="Copy the install command"
             className={cn(
-              "ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[11px] transition-colors",
+              "ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-xs transition-colors",
               copied
                 ? "border-accent bg-accent text-accent-foreground"
                 : "border-border text-muted-foreground hover:text-foreground",
@@ -131,11 +131,11 @@ export function InstallTerminal({
 
         <div className="px-3 py-2.5">
           {comment && (
-            <p className="install-cmd text-[12px] text-muted-foreground">
+            <p className="install-cmd text-xs text-muted-foreground">
               {comment}
             </p>
           )}
-          <p className="install-cmd text-[12.5px] text-foreground">
+          <p className="install-cmd text-xs text-foreground">
             <span className="mr-1.5 select-none font-semibold text-accent">
               {shellPrompt()}
             </span>
@@ -145,7 +145,7 @@ export function InstallTerminal({
         </div>
       </div>
       {active.note && (
-        <p className="mt-1.5 text-[11px] text-muted-foreground">{active.note}</p>
+        <p className="mt-1.5 text-xs text-muted-foreground">{active.note}</p>
       )}
     </div>
   );

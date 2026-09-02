@@ -368,7 +368,7 @@ function LayoutStep({
             className={cn(
               "flex aspect-square flex-col items-center justify-center gap-2 rounded-xl border p-3 transition-colors",
               selected === n
-                ? "border-primary/50 bg-primary/5 shadow-[0_0_0_1px_hsl(var(--primary)/0.2)]"
+                ? "border-primary/50 bg-primary/5"
                 : "border-border bg-card/60 hover:border-primary/30",
             )}
           >

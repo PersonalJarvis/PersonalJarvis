@@ -85,7 +85,7 @@ export function LanguageStep({ goNext, goBack, setSummary }: StepProps) {
           >
             <dt>
               <span className="block text-sm font-medium text-foreground">{row.label}</span>
-              <span className="mt-0.5 block text-[13px] leading-relaxed text-muted-foreground">
+              <span className="mt-0.5 block text-sm leading-relaxed text-muted-foreground">
                 {row.hint}
               </span>
             </dt>

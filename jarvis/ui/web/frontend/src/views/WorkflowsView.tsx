@@ -198,7 +198,7 @@ function IntegrationsBanner({
           <div className="text-xs font-semibold text-foreground">
             {t("workflows_view.integrations_need_setup")} ({issues.length})
           </div>
-          <ul className="mt-1 space-y-1.5 text-[11px] text-muted-foreground">
+          <ul className="mt-1 space-y-1.5 text-xs text-muted-foreground">
             {issues.map((iss) => (
               <li key={iss.name}>
                 <span className="font-medium text-foreground">
@@ -380,7 +380,7 @@ function WorkflowCard({
           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
             {workflow.description || t("workflows_view.no_description")}
           </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>
               {workflow.step_count} Step{workflow.step_count === 1 ? "" : "s"}
             </span>
@@ -576,14 +576,14 @@ function RunStepsDetail({ runId }: { runId: string }) {
   const { data, isLoading } = useRunDetail(runId);
   if (isLoading) {
     return (
-      <div className="border-t border-border/60 p-2 text-[11px] text-muted-foreground">
+      <div className="border-t border-border/60 p-2 text-xs text-muted-foreground">
         {t("workflows_view.loading_run_details")}
       </div>
     );
   }
   const steps: WorkflowRunStep[] = data?.steps ?? [];
   return (
-    <ol className="space-y-1 border-t border-border/60 p-2 text-[11px]">
+    <ol className="space-y-1 border-t border-border/60 p-2 text-xs">
       {steps.map((s) => (
         <li key={s.seq} className="flex items-start gap-2">
           <span className="w-6 font-mono text-muted-foreground">#{s.seq}</span>

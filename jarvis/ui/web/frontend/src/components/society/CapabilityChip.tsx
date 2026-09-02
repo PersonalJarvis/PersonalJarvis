@@ -57,7 +57,7 @@ export function CapabilityChip({
       aria-pressed={onClick ? selected : undefined}
       title={[capability?.one_liner, connected ? null : disconnectedHint].filter(Boolean).join(" — ") || label}
       className={cn(
-        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] leading-5",
+        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs leading-5",
         onClick ? "cursor-pointer transition-colors hover:bg-secondary" : "",
         selected ? "border-border-strong bg-secondary text-foreground" : "border-border bg-transparent text-foreground",
         !connected && "opacity-50",
@@ -72,12 +72,12 @@ export function CapabilityChip({
         {brand.logoUrl ? (
           <img src={brand.logoUrl} alt="" className="h-full w-full object-contain p-[2px]" draggable={false} />
         ) : (
-          <span className="font-mono text-[8px] font-semibold uppercase text-muted-foreground">{brand.monogram}</span>
+          <span className="font-mono text-xs font-semibold uppercase text-muted-foreground">{brand.monogram}</span>
         )}
       </span>
       <span className="truncate">{label}</span>
       {kind && kind !== "plugin" ? (
-        <span className="shrink-0 rounded-sm bg-secondary px-1 font-mono text-[9px] uppercase text-muted-foreground">
+        <span className="shrink-0 rounded-sm bg-secondary px-1 font-mono text-xs uppercase text-muted-foreground">
           {kind}
         </span>
       ) : null}

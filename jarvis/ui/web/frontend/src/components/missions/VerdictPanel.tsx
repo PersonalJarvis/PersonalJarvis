@@ -142,7 +142,7 @@ function VerdictCard({ verdict }: { verdict: CriticVerdictReady }) {
                   <span className="w-3" />
                 )}
                 <Icon className={cn("h-3.5 w-3.5", tone)} />
-                <span className="flex-1 font-mono text-[11px]">{name}</span>
+                <span className="flex-1 font-mono text-xs">{name}</span>
                 <span className={cn("text-micro uppercase tracking-wider", tone)}>
                   {axis.pass === true
                     ? "pass"

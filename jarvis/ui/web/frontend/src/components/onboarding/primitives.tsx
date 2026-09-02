@@ -46,9 +46,9 @@ export function Register({
       {items.map((item, index) => (
         <li
           key={item.key}
-          className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-baseline gap-2 border-b border-border/50 py-3 text-[15px] last:border-b-0"
+          className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-baseline gap-2 border-b border-border/50 py-3 text-lg last:border-b-0"
         >
-          <span className="font-mono text-[11px] tabular-nums text-muted-foreground/70">
+          <span className="font-mono text-xs tabular-nums text-muted-foreground/70">
             {(index + 1).toString().padStart(2, "0")}
           </span>
           <span className="flex min-w-0 items-start gap-2.5">
@@ -123,7 +123,7 @@ export function ChoiceRow({
           </span>
         ) : null}
         {meta ? (
-          <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+          <span className="font-mono text-xs uppercase tracking-[0.12em] text-muted-foreground">
             {meta}
           </span>
         ) : null}
@@ -145,7 +145,7 @@ export function ConsentLine({
   testId?: string;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 py-1 text-[15px] leading-relaxed">
+    <label className="flex cursor-pointer items-start gap-3 py-1 text-lg leading-relaxed">
       <input
         type="checkbox"
         data-testid={testId}
@@ -239,7 +239,7 @@ export function StepFooter({
         ) : null}
         <Button
           variant="primary"
-          className="h-10 min-w-40 px-5 text-[15px]"
+          className="h-10 min-w-40 px-5 text-lg"
           onClick={primary.onClick}
           disabled={primary.disabled || primary.busy}
           data-testid={primary.testId ?? "onboarding-primary"}

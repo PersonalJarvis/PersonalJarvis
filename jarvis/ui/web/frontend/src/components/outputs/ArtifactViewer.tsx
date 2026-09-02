@@ -224,7 +224,7 @@ function FileRail({
                 onClick={() => onSelect(f.path)}
                 aria-current={isSelected ? "true" : undefined}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition-colors",
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
                   isSelected
                     ? "bg-primary/10 text-foreground"
                     : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground",
@@ -343,7 +343,7 @@ function SelectedFile({
       <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-card/30 px-3">
         <KindIcon kind={kind} className="text-primary" />
         <span
-          className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground"
+          className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
           title={file.path}
         >
           {`${display}  ·  ${formatBytes(file.size)}`}
@@ -477,7 +477,7 @@ function ModeButton({
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        "flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
+        "flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium transition-colors",
         active
           ? "bg-primary/15 text-foreground"
           : "text-muted-foreground hover:text-foreground",
@@ -556,7 +556,7 @@ function ArtifactBody({
 
   if (loading || (text === null && !error)) {
     return (
-      <div className="flex items-center gap-2 p-4 text-[11px] text-muted-foreground">
+      <div className="flex items-center gap-2 p-4 text-xs text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
         {t("outputs_view.loading_file")}
       </div>
@@ -564,7 +564,7 @@ function ArtifactBody({
   }
   if (error) {
     return (
-      <div className="p-4 text-[11px] text-destructive">
+      <div className="p-4 text-xs text-destructive">
         {t("common.error")}: {error}
       </div>
     );
@@ -639,7 +639,7 @@ export function HtmlPage({
   });
   if (probe.isLoading) {
     return (
-      <div className="flex items-center gap-2 p-4 text-[11px] text-muted-foreground">
+      <div className="flex items-center gap-2 p-4 text-xs text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
         {t("outputs_view.loading_file")}
       </div>
@@ -664,7 +664,7 @@ export function SourceView({ path, text }: { path: string; text: string }) {
   const language = artifactLanguage(path);
   if (text.length > HIGHLIGHT_MAX_CHARS || language === "txt") {
     return (
-      <pre className="m-0 whitespace-pre-wrap break-words p-4 font-mono text-[12px] leading-relaxed text-foreground/90">
+      <pre className="m-0 whitespace-pre-wrap break-words p-4 font-mono text-xs leading-relaxed text-foreground/90">
         {text}
       </pre>
     );
@@ -688,7 +688,7 @@ export function CsvTable({ text, tab }: { text: string; tab: boolean }) {
   return (
     <div className="p-4">
       <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full text-[12px]">
+        <table className="w-full text-xs">
           <thead className="bg-muted/40">
             <tr>
               {head.map((h, i) => (
@@ -752,7 +752,7 @@ function MarkdownDocument({
       onSelectSibling={onSelectSibling}
       className={cn(
         "mx-auto max-w-3xl px-8 py-8 lg:px-12",
-        "font-serif text-[15.5px] leading-7 prose-headings:font-serif",
+        "font-serif text-lg leading-7 prose-headings:font-serif",
         "prose-h1:text-3xl prose-h1:leading-tight prose-h2:mt-10 prose-h2:text-2xl prose-h3:text-xl",
       )}
     />

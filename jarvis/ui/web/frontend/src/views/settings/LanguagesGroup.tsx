@@ -154,7 +154,7 @@ function LanguageRow({
         className={cn(
           "flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors",
           active
-            ? "bg-secondary shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]"
+            ? "bg-secondary"
             : "border-border bg-card hover:border-border-strong hover:bg-secondary",
         )}
       >

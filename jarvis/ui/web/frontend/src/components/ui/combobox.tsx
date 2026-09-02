@@ -414,7 +414,7 @@ export function Combobox({
         {selected?.icon}
         <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
         {triggerHint && selected?.hint && (
-          <span className="shrink-0 truncate text-[13px] text-muted-foreground">
+          <span className="shrink-0 truncate text-sm text-muted-foreground">
             {selected.hint}
           </span>
         )}
@@ -484,7 +484,7 @@ export function Combobox({
             >
               {flat.length === 0 && (
                 <p
-                  className="px-3 py-6 text-center text-[13px] text-muted-foreground"
+                  className="px-3 py-6 text-center text-sm text-muted-foreground"
                   data-testid={testId ? `${testId}-empty` : undefined}
                 >
                   {emptyLabel ?? "—"}
@@ -497,7 +497,7 @@ export function Combobox({
                     // Micro, the scale's floor — not a 10px all-caps label.
                     // Tiny uppercase is the single construction that makes an
                     // interface read as an admin panel.
-                    <div className="px-3 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
+                    <div className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">
                       {group.label}
                     </div>
                   )}
@@ -550,7 +550,7 @@ export function Combobox({
                           {option.label}
                         </span>
                         {option.hint && (
-                          <span className="shrink-0 truncate text-[13px] text-muted-foreground">
+                          <span className="shrink-0 truncate text-sm text-muted-foreground">
                             {option.hint}
                           </span>
                         )}

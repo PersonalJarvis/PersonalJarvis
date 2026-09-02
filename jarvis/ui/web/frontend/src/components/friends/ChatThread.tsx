@@ -149,7 +149,7 @@ function EmptyThread({ hasChannel }: { hasChannel: boolean }) {
     <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center text-sm text-muted-foreground">
       <span>{t("chat_thread.no_messages")}</span>
       {!hasChannel && (
-        <span className="rounded-md border border-dashed border-border/60 px-3 py-1 text-[11px]">
+        <span className="rounded-md border border-dashed border-border/60 px-3 py-1 text-xs">
           {t("chat_thread.link_channel_hint")}
         </span>
       )}

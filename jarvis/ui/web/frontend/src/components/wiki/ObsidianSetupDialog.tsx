@@ -541,7 +541,7 @@ export function ObsidianSetupDialog({
             <p className="text-sm text-muted-foreground">
               {t("obsidian_setup_dialog.connect_body_1")}{" "}
               {t("obsidian_setup_dialog.connect_body_2")}{" "}
-              <code className="rounded bg-background px-1 py-0.5 font-mono text-[12px]">
+              <code className="rounded bg-background px-1 py-0.5 font-mono text-xs">
                 obsidian://
               </code>{" "}
               {t("obsidian_setup_dialog.connect_body_3")}

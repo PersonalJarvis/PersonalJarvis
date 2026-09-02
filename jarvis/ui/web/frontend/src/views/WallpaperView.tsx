@@ -171,7 +171,7 @@ function LibraryDownloadBanner() {
                 style={{ width: `${percent}%` }}
               />
             </div>
-            <span className="whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">
+            <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
               {state?.state === "unpacking"
                 ? "Unpacking…"
                 : `${formatMb(state?.receivedBytes ?? 0)} / ${formatMb(state?.totalBytes ?? 0)}`}
@@ -304,7 +304,7 @@ function WallpaperTile({
           className="aspect-video w-full bg-secondary/40 object-cover transition-transform duration-300 group-hover:scale-[1.03]"
         />
         <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-2.5 pb-1.5 pt-6">
-          <span className="block truncate text-[11px] font-medium text-white">
+          <span className="block truncate text-xs font-medium text-white">
             {item.title}
           </span>
           <span className="block truncate text-micro text-white/65">

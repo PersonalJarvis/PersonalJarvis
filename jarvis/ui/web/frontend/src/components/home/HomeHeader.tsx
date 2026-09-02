@@ -100,9 +100,9 @@ function HeaderPill({
       onClick={onClick}
       title={t("home.model_hint")}
       data-testid={testId}
-      className="inline-flex h-7 max-w-[260px] items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2 text-xs transition-colors hover:border-primary/50"
+      className="inline-flex h-6 max-w-[260px] items-center gap-1.5 rounded-md border border-border bg-secondary px-2 text-xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
     >
-      <span className="font-mono text-micro uppercase tracking-[0.14em] text-muted-foreground">
+      <span className="text-xs uppercase tracking-wide text-foreground-faint">
         {label}
       </span>
       <span className={cn("truncate font-medium", hot ? "text-primary" : "text-foreground")}>

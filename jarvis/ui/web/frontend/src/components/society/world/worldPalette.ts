@@ -98,7 +98,7 @@ export const NATURE = {
 
 /** In-world labels (drawn as DOM over the canvas, in the world's own type). */
 export const LABEL = {
-  font: '"Pixelify Sans", "Space Grotesk", ui-sans-serif, sans-serif',
+  font: '"Pixelify Sans", "Inter Variable", "Inter", ui-sans-serif, sans-serif',
   ink: "#1f2a3a",
   chip: "rgba(255, 252, 245, 0.88)",
   chipRim: "rgba(31, 42, 58, 0.18)",

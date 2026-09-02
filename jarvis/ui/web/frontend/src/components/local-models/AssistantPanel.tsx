@@ -328,10 +328,10 @@ export function AssistantPanel({
       <div className="shrink-0 border-b border-border/70 bg-card px-5 py-3">
         <div className="mx-auto flex w-full max-w-[46rem] flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="min-w-0">
-            <h3 className="text-[14px] font-semibold leading-tight tracking-[-0.01em]">
+            <h3 className="text-base font-semibold leading-tight tracking-[-0.01em]">
               {t("local_models.assistant.title")}
             </h3>
-            <p className="mt-0.5 text-[12.5px] text-muted-foreground" data-testid="assistant-status">
+            <p className="mt-0.5 text-xs text-muted-foreground" data-testid="assistant-status">
               {statusLine}
             </p>
           </div>
@@ -363,7 +363,7 @@ export function AssistantPanel({
         <div className="mx-auto flex w-full max-w-[46rem] flex-col gap-8 px-5 py-6">
           {health && checkedAt && (
             <p
-              className="flex flex-wrap items-center gap-3 text-[12.5px]"
+              className="flex flex-wrap items-center gap-3 text-xs"
               data-testid="assistant-health"
             >
               <StatusDot
@@ -415,7 +415,7 @@ export function AssistantPanel({
               <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/12 text-primary">
                 <Sparkles className="h-5 w-5" />
               </span>
-              <p className="max-w-[38ch] text-[15px] leading-relaxed text-muted-foreground">
+              <p className="max-w-[38ch] text-lg leading-relaxed text-muted-foreground">
                 {t("local_models.assistant.empty")}
               </p>
               <div className="flex flex-wrap justify-center gap-2">
@@ -448,7 +448,7 @@ export function AssistantPanel({
               onClick={() => setShowEarlier((v) => !v)}
               className={cn(
                 "mx-auto inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1",
-                "text-[11.5px] text-muted-foreground hover:text-foreground",
+                "text-xs text-muted-foreground hover:text-foreground",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               )}
               data-testid="assistant-earlier"
@@ -465,7 +465,7 @@ export function AssistantPanel({
               return (
                 <div key={item.id} className="flex justify-end">
                   <p
-                    className="max-w-[85%] rounded-3xl rounded-br-lg bg-muted px-4 py-2.5 text-[14.5px] leading-relaxed text-foreground"
+                    className="max-w-[85%] rounded-3xl rounded-br-lg bg-muted px-4 py-2.5 text-base leading-relaxed text-foreground"
                     data-testid="assistant-you"
                   >
                     {item.text}
@@ -572,7 +572,7 @@ export function AssistantPanel({
               aria-label={t("local_models.assistant.composer_placeholder")}
               data-testid="assistant-composer"
               className={cn(
-                "max-h-40 min-h-[1.75rem] flex-1 resize-none bg-transparent px-1.5 py-1 text-[14.5px] leading-relaxed text-foreground",
+                "max-h-40 min-h-[1.75rem] flex-1 resize-none bg-transparent px-1.5 py-1 text-base leading-relaxed text-foreground",
                 "placeholder:text-faint-foreground focus:outline-none disabled:cursor-not-allowed",
               )}
             />
@@ -628,7 +628,7 @@ function ChipButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium",
+        "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium",
         "transition-colors disabled:cursor-not-allowed disabled:opacity-45",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         primary

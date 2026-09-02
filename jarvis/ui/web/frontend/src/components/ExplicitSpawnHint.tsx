@@ -12,7 +12,7 @@ export function ExplicitSpawnHint({ className = "" }: { className?: string }) {
   const t = useT();
   return (
     <div
-      className={`flex items-start gap-2 px-4 py-2 text-[11px] leading-snug text-muted-foreground ${className}`}
+      className={`flex items-start gap-2 px-4 py-2 text-xs leading-snug text-muted-foreground ${className}`}
     >
       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <span>{t("subagents_view.explicit_spawn_hint")}</span>

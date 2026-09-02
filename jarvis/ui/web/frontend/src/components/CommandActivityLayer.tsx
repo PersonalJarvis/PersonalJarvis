@@ -151,7 +151,7 @@ function CommandCard({
           <div className="flex items-baseline justify-between gap-2">
             <span
               className={cn(
-                "text-[11px] font-semibold tracking-wide",
+                "text-xs font-semibold tracking-wide",
                 style.text,
               )}
             >
@@ -162,7 +162,7 @@ function CommandCard({
 
           {entry.command && (
             <div
-              className="mt-1 flex items-center gap-1.5 font-mono text-[11px] leading-relaxed text-foreground/90"
+              className="mt-1 flex items-center gap-1.5 font-mono text-xs leading-relaxed text-foreground/90"
               title={entry.command}
             >
               <span className={cn("shrink-0 font-bold", style.text)}>❯</span>

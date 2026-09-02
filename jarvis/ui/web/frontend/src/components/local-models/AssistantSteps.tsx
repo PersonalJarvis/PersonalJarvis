@@ -254,7 +254,7 @@ export function AssistantSteps({
         disabled={pinned}
         className={cn(
           "-mx-1 inline-flex items-center gap-1.5 rounded-md px-1 py-0.5",
-          "text-[12.5px] text-muted-foreground",
+          "text-xs text-muted-foreground",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           !pinned && "hover:text-foreground",
         )}

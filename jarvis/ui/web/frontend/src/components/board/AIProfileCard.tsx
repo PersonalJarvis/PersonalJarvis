@@ -66,7 +66,7 @@ export function AIProfileCard() {
           onClick={() => regen.mutate({})}
           disabled={regen.isPending}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium transition-colors",
+            "inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium transition-colors",
             "hover:border-primary/40 hover:bg-background/60",
             regen.isPending && "opacity-60",
           )}
@@ -134,7 +134,7 @@ export function AIProfileCard() {
               onClick={() => handleFeedback("haerter")}
             />
             {lastFeedback && (
-              <span className="text-[11px] italic text-muted-foreground">
+              <span className="text-xs italic text-muted-foreground">
                 {t("board_view.feedback_noted")}
               </span>
             )}
@@ -180,7 +180,7 @@ function FeedbackButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors",
+        "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
         colorClass,
         active && "ring-1 ring-current",
         disabled && "opacity-60",

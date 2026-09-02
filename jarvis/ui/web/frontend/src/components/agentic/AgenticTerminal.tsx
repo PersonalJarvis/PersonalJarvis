@@ -3148,7 +3148,7 @@ function PaneHeaderTip({
         }}
       />
       <p
-        className="px-3.5 py-2.5 text-[13px] leading-relaxed"
+        className="px-3.5 py-2.5 text-sm leading-relaxed"
         style={{ color: brand.ink }}
       >
         {text}

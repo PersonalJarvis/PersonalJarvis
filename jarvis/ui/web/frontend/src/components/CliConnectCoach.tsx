@@ -28,7 +28,7 @@ export function CliConnectCoach({ coach }: { coach: CoachState }) {
           <div className="font-display text-sm font-semibold">
             {coach.displayName} {t("cli_connect_coach.connect")}
           </div>
-          <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
+          <div className="mt-0.5 flex items-center gap-1.5 text-xs">
             {connected ? (
               <>
                 <CheckCircle2 className="h-3 w-3 text-primary" />

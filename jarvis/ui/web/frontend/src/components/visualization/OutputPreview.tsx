@@ -158,7 +158,7 @@ export function OutputPreview({
     <div className="h-full overflow-auto" data-testid="output-preview">
       <article className="mx-auto flex max-w-[1080px] flex-col gap-10 px-8 py-10 lg:px-12">
         <header className="flex flex-col gap-3">
-          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
             <span>{t("visualization.output_kind")}</span>
             {run.started_at || run.completed_at ? (
               <>
@@ -190,7 +190,7 @@ export function OutputPreview({
           </h1>
           {showRequest && (
             <p
-              className="max-w-[68ch] text-[15px] leading-relaxed text-muted-foreground"
+              className="max-w-[68ch] text-lg leading-relaxed text-muted-foreground"
               data-testid="output-preview-request"
             >
               {request}
@@ -216,7 +216,7 @@ export function OutputPreview({
               aria-hidden
             />
             <div className="flex min-w-0 flex-col gap-1">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {needsReview
                   ? t("outputs_view.needs_review")
                   : status === "cancelled"
@@ -234,10 +234,10 @@ export function OutputPreview({
                 </p>
               )}
               {run.terminal_reason && (
-                <p className="font-mono text-[12px] text-muted-foreground">{run.terminal_reason}</p>
+                <p className="font-mono text-xs text-muted-foreground">{run.terminal_reason}</p>
               )}
               {run.error && !run.terminal_reason && (
-                <pre className="whitespace-pre-wrap font-mono text-[12px] text-destructive/90">
+                <pre className="whitespace-pre-wrap font-mono text-xs text-destructive/90">
                   {run.error}
                 </pre>
               )}
@@ -267,7 +267,7 @@ export function OutputPreview({
               files={files}
               text={answer}
               onSelectSibling={onOpenFile}
-              className="max-w-none text-[15px] leading-7 prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg"
+              className="max-w-none text-lg leading-7 prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg"
               testId="output-preview-answer-body"
             />
           </section>
@@ -305,7 +305,7 @@ export function OutputPreview({
 /** A section's label — small caps, a hairline above, the way the standard marks a section. */
 function SectionEyebrow({ children }: { children: ReactNode }) {
   return (
-    <h2 className="border-t border-border pt-4 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+    <h2 className="border-t border-border pt-4 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
       {children}
     </h2>
   );
@@ -371,7 +371,7 @@ function FileSection({
     body = (
       <div className="flex flex-col" data-testid="output-preview-page">
         <HtmlPage slug={slug} path={file.path} className="h-[min(70vh,720px)] w-full" />
-        <p className="flex items-center gap-1.5 border-t border-border/60 px-4 py-1.5 text-[11px] text-muted-foreground">
+        <p className="flex items-center gap-1.5 border-t border-border/60 px-4 py-1.5 text-xs text-muted-foreground">
           <ShieldCheck className="h-3 w-3 shrink-0" aria-hidden />
           {t("visualization.page_sandbox_note")}
         </p>
@@ -404,7 +404,7 @@ function FileSection({
         files={files}
         text={full.data.text}
         onSelectSibling={onOpenFile}
-        className="max-w-none px-6 py-5 text-[15px] leading-7 prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg"
+        className="max-w-none px-6 py-5 text-lg leading-7 prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg"
         testId="output-preview-markdown"
       />
     );
@@ -422,17 +422,17 @@ function FileSection({
     >
       <header className="flex h-10 items-center gap-2 border-b border-border/60 bg-card/60 px-4">
         <KindIcon kind={kind} className="text-primary" />
-        <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground" title={file.path}>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground" title={file.path}>
           {display}
         </span>
-        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+        <span className="shrink-0 font-mono text-xs text-muted-foreground">
           {formatBytes(file.size)}
         </span>
         {onOpenFile && (
           <button
             type="button"
             onClick={() => onOpenFile(file.path)}
-            className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
+            className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
             title={t("visualization.preview_open_in_files")}
           >
             {t("visualization.preview_open_in_files")}
@@ -470,7 +470,7 @@ function CodeCard({ path, text }: { path: string; text: string }) {
       <div className="flex flex-col gap-2 px-4 py-3">
         {digest.description && (
           <p
-            className="max-w-[72ch] text-[14px] leading-relaxed text-foreground/90"
+            className="max-w-[72ch] text-base leading-relaxed text-foreground/90"
             data-testid="output-preview-code-description"
           >
             {digest.description}
@@ -482,7 +482,7 @@ function CodeCard({ path, text }: { path: string; text: string }) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 border-t border-border/60 px-4 py-2 text-left text-[11px] text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground"
+        className="flex w-full items-center gap-1.5 border-t border-border/60 px-4 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground"
       >
         <ChevronRight
           className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")}
@@ -524,7 +524,7 @@ function DigestFacts({ digest }: { digest: CodeDigest }) {
 
   return (
     <div className="flex flex-col gap-1.5" data-testid="output-preview-code-facts">
-      <p className="flex flex-wrap items-center gap-x-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+      <p className="flex flex-wrap items-center gap-x-2 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
         <span>{digest.language}</span>
         <span aria-hidden>·</span>
         <span className="normal-case tracking-normal tabular-nums">{lines}</span>
@@ -552,39 +552,39 @@ function DigestFacts({ digest }: { digest: CodeDigest }) {
         )}
       </p>
       {digest.symbols.length > 0 && (
-        <p className="text-[12px] leading-relaxed text-muted-foreground">
-          <span className="mr-2 text-[11px] font-semibold uppercase tracking-[0.08em]">
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          <span className="mr-2 text-xs font-semibold uppercase tracking-[0.08em]">
             {t("visualization.preview_defines")}
           </span>
           {named(digest.symbols, (s) => (
-            <code className="font-mono text-[12px] text-foreground/80">
+            <code className="font-mono text-xs text-foreground/80">
               {s.kind === "function" ? `${s.name}()` : s.name}
             </code>
           ))}
         </p>
       )}
       {digest.json?.kind === "object" && digest.json.keys.length > 0 && (
-        <p className="text-[12px] leading-relaxed text-muted-foreground">
+        <p className="text-xs leading-relaxed text-muted-foreground">
           {named(digest.json.keys, (k) => (
-            <code className="font-mono text-[12px] text-foreground/80">{k}</code>
+            <code className="font-mono text-xs text-foreground/80">{k}</code>
           ))}
         </p>
       )}
       {digest.diff && digest.diff.length > 0 && (
-        <ul className="mt-1 flex flex-col gap-0.5 text-[12px]" data-testid="output-preview-diff-files">
+        <ul className="mt-1 flex flex-col gap-0.5 text-xs" data-testid="output-preview-diff-files">
           {digest.diff.slice(0, MAX_NAMED).map((f) => (
             <li key={f.path} className="flex items-baseline gap-3">
-              <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground/80">
+              <code className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/80">
                 {f.path}
               </code>
-              <span className="shrink-0 font-mono text-[11px] tabular-nums">
+              <span className="shrink-0 font-mono text-xs tabular-nums">
                 <span className="text-muted-foreground">+{f.added}</span>
                 <span className="ml-1.5 text-destructive">−{f.removed}</span>
               </span>
             </li>
           ))}
           {digest.diff.length > MAX_NAMED && (
-            <li className="text-[11px] text-muted-foreground">+{digest.diff.length - MAX_NAMED}</li>
+            <li className="text-xs text-muted-foreground">+{digest.diff.length - MAX_NAMED}</li>
           )}
         </ul>
       )}

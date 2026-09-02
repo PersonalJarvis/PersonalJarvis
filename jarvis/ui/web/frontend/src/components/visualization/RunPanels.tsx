@@ -284,7 +284,7 @@ export function RunNotes({ run, className }: { run: OutputSummary; className?: s
             </p>
           )}
           {run.terminal_reason && (
-            <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+            <div className="mt-1 font-mono text-xs text-muted-foreground">
               {run.terminal_reason}
             </div>
           )}
@@ -373,11 +373,11 @@ export function RunFiles({
       <section className="flex min-h-0 flex-col">
         <div className="mb-2 flex items-center gap-2">
           <FileText className="h-4 w-4 text-primary" aria-hidden />
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {t("outputs_view.results")}
           </span>
           {!q.isLoading && (
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {files.length}{" "}
               {files.length === 1 ? t("outputs_view.file") : t("outputs_view.files")}
             </span>

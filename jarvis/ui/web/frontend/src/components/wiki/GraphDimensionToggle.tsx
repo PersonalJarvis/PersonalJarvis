@@ -54,7 +54,7 @@ export function GraphDimensionToggle({
         data-active={active ? "true" : "false"}
         onClick={() => setDimension(value)}
         className={cn(
-          "inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium tabular-nums transition-colors",
+          "inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium tabular-nums transition-colors",
           active
             ? "bg-primary/15 text-foreground"
             : "text-muted-foreground hover:text-foreground",

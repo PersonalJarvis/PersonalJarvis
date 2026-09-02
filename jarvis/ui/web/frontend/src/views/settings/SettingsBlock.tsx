@@ -33,7 +33,7 @@ export function SettingsBlock({
   children?: ReactNode;
 }) {
   return (
-    <section className="w-full overflow-hidden rounded-lg border border-border bg-card p-block">
+    <section className="w-full overflow-hidden rounded-lg border border-border bg-card p-5">
       <div className="flex items-start gap-3">
         <span
           aria-hidden
@@ -42,18 +42,18 @@ export function SettingsBlock({
           <Icon className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="text-title font-semibold text-foreground-strong">
+          <h3 className="text-lg font-semibold text-foreground-strong">
             {title}
           </h3>
           {description && (
-            <p className="mt-1 text-meta text-muted-foreground">{description}</p>
+            <p className="mt-1 text-base text-muted-foreground">{description}</p>
           )}
         </div>
         {headerRight && (
           <div className="flex shrink-0 items-center pl-2">{headerRight}</div>
         )}
       </div>
-      {children && <div className="mt-block">{children}</div>}
+      {children && <div className="mt-5">{children}</div>}
     </section>
   );
 }
@@ -75,7 +75,7 @@ export function SettingsField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-meta text-muted-foreground">
+      <span className="mb-1.5 block text-sm font-medium text-muted-foreground">
         {label}
       </span>
       {children}
@@ -94,4 +94,4 @@ export function SettingsField({
  * --border-strong ring, never a coloured hairline.
  */
 export const settingsInputCls =
-  "w-full rounded-md bg-input px-3 py-2 text-body text-foreground placeholder:text-faint-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong";
+  "h-9 w-full rounded-md border border-border-strong bg-input px-3 text-base text-foreground placeholder:text-foreground-faint transition-colors focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";

@@ -176,7 +176,7 @@ export function BoardView() {
 
           {/* Slim caption line of secondary stats. */}
           {!loading && s && (
-            <p className="-mt-1 px-1 text-[11px] text-muted-foreground">
+            <p className="-mt-1 px-1 text-xs text-muted-foreground">
               {t("board_view.micro.avg_words").replace("{0}", nf(avgWords))}
               <Dot />
               {t("board_view.micro.ratio").replace("{0}", ratio.toFixed(1))}
@@ -201,7 +201,7 @@ export function BoardView() {
                     {t("board_view.activity_subtitle")}
                   </p>
                 </div>
-                <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <LegendDot color={TREND_YOU} label={t("board_view.hero.you_spoke")} />
                   <LegendDot color={TREND_JARVIS} label={t("board_view.hero.jarvis_spoke")} />
                 </div>
@@ -250,13 +250,13 @@ export function BoardView() {
               </div>
               <div className="flex items-center gap-2">
                 {streak > 0 && (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/[0.08] px-2.5 py-1 text-[11px] font-medium text-primary">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/[0.08] px-2.5 py-1 text-xs font-medium text-primary">
                     <Flame className="h-3 w-3" />
                     {plural(t, "board_view.activity_streak_badge", streak)}
                   </span>
                 )}
                 {longest > 0 && (
-                  <span className="rounded-full border border-sheen/[0.08] bg-sheen/[0.03] px-2.5 py-1 text-[11px] text-muted-foreground">
+                  <span className="rounded-full border border-sheen/[0.08] bg-sheen/[0.03] px-2.5 py-1 text-xs text-muted-foreground">
                     {plural(t, "board_view.longest_streak", longest)}
                   </span>
                 )}
@@ -326,7 +326,7 @@ function Metric({
         )}
         <span className="truncate">{label}</span>
       </div>
-      <div className="font-display text-[2.1rem] font-semibold leading-none tracking-tight tabular-nums">
+      <div className="font-display text-2xl font-semibold leading-none tracking-tight tabular-nums">
         {value}
       </div>
       {sub && <div className="truncate text-xs text-muted-foreground">{sub}</div>}

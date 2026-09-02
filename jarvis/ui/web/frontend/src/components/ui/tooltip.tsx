@@ -141,7 +141,7 @@ export function QuickTooltip({
               // --popover with the strong rim and the only shadow the system
               // allows — not the card surface it used to borrow.
               "pointer-events-none z-[70] rounded-lg border border-border-strong bg-popover px-2.5 py-1.5 shadow-float",
-              "text-[13px] text-popover-foreground",
+              "text-sm text-popover-foreground",
               position && "animate-in fade-in-0 zoom-in-95 duration-100",
             )}
           >

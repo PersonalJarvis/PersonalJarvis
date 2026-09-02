@@ -267,7 +267,7 @@ export function WorkspaceTerminal({
       </header>
       <div ref={containerRef} className="flex-1 overflow-hidden p-1" />
       {error && (
-        <div className="border-t border-border bg-destructive/10 px-3 py-1.5 text-[11px] text-destructive">
+        <div className="border-t border-border bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
           {error}
         </div>
       )}

@@ -412,12 +412,12 @@ function TimelineRow({
           {run.trigger}
         </Badge>
         {duration !== undefined && (
-          <span className="font-mono text-[11px] text-muted-foreground">
+          <span className="font-mono text-xs text-muted-foreground">
             {duration}ms
           </span>
         )}
         {run.exit_code !== null && run.exit_code !== 0 && (
-          <span className="font-mono text-[11px] text-destructive">
+          <span className="font-mono text-xs text-destructive">
             exit {run.exit_code}
           </span>
         )}
@@ -428,13 +428,13 @@ function TimelineRow({
         )}
       </button>
       {open && (
-        <div className="space-y-2 border-t border-border/60 p-3 text-[11px]">
+        <div className="space-y-2 border-t border-border/60 p-3 text-xs">
           {run.output && (
             <div>
               <div className="mb-1 text-micro uppercase tracking-wider text-muted-foreground">
                 Output
               </div>
-              <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-background/40 p-2 font-mono text-[11px] leading-snug">
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-background/40 p-2 font-mono text-xs leading-snug">
                 {run.output.slice(0, 8000)}
               </pre>
             </div>

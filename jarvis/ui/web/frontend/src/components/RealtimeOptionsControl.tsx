@@ -252,7 +252,7 @@ function RealtimeModelRow({
   if (managed) {
     return (
       <div className="flex items-start gap-2">
-        <span className="w-14 shrink-0 pt-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+        <span className="w-14 shrink-0 pt-1.5 text-xs uppercase tracking-wide text-muted-foreground">
           {label}
         </span>
         <div
@@ -267,7 +267,7 @@ function RealtimeModelRow({
               {t("apikeys_view.realtime_model_managed")}
             </span>
           </div>
-          <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
             {t("apikeys_view.realtime_model_managed_hint")}
           </p>
         </div>
@@ -282,7 +282,7 @@ function RealtimeModelRow({
 
   return (
     <div ref={rootRef} className="relative flex items-center gap-2">
-      <span className="w-14 shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
+      <span className="w-14 shrink-0 text-xs uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
       <button
@@ -496,7 +496,7 @@ function RealtimeVoiceRow({
   return (
     <div ref={rootRef} className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <span className="w-14 shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
+        <span className="w-14 shrink-0 text-xs uppercase tracking-wide text-muted-foreground">
           {label}
         </span>
         <button
@@ -554,7 +554,7 @@ function RealtimeVoiceRow({
               role="group"
               aria-label={t("apikeys_voice.preview_language")}
             >
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-xs text-muted-foreground">
                 {t("apikeys_voice.preview_in")}
               </span>
               {(["de", "en", "es"] as const).map((lng) => (
@@ -564,7 +564,7 @@ function RealtimeVoiceRow({
                   onClick={() => setPreviewLang(lng)}
                   aria-pressed={previewLang === lng}
                   className={cn(
-                    "rounded-full border px-1.5 py-0.5 text-[11px] uppercase tracking-wide transition-colors",
+                    "rounded-full border px-1.5 py-0.5 text-xs uppercase tracking-wide transition-colors",
                     previewLang === lng
                       ? "border-primary/40 bg-primary/20 text-primary"
                       : "border-border bg-muted text-muted-foreground hover:text-foreground",
@@ -640,7 +640,7 @@ function RealtimeVoiceRow({
             })}
           </ul>
           {options.length > 0 && (
-            <div className="border-t border-border px-2.5 py-1 text-[11px] text-muted-foreground">
+            <div className="border-t border-border px-2.5 py-1 text-xs text-muted-foreground">
               {t("apikeys_voice.count_hint").replace("{0}", String(options.length))}
             </div>
           )}

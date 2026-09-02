@@ -52,7 +52,7 @@ export function IntroSequence({ className }: { className?: string }) {
       <MascotGigi size={104} reactToVoice={false} enableComments={false} />
       <p
         key={scene}
-        className="animate-in fade-in text-center text-[17px] font-medium leading-snug tracking-tight text-foreground [text-wrap:balance] motion-reduce:animate-none"
+        className="animate-in fade-in text-center text-lg font-medium leading-snug tracking-tight text-foreground [text-wrap:balance] motion-reduce:animate-none"
       >
         {t(SCENE_KEYS[scene])}
       </p>

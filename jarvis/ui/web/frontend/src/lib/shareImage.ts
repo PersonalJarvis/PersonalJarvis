@@ -37,7 +37,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 
 /**
  * Capture a DOM node to a PNG Blob at high pixel density. Waits for web fonts
- * so the first export embeds Space Grotesk instead of falling back to a system
+ * so the first export embeds Inter instead of falling back to a system
  * font, and renders on a solid background (never transparent — bad for social).
  * Bounded by a 12 s timeout so a blocked font/image fetch fails loudly instead
  * of hanging the dialog.

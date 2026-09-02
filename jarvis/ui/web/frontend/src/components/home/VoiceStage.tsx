@@ -175,9 +175,9 @@ function TranscriptLine({
         className={cn(
           "whitespace-pre-wrap",
           user
-            ? cn("text-[15px]", live ? "text-muted-foreground/70" : "text-muted-foreground")
+            ? cn("text-lg", live ? "text-muted-foreground/70" : "text-muted-foreground")
             : cn(
-                "font-display text-[17px] leading-snug",
+                "font-display text-lg leading-snug",
                 live ? "text-muted-foreground" : "text-foreground",
               ),
           live && "italic",

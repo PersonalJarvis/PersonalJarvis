@@ -177,10 +177,10 @@ describe("JarvisBar Prompt Mode pill", () => {
     expect(pill.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("paints the bar as a fill in dark, without a hairline", async () => {
+  it("wears the strong composer rim in both modes", async () => {
     stubBackend(false);
     renderBar();
     const bar = await screen.findByTestId("jarvis-bar");
-    expect(bar.className).toContain("dark:border-transparent");
+    expect(bar.className).toContain("border-border-strong");
   });
 });

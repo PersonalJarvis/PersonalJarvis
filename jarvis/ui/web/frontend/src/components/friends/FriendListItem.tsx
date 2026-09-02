@@ -49,7 +49,7 @@ export function FriendListItem({
           <SourceBadge channels={friend.channels} />
         </div>
         {friend.note && (
-          <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">
             {friend.note}
           </div>
         )}

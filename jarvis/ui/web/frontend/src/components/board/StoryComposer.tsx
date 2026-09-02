@@ -100,7 +100,7 @@ export function VisibilityRadios({
         <label
           key={o.v}
           className={cn(
-            "flex cursor-pointer flex-col gap-0.5 rounded-md border px-2.5 py-2 text-[11px] transition-colors",
+            "flex cursor-pointer flex-col gap-0.5 rounded-md border px-2.5 py-2 text-xs transition-colors",
             value === o.v
               ? "border-primary/40 bg-primary/10 text-primary"
               : "border-border/60 bg-background/40 text-muted-foreground hover:bg-background/60",

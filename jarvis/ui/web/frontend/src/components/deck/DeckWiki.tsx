@@ -224,7 +224,7 @@ export function WikiCard({ className }: { className?: string }) {
         bodyClassName="p-0"
       >
         {empty ? (
-          <p className="px-2.5 py-2 text-[11px] text-muted-foreground">
+          <p className="px-2.5 py-2 text-xs text-muted-foreground">
             {graph.isLoading ? t("wiki_graph.loading_3d") : t("deck.unavailable")}
           </p>
         ) : expanded ? (
@@ -311,7 +311,7 @@ function WikiExpanded({
       <div className="flex items-center gap-3 border-b border-primary/40 px-4 py-2">
         <HudLamp on />
         <Notebook className="h-3.5 w-3.5 text-primary" />
-        <span className="font-mono text-[11px] uppercase tracking-[0.22em] text-primary">
+        <span className="font-mono text-xs uppercase tracking-[0.22em] text-primary">
           {t("deck.card_wiki")}
         </span>
         <span className="font-mono text-micro tabular-nums text-muted-foreground">

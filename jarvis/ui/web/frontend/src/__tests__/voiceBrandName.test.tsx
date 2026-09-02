@@ -216,7 +216,7 @@ describe("voice section sidebar brand", () => {
       expect(
         screen.getByTestId("nav-row-dictation").className,
         `active section ${section} must highlight the voice row`,
-      ).toContain("shadow-[inset_2px_0_0_hsl(var(--primary))]");
+      ).toContain("jarvis-nav-active");
       cleanup();
     }
   });

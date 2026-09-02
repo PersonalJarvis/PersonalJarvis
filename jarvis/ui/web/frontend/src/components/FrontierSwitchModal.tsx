@@ -113,7 +113,7 @@ export function FrontierSwitchModal() {
               key={provider}
               className="rounded-lg border border-border bg-background/40 p-3"
             >
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-primary">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-primary">
                 {provider}
               </div>
               <ul className="space-y-1.5">

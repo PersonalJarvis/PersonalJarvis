@@ -72,7 +72,7 @@ export function TurnCard({ className }: { className?: string }) {
       bodyClassName="p-0"
     >
       {turn.index === 0 ? (
-        <p className="px-2.5 py-1 text-[11px] text-muted-foreground">{t("deck.turn_empty")}</p>
+        <p className="px-2.5 py-1 text-xs text-muted-foreground">{t("deck.turn_empty")}</p>
       ) : (
         <div className={cn("flex h-full min-h-0 flex-col", quiet && "opacity-60")}>
           {/* Phase strip: hear → think → act → speak. */}

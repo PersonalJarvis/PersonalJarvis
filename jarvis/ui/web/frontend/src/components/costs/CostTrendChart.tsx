@@ -220,7 +220,7 @@ export function CostTrendChart({
       </ResponsiveContainer>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1">
         {stacks.map((s) => (
-          <span key={s.dataKey} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span key={s.dataKey} className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className="h-2 w-2 rounded-[2px]" style={{ background: s.color }} />
             {t(s.labelKey)}
           </span>

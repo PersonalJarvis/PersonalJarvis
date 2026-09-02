@@ -102,7 +102,7 @@ export function ToastLayer() {
                 )}
               </div>
               {draggable && (
-                <div className="mt-1 text-[11px] font-medium text-primary/80">
+                <div className="mt-1 text-xs font-medium text-primary/80">
                   {t("file_toast.drag_hint")}
                 </div>
               )}
@@ -151,7 +151,7 @@ function FileToastActions({ path }: { path: string }) {
       <button
         type="button"
         onClick={onReveal}
-        className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
+        className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
       >
         <FolderOpen className="h-3 w-3" />
         {t("file_toast.show_in_folder")}
@@ -159,7 +159,7 @@ function FileToastActions({ path }: { path: string }) {
       <button
         type="button"
         onClick={onOpen}
-        className="inline-flex items-center gap-1 rounded-md border border-border bg-background/40 px-2 py-1 text-[11px] font-medium text-foreground/90 transition-colors hover:bg-background/70"
+        className="inline-flex items-center gap-1 rounded-md border border-border bg-background/40 px-2 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-background/70"
       >
         <ExternalLink className="h-3 w-3" />
         {t("file_toast.open")}

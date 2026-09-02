@@ -130,7 +130,7 @@ function Meter({ window: usageWindow, now }: { window: UsageWindow; now: number 
         </span>
         <span
           className={cn(
-            "shrink-0 text-[11px] font-semibold tabular-nums",
+            "shrink-0 text-xs font-semibold tabular-nums",
             PERCENT_CLASS[severity],
           )}
         >

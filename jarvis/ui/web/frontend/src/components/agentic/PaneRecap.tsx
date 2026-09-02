@@ -411,7 +411,7 @@ export function PaneRecap({
                 </p>
                 {body && body !== headline && (
                   <p
-                    className="max-h-[36vh] overflow-y-auto whitespace-pre-line pr-1 text-[12.5px] leading-[1.65] text-muted-foreground"
+                    className="max-h-[36vh] overflow-y-auto whitespace-pre-line pr-1 text-xs leading-[1.65] text-muted-foreground"
                     data-testid={`pane-recap-detail-${name}`}
                   >
                     {body}
@@ -582,7 +582,7 @@ function RecapEditor({
           data-testid={`pane-recap-input-${name}`}
           onChange={(e) => setLine(e.target.value)}
           onKeyDown={onKeyDown}
-          className="w-full rounded-lg border border-border bg-muted px-2.5 py-2 text-[12.5px] text-foreground outline-none transition-colors focus:border-primary/60 focus:bg-secondary"
+          className="w-full rounded-lg border border-border bg-muted px-2.5 py-2 text-xs text-foreground outline-none transition-colors focus:border-primary/60 focus:bg-secondary"
         />
       </label>
       <label className="flex flex-col gap-1">
@@ -597,7 +597,7 @@ function RecapEditor({
           data-testid={`pane-recap-detail-input-${name}`}
           onChange={(e) => setBody(e.target.value)}
           onKeyDown={onKeyDown}
-          className="w-full resize-y rounded-lg border border-border bg-muted px-2.5 py-2 text-[12.5px] leading-relaxed text-foreground outline-none transition-colors focus:border-primary/60 focus:bg-secondary"
+          className="w-full resize-y rounded-lg border border-border bg-muted px-2.5 py-2 text-xs leading-relaxed text-foreground outline-none transition-colors focus:border-primary/60 focus:bg-secondary"
         />
       </label>
       <div className="flex items-center justify-between gap-2">

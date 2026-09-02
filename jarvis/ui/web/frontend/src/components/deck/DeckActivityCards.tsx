@@ -72,13 +72,13 @@ export function RunsCard({ className }: { className?: string }) {
       bodyClassName="overflow-y-auto"
     >
       {items.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {runs.isError ? t("deck.unavailable") : t("deck.runs_empty")}
         </p>
       ) : (
         <ul className="space-y-1">
           {items.map((r) => (
-            <li key={r.session_id} className="flex items-center gap-2 text-[11px]">
+            <li key={r.session_id} className="flex items-center gap-2 text-xs">
               <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", outcomeTone(r.outcome))} aria-hidden />
               <span className="min-w-0 flex-1 truncate text-foreground">
                 {r.preview || r.outcome || r.session_id.slice(0, 8)}
@@ -129,13 +129,13 @@ export function OutputsCard({ className }: { className?: string }) {
       bodyClassName="overflow-y-auto"
     >
       {items.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {outputs.isError ? t("deck.unavailable") : t("deck.outputs_empty")}
         </p>
       ) : (
         <ul className="space-y-1">
           {items.map((o) => (
-            <li key={o.slug} className="flex items-center gap-2 text-[11px]">
+            <li key={o.slug} className="flex items-center gap-2 text-xs">
               <span
                 className={cn("h-1.5 w-1.5 shrink-0 rounded-full", OUTPUT_TONE[o.status ?? "unknown"])}
                 aria-hidden
@@ -292,7 +292,7 @@ export function IdeGridCard({ className }: { className?: string }) {
       className={className}
     >
       {rows.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {state.isError ? t("deck.unavailable") : t("deck.ide_empty")}
         </p>
       ) : (
@@ -368,7 +368,7 @@ function CrewColumn({
                   )}
                   aria-hidden
                 />
-                <span className="min-w-0 flex-1 truncate text-[11px] text-foreground group-hover/row:text-primary">
+                <span className="min-w-0 flex-1 truncate text-xs text-foreground group-hover/row:text-primary">
                   {r.title}
                 </span>
                 <span className={cn("shrink-0 font-mono text-micro uppercase tracking-wider", CREW_TONE[r.state])}>
@@ -445,7 +445,7 @@ export function TerminalsCard({ className }: { className?: string }) {
       bodyClassName="overflow-y-auto"
     >
       {shown.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground">{t("deck.terminals_empty")}</p>
+        <p className="text-xs text-muted-foreground">{t("deck.terminals_empty")}</p>
       ) : (
         <div className="font-mono text-micro leading-relaxed">
           {shown.map((l) => (

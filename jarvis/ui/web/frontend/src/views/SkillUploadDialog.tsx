@@ -409,7 +409,7 @@ function UploadReport({
               {t("skill_upload.no_skill_detected")}
             </p>
           )}
-          <p className="mt-1.5 text-[11px] text-muted-foreground">
+          <p className="mt-1.5 text-xs text-muted-foreground">
             {`${report.files.length} ${t("skill_upload.files")} · ${formatBytes(report.total_bytes)}`}
           </p>
         </div>
@@ -429,7 +429,7 @@ function UploadReport({
             {report.files.map((path) => (
               <li
                 key={path}
-                className="truncate rounded px-2 py-1 font-mono text-[11px] text-muted-foreground"
+                className="truncate rounded px-2 py-1 font-mono text-xs text-muted-foreground"
                 title={path}
               >
                 {path}
@@ -458,7 +458,7 @@ function UploadReport({
       )}
 
       {report.ignored.length > 0 && (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {`${t("skill_upload.ignored")} (${report.ignored.length}): ${report.ignored
             .slice(0, 3)
             .map((path) => path.split("/").pop())

@@ -161,12 +161,12 @@ function LocalPath({ onActivated }: { onActivated: () => void }) {
             {t("onboarding.api_keys.local_title")}
           </p>
           {probe === "checking" && (
-            <p className="text-[13px] text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               {t("onboarding.api_keys.local_checking")}
             </p>
           )}
           {probe === "reachable" && !active && (
-            <p className="text-[13px] leading-relaxed text-muted-foreground">
+            <p className="text-sm leading-relaxed text-muted-foreground">
               {t("onboarding.api_keys.local_detected")}
             </p>
           )}
@@ -176,12 +176,12 @@ function LocalPath({ onActivated }: { onActivated: () => void }) {
             </StatusLine>
           )}
           {probe === "empty" && (
-            <p className="text-[13px] leading-relaxed text-muted-foreground">
+            <p className="text-sm leading-relaxed text-muted-foreground">
               {t("onboarding.api_keys.local_detected_empty")}
             </p>
           )}
           {probe === "unreachable" && (
-            <p className="text-[13px] leading-relaxed text-muted-foreground">
+            <p className="text-sm leading-relaxed text-muted-foreground">
               {t("onboarding.api_keys.local_missing")}{" "}
               <a
                 href="https://ollama.com/download"
@@ -435,7 +435,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
         }
       >
         {loading && startable.length === 0 ? (
-          <p className="text-[13px] text-muted-foreground">{t("onboarding.api_keys.loading")}</p>
+          <p className="text-sm text-muted-foreground">{t("onboarding.api_keys.loading")}</p>
         ) : error && startable.length === 0 ? (
           <StatusLine tone="warning">{t("onboarding.api_keys.load_failed")}</StatusLine>
         ) : (
@@ -522,7 +522,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
         {hidden > 0 && !expanded && (
           <button
             type="button"
-            className="text-[13px] text-muted-foreground underline underline-offset-4 hover:text-foreground"
+            className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
             onClick={() => setExpanded(true)}
           >
             {t("onboarding.api_keys.show_more").replace("{0}", String(hidden))}
@@ -531,7 +531,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
         {expanded && startable.length > FOLD_AFTER && (
           <button
             type="button"
-            className="text-[13px] text-muted-foreground underline underline-offset-4 hover:text-foreground"
+            className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
             onClick={() => setExpanded(false)}
           >
             {t("onboarding.api_keys.show_less")}
@@ -560,7 +560,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
 
       {!plan && <LocalPath onActivated={() => setLocalActive(true)} />}
 
-      <p className="text-[13px] leading-relaxed text-muted-foreground">
+      <p className="text-sm leading-relaxed text-muted-foreground">
         {t("onboarding.api_keys.security_note")}
       </p>
 
@@ -582,7 +582,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
         }
       />
       {!canContinue && (
-        <p className="mt-2 text-right text-[11px] text-muted-foreground">
+        <p className="mt-2 text-right text-xs text-muted-foreground">
           {t("onboarding.api_keys.later_hint")}
         </p>
       )}

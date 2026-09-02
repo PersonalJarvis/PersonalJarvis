@@ -103,7 +103,7 @@ function AchievementCard({ item }: { item: AchievementItem }) {
         >
           {item.title}
         </div>
-        <div className="text-[11px] leading-snug text-muted-foreground">
+        <div className="text-xs leading-snug text-muted-foreground">
           {item.description}
         </div>
         {unlocked && item.unlocked_at && (

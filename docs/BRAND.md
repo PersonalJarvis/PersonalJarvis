@@ -28,12 +28,12 @@ states, progress bars and informational status. Green, amber and red are status 
 | Foreground (`--foreground`) | `#FAFAFA` ![](https://img.shields.io/badge/_-FAFAFA?style=flat-square&labelColor=FAFAFA) | `#171717` ![](https://img.shields.io/badge/_-171717?style=flat-square&labelColor=171717) |
 | Secondary ink (`--foreground-secondary`) | `#B8B8B8` ![](https://img.shields.io/badge/_-B8B8B8?style=flat-square&labelColor=B8B8B8) | `#525252` ![](https://img.shields.io/badge/_-525252?style=flat-square&labelColor=525252) |
 | Muted ink (`--muted-foreground`) | `#A1A1A1` ![](https://img.shields.io/badge/_-A1A1A1?style=flat-square&labelColor=A1A1A1) | `#666666` ![](https://img.shields.io/badge/_-666666?style=flat-square&labelColor=666666) |
-| Faint ink (`--foreground-faint`) | `#737373` ![](https://img.shields.io/badge/_-737373?style=flat-square&labelColor=737373) | `#999999` ![](https://img.shields.io/badge/_-999999?style=flat-square&labelColor=999999) |
+| Faint ink (`--foreground-faint`) | `#7A7A7A` ![](https://img.shields.io/badge/_-7A7A7A?style=flat-square&labelColor=7A7A7A) | `#757575` ![](https://img.shields.io/badge/_-757575?style=flat-square&labelColor=757575) |
 | Primary fill (`--primary`) | `#FAFAFA` ![](https://img.shields.io/badge/_-FAFAFA?style=flat-square&labelColor=FAFAFA) | `#171717` ![](https://img.shields.io/badge/_-171717?style=flat-square&labelColor=171717) |
-| Accent (`--accent`) | `#3D8BFF` ![](https://img.shields.io/badge/_-3D8BFF?style=flat-square&labelColor=3D8BFF) | `#0A6FF5` ![](https://img.shields.io/badge/_-0A6FF5?style=flat-square&labelColor=0A6FF5) |
+| Accent (`--accent`) | `#3D8BFF` ![](https://img.shields.io/badge/_-3D8BFF?style=flat-square&labelColor=3D8BFF) | `#096CDC` ![](https://img.shields.io/badge/_-096CDC?style=flat-square&labelColor=096CDC) |
 | Success (`--success`) | `#22C35E` ![](https://img.shields.io/badge/_-22C35E?style=flat-square&labelColor=22C35E) | `#15803D` ![](https://img.shields.io/badge/_-15803D?style=flat-square&labelColor=15803D) |
-| Warning (`--warning`) | `#F59E0B` ![](https://img.shields.io/badge/_-F59E0B?style=flat-square&labelColor=F59E0B) | `#BD5E05` ![](https://img.shields.io/badge/_-BD5E05?style=flat-square&labelColor=BD5E05) |
-| Destructive (`--destructive`) | `#DC2828` ![](https://img.shields.io/badge/_-DC2828?style=flat-square&labelColor=DC2828) | `#C52020` ![](https://img.shields.io/badge/_-C52020?style=flat-square&labelColor=C52020) |
+| Warning (`--warning`) | `#F59E0B` ![](https://img.shields.io/badge/_-F59E0B?style=flat-square&labelColor=F59E0B) | `#A95C04` ![](https://img.shields.io/badge/_-A95C04?style=flat-square&labelColor=A95C04) |
+| Destructive (`--destructive`) | `#DF3A3A` ![](https://img.shields.io/badge/_-DF3A3A?style=flat-square&labelColor=DF3A3A) | `#C52020` ![](https://img.shields.io/badge/_-C52020?style=flat-square&labelColor=C52020) |
 
 These are the exact tokens from the desktop app
 (`jarvis/ui/web/frontend/src/index.css`). `jarvis/ui/theme.py` (`WINDOW_BACKGROUND`),
@@ -45,7 +45,7 @@ asset must stay on the same values so nothing drifts.
 - **Neutral, both modes.** Surfaces, rims and ink carry zero saturation. Dark is a
   cool black room (`#0A0A0A`) with objects one step lighter each; light is the same ladder
   inverted on white. No warm cast, no blue-black, no cream.
-- **One accent.** Blue (`#3D8BFF` dark / `#0A6FF5` light) is the only hue that means
+- **One accent.** Blue (`#3D8BFF` dark / `#096CDC` light) is the only hue that means
   "interactive or selected": links, focus rings, the active nav row's bar, selected rows
   (`--accent` at 12 % as the wash), progress bars, informational callouts. It never fills a
   primary button — that stays white on dark and black on light.

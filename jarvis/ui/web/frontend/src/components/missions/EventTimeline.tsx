@@ -79,7 +79,7 @@ export function EventTimeline() {
                 <span className="w-16 shrink-0 font-mono text-micro text-muted-foreground">
                   {formatTime(env.ts_ms)}
                 </span>
-                <span className="flex-1 truncate font-mono text-[11px] text-foreground/90">
+                <span className="flex-1 truncate font-mono text-xs text-foreground/90">
                   {env.payload.event_type}
                 </span>
                 <span className={cn("text-micro uppercase tracking-wider", actorClass)}>

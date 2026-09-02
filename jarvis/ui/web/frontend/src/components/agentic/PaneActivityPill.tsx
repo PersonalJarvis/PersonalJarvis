@@ -308,9 +308,9 @@ export function durationLabel(since: number, now: number): string {
  * "finished". Removing them would delete a state, not a decoration — the same
  * reason the animated glows in index.css stayed.
  */
-const GLOW = "shadow-[0_0_5px_currentColor]";
+const GLOW = "ring-2 ring-current/30";
 /** The same halo for a stroked icon, where a box shadow would draw a square. */
-const GLOW_STROKE = "drop-shadow-[0_0_3px_currentColor]";
+const GLOW_STROKE = "[filter:drop-shadow(0_0_3px_currentColor)]";
 
 function Icon({ look }: { look: Look }) {
   if (look.icon === "spinner")

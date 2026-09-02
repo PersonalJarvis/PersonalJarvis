@@ -183,7 +183,7 @@ export function PublishWallpaperDialog({
                   placeholder="Rain Antenna City"
                   data-testid="wallpaper-title"
                 />
-                <p className="mt-1 text-[11px] text-muted-foreground">
+                <p className="mt-1 text-xs text-muted-foreground">
                   {titleTooLong
                     ? fill(t("marketplace.share_f_title_too_long"), {
                         count: title.trim().length,
@@ -235,14 +235,14 @@ export function PublishWallpaperDialog({
                         <span className="block text-xs font-medium text-foreground">
                           {t(`marketplace.share_license_${LICENSE_KEY[id]}`)}
                         </span>
-                        <span className="block text-[11px] text-muted-foreground">
+                        <span className="block text-xs text-muted-foreground">
                           {t(`marketplace.share_license_${LICENSE_KEY[id]}_hint`)}
                         </span>
                       </span>
                     </label>
                   ))}
                 </div>
-                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                <p className="mt-1.5 text-xs text-muted-foreground">
                   {t("marketplace.share_f_license_note")}
                 </p>
               </Field>
@@ -278,7 +278,7 @@ export function PublishWallpaperDialog({
         </div>
 
         <footer className="flex items-center gap-2 border-t border-border px-5 py-3">
-          <p className="min-w-0 flex-1 text-[11px] text-muted-foreground">
+          <p className="min-w-0 flex-1 text-xs text-muted-foreground">
             {published
               ? t("marketplace.share_footer_done")
               : signedIn
@@ -343,7 +343,7 @@ function Field({
       <label className="mb-1 block text-xs font-medium text-foreground">{label}</label>
       {children}
       {error && (
-        <p className="mt-1 flex items-start gap-1.5 text-[11px] text-destructive">
+        <p className="mt-1 flex items-start gap-1.5 text-xs text-destructive">
           <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
           {error}
         </p>

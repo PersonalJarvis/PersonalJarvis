@@ -111,7 +111,7 @@ export function FinishStep({ onb, goBack, summaries, gaps }: StepProps) {
               <dd
                 className={
                   row.muted
-                    ? "text-right text-[13px] text-muted-foreground/80"
+                    ? "text-right text-sm text-muted-foreground/80"
                     : "text-right font-medium text-foreground"
                 }
               >
@@ -125,7 +125,7 @@ export function FinishStep({ onb, goBack, summaries, gaps }: StepProps) {
                 <span className="block text-sm font-medium text-foreground">
                   {t("onboarding.finish.autostart_label")}
                 </span>
-                <span className="mt-0.5 block text-[13px] text-muted-foreground">
+                <span className="mt-0.5 block text-sm text-muted-foreground">
                   {t("onboarding.finish.autostart_hint")}
                 </span>
               </div>
@@ -154,7 +154,7 @@ export function FinishStep({ onb, goBack, summaries, gaps }: StepProps) {
             <span className="block font-medium text-foreground">
               {t("onboarding.finish.tour_title")}
             </span>
-            <span className="block text-[13px] text-muted-foreground">
+            <span className="block text-sm text-muted-foreground">
               {t("onboarding.finish.tour_body")}
             </span>
           </span>
@@ -168,13 +168,13 @@ export function FinishStep({ onb, goBack, summaries, gaps }: StepProps) {
             data-testid="onboarding-gaps"
             className="space-y-3 border-l-2 border-foreground/70 py-1 pl-4"
           >
-            <p className="text-[15px] font-medium text-foreground">
+            <p className="text-lg font-medium text-foreground">
               {t("onboarding.finish.gaps_intro")}
             </p>
             <ul className="space-y-2">
               {gapList.map((g) => (
                 <li key={g.key} className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 text-sm">
-                  <span className="pt-0.5 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                  <span className="pt-0.5 font-mono text-xs uppercase tracking-[0.12em] text-muted-foreground">
                     {t(`onboarding.steps.${g.key}.label`)}
                   </span>
                   <span className="leading-relaxed text-foreground">{g.text}</span>

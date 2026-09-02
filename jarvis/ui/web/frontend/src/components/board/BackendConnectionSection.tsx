@@ -37,7 +37,7 @@ export function BackendConnectionSection() {
             type="button"
             onClick={() => disconnect.mutate()}
             disabled={disconnect.isPending}
-            className="rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-50"
+            className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
             title={t("board_view.backend_disconnect_tooltip")}
           >
             {disconnect.isPending && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />}
@@ -61,7 +61,7 @@ export function BackendConnectionSection() {
       {status.data?.enabled && (
         <div className="space-y-2 text-xs">
           <Row label={t("board_view.backend_url_label")}>
-            <code className="font-mono text-[11px]">
+            <code className="font-mono text-xs">
               {status.data.backend_url || t("board_view.backend_url_unset")}
             </code>
             <p className="mt-1 text-micro text-muted-foreground">

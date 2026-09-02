@@ -167,7 +167,7 @@ export function PluginUploadDialog({
                         <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
                           {report.plugin.description}
                         </p>
-                        <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        <p className="mt-1.5 text-xs text-muted-foreground">
                           {`${report.plugin.category} · ${t("plugin_upload.auth_mode")}: ${report.plugin.auth_mode}`}
                           {report.has_mcp ? ` · ${t("plugin_upload.with_mcp")}` : ""}
                         </p>
@@ -177,7 +177,7 @@ export function PluginUploadDialog({
                         {t("plugin_upload.no_plugin_detected")}
                       </p>
                     )}
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    <p className="mt-1.5 text-xs text-muted-foreground">
                       {`${report.files.length} ${t("plugin_upload.files")} · ${formatBytes(report.total_bytes)}`}
                     </p>
                   </div>
@@ -197,7 +197,7 @@ export function PluginUploadDialog({
                       {report.files.map((path) => (
                         <li
                           key={path}
-                          className="truncate rounded px-2 py-1 font-mono text-[11px] text-muted-foreground"
+                          className="truncate rounded px-2 py-1 font-mono text-xs text-muted-foreground"
                           title={path}
                         >
                           {path}

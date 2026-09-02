@@ -64,7 +64,7 @@ export function PermissionsStep({ goNext, goBack, skip, setSummary, setGap }: St
         <PermissionRows compact deferRestartNote onSnapshot={onSnapshot} />
       </div>
 
-      <p className="text-[13px] leading-relaxed text-muted-foreground">
+      <p className="text-sm leading-relaxed text-muted-foreground">
         {t("onboarding.permissions.privacy_note")}
       </p>
 

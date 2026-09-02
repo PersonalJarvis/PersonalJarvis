@@ -82,7 +82,7 @@ export function InstallStandard({
                   setCopied(false);
                 }}
                 className={cn(
-                  "text-[11px] font-medium transition-colors",
+                  "text-xs font-medium transition-colors",
                   tab === t.id ? "text-primary" : "text-muted-foreground hover:text-foreground",
                 )}
               >
@@ -117,7 +117,7 @@ export function InstallStandard({
           )}
         </button>
       </div>
-      <p className="mt-1.5 text-[11px] text-muted-foreground">{note ?? active.hint}</p>
+      <p className="mt-1.5 text-xs text-muted-foreground">{note ?? active.hint}</p>
     </section>
   );
 }

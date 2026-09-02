@@ -510,8 +510,8 @@ label,
     --foreground-strong: 0 0% 4%; /* #0A0A0A — headings, headline numbers */
     --foreground: 0 0% 9%; /* #171717 — body, labels, running text */
     --muted-foreground: 0 0% 40%; /* #666666 — labels, meta, table heads (5.7:1) */
-    --faint-foreground: 0 0% 60%; /* #999999 — placeholder + disabled ONLY */
-    --foreground-faint: 0 0% 60%; /* = --faint-foreground; the Tailwind name */
+    --faint-foreground: 0 0% 46%; /* #757575 — placeholder + disabled ONLY (4.6:1) */
+    --foreground-faint: 0 0% 46%; /* = --faint-foreground; the Tailwind name */
     --foreground-secondary: 0 0% 32%; /* #525252 — body on cards, descriptions */
 
     /* --primary is a FILL, not an ink: buttons, marks, active indicators,
@@ -522,9 +522,9 @@ label,
        carried by weight and by --foreground-strong instead. 14.3:1 on paper. */
     --primary: 0 0% 9%;
     --primary-foreground: 0 0% 100%;
-    --accent: 212 92% 50%; /* #0A6FF5 — the SIGNAL: links, focus, active, selected, info */
+    --accent: 212 92% 45%; /* #096CDC — the SIGNAL: links, focus, active, selected, info */
     --accent-foreground: 0 0% 100%;
-    --ring: 212 92% 50%;
+    --ring: 212 92% 45%;
 
     /* --- Status. Colour has jobs again (v3.1, 2026-09-01) ------------------
        The all-neutral product read as dead. Cursor's Anysphere theme is the
@@ -535,7 +535,7 @@ label,
     --success: 142 72% 29%; /* #15803D — life */
     --destructive: 0 72% 45%; /* #C52020 — fault */
     --destructive-foreground: 0 0% 100%;
-    --warning: 32 95% 38%; /* #BD5E05 — degraded */
+    --warning: 32 95% 34%; /* #A95C04 — degraded */
 
     /* Added / removed code in a chat diff. Green and red were always the
        weaker half of this signal: a diff already carries + and - in its
@@ -554,7 +554,7 @@ label,
     /* The accent as raw channels, for glows / grid lines / halos. Now the ink
        itself: on paper a "glow" means a faint darkening, not a light source,
        so every grid and halo built from this reads as a pencil rule. */
-    --accent-rgb: 10 111 245;
+    --accent-rgb: 9 108 220;
     /* What a translucent overlay DARKENS with (backdrops, vignettes, shadows).
        Warm near-black rather than pure black, so a scrim over paper does not
        turn grey-blue. */
@@ -604,7 +604,7 @@ label,
        What survives is the only distinction worth a value: where a run starts
        and where it lands are full ink, everything in between is neutral. Only
        the card's icon tile reads `hsl(var(--viz-*))`. */
-    --viz-trigger: 212 92% 50%;
+    --viz-trigger: 212 92% 45%;
     --viz-reasoning: 247 45% 52%;
     --viz-terminal: 184 67% 27%;
     --viz-file: 38 100% 32%;
@@ -643,7 +643,7 @@ label,
     --jarvis-yellow: 23 23 23;
     --jarvis-yellow-dim: 102 102 102;
     --jarvis-grid: 0 0% 90%;
-    --info: 212 92% 50%; /* = --accent: one signal hue carries counts and hints too */
+    --info: 212 92% 45%; /* = --accent: one signal hue carries counts and hints too */
     --info-foreground: 0 0% 100%;
 
   }
@@ -712,8 +712,8 @@ label,
     --foreground-strong: 0 0% 100%; /* #FFFFFF — headings, headline numbers */
     --foreground: 0 0% 98%; /* #FAFAFA — body, labels, running text */
     --muted-foreground: 0 0% 63%; /* #A1A1A1 — labels, meta, table heads (7.9:1 on #0A0A0A) */
-    --faint-foreground: 0 0% 45%; /* #737373 — placeholder + disabled ONLY */
-    --foreground-faint: 0 0% 45%; /* = --faint-foreground; the Tailwind name */
+    --faint-foreground: 0 0% 48%; /* #7A7A7A — placeholder + disabled ONLY (4.7:1) */
+    --foreground-faint: 0 0% 48%; /* = --faint-foreground; the Tailwind name */
     --foreground-secondary: 0 0% 72%; /* #B8B8B8 — body on cards, descriptions */
 
     /* #FFFFFF, and a FILL. It sits one step past --foreground because a
@@ -725,7 +725,7 @@ label,
     --accent-foreground: 0 0% 100%;
     --ring: 212 100% 62%;
     --success: 142 70% 45%; /* #22C35E — life: running, live, passed */
-    --destructive: 0 72% 51%; /* #DC2828 — fault: failed, blocked, error */
+    --destructive: 0 72% 55%; /* #DF3A3A — fault: failed, blocked, error */
     --destructive-foreground: 0 0% 100%;
     --warning: 38 92% 50%; /* #F59E0B — degraded: stale, modified, attention */
 

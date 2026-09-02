@@ -32,12 +32,12 @@ export function Greeting({
       )}
       data-testid="home-greeting"
     >
-      <h1 className="flex items-center gap-3 font-display text-3xl tracking-tight text-foreground [text-wrap:balance]">
+      <h1 className="flex items-center gap-3 text-2xl font-semibold text-foreground-strong [text-wrap:balance]">
         <GigiMark size={36} />
         <span>{text}</span>
       </h1>
       {subtitle && !muted && (
-        <p className="mt-2 max-w-md text-sm text-muted-foreground">{subtitle}</p>
+        <p className="mt-2 max-w-md text-base text-muted-foreground">{subtitle}</p>
       )}
     </div>
   );

@@ -69,7 +69,7 @@ export function PermissionMatrix({
                 {p.label}
               </span>
             </div>
-            <span className="pl-5 text-[11px] text-muted-foreground">
+            <span className="pl-5 text-xs text-muted-foreground">
               {p.subline}
             </span>
           </label>

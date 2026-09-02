@@ -193,7 +193,7 @@ function FilterChip({
       onClick={onClick}
       aria-pressed={selected}
       className={cn(
-        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors",
+        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         selected
           ? "border-primary/40 bg-primary/10 text-primary"
@@ -245,7 +245,7 @@ function ArchiveRow({
         <span className="min-w-0 flex-1">
           <span className="block truncate text-xs font-medium text-foreground">{title}</span>
           {preview && (
-            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{preview}</span>
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">{preview}</span>
           )}
         </span>
         <span className="mt-0.5 shrink-0 pr-6 font-mono text-micro tabular-nums text-muted-foreground">

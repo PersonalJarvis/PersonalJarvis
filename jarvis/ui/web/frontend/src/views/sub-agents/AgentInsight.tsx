@@ -273,14 +273,14 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
           {/* Masthead ------------------------------------------------- */}
           <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4 pb-1">
             <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 {agentName}
                 <span className="mx-2 text-muted-foreground/50">·</span>
                 <span className="font-mono normal-case tracking-normal">{missionId.slice(0, 13)}</span>
                 <span className="mx-2 text-muted-foreground/50">·</span>
                 {formatClock(startedMs, locale)}
               </p>
-              <h1 className="mt-2 line-clamp-3 font-display text-[26px] font-semibold leading-[1.15] tracking-tight text-foreground">
+              <h1 className="mt-2 line-clamp-3 font-display text-2xl font-semibold leading-[1.15] tracking-tight text-foreground">
                 {title}
               </h1>
             </div>
@@ -316,18 +316,18 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
           {/* 01 What happened ------------------------------------------ */}
           <Register number={next()} title={t("subagents_view.register_verdict")}>
             <div className="px-5 pb-5 pt-4">
-              <p className={cn("max-w-[68ch] text-[16px] leading-relaxed text-foreground", detail.isPending && "text-muted-foreground")}>
+              <p className={cn("max-w-[68ch] text-lg leading-relaxed text-foreground", detail.isPending && "text-muted-foreground")}>
                 {detail.isPending ? t("subagents_view.insight_loading") : narrative.paragraph}
               </p>
               {narrative.quote && (
                 <blockquote className="mt-4 max-w-[68ch] border-l-2 border-primary/60 pl-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                     {narrative.quote.label}
                   </p>
                   <p
                     className={cn(
                       "mt-1 whitespace-pre-wrap break-words text-foreground/90",
-                      narrative.quote.mono ? "font-mono text-[12.5px] leading-relaxed" : "text-[14.5px] leading-relaxed",
+                      narrative.quote.mono ? "font-mono text-xs leading-relaxed" : "text-base leading-relaxed",
                     )}
                   >
                     {narrative.quote.text}
@@ -349,9 +349,9 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
                   <dt className="text-micro font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                     {f.label}
                   </dt>
-                  <dd className="mt-1 font-display text-[15px] font-semibold tabular-nums text-foreground">
+                  <dd className="mt-1 font-display text-lg font-semibold tabular-nums text-foreground">
                     {f.value}
-                    {f.hint && <span className="ml-1.5 font-mono text-[11px] font-normal text-muted-foreground">{f.hint}</span>}
+                    {f.hint && <span className="ml-1.5 font-mono text-xs font-normal text-muted-foreground">{f.hint}</span>}
                   </dd>
                 </div>
               ))}
@@ -437,8 +437,8 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
           {/* 05 Details ------------------------------------------------- */}
           <details className="group overflow-hidden rounded-xl border border-border bg-card/60 backdrop-blur-sm">
             <summary className="flex cursor-pointer select-none items-baseline gap-3 px-5 py-3 hover:bg-secondary/40">
-              <span className="font-mono text-[11px] text-primary">{next()}</span>
-              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <span className="font-mono text-xs text-primary">{next()}</span>
+              <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 {t("subagents_view.details_title")}
               </span>
               <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90" />
@@ -504,9 +504,9 @@ function Register({
   return (
     <section className="overflow-hidden rounded-xl border border-border bg-card/60 backdrop-blur-sm">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/70 px-5 py-3">
-        <span className="font-mono text-[11px] text-primary">{number}</span>
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{title}</h2>
-        {meta && <span className="text-[11px] text-muted-foreground/70">{meta}</span>}
+        <span className="font-mono text-xs text-primary">{number}</span>
+        <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{title}</h2>
+        {meta && <span className="text-xs text-muted-foreground/70">{meta}</span>}
         {actions && <div className="ml-auto">{actions}</div>}
       </header>
       {children}
@@ -518,7 +518,7 @@ function Stamp({ tone, pulse, children }: { tone: StoryTone; pulse?: boolean; ch
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-2 rounded-md border-2 px-3.5 py-1.5 font-display text-[13px] font-bold uppercase tracking-[0.16em]",
+        "inline-flex items-center gap-2 rounded-md border-2 px-3.5 py-1.5 font-display text-sm font-bold uppercase tracking-[0.16em]",
         STAMP[tone],
       )}
     >
@@ -543,7 +543,7 @@ function Report({ text, slug, t }: { text: string; slug: string; t: T }) {
           path="report.md"
           files={[]}
           text={text}
-          className="prose-sm max-w-[72ch] prose-headings:font-display prose-h3:text-[15px]"
+          className="prose-sm max-w-[72ch] prose-headings:font-display prose-h3:text-lg"
           testId="agent-report"
         />
       </div>
@@ -665,7 +665,7 @@ function Line({
 }) {
   return (
     <li className="grid grid-cols-[60px_76px_minmax(0,1fr)] items-baseline gap-x-4 px-5 py-3">
-      <span className="font-mono text-[11px] tabular-nums text-muted-foreground/70">{offset}</span>
+      <span className="font-mono text-xs tabular-nums text-muted-foreground/70">{offset}</span>
       <span className={cn("text-micro font-semibold uppercase tracking-[0.16em]", TONE_TEXT[tone])}>{kind}</span>
       <div className="min-w-0">{children}</div>
     </li>
@@ -693,8 +693,8 @@ function EntryRow({
     return (
       <Line offset={offset} kind={kind} tone="neutral">
         <div className="border-l-2 border-primary/50 pl-3">
-          <span className="text-[11px] font-medium text-muted-foreground">{agentName}</span>
-          <ClampedBlock text={text} t={t} lines={3} className="mt-0.5 max-w-[72ch] text-[14.5px] leading-relaxed text-foreground/90" />
+          <span className="text-xs font-medium text-muted-foreground">{agentName}</span>
+          <ClampedBlock text={text} t={t} lines={3} className="mt-0.5 max-w-[72ch] text-base leading-relaxed text-foreground/90" />
         </div>
       </Line>
     );
@@ -709,7 +709,7 @@ function EntryRow({
   const terminal = ["approved", "failed", "cancelled", "timed_out", "killed"].includes(entry.kind);
   return (
     <Line offset={offset} kind={kind} tone={entry.tone}>
-      <div className={cn("text-[14px]", terminal ? "font-semibold text-foreground" : "font-medium text-foreground/90")}>
+      <div className={cn("text-base", terminal ? "font-semibold text-foreground" : "font-medium text-foreground/90")}>
         {entryTitle(entry, agentName, t)}
       </div>
       {text && (
@@ -730,14 +730,14 @@ function VerdictBody({ verdict, t }: { verdict: CriticVerdictReady; t: T }) {
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2.5">
-        <span className={cn("rounded border px-1.5 py-0.5 font-display text-[11px] font-bold uppercase tracking-[0.14em]", STAMP[tone])}>
+        <span className={cn("rounded border px-1.5 py-0.5 font-display text-xs font-bold uppercase tracking-[0.14em]", STAMP[tone])}>
           {t(`subagents_view.verdict.${verdict.verdict}`)}
         </span>
-        <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+        <span className="font-mono text-xs tabular-nums text-muted-foreground">
           {fill(t("subagents_view.confidence"), { pct: Math.round(verdict.confidence * 100) })}
         </span>
       </div>
-      <p className="mt-1.5 max-w-[72ch] text-[14px] leading-relaxed text-foreground/90">{verdict.summary}</p>
+      <p className="mt-1.5 max-w-[72ch] text-base leading-relaxed text-foreground/90">{verdict.summary}</p>
       {axes.length > 0 && (
         <ul className="mt-2.5 divide-y divide-border/50 rounded-lg border border-border/70">
           {axes.map(([name, axis]) => {
@@ -749,8 +749,8 @@ function VerdictBody({ verdict, t }: { verdict: CriticVerdictReady; t: T }) {
                 <span className={cn("pt-0.5", passed === true ? TONE_TEXT.ok : passed === false ? TONE_TEXT.error : "text-muted-foreground")}>
                   {passed === true ? <CheckCircle2 className="h-3.5 w-3.5" /> : passed === false ? <XCircle className="h-3.5 w-3.5" /> : <CircleAlert className="h-3.5 w-3.5" />}
                 </span>
-                <span className="text-[13px] font-medium text-foreground">{label}</span>
-                <span className="min-w-0 break-words font-mono text-[11.5px] leading-relaxed text-muted-foreground">
+                <span className="text-sm font-medium text-foreground">{label}</span>
+                <span className="min-w-0 break-words font-mono text-xs leading-relaxed text-muted-foreground">
                   {evidence.length > 0 ? evidence.join("  ·  ") : axis.notes ? String(axis.notes) : "—"}
                 </span>
               </li>
@@ -773,7 +773,7 @@ function ActionsRow({ block, startedMs, t }: { block: ActionsBlock; startedMs: n
         aria-expanded={open}
         className="group/actions flex w-full flex-wrap items-center gap-x-3 gap-y-1.5 text-left"
       >
-        <span className="text-[14px] font-medium text-foreground/90">
+        <span className="text-base font-medium text-foreground/90">
           {fill(t(block.entries.length === 1 ? "subagents_view.actions_one" : "subagents_view.actions_many"), {
             n: block.entries.length,
             span: formatDuration(span),
@@ -781,7 +781,7 @@ function ActionsRow({ block, startedMs, t }: { block: ActionsBlock; startedMs: n
         </span>
         <span className="flex flex-wrap gap-1.5">
           {block.counts.map((c) => (
-            <span key={c.tool} className="inline-flex h-5 items-center gap-1 rounded border border-border/70 px-1.5 font-mono text-[11px] text-foreground/80">
+            <span key={c.tool} className="inline-flex h-5 items-center gap-1 rounded border border-border/70 px-1.5 font-mono text-xs text-foreground/80">
               {c.tool}
               {c.n > 1 && <span className="text-muted-foreground">×{c.n}</span>}
             </span>
@@ -792,7 +792,7 @@ function ActionsRow({ block, startedMs, t }: { block: ActionsBlock; startedMs: n
       {open && (
         <ol className="mt-2.5 divide-y divide-border/50 rounded-lg border border-border/70">
           {block.entries.map((e) => (
-            <li key={e.id} className="grid grid-cols-[52px_72px_minmax(0,1fr)] gap-x-3 px-3 py-1.5 font-mono text-[11.5px]">
+            <li key={e.id} className="grid grid-cols-[52px_72px_minmax(0,1fr)] gap-x-3 px-3 py-1.5 font-mono text-xs">
               <span className="tabular-nums text-muted-foreground/60">{formatOffset(e.ts_ms - startedMs)}</span>
               <span className="truncate text-muted-foreground">{e.tool}</span>
               <span className="min-w-0 break-all text-foreground/85">{e.text}</span>
@@ -865,7 +865,7 @@ function TranscriptFold({
               const body = step.error ?? step.output ?? null;
               return (
                 <li key={step.step_id} className="grid grid-cols-[60px_76px_minmax(0,1fr)_100px] items-baseline gap-x-4 px-5 py-2.5">
-                  <span className="font-mono text-[11px] tabular-nums text-muted-foreground/60">{pad2(idx + 1)}</span>
+                  <span className="font-mono text-xs tabular-nums text-muted-foreground/60">{pad2(idx + 1)}</span>
                   <span className={cn("text-micro font-semibold uppercase tracking-[0.16em]", kind === "reasoning" ? "text-primary" : "text-muted-foreground")}>
                     {t(`subagents_view.kind.${kind === "reasoning" ? "thought" : kind === "spawn" ? "worker" : "ran"}`)}
                   </span>
@@ -874,7 +874,7 @@ function TranscriptFold({
                       <ClampedBlock text={step.output ?? step.name} t={t} lines={3} className="max-w-[72ch] text-sm leading-relaxed text-foreground/85" />
                     ) : (
                       <>
-                        <div className="font-mono text-[12.5px] text-foreground">
+                        <div className="font-mono text-xs text-foreground">
                           {step.tool_name && <span className="mr-2 text-muted-foreground">{step.tool_name}</span>}
                           <span className="break-all">{step.name}</span>
                         </div>
@@ -883,7 +883,7 @@ function TranscriptFold({
                             text={body}
                             t={t}
                             lines={2}
-                            className={cn("mt-0.5 whitespace-pre-wrap font-mono text-[11.5px]", step.error ? "text-destructive" : "text-muted-foreground")}
+                            className={cn("mt-0.5 whitespace-pre-wrap font-mono text-xs", step.error ? "text-destructive" : "text-muted-foreground")}
                           />
                         )}
                       </>
@@ -969,14 +969,14 @@ function FilesLedger({
                 {r.glyph}
               </span>
               <span className="min-w-0">
-                <span className="block truncate font-mono text-[12.5px] text-foreground" title={r.path}>
+                <span className="block truncate font-mono text-xs text-foreground" title={r.path}>
                   {r.path}
                 </span>
                 {r.from && (
-                  <span className="block truncate font-mono text-[11px] text-muted-foreground">← {r.from}</span>
+                  <span className="block truncate font-mono text-xs text-muted-foreground">← {r.from}</span>
                 )}
               </span>
-              <span className="font-mono text-[11.5px] tabular-nums">
+              <span className="font-mono text-xs tabular-nums">
                 {r.binary ? (
                   <span className="text-muted-foreground">{t("subagents_view.change.binary")}</span>
                 ) : r.add != null && r.del != null ? (
@@ -987,7 +987,7 @@ function FilesLedger({
                   </>
                 ) : null}
               </span>
-              <span className="w-14 text-right font-mono text-[11.5px] tabular-nums text-muted-foreground">
+              <span className="w-14 text-right font-mono text-xs tabular-nums text-muted-foreground">
                 {r.size != null ? formatBytes(r.size) : ""}
               </span>
               {onOpen ? <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/50" /> : <span />}
@@ -1011,12 +1011,12 @@ function LiveToolCall({ call, t }: { call: ToolCallEntry; t: T }) {
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_64px_96px] items-center gap-3 px-5 py-2.5 text-sm">
       <div className="min-w-0">
-        <div className="truncate font-mono text-[12.5px] text-foreground">{call.tool_name || t("subagents_view.tool_unnamed")}</div>
+        <div className="truncate font-mono text-xs text-foreground">{call.tool_name || t("subagents_view.tool_unnamed")}</div>
         <div className="truncate text-xs text-muted-foreground" title={call.args_preview}>
           {call.error || call.args_preview || call.output_preview || "—"}
         </div>
       </div>
-      <div className="text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+      <div className="text-right font-mono text-xs tabular-nums text-muted-foreground">
         {call.duration_ms != null ? formatDuration(call.duration_ms) : "—"}
       </div>
       <div className="flex justify-end">

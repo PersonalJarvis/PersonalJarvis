@@ -89,7 +89,7 @@ function Segmented<T extends string>({
             onClick={() => onChange(o.id)}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-md font-medium transition-colors",
-              size === "sm" ? "px-2 py-1 text-[11px]" : "px-3 py-1.5 text-xs",
+              size === "sm" ? "px-2 py-1 text-xs" : "px-3 py-1.5 text-xs",
               active
                 ? "bg-primary/15 text-primary"
                 : "text-muted-foreground hover:text-foreground",
@@ -107,7 +107,7 @@ function Segmented<T extends string>({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block space-y-1.5">
-      <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </span>
       {children}
@@ -259,7 +259,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
             </div>
             <div>
               <h2 className="text-sm font-semibold">{t("tasks_view.create.title")}</h2>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {t("tasks_view.create.subtitle")}
               </p>
             </div>
@@ -289,7 +289,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
             {/* Trigger mode: a time-based schedule vs. an event-driven
                 "When-Then" rule (e.g. when a mission finishes → do X). */}
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 {t("tasks_view.create.trigger_mode_label")}
               </span>
               <Segmented
@@ -306,7 +306,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
             {triggerMode === "event" && (
               <div className="space-y-4 rounded-xl border border-border/70 bg-background/30 p-4">
                 <div className="space-y-2">
-                  <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     {t("tasks_view.create.when_label")}
                   </span>
                   <div className="flex flex-wrap gap-1.5">
@@ -324,7 +324,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
                 </div>
 
                 <div className="space-y-2">
-                  <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     {t("tasks_view.create.then_label")}
                   </span>
                   <Segmented
@@ -366,7 +366,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
                     maxLength={2048}
                   />
                 </Field>
-                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                <p className="text-xs leading-relaxed text-muted-foreground">
                   {t("tasks_view.create.when_then_hint")}
                 </p>
               </div>
@@ -376,7 +376,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
             {triggerMode === "schedule" && (
             <div className="space-y-3 rounded-xl border border-border/70 bg-background/30 p-4">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                   {t("tasks_view.create.schedule_label")}
                 </span>
                 <Segmented
@@ -517,7 +517,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
             <div className="space-y-2.5 rounded-xl border border-border/70 bg-background/30 p-4">
               <div className="flex items-center gap-2">
                 <Plug className="h-3.5 w-3.5 text-primary" />
-                <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                   {t("tasks_view.create.plugins_label")}
                 </span>
               </div>
@@ -564,7 +564,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
                 </div>
               )}
               {hasElevatedGrant && (
-                <p className="flex items-start gap-1.5 rounded-lg border border-foreground/30 bg-foreground/5 px-3 py-2 text-[11px] leading-relaxed text-foreground/90">
+                <p className="flex items-start gap-1.5 rounded-lg border border-foreground/30 bg-foreground/5 px-3 py-2 text-xs leading-relaxed text-foreground/90">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/80" />
                   {t("tasks_view.create.unattended_hint")}
                 </p>
@@ -573,7 +573,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
 
             {/* Model tier */}
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 {t("tasks_view.create.model_label")}
               </span>
               <Segmented

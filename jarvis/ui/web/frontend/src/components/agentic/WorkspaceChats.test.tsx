@@ -284,9 +284,9 @@ describe("the sidebar's chat face", () => {
       "needs you",
       "exited",
     ]);
-    // A finished job glows; a dead process does not.
-    expect(badges[1].querySelector("[class*='shadow']")).not.toBeNull();
-    expect(badges[4].querySelector("[class*='shadow']")).toBeNull();
+    // A finished job wears a halo ring; a dead process does not.
+    expect(badges[1].querySelector("[class*='drop-shadow'], [class*='ring-']")).not.toBeNull();
+    expect(badges[4].querySelector("[class*='drop-shadow'], [class*='ring-']")).toBeNull();
   });
 
   it("opens an options menu on right-click of a session", () => {

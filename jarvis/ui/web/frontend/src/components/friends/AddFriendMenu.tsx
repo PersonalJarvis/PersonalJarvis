@@ -203,7 +203,7 @@ function ModeButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center gap-1 rounded-md border px-2 py-2 text-[11px] transition-colors",
+        "flex flex-col items-center gap-1 rounded-md border px-2 py-2 text-xs transition-colors",
         active
           ? "border-primary/40 bg-primary/10 text-primary"
           : "border-transparent text-muted-foreground hover:border-border/60 hover:text-foreground"
@@ -224,7 +224,7 @@ function FieldLabel({
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+      <span className="text-xs uppercase tracking-wider text-muted-foreground">
         {label}
       </span>
       {children}

@@ -252,7 +252,7 @@ export function SkillCreateDialog({
               </div>
             )}
 
-            <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
               <div className="h-px flex-1 bg-border" />
               {t("skill_create_dialog.or_review_edit")}
               <div className="h-px flex-1 bg-border" />
