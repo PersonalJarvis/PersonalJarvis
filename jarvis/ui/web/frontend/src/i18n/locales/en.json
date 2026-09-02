@@ -5201,6 +5201,13 @@
       "idle": "Wandering"
     },
     "card": {
+      "brain_shared_hint": "The same brain the chat and the voice stage use right now; change it in the chat's model pill.",
+      "instructions_file": "Standing instructions ({0})",
+      "instructions_empty": "No standing instructions yet — the template is a click away.",
+      "instructions_hint": "Read before every turn, typed or spoken. Saved on the next turn, no restart.",
+      "edit": "Edit",
+      "save": "Save",
+      "saving": "Saving…",
       "default_brain": "Jarvis' default brain",
       "no_description": "No standing instructions yet.",
       "focus": "Reaches for first",

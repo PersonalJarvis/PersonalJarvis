@@ -5201,6 +5201,13 @@
       "idle": "Unterwegs"
     },
     "card": {
+      "brain_shared_hint": "Dasselbe Gehirn, das Chat und Sprache gerade nutzen; ändern kannst du es an der Modell-Pille im Chat.",
+      "instructions_file": "Ständige Anweisungen ({0})",
+      "instructions_empty": "Noch keine ständigen Anweisungen — die Vorlage ist einen Klick entfernt.",
+      "instructions_hint": "Wird vor jeder Antwort gelesen, getippt wie gesprochen. Gilt ab der nächsten Antwort, kein Neustart.",
+      "edit": "Bearbeiten",
+      "save": "Speichern",
+      "saving": "Speichert…",
       "default_brain": "Standardgehirn von Jarvis",
       "no_description": "Noch keine ständigen Anweisungen.",
       "focus": "Greift zuerst zu",

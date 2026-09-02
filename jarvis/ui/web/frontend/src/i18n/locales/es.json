@@ -5201,6 +5201,13 @@
       "idle": "Paseando"
     },
     "card": {
+      "brain_shared_hint": "El mismo cerebro que usan ahora el chat y la voz; cámbialo en la píldora de modelo del chat.",
+      "instructions_file": "Instrucciones permanentes ({0})",
+      "instructions_empty": "Aún no hay instrucciones permanentes; la plantilla está a un clic.",
+      "instructions_hint": "Se lee antes de cada respuesta, escrita o hablada. Vale desde la siguiente respuesta, sin reiniciar.",
+      "edit": "Editar",
+      "save": "Guardar",
+      "saving": "Guardando…",
       "default_brain": "Cerebro predeterminado de Jarvis",
       "no_description": "Aún no hay instrucciones permanentes.",
       "focus": "Usa primero",

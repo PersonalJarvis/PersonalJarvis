@@ -137,7 +137,7 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
             dpr={1}
             frameloop={frameloop}
             gl={{ antialias: false, alpha: true, powerPreference: "low-power" }}
-            camera={{ fov: 26, near: 0.1, far: 40, position: [0, heightM * 0.55, heightM * 2.4] }}
+            camera={{ fov: 26, near: 0.1, far: 40, position: [0, heightM * 0.55, heightM * 2.5] }}
             onCreated={({ gl }) => {
               gl.setClearColor(0x000000, 0);
             }}
@@ -162,7 +162,7 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
       ) : (
         <PaletteTile palette={palette} label={t("society.figure.no_figure")} />
       )}
-      <p className="pointer-events-none absolute inset-x-0 bottom-2 text-center text-[11px] text-[#5b5245]/80">
+      <p className="pointer-events-none absolute inset-x-0 bottom-2 text-center text-xs text-[#5b5245]/80">
         {reduced ? t("society.figure.reduced_motion") : t("society.figure.drag_hint")}
       </p>
     </div>
@@ -235,7 +235,7 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
     // 2.4 heights of distance: larger than the 2.6 it opened with (maintainer:
     // "about a fifth"), with the crown and the hem still inside the frame.
     const mid = heightM * 0.5;
-    const distance = (heightM * 2.4) / o.zoom;
+    const distance = (heightM * 2.5) / o.zoom;
     camera.position.set(0, mid + Math.sin(o.pitch) * distance, Math.cos(o.pitch) * distance);
     camera.lookAt(0, mid, 0);
     camera.updateProjectionMatrix();

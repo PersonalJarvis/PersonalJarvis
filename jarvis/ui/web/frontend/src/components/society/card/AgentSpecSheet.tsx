@@ -18,6 +18,7 @@ import { useT } from "@/i18n";
 
 import { CapabilityChip } from "../CapabilityChip";
 import { useSetAgentPaused, useSocietyCapabilities, type Capability, type SocietyAgent } from "../data";
+import { LeadBrain, LeadInstructions } from "./LeadSections";
 
 function formatDate(ms: number | null, fallback: string): string {
   if (ms === null) return fallback;
@@ -65,12 +66,15 @@ export function AgentSpecSheet({ agent }: { agent: SocietyAgent }) {
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-5 p-5">
           <section>
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {t("society.card.brain")}
             </h3>
+            {agent.tier === "lead" ? (
+              <LeadBrain />
+            ) : (
             <div className="flex flex-wrap items-center gap-2">
               {agent.provider ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-[12px] text-foreground">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs text-foreground">
                   <ProviderLogo providerId={agent.provider} label={agent.providerLabel || agent.provider} size="sm" />
                   {agent.providerLabel || agent.provider}
                 </span>
@@ -78,28 +82,35 @@ export function AgentSpecSheet({ agent }: { agent: SocietyAgent }) {
                 <Badge variant="outline">{t("society.card.default_brain")}</Badge>
               )}
               {agent.model ? (
-                <Badge variant="secondary" className="font-mono text-[11px]">
+                <Badge variant="secondary" className="font-mono text-xs">
                   {agent.model}
                 </Badge>
               ) : null}
               {agent.effort ? <Badge variant="outline">{agent.effort}</Badge> : null}
               <Badge variant="outline">{t(`society.tier.${agent.tier}`)}</Badge>
             </div>
-          </section>
-
-          <section>
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {t("society.card.description")}
-            </h3>
-            {agent.description ? (
-              <p className="whitespace-pre-line text-[13px] leading-relaxed text-foreground">{agent.description}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">{t("society.card.no_description")}</p>
             )}
           </section>
 
           <section>
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {agent.tier === "lead" ? (
+              <LeadInstructions />
+            ) : (
+              <>
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t("society.card.description")}
+                </h3>
+                {agent.description ? (
+                  <p className="whitespace-pre-line text-sm leading-relaxed text-foreground">{agent.description}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{t("society.card.no_description")}</p>
+                )}
+              </>
+            )}
+          </section>
+
+          <section>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {t("society.card.focus")}
             </h3>
             {agent.focus.length === 0 ? (
@@ -114,7 +125,7 @@ export function AgentSpecSheet({ agent }: { agent: SocietyAgent }) {
           </section>
 
           <section>
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {t("society.card.tools")}
             </h3>
             <p className="mb-2 text-xs text-muted-foreground">
@@ -129,7 +140,7 @@ export function AgentSpecSheet({ agent }: { agent: SocietyAgent }) {
             ) : null}
             {agent.denies.length > 0 ? (
               <div className="mt-2">
-                <p className="mb-1 text-[11px] text-muted-foreground">{t("society.card.denied")}</p>
+                <p className="mb-1 text-xs text-muted-foreground">{t("society.card.denied")}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {agent.denies.map((id) => (
                     <CapabilityChip key={id} id={id} capability={byId.get(id)} className="line-through opacity-60" />
@@ -148,7 +159,7 @@ export function AgentSpecSheet({ agent }: { agent: SocietyAgent }) {
 
           {agent.approvalRules.requireApproval.length > 0 || agent.approvalRules.alwaysAllow.length > 0 ? (
             <section>
-              <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {t("society.card.approval_rules")}
               </h3>
               {agent.approvalRules.requireApproval.length > 0 ? (
@@ -161,7 +172,7 @@ export function AgentSpecSheet({ agent }: { agent: SocietyAgent }) {
           ) : null}
 
           <section>
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {t("society.card.routines")}
             </h3>
             {agent.routines.length === 0 ? (
@@ -171,7 +182,7 @@ export function AgentSpecSheet({ agent }: { agent: SocietyAgent }) {
                 {agent.routines.map((routine) => {
                   const due = relativeUntil(routine.nextFire, t);
                   return (
-                    <li key={routine.id} className="flex items-baseline justify-between gap-3 text-[13px]">
+                    <li key={routine.id} className="flex items-baseline justify-between gap-3 text-sm">
                       <span className="truncate text-foreground">{routine.label}</span>
                       <span className="shrink-0 text-xs text-muted-foreground">
                         {routine.schedule}
@@ -212,7 +223,7 @@ export function AgentSpecSheet({ agent }: { agent: SocietyAgent }) {
 function RuleRow({ label, ids, byId }: { label: string; ids: string[]; byId: Map<string, Capability> }) {
   return (
     <div className="mb-2">
-      <p className="mb-1 text-[11px] text-muted-foreground">{label}</p>
+      <p className="mb-1 text-xs text-muted-foreground">{label}</p>
       <div className="flex flex-wrap gap-1.5">
         {ids.map((id) => (
           <CapabilityChip key={id} id={id} capability={byId.get(id.split(":").slice(0, 2).join(":"))} />
@@ -225,8 +236,8 @@ function RuleRow({ label, ids, byId }: { label: string; ids: string[]; byId: Map
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="truncate text-[13px] font-medium text-foreground">{value}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="truncate text-sm font-medium text-foreground">{value}</div>
     </div>
   );
 }
