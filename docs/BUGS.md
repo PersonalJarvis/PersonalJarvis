@@ -14907,7 +14907,13 @@ crash). Recurring tasks re-arm on their wall-clock grid
 (`next_every_due_ns`). `BrainPromptStep` grew `tools` and `model_tier`, and
 the workflow runner prefers `brain.run_task(...)` — an isolated turn with an
 empty history and the step's allowlist — over the callable chat path.
-`run_task` now passes `turn_context`. The seed Morning Briefing is v2: a
+`run_task` now passes `turn_context`, and its provider order is the Tool
+Model chain (`_task_provider_chain`): the provider the user set under API
+Keys for tool calls leads, then every credential-ready, tool-capable
+provider of another family, capped at four — it used to anchor on the
+chat's active provider with exactly one retry, so OpenRouter 402 + Gemini
+429 killed the run while a ready Vertex Tool Model sat unused. The seed
+Morning Briefing is v2: a
 read-only allowlist (`google_calendar`, `gmail`, `wiki-recall`,
 `search_web`) and a prompt that grounds every sentence in tool output, greets
 by the actual time of day and skips a disconnected area in one clause;

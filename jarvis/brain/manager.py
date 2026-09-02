@@ -13149,30 +13149,6 @@ class BrainManager:
         cache[name] = tool
         return tool
 
-    def _task_fallback_provider(self) -> str | None:
-        """The one provider a scheduled task retries on when the active brain
-        rejects the turn with a credential/credit/rate error.
-
-        A different credential FAMILY than the active provider (AP-22: a
-        same-family fallback is a brick), registered, not dead-listed this
-        session, with a fast model and a portable credential on this box.
-        The persistent active provider is never touched (user-only lock).
-        """
-        active = self._active_name
-        active_family = self._tool_model_family(active)
-        available = set(self._registry.available())
-        for name in _TASK_FALLBACK_ORDER:
-            if name == active or name not in available or name in self._dead_providers:
-                continue
-            if self._tool_model_family(name) == active_family:
-                continue
-            if not self._fast_model(name):
-                continue
-            if not self._tool_model_credential_ready(name):
-                continue
-            return name
-        return None
-
     async def run_task(
         self,
         *,
@@ -13191,13 +13167,13 @@ class BrainManager:
         actions still hit the approval gate (which, with no human present,
         means they block until the unattended-approval wave wires Option B).
 
-        Provider fallback (2026-08-24): when the active provider rejects the
-        turn with a credential / credit / rate-limit error (401/402/403/429
-        — the same classes the chat path dead-lists or cools down), the SAME
-        turn is retried exactly once on the next provider of a different
-        credential family (:meth:`_task_fallback_provider`). Any other error,
-        or a second failure, propagates so the runner records it in
-        ``last_error``. The persistent active provider is never switched.
+        Provider order (BUG-212): the Tool Model leads, then every other
+        credential-ready, tool-capable provider of a different family — see
+        :meth:`_task_provider_chain`. A credential / credit / rate-limit
+        error (401/402/403/429 — the same classes the chat path dead-lists
+        or cools down) moves the SAME turn on to the next candidate; any
+        other error propagates so the runner records it in ``last_error``.
+        The persistent active provider is never switched.
 
         Returns the final assistant text.
         """
@@ -13213,16 +13189,10 @@ class BrainManager:
         except Exception:  # noqa: BLE001 — the context block is a nicety
             log.debug("run_task: turn context skipped", exc_info=True)
             turn_context = ""
-        attempts: list[str] = [self._active_name]
+        attempts = self._task_provider_chain(intent)
         failures: list[str] = []
-        while attempts:
-            name = attempts.pop(0)
-            if intent == "deep":
-                model = self._deep_model(name) or self._fast_model(name)
-            else:
-                # "fast" and "auto" both resolve to the fast model — the
-                # cheapest correct default for an unattended background turn.
-                model = self._fast_model(name)
+        original: Exception | None = None
+        for index, (name, model) in enumerate(attempts):
             try:
                 brain = self._get_brain(name, model)
                 dispatcher = self._build_dispatcher(
@@ -13241,22 +13211,59 @@ class BrainManager:
                 kind = _classify_provider_error(str(exc), default="call_fail")
                 if kind not in _TASK_FALLBACK_KINDS:
                     raise
+                original = original or exc
                 failures.append(f"{name}: {_short_provider_error(exc)}")
-                if failures and len(failures) == 1:
-                    fallback = self._task_fallback_provider()
-                    if fallback is not None:
-                        log.warning(
-                            "run_task: %s rejected the turn (%s) — retrying once on %s",
-                            name, kind, fallback,
-                        )
-                        attempts.append(fallback)
-                        continue
+                remaining = attempts[index + 1:]
+                if remaining:
                     log.warning(
-                        "run_task: %s rejected the turn (%s) and no cross-family "
-                        "fallback provider is usable", name, kind,
+                        "run_task: %s rejected the turn (%s) — trying %s next",
+                        name, kind, remaining[0][0],
                     )
-                    raise
+                    continue
+                log.warning(
+                    "run_task: %s rejected the turn (%s) and no further "
+                    "credential-ready tool-capable provider is usable", name, kind,
+                )
+        if len(failures) == 1 and original is not None:
+            raise original
         raise RuntimeError("all brain providers failed: " + "; ".join(failures))
+
+    def _task_provider_chain(self, intent: str) -> list[tuple[str, str | None]]:
+        """The providers a scheduled turn tries, in order.
+
+        The Tool Model leads (the provider and key the user set for tool
+        calls — ``[brain.tool_model]``, the "API Keys" section), then every
+        other credential-ready, tool-capable provider of a different family
+        (:meth:`_hoist_tool_model` over the automatic chain). The chat's
+        active provider is just one candidate in that chain, never the
+        anchor: it used to be the only one, and with OpenRouter at 0 credits
+        every automation died at its action step while a ready Vertex Tool
+        Model sat unused (BUG-212). Without any ready candidate the active
+        provider is tried alone so the caller sees its real error.
+
+        ``deep`` turns swap in the provider's deep model; ``fast``/``auto``
+        run on the Tool Model's own model — the cheapest correct default for
+        an unattended background turn. Capped so an unattended run cannot
+        walk a long chain for minutes.
+        """
+        try:
+            ready = self._hoist_tool_model(self._tool_model_base_chain())
+        except Exception:  # noqa: BLE001 — a broken probe must not kill the task
+            log.debug("run_task: tool-model chain unavailable", exc_info=True)
+            ready = []
+        chain: list[tuple[str, str | None]] = []
+        for name, model in ready[:_TASK_MAX_ATTEMPTS]:
+            if intent == "deep":
+                model = self._deep_model(name) or model
+            chain.append((name, model))
+        if chain:
+            return chain
+        name = self._active_name
+        model = (
+            (self._deep_model(name) or self._fast_model(name))
+            if intent == "deep" else self._fast_model(name)
+        )
+        return [(name, model)]
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -13277,18 +13284,14 @@ class BrainManager:
 #: spawn tool (AP-5/AP-14).
 _TASK_ONLY_TOOLS: frozenset[str] = frozenset({"remember"})
 
-#: Error classes that make a scheduled task retry once on another provider
+#: Error classes that make a scheduled task move on to the next provider
 #: family: the dead-list kinds (missing/bad key, 402 credits) plus a rate limit.
 _TASK_FALLBACK_KINDS: frozenset[str] = frozenset(
     {"missing_key", "account_blocked", "bad_key", "rate_limit"}
 )
 
-#: Cross-provider order for the scheduled-task fallback (mirrors the chat
-#: path's ``cross_order``; family-filtered at runtime).
-_TASK_FALLBACK_ORDER: tuple[str, ...] = (
-    "gemini", "claude-api", "openai", "openrouter", "grok", "nvidia",
-)
-
+#: Most providers one scheduled turn walks before it gives up (BUG-212).
+_TASK_MAX_ATTEMPTS: int = 4
 
 def _scheduled_turn_context(turn_context: str, tools: dict[str, Any]) -> str:
     """The per-turn context of an unattended scheduled turn.

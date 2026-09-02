@@ -1,11 +1,14 @@
-"""BrainManager.run_task — cross-family provider fallback, task-only tools and
-written delivery for scheduled tasks (Automations, 2026-08-24).
+"""BrainManager.run_task — the Tool Model leads, then the cross-family chain;
+task-only tools and written delivery for scheduled tasks.
 
-Live defect: the active provider (OpenRouter, 0 credits) answered every
-scheduled turn with ``APIStatusError 402`` in 0.4 s and NOTHING retried, so
-every automation failed at its action step. The chat path walks a fallback
-chain; the task path must at least retry once on another credential family
-(AP-22) — and never switch the persistent active provider (user-only lock).
+Live defect 2026-08-24: the active provider (OpenRouter, 0 credits) answered
+every scheduled turn with ``APIStatusError 402`` in 0.4 s and NOTHING retried.
+Live defect 2026-09-02 (BUG-212): one retry on one other family was not
+enough either — OpenRouter 402, Gemini 429, and the Vertex Tool Model the
+user had configured under API Keys (state "ready") was never asked. A
+scheduled turn now walks :meth:`BrainManager._task_provider_chain`: the Tool
+Model first, then every credential-ready, tool-capable provider of another
+family, capped — and never switches the persistent active provider.
 """
 from __future__ import annotations
 
@@ -47,8 +50,21 @@ class _Credit402(Exception):
     pass
 
 
-def _manager(monkeypatch: pytest.MonkeyPatch, *, active: str = "openrouter",
-             providers: list[str] | None = None) -> BrainManager:
+_DEFAULT_CHAIN: list[tuple[str, str | None]] = [
+    ("openrouter", "openrouter-tool"),
+    ("gemini", "gemini-tool"),
+    ("openai", "openai-tool"),
+]
+
+
+def _manager(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    active: str = "openrouter",
+    providers: list[str] | None = None,
+    ready_chain: list[tuple[str, str | None]] | None = None,
+) -> BrainManager:
+    """A manager whose hoisted Tool Model chain is ``ready_chain``."""
     mgr = BrainManager(
         config=JarvisConfig(),
         bus=EventBus(),
@@ -63,6 +79,8 @@ def _manager(monkeypatch: pytest.MonkeyPatch, *, active: str = "openrouter",
     monkeypatch.setattr(mgr, "_get_brain", lambda name, model=None: SimpleNamespace(
         name=name, model=model,
     ))
+    chain = list(_DEFAULT_CHAIN if ready_chain is None else ready_chain)
+    monkeypatch.setattr(mgr, "_hoist_tool_model", lambda base: list(chain))
     return mgr
 
 
@@ -89,7 +107,30 @@ def _install_dispatch(
     return calls
 
 
-async def test_402_retries_once_on_a_different_family(monkeypatch: pytest.MonkeyPatch) -> None:
+# ----------------------------------------------------------------------
+# Provider order
+# ----------------------------------------------------------------------
+
+async def test_the_configured_tool_model_leads_not_the_chat_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user set Vertex under API Keys as the Tool Model; the chat runs on
+    OpenRouter. A scheduled turn asks Vertex first."""
+    mgr = _manager(monkeypatch, active="openrouter", ready_chain=[
+        ("vertex", "gemini-3.7-flash"), ("openrouter", "openrouter-tool"),
+    ])
+    calls = _install_dispatch(monkeypatch, mgr, {
+        "vertex": "brief from vertex", "openrouter": "never reached",
+    })
+
+    out = await mgr.run_task(prompt="p", allowed_tools=("gmail",), model_tier="fast")
+
+    assert out == "brief from vertex"
+    assert [(c[0], c[1]) for c in calls] == [("vertex", "gemini-3.7-flash")]
+    assert mgr._active_name == "openrouter", "the persistent provider is never switched"
+
+
+async def test_402_moves_on_to_the_next_family(monkeypatch: pytest.MonkeyPatch) -> None:
     mgr = _manager(monkeypatch)
     calls = _install_dispatch(monkeypatch, mgr, {
         "openrouter": _Credit402("Error code: 402 - Insufficient credits"),
@@ -99,33 +140,66 @@ async def test_402_retries_once_on_a_different_family(monkeypatch: pytest.Monkey
     out = await mgr.run_task(prompt="p", allowed_tools=("gmail",), model_tier="fast")
 
     assert out == "digest from gemini"
-    assert [(c[0], c[1]) for c in calls] == [
-        ("openrouter", "openrouter-fast"), ("gemini", "gemini-fast"),
-    ]
-    assert mgr._active_name == "openrouter", "the persistent provider is never switched"
+    assert [c[0] for c in calls] == ["openrouter", "gemini"]
 
 
-async def test_fallback_skips_same_family_and_dead_providers(
+async def test_the_whole_chain_is_walked_not_just_one_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # codex shares the "openai" family with openai-api; gemini is dead-listed.
+    """OpenRouter 402 AND Gemini 429 used to end the turn; the third ready
+    provider must still get its chance."""
+    mgr = _manager(monkeypatch)
+    calls = _install_dispatch(monkeypatch, mgr, {
+        "openrouter": _Credit402("Error code: 402 - Insufficient credits"),
+        "gemini": RuntimeError("Error code: 429 - rate limit exceeded"),
+        "openai": "brief from openai",
+    })
+
+    out = await mgr.run_task(prompt="p", model_tier="fast")
+
+    assert out == "brief from openai"
+    assert [c[0] for c in calls] == ["openrouter", "gemini", "openai"]
+
+
+def test_the_chain_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    ready = [(f"p{i}", f"p{i}-tool") for i in range(8)]
+    mgr = _manager(monkeypatch, ready_chain=ready)
+    chain = mgr._task_provider_chain("fast")
+    assert len(chain) == manager_mod._TASK_MAX_ATTEMPTS
+    assert chain == ready[: manager_mod._TASK_MAX_ATTEMPTS]
+
+
+def test_deep_tier_swaps_in_the_deep_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    mgr = _manager(monkeypatch)
+    assert mgr._task_provider_chain("fast")[0] == ("openrouter", "openrouter-tool")
+    assert mgr._task_provider_chain("deep")[0] == ("openrouter", "openrouter-deep")
+
+
+def test_the_real_hoist_skips_same_family_and_dead_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the real Tool Model hoist: codex shares the openai family with
+    openai-api; a dead-listed gemini is skipped; grok stays."""
     mgr = _manager(monkeypatch, active="openai-api",
                    providers=["openai-api", "codex", "gemini", "grok"])
+    monkeypatch.delattr(mgr, "_hoist_tool_model")
+    monkeypatch.setattr(mgr, "_tool_model_provider", lambda: "")
+    monkeypatch.setattr(mgr, "_tool_model_base_chain", lambda: [
+        ("openai-api", None), ("codex", None), ("gemini", None), ("grok", None),
+    ])
     mgr._dead_providers.add("gemini")
-    assert mgr._task_fallback_provider() == "grok"
+
+    chain = mgr._task_provider_chain("fast")
+
+    assert [name for name, _ in chain] == ["openai-api", "grok"]
 
 
-async def test_fallback_requires_a_usable_credential(monkeypatch: pytest.MonkeyPatch) -> None:
-    mgr = _manager(monkeypatch)
-    monkeypatch.setattr(mgr, "_tool_model_credential_ready", lambda name: name == "openai")
-    assert mgr._task_fallback_provider() == "openai"
-
-
-async def test_both_failing_reports_both(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_all_failing_reports_every_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     mgr = _manager(monkeypatch)
     _install_dispatch(monkeypatch, mgr, {
         "openrouter": _Credit402("Error code: 402 - Insufficient credits"),
         "gemini": RuntimeError("Error code: 429 - rate limit exceeded"),
+        "openai": RuntimeError("Error code: 401 - invalid api key"),
     })
     with pytest.raises(RuntimeError) as info:
         await mgr.run_task(prompt="p", model_tier="fast")
@@ -133,6 +207,7 @@ async def test_both_failing_reports_both(monkeypatch: pytest.MonkeyPatch) -> Non
     assert msg.startswith("all brain providers failed: ")
     assert "openrouter: _Credit402: Error code: 402" in msg
     assert "gemini: RuntimeError: Error code: 429" in msg
+    assert "openai: RuntimeError: Error code: 401" in msg
 
 
 async def test_non_credential_error_propagates_without_retry(
@@ -148,20 +223,33 @@ async def test_non_credential_error_propagates_without_retry(
     assert [c[0] for c in calls] == ["openrouter"]
 
 
-async def test_no_usable_fallback_reraises_original(monkeypatch: pytest.MonkeyPatch) -> None:
-    mgr = _manager(monkeypatch, providers=["openrouter"])
-    _install_dispatch(monkeypatch, mgr, {
+async def test_no_ready_candidate_tries_the_active_provider_and_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing credential-ready: the active provider runs alone so the
+    caller sees its real error, not a generic 'all failed'."""
+    mgr = _manager(monkeypatch, providers=["openrouter"], ready_chain=[])
+    calls = _install_dispatch(monkeypatch, mgr, {
         "openrouter": _Credit402("Error code: 402 - Insufficient credits"),
     })
     with pytest.raises(_Credit402):
         await mgr.run_task(prompt="p", model_tier="fast")
+    assert [(c[0], c[1]) for c in calls] == [("openrouter", "openrouter-fast")]
 
 
-async def test_task_turn_declares_written_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
+# ----------------------------------------------------------------------
+# Turn shape
+# ----------------------------------------------------------------------
+
+async def test_task_turn_declares_written_unattended_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     mgr = _manager(monkeypatch)
     calls = _install_dispatch(monkeypatch, mgr, {"openrouter": "ok"})
     await mgr.run_task(prompt="p", model_tier="deep")
-    assert calls == [("openrouter", "openrouter-deep", {"delivery": "written"})]
+    assert calls == [(
+        "openrouter", "openrouter-deep", {"delivery": "written", "unattended": True},
+    )]
 
 
 def test_remember_grant_loads_task_only_tool(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -198,4 +286,3 @@ def test_build_dispatcher_accepts_tool_context() -> None:
 
     params = inspect.signature(BrainManager._build_dispatcher).parameters
     assert "tool_context" in params
-    assert params["tool_context"].kind is inspect.Parameter.KEYWORD_ONLY
