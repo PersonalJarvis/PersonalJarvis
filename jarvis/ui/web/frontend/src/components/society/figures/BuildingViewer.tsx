@@ -1,8 +1,10 @@
 /**
- * The building card's stage: one island building, turned by hand, in the
- * island's own look — its GLB restyled to the world's toon ramp, the world's
- * sky behind it, a patch of the island's grass under it — so the card shows
- * the very building that stands on the map, not a render of something else.
+ * The building card's stage: one island building, turned by hand — its GLB
+ * restyled to the world's toon ramp, so the card shows the very building
+ * that stands on the map — presented on the same lobby platform the agent
+ * card uses (LobbyStage, sized to the building's footprint), in the app's
+ * own room. A flat sky and a grass disc read as a stock render (maintainer,
+ * 2026-09-02); a stage in the theme reads as the product.
  *
  * Drag turns it and tilts the camera (never under the ground), the wheel
  * zooms, a double-click resets, and it turns slowly on its own while nobody
@@ -28,8 +30,7 @@ import { cn } from "@/lib/utils";
 
 import { KIT_URLS, restyle, type KitId } from "../world/KitBuilding";
 import { createToonRamp } from "../world/worldMaterials";
-import { SKY, TILE_COLORS } from "../world/worldPalette";
-import { TileKind } from "../world/islandLayout";
+import { LobbyStage } from "./LobbyStage";
 
 /** Every model a card can show: the five kit hubs and the Memory House. */
 export type BuildingModelId = KitId | "memory-house";
@@ -115,9 +116,11 @@ export function BuildingViewer({ model, className }: BuildingViewerProps) {
         drag.current ? "cursor-grabbing" : "cursor-grab",
         className,
       )}
-      // The island's own sky, not the app's room: the building is shown as
-      // it stands on the map (worldPalette, nothing inside reads a token).
-      style={{ background: `linear-gradient(180deg, ${SKY.clear} 0%, ${SKY.hemiSky} 100%)` }}
+      // The app's room around the lobby, as on the agent card (v4 tokens).
+      style={{
+        background:
+          "radial-gradient(120% 90% at 50% 40%, hsl(var(--secondary)) 0%, hsl(var(--background)) 72%)",
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -137,8 +140,6 @@ export function BuildingViewer({ model, className }: BuildingViewerProps) {
             gl.setClearColor(0x000000, 0);
           }}
         >
-          <hemisphereLight args={[SKY.hemiSky, SKY.hemiGround, SKY.hemiIntensity]} />
-          <directionalLight position={[40, 70, 30]} intensity={0.9 * Math.PI} color="#fff6e0" />
           <Suspense fallback={null}>
             <BuildingScene
               model={model}
@@ -151,7 +152,7 @@ export function BuildingViewer({ model, className }: BuildingViewerProps) {
           <HostSizeSync />
         </Canvas>
       </ViewerErrorBoundary>
-      <p className="pointer-events-none absolute inset-x-0 bottom-2 text-center text-xs text-[#2f4a2a]/80">
+      <p className="pointer-events-none absolute inset-x-0 bottom-2 text-center text-xs text-muted-foreground">
         {reduced ? t("society.world.card_reduced_motion") : t("society.world.card_drag_hint")}
       </p>
     </div>
@@ -230,21 +231,14 @@ function BuildingScene({
     place();
   });
 
-  const grass = TILE_COLORS[TileKind.grass];
-  const patchR = bounds.radius * 1.6;
-
   return (
-    <group ref={groupRef}>
-      {/* the model, centred on its footprint and set on the ground */}
-      <primitive object={instance} position={[-bounds.centre.x, -bounds.bottom, -bounds.centre.z]} />
-      {/* the patch of island under it: a grass top over an earth side */}
-      <mesh position={[0, -0.6, 0]}>
-        <cylinderGeometry args={[patchR, patchR * 0.92, 1.2, 40]} />
-        <meshToonMaterial attach="material-0" color={grass.side} gradientMap={ramp} />
-        <meshToonMaterial attach="material-1" color={grass.top[0]} gradientMap={ramp} />
-        <meshToonMaterial attach="material-2" color={grass.side} gradientMap={ramp} />
-      </mesh>
-    </group>
+    <>
+      {/* The building turns; the lobby around it stays put, lights included. */}
+      <group ref={groupRef}>
+        <primitive object={instance} position={[-bounds.centre.x, -bounds.bottom, -bounds.centre.z]} />
+      </group>
+      <LobbyStage heightM={bounds.size.y} platformR={bounds.radius * 1.3} paused={!idle} />
+    </>
   );
 }
 

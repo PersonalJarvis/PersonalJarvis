@@ -31,6 +31,12 @@ export interface LobbyStageProps {
   heightM: number;
   /** No breathing glow while paused (reduced motion, off screen). */
   paused: boolean;
+  /**
+   * The platform's radius, when the thing on it is wider than a figure — a
+   * building card passes its footprint. The wall and the pillars keep their
+   * distance from the platform's edge. Default: 1.35 heights.
+   */
+  platformR?: number;
 }
 
 interface LobbyTokens {
@@ -141,7 +147,7 @@ function makePoolTexture(t: LobbyTokens): THREE.CanvasTexture | null {
   return texture;
 }
 
-export function LobbyStage({ heightM, paused }: LobbyStageProps) {
+export function LobbyStage({ heightM, paused, platformR }: LobbyStageProps) {
   const h = heightM;
   const t = useLobbyTokens();
   const ringRef = useRef<THREE.MeshStandardMaterial>(null);
@@ -165,11 +171,11 @@ export function LobbyStage({ heightM, paused }: LobbyStageProps) {
   });
 
   // Measures, in figure heights.
-  const platR = h * 1.35;
+  const platR = platformR ?? h * 1.35;
   const platH = h * 0.3;
-  const wallR = h * 3.0;
+  const wallR = Math.max(h * 3.0, platR * 2.2);
   const wallH = h * 2.4;
-  const pillarR = h * 2.35;
+  const pillarR = Math.max(h * 2.35, platR * 1.75);
 
   const accentHex = `#${t.accent.getHexString()}`;
   const glow = t.dark ? 1.0 : 0.7;

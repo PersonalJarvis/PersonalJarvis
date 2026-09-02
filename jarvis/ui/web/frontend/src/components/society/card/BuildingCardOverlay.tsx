@@ -5,8 +5,8 @@
  * Two columns under one header. Left, the building itself, turned by hand,
  * in the island's own look (BuildingViewer — the same GLB and toon ramp the
  * map draws). Right, the explanation: what it does, how a person uses it,
- * and — for a hub — what stands inside it right now, loaded from the same
- * endpoints the hub drawer reads, so nothing is invented. The footer opens
+ * and — for a hub — what stands inside it right now, as the app's own
+ * section lists it, marks and all (BuildingInside). The footer opens
  * the app section the building stands for; the Foundry's also creates an
  * agent.
  *
@@ -14,7 +14,6 @@
  * visible through the scrim, Esc and ✕ close.
  */
 import * as Dialog from "@radix-ui/react-dialog";
-import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Plus, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -24,7 +23,7 @@ import { useLocaleChunk, useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 
 import { BuildingViewer } from "../figures/BuildingViewer";
-import { HUBS } from "../world/HubDrawer";
+import { BuildingInside, hasInside } from "./BuildingInside";
 import { BUILDING_CARDS, type BuildingPlace } from "./buildingCards";
 
 export interface BuildingCardOverlayProps {
@@ -39,14 +38,6 @@ export function BuildingCardOverlay({ place, onClose, onCreateAgent }: BuildingC
   const ready = useLocaleChunk("society");
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const card = place ? BUILDING_CARDS[place] : null;
-  const hub = card?.hub ? HUBS[card.hub] : null;
-  const inside = useQuery({
-    queryKey: ["society", "hub", card?.hub ?? ""],
-    queryFn: hub?.load ?? (async () => []),
-    enabled: Boolean(hub?.load) && place !== null,
-    staleTime: 60_000,
-  });
-  const total = inside.data ? inside.data.reduce((n, g) => n + g.items.length, 0) : 0;
   const open = card !== null && ready;
 
   return (
@@ -99,37 +90,12 @@ export function BuildingCardOverlay({ place, onClose, onCreateAgent }: BuildingC
                         </h3>
                         <p className="text-sm leading-relaxed text-foreground">{t(`society.world.${card.howKey}`)}</p>
                       </div>
-                      {hub?.load ? (
-                        <div data-testid="building-card-inside">
+                      {place && hasInside(place) ? (
+                        <div>
                           <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                             {t("society.world.card_inside_title")}
                           </h3>
-                          {inside.isLoading ? (
-                            <p className="text-sm text-muted-foreground">{t("society.world.drawer_loading")}</p>
-                          ) : inside.isError ? (
-                            <p className="text-sm text-destructive">{String(inside.error)}</p>
-                          ) : total === 0 ? (
-                            <p className="text-sm text-muted-foreground">{t("society.world.drawer_empty")}</p>
-                          ) : (
-                            inside.data
-                              ?.filter((g) => g.items.length > 0)
-                              .map((g) => (
-                                <div key={g.labelKey} className="mb-3">
-                                  <h4 className="mb-1.5 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                                    <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: g.color }} aria-hidden />
-                                    {t(`society.world.${g.labelKey}`)}
-                                    <span className="tabular-nums">{g.items.length}</span>
-                                  </h4>
-                                  <ul className="flex flex-wrap gap-1.5">
-                                    {g.items.map((n) => (
-                                      <li key={n} className="rounded-md bg-secondary px-2 py-1 font-mono text-xs text-foreground">
-                                        {n}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              ))
-                          )}
+                          <BuildingInside place={place} className="-mx-2" />
                         </div>
                       ) : null}
                     </div>
