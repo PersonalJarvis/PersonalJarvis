@@ -5241,7 +5241,7 @@
       "idle": "Paseando"
     },
     "card": {
-      "brain_shared_hint": "El mismo cerebro que usan ahora el chat y la voz; cámbialo en la píldora de modelo del chat.",
+      "brain_shared_hint": "El cerebro del chat escrito, elegido en la píldora de modelo del chat. La voz usa el cerebro en tiempo real de los ajustes de voz.",
       "instructions_file": "Instrucciones permanentes ({0})",
       "instructions_empty": "Aún no hay instrucciones permanentes; la plantilla está a un clic.",
       "instructions_hint": "Se lee antes de cada respuesta, escrita o hablada. Vale desde la siguiente respuesta, sin reiniciar.",

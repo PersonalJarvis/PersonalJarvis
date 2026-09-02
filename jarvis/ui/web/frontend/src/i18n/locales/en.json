@@ -5241,7 +5241,7 @@
       "idle": "Wandering"
     },
     "card": {
-      "brain_shared_hint": "The same brain the chat and the voice stage use right now; change it in the chat's model pill.",
+      "brain_shared_hint": "The brain of the typed chat, picked in the chat's model pill. Voice runs on the realtime brain from the voice settings.",
       "instructions_file": "Standing instructions ({0})",
       "instructions_empty": "No standing instructions yet — the template is a click away.",
       "instructions_hint": "Read before every turn, typed or spoken. Saved on the next turn, no restart.",

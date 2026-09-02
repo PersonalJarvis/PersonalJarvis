@@ -5241,7 +5241,7 @@
       "idle": "Unterwegs"
     },
     "card": {
-      "brain_shared_hint": "Dasselbe Gehirn, das Chat und Sprache gerade nutzen; ändern kannst du es an der Modell-Pille im Chat.",
+      "brain_shared_hint": "Das Gehirn des getippten Chats, gewählt an der Modell-Pille im Chat. Sprache läuft über das Realtime-Gehirn aus den Sprach-Einstellungen.",
       "instructions_file": "Ständige Anweisungen ({0})",
       "instructions_empty": "Noch keine ständigen Anweisungen — die Vorlage ist einen Klick entfernt.",
       "instructions_hint": "Wird vor jeder Antwort gelesen, getippt wie gesprochen. Gilt ab der nächsten Antwort, kein Neustart.",
