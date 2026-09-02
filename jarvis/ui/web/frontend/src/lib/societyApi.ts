@@ -186,6 +186,12 @@ export interface SocietyQuestRow {
     text?: string;
     reason?: string;
     retry?: string;
+    /** "waiting" while a busy taker is knocked again; why (blocker: approval | busy). */
+    blocker?: string;
+    attempts?: number;
+    /** Live while running: the latest tool steps and the agent's latest sentence. */
+    progress?: string[];
+    live?: string;
   };
   created_ms: number;
   updated_ms: number;

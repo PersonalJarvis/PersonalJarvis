@@ -306,6 +306,7 @@ class SocietyRuntime:
         error = ""
         tool_steps: list[str] = []
         used_browser = False
+        quest_trace = env.trace_id.startswith("quest:")
         try:
             while True:
                 event = await queue.get()
@@ -315,10 +316,15 @@ class SocietyRuntime:
                     continue
                 if kind == "assistant_text":
                     final_text = str(payload.get("text") or final_text)
+                    if quest_trace:
+                        await self.quests.note_progress(env.trace_id, "", live=final_text)
                 elif kind == "tool_call":
                     name = str(payload.get("name") or payload.get("tool") or "tool")
                     summary = str(payload.get("summary") or "")[:120]
-                    tool_steps.append(f"{name}: {summary}" if summary else name)
+                    step = f"{name}: {summary}" if summary else name
+                    tool_steps.append(step)
+                    if quest_trace:
+                        await self.quests.note_progress(env.trace_id, step)
                     if name == "society_browser":
                         used_browser = True
                 elif kind == "error":

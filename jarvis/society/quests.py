@@ -28,6 +28,7 @@ the quest ``failed`` with the typed reason; ``retry`` routes it again.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -62,6 +63,13 @@ MIN_MATCH_SCORE: Final[int] = 3
 TERMINAL: Final[frozenset[QuestState]] = frozenset(
     {QuestState.DONE, QuestState.FAILED, QuestState.CANCELLED}
 )
+#: Refusals that mean "not now", not "never": the quest waits and is routed again.
+WAIT_REASONS: Final[frozenset[str]] = frozenset({"target_busy", "concurrency_cap"})
+#: How long a waiting quest keeps knocking: every RETRY_DELAY_S, at most MAX_WAIT_ATTEMPTS.
+RETRY_DELAY_S: Final[float] = 15.0
+MAX_WAIT_ATTEMPTS: Final[int] = 40
+#: How many progress lines a running quest keeps (newest last).
+PROGRESS_KEEP: Final[int] = 6
 
 #: The generalist the foundry forges once when no specialist fits a quest.
 GENERALIST: Final[dict[str, Any]] = {
@@ -294,10 +302,20 @@ class QuestRecord:
 class Quests:
     """The quest board over the runtime: create → route → listen."""
 
-    def __init__(self, runtime: Any, *, publish: Callable[[Any], Any] | None = None) -> None:
+    def __init__(
+        self,
+        runtime: Any,
+        *,
+        publish: Callable[[Any], Any] | None = None,
+        retry_delay_s: float = RETRY_DELAY_S,
+    ) -> None:
         self._runtime = runtime
         self._publish = publish
+        self._retry_delay = retry_delay_s
         self._unsubscribe: Callable[[], None] | None = None
+        self._timers: dict[str, asyncio.TimerHandle] = {}
+        self._attempts: dict[str, int] = {}
+        self._tasks: set[asyncio.Task[Any]] = set()
 
     # ------------------------------------------------------------ wiring
 
@@ -309,6 +327,89 @@ class Quests:
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
+        for handle in self._timers.values():
+            handle.cancel()
+        self._timers.clear()
+        for task in list(self._tasks):
+            task.cancel()
+        self._tasks.clear()
+
+    # ------------------------------------------------------------ waiting
+
+    def blocker_of(self, agent_id: str) -> str:
+        """Why the agent cannot take work right now: ``approval`` (its chat waits
+        for the person), ``busy`` (a turn runs), or an empty string."""
+        get_chat = getattr(self._runtime, "_get_chat", None)
+        svc = get_chat() if callable(get_chat) else None
+        if svc is None:
+            return ""
+        session_id = f"society:{agent_id}"
+        try:
+            pending = getattr(svc, "pending_approvals", None)
+            if callable(pending) and pending(session_id):
+                return "approval"
+            if svc.is_running(session_id):
+                return "busy"
+        except Exception:  # noqa: BLE001 - the blocker is a hint for the card, never a gate
+            log.debug("society quests: blocker probe failed for %s", agent_id, exc_info=True)
+        return ""
+
+    def _arm(self, quest_id: str, delay_s: float) -> None:
+        old = self._timers.pop(quest_id, None)
+        if old is not None:
+            old.cancel()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._timers[quest_id] = loop.call_later(delay_s, self._fire, quest_id)
+
+    def _fire(self, quest_id: str) -> None:
+        self._timers.pop(quest_id, None)
+        task = asyncio.create_task(self._retry_waiting(quest_id))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _retry_waiting(self, quest_id: str) -> None:
+        try:
+            quest = await self.get(quest_id)
+            if quest is None or quest.state is not QuestState.OPEN:
+                return
+            await self.route(quest_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a failed knock is logged; the next timer knocks again
+            log.warning("society quests: retry of %s failed", quest_id, exc_info=True)
+
+    async def _wake_waiting(self) -> None:
+        """A slot was freed: the oldest waiting quests knock right away."""
+        waiting = sorted(await self.list(state=QuestState.OPEN), key=lambda q: q.created_ms)
+        for quest in waiting:
+            if quest.result.get("status") == "waiting":
+                await self.route(quest.quest_id)
+
+    async def note_progress(self, trace_id: str, line: str, *, live: str | None = None) -> None:
+        """A running quest's latest step (from the agent's turn) for the card."""
+        row = await self._runtime.store.get_quest_row_by_trace(trace_id)
+        if row is None:
+            return
+        quest = QuestRecord.from_row(row)
+        if quest.state is not QuestState.RUNNING:
+            return
+        result = dict(quest.result)
+        progress = list(result.get("progress") or [])
+        line = line.strip()
+        if line and (not progress or progress[-1] != line):
+            progress.append(line[:160])
+        result["progress"] = progress[-PROGRESS_KEEP:]
+        if live is not None:
+            result["live"] = live.strip()[:240]
+        await self._runtime.store.update_quest(
+            quest.quest_id, {"result_json": json.dumps(result), "updated_ms": now_ms()}
+        )
+        fresh = await self.get(quest.quest_id)
+        if fresh is not None:
+            await self._announce(fresh, previous=quest.state)
 
     # ------------------------------------------------------------- reads
 
@@ -364,6 +465,8 @@ class Quests:
             raise KeyError(quest_id)
         if quest.state in TERMINAL and quest.state is not QuestState.FAILED:
             return quest
+        if quest.state is not QuestState.OPEN:
+            self._attempts.pop(quest_id, None)
         roster = self._runtime.roster
         agents = await roster.list()
         busy = {a.agent_id: self._runtime.scheduler.active_runs(a.agent_id) for a in agents}
@@ -439,6 +542,10 @@ class Quests:
             return quest
         if quest.run_id:
             self._runtime.scheduler.note_run_ended(quest.run_id)
+        handle = self._timers.pop(quest_id, None)
+        if handle is not None:
+            handle.cancel()
+        self._attempts.pop(quest_id, None)
         await self._set(quest, state=QuestState.CANCELLED, done_ms=now_ms())
         fresh = await self.get(quest_id)
         assert fresh is not None
@@ -448,6 +555,8 @@ class Quests:
 
     async def _on_envelope(self, env: SocietyEnvelope) -> None:
         if not env.trace_id.startswith(TRACE_PREFIX):
+            if env.msg_type is MsgType.RESULT:
+                await self._wake_waiting()
             return
         row = await self._runtime.store.get_quest_row_by_trace(env.trace_id)
         if row is None:
@@ -468,11 +577,30 @@ class Quests:
                 "text": env.text,
             }
             state = QuestState.FAILED if status == "blocked" else QuestState.DONE
+            result["progress"] = list(quest.result.get("progress") or [])
             await self._set(quest, state=state, result_json=json.dumps(result), done_ms=env.ts_ms)
+            self._attempts.pop(quest.quest_id, None)
+            await self._wake_waiting()
         elif env.msg_type is MsgType.VETO:
+            reason = str(env.payload.get("reason", ""))
+            attempts = self._attempts.get(quest.quest_id, 0) + 1
+            if reason in WAIT_REASONS and attempts <= MAX_WAIT_ATTEMPTS:
+                # Not now, not never: the quest waits on the board and knocks again.
+                self._attempts[quest.quest_id] = attempts
+                result = {
+                    "status": "waiting",
+                    "reason": reason,
+                    "blocker": self.blocker_of(quest.agent_id) if quest.agent_id else "",
+                    "text": env.text,
+                    "attempts": attempts,
+                }
+                await self._set(quest, state=QuestState.OPEN, result_json=json.dumps(result))
+                self._arm(quest.quest_id, self._retry_delay)
+                return
+            self._attempts.pop(quest.quest_id, None)
             result = {
                 "status": "vetoed",
-                "reason": env.payload.get("reason", ""),
+                "reason": reason,
                 "retry": env.payload.get("retry", ""),
                 "text": env.text,
             }

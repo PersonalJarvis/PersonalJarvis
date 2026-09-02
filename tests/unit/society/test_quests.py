@@ -176,17 +176,18 @@ async def test_result_closes_the_quest(rt: SocietyRuntime):
     assert rt.scheduler.active_runs(mailbox.agent_id) == 0
 
 
-async def test_blocked_result_and_veto_fail_the_quest_and_retry_routes_again(rt: SocietyRuntime):
+async def test_a_busy_taker_makes_the_quest_wait_and_a_freed_slot_starts_it(rt: SocietyRuntime):
     mailbox, _ = await rt.roster.create(
         name="Mailbox", focus=["plugin:gmail"], max_concurrent_runs=1
     )
     first = await rt.quests.create("Sort my mails")
-    # The one slot is taken: the next quest is vetoed by the concurrency cap.
+    # The one slot is taken: the next quest waits on the board instead of failing.
     second = await rt.quests.create("Archive old mails")
-    assert second.state is QuestState.FAILED
-    assert second.result["status"] == "vetoed"
+    assert second.state is QuestState.OPEN
+    assert second.result["status"] == "waiting"
     assert second.result["reason"] == "concurrency_cap"
-    # The first one ends blocked.
+    assert second.quest_id in rt.quests._timers  # noqa: SLF001 — it knocks again by timer
+    # The first one ends blocked -> failed; the freed slot starts the waiting one at once.
     await rt.store.append_and_publish(
         SocietyEnvelope(
             msg_type=MsgType.RESULT,
@@ -201,10 +202,61 @@ async def test_blocked_result_and_veto_fail_the_quest_and_retry_routes_again(rt:
         )
     )
     assert (await rt.quests.get(first.quest_id)).state is QuestState.FAILED  # type: ignore[union-attr]
-    # Retry: the slot is free again, the second quest runs.
-    retried = await rt.quests.retry(second.quest_id)
-    assert retried.state is QuestState.RUNNING
-    assert retried.result == {}
+    woken = await rt.quests.get(second.quest_id)
+    assert woken is not None and woken.state is QuestState.RUNNING
+    assert woken.result == {}
+    # A hard refusal still fails: the kill switch is "never", not "not now".
+    await rt.store.set_kill_switch(True)
+    third = await rt.quests.create("Reply to the newsletter")
+    assert third.state is QuestState.FAILED
+    assert third.result["reason"] == "kill_switch"
+    await rt.store.set_kill_switch(False)
+    retried = await rt.quests.retry(third.quest_id)
+    # Mailbox is still busy, so the retry lands on the forged generalist.
+    assert retried.state is QuestState.RUNNING and retried.agent_id == "runner"
+
+
+async def test_waiting_quests_knock_again_by_timer(tmp_path: Path):
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
+    runtime.catalog = lambda: CATALOG  # type: ignore[method-assign]
+    await runtime.ensure_started()
+    runtime.scheduler._dispatch = FakeDispatcher()  # noqa: SLF001
+    runtime.quests._publish = lambda _e: None  # noqa: SLF001
+    runtime.quests._retry_delay = 0.05  # noqa: SLF001
+    try:
+        mailbox, _ = await runtime.roster.create(
+            name="Mailbox", focus=["plugin:gmail"], max_concurrent_runs=1
+        )
+        first = await runtime.quests.create("Sort my mails")
+        second = await runtime.quests.create("Archive old mails")
+        assert second.state is QuestState.OPEN
+        # Free the slot silently (no RESULT): only the timer can notice.
+        runtime.scheduler.note_run_ended(first.run_id)
+        import asyncio
+
+        await asyncio.sleep(0.3)
+        woken = await runtime.quests.get(second.quest_id)
+        assert woken is not None and woken.state is QuestState.RUNNING
+        assert mailbox.agent_id == woken.agent_id
+    finally:
+        await runtime.close()
+
+
+async def test_progress_lines_reach_the_card_while_running(rt: SocietyRuntime):
+    await rt.roster.create(name="Mailbox", focus=["plugin:gmail"])
+    quest = await rt.quests.create("Sort my mails")
+    await rt.quests.note_progress(quest.trace_id, "gmail_list: 40 mails")
+    await rt.quests.note_progress(quest.trace_id, "gmail_list: 40 mails")  # duplicate step
+    await rt.quests.note_progress(quest.trace_id, "", live="Reading the newest ones…")
+    fresh = await rt.quests.get(quest.quest_id)
+    assert fresh is not None
+    assert fresh.result["progress"] == ["gmail_list: 40 mails"]
+    assert fresh.result["live"] == "Reading the newest ones…"
+    assert rt.pushed[-1].state == "running"  # type: ignore[attr-defined]
+    # A quest that is not running ignores late progress.
+    await rt.quests.cancel(quest.quest_id)
+    await rt.quests.note_progress(quest.trace_id, "late step")
+    assert "late step" not in (await rt.quests.get(quest.quest_id)).result.get("progress", [])  # type: ignore[union-attr]
 
 
 async def test_cancel_frees_the_slot_and_ignores_the_late_result(rt: SocietyRuntime):
