@@ -5094,6 +5094,21 @@
     "mode_pipeline": "Stimme rein und raus"
   },
   "society": {
+    "world": {
+      "minimap_label": "Inselkarte",
+      "mode_world": "Die Insel",
+      "hud_agents": "{0} Agenten",
+      "hud_active": "{0} aktiv",
+      "sample_badge": "Beispieldaten",
+      "reduced_motion_note": "Reduzierte Bewegung: Die Insel hält still.",
+      "controls_hint": "Ziehen zum Verschieben · Scrollen zum Zoomen · Pfeiltasten zum Bewegen",
+      "zoom_label": "Zoom",
+      "zoom_in": "Vergrößern",
+      "zoom_out": "Verkleinern",
+      "webgl_missing_title": "Die Insel braucht WebGL",
+      "webgl_missing_body": "Dieses Fenster kann gerade kein 3D zeichnen. Das Register zeigt dieselben Agenten als Tabelle.",
+      "open_ledger": "Register öffnen"
+    },
     "style": {
       "modern": "Modern",
       "fantasy": "Fantasy",

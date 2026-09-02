@@ -5094,6 +5094,21 @@
     "mode_pipeline": "voz de entrada y salida"
   },
   "society": {
+    "world": {
+      "minimap_label": "Mapa de la isla",
+      "mode_world": "La isla",
+      "hud_agents": "{0} agentes",
+      "hud_active": "{0} activos",
+      "sample_badge": "Datos de ejemplo",
+      "reduced_motion_note": "Movimiento reducido: la isla se queda quieta.",
+      "controls_hint": "Arrastra para desplazar · Rueda para acercar · Flechas para mover",
+      "zoom_label": "Zoom",
+      "zoom_in": "Acercar",
+      "zoom_out": "Alejar",
+      "webgl_missing_title": "La isla necesita WebGL",
+      "webgl_missing_body": "Esta ventana no puede dibujar 3D ahora. El registro muestra los mismos agentes como tabla.",
+      "open_ledger": "Abrir el registro"
+    },
     "style": {
       "modern": "Moderno",
       "fantasy": "Fantasía",

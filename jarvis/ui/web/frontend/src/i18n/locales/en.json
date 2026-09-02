@@ -5094,6 +5094,21 @@
     "mode_pipeline": "voice in and out"
   },
   "society": {
+    "world": {
+      "minimap_label": "Island map",
+      "mode_world": "The island",
+      "hud_agents": "{0} agents",
+      "hud_active": "{0} active",
+      "sample_badge": "Sample data",
+      "reduced_motion_note": "Motion reduced: the island holds still.",
+      "controls_hint": "Drag to pan · Scroll to zoom · Arrow keys to move",
+      "zoom_label": "Zoom",
+      "zoom_in": "Zoom in",
+      "zoom_out": "Zoom out",
+      "webgl_missing_title": "The island needs WebGL",
+      "webgl_missing_body": "This window cannot draw 3D right now. The ledger shows the same agents as a table.",
+      "open_ledger": "Open the ledger"
+    },
     "style": {
       "modern": "Modern",
       "fantasy": "Fantasy",
