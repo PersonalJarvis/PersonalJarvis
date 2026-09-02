@@ -19,6 +19,7 @@ import type { SocietyAgentRow } from "@/lib/societyApi";
 
 import { PALETTE_PRESETS, resolvePalette, type FigureRecipe } from "./figures/figureRecipe";
 import { SAMPLE_ROSTER } from "./mockRoster";
+import { announceSpawn } from "./world/spawnStore";
 
 /** MASTERPLAN §2.5 — exactly one lead (Jarvis), orchestrators may ASSIGN. */
 export type AgentTier = "lead" | "orchestrator" | "specialist";
@@ -332,6 +333,8 @@ export function useCreateAgent() {
         });
         if (res.ok) {
           const created = (await res.json()) as { agent: SocietyAgentRow };
+          // The island owes this row an entrance: it walks out of the foundry.
+          announceSpawn(created.agent.agent_id);
           await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
           return rowToAgent(created.agent);
         }
@@ -372,6 +375,7 @@ export function useCreateAgent() {
         stats: { runs: 0, totalCostUsd: 0, lastActiveMs: null },
       };
       LOCAL_ROSTER.push(agent);
+      announceSpawn(agent.agentId);
       await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
       return agent;
     },

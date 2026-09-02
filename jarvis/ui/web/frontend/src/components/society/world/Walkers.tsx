@@ -15,8 +15,10 @@ import type { Group } from "three";
 import type { AgentCheckpoint, AgentRunState, SocietyAgent } from "../data";
 import { useCameraStore } from "./cameraStore";
 import {
+  FOUNDRY_BELT_LIFT_M,
   buildIsland,
   findPath,
+  foundryWalkOut,
   groundY,
   randomPlazaTile,
   smoothPath,
@@ -35,6 +37,7 @@ import {
   turnToward,
 } from "./walkerKinematics";
 import { WORLD_HERO_SCALE, WalkerFigure, type WalkerAnim, type WalkerMode } from "./WalkerFigure";
+import { claimEntrance } from "./spawnStore";
 import { clearWalkerPin, setWalkerPin } from "./walkerRegistry";
 import { mulberry32, nextBeat, seedFromString } from "./wander";
 
@@ -59,6 +62,12 @@ interface Sim {
   speed: number;
   purpose: PlaceId | null;
   atPurpose: boolean;
+  /** True while the figure is still riding the foundry's conveyor out of the
+   *  portal: it follows a fixed two-point path instead of an A* route, because
+   *  its first metres run over the building's own blocked footprint. */
+  exiting: boolean;
+  /** Height above the ground the belt still carries it, in metres. */
+  lift: number;
   rng: () => number;
 }
 
@@ -103,23 +112,48 @@ function Walker({
     const { map, content } = buildIsland();
     const rng = mulberry32(seedFromString(agent.agentId) ^ Date.now());
     const purpose = CHECKPOINT_PLACE[agent.checkpoint];
-    const startTile = purpose ? content.places[purpose].standTile : randomPlazaTile(map, rng);
-    const [x, z] = tileToWorld(startTile[0], startTile[1]);
-    const facing = purpose ? content.places[purpose].facing : rng() * Math.PI * 2;
-    sim.current = {
-      x: x + offset,
-      z,
-      y: groundY(map, x, z),
-      heading: facing,
-      mode: stateMode(agent.state, purpose !== null),
-      timer: 1 + rng() * 3,
-      waypoints: [],
-      index: 0,
-      speed: WANDER_SPEED_MPS,
-      purpose,
-      atPurpose: purpose !== null,
-      rng,
-    };
+    // A row that was just created walks out of the Agent Foundry; every other
+    // figure is simply standing where the backend says it is.
+    const born = claimEntrance(agent.agentId, agent.createdMs);
+    if (born) {
+      const exit = foundryWalkOut();
+      sim.current = {
+        x: exit.from[0],
+        z: exit.from[1],
+        y: groundY(map, exit.from[0], exit.from[1]) + FOUNDRY_BELT_LIFT_M,
+        heading: exit.heading,
+        mode: "walk",
+        timer: 0,
+        waypoints: [exit.to],
+        index: 0,
+        speed: NOMINAL_WALK_MPS,
+        purpose,
+        atPurpose: false,
+        exiting: true,
+        lift: FOUNDRY_BELT_LIFT_M,
+        rng,
+      };
+    } else {
+      const startTile = purpose ? content.places[purpose].standTile : randomPlazaTile(map, rng);
+      const [x, z] = tileToWorld(startTile[0], startTile[1]);
+      const facing = purpose ? content.places[purpose].facing : rng() * Math.PI * 2;
+      sim.current = {
+        x: x + offset,
+        z,
+        y: groundY(map, x, z),
+        heading: facing,
+        mode: stateMode(agent.state, purpose !== null),
+        timer: 1 + rng() * 3,
+        waypoints: [],
+        index: 0,
+        speed: WANDER_SPEED_MPS,
+        purpose,
+        atPurpose: purpose !== null,
+        exiting: false,
+        lift: 0,
+        rng,
+      };
+    }
   }
 
   // A checkpoint or state change from the roster re-targets the walker.
@@ -127,7 +161,11 @@ function Walker({
     const s = sim.current;
     if (!s) return;
     const purpose = CHECKPOINT_PLACE[agent.checkpoint];
-    if (purpose !== s.purpose) {
+    if (s.exiting) {
+      // Still on the conveyor: remember the target, walk there once outside.
+      s.purpose = purpose;
+      s.atPurpose = false;
+    } else if (purpose !== s.purpose) {
       s.purpose = purpose;
       s.atPurpose = false;
       if (purpose) {
@@ -164,7 +202,21 @@ function Walker({
           s.heading = turnToward(s.heading, headingFor(r.vx, r.vz), TURN_RATE_RAD_S * step);
         }
         anim.current.speed = Math.hypot(r.vx, r.vz);
-        if (r.arrived) {
+        if (r.arrived && s.exiting) {
+          // Off the belt and on the plaza: head for wherever the roster says.
+          s.exiting = false;
+          s.lift = 0;
+          const target = s.purpose
+            ? content.places[s.purpose].standTile
+            : randomPlazaTile(map, s.rng);
+          if (pathTo(s, target)) {
+            s.speed = s.purpose ? NOMINAL_WALK_MPS : WANDER_SPEED_MPS;
+          } else {
+            s.mode = stateMode(agent.state, false);
+            s.timer = 2;
+            s.speed = WANDER_SPEED_MPS;
+          }
+        } else if (r.arrived) {
           if (s.purpose && !s.atPurpose) {
             s.atPurpose = true;
             s.heading = content.places[s.purpose].facing;
@@ -189,8 +241,14 @@ function Walker({
           }
         }
       }
+      if (s.exiting) {
+        // The conveyor lowers its passenger over the last two metres.
+        const end = s.waypoints[s.waypoints.length - 1];
+        const remain = end ? Math.hypot(end[0] - s.x, end[1] - s.z) : 0;
+        s.lift = FOUNDRY_BELT_LIFT_M * Math.min(1, remain / 2.0);
+      }
       // Ground snap with a short ease so a level step reads as a step.
-      const targetY = groundY(map, s.x, s.z);
+      const targetY = groundY(map, s.x, s.z) + s.lift;
       s.y += (targetY - s.y) * Math.min(1, step * 12);
     }
 

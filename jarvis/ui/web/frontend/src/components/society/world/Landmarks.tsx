@@ -1,6 +1,6 @@
 /**
  * The four quarters' landmarks — the places MASTERPLAN §4.1 names, in the
- * solarpunk language: the workshop hall (west), the archive tower (north), the
+ * solarpunk language: the workshop hall (west), the Memory House (north), the
  * harbor gate with its dock and boat (south), the lighthouse on the eastern
  * cape, plus the greenhouses and the solar field that fill the corners.
  */
@@ -8,8 +8,10 @@ import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Group, InstancedMesh, Mesh, Object3D } from "three";
 
+import { AgentFoundry } from "./AgentFoundry";
 import { buildIsland, groundY, tileToWorld, type PlaceId, type Post } from "./islandLayout";
 import { KIT_PLACEMENTS, KitBuilding } from "./KitBuilding";
+import { MemoryHouse } from "./MemoryHouse";
 import { Block, useKit, type Kit } from "./WorldKit";
 import { PAL } from "./worldMaterials";
 
@@ -41,25 +43,6 @@ function Workshop({ kit }: { kit: Kit }) {
       <Block kit={kit} at={[0, 3.4, -6.05]} size={[20, 1.0, 0.12]} color={PAL.glass} glow />
       {/* chimney */}
       <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.metal)} position={[-9, 6.8, -4]} scale={[1.1, 4, 1.1]} />
-    </group>
-  );
-}
-
-function Archive({ kit }: { kit: Kit }) {
-  const [x, y, z] = placeWorld("archive");
-  return (
-    <group position={[x, y, z]}>
-      <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.trim)} position={[0, 0.2, 0]} scale={[13, 0.4, 13]} />
-      <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.wall)} position={[0, 4.5, 0]} scale={[11, 9, 11]} />
-      {/* two glass bands */}
-      <mesh geometry={kit.g.cylinder} material={kit.m.glow(PAL.glass)} position={[0, 3.2, 0]} scale={[11.1, 0.9, 11.1]} />
-      <mesh geometry={kit.g.cylinder} material={kit.m.glow(PAL.glass)} position={[0, 6.6, 0]} scale={[11.1, 0.9, 11.1]} />
-      <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.hubAccent)} position={[0, 9.1, 0]} scale={[11.6, 0.3, 11.6]} />
-      <mesh geometry={kit.g.dome} material={kit.m.lit(PAL.archiveDome)} position={[0, 9.2, 0]} scale={[11, 6, 11]} />
-      <mesh geometry={kit.g.cone} material={kit.m.lit(PAL.metal)} position={[0, 12.9, 0]} scale={[0.6, 1.6, 0.6]} />
-      {/* entrance arch facing the village (south, +z) */}
-      <Block kit={kit} at={[0, 1.7, 5.6]} size={[3.6, 3.4, 0.6]} color={PAL.wood} />
-      <Block kit={kit} at={[0, 1.4, 5.95]} size={[2.2, 2.8, 0.2]} color={PAL.door} />
     </group>
   );
 }
@@ -197,21 +180,35 @@ export function Landmarks({
   paused,
   onHubClick,
   openHub,
+  memoryOpen,
+  atMemory,
 }: {
   paused: boolean;
   /** A kit building was clicked — the stage opens that hub's drawer. */
   onHubClick?: (place: PlaceId) => void;
   openHub?: PlaceId | null;
+  /** The Memory House's drawer is open (it is not a ring hub, so it has its own flag). */
+  memoryOpen?: boolean;
+  /** Agents whose checkpoint is `archive` right now — the house lights up for them. */
+  atMemory?: number;
 }) {
   const kit = useKit();
   const { content } = buildIsland();
   return (
     <group>
-      {KIT_PLACEMENTS.map((k) => (
-        <KitBuilding key={k.kit} kit={k.kit} place={k.place} onClick={onHubClick} selected={openHub === k.place} />
+      {/* The foundry has its own component: it animates its core and portal. */}
+      {KIT_PLACEMENTS.filter((k) => k.place !== "foundry").map((k) => (
+        <KitBuilding
+          key={k.kit}
+          kit={k.kit}
+          place={k.place}
+          onClick={onHubClick}
+          selected={openHub === k.place}
+        />
       ))}
+      <AgentFoundry paused={paused} onClick={onHubClick} selected={openHub === "foundry"} />
       <Workshop kit={kit} />
-      <Archive kit={kit} />
+      <MemoryHouse paused={paused} busy={atMemory ?? 0} onClick={onHubClick} selected={memoryOpen} />
       <Harbor kit={kit} paused={paused} />
       <Lighthouse kit={kit} paused={paused} />
       <Greenhouses kit={kit} posts={content.greenhouses} />

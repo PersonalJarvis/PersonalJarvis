@@ -13,6 +13,7 @@ import { useThree, type ThreeEvent } from "@react-three/fiber";
 import { Color, Mesh, MeshBasicMaterial, MeshStandardMaterial, MeshToonMaterial, type Object3D } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 
+import agentFoundryUrl from "@/assets/society/world/kit/agent-foundry.glb";
 import pluginDocksUrl from "@/assets/society/world/kit/plugin-docks.glb";
 import relayTowerUrl from "@/assets/society/world/kit/relay-tower.glb";
 import skillForgeUrl from "@/assets/society/world/kit/skill-forge.glb";
@@ -27,24 +28,27 @@ export const KIT_URLS = {
   "skill-forge": skillForgeUrl,
   "relay-tower": relayTowerUrl,
   "terminal-cantina": terminalCantinaUrl,
+  "agent-foundry": agentFoundryUrl,
 } as const;
 export type KitId = keyof typeof KIT_URLS;
-
-/** Which kit file stands at which kit place; the pose comes from the island layout. */
-export const KIT_PLACEMENTS: ReadonlyArray<{ kit: KitId; place: KitPlace }> = [
-  { kit: "plugin-docks", place: "plugins" },
-  { kit: "skill-forge", place: "skills" },
-  { kit: "relay-tower", place: "mcp" },
-  { kit: "terminal-cantina", place: "cli" },
-];
 
 /** Radius of the hover/selection ring drawn under each kit, in metres. */
 const KIT_RING_R: Record<KitId, number> = {
   "plugin-docks": 9.9,
+  "agent-foundry": 13.6,
   "skill-forge": 8.6,
   "relay-tower": 6.4,
   "terminal-cantina": 8.8,
 };
+
+/** Which kit file stands at which kit place; the pose comes from the island layout. */
+export const KIT_PLACEMENTS: ReadonlyArray<{ kit: KitId; place: KitPlace }> = [
+  { kit: "plugin-docks", place: "plugins" },
+  { kit: "agent-foundry", place: "foundry" },
+  { kit: "skill-forge", place: "skills" },
+  { kit: "relay-tower", place: "mcp" },
+  { kit: "terminal-cantina", place: "cli" },
+];
 
 /** Emission above this strength renders unlit (a lamp, a neon tube), below it stays a lit toon. */
 const GLOW_STRENGTH = 1.5;
@@ -75,11 +79,14 @@ export function KitBuilding({
   place,
   onClick,
   selected,
+  onInstance,
 }: {
   kit: KitId;
   place: KitPlace;
   onClick?: (place: KitPlace) => void;
   selected?: boolean;
+  /** The restyled clone, once per load — a building animates its own nodes. */
+  onInstance?: (root: Object3D) => void;
 }) {
   const { scene } = useGLTF(KIT_URLS[kit]);
   const gl = useThree((s) => s.gl);
@@ -90,6 +97,10 @@ export function KitBuilding({
     restyle(clone, ramp);
     return clone;
   }, [scene, ramp]);
+
+  useEffect(() => {
+    onInstance?.(instance);
+  }, [instance, onInstance]);
 
   useEffect(
     () => () => {
@@ -142,4 +153,5 @@ export function KitBuilding({
   );
 }
 
-for (const url of Object.values(KIT_URLS)) useGLTF.preload(url);
+useGLTF.preload(pluginDocksUrl);
+useGLTF.preload(agentFoundryUrl);

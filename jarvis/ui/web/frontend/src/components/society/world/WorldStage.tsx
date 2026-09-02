@@ -29,7 +29,9 @@ import { useWebglSupported } from "@/lib/graphDimension";
 import { useSocietyRoster } from "../data";
 import { useCameraStore } from "./cameraStore";
 import { Clouds } from "./Clouds";
+import { FoundryDrawer } from "./FoundryDrawer";
 import { Landmarks } from "./Landmarks";
+import { MemoryDrawer } from "./MemoryDrawer";
 import { PlaceLabels } from "./PlaceLabels";
 import { HubDrawer } from "./HubDrawer";
 import { QuestBoardDrawer } from "./QuestBoardDrawer";
@@ -81,6 +83,7 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
   const [selected, setSelected] = useState<string | null>(null);
   const [openHub, setOpenHub] = useState<KitPlace | null>(null);
   const [questOpen, setQuestOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
 
   useWorldControls(hostRef, webgl);
 
@@ -149,6 +152,7 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
                 questOpen={questOpen}
                 onQuestClick={() => {
                   setOpenHub(null);
+                  setMemoryOpen(false);
                   setQuestOpen((cur) => !cur);
                 }}
               />
@@ -156,10 +160,18 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
                 paused={reduced}
                 onHubClick={(p) => {
                   setQuestOpen(false);
+                  if (p === "archive") {
+                    setOpenHub(null);
+                    setMemoryOpen((cur) => !cur);
+                    return;
+                  }
+                  setMemoryOpen(false);
                   const hub = asHub(p);
                   if (hub) setOpenHub((cur) => (cur === hub ? null : hub));
                 }}
                 openHub={openHub}
+                memoryOpen={memoryOpen}
+                atMemory={agents.filter((a) => a.checkpoint === "archive").length}
               />
               <Trees />
               <Walkers agents={agents} paused={reduced} selectedId={selected} onSelect={select} />
@@ -174,7 +186,15 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
       {ready && (
         <WorldHud agents={agents} sample={sample} awake={awake} reducedMotion={reduced} topRight={topRight} />
       )}
-      {ready && openHub && <HubDrawer hub={openHub} onClose={() => setOpenHub(null)} />}
+      {/* Every hub lists what it stands for; the foundry also BUILDS, so it
+          has its own drawer with the creator in it. */}
+      {ready && openHub && openHub !== "foundry" && (
+        <HubDrawer hub={openHub} onClose={() => setOpenHub(null)} />
+      )}
+      {ready && openHub === "foundry" && (
+        <FoundryDrawer onClose={() => setOpenHub(null)} onSelectAgent={select} />
+      )}
+      {ready && memoryOpen && <MemoryDrawer onClose={() => setMemoryOpen(false)} />}
       {ready && questOpen && <QuestBoardDrawer onClose={() => setQuestOpen(false)} />}
     </div>
   );

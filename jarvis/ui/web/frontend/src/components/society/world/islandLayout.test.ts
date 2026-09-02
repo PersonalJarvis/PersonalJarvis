@@ -9,6 +9,7 @@ import {
   ISLAND_FIELDS,
   ISLAND_TILES,
   ISLETS,
+  KIT_FACING,
   LEVEL_Y,
   MARKET_FIELDS,
   MARKET_HALF_TILES,
@@ -143,7 +144,7 @@ describe("islandLayout", () => {
   it("opens a paved square in the middle with a ring of houses around it", () => {
     const { map, content } = island;
     expect(map.kind[tileIndex(map, CENTER_TILE + 5, CENTER_TILE + 5)]).toBe(TileKind.plaza);
-    expect(content.houses.length).toBe(7); // 12 slots, five taken by the four ring hubs
+    expect(content.houses.length).toBe(5); // 12 slots, seven taken by the five ring hubs
     for (const h of content.houses) {
       const r = Math.hypot(h.x, h.z) / 2;
       expect(r).toBeGreaterThan(PLAZA_RADIUS_TILES);
@@ -160,13 +161,14 @@ describe("islandLayout", () => {
     }
   });
 
-  it("puts every ring hub on the house ring, facing the square, with a reachable stand", () => {
+  it("puts the Plugin Docks on the house ring, facing the square, with a reachable stand", () => {
     const { map, content } = island;
     for (const [id, pose] of Object.entries(content.kitPoses)) {
       expect(Math.hypot(pose.x, pose.z) / 2, id).toBeCloseTo(HOUSE_RING_TILES, 5);
       const fx = Math.sin(pose.rotation);
       const fz = Math.cos(pose.rotation);
-      expect(fx * -pose.x + fz * -pose.z, id).toBeGreaterThan(0); // the front points at the centre
+      // The front points at the centre, unless the building faces the road on purpose.
+      if (!(id in KIT_FACING)) expect(fx * -pose.x + fz * -pose.z, id).toBeGreaterThan(0);
       const [sx, sz] = content.places[id as keyof typeof content.places].standTile;
       expect(isWalkable(map, sx, sz), id).toBe(true);
       const [bx, bz] = worldToTile(pose.x, pose.z);

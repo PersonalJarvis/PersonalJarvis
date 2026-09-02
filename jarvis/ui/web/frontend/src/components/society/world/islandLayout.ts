@@ -131,6 +131,7 @@ export type PlaceId =
   | "gardens"
   | "solar"
   | "plugins"
+  | "foundry"
   | "skills"
   | "mcp"
   | "cli";
@@ -213,7 +214,7 @@ export interface IslandContent {
 }
 
 /** Places that are World Kit buildings sitting IN the house ring (world-masterplan-v2.md §5). */
-export type KitPlace = "plugins" | "skills" | "mcp" | "cli";
+export type KitPlace = "plugins" | "foundry" | "skills" | "mcp" | "cli";
 
 export interface KitPose {
   x: number;
@@ -328,32 +329,52 @@ export const HEDGE_RING_TILES = 29;
 export const GATE_GAP_TILES = 3;
 
 /**
- * Ring slots (of 16) a kit building takes over instead of houses. The Plugin
- * Docks are 16 m wide, a house slot is ~15 m of arc, so the docks take two
- * neighbouring north-west slots and stand centred between them.
+ * Ring slots (of 16) a kit building takes over instead of houses. A house slot
+ * is ~15 m of arc, so a hall takes two neighbouring slots and stands centred
+ * between them. The Agent Foundry sits on 2-3, the mirror image of the Plugin
+ * Docks on 13-14 across the north axis: the two halls frame the square's north
+ * side, and the foundry's ramp runs down onto the plaza in full view of the
+ * island camera (which looks from the south-east).
  */
 export const RING_KIT_SLOTS: Record<KitPlace, readonly number[]> = {
+  plugins: [13, 14],
+  foundry: [2, 3],
   // Hubs sit on the north and west of the ring so their fronts face the camera
   // (it looks from the south-east); houses take the slots whose backs it sees.
-  plugins: [13, 14], // north-west, two slots (16 m wide)
   skills: [15], // north, beside the docks: the Skill Forge
-  mcp: [1], // north-east: the Relay Tower
+  mcp: [1], // north, beside the foundry: the Relay Tower
   cli: [11], // west: the Terminal Cantina
 };
 
-/** Footprints (tiles) of the kit buildings, for blocking the walk grid. */
-export const KIT_FOOTPRINTS: Record<KitPlace, [number, number]> = {
-  plugins: [8, 5],
-  skills: [7, 5],
-  mcp: [5, 5],
-  cli: [7, 5],
+/**
+ * Footprint of each kit building in TILES, as its GLB's `jarvis_building`
+ * extras declare it. Walkers route around these the way they route around a
+ * house; the foundry's conveyor ramp stays walkable on purpose — a figure
+ * leaving the portal walks down it.
+ */
+export const KIT_FOOTPRINT_TILES: Record<KitPlace, { w: number; d: number }> = {
+  plugins: { w: 8, d: 5 },
+  foundry: { w: 10, d: 7 },
+  skills: { w: 7, d: 5 },
+  mcp: { w: 5, d: 5 },
+  cli: { w: 7, d: 5 },
 };
 
-const KIT_PLACES = Object.keys(RING_KIT_SLOTS) as KitPlace[];
+/**
+ * Kit buildings face the square by default. The Agent Foundry does not: it
+ * faces the ring road (south-east), because a factory's loading side belongs
+ * on the road rather than on the market place — and because its door is the
+ * one door a viewer has to SEE. The island camera is fixed at a 45° yaw from
+ * the south-east, so this is the heading that puts the portal, the sign, the
+ * assembly arms and the whole conveyor in plain view of the default camera.
+ */
+export const KIT_FACING: Partial<Record<KitPlace, number>> = { foundry: Math.PI / 4 };
 
-function kitTile(place: KitPlace): [number, number] {
-  const p = ringPose(RING_KIT_SLOTS[place]);
-  return [Math.floor(p.x / TILE_M + CENTER_TILE), Math.floor(p.z / TILE_M + CENTER_TILE)];
+/** Where a kit building stands and which way it turns — the one source. */
+export function kitPose(place: KitPlace): KitPose {
+  const pose = ringPose(RING_KIT_SLOTS[place]);
+  const facing = KIT_FACING[place];
+  return facing === undefined ? pose : { ...pose, rotation: facing };
 }
 
 /**
@@ -390,12 +411,48 @@ const PLACE_TILES: Record<PlaceId, [number, number]> = {
   lighthouse: [CENTER_TILE + 84, CENTER_TILE],
   gardens: [CENTER_TILE + 44, CENTER_TILE + 48],
   solar: [CENTER_TILE - 40, CENTER_TILE - 40],
-  // Kit hubs stand in the house ring (RING_KIT_SLOTS); these are their ring poses' tiles.
-  plugins: kitTile("plugins"),
-  skills: kitTile("skills"),
-  mcp: kitTile("mcp"),
-  cli: kitTile("cli"),
+  // Kit buildings stand in the house ring (RING_KIT_SLOTS); the tile is the ring pose's.
+  plugins: ringTile("plugins"),
+  foundry: ringTile("foundry"),
+  skills: ringTile("skills"),
+  mcp: ringTile("mcp"),
+  cli: ringTile("cli"),
 };
+
+/**
+ * The Agent Foundry's walk-out, in world metres: where a brand-new figure
+ * appears (just behind the portal's containment field) and where the conveyor
+ * ramp sets it down on the plaza. Both distances are the GLB's own
+ * `jarvis_building` anchors — `door` 6.5 m and `ramp_end` 13.4 m ahead of the
+ * origin — nudged so the figure starts inside the glow and lands past the belt.
+ */
+export const FOUNDRY_PORTAL_M = 5.2;
+export const FOUNDRY_RAMP_END_M = 13.6;
+/** Centre of the conveyor deck ahead of the origin, in metres. */
+export const FOUNDRY_RAMP_MID_M = 9.5;
+/** How high the conveyor carries a figure above the plaza, in metres. */
+export const FOUNDRY_BELT_LIFT_M = 0.55;
+
+export function foundryWalkOut(): {
+  from: [number, number];
+  to: [number, number];
+  heading: number;
+} {
+  const p = kitPose("foundry");
+  const fx = Math.sin(p.rotation);
+  const fz = Math.cos(p.rotation);
+  return {
+    from: [p.x + fx * FOUNDRY_PORTAL_M, p.z + fz * FOUNDRY_PORTAL_M],
+    to: [p.x + fx * FOUNDRY_RAMP_END_M, p.z + fz * FOUNDRY_RAMP_END_M],
+    heading: p.rotation,
+  };
+}
+
+/** The tile a ring kit building's origin falls on. */
+function ringTile(place: KitPlace): [number, number] {
+  const p = kitPose(place);
+  return [Math.floor(p.x / TILE_M + CENTER_TILE), Math.floor(p.z / TILE_M + CENTER_TILE)];
+}
 
 /** Half extents (tiles) of the flat plots each place is built on. */
 const PLOT_HALF: Record<PlaceId, [number, number]> = {
@@ -407,8 +464,8 @@ const PLOT_HALF: Record<PlaceId, [number, number]> = {
   lighthouse: [4, 4],
   gardens: [9, 7],
   solar: [8, 7],
-  // Ring hubs have no flat plot of their own: they sit on the village plateau.
-  plugins: [0, 0],
+  plugins: [0, 0], // no flat plot of its own: it sits on the village plateau
+  foundry: [0, 0],
   skills: [0, 0],
   mcp: [0, 0],
   cli: [0, 0],
@@ -425,6 +482,7 @@ const PLOT_LEVEL: Record<PlaceId, number> = {
   gardens: 2,
   solar: 4,
   plugins: PLATEAU_LEVEL,
+  foundry: PLATEAU_LEVEL,
   skills: PLATEAU_LEVEL,
   mcp: PLATEAU_LEVEL,
   cli: PLATEAU_LEVEL,
@@ -433,7 +491,7 @@ const PLOT_LEVEL: Record<PlaceId, number> = {
 /** Building footprints (half extents, tiles) that block walking. */
 const BUILDING_HALF: Partial<Record<PlaceId, [number, number]>> = {
   hub: [6, 3],
-  archive: [3, 3],
+  archive: [4, 3], // the Memory House: 8 x 6 tiles
   workshop: [6, 3],
   lighthouse: [1, 1],
 };
@@ -1013,6 +1071,13 @@ function placeBoulders(map: IslandMap): Boulder[] {
   return boulders;
 }
 
+/** A stand point `ahead` metres in front of a kit building, facing it. */
+function kitPlace(id: KitPlace, ahead: number): Place {
+  const p = kitPose(id);
+  const tile = worldToTile(p.x + Math.sin(p.rotation) * ahead, p.z + Math.cos(p.rotation) * ahead);
+  return { id, tile: PLACE_TILES[id], standTile: tile, facing: p.rotation + Math.PI };
+}
+
 function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
   const C = CENTER_TILE;
   const place = (id: PlaceId, standTile: [number, number], facing: number): Place => ({
@@ -1032,16 +1097,13 @@ function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
     lighthouse: place("lighthouse", [PLACE_TILES.lighthouse[0] - 4, C], Math.PI / 2),
     gardens: place("gardens", [PLACE_TILES.gardens[0], PLACE_TILES.gardens[1]], 0),
     solar: place("solar", [PLACE_TILES.solar[0] + 1, PLACE_TILES.solar[1] + 9], Math.PI),
-    // Ring hubs: 7.5 m in front of the doors, toward the square, facing the building.
-    ...(Object.fromEntries(
-      KIT_PLACES.map((id) => {
-        const p = ringPose(RING_KIT_SLOTS[id]);
-        const fx = Math.sin(p.rotation);
-        const fz = Math.cos(p.rotation);
-        const tile = worldToTile(p.x + fx * 7.5, p.z + fz * 7.5);
-        return [id, place(id, tile, p.rotation + Math.PI)];
-      }),
-    ) as Record<KitPlace, Place>),
+    // In front of the docks' bays (7.5 m toward the square), facing the building.
+    plugins: kitPlace("plugins", 7.5),
+    // At the foot of the foundry's conveyor ramp, facing the portal.
+    foundry: kitPlace("foundry", 13.5),
+    skills: kitPlace("skills", 7.5),
+    mcp: kitPlace("mcp", 7.0),
+    cli: kitPlace("cli", 7.5),
   };
   // Make sure every stand tile is walkable — a place nobody can reach is a bug.
   for (const p of Object.values(places)) {
@@ -1083,20 +1145,38 @@ export function buildIsland(): Island {
   buildVillage(map);
   const houses = placeHouses();
   blockHouses(map, houses);
-  const kitPoses = Object.fromEntries(
-    KIT_PLACES.map((id) => [id, ringPose(RING_KIT_SLOTS[id])]),
-  ) as Record<KitPlace, KitPose>;
-  // Kit footprints block walking like houses do.
+  const kitPoses: Record<KitPlace, KitPose> = {
+    plugins: kitPose("plugins"),
+    foundry: kitPose("foundry"),
+    skills: kitPose("skills"),
+    mcp: kitPose("mcp"),
+    cli: kitPose("cli"),
+  };
+  // Every kit footprint blocks walking the way a house does.
   blockHouses(
     map,
-    KIT_PLACES.map((id) => ({
+    (Object.keys(kitPoses) as KitPlace[]).map((id) => ({
       ...kitPoses[id],
-      w: KIT_FOOTPRINTS[id][0],
-      d: KIT_FOOTPRINTS[id][1],
-      variant: "glass-loft" as const,
+      ...KIT_FOOTPRINT_TILES[id],
+      variant: "glass-loft" as HouseVariant,
       seed: 0,
     })),
   );
+  // The foundry's conveyor deck is furniture, not floor: it keeps trees off
+  // and keeps strollers beside it. A newborn rides it on fixed waypoints, so
+  // the block costs the entrance nothing.
+  const belt = kitPose("foundry");
+  blockHouses(map, [
+    {
+      x: belt.x + Math.sin(belt.rotation) * FOUNDRY_RAMP_MID_M,
+      z: belt.z + Math.cos(belt.rotation) * FOUNDRY_RAMP_MID_M,
+      rotation: belt.rotation,
+      w: 3,
+      d: 3,
+      variant: "glass-loft" as HouseVariant,
+      seed: 0,
+    },
+  ]);
   blockSquareFurniture(map);
   const { hedges, lamps } = placeRingFurniture(map);
   const { panels, greenhouses } = placeQuarterFurniture(map);
