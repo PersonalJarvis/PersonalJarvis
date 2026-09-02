@@ -117,7 +117,8 @@
       "place_harbor": "Puerta del Puerto",
       "place_lighthouse": "Faro",
       "place_gardens": "Jardines",
-      "place_solar": "Campo Solar"
+      "place_solar": "Campo Solar",
+      "place_mine": "La Mina"
     }
   }
 }

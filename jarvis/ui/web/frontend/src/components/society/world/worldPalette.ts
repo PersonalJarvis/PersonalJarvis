@@ -34,6 +34,12 @@ export const TILE_COLORS: Record<TileKind, TileShades> = {
   [TileKind.forest]: { top: ["#4f9e47", "#47923f"], side: "#6d5236" },
   [TileKind.alpine]: { top: ["#bcd97c", "#aecf6f"], side: "#7c6a4c" },
   [TileKind.snow]: { top: ["#f6f9fc", "#e9eff6"], side: "#8f92a3" },
+  [TileKind.heath]: { top: ["#b48ec6", "#a583b8"], side: "#7c6a4c" },
+  [TileKind.dry]: { top: ["#dcd07e", "#cfc370"], side: "#a08a55" },
+  [TileKind.farm]: { top: ["#c9a35a", "#8fbf55"], side: "#8e6a44" },
+  [TileKind.marsh]: { top: ["#5f9e70", "#4f8c62"], side: "#4c5e3c" },
+  [TileKind.scree]: { top: ["#918e88", "#85827b"], side: "#6f6e7c" },
+  [TileKind.quarry]: { top: ["#a2988a", "#948a7c"], side: "#6f6e7c" },
 };
 
 /** Water: the animated surface, from the turquoise shallows to the open sea. */
@@ -49,6 +55,8 @@ export const WATER = {
 /** Sky and light. NoToneMapping keeps these exact. */
 export const SKY = {
   clear: "#a5dbff",
+  /** The sea's own highlight: the sun's colour on a wave face. */
+  seaGlint: "#fff6df",
   hemiSky: "#d6ecff",
   hemiGround: "#7f9c5a",
   sun: "#fff1d6",
@@ -89,6 +97,10 @@ export const BUILDING = {
   lighthouseStripe: "#e05a5a",
   metal: "#8b8f9c",
   buoy: "#e8563f",
+  /** The mine: the dark of the tunnel, the ore in the cart, the rails. */
+  mineDark: "#10131a",
+  ore: "#e8bd4c",
+  rail: "#6d6f78",
 };
 
 export const NATURE = {
@@ -114,6 +126,14 @@ export const NATURE = {
   flower: "#ef8fb6",
   lampPost: "#5c5f6a",
   lampLight: "#ffe9b0",
+  /** The warm pool a lamp throws on the ground, and the festoon bulbs over the square. */
+  lampGlow: "#ffd68a",
+  bulb: "#fff3c8",
+  reed: "#7aa95e",
+  reedHead: "#a8834b",
+  fire: "#ff8f3a",
+  fireCore: "#ffe37a",
+  ember: "#ff5a2c",
   tableWood: "#c58d4f",
   bench: "#a9723a",
 };

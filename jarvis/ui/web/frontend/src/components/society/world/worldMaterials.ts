@@ -6,7 +6,9 @@
  */
 import { useEffect, useMemo } from "react";
 import {
+  AdditiveBlending,
   BoxGeometry,
+  CircleGeometry,
   Color,
   CylinderGeometry,
   DataTexture,
@@ -48,6 +50,8 @@ export function createToonRamp(): DataTexture {
 export interface WorldMaterials {
   lit: (hex: string) => MeshToonMaterial;
   glow: (hex: string) => MeshBasicMaterial;
+  /** Additive, translucent: light pools, beams, halos — the cheap "lighting effect". */
+  halo: (hex: string, opacity?: number) => MeshBasicMaterial;
   dispose: () => void;
 }
 
@@ -55,8 +59,24 @@ export interface WorldMaterials {
 export function createWorldMaterials(): WorldMaterials {
   const lit = new Map<string, MeshToonMaterial>();
   const glow = new Map<string, MeshBasicMaterial>();
+  const halo = new Map<string, MeshBasicMaterial>();
   const ramp = createToonRamp();
   return {
+    halo: (hex, opacity = 0.35) => {
+      const key = `${hex}@${opacity}`;
+      let m = halo.get(key);
+      if (!m) {
+        m = new MeshBasicMaterial({
+          color: new Color(hex),
+          transparent: true,
+          opacity,
+          blending: AdditiveBlending,
+          depthWrite: false,
+        });
+        halo.set(key, m);
+      }
+      return m;
+    },
     lit: (hex) => {
       let m = lit.get(hex);
       if (!m) {
@@ -76,9 +96,11 @@ export function createWorldMaterials(): WorldMaterials {
     dispose: () => {
       for (const m of lit.values()) m.dispose();
       for (const m of glow.values()) m.dispose();
+      for (const m of halo.values()) m.dispose();
       ramp.dispose();
       lit.clear();
       glow.clear();
+      halo.clear();
     },
   };
 }
@@ -106,6 +128,8 @@ export interface WorldGeometries {
   pine: BufferGeometry;
   /** A palm crown: six drooping fronds around the trunk top, unit radius. */
   palmCrown: BufferGeometry;
+  /** A flat unit disc facing +y, for light pools on the ground. */
+  disc: CircleGeometry;
   dispose: () => void;
 }
 
@@ -144,7 +168,8 @@ export function createWorldGeometries(): WorldGeometries {
   const ring = new TorusGeometry(0.5, 0.06, 6, 24);
   const pine = makePine();
   const palmCrown = makePalmCrown();
-  const all = [box, slab, cylinder, halfCylinder, cone, blob, sphere, dome, ring, pine, palmCrown];
+  const disc = new CircleGeometry(1, 20).rotateX(-Math.PI / 2);
+  const all = [box, slab, cylinder, halfCylinder, cone, blob, sphere, dome, ring, pine, palmCrown, disc];
   return {
     box,
     slab,
@@ -157,6 +182,7 @@ export function createWorldGeometries(): WorldGeometries {
     ring,
     pine,
     palmCrown,
+    disc,
     dispose: () => all.forEach((g) => g.dispose()),
   };
 }

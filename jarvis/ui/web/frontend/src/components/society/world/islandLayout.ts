@@ -26,7 +26,11 @@
  *    alpine meadows roll over the north-east, the lighthouse stands on a
  *    rocky cape in the east, the tropical cove with its lagoon and palms fills
  *    the low south-east foreground, the harbor bay bites into the south, the
- *    orchard meadows cover the south-west and the dark forest the west.
+ *    orchard meadows and farmland cover the south-west, a marsh with pools
+ *    and reeds the south-western coast, dry savanna the eastern lowland, the
+ *    dark forest the west; heather drifts over the high moor, gravel over the
+ *    mountain's flanks, and a mine is cut into a cliff on its south-eastern
+ *    side, reached by a branch off the north road.
  *  - The terrain is a continuous height field quantised into steps: every
  *    slope becomes a terrace, every steep place a cliff. Roads are GRADED —
  *    never more than one step per tile — so every place stays reachable on
@@ -85,6 +89,18 @@ export const TileKind = {
   alpine: 10,
   /** The mountain's snow cap. */
   snow: 11,
+  /** Heather over the high moor, north-east. */
+  heath: 12,
+  /** Sun-dried savanna grass on the eastern lowland. */
+  dry: 13,
+  /** Crop rows of the south-western farmland. */
+  farm: 14,
+  /** Wetland with pools and reeds on the south-western coast. */
+  marsh: 15,
+  /** Loose gravel on the mountain's flanks. */
+  scree: 16,
+  /** The quarry floor around the mine. */
+  quarry: 17,
 } as const;
 export type TileKind = (typeof TileKind)[keyof typeof TileKind];
 
@@ -130,6 +146,7 @@ export type PlaceId =
   | "lighthouse"
   | "gardens"
   | "solar"
+  | "mine"
   | "plugins"
   | "foundry"
   | "skills"
@@ -201,6 +218,12 @@ export interface IslandContent {
   trees: TreeSpot[];
   /** Rocks scattered over the highland, the cliffs and the beaches. */
   boulders: Boulder[];
+  /** Reeds standing in the marsh. */
+  reeds: Post[];
+  /** Poles around the square that carry the festoon lights. */
+  festoonPoles: Post[];
+  /** The campfire on the cove's beach. */
+  campfire: Post;
   /** Hedge segments forming the village ring, with gaps at the four gates. */
   hedges: Post[];
   /** Light posts along the ring and the spokes. */
@@ -411,6 +434,8 @@ const PLACE_TILES: Record<PlaceId, [number, number]> = {
   lighthouse: [CENTER_TILE + 84, CENTER_TILE],
   gardens: [CENTER_TILE + 44, CENTER_TILE + 48],
   solar: [CENTER_TILE - 40, CENTER_TILE - 40],
+  // The mine: a portal in a cliff on the mountain's south-eastern flank.
+  mine: [CENTER_TILE - 32, CENTER_TILE - 60],
   // Kit buildings stand in the house ring (RING_KIT_SLOTS); the tile is the ring pose's.
   plugins: ringTile("plugins"),
   foundry: ringTile("foundry"),
@@ -464,6 +489,7 @@ const PLOT_HALF: Record<PlaceId, [number, number]> = {
   lighthouse: [4, 4],
   gardens: [9, 7],
   solar: [8, 7],
+  mine: [5, 4],
   plugins: [0, 0], // no flat plot of its own: it sits on the village plateau
   foundry: [0, 0],
   skills: [0, 0],
@@ -481,6 +507,7 @@ const PLOT_LEVEL: Record<PlaceId, number> = {
   lighthouse: 6,
   gardens: 2,
   solar: 4,
+  mine: 4,
   plugins: PLATEAU_LEVEL,
   foundry: PLATEAU_LEVEL,
   skills: PLATEAU_LEVEL,
@@ -495,6 +522,11 @@ const BUILDING_HALF: Partial<Record<PlaceId, [number, number]>> = {
   workshop: [6, 3],
   lighthouse: [1, 1],
 };
+
+/** The cliff the mine's portal is cut into: a rock block north of the forecourt. */
+const MINE_CLIFF = { dz: -8, hw: 8, hd: 3, level: 7 } as const;
+/** The mine's branch road leaves the north spoke here and runs west to the forecourt. */
+const MINE_ROAD = { fromX: CENTER_TILE - 1, z: CENTER_TILE - 60, length: 27 } as const;
 
 /** Where the dock reaches into the bay: from the harbor plot southward. */
 export const DOCK_TILES = { from: CENTER_TILE + 66, to: CENTER_TILE + 80, halfWidth: 1 } as const;
@@ -522,6 +554,10 @@ export const REGIONS = {
   orchard: { x: -0.45, z: 0.5, r: 0.3 },
   /** The dark forest, west. */
   forest: { x: -0.6, z: 0.02, r: 0.34 },
+  /** Dry savanna on the eastern lowland, between the highland and the cove. */
+  savanna: { x: 0.64, z: 0.2, r: 0.3 },
+  /** The wetland on the south-western coast. */
+  marsh: { x: -0.62, z: 0.46, r: 0.2 },
 } as const;
 export type RegionId = keyof typeof REGIONS;
 
@@ -647,21 +683,39 @@ function biomeKind(nx: number, nz: number, level: number): TileKind {
   const inHighland = regionT(nx, nz, REGIONS.highland) < 1;
   const inCove = regionT(nx, nz, REGIONS.cove) < 0.8;
   const inForest = regionT(nx, nz, REGIONS.forest) < 0.92;
+  const inSavanna = regionT(nx, nz, REGIONS.savanna) < 1;
+  const inMarsh = regionT(nx, nz, REGIONS.marsh) < 1;
+  const inOrchard = regionT(nx, nz, REGIONS.orchard) < 0.85;
   const grain = fbm(nx * 6 + 31, nz * 6 + 17, ISLAND_SEED + 3);
-  if (level === 6) return inMountain || inCape ? TileKind.rock : TileKind.alpine;
-  if (level === 5) {
-    if ((inMountain || inCape) && grain > 0.55) return TileKind.rock;
-    return inMountain || inHighland || inCape ? TileKind.alpine : TileKind.meadow;
+  // A second, coarser grain decides the patchwork biomes: heather drifts, fields, gravel.
+  const patchwork = fbm(nx * 4.2 + 5, nz * 4.2 + 9, ISLAND_SEED + 31);
+  if (level === 6) {
+    if (inMountain || inCape) return grain > 0.42 ? TileKind.rock : TileKind.scree;
+    return patchwork > 0.5 ? TileKind.heath : TileKind.alpine;
   }
-  if (level === 1) return TileKind.sand;
+  if (level === 5) {
+    if (inMountain || inCape) return grain > 0.55 ? TileKind.rock : grain > 0.3 ? TileKind.scree : TileKind.alpine;
+    if (inHighland) return patchwork > 0.52 ? TileKind.heath : TileKind.alpine;
+    return TileKind.meadow;
+  }
+  if (level === 1) return inMarsh ? TileKind.marsh : TileKind.sand;
   if (level === 2) {
     if (inCove) return TileKind.sand;
+    if (inMarsh) return TileKind.marsh;
+    if (inSavanna) return TileKind.dry;
+    if (inOrchard) return patchwork > 0.45 ? TileKind.farm : TileKind.meadow;
     return grain > 0.6 ? TileKind.meadow : TileKind.grass;
   }
   // Levels 3 and 4: the rolling middle ground.
   if (inForest && grain > 0.3) return TileKind.forest;
-  if (level === 4) return inHighland && grain > 0.5 ? TileKind.alpine : TileKind.meadow;
-  return grain > 0.66 ? TileKind.meadow : TileKind.grass;
+  if (inSavanna && level === 3) return grain > 0.7 ? TileKind.meadow : TileKind.dry;
+  if (inOrchard && level === 3) return patchwork > 0.42 ? TileKind.farm : TileKind.meadow;
+  if (inMountain && level === 4 && grain > 0.6) return TileKind.scree;
+  if (level === 4) {
+    if (inHighland) return patchwork > 0.55 ? TileKind.heath : grain > 0.5 ? TileKind.alpine : TileKind.meadow;
+    return grain > 0.45 ? TileKind.meadow : TileKind.grass;
+  }
+  return grain > 0.58 ? TileKind.meadow : TileKind.grass;
 }
 
 /**
@@ -692,6 +746,29 @@ function buildTerrain(map: IslandMap): void {
       paintLand(map, i, kind, level);
     }
   }
+
+  // Pools in the marsh: sea-level water inside the wetland, ringed by reeds.
+  for (let tz = 0; tz < map.size; tz++) {
+    for (let tx = 0; tx < map.size; tx++) {
+      const i = tileIndex(map, tx, tz);
+      if (map.kind[i] !== TileKind.marsh) continue;
+      const nx = (tx + 0.5 - C) / C;
+      const nz = (tz + 0.5 - C) / C;
+      if (fbm(nx * 16 + 2, nz * 16 + 6, ISLAND_SEED + 21) > 0.64) paintWater(map, i);
+    }
+  }
+
+  // The quarry: a gravel apron around the mine and the cliff its portal is cut into.
+  const [mx, mz] = PLACE_TILES.mine;
+  paintDisc(map, mx, mz, 0, 11, (i) => {
+    if (map.kind[i] === TileKind.water || map.kind[i] === TileKind.snow) return;
+    if (map.level[i] >= 7) return;
+    paintLand(map, i, map.level[i] >= 4 ? TileKind.scree : TileKind.quarry, map.level[i]);
+  });
+  fillRect(map, mx, mz + MINE_CLIFF.dz, MINE_CLIFF.hw, MINE_CLIFF.hd, (i) => {
+    if (map.kind[i] === TileKind.water) return;
+    paintLand(map, i, TileKind.rock, MINE_CLIFF.level);
+  });
 
   // Sandbar around the lagoon: a bright rim of beach, one step above the water.
   const lag = REGIONS.lagoon;
@@ -742,7 +819,9 @@ function buildPlots(map: IslandMap): void {
           ? TileKind.meadow
           : id === "lighthouse"
             ? TileKind.rock
-            : TileKind.plaza;
+            : id === "mine"
+              ? TileKind.quarry
+              : TileKind.plaza;
     fillRect(map, px, pz, hw, hd, (i) => {
       if (map.kind[i] === TileKind.water) return;
       paintLand(map, i, kind, PLOT_LEVEL[id]);
@@ -757,12 +836,17 @@ function buildPlots(map: IslandMap): void {
  * come along, so the road never runs in a trench. This is what keeps every
  * place reachable on foot whatever the terrain does.
  */
-function gradeSpoke(map: IslandMap, dir: [number, number], fromTiles: number, toTiles: number): void {
-  const C = CENTER_TILE;
-  let prev = PLATEAU_LEVEL;
-  for (let s = fromTiles; s <= toTiles; s++) {
-    const cx = C + dir[0] * s;
-    const cz = C + dir[1] * s;
+function gradeRoad(
+  map: IslandMap,
+  start: [number, number],
+  dir: [number, number],
+  length: number,
+  startLevel: number,
+): void {
+  let prev = startLevel;
+  for (let s = 0; s <= length; s++) {
+    const cx = start[0] + dir[0] * s;
+    const cz = start[1] + dir[1] * s;
     if (!inBounds(map, cx, cz)) break;
     const ci = tileIndex(map, cx, cz);
     const desired = map.kind[ci] === TileKind.water ? prev : map.level[ci];
@@ -804,7 +888,13 @@ function buildVillage(map: IslandMap): void {
   });
 
   // Spokes from the square out to the quarters (width 3), graded.
-  for (const spoke of SPOKES) gradeSpoke(map, spoke.dir, PLAZA_RADIUS_TILES - 1, spoke.toTiles);
+  for (const spoke of SPOKES) {
+    const from = PLAZA_RADIUS_TILES - 1;
+    gradeRoad(map, [C + spoke.dir[0] * from, C + spoke.dir[1] * from], spoke.dir, spoke.toTiles - from, PLATEAU_LEVEL);
+  }
+  // The mine's branch: off the north spoke, west to the quarry, at the spoke's level there.
+  const junction = map.level[tileIndex(map, MINE_ROAD.fromX + 1, MINE_ROAD.z)];
+  gradeRoad(map, [MINE_ROAD.fromX, MINE_ROAD.z], [-1, 0], MINE_ROAD.length, junction);
 
   // Buildings block walking; their tiles keep the plot level.
   for (const id of Object.keys(BUILDING_HALF) as PlaceId[]) {
@@ -816,6 +906,10 @@ function buildVillage(map: IslandMap): void {
       map.level[i] = PLOT_LEVEL[id];
     });
   }
+
+  // The mine's portal and its rail head block walking; the forecourt stays open.
+  const [mx, mz] = PLACE_TILES.mine;
+  fillRect(map, mx, mz - 3, 3, 1, (i) => (map.blocked[i] = 1));
 
   // The dock runs from the harbor plot into the bay, one step above the water
   // so a walker can step onto the planks from the beach.
@@ -923,7 +1017,103 @@ function placeRingFurniture(map: IslandMap): { hedges: Post[]; lamps: Post[] } {
       }
     }
   }
+  // Lamps around the square's rim and along the ring road, between the gates.
+  const ringLamps = (radiusTiles: number, count: number, offset: number) => {
+    for (let k = 0; k < count; k++) {
+      const angle = ((k + offset) / count) * Math.PI * 2;
+      // Never in a gate or on a spoke.
+      const toCardinal = Math.abs(((angle + Math.PI / 4) % (Math.PI / 2)) - Math.PI / 4);
+      if (toCardinal < 0.12) continue;
+      const x = Math.sin(angle) * radiusTiles * TILE_M;
+      const z = -Math.cos(angle) * radiusTiles * TILE_M;
+      const [tx, tz] = worldToTile(x, z);
+      if (!inBounds(map, tx, tz) || map.blocked[tileIndex(map, tx, tz)]) continue;
+      lamps.push({ x, z, y: groundY(map, x, z), rotation: 0 });
+    }
+  };
+  ringLamps(PLAZA_RADIUS_TILES + 2.2, 16, 0.5);
+  ringLamps(RING_ROAD_TILES + 1.8, 16, 0.5);
+  // Lanterns along the dock and the mine's road.
+  for (let tz = DOCK_TILES.from + 2; tz <= DOCK_TILES.to; tz += 4) {
+    const [x, z] = tileToWorld(CENTER_TILE + DOCK_TILES.halfWidth, tz);
+    lamps.push({ x: x + 0.7, z, y: DOCK_Y, rotation: 0 });
+  }
+  for (let s = 4; s < MINE_ROAD.length; s += 8) {
+    const [x, z] = tileToWorld(MINE_ROAD.fromX - s, MINE_ROAD.z + 2);
+    lamps.push({ x, z, y: groundY(map, x, z), rotation: 0 });
+  }
   return { hedges, lamps };
+}
+
+/** Eight poles around the square that carry the festoon lights over it. */
+function placeFestoonPoles(map: IslandMap): Post[] {
+  const poles: Post[] = [];
+  const r = (PLAZA_RADIUS_TILES - 1.5) * TILE_M;
+  for (let k = 0; k < 8; k++) {
+    const angle = ((k + 0.5) / 8) * Math.PI * 2;
+    const x = Math.sin(angle) * r;
+    const z = -Math.cos(angle) * r;
+    poles.push({ x, z, y: groundY(map, x, z), rotation: angle });
+    const [tx, tz] = worldToTile(x, z);
+    if (inBounds(map, tx, tz)) map.blocked[tileIndex(map, tx, tz)] = 1;
+  }
+  return poles;
+}
+
+/** The campfire: the first free sand tile near the lagoon's western shore. */
+function placeCampfire(map: IslandMap): Post {
+  const C = CENTER_TILE;
+  const cx = Math.round(C + REGIONS.lagoon.x * C - REGIONS.lagoon.r * C - 9);
+  const cz = Math.round(C + REGIONS.lagoon.z * C + 4);
+  for (let r = 0; r < 12; r++) {
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const tx = cx + dx;
+        const tz = cz + dz;
+        if (!inBounds(map, tx, tz)) continue;
+        let ok = true;
+        fillRect(map, tx, tz, 1, 1, (i) => {
+          if (map.kind[i] !== TileKind.sand || map.blocked[i]) ok = false;
+        });
+        if (!ok) continue;
+        fillRect(map, tx, tz, 1, 1, (i) => (map.blocked[i] = 1));
+        const [x, z] = tileToWorld(tx, tz);
+        return { x, z, y: groundY(map, x, z), rotation: 0 };
+      }
+    }
+  }
+  const [x, z] = tileToWorld(cx, cz);
+  return { x, z, y: groundY(map, x, z), rotation: 0 };
+}
+
+/** Reeds on the marsh, thickest at the pools' edges. */
+function placeReeds(map: IslandMap): Post[] {
+  const reeds: Post[] = [];
+  for (let tz = 1; tz < map.size - 1; tz++) {
+    for (let tx = 1; tx < map.size - 1; tx++) {
+      const i = tileIndex(map, tx, tz);
+      if (map.kind[i] !== TileKind.marsh || map.blocked[i]) continue;
+      let pool = false;
+      for (const [dx, dz] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ] as const) {
+        if (map.kind[tileIndex(map, tx + dx, tz + dz)] === TileKind.water) pool = true;
+      }
+      const density = pool ? 0.8 : 0.28;
+      if (hash2(tx, tz, ISLAND_SEED + 61) > density) continue;
+      const [x, z] = tileToWorld(tx, tz);
+      reeds.push({
+        x: x + (hash2(tx, tz, 62) - 0.5) * 1.4,
+        z: z + (hash2(tx, tz, 63) - 0.5) * 1.4,
+        y: LEVEL_Y[map.level[i]],
+        rotation: hash2(tx, tz, 64) * Math.PI * 2,
+      });
+    }
+  }
+  return reeds;
 }
 
 /** Solar panel rows and greenhouses — the solarpunk furniture of two quarters. */
@@ -971,6 +1161,8 @@ function treeChoice(map: IslandMap, tx: number, tz: number): { kind: TreeKind; d
     return { kind: "palm", density: lagoon < 1.9 ? 0.11 : 0.045 };
   }
   if (k === TileKind.meadow) return { kind: level >= 5 ? "pine" : "round", density: 0.09 };
+  if (k === TileKind.heath) return { kind: "pine", density: 0.025 };
+  if (k === TileKind.dry) return { kind: "round", density: 0.018 };
   if (k === TileKind.grass) {
     // Islets carry a tree or two; the mainland's grass stays open.
     const offshore = Math.hypot(nx, nz) > 0.8;
@@ -1040,7 +1232,9 @@ function placeBoulders(map: IslandMap): Boulder[] {
       if (Math.hypot(tx + 0.5 - C, tz + 0.5 - C) < HEDGE_RING_TILES + 4) continue;
       let density: number;
       if (k === TileKind.rock || k === TileKind.snow) density = 0.05;
-      else if (k === TileKind.alpine) density = 0.035;
+      else if (k === TileKind.quarry) density = 0.09;
+      else if (k === TileKind.scree) density = 0.06;
+      else if (k === TileKind.alpine || k === TileKind.heath) density = 0.035;
       else if (k === TileKind.sand) density = 0.012;
       else density = 0.008;
       // Rocks gather at the foot of cliffs: a higher neighbour raises the odds.
@@ -1097,6 +1291,8 @@ function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
     lighthouse: place("lighthouse", [PLACE_TILES.lighthouse[0] - 4, C], Math.PI / 2),
     gardens: place("gardens", [PLACE_TILES.gardens[0], PLACE_TILES.gardens[1]], 0),
     solar: place("solar", [PLACE_TILES.solar[0] + 1, PLACE_TILES.solar[1] + 9], Math.PI),
+    // On the mine's road at the edge of the forecourt, facing the portal (west).
+    mine: place("mine", [PLACE_TILES.mine[0] + 7, PLACE_TILES.mine[1]], -Math.PI / 2),
     // In front of the docks' bays (7.5 m toward the square), facing the building.
     plugins: kitPlace("plugins", 7.5),
     // At the foot of the foundry's conveyor ramp, facing the portal.
@@ -1180,12 +1376,28 @@ export function buildIsland(): Island {
   blockSquareFurniture(map);
   const { hedges, lamps } = placeRingFurniture(map);
   const { panels, greenhouses } = placeQuarterFurniture(map);
+  const festoonPoles = placeFestoonPoles(map);
+  const campfire = placeCampfire(map);
   const trees = placeTrees(map);
   const boulders = placeBoulders(map);
+  const reeds = placeReeds(map);
   const places = buildPlaces(map);
   cached = {
     map,
-    content: { places, houses, trees, boulders, hedges, lamps, panels, greenhouses, kitPoses },
+    content: {
+      places,
+      houses,
+      trees,
+      boulders,
+      reeds,
+      festoonPoles,
+      campfire,
+      hedges,
+      lamps,
+      panels,
+      greenhouses,
+      kitPoses,
+    },
   };
   return cached;
 }

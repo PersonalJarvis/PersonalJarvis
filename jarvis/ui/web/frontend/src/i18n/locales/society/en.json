@@ -117,7 +117,8 @@
       "place_harbor": "Harbor Gate",
       "place_lighthouse": "Lighthouse",
       "place_gardens": "Gardens",
-      "place_solar": "Solar Field"
+      "place_solar": "Solar Field",
+      "place_mine": "The Mine"
     }
   }
 }

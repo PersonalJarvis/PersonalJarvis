@@ -117,7 +117,8 @@
       "place_harbor": "Hafentor",
       "place_lighthouse": "Leuchtturm",
       "place_gardens": "Gärten",
-      "place_solar": "Solarfeld"
+      "place_solar": "Solarfeld",
+      "place_mine": "Die Mine"
     }
   }
 }

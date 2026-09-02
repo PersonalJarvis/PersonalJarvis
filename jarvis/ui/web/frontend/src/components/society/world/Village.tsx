@@ -9,7 +9,7 @@
  */
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { Color, InstancedMesh, Mesh, Object3D } from "three";
+import { Color, InstancedMesh, Mesh, Object3D, Vector3 } from "three";
 
 import { LEVEL_Y, PLATEAU_LEVEL, buildIsland, groundY, type HousePlot, type Post } from "./islandLayout";
 import { QuestMonument } from "./QuestMonument";
@@ -233,7 +233,11 @@ function Hedges({ kit, posts }: { kit: Kit; posts: Post[] }) {
   );
 }
 
-/** Lamps along the spokes: a post and a glowing head. */
+/**
+ * Lamps along the spokes, around the square, the ring road and the dock: a
+ * post, a glowing head, and the warm pool of light it throws on the ground —
+ * an additive disc, the cheapest lighting effect there is.
+ */
 function Lamps({ kit, posts }: { kit: Kit; posts: Post[] }) {
   const dummy = useMemo(() => new Object3D(), []);
   const setup = (mesh: InstancedMesh | null, yOffset: number, scale: [number, number, number]) => {
@@ -251,7 +255,92 @@ function Lamps({ kit, posts }: { kit: Kit; posts: Post[] }) {
     <>
       <instancedMesh ref={(m) => setup(m, 1.6, [0.18, 3.2, 0.18])} args={[kit.g.cylinder, kit.m.lit(PAL.lampPost), posts.length]} />
       <instancedMesh ref={(m) => setup(m, 3.35, [0.55, 0.45, 0.55])} args={[kit.g.box, kit.m.glow(PAL.lampLight), posts.length]} />
+      <instancedMesh ref={(m) => setup(m, 0.05, [3.4, 1, 3.4])} args={[kit.g.disc, kit.m.halo(PAL.lampGlow, 0.28), posts.length]} />
     </>
+  );
+}
+
+/** Bulbs per string between two neighbouring poles. */
+const FESTOON_BULBS = 13;
+/** How far the string sags in the middle, metres. */
+const FESTOON_SAG = 1.4;
+/** Height of the string's ends on the pole. */
+const FESTOON_Y = 5.2;
+
+/**
+ * Festoon lights over the square: strings of bulbs sagging from pole to pole
+ * around the rim, and one from every pole in toward the centre — the roof of
+ * light a market has on a summer evening. Bulbs and wire segments are two
+ * instanced meshes.
+ */
+function Festoon({ kit, poles }: { kit: Kit; poles: Post[] }) {
+  const dummy = useMemo(() => new Object3D(), []);
+  const segments = useMemo(() => {
+    const out: Array<{ a: Vector3; b: Vector3 }> = [];
+    const anchor = (p: Post) => new Vector3(p.x, p.y + FESTOON_Y, p.z);
+    for (let i = 0; i < poles.length; i++) {
+      out.push({ a: anchor(poles[i]), b: anchor(poles[(i + 1) % poles.length]) });
+    }
+    return out;
+  }, [poles]);
+  const points = useMemo(() => {
+    const pts: Vector3[] = [];
+    for (const { a, b } of segments) {
+      for (let k = 0; k <= FESTOON_BULBS; k++) {
+        const t = k / FESTOON_BULBS;
+        const p = a.clone().lerp(b, t);
+        p.y -= FESTOON_SAG * 4 * t * (1 - t);
+        pts.push(p);
+      }
+    }
+    return pts;
+  }, [segments]);
+  const bulbCount = segments.length * (FESTOON_BULBS - 1);
+  const wireCount = segments.length * FESTOON_BULBS;
+
+  const bulbs = (mesh: InstancedMesh | null) => {
+    if (!mesh) return;
+    let i = 0;
+    for (let s = 0; s < segments.length; s++) {
+      for (let k = 1; k < FESTOON_BULBS; k++) {
+        const p = points[s * (FESTOON_BULBS + 1) + k];
+        dummy.position.set(p.x, p.y - 0.12, p.z);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.setScalar(0.3);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i++, dummy.matrix);
+      }
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+  const wires = (mesh: InstancedMesh | null) => {
+    if (!mesh) return;
+    let i = 0;
+    for (let s = 0; s < segments.length; s++) {
+      for (let k = 0; k < FESTOON_BULBS; k++) {
+        const p = points[s * (FESTOON_BULBS + 1) + k];
+        const q = points[s * (FESTOON_BULBS + 1) + k + 1];
+        dummy.position.copy(p).lerp(q, 0.5);
+        dummy.lookAt(q);
+        dummy.scale.set(0.05, 0.05, p.distanceTo(q));
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i++, dummy.matrix);
+      }
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+
+  return (
+    <group>
+      {poles.map((p, i) => (
+        <group key={i} position={[p.x, p.y, p.z]}>
+          <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.lampPost)} position={[0, FESTOON_Y / 2, 0]} scale={[0.22, FESTOON_Y, 0.22]} />
+          <mesh geometry={kit.g.box} material={kit.m.lit(PAL.trim)} position={[0, 0.2, 0]} scale={[0.8, 0.4, 0.8]} />
+        </group>
+      ))}
+      <instancedMesh ref={wires} args={[kit.g.slab, kit.m.lit(PAL.lampPost), wireCount]} />
+      <instancedMesh ref={bulbs} args={[kit.g.sphere, kit.m.glow(PAL.bulb), bulbCount]} />
+    </group>
   );
 }
 
@@ -276,6 +365,7 @@ export function Village({
       <SquareCentre kit={kit} paused={paused} onQuestClick={onQuestClick} questOpen={questOpen} />
       <Hedges kit={kit} posts={content.hedges} />
       <Lamps kit={kit} posts={content.lamps} />
+      <Festoon kit={kit} poles={content.festoonPoles} />
     </group>
   );
 }

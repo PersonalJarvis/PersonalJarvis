@@ -140,7 +140,9 @@ export function buildTerrainGeometry(map: IslandMap): BufferGeometry {
       const shades = TILE_COLORS[kind];
       const shade = hash2(tx, tz, 91) < 0.5 ? 0 : 1;
       // Garden beds: the second shade is the flower colour, sprinkled sparsely.
-      const topIdx = kind === TileKind.garden ? (hash2(tx, tz, 92) < 0.3 ? 1 : 0) : shade;
+      // Farmland: the two shades alternate by row — soil and crop, ploughed lines.
+      const topIdx =
+        kind === TileKind.garden ? (hash2(tx, tz, 92) < 0.3 ? 1 : 0) : kind === TileKind.farm ? tz % 2 : shade;
       // Analytic ambient occlusion (world-masterplan-v2.md §3.3): ground next
       // to a higher step or a building darkens a little, the way every corner
       // of a stylised village is shaded.

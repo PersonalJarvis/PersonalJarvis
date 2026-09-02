@@ -18,6 +18,7 @@ const LABEL_Y: Record<PlaceId, number> = {
   lighthouse: 20,
   gardens: 6,
   solar: 5,
+  mine: 10,
   plugins: 13,
   foundry: 18,
   skills: 9,

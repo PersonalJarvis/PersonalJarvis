@@ -48,6 +48,12 @@ W  dark FOREST  (workshop)—[ MARKET PLATEAU ]—(lighthouse on the rocky CAPE)
                             S  harbor BAY, dock, breakwater
 ```
 
+**Biomes, as tile kinds:** sand · grass · meadow · forest · alpine · heath (heather drifts over
+the high moor) · dry (savanna on the eastern lowland) · farm (crop rows, south-west) · marsh
+(pools and reeds on the south-western coast) · scree (gravel on the mountain's flanks) · rock ·
+snow · quarry (the mine's forecourt). Plain grass is kept to the village plateau and the
+lowland around it; everything further out belongs to a named biome.
+
 **Terrain:** a continuous height field (`islandLayout.heightAt`) — a radial fall-off plus one
 designed bump or dip per biome (`REGIONS`) plus a little noise — quantised into ten levels
 (`LEVEL_Y`, 0.35 m at the beach to 12.6 m at the peak). Every slope becomes a terrace, every
@@ -90,9 +96,19 @@ harbor and the gardens low at 2, the solar field on the mountain's foot terrace 
 | — | lighthouse (east cape, on the rock) | striped tower with rotating lamp, keeper's hut |
 | — | gardens (south-east, the cove's low terrace) | six glass greenhouses on garden tiles |
 | — | solar field (north-west, the mountain's foot terrace) | 35 tilted panels on posts |
+| — | the mine (the mountain's south-eastern flank, off the north road) | timber portal in a cliff, lanterns, rails, ore cart, headframe, foreman's hut |
 
 Idle agents (`idle`) wander inside the square with the rest-biased model (`wander.ts`);
 paused agents stand still.
+
+**Light and life:** lamps along the spokes, around the square's rim, along the ring road, the
+dock and the mine's road — every lamp throws an additive pool of light on the ground; festoon
+strings over the square from eight poles; the lighthouse's two sweeping beams; lanterns on the
+mine's portal; a campfire on the cove's beach; lights on the buoys; the hub's halo beacon.
+
+**Sea:** a subdivided plane with real waves — three swells plus breakers that build as the
+bottom rises (from the shore-distance field), lit by the sun with a glint, whitecaps on the
+crests, a breathing foam line, and a wash sheet that runs up the beach and drains back.
 
 **Vegetation per biome** (`treeChoice`): round trees on grass and meadow (dense and taller in the
 forest), pines on the alpine meadows and the high slopes, palms on the cove's sand — thickest

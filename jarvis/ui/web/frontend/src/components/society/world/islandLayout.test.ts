@@ -262,7 +262,7 @@ describe("islandLayout", () => {
       kinds[t.kind]++;
       const [tx, tz] = worldToTile(t.x, t.z);
       const k = map.kind[tileIndex(map, tx, tz)];
-      expect([TileKind.grass, TileKind.meadow, TileKind.forest, TileKind.alpine, TileKind.sand]).toContain(k);
+      expect([TileKind.grass, TileKind.meadow, TileKind.forest, TileKind.alpine, TileKind.sand, TileKind.heath, TileKind.dry]).toContain(k);
       if (k === TileKind.sand) expect(t.kind).toBe("palm");
       if (t.kind === "palm") expect(k).toBe(TileKind.sand);
       expect(Math.hypot(tx + 0.5 - CENTER_TILE, tz + 0.5 - CENTER_TILE)).toBeGreaterThan(
@@ -272,6 +272,22 @@ describe("islandLayout", () => {
     expect(kinds.round).toBeGreaterThan(200);
     expect(kinds.pine).toBeGreaterThan(100);
     expect(kinds.palm).toBeGreaterThan(20);
+  });
+
+  it("cuts the mine into a cliff at the end of its own road, and lights the village", () => {
+    const { map, content } = island;
+    const [mx, mz] = content.places.mine.tile;
+    // The forecourt is quarry floor; the cliff behind it stands three steps higher, as rock.
+    expect(map.kind[tileIndex(map, mx, mz)]).toBe(TileKind.quarry);
+    expect(map.kind[tileIndex(map, mx, mz - 8)]).toBe(TileKind.rock);
+    expect(map.level[tileIndex(map, mx, mz - 8)] - map.level[tileIndex(map, mx, mz)]).toBeGreaterThanOrEqual(3);
+    // The branch road reaches the forecourt from the north spoke.
+    expect(map.kind[tileIndex(map, mx + 12, mz)]).toBe(TileKind.path);
+    expect(content.festoonPoles.length).toBe(8);
+    expect(content.lamps.length).toBeGreaterThan(50);
+    expect(content.reeds.length).toBeGreaterThan(40);
+    const [cx, cz] = worldToTile(content.campfire.x, content.campfire.z);
+    expect(map.kind[tileIndex(map, cx, cz)]).toBe(TileKind.sand);
   });
 
   it("scatters boulders over the high ground, never on pavement", () => {

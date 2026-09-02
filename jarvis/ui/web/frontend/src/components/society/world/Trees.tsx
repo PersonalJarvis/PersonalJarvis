@@ -8,7 +8,7 @@
 import { useMemo } from "react";
 import { Color, InstancedMesh, Object3D } from "three";
 
-import { buildIsland, type Boulder, type TreeSpot } from "./islandLayout";
+import { buildIsland, type Boulder, type Post, type TreeSpot } from "./islandLayout";
 import { NATURE } from "./worldPalette";
 import { useKit } from "./WorldKit";
 
@@ -196,8 +196,49 @@ function Boulders({ rocks }: { rocks: Boulder[] }) {
   return <instancedMesh ref={setup} args={[g.blob, m.lit("#ffffff"), rocks.length]} />;
 }
 
+/** Reeds in the marsh: leaning stalks with a brown head, two instanced meshes. */
+function Reeds({ reeds }: { reeds: Post[] }) {
+  const { g, m } = useKit();
+  const dummy = useMemo(() => new Object3D(), []);
+  const stalks: Setup = (mesh) => {
+    if (!mesh) return;
+    reeds.forEach((r, i) => {
+      const h = 1.5 + (r.rotation % 1) * 0.9;
+      dummy.position.set(r.x, r.y, r.z);
+      dummy.rotation.set(0, r.rotation, 0);
+      dummy.rotateX(0.12);
+      dummy.scale.set(0.12, h, 0.12);
+      dummy.translateY(h / 2);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+  const heads: Setup = (mesh) => {
+    if (!mesh) return;
+    reeds.forEach((r, i) => {
+      const h = 1.5 + (r.rotation % 1) * 0.9;
+      dummy.position.set(r.x, r.y, r.z);
+      dummy.rotation.set(0, r.rotation, 0);
+      dummy.rotateX(0.12);
+      dummy.scale.set(0.2, 0.45, 0.2);
+      dummy.translateY(h / 0.45 - 0.3);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+  if (reeds.length === 0) return null;
+  return (
+    <group>
+      <instancedMesh ref={stalks} args={[g.slab, m.lit(NATURE.reed), reeds.length]} />
+      <instancedMesh ref={heads} args={[g.cylinder, m.lit(NATURE.reedHead), reeds.length]} />
+    </group>
+  );
+}
+
 export function Trees() {
-  const { trees, boulders } = buildIsland().content;
+  const { trees, boulders, reeds } = buildIsland().content;
   const byKind = useMemo(
     () => ({
       round: trees.filter((t) => t.kind === "round"),
@@ -212,6 +253,7 @@ export function Trees() {
       <Pines spots={byKind.pine} />
       <Palms spots={byKind.palm} />
       <Boulders rocks={boulders} />
+      <Reeds reeds={reeds} />
     </group>
   );
 }
