@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 from typing import Any, Final
 
 from .events import SCHEDULER_ACTOR as _SCHEDULER
+from .events import USER_ACTOR as _USER
 from .events import MsgType, SocietyEnvelope, Tier
 from .failure_reasons import FailureReason, classify_error, retry_action
 from .roster import AgentRecord, AgentState, Roster
@@ -141,7 +142,9 @@ class SocietyScheduler:
             await self._on_assign(env)
         elif env.msg_type is MsgType.RESULT:
             await self._on_result(env)
-        elif env.msg_type in _DELIVERED and env.to_agent:
+        elif env.msg_type in _DELIVERED and env.to_agent and env.to_agent != _USER:
+            # Envelopes for the person (HOLD/RELEASE on approvals) are read by
+            # the UI, the bar and voice — never delivered to a roster row.
             await self._on_deliver(env)
 
     async def _veto(self, env: SocietyEnvelope, reason: FailureReason, detail: str) -> None:

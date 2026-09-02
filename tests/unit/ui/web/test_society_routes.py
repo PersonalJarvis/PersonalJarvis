@@ -207,3 +207,63 @@ def test_missing_factory_is_503():
     app.include_router(router)
     with TestClient(app) as c:
         assert c.get("/api/society/status").status_code == 503
+
+
+def test_approvals_over_rest(client):
+    c, _ = client
+    c.post("/api/society/agents", json={"name": "Mailbox"})
+    created = c.post(
+        "/api/society/approvals",
+        json={
+            "agent_id": "mailbox",
+            "trace_id": "t",
+            "capability": "plugin:gmail",
+            "action": {"verb": "send"},
+            "summary": "Send the report",
+        },
+    )
+    assert created.status_code == 200, created.text
+    item = created.json()["approval"]
+    assert item["state"] == "pending"
+    listed = c.get("/api/society/approvals").json()
+    assert [a["id"] for a in listed["approvals"]] == [item["id"]]
+    assert c.get("/api/society/approvals", params={"agent_id": "nobody"}).json()["total"] == 0
+    board = c.get("/api/society/events", params={"trace_id": "t"}).json()["events"]
+    assert [e["msg_type"] for e in board] == ["HOLD"]
+    res = c.post(
+        f"/api/society/approvals/{item['id']}/resolve", json={"approve": True, "note": "ok"}
+    )
+    assert res.json()["approval"]["state"] == "approved"
+    assert c.get("/api/society/approvals").json()["total"] == 0
+    assert c.post("/api/society/approvals/nope/resolve", json={"approve": False}).status_code == 404
+    assert c.post("/api/society/approvals/resurface").json()["total"] == 0
+    assert (
+        c.post("/api/society/approvals", json={"agent_id": "ghost", "capability": "x"}).status_code
+        == 404
+    )
+
+
+def test_routines_over_rest(client):
+    from tests.unit.society.test_routines import FakeScheduler, FakeTaskStore
+
+    c, _ = client
+    c.post("/api/society/agents", json={"name": "Mailbox", "title": "Gmail agent"})
+    assert c.get("/api/society/agents/mailbox/routines").status_code == 503
+    store = FakeTaskStore()
+    c.app.state.task_store = store
+    c.app.state.task_scheduler = FakeScheduler(store)
+    res = c.post(
+        "/api/society/agents/mailbox/routines",
+        json={"title": "Morning brief", "prompt": "Summarize mail.", "schedule": {"kind": "every"}},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["title"] == "[agent:Mailbox] Morning brief"
+    assert res.json()["tags"] == ["society", "agent:mailbox"]
+    listed = c.get("/api/society/agents/mailbox/routines").json()
+    assert listed["total"] == 1 and listed["routines"][0]["state"] == "scheduled"
+    bad = c.post(
+        "/api/society/agents/mailbox/routines",
+        json={"title": "x", "prompt": "p", "schedule": {"kind": "cron"}},
+    )
+    assert bad.status_code == 422
+    assert c.get("/api/society/agents/ghost/routines").status_code == 404

@@ -22,6 +22,7 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from .approvals import Approvals
 from .bridge import MissionBridge
 from .capabilities import CapabilityRow, build_catalog
 from .events import MsgType, RoomState, SocietyEnvelope, Tier
@@ -86,6 +87,7 @@ class SocietyRuntime:
         self.store = SocietyStore(self._data_dir / _DB_NAME)
         self.roster = Roster(self.store)
         self.rooms = Rooms(self.store)
+        self.approvals = Approvals(self.store)
         self.scheduler = SocietyScheduler(
             self.store,
             self.roster,

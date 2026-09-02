@@ -387,6 +387,135 @@ async def room_settle(room_id: str, request: Request) -> dict[str, Any]:
     return {"room": room.to_dict()}
 
 
+# ----------------------------------------------------------------- routines
+
+
+class RoutineBody(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    prompt: str = Field(min_length=1, max_length=16_000)
+    schedule: dict[str, Any] = Field(default_factory=lambda: {"kind": "every"})
+    plugin_grants: list[dict[str, str]] = Field(default_factory=list)
+    announce_on_success: str | None = None
+
+
+def _task_store(request: Request) -> Any:
+    store = getattr(request.app.state, "task_store", None)
+    if store is None:
+        raise HTTPException(503, "task store not available")
+    return store
+
+
+@router.get("/agents/{agent_id}/routines")
+async def list_agent_routines(agent_id: str, request: Request) -> dict[str, Any]:
+    from jarvis.society.routines import list_routines
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    rows = await list_routines(_task_store(request), agent.agent_id)
+    return {"routines": rows, "total": len(rows)}
+
+
+@router.post("/agents/{agent_id}/routines", openapi_extra={"x-jarvis-dangerous": True})
+async def create_agent_routine(
+    agent_id: str, body: RoutineBody, request: Request
+) -> dict[str, Any]:
+    """A routine is a task in the Automations scheduler tagged with the agent."""
+    from jarvis.society.routines import (
+        MAX_ROUTINES_PER_AGENT,
+        build_task_spec,
+        count_routines,
+        create_routine,
+    )
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    store = _task_store(request)
+    if await count_routines(store, agent.agent_id) >= MAX_ROUTINES_PER_AGENT:
+        raise HTTPException(409, {"reason": str(FailureReason.BLOCKED_BY_POLICY)})
+    try:
+        spec = build_task_spec(
+            agent,
+            title=body.title,
+            prompt=body.prompt,
+            schedule=body.schedule,
+            plugin_grants=body.plugin_grants,
+            announce_on_success=body.announce_on_success,
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(422, f"invalid routine: {exc}") from exc
+    task_id = await create_routine(store, getattr(request.app.state, "task_scheduler", None), spec)
+    return {"id": task_id, "title": spec.title, "tags": list(spec.tags)}
+
+
+# ---------------------------------------------------------------- approvals
+
+
+class ResolveApprovalBody(BaseModel):
+    approve: bool
+    note: str = ""
+
+
+class EnqueueApprovalBody(BaseModel):
+    agent_id: str
+    capability: str
+    trace_id: str = ""
+    action: dict[str, Any] = Field(default_factory=dict)
+    summary: str = ""
+
+
+@router.post("/approvals")
+async def enqueue_approval(body: EnqueueApprovalBody, request: Request) -> dict[str, Any]:
+    """Park an action for the person to decide. Executes nothing by itself —
+    the approved action is run by whoever asked (executor, routine, CLI)."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(body.agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    item = await rt.approvals.enqueue(
+        agent_id=agent.agent_id,
+        trace_id=body.trace_id or f"approval:{agent.agent_id}",
+        capability=body.capability,
+        action=body.action,
+        summary=body.summary or body.capability,
+    )
+    return {"approval": item.to_dict()}
+
+
+@router.get("/approvals")
+async def list_approvals(request: Request, agent_id: str | None = None) -> dict[str, Any]:
+    """Everything a person still has to decide (pending and parked), oldest first."""
+    rt = await _runtime(request)
+    await rt.approvals.expire_due()
+    items = await rt.approvals.pending()
+    if agent_id:
+        items = [a for a in items if a.agent_id == agent_id]
+    return {"approvals": [a.to_dict() for a in items], "total": len(items)}
+
+
+@router.post("/approvals/{approval_id}/resolve", openapi_extra={"x-jarvis-dangerous": True})
+async def resolve_approval(
+    approval_id: str, body: ResolveApprovalBody, request: Request
+) -> dict[str, Any]:
+    rt = await _runtime(request)
+    try:
+        item = await rt.approvals.resolve(approval_id, approve=body.approve, note=body.note)
+    except KeyError as exc:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+    return {"approval": item.to_dict()}
+
+
+@router.post("/approvals/resurface")
+async def resurface_approvals(request: Request) -> dict[str, Any]:
+    """App focus / voice turn: parked items are asked again."""
+    rt = await _runtime(request)
+    revived = await rt.approvals.resurface()
+    return {"approvals": [a.to_dict() for a in revived], "total": len(revived)}
+
+
 # ----------------------------------------------------------------- controls
 
 
