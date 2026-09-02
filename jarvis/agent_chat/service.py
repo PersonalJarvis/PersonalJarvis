@@ -274,6 +274,12 @@ class AgentChatService:
         if not subs:
             self._subscribers.pop(session_id, None)
 
+    async def post_notice(self, session_id: str, payload: dict[str, Any]) -> None:
+        """A system line in a session's timeline that is not a turn: the agent
+        society posts learned skills, login requests and queued approvals here.
+        Stored like any event (kind ``notice``) so a reopened chat still shows it."""
+        await self._emit(session_id, make_event("notice", dict(payload)))
+
     async def _emit(self, session_id: str, event: dict[str, Any]) -> None:
         stored = self.store.append_event(session_id, event)
         for q in list(self._subscribers.get(session_id, ())):

@@ -9,6 +9,7 @@ import pytest
 
 from jarvis.society import runtime as runtime_mod
 from jarvis.society.agent_tools import MESSAGE_TOOL_NAME, SHELL_TOOL_NAME, WIKI_NOTE_TOOL_NAME
+from jarvis.society.learning import RUN_SKILL_TOOL_NAME
 from jarvis.society.runtime import SocietyRuntime
 from jarvis.society.surface import (
     agent_id_of,
@@ -19,8 +20,7 @@ from jarvis.society.surface import (
     society_tools,
 )
 
-
-FOLDER = ["Read", "Write", "Edit", "Ls", "Glob", "Grep"]
+FOLDER = ["Read", "Write", "Edit", "Ls", "Glob", "Grep", RUN_SKILL_TOOL_NAME]
 
 
 def _tool(name: str, desc: str = "x.") -> SimpleNamespace:

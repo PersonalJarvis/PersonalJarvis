@@ -29,6 +29,7 @@ Kinds (``payload`` keys in brackets):
                         status: done | cancelled | error
 ``session_updated``    [title?, provider?, model?, effort?, cwd?, permission_mode?]
 ``error``              [turn_id?, message]
+``notice``              [kind, ...]                      — a system line outside a turn
 
 ``text_delta`` / ``reasoning_delta`` / ``reasoning_started`` / ``usage_delta``
 are the transient kinds: the finished block carries the whole text and the

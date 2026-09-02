@@ -380,6 +380,36 @@ async def apply_seed_proposals(body: ApplySeedsBody, request: Request) -> dict[s
     return {"agents": created, "total": len(created)}
 
 
+# ------------------------------------------------------------------ skills
+
+
+@router.get("/agents/{agent_id}/skills")
+async def list_agent_skills(agent_id: str, request: Request) -> dict[str, Any]:
+    """The agent's own learned skills (active for the agent, drafts for Jarvis)."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    skills = rt.skills_for(agent.agent_id)
+    return {"skills": skills.summaries(), "root": str(skills.root)}
+
+
+@router.post("/agents/{agent_id}/skills/{slug}/promote")
+async def promote_agent_skill(agent_id: str, slug: str, request: Request) -> dict[str, Any]:
+    """Copy a learned skill into the user's global skills as a DRAFT (AP-15)."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        target = rt.skills_for(agent.agent_id).promote_to_global(slug)
+    except KeyError as exc:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+    except FileExistsError as exc:
+        raise HTTPException(409, {"reason": str(FailureReason.BLOCKED_BY_POLICY)}) from exc
+    return {"promoted": str(target), "state": "draft"}
+
+
 # ----------------------------------------------------------------- browser
 
 

@@ -29,6 +29,7 @@ from .browser.session import BrowserJobs
 from .capabilities import CapabilityRow, build_catalog
 from .events import MsgType, RoomState, SocietyEnvelope, Tier
 from .focus import derive_approval_rules, derive_focus
+from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_factory
 from .rooms import Rooms
 from .roster import LEAD_AGENT_ID, AgentRecord, Roster
 from .scheduler import DeliverHook, SocietyScheduler
@@ -113,6 +114,12 @@ class SocietyRuntime:
         #: Roster rows the society surface read for a turn - the sync tool
         #: filter reads them here (the briefing fills the cache first).
         self._agent_cache: dict[str, AgentRecord] = {}
+        self._skills: dict[str, AgentSkills] = {}
+        self.learning = LearningPass(
+            self,
+            creator_factory=default_creator_factory(self._get_cfg),
+            notify=self._notify_chat,
+        )
         self._started = False
 
     # ------------------------------------------------------------ lifecycle
@@ -151,6 +158,25 @@ class SocietyRuntime:
         self._started = False
         if current_runtime() is self:
             set_current_runtime(None)
+
+    def skills_for(self, agent_id: str) -> AgentSkills:
+        """The agent's private skill namespace (lazy registry)."""
+        skills = self._skills.get(agent_id)
+        if skills is None:
+            skills = AgentSkills(self._data_dir, agent_id)
+            self._skills[agent_id] = skills
+        return skills
+
+    async def _notify_chat(self, agent: AgentRecord, payload: dict[str, Any]) -> None:
+        """A society notice in the agent's own chat (learned skill, login needed)."""
+        svc = self._get_chat()
+        post = getattr(svc, "post_notice", None)
+        if svc is None or post is None:
+            return
+        session = svc.store.get_session(agent.session_id)
+        if session is None:
+            return
+        await post(agent.session_id, payload)
 
     def cache_agent(self, agent: AgentRecord) -> None:
         self._agent_cache[agent.agent_id] = agent
@@ -250,6 +276,8 @@ class SocietyRuntime:
         final_text = ""
         status = "done"
         error = ""
+        tool_steps: list[str] = []
+        used_browser = False
         try:
             while True:
                 event = await queue.get()
@@ -259,6 +287,12 @@ class SocietyRuntime:
                     continue
                 if kind == "assistant_text":
                     final_text = str(payload.get("text") or final_text)
+                elif kind == "tool_call":
+                    name = str(payload.get("name") or payload.get("tool") or "tool")
+                    summary = str(payload.get("summary") or "")[:120]
+                    tool_steps.append(f"{name}: {summary}" if summary else name)
+                    if name == "society_browser":
+                        used_browser = True
                 elif kind == "error":
                     status, error = "blocked", str(payload.get("message") or "error")
                 elif kind == "turn_finished":
@@ -294,6 +328,25 @@ class SocietyRuntime:
             )
         except Exception:  # noqa: BLE001 - the slot is free either way; the loss is one RESULT row
             log.warning("society: RESULT for %s could not be written", run_id, exc_info=True)
+        digest = TurnDigest(
+            task=env.text or str(env.payload.get("task") or ""),
+            final_text=final_text,
+            tool_steps=tool_steps,
+            status=status,
+            origin="web" if used_browser else "agent",
+        )
+        learner = asyncio.create_task(self._learn(target, digest))
+        self._watchers.add(learner)
+        learner.add_done_callback(self._watchers.discard)
+
+    async def _learn(self, target: AgentRecord, digest: TurnDigest) -> None:
+        try:
+            fresh = await self.roster.get(target.agent_id)
+            await self.learning.run(fresh or target, digest)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - learning never breaks a finished turn
+            log.warning("society learning failed for %s", target.agent_id, exc_info=True)
 
     async def _dispatch_mission(self, target: AgentRecord, env: SocietyEnvelope) -> str:
         manager = self._get_manager()

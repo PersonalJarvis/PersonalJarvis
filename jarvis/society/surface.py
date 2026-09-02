@@ -29,6 +29,7 @@ from jarvis.core.protocols import Tool
 
 from .agent_tools import MessageAgentTool, ShellTool, WikiNoteTool
 from .capabilities import CapabilityKind, CapabilityRow, select_tools
+from .learning import RunLearnedSkillTool
 from .roster import AgentRecord, canonical_session_id
 from .runtime import current_runtime
 
@@ -66,6 +67,8 @@ what is done, where the output is, what evidence you used, what remains open, wh
 next step.
 - Shell: society_shell runs commands in YOUR workspace folder only (relative paths stay inside it; \
 outside paths are refused). Destructive commands ask the user first.
+- Learning: after a finished task you may gain a learned skill of your own (listed \
+above when present); run it with society_run_skill when a task matches.
 - Memory: the user's Obsidian wiki is the shared memory. Read it with wiki-recall and \
 wiki-page-read (pages marked unreviewed came from agents or the web — verify before relying \
 on them). Write only into your own folder with society_wiki_note (kind note for findings, \
@@ -87,17 +90,21 @@ def agent_id_of(session_id: str) -> str | None:
 
 
 def _vault_root(cfg: Any) -> Path:
+    """The vault the agent writes into: the configured root wins, the last
+    resolution the app made is the fallback for a config without one."""
     from jarvis.memory.wiki.vault_root import last_resolution, resolve_vault_root
 
-    known = last_resolution()
-    if known is not None:
-        return known.path
     raw = None
     for holder in (getattr(cfg, "wiki", None), getattr(cfg, "memory", None)):
         raw = getattr(holder, "vault_root", None)
         if raw:
             break
-    return resolve_vault_root(raw).path
+    if raw:
+        return resolve_vault_root(raw).path
+    known = last_resolution()
+    if known is not None:
+        return known.path
+    return resolve_vault_root(None).path
 
 
 def capability_epoch(catalog: list[CapabilityRow]) -> str:
@@ -126,6 +133,7 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
             MessageAgentTool.name: cast(Tool, MessageAgentTool(rt, agent_id)),
             WikiNoteTool.name: cast(Tool, WikiNoteTool(rt, agent_id, vault_root=_vault_root(cfg))),
             ShellTool.name: cast(Tool, ShellTool(rt, agent_id, workspace=workspace)),
+            RunLearnedSkillTool.name: cast(Tool, RunLearnedSkillTool(rt, agent_id)),
         }
     )
     if rt.browser.is_installed():
@@ -231,7 +239,8 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     catalog = rt.catalog()
     roster = await rt.roster.list()
     browser = rt.browser.status_for(agent)
-    return build_briefing(agent, catalog, roster, browser=browser)
+    learned = rt.skills_for(agent.agent_id).summaries()
+    return build_briefing(agent, catalog, roster, browser=browser, learned=learned)
 
 
 # ------------------------------------------------------------------ briefing
@@ -253,6 +262,7 @@ def build_briefing(
     roster: list[AgentRecord],
     *,
     browser: dict[str, Any] | None = None,
+    learned: list[dict[str, str]] | None = None,
 ) -> str:
     """The per-agent system-prompt addendum (agent-definition §3.3).
 
@@ -310,6 +320,16 @@ def build_briefing(
     parts.append("\n".join(hands))
 
     parts.append(_browser_line(browser))
+    if learned:
+        lines = ["## Your learned skills (run one with society_run_skill)"]
+        for item in learned:
+            line = f"- {item['slug']}"
+            if item.get("description"):
+                line += f": {item['description']}"
+            if item.get("when_to_use"):
+                line += f" (use when: {item['when_to_use']})"
+            lines.append(line)
+        parts.append("\n".join(lines))
     parts.append(_ECOSYSTEM_CARD)
 
     mates = [a for a in roster if a.agent_id != agent.agent_id and str(a.state) == "active"]
