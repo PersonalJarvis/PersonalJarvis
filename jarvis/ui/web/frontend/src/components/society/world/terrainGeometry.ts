@@ -82,6 +82,24 @@ function topY(map: IslandMap, tx: number, tz: number): number {
   return LEVEL_Y[map.level[i]];
 }
 
+/** 1 = fully lit; each higher neighbour and each built-on neighbour darkens the tile a step. */
+function tileAo(map: IslandMap, tx: number, tz: number, y: number): number {
+  let ao = 1;
+  for (const [dx, dz] of [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ] as const) {
+    const nx = tx + dx;
+    const nz = tz + dz;
+    if (!inBounds(map, nx, nz)) continue;
+    if (topY(map, nx, nz) > y + 0.01) ao -= 0.09;
+    else if (map.blocked[tileIndex(map, nx, nz)] && map.kind[tileIndex(map, nx, nz)] !== TileKind.water) ao -= 0.05;
+  }
+  return Math.max(0.68, ao);
+}
+
 /** Build the terrain mesh for the whole map. */
 export function buildTerrainGeometry(map: IslandMap): BufferGeometry {
   const b = new MeshBuilder();
@@ -100,7 +118,11 @@ export function buildTerrainGeometry(map: IslandMap): BufferGeometry {
       const shade = hash2(tx, tz, 91) < 0.5 ? 0 : 1;
       // Garden beds: the second shade is the flower colour, sprinkled sparsely.
       const topIdx = kind === TileKind.garden ? (hash2(tx, tz, 92) < 0.3 ? 1 : 0) : shade;
-      const top = color(shades.top[topIdx]);
+      // Analytic ambient occlusion (world-masterplan-v2.md §3.3): ground next
+      // to a higher step or a building darkens a little, the way every corner
+      // of a stylised village is shaded.
+      const ao = tileAo(map, tx, tz, y);
+      const top = ao < 1 ? color(shades.top[topIdx]).clone().multiplyScalar(ao) : color(shades.top[topIdx]);
       b.quad([x0, y, z0], [x0, y, z1], [x1, y, z1], [x1, y, z0], UP, top);
 
       const side = color(shades.side);

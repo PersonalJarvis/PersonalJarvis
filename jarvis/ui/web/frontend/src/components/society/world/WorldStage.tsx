@@ -1,6 +1,6 @@
 /**
  * The island, mounted — the world view of the Jarvis Agents section
- * (MASTERPLAN §4.1) and the first piece of M3.
+ * (MASTERPLAN §4.1); look and behaviour per world-masterplan-v2.md.
  *
  * Discipline every world canvas owes (society README):
  *  - the R3F Canvas mounts through `useWebglSurface` (AP-32: context released
@@ -8,7 +8,7 @@
  *  - the render loop runs only while the host is on screen, gated by an
  *    IntersectionObserver (`useCanvasAwake`) — never `document.hidden`;
  *  - `prefers-reduced-motion` freezes the island (demand-driven frames, no
- *    wander, no water drift) instead of animating it;
+ *    wander, no water drift, no clouds) instead of animating it;
  *  - no WebGL at all → an honest fallback that points to the ledger.
  *
  * Everything inside the canvas wears the world's own branding (§4.3); the
@@ -29,19 +29,23 @@ import { useWebglSupported } from "@/lib/graphDimension";
 import { useSocietyRoster } from "../data";
 import { SAMPLE_ROSTER } from "../mockRoster";
 import { useCameraStore } from "./cameraStore";
+import { Clouds } from "./Clouds";
 import { Landmarks } from "./Landmarks";
-import { PixelPass } from "./PixelPass";
 import { PlaceLabels } from "./PlaceLabels";
+import { Shadowed } from "./Shadowed";
+import { SunRig } from "./SunRig";
 import { Terrain, Water } from "./Terrain";
 import { Trees } from "./Trees";
 import { Village } from "./Village";
 import { Walkers } from "./Walkers";
 import { useWorldControls } from "./useWorldControls";
 import { WorldCameraRig } from "./WorldCameraRig";
+import { WorldComposer } from "./WorldComposer";
 import { WorldHud } from "./WorldHud";
 import { WorldKitProvider } from "./WorldKit";
-import { PIXEL_SIZE, cameraOffset } from "./worldCamera";
+import { cameraOffset } from "./worldCamera";
 import { SKY } from "./worldPalette";
+import { useWorldSettings } from "./worldSettings";
 
 export interface WorldStageProps {
   /** App-chrome content for the HUD's top-right corner (the World / Ledger switch). */
@@ -62,6 +66,8 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
   const awake = useCanvasAwake(hostRef);
   const reduced = useReducedMotion() ?? false;
   const webgl = useWebglSupported();
+  const grain = useWorldSettings((s) => s.grain);
+  const shadows = useWorldSettings((s) => s.shadows);
   const roster = useSocietyRoster();
   const agents = roster.data ?? [];
   const sample = roster.data === SAMPLE_ROSTER;
@@ -104,6 +110,7 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
       <div
         ref={hostRef}
         className="sw-stage"
+        data-grain={grain > 0 ? grain : undefined}
         tabIndex={0}
         role="application"
         aria-label={ready ? t("society.world.mode_world") : undefined}
@@ -114,30 +121,30 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent }: WorldStage
           camera={{ position: CAMERA_START, near: 1, far: 1200, zoom: 1 }}
           dpr={1}
           flat
-          gl={{ antialias: false, alpha: false, powerPreference: "high-performance", stencil: false }}
+          shadows={shadows ? "soft" : false}
+          gl={{ antialias: grain === 0, alpha: false, powerPreference: "high-performance", stencil: false }}
           frameloop={frameloop}
           onPointerMissed={() => {
             if (!useCameraStore.getState().dragging) select(null);
           }}
         >
           <color attach="background" args={[SKY.clear]} />
-          <hemisphereLight args={[SKY.hemiSky, SKY.hemiGround, SKY.hemiIntensity * Math.PI]} />
-          <directionalLight
-            position={[SKY.sunFrom[0], SKY.sunFrom[1], SKY.sunFrom[2]]}
-            intensity={SKY.sunIntensity * Math.PI * 0.75}
-            color={SKY.sun}
-          />
+          <hemisphereLight args={[SKY.hemiSky, SKY.hemiGround, SKY.hemiIntensity]} />
+          <SunRig />
           <WorldKitProvider>
             <Terrain />
             <Water paused={reduced} />
-            <Village paused={reduced} />
-            <Landmarks paused={reduced} />
-            <Trees />
-            <Walkers agents={agents} paused={reduced} selectedId={selected} onSelect={select} />
+            <Shadowed>
+              <Village paused={reduced} />
+              <Landmarks paused={reduced} />
+              <Trees />
+              <Walkers agents={agents} paused={reduced} selectedId={selected} onSelect={select} />
+            </Shadowed>
+            <Clouds paused={reduced} />
             {ready && <PlaceLabels />}
           </WorldKitProvider>
           <WorldCameraRig />
-          <PixelPass pixelSize={PIXEL_SIZE} />
+          <WorldComposer />
         </Canvas>
       </div>
       {ready && (

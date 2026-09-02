@@ -44,8 +44,9 @@ export const SKY = {
   hemiSky: "#d6ecff",
   hemiGround: "#7f9c5a",
   sun: "#fff1d6",
-  sunIntensity: 1.35,
-  hemiIntensity: 0.95,
+  /** Directional and hemisphere intensities are plain multipliers in three r155+ — no π. */
+  sunIntensity: 0.8,
+  hemiIntensity: 0.78,
   /** Direction the sun shines FROM (unit-ish vector; warm afternoon, south-west). */
   sunFrom: [-60, 90, 45] as const,
 };

@@ -25,6 +25,9 @@
 }
 .sw-stage canvas {
   display: block;
+}
+/* Only the optional grain modes want hard pixels; the smooth default upscales linearly. */
+.sw-stage[data-grain] canvas {
   image-rendering: pixelated;
 }
 

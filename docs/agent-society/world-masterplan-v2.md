@@ -1,8 +1,8 @@
 # World Master Plan v2 — from the first island to a professional game world
 
-Status: **analysis and proposal, written 2026-09-02 after the maintainer saw island V1.** Nothing
-here is decided yet except where §9 says so; the maintainer's answers to §9 turn this into the
-binding successor of [`world-art-direction.md`](world-art-direction.md). Subordinate to
+Status: **binding since 2026-09-02** — the maintainer took the four recommended decisions of §9
+(grain off by default, one house per agent, the 15 hubs, the scripted Blender World Kit); this
+document succeeds [`world-art-direction.md`](world-art-direction.md) for everything it covers. Subordinate to
 [`MASTERPLAN.md`](MASTERPLAN.md) (§2 decisions stay untouched: the world is a projection of the
 society event stream, idle is LLM-free, dispatch is the scheduler's privilege).
 
@@ -263,7 +263,7 @@ Figures (character-pipeline F1–F7) run in parallel in the sibling session; `Wa
 for `<Figure>` the day F3 lands. The Ledger, reduced motion and no-WebGL fallbacks stay as they
 are.
 
-## 9. Decisions the maintainer owns
+## 9. Decisions (1–4 taken by the maintainer on 2026-09-02, the recommended option each time; 5–6 default until revisited)
 
 1. **Pixel grain — Recommended: off by default, kept as a setting.** The named references (Roblox,
    Clash of Clans) are smooth; the grain then serves as a look option and as the low-GPU fallback.
