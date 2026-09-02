@@ -20,6 +20,8 @@ export interface CameraState {
   aspect: number;
   panBy: (dx: number, dz: number) => void;
   jumpTo: (x: number, z: number) => void;
+  /** Look at a spot at a chosen zoom — the world's "show me this". */
+  focusOn: (x: number, z: number, zoom: ZoomLevel) => void;
   zoomStep: (direction: 1 | -1) => void;
   setDragging: (dragging: boolean) => void;
   setAspect: (aspect: number) => void;
@@ -60,6 +62,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
     set({ target: clampTarget(x + dx, z + dz) });
   },
   jumpTo: (x, z) => set({ target: clampTarget(x, z) }),
+  focusOn: (x, z, zoom) => set({ target: clampTarget(x, z), zoom }),
   zoomStep: (direction) => set((s) => ({ zoom: stepZoom(s.zoom, direction) })),
   setDragging: (dragging) => set({ dragging }),
   setAspect: (aspect) => set({ aspect }),

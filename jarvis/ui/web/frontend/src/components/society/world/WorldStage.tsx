@@ -49,7 +49,8 @@ import { WorldCameraRig } from "./WorldCameraRig";
 import { WorldComposer } from "./WorldComposer";
 import { WorldHud } from "./WorldHud";
 import { WorldKitProvider } from "./WorldKit";
-import { isKitPlace, type KitPlace, type PlaceId } from "./islandLayout";
+import { foundryWalkOut, isKitPlace, type KitPlace, type PlaceId } from "./islandLayout";
+import { FOCUS_GRACE_MS, useSpawnStore } from "./spawnStore";
 
 /** Only kit hubs open a drawer; other places are scenery. */
 function asHub(place: PlaceId): KitPlace | null {
@@ -77,6 +78,9 @@ export interface WorldStageProps {
 
 const CAMERA_START = cameraOffset();
 
+/** Zoom step the island snaps to when it shows a newborn leaving the foundry. */
+const SPAWN_ZOOM = 1;
+
 export function WorldStage({ topRight, onOpenLedger, onSelectAgent, onSelectPlace }: WorldStageProps) {
   const t = useT();
   const ready = useLocaleChunk("society");
@@ -98,6 +102,20 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent, onSelectPlac
   const [memoryOpen, setMemoryOpen] = useState(false);
 
   useWorldControls(hostRef, webgl);
+
+  // An agent created in this window: look at the foundry, so its maker sees
+  // the figure come out instead of it happening on a mountain off screen.
+  // The frame holds the portal and the whole conveyor, so the walk reads.
+  const focusRequestedMs = useSpawnStore((s) => s.focusRequestedMs);
+  useEffect(() => {
+    if (focusRequestedMs === 0) return;
+    useSpawnStore.getState().clearFocus();
+    if (Date.now() - focusRequestedMs > FOCUS_GRACE_MS) return; // stale request
+    const walk = foundryWalkOut();
+    useCameraStore
+      .getState()
+      .focusOn((walk.from[0] + walk.to[0]) / 2, (walk.from[1] + walk.to[1]) / 2, SPAWN_ZOOM);
+  }, [focusRequestedMs]);
   // The viewer's turned buildings go into the island before the first frame.
   useEffect(syncBuildingPoses, []);
 

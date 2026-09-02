@@ -24,6 +24,13 @@
  *
  * `portalOpenedMs` is what the building itself listens to: the portal flares
  * and the forecourt lights up for a few seconds after any entrance.
+ *
+ * `focusRequestedMs` is the other half of "you made this one": when the agent
+ * was created in THIS window, the island swings its camera to the foundry so
+ * the maker actually watches the figure come out, instead of it happening on a
+ * mountain they are not looking at. It expires — a request nobody consumed
+ * (the world was not mounted, the viewer was reading the ledger) must not
+ * yank the camera minutes later.
  */
 import { create } from "zustand";
 
@@ -31,6 +38,8 @@ import { create } from "zustand";
 export const FRESH_ENTRANCE_MS = 60_000;
 /** How long the portal keeps glowing after a figure came through (ms). */
 export const PORTAL_FLARE_MS = 4_200;
+/** A camera request older than this is stale and is ignored. */
+export const FOCUS_GRACE_MS = 20_000;
 /**
  * A claimed entrance stays claimable this long, so a remount of the walker
  * (a rebuilt canvas, a re-rendered subtree) resumes the walk instead of
@@ -76,19 +85,25 @@ interface SpawnState {
   announced: Set<string>;
   /** What this window decided per agent: when it walked out, or 0 for never. */
   seen: Decisions;
+  /** When this window last asked the island to look at the foundry; 0 = never. */
+  focusRequestedMs: number;
   announce: (agentId: string) => void;
+  clearFocus: () => void;
   claim: (agentId: string, createdMs: number, now?: number) => boolean;
 }
 
 export const useSpawnStore = create<SpawnState>((set, get) => ({
   portalOpenedMs: 0,
+  focusRequestedMs: 0,
   announced: new Set<string>(),
   seen: typeof sessionStorage === "undefined" ? (new Map() as Decisions) : readSeen(),
   announce: (agentId) => {
     const announced = new Set(get().announced);
     announced.add(agentId);
-    set({ announced });
+    // Made here, so watch it happen: the stage swings to the works.
+    set({ announced, focusRequestedMs: Date.now() });
   },
+  clearFocus: () => set({ focusRequestedMs: 0 }),
   claim: (agentId, createdMs, now = Date.now()) => {
     const { seen, announced } = get();
     const decided = seen.get(agentId);

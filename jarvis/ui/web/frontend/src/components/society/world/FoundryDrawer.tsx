@@ -66,15 +66,13 @@ export function FoundryDrawer({
     [agents],
   );
 
-  const created = useCallback(
-    (agentId: string) => {
-      setCreating(false);
-      // Get out of the way — the new figure is walking out of the portal now.
-      onClose();
-      onSelectAgent?.(agentId);
-    },
-    [onClose, onSelectAgent],
-  );
+  const created = useCallback(() => {
+    setCreating(false);
+    // Get out of the way — the new figure is walking out of the portal now,
+    // and the island has already swung its camera to the works. Opening its
+    // card here would cover the one thing worth watching.
+    onClose();
+  }, [onClose]);
 
   return (
     <>

@@ -39,9 +39,12 @@ export function SocietyView() {
   );
   const activeCount = agents.filter((a) => a.state === "working" || a.state === "waiting").length;
 
-  const onCreated = useCallback((agentId: string) => {
+  const onCreated = useCallback(() => {
     setCreating(false);
-    setOpenAgentId(agentId);
+    // The card does NOT open on top of the island: a brand-new agent is
+    // walking out of the foundry right now, and its card would cover exactly
+    // that. It holds nothing new anyway — the maker just typed all of it. The
+    // rail lists the newcomer; a click on it, or on the figure, opens it.
   }, []);
 
   // A figure clicked on the island opens its card, like a row in the rail
