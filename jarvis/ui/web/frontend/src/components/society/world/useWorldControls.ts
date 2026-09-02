@@ -28,12 +28,30 @@ export function useWorldControls(hostRef: RefObject<HTMLElement | null>, enabled
     let travelled = 0;
     let lastWheel = 0;
 
+    /*
+     * A held left button over the island pans it, so nothing may start a text
+     * selection while that button is down. The signs over the houses and the
+     * HUD are DOM drawn on top of the canvas: as the pointer travels the
+     * browser paints them blue, and — worse — a selection that starts under a
+     * captured pointer makes Chromium fire `pointercancel`, which ends the pan
+     * halfway through the drag. `user-select: none` on the stage does not
+     * settle it either, because the selection can begin over the HUD, which
+     * sits outside the stage and stays readable by design.
+     *
+     * Blocking `selectstart` for exactly as long as the button is held costs
+     * nothing (there is nothing to read on the map) and leaves every other
+     * surface of the app selectable.
+     */
+    const blockSelectStart = (e: Event) => e.preventDefault();
+    const allowSelectStart = () => document.removeEventListener("selectstart", blockSelectStart);
+
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
       pointerId = e.pointerId;
       lastX = e.clientX;
       lastY = e.clientY;
       travelled = 0;
+      document.addEventListener("selectstart", blockSelectStart);
       host.focus({ preventScroll: true });
     };
 
@@ -61,6 +79,7 @@ export function useWorldControls(hostRef: RefObject<HTMLElement | null>, enabled
     const endDrag = (e: PointerEvent) => {
       if (pointerId !== e.pointerId) return;
       pointerId = null;
+      allowSelectStart();
       if (store.getState().dragging) {
         // Let the click that ends a drag pass first, then re-enable figure clicks.
         window.setTimeout(() => store.getState().setDragging(false), 0);
@@ -107,6 +126,7 @@ export function useWorldControls(hostRef: RefObject<HTMLElement | null>, enabled
       host.removeEventListener("keydown", onKeyDown);
       host.removeEventListener("keyup", onKeyUp);
       host.removeEventListener("blur", onBlur);
+      allowSelectStart();
       store.getState().clearKeys();
       store.getState().setDragging(false);
     };
