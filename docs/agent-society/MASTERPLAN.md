@@ -6,8 +6,12 @@ codename: `society`; the section keeps the name "Jarvis Agents" (§10).
 Progress (2026-09-01/02): **M1 done** — `jarvis/society/` substrate, `/api/society`, the
 headless contract test. **M2 backend done** — the `society` chat surface with per-agent hands
 and briefing, canonical chat binding, `society_message_agent` / `society_wiki_note`, the
-approvals queue, `[agent:*]` routines. **M2 frontend open** — the section (sidebar | stage |
-roster rail), the model card (Specs | 3D | Chat) on `components/society/data.ts`. **Also done
+approvals queue, `[agent:*]` routines. **M2 frontend mostly done (2026-09-02)** — the section
+(sidebar | stage | roster rail with rendered headshots), the model card (Specs with the services'
+marks | turnable 3D figure | Chat placeholder) reading `/api/society`, the creator (three fields,
+Advanced with the capability catalog, style → base → parts → palette, own-GLB import through the
+figure gate); open: the card's chat column. Figures: four bases + fifteen parts from the CC0
+pack, a generated catalog, the island's walkers wear them (character-pipeline.md §13). **Also done
 (2026-09-02):** an ASSIGN runs by default as a turn in the agent's canonical chat (per-agent
 model, tools and briefing apply in full; the turn's end is a RESULT on the board; the mission
 stack stays available via `payload.runner = "mission"`), the starter team Scout + Archivist is
