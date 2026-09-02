@@ -149,7 +149,16 @@ mission running), a **meeting pavilion** (bounded rooms, visible round counter "
 pending approvals), and **Jarvis' lighthouse** (the lead agent, mapped to the voice orb). Idle
 agents wander the island client-side (rest-biased, exponential dwell).
 Click a figure → model card. HUD: active count, today's cost (from the costs ledger, §5), "Active
-now" face strip. A **Ledger tab** keeps the current DepartureBoard as the data-dense secondary view
+now" face strip.
+
+**Island layout (maintainer decisions 2026-09-01/02, binding detail in
+[`world-art-direction.md`](world-art-direction.md)):** the island is a 10 × 10 grid of screen-sized
+fields; the central 4 × 4 fields are the **market district** — a solarpunk village in a ring
+around ONE open square (the meeting place, with the big tree and the long table), the lead's hub
+at the head of the square, the workshop / archive / harbor gate / lighthouse in the four quarters
+around it. Camera: steep bird's-eye (50° pitch, 45° yaw), fine pixel grain (2 screen px per
+rendered px), three fixed zoom steps, drag / keys / minimap navigation. The meeting pavilion of
+the first sketch became the square itself. A **Ledger tab** keeps the current DepartureBoard as the data-dense secondary view
 — and is the *declared* fallback wherever WebGL is absent, reduced motion is requested, or the
 box is headless.
 
@@ -358,6 +367,11 @@ Decided 2026-09-01:
    society — backend and UI — is built in-house (§7).
 8. **Build start:** frontend card work may proceed on clearly-labeled sample data while M1 lands
    (`components/society/data.ts` is the single swap point).
+10. **World layout & art direction (2026-09-01/02):** colourful pixel island, solarpunk village in
+    a comic-village ring around the central market square (4 × 4 of 10 × 10 fields), steep
+    bird's-eye camera, fine pixel grain, three zoom steps + minimap — see
+    [`world-art-direction.md`](world-art-direction.md) (binding for M3 world work). V1 of the
+    island ships as the World face of the Jarvis Agents section with the board as its Ledger.
 9. **Agent definition & ecosystem wiring:** see [`agent-definition.md`](agent-definition.md)
    (binding). Highlights: full customization per agent (brain, grant/focus/deny over ONE
    capability catalog of plugins + CLIs + MCPs + skills, approval rules, budget, workspace);

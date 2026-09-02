@@ -19,7 +19,7 @@
  * The brand comes from `agentBrand`, so the board follows whatever wake word is
  * configured rather than a product name (see lib/agentBrand.ts).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, Bot, CheckCircle2, ChevronRight, CircleAlert, Radio, Wrench } from "lucide-react";
 
 import type { SubAgentNode } from "@/store/jarvisAgents";
@@ -119,6 +119,8 @@ interface Props {
   historyError?: boolean;
   /** A row was clicked: open that run's insight page. */
   onOpen?: (agent: SubAgentNode) => void;
+  /** Right-aligned controls in the header (the section's World / Ledger switch). */
+  headerActions?: ReactNode;
 }
 
 export function DepartureBoard({
@@ -127,6 +129,7 @@ export function DepartureBoard({
   health = null,
   historyError = false,
   onOpen,
+  headerActions,
 }: Props) {
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
@@ -171,6 +174,7 @@ export function DepartureBoard({
               active: activeCount,
               total: agents.length,
             })}
+            actions={headerActions}
           />
 
           {health && (health.status === "needs_setup" || health.status === "error") && (

@@ -25,6 +25,7 @@ Static analysis only — it never runs a bundler, so it is cheap and
 dependency-free. Run from CI and covered by
 ``tests/unit/ui/test_webgl_contexts_released.py``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,10 +40,22 @@ _FRONTEND = _REPO / "jarvis" / "ui" / "web" / "frontend" / "src"
 #: raw WebGL context. Type-only imports are excluded at the call site: a module
 #: that merely names `NodeObject` never owns a context.
 _MOUNTS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("react-force-graph-3d", re.compile(r"^\s*import\s+(?!type\b)[^\n]*react-force-graph-3d", re.M)),
+    (
+        "react-force-graph-3d",
+        re.compile(r"^\s*import\s+(?!type\b)[^\n]*react-force-graph-3d", re.M),
+    ),
     ("new WebGLRenderer", re.compile(r"\bnew\s+(?:THREE\.)?WebGLRenderer\b")),
-    ("@react-three/fiber", re.compile(r"^\s*import\s+(?!type\b)[^\n]*@react-three/fiber", re.M)),
-    ("getContext(\"webgl\")", re.compile(r"""getContext\(\s*['"]webgl2?['"]""")),
+    # Only `Canvas` mounts a renderer; a module that imports hooks (useFrame,
+    # useThree) or event types renders INSIDE someone else's canvas and owns
+    # no context of its own.
+    (
+        "@react-three/fiber Canvas",
+        re.compile(
+            r"^\s*import\s+(?!type\b)\{[^}]*\bCanvas\b[^}]*\}\s*from\s*['\"]@react-three/fiber",
+            re.M,
+        ),
+    ),
+    ('getContext("webgl")', re.compile(r"""getContext\(\s*['"]webgl2?['"]""")),
 )
 
 #: Proof that the module hands the context back. `useWebglSurface` is the

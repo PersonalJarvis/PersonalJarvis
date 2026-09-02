@@ -26,7 +26,7 @@
  * shared `components/extensions/primitives` so this section looks like Spend,
  * Skills, Plugins, MCPs and CLIs rather than like a screen of its own.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { useSubAgentStore, type SubAgentNode, type SubAgentTreeSnapshot } from "@/store/jarvisAgents";
@@ -40,9 +40,67 @@ import { useMissionWebSocket } from "@/components/missions/useMissionWebSocket";
 import { useMissionsStore } from "@/components/missions/store";
 import { useOutputsList } from "@/hooks/useOutputs";
 import { useSectionHealth } from "@/hooks/useProviders";
+import { SegmentedFilter } from "@/components/extensions/primitives";
+import { useLocaleChunk, useT } from "@/i18n";
+import { detectWebgl } from "@/lib/graphDimension";
 
 /** The query parameter the Artifacts section reads to pre-select a run. */
 const RUN_PARAM = "run";
+
+/**
+ * The section's two faces (MASTERPLAN §4.1): the 3D island is the face, the
+ * board stays as the data-dense "Ledger" and the declared fallback wherever
+ * WebGL is absent. The world is a lazy chunk — three.js and the island never
+ * load for someone who only ever reads the ledger.
+ */
+type AgentsMode = "world" | "ledger";
+const MODE_KEY = "jarvis.agents.mode";
+
+const WorldStage = lazy(() =>
+  import("@/components/society/world/WorldStage").then((m) => ({ default: m.WorldStage })),
+);
+
+function readMode(): AgentsMode {
+  try {
+    const raw = localStorage.getItem(MODE_KEY);
+    if (raw === "world" || raw === "ledger") return raw;
+  } catch {
+    /* private mode: fall through to the default */
+  }
+  return detectWebgl() ? "world" : "ledger";
+}
+
+function writeMode(mode: AgentsMode): void {
+  try {
+    localStorage.setItem(MODE_KEY, mode);
+  } catch {
+    /* not persisted, still switched */
+  }
+}
+
+function ModeSwitch({ mode, onChange }: { mode: AgentsMode; onChange: (m: AgentsMode) => void }) {
+  const t = useT();
+  const ready = useLocaleChunk("society");
+  if (!ready) return null;
+  return (
+    <div className="rounded-md border border-border bg-popover p-0.5 shadow-float">
+      <SegmentedFilter<AgentsMode>
+        value={mode}
+        onChange={onChange}
+        label={t("society.world.mode_label")}
+        options={[
+          { id: "world", label: t("society.world.mode_world") },
+          { id: "ledger", label: t("society.world.mode_ledger") },
+        ]}
+      />
+    </div>
+  );
+}
+
+/** Shown while the world chunk loads: a quiet sky-coloured block, no invented numbers. */
+function WorldLoading() {
+  return <div className="h-full w-full animate-pulse bg-secondary" aria-hidden />;
+}
 
 export function JarvisAgentsView() {
   const { health } = useSectionHealth();
@@ -54,6 +112,11 @@ export function JarvisAgentsView() {
   // The run whose insight page is open, by dash-stripped id. Kept as an id
   // rather than a node so the page follows the row through live updates.
   const [openTraceId, setOpenTraceId] = useState<string | null>(null);
+  const [mode, setMode] = useState<AgentsMode>(readMode);
+  const switchMode = useCallback((next: AgentsMode) => {
+    writeMode(next);
+    setMode(next);
+  }, []);
 
   // One row per task: collapse each worker into its mission row so a single
   // dispatched task shows once (the mission "Sub-Agent" carrying the task
@@ -178,6 +241,18 @@ export function JarvisAgentsView() {
     );
   }
 
+  const modeSwitch = <ModeSwitch mode={mode} onChange={switchMode} />;
+
+  if (mode === "world") {
+    return (
+      <div className="h-full min-h-0">
+        <Suspense fallback={<WorldLoading />}>
+          <WorldStage topRight={modeSwitch} onOpenLedger={() => switchMode("ledger")} />
+        </Suspense>
+      </div>
+    );
+  }
+
   return (
     <DepartureBoard
       agents={nodesList}
@@ -185,6 +260,7 @@ export function JarvisAgentsView() {
       health={health["subagents"] ?? null}
       historyError={historyQuery.isError}
       onOpen={onOpen}
+      headerActions={modeSwitch}
     />
   );
 }

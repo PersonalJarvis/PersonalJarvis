@@ -1,0 +1,40 @@
+/**
+ * In-world signs over the places, drawn as DOM so they stay legible through
+ * the pixel pass. Text comes from the `society` locale chunk; the look from
+ * `world.css` (the world's own type, MASTERPLAN §4.3).
+ */
+import { Html } from "@react-three/drei";
+
+import { useT } from "@/i18n";
+import { buildIsland, groundY, tileToWorld, type PlaceId } from "./islandLayout";
+
+/** Label anchor height above the ground per place (roughly the roofline). */
+const LABEL_Y: Record<PlaceId, number> = {
+  market: 12.5,
+  hub: 13,
+  workshop: 9,
+  archive: 15,
+  harbor: 8,
+  lighthouse: 16,
+  gardens: 6,
+  solar: 5,
+};
+
+export function PlaceLabels() {
+  const t = useT();
+  const { map, content } = buildIsland();
+  return (
+    <group>
+      {(Object.keys(content.places) as PlaceId[]).map((id) => {
+        const [tx, tz] = content.places[id].tile;
+        const [x, z] = tileToWorld(tx, tz);
+        const y = groundY(map, x, z) + LABEL_Y[id];
+        return (
+          <Html key={id} position={[x, y, z]} center zIndexRange={[20, 5]} style={{ pointerEvents: "none" }}>
+            <div className="sw-placelabel">{t(`society.world.place_${id}`)}</div>
+          </Html>
+        );
+      })}
+    </group>
+  );
+}

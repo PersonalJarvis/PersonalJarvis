@@ -1,0 +1,213 @@
+/*
+ * The world viewport's own skin — MASTERPLAN §4.3: everything drawn inside the
+ * island (labels, nameplates, the game HUD) carries the world's bright
+ * branding, NOT the app's theme tokens. That is why this file uses literal
+ * colours; they are the world palette (worldPalette.ts LABEL), the same in
+ * light and dark mode by design, because the island has its own daylight.
+ * The World / Ledger switch handed in from the section is app chrome and
+ * keeps its Tailwind theme classes.
+ */
+
+.sw-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #a5dbff;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+.sw-stage:active {
+  cursor: grabbing;
+}
+.sw-stage canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+
+/* ---- in-world text ------------------------------------------------------ */
+
+.sw-nameplate,
+.sw-placelabel {
+  font-family: "Pixelify Sans", "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  color: #1f2a3a;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.sw-nameplate {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px 4px 6px;
+  font-size: 13px;
+  font-weight: 500;
+  background: rgba(255, 252, 245, 0.88);
+  border: 1px solid rgba(31, 42, 58, 0.18);
+  border-radius: 4px;
+  box-shadow: 0 2px 0 rgba(31, 42, 58, 0.25);
+}
+.sw-nameplate[data-selected] {
+  background: #fff8dc;
+  border-color: #1f2a3a;
+}
+.sw-nameplate[data-state="paused"] {
+  opacity: 0.72;
+}
+.sw-nameplate-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  border: 1px solid rgba(31, 42, 58, 0.4);
+  flex: none;
+}
+.sw-nameplate[data-state="working"] .sw-nameplate-dot {
+  animation: sw-pulse 1.2s ease-in-out infinite;
+}
+@keyframes sw-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.35);
+  }
+}
+
+.sw-placelabel {
+  padding: 4px 9px 5px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #fffaf0;
+  background: rgba(31, 42, 58, 0.62);
+  border-radius: 5px;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+/* ---- the game HUD ------------------------------------------------------- */
+
+.sw-hud {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 12px;
+  pointer-events: none;
+  font-family: "Pixelify Sans", "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+}
+.sw-hud > * > * {
+  pointer-events: auto;
+}
+.sw-hud-top,
+.sw-hud-bottom {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sw-hud-bottom {
+  align-items: flex-end;
+}
+.sw-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 7px;
+  font-size: 14px;
+  color: #1f2a3a;
+  background: rgba(255, 252, 245, 0.9);
+  border: 1px solid rgba(31, 42, 58, 0.2);
+  border-radius: 6px;
+  box-shadow: 0 2px 0 rgba(31, 42, 58, 0.25);
+}
+.sw-chip strong {
+  font-weight: 600;
+}
+.sw-chip-sep {
+  width: 1px;
+  height: 12px;
+  background: rgba(31, 42, 58, 0.25);
+}
+.sw-chip-note {
+  font-size: 12px;
+  color: #4a5568;
+  background: rgba(255, 248, 220, 0.9);
+}
+.sw-hint {
+  font-size: 12px;
+  color: #1f2a3a;
+  background: rgba(255, 252, 245, 0.7);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.sw-corner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.sw-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  background: rgba(255, 252, 245, 0.9);
+  border: 1px solid rgba(31, 42, 58, 0.2);
+  border-radius: 6px;
+  box-shadow: 0 2px 0 rgba(31, 42, 58, 0.25);
+}
+.sw-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #1f2a3a;
+  cursor: pointer;
+}
+.sw-zoom-btn:hover:not(:disabled) {
+  background: rgba(31, 42, 58, 0.1);
+}
+.sw-zoom-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.sw-zoom-level {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  color: #1f2a3a;
+}
+.sw-minimap {
+  width: 168px;
+  height: 168px;
+  image-rendering: pixelated;
+  border: 2px solid rgba(255, 252, 245, 0.95);
+  border-radius: 6px;
+  box-shadow: 0 2px 0 rgba(31, 42, 58, 0.35);
+  cursor: crosshair;
+}
+
+/* ---- fallback (no WebGL) ------------------------------------------------ */
+
+.sw-fallback {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
