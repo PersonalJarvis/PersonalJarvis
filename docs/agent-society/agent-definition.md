@@ -45,12 +45,35 @@ card; nothing hidden drives behavior.
   (`lead | orchestrator | specialist`), `parent_agent_id`, `state` (`active | paused | archived`).
 - `avatar` (parts + palette now; GLB/texture uri in M3), `checkpoint` (world place).
 
-**Brain**
-- `provider`, `model`, `effort` — from `agent_chat.catalog.rows_for("society")`: API families,
-  keyless local rows (`ollama`, `local-openai`). CLI seats (Claude Code, Codex, …) are NOT
-  society brains: a society agent runs on Jarvis' own harness (`brain_runner=True`,
-  `cli_seats=False`, like the `jarvis` surface). CLIs are *tools* of the agent (§3.1), not its mind.
-- `fallback_policy` = the global capability-gated chain (AP-21/22); no per-agent fallback pins.
+**Brain (revised 2026-09-02 — subscriptions)**
+- `provider`, `model`, `effort` — from `agent_chat.catalog.rows_for("society")`: every API row
+  (key-based: `openai`, `gemini`, `grok`, `openrouter`, `nvidia`, `vertex`), the keyless local
+  rows (`ollama`, `local-openai`) AND the **subscription seats** — the vendor CLIs the app
+  already drives on a plan: Claude Code (Claude Max), Codex (ChatGPT), Grok Build (SuperGrok),
+  Antigravity (Google), OpenCode, Kimi, GLM, Cursor. `resolve_runner(provider, "society")`
+  decides per box: a seat's CLI when installed (`claude-api` is dual — Claude Code when
+  present, else the Anthropic API), Jarvis' brain runner for API rows.
+- **On a seat the CLI runs AS the agent**: its briefing (§3.3) is the identity the CLI is handed
+  (`jarvis_harness.identity_prompt(prompt_override=…)`, Jarvis' own layers stay out), Jarvis'
+  tools reach it over MCP (`mcp__jarvis__*`), and it brings its own hands (Claude Code's shell,
+  editor, browser). The society-only tools (`society_message_agent`, `society_wiki_note`,
+  `society_shell`, `society_browser`, `society_run_skill`) are available on the brain runner
+  today and are NOT yet offered over MCP to a seated CLI (tracked gap).
+- `account_id` — which stored subscription of that CLI the agent uses (`jarvis.agent_accounts`;
+  empty = the platform's active account). Pinned per turn through
+  `runner_cli.ACCOUNT_OVERRIDE`, so two agents can sit on two Claude Max logins.
+- **Switching later**: `POST /api/society/agents/{id}/model` (or PATCH) changes provider /
+  model / effort / account; the canonical chat is re-seated at once, transcript kept
+  (`chat_binding.ensure_session`). `GET /api/society/providers` lists every row with the
+  runner it resolves to on this box (`subscription: true|false`) and the accounts stored for
+  its CLI; models, efforts and permission ladders come from
+  `GET /api/agent-chat/catalog?surface=society`.
+- Reference check (2026-09-02): Hermes Agent switches with `hermes model` / `/model provider:name`
+  and offers Codex/ChatGPT device-code OAuth, xAI SuperGrok OAuth and Claude OAuth (Max only);
+  OpenClaw selects `agents.entries.*.model` as `provider/model`, reuses `claude -p` for the
+  Claude plan, ChatGPT OAuth for OpenAI, and keeps an ordered fallback chain. We match the
+  shape — per-agent provider/model/account, switch any time — through the seats the app
+  already runs, and keep fallbacks global (AP-21/22).
 
 **Capabilities** (§3)
 - `grant_mode`: `all` (default — everything the global tiers allow) or `allowlist`.

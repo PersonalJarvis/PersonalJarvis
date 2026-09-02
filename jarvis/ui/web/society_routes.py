@@ -70,6 +70,7 @@ class CreateAgentBody(BaseModel):
     provider: str = ""
     model: str = ""
     effort: str = ""
+    account_id: str = ""
     grant_mode: str | None = None
     grants: list[str] | None = None
     focus: list[str] | None = None
@@ -93,6 +94,7 @@ class PatchAgentBody(BaseModel):
     provider: str | None = None
     model: str | None = None
     effort: str | None = None
+    account_id: str | None = None
     grant_mode: str | None = None
     grants: list[str] | None = None
     focus: list[str] | None = None
@@ -378,6 +380,102 @@ async def apply_seed_proposals(body: ApplySeedsBody, request: Request) -> dict[s
         if was_created:
             created.append(agent.to_dict())
     return {"agents": created, "total": len(created)}
+
+
+# --------------------------------------------------------------- providers
+
+
+class ModelBody(BaseModel):
+    provider: str = Field(min_length=1)
+    model: str = ""
+    effort: str = ""
+    account_id: str = ""
+
+
+@router.get("/providers")
+async def list_society_providers(request: Request) -> dict[str, Any]:
+    """Every provider an agent may run on, with the runner that answers on
+    this box (a vendor CLI = a subscription seat; brain = an API key) and the
+    subscription accounts stored for that CLI. Models, efforts and ladders
+    come from GET /api/agent-chat/catalog?surface=society."""
+    from jarvis.agent_chat.catalog import rows_for
+    from jarvis.agent_chat.service import resolve_runner
+
+    await _runtime(request)
+    rows = []
+    for row in rows_for("society"):
+        runner = resolve_runner(row.id, surface="society")
+        accounts: list[dict[str, Any]] = []
+        if row.agent:
+            accounts = _account_snapshots(row.agent)
+        rows.append(
+            {
+                "id": row.id,
+                "label": row.label,
+                "family": row.family,
+                "runner": runner,
+                "subscription": runner not in ("brain", "api", "unknown"),
+                "keyless": bool(getattr(row, "keyless", False)),
+                "platform": row.agent or None,
+                "accounts": accounts,
+            }
+        )
+    return {"providers": rows, "catalog": "/api/agent-chat/catalog?surface=society"}
+
+
+def _account_snapshots(platform: str) -> list[dict[str, Any]]:
+    try:
+        from jarvis import agent_accounts
+
+        if platform not in agent_accounts.platforms():
+            return []
+        return [s.to_dict() for s in agent_accounts.snapshots(platform)]  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001 — no account layer: the picker shows none
+        log.debug("society: account snapshots unavailable for %s", platform, exc_info=True)
+        return []
+
+
+@router.post("/agents/{agent_id}/model")
+async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -> dict[str, Any]:
+    """Move the agent onto another provider / model / effort / subscription seat.
+    Its canonical chat is re-seated at once (transcript kept)."""
+    from jarvis.agent_chat.catalog import offers
+    from jarvis.agent_chat.service import resolve_runner
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    if not offers("society", body.provider):
+        raise HTTPException(
+            422,
+            {"reason": str(FailureReason.BLOCKED_BY_POLICY), "detail": "provider not offered"},
+        )
+    fields = {
+        "provider": body.provider.strip().lower(),
+        "model": body.model.strip(),
+        "effort": body.effort.strip(),
+        "account_id": body.account_id.strip(),
+    }
+    try:
+        updated = await rt.roster.update(agent.agent_id, fields)
+    except RosterError as exc:
+        raise _typed_error(exc) from exc
+    reseated = None
+    svc = rt._get_chat()  # noqa: SLF001 — the route is the runtime's operator
+    if svc is not None:
+        from jarvis.society.chat_binding import ensure_session
+
+        try:
+            session = ensure_session(svc, rt._get_cfg(), updated)  # noqa: SLF001
+            reseated = session.session_id
+        except PermissionError as exc:
+            log.info("society: %s re-seat deferred: %s", agent.agent_id, exc)
+    return {
+        "agent": updated.to_dict(),
+        "runner": resolve_runner(updated.provider, surface="society"),
+        "reseated": reseated,
+    }
 
 
 # ------------------------------------------------------------------ skills

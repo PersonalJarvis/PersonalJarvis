@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS agent_chat_sessions (
     updated_ms       INTEGER NOT NULL,
     message_count    INTEGER NOT NULL DEFAULT 0,
     preview          TEXT NOT NULL DEFAULT '',
-    surface          TEXT NOT NULL DEFAULT 'agent'
+    surface          TEXT NOT NULL DEFAULT 'agent',
+    account_id       TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS agent_chat_events (
     session_id  TEXT NOT NULL,
@@ -96,6 +97,9 @@ class AgentChatSession:
     message_count: int
     preview: str
     surface: str = DEFAULT_SURFACE
+    #: The subscription seat (``jarvis.agent_accounts`` id) a CLI turn runs on;
+    #: empty = the platform's active account.
+    account_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -141,6 +145,12 @@ class AgentChatStore:
                 "ALTER TABLE agent_chat_sessions ADD COLUMN surface TEXT NOT NULL "
                 f"DEFAULT '{DEFAULT_SURFACE}'"
             )
+        if "account_id" not in have:
+            # Which subscription seat a CLI turn runs on; empty = the platform's
+            # active account (the pre-column behaviour).
+            self._conn.execute(
+                "ALTER TABLE agent_chat_sessions ADD COLUMN account_id TEXT NOT NULL DEFAULT ''"
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -159,6 +169,7 @@ class AgentChatStore:
         title: str = "",
         session_id: str | None = None,
         surface: str = DEFAULT_SURFACE,
+        account_id: str = "",
     ) -> AgentChatSession:
         if surface not in SURFACES:
             raise ValueError(f"surface must be one of {SURFACES}, not {surface!r}")
@@ -171,8 +182,9 @@ class AgentChatStore:
             self._conn.execute(
                 "INSERT INTO agent_chat_sessions (session_id, title, provider, model, effort, "
                 "cwd, permission_mode, vendor_session, created_ms, updated_ms, message_count, "
-                "preview, surface) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, '', ?)",
-                (sid, title, provider, model, effort, cwd, mode, now, now, surface),
+                "preview, surface, account_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, '', ?, ?)",
+                (sid, title, provider, model, effort, cwd, mode, now, now, surface, account_id),
             )
             self._conn.commit()
         session = self.get_session(sid)
@@ -217,6 +229,7 @@ class AgentChatStore:
             "cwd",
             "permission_mode",
             "vendor_session",
+            "account_id",
         }
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
         if not updates:
@@ -378,4 +391,5 @@ class AgentChatStore:
             message_count=int(row["message_count"]),
             preview=row["preview"],
             surface=str(row["surface"] or DEFAULT_SURFACE),
+            account_id=str(row["account_id"] or "") if "account_id" in row.keys() else "",
         )

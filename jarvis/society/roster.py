@@ -95,6 +95,9 @@ class AgentRecord:
     provider: str
     model: str
     effort: str
+    #: The subscription seat (``jarvis.agent_accounts`` id) a CLI-seated agent
+    #: runs on; empty = the platform's active account.
+    account_id: str
     grant_mode: GrantMode
     grants: list[str]
     focus: list[str]
@@ -135,6 +138,7 @@ class AgentRecord:
             "provider": self.provider,
             "model": self.model,
             "effort": self.effort,
+            "account_id": self.account_id,
             "grant_mode": str(self.grant_mode),
             "grants": list(self.grants),
             "focus": list(self.focus),
@@ -178,6 +182,7 @@ class AgentRecord:
             provider=str(row.get("provider") or ""),
             model=str(row.get("model") or ""),
             effort=str(row.get("effort") or ""),
+            account_id=str(row.get("account_id") or ""),
             grant_mode=GrantMode(str(row.get("grant_mode") or "all")),
             grants=list(_loads(row.get("grants_json"), [])),
             focus=list(_loads(row.get("focus_json"), [])),
@@ -214,6 +219,7 @@ _EDITABLE: Final[frozenset[str]] = frozenset(
         "provider",
         "model",
         "effort",
+        "account_id",
         "grant_mode",
         "grants",
         "focus",
@@ -332,7 +338,14 @@ def _coerce(field_name: str, value: Any) -> Any:
         if runs < 1 or runs > 10:
             raise RosterError(FailureReason.BLOCKED_BY_POLICY, "max_concurrent_runs must be 1-10")
         return runs
-    if field_name in ("provider", "model", "effort", "workspace_dir", "wiki_namespace"):
+    if field_name in (
+        "provider",
+        "model",
+        "effort",
+        "account_id",
+        "workspace_dir",
+        "wiki_namespace",
+    ):
         return str(value or "")
     if field_name == "parent_agent_id":
         return str(value) if value else None

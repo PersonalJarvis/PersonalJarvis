@@ -212,7 +212,13 @@ _KITS: Final[dict[str, SurfaceKit]] = {
     "society": SurfaceKit(
         surface="society",
         brain_runner=True,
-        cli_seats=False,
+        # Subscriptions (maintainer, 2026-09-02): an agent may sit on a vendor
+        # CLI seat — Claude Code (Claude Max), Codex (ChatGPT), Grok Build
+        # (SuperGrok), Antigravity (Google) — or on any API row. On a seat the
+        # CLI runs AS the agent (its briefing is the identity, runner_cli),
+        # with Jarvis' tools over MCP and its own hands; on an API row Jarvis'
+        # brain runner drives the agent's own tool set.
+        cli_seats=True,
         ladder=_JARVIS_LADDER,
         uses_stance=True,
         tool_origin="society",

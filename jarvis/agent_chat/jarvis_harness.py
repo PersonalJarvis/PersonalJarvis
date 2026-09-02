@@ -227,6 +227,7 @@ async def identity_prompt(
     user_text: str,
     history: list[dict[str, Any]],
     resume: str | None,
+    prompt_override: str | None = None,
 ) -> str:
     """Jarvis' real prompt layers + the chat's transcript + the addendum.
 
@@ -242,6 +243,16 @@ async def identity_prompt(
     tell the model the same story twice.
     """
     parts: list[str] = []
+    if prompt_override:
+        # A society agent's seat: ITS briefing is the identity. Jarvis' own
+        # layers stay out so the CLI does not answer as Jarvis.
+        parts.append(prompt_override.strip())
+        if resume is None and history:
+            transcript = render_transcript(history)
+            if transcript:
+                parts.append("## This conversation so far\n\n" + transcript)
+        parts.append(SYSTEM_PREAMBLE)
+        return "\n\n".join(parts)
     brain = _brain()
     render = getattr(brain, "render_surface_prompt", None) if brain is not None else None
     if callable(render):
@@ -345,9 +356,12 @@ async def build_identity(
     history: list[dict[str, Any]],
     resume: str | None,
     with_file: bool,
+    prompt_override: str | None = None,
 ) -> Identity:
     """The identity for one CLI turn; ``with_file`` for a CLI that takes a file."""
-    text = await identity_prompt(user_text=user_text, history=history, resume=resume)
+    text = await identity_prompt(
+        user_text=user_text, history=history, resume=resume, prompt_override=prompt_override
+    )
     path = write_identity_file(text, turn_id=turn_id) if with_file else None
     return Identity(session_id=session_id, text=text, compact=compact_identity(text), path=path)
 

@@ -54,6 +54,7 @@ def test_agent_id_of():
 
 
 def test_without_runtime_everything_is_empty():
+    runtime_mod.set_current_runtime(None)  # another test's runtime may still be registered
     assert runtime_mod.current_runtime() is None
     session = SimpleNamespace(session_id="society:scout")
     assert society_tools(None, None, session) == {}

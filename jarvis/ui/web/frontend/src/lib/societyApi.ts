@@ -89,6 +89,8 @@ export interface SocietyAgentRow {
   provider: string;
   model: string;
   effort: string;
+  /** Subscription seat (agent-accounts id) for a CLI-seated agent; "" = active account. */
+  account_id: string;
   grant_mode: GrantMode;
   grants: string[];
   focus: string[];

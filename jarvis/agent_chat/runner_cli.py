@@ -59,6 +59,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
@@ -208,12 +209,23 @@ def cursor_argv_prefix() -> list[str]:
     return [binary]
 
 
+#: The subscription seat the CURRENT turn runs on, when its session names one
+#: (an agent-society member pinned to a specific account). Empty = the
+#: platform's active account, exactly as before the society existed.
+ACCOUNT_OVERRIDE: ContextVar[str] = ContextVar("agent_chat.account_override", default="")
+
+
 def _account_env(platform: str) -> dict[str, str]:
-    """The child environment for the active subscription seat of ``platform``."""
+    """The child environment for the subscription seat of ``platform`` — the
+    turn's pinned account when its session names one, else the active one."""
     try:
         from jarvis import agent_accounts
 
-        account = agent_accounts.active_account(platform)  # type: ignore[arg-type]
+        pinned = agent_accounts.resolve(ACCOUNT_OVERRIDE.get() or None)
+        if pinned is not None and pinned.platform == platform:
+            account = pinned
+        else:
+            account = agent_accounts.active_account(platform)  # type: ignore[arg-type]
         env = agent_accounts.spawn_env(platform, account.id, base=os.environ)  # type: ignore[arg-type]
     except Exception:  # noqa: BLE001 — no account layer for this platform → plain env
         env = dict(os.environ)
@@ -2231,6 +2243,26 @@ def _resume_was_lost(error: str | None) -> bool:
     return any(m in low for m in _RESUME_LOST_MARKERS)
 
 
+async def _surface_identity(session: Any) -> str | None:
+    """A surface whose identity is per session (an agent-society member's
+    briefing) hands that text over; ``None`` keeps Jarvis' own layers."""
+    from jarvis.agent_chat.surface_kits import kit_for
+
+    kit = kit_for(getattr(session, "surface", "") or "")
+    if kit.session_system_extra is None:
+        return None
+    try:
+        from jarvis.agent_chat.runner_brain import brain_manager
+
+        brain = brain_manager()
+        cfg = getattr(brain, "_config", None)
+        text = await kit.session_system_extra(cfg, brain, session)
+    except Exception:  # noqa: BLE001 — the CLI then runs with Jarvis' layers, never fails
+        log.warning("agent chat: surface identity unavailable this turn", exc_info=True)
+        return None
+    return text or None
+
+
 async def run_cli_turn(
     handle: TurnHandle,
     user_text: str,
@@ -2257,6 +2289,10 @@ async def run_cli_turn(
     resume = session.vendor_session
     ident: jarvis_harness.Identity | None = None
     ref = approval_ref(session.session_id)
+    # A society agent's seat: its own briefing is the identity (not Jarvis'
+    # layers), and its pinned subscription account is the seat's login.
+    prompt_override = await _surface_identity(session)
+    account_token = ACCOUNT_OVERRIDE.set(getattr(session, "account_id", "") or "")
     if identity:
         ident = await jarvis_harness.build_identity(
             session_id=session.session_id,
@@ -2265,6 +2301,7 @@ async def run_cli_turn(
             history=handle.history,
             resume=resume,
             with_file=(runner in _CLAUDE_CODE_RUNNERS),
+            prompt_override=prompt_override,
         )
         if bridge is not None:
             from jarvis.agent_chat.approval_bridge import ChatGrant
@@ -2304,11 +2341,13 @@ async def run_cli_turn(
                     history=handle.history,
                     resume=None,
                     with_file=(runner in _CLAUDE_CODE_RUNNERS),
+                    prompt_override=prompt_override,
                 )
             outcome = await _run_cli_once(
                 handle, user_text, runner, None, identity=ident, bridge=bridge
             )
     finally:
+        ACCOUNT_OVERRIDE.reset(account_token)
         if bridge is not None and identity:
             bridge.disarm(ref)
         if ident is not None:

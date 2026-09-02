@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS society_agents (
     provider            TEXT NOT NULL DEFAULT '',
     model               TEXT NOT NULL DEFAULT '',
     effort              TEXT NOT NULL DEFAULT '',
+    account_id          TEXT NOT NULL DEFAULT '',   -- subscription seat (agent_accounts id)
     grant_mode          TEXT NOT NULL DEFAULT 'all'
                         CHECK (grant_mode IN ('all', 'allowlist')),
     grants_json         TEXT NOT NULL DEFAULT '[]',

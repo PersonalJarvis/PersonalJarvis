@@ -92,9 +92,18 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
             title=agent.name,
             session_id=session_id,
             surface=SURFACE,
+            account_id=agent.account_id,
         )
     if existing.provider != provider or (model and existing.model != model):
         svc.store.reseat_session(session_id, provider=provider, model=model or existing.model)
+        existing = svc.store.get_session(session_id)
+    updates: dict[str, str] = {}
+    if getattr(existing, "account_id", "") != agent.account_id:
+        updates["account_id"] = agent.account_id
+    if effort and existing.effort != effort:
+        updates["effort"] = effort
+    if updates:
+        svc.store.update_session(session_id, **updates)
         existing = svc.store.get_session(session_id)
     return existing
 

@@ -96,6 +96,11 @@ class SocietyStore:
         existing = {str(r[1]) for r in rows}
         if not existing:  # pragma: no cover — schema always creates the table
             raise RuntimeError("society_agents table missing after schema load")
+        if "account_id" not in existing:
+            await self.conn.execute(
+                "ALTER TABLE society_agents ADD COLUMN account_id TEXT NOT NULL DEFAULT ''"
+            )
+            log.info("society store: migration applied — added account_id")
         if "browser_mode" not in existing:
             await self.conn.execute(
                 "ALTER TABLE society_agents ADD COLUMN browser_mode TEXT NOT NULL "
