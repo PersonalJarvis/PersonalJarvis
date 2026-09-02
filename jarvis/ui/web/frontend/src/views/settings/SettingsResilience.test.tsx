@@ -134,5 +134,10 @@ describe("SettingsView against an empty backend", () => {
       expect(screen.getAllByText("Deutsch (German)").length).toBeGreaterThan(0);
     });
     expect(screen.getByTestId("combo-field-call")).toBeTruthy();
+    // A 640px form cap left the groups as a left-hand column in a sea of
+    // black. The section fills the window; page padding is on the column.
+    const scroll = screen.getByTestId("settings-scroll");
+    expect(scroll.className).not.toMatch(/max-w-form/);
+    expect(scroll.parentElement?.className).toMatch(/px-6/);
   });
 });

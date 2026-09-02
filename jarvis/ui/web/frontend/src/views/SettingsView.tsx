@@ -96,7 +96,7 @@ export function SettingsView() {
   ];
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col px-6">
       <SectionHeader
         icon={<Settings />}
         title={t("settings_view.title")}
@@ -106,13 +106,15 @@ export function SettingsView() {
           by its own route, so one of them throwing must cost the user that one
           panel — not the ability to change any setting at all.
 
-          The measure and the rhythm live here, once: settings are option lists
-          and single-column forms, so they stop at the 640px form measure rather
-          than stretching an option card holding two words across the window,
-          and the groups are separated by the 32px group step — the step the
-          section was missing entirely, which is why it read as one mesh. The
-          horizontal page padding comes from the shell, not from here. */}
-      <div className="flex-1 space-y-group overflow-y-auto scrollbar-jarvis pb-group [&>*]:max-w-form">
+          Cards run the full section width (the 640px form measure left a
+          column of cards in a sea of black — the same verdict that retired
+          the shell-level page measure). Groups sit 32px apart so the section
+          does not read as one mesh. Horizontal padding lives here: the shell
+          does not supply it. */}
+      <div
+        data-testid="settings-scroll"
+        className="min-h-0 flex-1 space-y-group overflow-y-auto scrollbar-jarvis pb-group"
+      >
         <SettingsGroupBoundary group="languages">
           <LanguagesGroup />
         </SettingsGroupBoundary>

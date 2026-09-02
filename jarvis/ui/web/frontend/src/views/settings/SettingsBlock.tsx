@@ -6,10 +6,11 @@ import type { LucideIcon } from "lucide-react";
  * Telephony, Wiki) is built from, so the zone reads as a single consistent list
  * of optional integrations instead of four hand-rolled sections.
  *
- * A block is an OBJECT: a card sized to its content, capped at the form measure
- * so it never becomes a full-width wall (rule 1 — lift scales inversely with
- * area). Separation is fill first: --card carries it, the hairline only
- * finishes the edge, and there is no shadow because a block does not float.
+ * A block is an OBJECT: a card that fills the section it sits in. A 640px
+ * form cap was tried and left a column of cards in a sea of black; the
+ * section owns the width, the card follows. Separation is fill first:
+ * --card carries it, the hairline only finishes the edge, and there is no
+ * shadow because a block does not float.
  *
  * The icon used to sit inside a 36px tinted disc. The disc was a wrapper around
  * one glyph and nothing else, and it made the icon the brightest mark in a row
@@ -32,7 +33,7 @@ export function SettingsBlock({
   children?: ReactNode;
 }) {
   return (
-    <section className="max-w-form overflow-hidden rounded-lg border border-border bg-card p-block">
+    <section className="w-full overflow-hidden rounded-lg border border-border bg-card p-block">
       <div className="flex items-start gap-3">
         <span
           aria-hidden
