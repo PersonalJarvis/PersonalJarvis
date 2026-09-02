@@ -13,6 +13,7 @@ Windows shows the taskbar icon of the LAUNCHING exe (covered by
 The Linux entry is pure text I/O behind a test seam (``applications_dir``), so
 its contract is provable on every OS.
 """
+
 from __future__ import annotations
 
 import sys
@@ -86,3 +87,39 @@ def test_desktop_app_wires_all_three_platform_surfaces() -> None:
         "apply_macos_dock_icon",
     ):
         assert hook in src, hook
+
+
+# The title bar is a FOURTH surface: the window manager draws it from
+# ``_NET_WM_ICON`` on the window itself and never consults a ``.desktop`` file,
+# so the WM_CLASS handshake above leaves it on the WM's generic window glyph
+# (forensic 2026-09-02, Linux VM). pywebview sets that property only when
+# ``start(icon=...)`` is given.
+
+
+def test_native_window_icon_is_the_bundled_png_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    import jarvis.ui.desktop_app as desktop_app
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    icon = desktop_app.DesktopApp._native_window_icon()
+
+    assert icon is not None
+    assert icon.endswith(".png")
+    assert Path(icon).is_file()
+
+
+def test_native_window_icon_is_none_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """WinForms would build ``System.Drawing.Icon`` from the PNG and throw; the
+    Win32 ``WM_SETICON`` poll owns that surface."""
+    import jarvis.ui.desktop_app as desktop_app
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert desktop_app.DesktopApp._native_window_icon() is None
+
+
+def test_desktop_app_hands_the_icon_to_webview_start() -> None:
+    import inspect
+
+    import jarvis.ui.desktop_app as desktop_app
+
+    src = inspect.getsource(desktop_app.DesktopApp.run_window_only)
+    assert "icon=self._native_window_icon()" in src
