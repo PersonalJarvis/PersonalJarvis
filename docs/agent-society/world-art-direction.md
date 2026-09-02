@@ -10,10 +10,11 @@ master plan requires before environment assets are built. Figures are governed b
 
 A bright pixel island in the warm light of a late afternoon — the softness and colour of a
 cosy farming game rendered in true 3D — on which a small **solarpunk village** stands: white walls,
-glass bands, solar barrel roofs, garden roofs, wood accents, rounded shapes. The village is laid
-out like a classic comic village: a ring of houses around ONE open square where everyone gathers,
-the biggest house at the head of the square. Around the village, four quarters carry the working
-places of the society. Seen steeply from above, lightly pixelated, never dark, never monochrome.
+glass bands, solar barrel roofs, garden roofs, wood accents, rounded shapes. The town is laid out
+like a real one: ONE open square in the middle where everyone gathers, streets and narrower alleys
+around it, rectangular blocks of terraced houses between them, a boulevard closing the town, and
+the biggest house — the lead's hub — at the head of the avenue. Around the town, four quarters carry
+the working places of the society. Seen steeply from above, lightly pixelated, never dark, never monochrome.
 
 ## 2. Decisions (maintainer, 2026-09-01/02)
 
@@ -24,7 +25,7 @@ places of the society. Seen steeply from above, lightly pixelated, never dark, n
 | 3 | Size | **16 × 16 fields (512 m); the central 4 × 4 fields are the market district** | the maintainer wants a big island that is not seen in one screen — grown from 10 × 10 on 2026-09-02 ("at least 50 % bigger"); one field = one screen at the closest zoom |
 | 4 | Landscape | **A village / small town** on an island of **biomes at different heights**: a snow-capped mountain, terraced hills, alpine meadows, a rocky cape, a tropical cove with a lagoon, the harbor bay, orchards, a dark forest | free-text decisions: "a village, ultramodern, future-oriented" (2026-09-01) and "not flat — biomes, heights, spectacular, never overloaded" (2026-09-02) |
 | 5 | Architecture | **Solarpunk village** — white + glass + solar + gardens + wood, lots of green between | colourful AND futuristic; pure factory grey or neon-cyber contradicts the bright island |
-| 6 | Centre | **Comic-village ring structure, modernised**: houses around the open square, the big tree with the long table in the middle, the lead's hub at the head (north) | the maintainer's own image ("Asterix-style village structure, only modern") |
+| 6 | Centre | **A block town, not a ring** (revised 2026-09-02): the open square in the middle, a street framing it, a grid of streets and alleys with rectangular blocks of terraced houses between them, a boulevard with rounded corners closing the town, the lead's hub at the head of the north avenue | the maintainer's sketch of 2026-09-02: "like a real city — blocks, streets and alleys, centred, everything facing the viewer"; the comic-village ring (2026-09-01) looked arranged, not lived in |
 | 7 | Pixel grain | **Fine — 2 screen pixels per rendered pixel** (a 1280-px stage renders at 640 px) | figures and signs stay readable; 320×180 would be too coarse for a big island |
 | 8 | Navigation | **Drag + arrow keys/WASD, five fixed zoom steps (32 / 64 / 128 / 256 / 512 m), minimap with relief** | 256 fields need zoom to find an agent; fixed steps keep pixels crisp; the widest step is the postcard of the island |
 
@@ -68,21 +69,29 @@ steps or more are real barriers (`findPath` refuses them). Every place's plot is
 own terrace level (`PLOT_LEVEL`): the archive on the hill at 5, the lighthouse knob at 6, the
 harbor and the gardens low at 2, the solar field on the mountain's foot terrace at 4.
 
-**Market district (a round plateau of radius 39 tiles, level 3):**
-- open square, radius 13 tiles, paved; garden beds alternate around its rim;
+**Market district — the town (a rounded-square plateau, `squareDist` ≤ 37 tiles, level 3):**
+- the plan (`TOWN`, `townZone`), in tile offsets from the centre on both axes: the square
+  (|k| ≤ 11, paved, garden beds in runs along its rim), the frame street (12–14), the inner
+  blocks (15–23), the middle street (24–26), the outer blocks (27–30), the boulevard (31–33,
+  drawn in the 4-norm so its corners are rounded), a green fringe to the plateau's edge;
+- two avenues (|k| ≤ 1) leave the square on both axes and run on as the spokes; two alleys per
+  axis (13–14, 2 wide) continue the frame street's outer edge and cut the bands into blocks;
 - the Quest Board monument in the exact centre, a ring bench around it, the long table on the
   south side — this is the `meeting` checkpoint (MASTERPLAN §2.7);
-- the house ring at radius 19 tiles; the four cardinal directions stay open as gates; the ring
-  hubs take their slots (`RING_KIT_SLOTS`), the hub's podium the two slots flanking the north
-  gate — the remaining slots hold houses, three variants cycling: solar-barrel roof, garden
-  roof, glass loft;
-- **which way a house faces** (`houseDefaultRotation`, maintainer 2026-09-02): the door faces
-  the square — unless that turns the house's back on the camera, which looks from the south-east
-  (`CAMERA_FROM`); then the door faces the ring road instead. A door the viewer never sees is a
-  house with its back turned. The houses stand in the south-east half of the ring (the hubs took
-  the north and west), so nearly all of them face the road; a house on the far side would keep
-  its door on the square;
-- **the viewer may turn any house or ring hub** (`buildingPoses.ts`, `RotateHandle.tsx`): click a
+- **twenty blocks** (`BLOCK_TEMPLATES` × four quadrants, `townBlocks`): five templates per
+  quadrant — inner N/S beside the avenue, the inner corner, inner E/W beside the avenue, outer
+  N/S, outer E/W; the outer corner slivers the boulevard cuts off are parks;
+- **which way a house faces** (maintainer 2026-09-02): a block's FRONT sides are its south and
+  east edges — the sides the camera sees (`CAMERA_FROM`, from the south-east). Houses stand in
+  a terraced row along the south front (doors on the street south of the block) and in a column
+  up the east front (doors on the street east of it); the north row and the west column are
+  hedged back gardens. So every door faces the viewer and no house ever shows its back. Forty
+  houses (`townHouses`, 6.8 × 4.8 m on 4 × 3-tile lots), three variants cycling: solar-barrel
+  roof, garden roof, glass loft;
+- the four halls take four blocks (`KIT_BLOCKS`): Plugin Docks and Skill Forge north of the
+  square flanking the avenue, the Relay Tower on the north-east corner block, the Terminal
+  Cantina west of the square — every hall one street from the square, door on the street;
+- **the viewer may turn any house or hall** (`buildingPoses.ts`, `RotateHandle.tsx`): click a
   house (or open a hub's drawer) and a knob appears on the front of its selection ring; drag the
   knob around the building and it follows, Shift snaps to 15° steps, and close to the designed
   heading it snaps back. The badge beside the knob shows the heading and, once turned, a Reset;
@@ -95,14 +104,19 @@ harbor and the gardens low at 2, the solar field on the mountain's foot terrace 
   gate pillars, the keeper's hut, every lamp post and every hedge segment block their tiles
   (`blockSquareFurniture`, `blockLandmarkFurniture`, `buildIsland`). A figure that finds a
   building turned over its head steps to the nearest free tile first (`nearestWalkable`);
-- the **hub** (lead agent) at the head of the square, north, on a **podium one level up**
-  (18 × 10 tiles): a 24 × 12 m hall with a glass band and garden roofs, a set-back upper floor,
-  the glass atrium under the dome, the beacon spire with its halo, two solar-roofed wings, a
-  colonnade over the entrance, the grand stair down to the square, the reflecting pool and two
-  flag masts at its foot;
-- ring road at radius 25 (it climbs the podium's back terrace instead of vanishing under it),
-  hedge ring with four gates at radius 29, lamps along the spokes;
-- four spokes (width 3 tiles) from the square to the quarters.
+- the **hub** (lead agent) beyond the boulevard at the head of the north avenue, closing its
+  vista, on a **podium one level up** (18 × 8 tiles) with a paved forecourt down to the
+  boulevard: a 24 × 12 m hall with a glass band and garden roofs, a set-back upper floor, the
+  glass atrium under the dome, the beacon spire with its halo, two solar-roofed wings, a
+  colonnade over the entrance, the grand stair down to the forecourt, the reflecting pool and
+  two flag masts at its foot;
+- three spokes (width 3 tiles) from the boulevard to the quarters south, west and east; north
+  the **archive road** (`NORTH_ROAD`) leaves the boulevard on the eastern alley's line, passes
+  the hub's podium, turns west behind it and climbs the hill onto the archive's axis — the hub
+  closes the avenue, so the way to the Memory House goes round it and nothing stands on it
+  (maintainer 2026-09-02); the mine's branch leaves its last leg;
+- lamps on the outer rows of the frame street, the middle street and the boulevard's straight
+  runs, never in a street mouth; hedges (`placeStreetFurniture`) close every block's back sides.
 
 **Quarters and checkpoints** (backend place → island place, `Walkers.tsx`):
 
@@ -120,8 +134,8 @@ harbor and the gardens low at 2, the solar field on the mountain's foot terrace 
 Idle agents (`idle`) wander inside the square with the rest-biased model (`wander.ts`);
 paused agents stand still.
 
-**Light and life:** lamps along the spokes, around the square's rim, along the ring road, the
-dock and the mine's road — every lamp throws an additive pool of light on the ground; festoon
+**Light and life:** lamps along the town's streets and the boulevard, the spokes, the archive
+road, the dock and the mine's road — every lamp throws an additive pool of light on the ground; festoon
 strings over the square from eight poles; the lighthouse's two sweeping beams; lanterns on the
 mine's portal; a campfire on the cove's beach; lights on the buoys; the hub's halo beacon.
 

@@ -130,7 +130,7 @@ unchanged and lands with the five-layer change it needs.
 ### 3.5 The Memory House on the island
 
 - Replaces the primitive Archive tower on the archive plot at the island's north end (behind
-  the Jarvis Hub, on the axis — the ring's slots are taken by the hubs and the Agent Foundry);
+  the Jarvis Hub, on the axis, reached by the archive road that goes round the hub);
   the `archive` place keeps its id, so the walkers, the labels and the checkpoint enum need no
   new value.
 - Built by `scripts/world/kit_memory_house.py` on the helpers of `build_world_kit.py` (the Blender
@@ -173,7 +173,7 @@ the service refuses a `remember`/`note` body that matches the secret guard patte
   the row; secrets are refused; every op appends one `DIGEST` with `kind: memory`.
 - `test_checkpoints.py`: rule order, the memory hold, the timer re-evaluation.
 - `test_society_routes.py`: overview, recall, promote via the approvals route.
-- `islandLayout.test.ts`: archive pose on the ring, stand reachable, footprint blocked, 8 houses.
+- `islandLayout.test.ts`: the archive road arrives at the stand, stand reachable, footprint blocked.
 
 ## 6. Risks and the honest edges
 

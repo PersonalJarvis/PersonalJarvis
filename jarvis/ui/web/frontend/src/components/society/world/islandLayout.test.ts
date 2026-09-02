@@ -4,24 +4,25 @@ import {
   CENTER_TILE,
   DOCK_TILES,
   FIELD_TILES,
-  HEDGE_RING_TILES,
-  HOUSE_RING_TILES,
+  FRONT_ROTATION,
   ISLAND_FIELDS,
   ISLAND_TILES,
   ISLETS,
+  KIT_BLOCKS,
   KIT_FACING,
   LEVEL_Y,
+  NORTH_ROAD,
   MARKET_FIELDS,
   MARKET_HALF_TILES,
   PLATEAU_LEVEL,
   PLATEAU_RADIUS_TILES,
-  PLAZA_RADIUS_TILES,
+  PLAZA_HALF_TILES,
   PODIUM_LEVEL,
   REGIONS,
-  RING_KIT_SLOTS,
   SUMMIT_LEVEL,
   SNOW_LEVEL,
   SPOKES,
+  TOWN_EDGE_TILES,
   TileKind,
   applyBuildingYaws,
   buildIsland,
@@ -30,8 +31,8 @@ import {
   findPath,
   groundY,
   hash2,
-  houseDefaultRotation,
   houseId,
+  isPavedZone,
   isWalkable,
   kitId,
   nearestWalkable,
@@ -39,8 +40,12 @@ import {
   smoothPath,
   tileIndex,
   tileToWorld,
+  townBlocks,
+  townZone,
   worldToTile,
   type Island,
+  type KitPlace,
+  type KitPose,
 } from "./islandLayout";
 
 /** Tile under a normalised island coordinate. */
@@ -131,7 +136,7 @@ describe("islandLayout", () => {
     }
   });
 
-  it("keeps the village plateau flat, with the hub one step up on its podium", () => {
+  it("keeps the town plateau flat, with the hub one step up on its podium beyond it", () => {
     const { map, content } = island;
     const [hx, hz] = content.places.hub.tile;
     const r = PLATEAU_RADIUS_TILES - 4;
@@ -149,35 +154,47 @@ describe("islandLayout", () => {
     expect(groundY(map, ...tileToWorld(hx, hz))).toBe(LEVEL_Y[PODIUM_LEVEL]);
   });
 
-  it("opens a paved square in the middle with a ring of houses around it", () => {
+  it("lays the town out in blocks: every house fronts a street and faces the camera", () => {
     const { map, content } = island;
     expect(map.kind[tileIndex(map, CENTER_TILE + 5, CENTER_TILE + 5)]).toBe(TileKind.plaza);
-    expect(content.houses.length).toBe(7); // 12 slots, five taken by the ring hubs
+    expect(map.kind[tileIndex(map, CENTER_TILE + PLAZA_HALF_TILES + 2, CENTER_TILE)]).toBe(TileKind.path);
+    // Twenty blocks, four of them taken by the halls; the rest carry the houses.
+    const blocks = townBlocks();
+    expect(blocks.length).toBe(20);
+    expect(
+      blocks
+        .filter((b) => b.kit)
+        .map((b) => b.kit)
+        .sort(),
+    ).toEqual(["cli", "mcp", "plugins", "skills"]);
+    expect(content.houses.length).toBe(40);
     for (const h of content.houses) {
-      const r = Math.hypot(h.x, h.z) / 2;
-      expect(r).toBeGreaterThan(PLAZA_RADIUS_TILES);
-      expect(r).toBeLessThan(HEDGE_RING_TILES);
-      // A door faces the square or the ring road: local +z rotated by
-      // `rotation` points along the radius, one way or the other …
-      const fx = Math.sin(h.rotation);
-      const fz = Math.cos(h.rotation);
-      const along = (fx * -h.x + fz * -h.z) / Math.hypot(h.x, h.z);
-      expect(Math.abs(along), `house ${h.slot}`).toBeCloseTo(1, 6);
-      // … and never away from the camera: no house shows the viewer its back.
+      // A door faces south or east — the camera's side — never north or west.
+      expect([FRONT_ROTATION.south, FRONT_ROTATION.east], `house ${h.slot}`).toContain(h.rotation);
       expect(facesCamera(h.rotation), `house ${h.slot}`).toBe(true);
       expect(h.rotation).toBe(h.defaultRotation);
-      expect(h.defaultRotation).toBeCloseTo(houseDefaultRotation(h.x, h.z), 9);
-      // No house stands on the hub's podium.
+      expect(defaultBuildingYaw(houseId(h.slot))).toBe(h.defaultRotation);
+      // It stands on a block of the plateau …
       const [tx, tz] = worldToTile(h.x, h.z);
+      expect(townZone(tx - CENTER_TILE, tz - CENTER_TILE), `house ${h.slot}`).toBe("block");
       expect(map.level[tileIndex(map, tx, tz)]).toBe(PLATEAU_LEVEL);
+      // … and the ground two metres past its door is a street, an alley or the boulevard.
+      const ahead = h.d + 2;
+      const [fx, fz] = worldToTile(h.x + Math.sin(h.rotation) * ahead, h.z + Math.cos(h.rotation) * ahead);
+      const zone = townZone(fx - CENTER_TILE, fz - CENTER_TILE);
+      expect(isPavedZone(zone) && zone !== "square", `house ${h.slot} fronts ${zone}`).toBe(true);
+      expect(isWalkable(map, fx, fz), `house ${h.slot}`).toBe(true);
     }
-    // The houses stand in the south-east half, the camera's side of the ring,
-    // so most of them face the road — that is the point of the rule.
-    const towardRoad = content.houses.filter((h) => Math.sin(h.rotation) * h.x + Math.cos(h.rotation) * h.z > 0);
-    expect(towardRoad.length).toBeGreaterThanOrEqual(4);
-    // A house on the far side would keep its door on the square.
-    expect(facesCamera(houseDefaultRotation(-30, -30))).toBe(true);
-    expect(houseDefaultRotation(-30, -30)).toBeCloseTo(Math.atan2(30, 30), 9);
+    // Houses stand in every quadrant, so it reads as one town around the square.
+    const quadrants = new Set(content.houses.map((h) => `${Math.sign(h.x)},${Math.sign(h.z)}`));
+    expect(quadrants.size).toBe(4);
+    // No two houses overlap.
+    for (const a of content.houses) {
+      for (const b of content.houses) {
+        if (a.slot >= b.slot) continue;
+        expect(Math.max(Math.abs(a.x - b.x), Math.abs(a.z - b.z)), `houses ${a.slot}/${b.slot}`).toBeGreaterThanOrEqual(5);
+      }
+    }
   });
 
   it("blocks the square's furniture and the landmarks' add-ons so nobody walks through a bench", () => {
@@ -262,52 +279,49 @@ describe("islandLayout", () => {
     expect(Math.max(Math.abs(out![0] - inside[0]), Math.abs(out![1] - inside[1]))).toBeLessThanOrEqual(3);
   });
 
-  it("puts the Plugin Docks on the house ring, facing the square, with a reachable stand", () => {
+  it("stands every hall on its own block with its door on the street, the foundry on the summit", () => {
     const { map, content } = island;
-    for (const [id, pose] of Object.entries(content.kitPoses)) {
-      // Ring hubs stand on the house ring; a hub with an anchor of its own does
-      // not — the Agent Foundry crowns the mountain (SUMMIT_TILE).
-      if (id in RING_KIT_SLOTS) {
-        expect(Math.hypot(pose.x, pose.z) / 2, id).toBeCloseTo(HOUSE_RING_TILES, 5);
-      }
-      const fx = Math.sin(pose.rotation);
-      const fz = Math.cos(pose.rotation);
-      // The front points at the centre, unless the building faces the road on purpose.
-      if (!(id in KIT_FACING)) expect(fx * -pose.x + fz * -pose.z, id).toBeGreaterThan(0);
-      const [sx, sz] = content.places[id as keyof typeof content.places].standTile;
+    for (const [id, pose] of Object.entries(content.kitPoses) as Array<[KitPlace, KitPose]>) {
+      const [sx, sz] = content.places[id].standTile;
       expect(isWalkable(map, sx, sz), id).toBe(true);
       const [bx, bz] = worldToTile(pose.x, pose.z);
       expect(isWalkable(map, bx, bz), id).toBe(false); // the footprint is blocked
+      const level = map.level[tileIndex(map, bx, bz)];
+      if (id === "foundry") {
+        expect(level).toBe(SUMMIT_LEVEL);
+        expect(pose.rotation).toBe(KIT_FACING.foundry);
+        continue;
+      }
+      expect(level, id).toBe(PLATEAU_LEVEL);
+      expect(townZone(bx - CENTER_TILE, bz - CENTER_TILE), id).toBe("block");
+      expect(pose.rotation, id).toBe(FRONT_ROTATION[KIT_BLOCKS[id].front]);
+      expect(facesCamera(pose.rotation), id).toBe(true);
+      // The visitor stands on the paving in front of the door: the frame
+      // street, or the alley that continues it past the corner block.
+      expect(["street", "alley"], id).toContain(townZone(sx - CENTER_TILE, sz - CENTER_TILE));
     }
-    // No two hubs share a slot.
-    const slots = Object.values(RING_KIT_SLOTS).flat();
-    expect(new Set(slots).size).toBe(slots.length);
-    // No ring hub stands on the hub's podium; the summit hub stands on its own
-    // terrace on the mountain, far above the village.
-    for (const [id, pose] of Object.entries(content.kitPoses)) {
-      const [tx, tz] = worldToTile(pose.x, pose.z);
-      const level = map.level[tileIndex(map, tx, tz)];
-      expect(level, id).toBe(id in RING_KIT_SLOTS ? PLATEAU_LEVEL : SUMMIT_LEVEL);
-    }
+    // No two halls share a block.
+    const lots = Object.values(KIT_BLOCKS).map((l) => `${l.template}:${l.sx}:${l.sz}`);
+    expect(new Set(lots).size).toBe(lots.length);
   });
 
-  it("leaves the four gates open in the hedge ring, the north one as wide as the hub", () => {
-    const { content } = island;
-    const r = HEDGE_RING_TILES * 2;
-    // The podium (±18 m) sits astride the ring at the north: no hedge post on it.
-    for (const h of content.hedges) {
-      if (h.z < -r + 12 && Math.abs(h.x) < 18) throw new Error(`hedge on the podium at ${h.x},${h.z}`);
+  it("hedges every block's north and west sides and leaves its fronts open", () => {
+    const { map, content } = island;
+    const hedged = new Set(content.hedges.map((h) => worldToTile(h.x, h.z).join(",")));
+    const at = (kx: number, kz: number) => hedged.has(`${CENTER_TILE + kx},${CENTER_TILE + kz}`);
+    for (const b of townBlocks()) {
+      const { x0, x1, z0, z1 } = b.rect;
+      for (let kx = x0; kx <= x1; kx++) expect(at(kx, z0), `north row ${kx},${z0}`).toBe(true);
+      for (let kz = z0; kz <= z1; kz++) expect(at(x0, kz), `west column ${x0},${kz}`).toBe(true);
+      // The south row and the east column belong to the doors.
+      for (let kx = x0 + 1; kx <= x1; kx++) expect(at(kx, z1), `south row ${kx},${z1}`).toBe(false);
+      for (let kz = z0 + 1; kz <= z1; kz++) expect(at(x1, kz), `east column ${x1},${kz}`).toBe(false);
     }
-    for (const [gx, gz] of [
-      [0, -r],
-      [0, r],
-      [-r, 0],
-      [r, 0],
-    ]) {
-      const nearest = Math.min(...content.hedges.map((h) => Math.hypot(h.x - gx, h.z - gz)));
-      expect(nearest).toBeGreaterThan(4);
-    }
-    expect(content.hedges.length).toBeGreaterThan(100);
+    expect(content.hedges.length).toBeGreaterThan(200);
+    for (const h of content.hedges) expect(isWalkable(map, ...worldToTile(h.x, h.z))).toBe(false);
+    // The streets between the blocks stay open: a walk right round the square's frame.
+    const loop = findPath(map, [CENTER_TILE + 14, CENTER_TILE - 14], [CENTER_TILE - 14, CENTER_TILE + 14]);
+    expect(loop).not.toBeNull();
   });
 
   it("reads ground height from the level table and the dock from its own height", () => {
@@ -324,7 +338,7 @@ describe("islandLayout", () => {
     const { map } = island;
     for (const spoke of SPOKES) {
       let prev = PLATEAU_LEVEL;
-      for (let s = PLAZA_RADIUS_TILES - 1; s <= spoke.toTiles; s++) {
+      for (let s = TOWN_EDGE_TILES - 1; s <= spoke.toTiles; s++) {
         const tx = CENTER_TILE + spoke.dir[0] * s;
         const tz = CENTER_TILE + spoke.dir[1] * s;
         const i = tileIndex(map, tx, tz);
@@ -333,6 +347,26 @@ describe("islandLayout", () => {
         prev = map.level[i];
       }
     }
+    // The archive road: paved along all three legs, graded the same way, and
+    // never on the hub's podium — the hub closes the avenue, the road goes round.
+    const [hx, hz] = island.content.places.hub.tile;
+    let prev = PLATEAU_LEVEL;
+    for (const leg of NORTH_ROAD) {
+      for (let s = 0; s <= leg.length; s++) {
+        const tx = leg.from[0] + leg.dir[0] * s;
+        const tz = leg.from[1] + leg.dir[1] * s;
+        const i = tileIndex(map, tx, tz);
+        expect(map.kind[i], `archive road at ${tx},${tz}`).toBe(TileKind.path);
+        expect(Math.abs(map.level[i] - prev), `archive road at ${tx},${tz}`).toBeLessThanOrEqual(1);
+        expect(Math.abs(tx - hx) > 10 || Math.abs(tz - hz) > 5, `archive road on the podium at ${tx},${tz}`).toBe(true);
+        prev = map.level[i];
+      }
+    }
+    // Its last leg arrives at the archive's stand.
+    const [ax, az] = island.content.places.archive.standTile;
+    const last = NORTH_ROAD[NORTH_ROAD.length - 1];
+    expect(last.from[0]).toBe(ax);
+    expect(last.from[1] + last.dir[1] * last.length).toBeLessThanOrEqual(az);
   });
 
   it("makes every place reachable on foot from the square", () => {
@@ -372,9 +406,7 @@ describe("islandLayout", () => {
       expect([TileKind.grass, TileKind.meadow, TileKind.forest, TileKind.alpine, TileKind.sand, TileKind.heath, TileKind.dry]).toContain(k);
       if (k === TileKind.sand) expect(t.kind).toBe("palm");
       if (t.kind === "palm") expect(k).toBe(TileKind.sand);
-      expect(Math.hypot(tx + 0.5 - CENTER_TILE, tz + 0.5 - CENTER_TILE)).toBeGreaterThan(
-        PLAZA_RADIUS_TILES,
-      );
+      expect(isPavedZone(townZone(tx - CENTER_TILE, tz - CENTER_TILE)), `tree on paving at ${tx},${tz}`).toBe(false);
     }
     expect(kinds.round).toBeGreaterThan(200);
     expect(kinds.pine).toBeGreaterThan(100);

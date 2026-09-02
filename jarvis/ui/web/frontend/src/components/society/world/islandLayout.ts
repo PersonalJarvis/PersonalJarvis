@@ -12,13 +12,18 @@
  *  - The island is a 16 × 16 grid of "fields". One field is what the viewer
  *    sees at the closest zoom without scrolling. Fields are the navigation
  *    unit, not a visible grid.
- *  - The central 4 × 4 fields are the MARKET DISTRICT: a round plateau with a
- *    village laid out like a ring — houses around one open square, the way a
- *    classic comic village stands around its meeting place — but built in a
- *    bright solarpunk language. The lead agent's hub stands on its own podium
- *    at the head of the village, behind the ring road, astride the hedge ring —
- *    the palace at the north gate — with the ring hubs (docks, forge, relay,
- *    cantina) in the house ring below it.
+ *  - The central 4 × 4 fields are the MARKET DISTRICT: a rounded-square
+ *    plateau carrying a small TOWN laid out like a real one (maintainer,
+ *    2026-09-02: "not a ring — blocks, streets and alleys, like a city"): the
+ *    open square in the middle, a street framing it, a grid of streets and
+ *    narrower alleys around that, and a boulevard closing the town; between
+ *    the streets stand rectangular BLOCKS of terraced houses, built in a
+ *    bright solarpunk language. Every house and hall fronts a street on the
+ *    camera's side (south or east), so the viewer sees doors and never backs;
+ *    hedges close each block's other two sides. The lead agent's hub stands
+ *    on its podium beyond the boulevard at the head of the north avenue — the
+ *    palace that closes the vista — and the four halls (docks, forge, relay,
+ *    cantina) take the blocks around the square. See `TOWN`.
  *  - Around the plateau the island is a composed landscape of BIOMES at
  *    different heights, arranged for the camera (which looks toward the
  *    north-west): the mountain with its snow cap is the backdrop in the
@@ -61,8 +66,11 @@ export const MARKET_FIELDS = 4;
 export const MARKET_TILES = MARKET_FIELDS * FIELD_TILES;
 /** Half the market edge in tiles, from the centre. */
 export const MARKET_HALF_TILES = MARKET_TILES / 2;
-/** Radius (tiles) of the round plateau the market district stands on. */
-export const PLATEAU_RADIUS_TILES = MARKET_HALF_TILES + 7;
+/**
+ * Extent (tiles, in `squareDist`) of the rounded-square plateau the town
+ * stands on: dead flat to here, then terraces down to the surrounding country.
+ */
+export const PLATEAU_RADIUS_TILES = MARKET_HALF_TILES + 5;
 /** The island centre in tile units — also the market's centre. */
 export const CENTER_TILE = ISLAND_TILES / 2;
 
@@ -136,7 +144,7 @@ export interface IslandMap {
   /** 1 where a walker may not stand: water, rock, buildings, tree trunks. */
   blocked: Uint8Array;
   /**
-   * `blocked` without the buildings a viewer may turn (houses, ring hubs, the
+   * `blocked` without the buildings a viewer may turn (houses, halls, the
    * foundry's belt). `applyBuildingYaws` stamps those back in at their current
    * heading, so a turned house blocks the tiles it actually covers.
    */
@@ -176,7 +184,7 @@ export interface Place {
 export type HouseVariant = "solar-barrel" | "garden-roof" | "glass-loft";
 
 export interface HousePlot {
-  /** Ring slot (0..15, clockwise from north) — the house's stable identity. */
+  /** Index in the town plan (block by block, `townHouses`) — the house's stable identity. */
   slot: number;
   /** Centre of the footprint, world metres. */
   x: number;
@@ -222,7 +230,7 @@ export interface Post {
   x: number;
   z: number;
   y: number;
-  /** Rotation about y so a hedge segment follows the ring. */
+  /** Rotation about y so a hedge segment follows its block's edge. */
   rotation: number;
 }
 
@@ -238,9 +246,9 @@ export interface IslandContent {
   festoonPoles: Post[];
   /** The campfire on the cove's beach. */
   campfire: Post;
-  /** Hedge segments forming the village ring, with gaps at the four gates. */
+  /** Hedge segments closing the back sides (north and west) of every block. */
   hedges: Post[];
-  /** Light posts along the ring and the spokes. */
+  /** Light posts along the town's streets and the roads out of it. */
   lamps: Post[];
   /** Solar panel rows on the mountain's foot terrace (centre + rotation). */
   panels: Post[];
@@ -250,7 +258,7 @@ export interface IslandContent {
   kitPoses: Record<KitPlace, KitPose>;
 }
 
-/** Places that are World Kit buildings sitting IN the house ring (world-masterplan-v2.md §5). */
+/** Places that are World Kit buildings — the halls on the town's blocks and the foundry on the summit (world-masterplan-v2.md §5). */
 export type KitPlace = "plugins" | "foundry" | "skills" | "mcp" | "cli";
 
 export interface KitPose {
@@ -380,33 +388,173 @@ export function nearestWalkable(map: IslandMap, tx: number, tz: number, maxRadiu
 // Design: where things stand (tile units, from the island centre)
 // ---------------------------------------------------------------------------
 
-/** Radius of the open square in the middle of the village. */
-export const PLAZA_RADIUS_TILES = 13;
-/** Where the house ring stands. */
-export const HOUSE_RING_TILES = 19;
-/** The ring road around the houses. */
-export const RING_ROAD_TILES = 25;
-/** The hedge ring that closes the village, with gaps at the gates. */
-export const HEDGE_RING_TILES = 29;
-/** Half-width of a gate gap in the hedge ring, in tiles. */
-export const GATE_GAP_TILES = 3;
+/** Half-width of the open square in the middle of the town, in tiles. */
+export const PLAZA_HALF_TILES = 11;
 
 /**
- * Ring slots (of 16) a kit building takes over instead of houses. A house slot
- * is ~15 m of arc, so a hall takes two neighbouring slots and stands centred
- * between them. The Agent Foundry sits on 2-3, the mirror image of the Plugin
- * Docks on 13-14 across the north axis: the two halls frame the square's north
- * side, and the foundry's ramp runs down onto the plaza in full view of the
- * island camera (which looks from the south-east).
+ * The town plan, in tile offsets from the centre — the same on both axes and
+ * to both sides (maintainer, 2026-09-02: "not a ring — blocks, streets and
+ * alleys, like a real city, centred on the island"):
+ *
+ *   |k| ≤ 11   the square
+ *   12..14     the frame street around the square (3 wide)
+ *   15..23     the inner blocks
+ *   24..26     the middle street (3 wide)
+ *   27..30     the outer blocks
+ *   31..33     the boulevard — in `squareDist`, so its corners are rounded
+ *   34..36     the green fringe of the plateau, then the terraces down
+ *
+ * Two AVENUES (|k| ≤ 1, 3 wide) leave the square on both axes, cross the
+ * town and run on into the country as the spokes; the north one ends at the
+ * hub's forecourt. Two ALLEYS per axis (13..14, 2 wide) continue the frame
+ * street's outer edge outward and cut the bands into blocks. A block's FRONT
+ * sides are its south and east edges — the sides the camera sees
+ * (`CAMERA_FROM`) — where houses and halls stand with their doors on the
+ * street; its north and west edges are hedged back gardens. So the viewer
+ * sees doors everywhere and never a back.
  */
-export const RING_KIT_SLOTS: Partial<Record<KitPlace, readonly number[]>> = {
-  plugins: [13, 14],
-  // Hubs sit on the north and west of the ring so their fronts face the camera
-  // (it looks from the south-east); houses take the slots whose backs it sees.
-  skills: [15], // north, beside the docks: the Skill Forge
-  mcp: [1], // north-east: the Relay Tower
-  cli: [11], // west: the Terminal Cantina
+export const TOWN = {
+  frame: { from: 12, to: 14 },
+  inner: { from: 15, to: 23 },
+  middle: { from: 24, to: 26 },
+  outer: { from: 27, to: 30 },
+  boulevard: { from: 31, to: 34 },
+  avenueHalf: 1,
+  alley: { from: 13, to: 14 },
+} as const;
+
+/** Where the town ends (`squareDist`, exclusive): the boulevard's outer edge. */
+export const TOWN_EDGE_TILES = TOWN.boulevard.to;
+
+/**
+ * Distance from the centre in the rounded-square metric the town is laid out
+ * in — a 4-norm: |k| along the axes, a soft arc across the corners. The
+ * plateau, the boulevard and the town's edge are all drawn in it.
+ */
+export function squareDist(kx: number, kz: number): number {
+  return Math.sqrt(Math.sqrt(kx * kx * kx * kx + kz * kz * kz * kz));
+}
+
+export type TownZone = "square" | "street" | "alley" | "boulevard" | "block" | "fringe" | "outside";
+
+/** What the town plan says about the tile at offset (kx, kz) from the centre. */
+export function townZone(kx: number, kz: number): TownZone {
+  const ax = Math.abs(kx);
+  const az = Math.abs(kz);
+  const cheb = Math.max(ax, az);
+  const d = squareDist(kx, kz);
+  if (d >= PLATEAU_RADIUS_TILES) return "outside";
+  if (d >= TOWN_EDGE_TILES) return "fringe";
+  if (cheb <= PLAZA_HALF_TILES) return "square";
+  if (d >= TOWN.boulevard.from) return "boulevard";
+  if (cheb >= TOWN.frame.from && cheb <= TOWN.frame.to) return "street";
+  if (cheb >= TOWN.middle.from && cheb <= TOWN.middle.to) return "street";
+  if (ax <= TOWN.avenueHalf || az <= TOWN.avenueHalf) return "street";
+  if ((ax >= TOWN.alley.from && ax <= TOWN.alley.to) || (az >= TOWN.alley.from && az <= TOWN.alley.to)) return "alley";
+  return "block";
+}
+
+/** Whether a zone is paved ground a walker strolls on. */
+export function isPavedZone(zone: TownZone): boolean {
+  return zone === "square" || zone === "street" || zone === "alley" || zone === "boulevard";
+}
+
+/** A block of the town: inclusive tile offsets from the centre. */
+export interface BlockRect {
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
+}
+
+/**
+ * The blocks of one quadrant, in absolute tile offsets (inclusive); every
+ * template is mirrored into all four quadrants by `townBlocks`. The outer
+ * corner lots, which the boulevard's arc cuts into slivers, are parks and
+ * have no template.
+ */
+export const BLOCK_TEMPLATES: ReadonlyArray<BlockRect> = [
+  { x0: 2, x1: 12, z0: 15, z1: 23 }, // inner band, beside the avenue, north/south of the square
+  { x0: 15, x1: 23, z0: 15, z1: 23 }, // inner band, the corner block
+  { x0: 15, x1: 23, z0: 2, z1: 12 }, // inner band, beside the avenue, east/west of the square
+  { x0: 2, x1: 12, z0: 27, z1: 30 }, // outer band, north/south
+  { x0: 27, x1: 30, z0: 2, z1: 12 }, // outer band, east/west
+];
+
+/** The four quadrants as signs on (x, z): north-east, north-west, south-west, south-east. */
+const QUADRANTS: ReadonlyArray<readonly [-1 | 1, -1 | 1]> = [
+  [1, -1],
+  [-1, -1],
+  [-1, 1],
+  [1, 1],
+];
+
+/** A template mirrored into a quadrant. */
+export function quadrantRect(t: BlockRect, sx: -1 | 1, sz: -1 | 1): BlockRect {
+  return {
+    x0: Math.min(sx * t.x0, sx * t.x1),
+    x1: Math.max(sx * t.x0, sx * t.x1),
+    z0: Math.min(sz * t.z0, sz * t.z1),
+    z1: Math.max(sz * t.z0, sz * t.z1),
+  };
+}
+
+/** A block's front a building stands on: local +z is the door side. */
+export type BlockFront = "south" | "east";
+
+/** Front headings, rotation about y. Both face the camera (`CAMERA_FROM`). */
+export const FRONT_ROTATION: Record<BlockFront, number> = { south: 0, east: Math.PI / 2 };
+
+/**
+ * Which block each hall takes instead of houses, and which front it stands
+ * on. All four stand on the blocks around the square — the docks and the
+ * forge north of it flanking the avenue, the relay on the north-east corner
+ * block (its door on the alley that continues the frame street), the cantina
+ * west of it — so a visitor finds every hall one street from the square, and
+ * every hall's door faces the camera.
+ */
+export const KIT_BLOCKS: Record<Exclude<KitPlace, "foundry">, { template: number; sx: -1 | 1; sz: -1 | 1; front: BlockFront }> = {
+  plugins: { template: 0, sx: -1, sz: -1, front: "south" },
+  skills: { template: 0, sx: 1, sz: -1, front: "south" },
+  mcp: { template: 1, sx: 1, sz: -1, front: "south" },
+  cli: { template: 2, sx: -1, sz: -1, front: "east" },
 };
+
+export interface TownBlock {
+  rect: BlockRect;
+  /** The hall standing on this block, or null when houses do. */
+  kit: KitPlace | null;
+}
+
+/** Every block of the town in plan order: template by template, quadrant by quadrant. */
+export function townBlocks(): TownBlock[] {
+  const out: TownBlock[] = [];
+  const halls = Object.entries(KIT_BLOCKS) as Array<[KitPlace, (typeof KIT_BLOCKS)[keyof typeof KIT_BLOCKS]]>;
+  BLOCK_TEMPLATES.forEach((t, template) => {
+    for (const [sx, sz] of QUADRANTS) {
+      const hall = halls.find(([, lot]) => lot.template === template && lot.sx === sx && lot.sz === sz);
+      out.push({ rect: quadrantRect(t, sx, sz), kit: hall ? hall[0] : null });
+    }
+  });
+  return out;
+}
+
+/** World-metre extent of a block: tile k covers [2k, 2k + 2) metres. */
+function rectMetres(r: BlockRect): { x0: number; x1: number; z0: number; z1: number } {
+  return { x0: r.x0 * TILE_M, x1: (r.x1 + 1) * TILE_M, z0: r.z0 * TILE_M, z1: (r.z1 + 1) * TILE_M };
+}
+
+/** A hall's setback from its street, metres: its wall margin stays on its own lot. */
+const HALL_SETBACK_M = 1;
+
+/** Pose of a hall `depthM` deep standing centred on a block's front, door on the street. */
+function hallPose(r: BlockRect, depthM: number, front: BlockFront): KitPose {
+  const m = rectMetres(r);
+  if (front === "south") {
+    return { x: (m.x0 + m.x1) / 2, z: m.z1 - HALL_SETBACK_M - depthM / 2, rotation: FRONT_ROTATION.south };
+  }
+  return { x: m.x1 - HALL_SETBACK_M - depthM / 2, z: (m.z0 + m.z1) / 2, rotation: FRONT_ROTATION.east };
+}
 
 /**
  * Footprint of each kit building in TILES, as its GLB's `jarvis_building`
@@ -423,11 +571,11 @@ export const KIT_FOOTPRINT_TILES: Record<KitPlace, { w: number; d: number }> = {
 };
 
 /**
- * Kit buildings face the square by default. The Agent Foundry does not: it
- * faces the ring road (south-east), because a factory's loading side belongs
- * on the road rather than on the market place — and because its door is the
- * one door a viewer has to SEE. The island camera is fixed at a 45° yaw from
- * the south-east, so this is the heading that puts the portal, the sign, the
+ * The halls on the blocks face their street (`KIT_BLOCKS`). The Agent Foundry
+ * on the summit faces the mountain road (south-east), because a factory's
+ * loading side belongs on the road — and because its door is the one door a
+ * viewer has to SEE. The island camera is fixed at a 45° yaw from the
+ * south-east, so this is the heading that puts the portal, the sign, the
  * assembly arms and the whole conveyor in plain view of the default camera.
  */
 export const KIT_FACING: Partial<Record<KitPlace, number>> = { foundry: Math.PI / 4 };
@@ -437,16 +585,11 @@ export const KIT_FACING: Partial<Record<KitPlace, number>> = { foundry: Math.PI 
  * "the factory sits up there on the mountain, connected by the road"). The
  * highest tile of the snow cap; `PLOT_HALF.foundry` planes a terrace around it
  * and `SUMMIT_ROAD` climbs to it, so the works crown the island's backdrop and
- * a new agent walks the whole mountain road down into the village.
+ * a new agent walks the whole mountain road down into the town.
  */
 export const SUMMIT_TILE: readonly [number, number] = [CENTER_TILE - 65, CENTER_TILE - 70];
 
-/** Kit buildings that stand on a plot of their own instead of in the house ring. */
-const KIT_ANCHOR: Partial<Record<KitPlace, readonly [number, number]>> = {
-  foundry: SUMMIT_TILE,
-};
-
-/** Every kit place, ring-bound or not — the world's hub roster. */
+/** Every kit place, on a block or not — the world's hub roster. */
 export const KIT_PLACES: readonly KitPlace[] = ["plugins", "foundry", "skills", "mcp", "cli"];
 
 /** Whether a place id names a World Kit hub (the ones a click opens). */
@@ -476,10 +619,12 @@ export function facesCamera(rotation: number): boolean {
 }
 
 /**
- * A house's resting heading. Houses face the square — unless that turns their
- * back on the viewer, in which case they face the ring road instead: a door
- * the camera never sees is a house with its back turned (maintainer,
- * 2026-09-02). A house seen exactly in profile keeps the square.
+ * The resting heading of a building that stands on a plot of its own, off the
+ * town's grid: toward the square — unless that turns its back on the viewer,
+ * in which case it faces away from the square instead. A door the camera
+ * never sees is a building with its back turned (maintainer, 2026-09-02).
+ * Houses and halls on the blocks do not use it: they face their street
+ * (`FRONT_ROTATION`), which faces the camera by construction.
  */
 export function houseDefaultRotation(x: number, z: number): number {
   const toSquare = Math.atan2(-x, -z);
@@ -488,46 +633,52 @@ export function houseDefaultRotation(x: number, z: number): number {
 
 /** Where a kit building stands and which way it turns — the one source. */
 export function kitPose(place: KitPlace): KitPose {
-  const facing = KIT_FACING[place];
-  const anchor = KIT_ANCHOR[place];
-  if (anchor) {
-    const [x, z] = tileToWorld(anchor[0], anchor[1]);
-    return { x, z, rotation: facing ?? houseDefaultRotation(x, z) };
+  if (place === "foundry") {
+    const [x, z] = tileToWorld(SUMMIT_TILE[0], SUMMIT_TILE[1]);
+    return { x, z, rotation: KIT_FACING.foundry ?? houseDefaultRotation(x, z) };
   }
-  const slots = RING_KIT_SLOTS[place];
-  if (!slots) throw new Error(`kit place ${place} has neither ring slots nor an anchor`);
-  const pose = ringPose(slots);
-  return facing === undefined ? pose : { ...pose, rotation: facing };
+  const lot = KIT_BLOCKS[place];
+  const rect = quadrantRect(BLOCK_TEMPLATES[lot.template], lot.sx, lot.sz);
+  return hallPose(rect, KIT_FOOTPRINT_TILES[place].d * TILE_M, lot.front);
 }
 
 /**
- * The hub's gate: the podium sits astride the hedge ring at the north, so the
- * gap there is as wide as the podium (the other three gates keep `GATE_GAP_TILES`).
+ * The spokes: the avenues run on from the boulevard out to the quarters.
+ * `dir` is (dx, dz), `toTiles` how far from the centre they reach. North has
+ * no spoke — the hub stands there; the archive is reached by `NORTH_ROAD`.
  */
-export const HUB_GATE_GAP_TILES = 10;
-
-/** Pose of a building centred on the given ring slots, front toward the square. */
-export function ringPose(slots: readonly number[], radiusTiles = HOUSE_RING_TILES): KitPose {
-  const mean = slots.reduce((a, b) => a + b, 0) / slots.length;
-  const angle = (mean / 16) * Math.PI * 2; // clockwise from north
-  const r = radiusTiles * TILE_M;
-  const x = Math.sin(angle) * r;
-  const z = -Math.cos(angle) * r;
-  return { x, z, rotation: Math.atan2(-x, -z) };
-}
-
-/** The four spokes leave the square toward the quarters. `dir` is (dx, dz). */
 export const SPOKES: ReadonlyArray<{ dir: [number, number]; toTiles: number }> = [
-  { dir: [0, -1], toTiles: 61 }, // north → archive hill
   { dir: [0, 1], toTiles: 62 }, // south → harbor
   { dir: [-1, 0], toTiles: 60 }, // west → workshop clearing
   { dir: [1, 0], toTiles: 80 }, // east → lighthouse cape
 ];
 
+/** A straight, graded leg of road: from a tile, along `dir`, for `length` tiles. */
+export interface RoadLeg {
+  from: [number, number];
+  dir: [number, number];
+  length: number;
+}
+
+/**
+ * The road north to the Memory House, in three straight graded legs: up the
+ * line of the eastern alley from the boulevard, past the hub's podium, west
+ * behind the hub and up the hill onto the archive's axis. The hub closes the
+ * vista of the north avenue, so the road to the archive goes AROUND it —
+ * nothing may stand on the way to the memory (maintainer, 2026-09-02). The
+ * mine's branch leaves the last leg (`MINE_ROAD`).
+ */
+export const NORTH_ROAD: ReadonlyArray<RoadLeg> = [
+  { from: [CENTER_TILE + 14, CENTER_TILE - 31], dir: [0, -1], length: 23 },
+  { from: [CENTER_TILE + 14, CENTER_TILE - 54], dir: [-1, 0], length: 14 },
+  { from: [CENTER_TILE, CENTER_TILE - 54], dir: [0, -1], length: 8 },
+];
+
 /** Anchor tiles of the places (tile units, absolute). */
 const PLACE_TILES: Record<PlaceId, [number, number]> = {
   market: [CENTER_TILE, CENTER_TILE],
-  hub: [CENTER_TILE, CENTER_TILE - 30],
+  // The hub: on its podium beyond the boulevard, closing the north avenue's vista.
+  hub: [CENTER_TILE, CENTER_TILE - 42],
   archive: [CENTER_TILE, CENTER_TILE - 66],
   harbor: [CENTER_TILE, CENTER_TILE + 64],
   workshop: [CENTER_TILE - 68, CENTER_TILE],
@@ -536,12 +687,12 @@ const PLACE_TILES: Record<PlaceId, [number, number]> = {
   solar: [CENTER_TILE - 40, CENTER_TILE - 40],
   // The mine: a portal in a cliff on the mountain's south-eastern flank.
   mine: [CENTER_TILE - 32, CENTER_TILE - 60],
-  // Kit buildings stand in the house ring (RING_KIT_SLOTS); the tile is the ring pose's.
-  plugins: ringTile("plugins"),
+  // The halls stand on their blocks (KIT_BLOCKS); the tile is the pose's.
+  plugins: kitTile("plugins"),
   foundry: [SUMMIT_TILE[0], SUMMIT_TILE[1]],
-  skills: ringTile("skills"),
-  mcp: ringTile("mcp"),
-  cli: ringTile("cli"),
+  skills: kitTile("skills"),
+  mcp: kitTile("mcp"),
+  cli: kitTile("cli"),
 };
 
 /**
@@ -574,16 +725,16 @@ export function foundryWalkOut(): {
   };
 }
 
-/** The tile a ring kit building's origin falls on. */
-function ringTile(place: KitPlace): [number, number] {
+/** The tile a hall's origin falls on. */
+function kitTile(place: KitPlace): [number, number] {
   const p = kitPose(place);
-  return [Math.floor(p.x / TILE_M + CENTER_TILE), Math.floor(p.z / TILE_M + CENTER_TILE)];
+  return worldToTile(p.x, p.z);
 }
 
 /** Half extents (tiles) of the flat plots each place is built on. */
 const PLOT_HALF: Record<PlaceId, [number, number]> = {
   market: [0, 0],
-  hub: [9, 5],
+  hub: [9, 4],
   archive: [7, 7],
   harbor: [8, 4],
   workshop: [9, 6],
@@ -591,7 +742,7 @@ const PLOT_HALF: Record<PlaceId, [number, number]> = {
   gardens: [9, 7],
   solar: [8, 7],
   mine: [5, 4],
-  plugins: [0, 0], // no flat plot of its own: it sits on the village plateau
+  plugins: [0, 0], // no flat plot of its own: it sits on the town plateau
   // The foundry's terrace: the summit planed flat, wide enough for the hall,
   // its conveyor and a rim of snow around the lot.
   foundry: [10, 8],
@@ -628,7 +779,7 @@ const BUILDING_HALF: Partial<Record<PlaceId, [number, number]>> = {
 
 /** The cliff the mine's portal is cut into: a rock block north of the forecourt. */
 const MINE_CLIFF = { dz: -8, hw: 8, hd: 3, level: 7 } as const;
-/** The mine's branch road leaves the north spoke here and runs west to the forecourt. */
+/** The mine's branch road leaves the archive road here and runs west to the forecourt. */
 const MINE_ROAD = { fromX: CENTER_TILE - 1, z: CENTER_TILE - 60, length: 27 } as const;
 
 /**
@@ -637,11 +788,7 @@ const MINE_ROAD = { fromX: CENTER_TILE - 1, z: CENTER_TILE - 60, length: 27 } as
  * at the foot of the works' conveyor. Straight legs only — `gradeRoad` widens
  * across its own axis, so a diagonal would lay its shoulders lengthwise.
  */
-const SUMMIT_ROAD: ReadonlyArray<{
-  from: [number, number];
-  dir: [number, number];
-  length: number;
-}> = [
+const SUMMIT_ROAD: ReadonlyArray<RoadLeg> = [
   { from: [CENTER_TILE - 37, CENTER_TILE - 60], dir: [-1, 0], length: 17 },
   { from: [CENTER_TILE - 54, CENTER_TILE - 60], dir: [0, -1], length: 5 },
   { from: [CENTER_TILE - 54, CENTER_TILE - 65], dir: [-1, 0], length: 6 },
@@ -767,8 +914,9 @@ export function heightAt(nx: number, nz: number): number {
   h -= 0.7 * bump(nx, nz, REGIONS.orchard, 1.0);
   h += 1.0 * bump(nx, nz, REGIONS.forest, 1.0);
   h += (fbm(nx * 3.3 + 11, nz * 3.3 + 5, ISLAND_SEED + 7) - 0.5) * 1.5;
-  // The market plateau: dead flat, blended in over a wide skirt of terraces.
-  const plateauT = (Math.hypot(nx, nz) * CENTER_TILE) / PLATEAU_RADIUS_TILES;
+  // The town plateau — a rounded square like the town on it — dead flat,
+  // blended in over a wide skirt of terraces.
+  const plateauT = squareDist(nx * CENTER_TILE, nz * CENTER_TILE) / PLATEAU_RADIUS_TILES;
   const w = 1 - smoothstep(1.0, 1.55, plateauT);
   return lerp(h, PLATEAU_LEVEL, w);
 }
@@ -993,45 +1141,73 @@ function gradeRoad(
   }
 }
 
-/** The village: square, ring road, spokes, garden beds and the dock. */
+/** Grade a chain of straight legs; each starts at the level the previous one reached. */
+function gradeLegs(map: IslandMap, legs: ReadonlyArray<RoadLeg>, startLevel: number): void {
+  let climb = startLevel;
+  for (const leg of legs) {
+    gradeRoad(map, leg.from, leg.dir, leg.length, climb);
+    const end: [number, number] = [leg.from[0] + leg.dir[0] * leg.length, leg.from[1] + leg.dir[1] * leg.length];
+    if (inBounds(map, end[0], end[1])) climb = map.level[tileIndex(map, end[0], end[1])];
+  }
+}
+
+/** The town: square, streets, alleys, boulevard, blocks, the roads out, and the dock. */
 function buildVillage(map: IslandMap): void {
   const C = CENTER_TILE;
 
-  // Open square with a ring of garden beds around it.
-  paintDisc(map, C, C, 0, PLAZA_RADIUS_TILES, (i) => paintLand(map, i, TileKind.plaza, PLATEAU_LEVEL));
-  paintDisc(map, C, C, PLAZA_RADIUS_TILES, PLAZA_RADIUS_TILES + 1.5, (i, tx, tz) => {
-    // Beds alternate with plaza so the square stays open toward every house.
-    const a = Math.atan2(tz + 0.5 - C, tx + 0.5 - C);
-    const bed = Math.floor(((a + Math.PI) / (2 * Math.PI)) * 16) % 2 === 0;
-    paintLand(map, i, bed ? TileKind.garden : TileKind.plaza, PLATEAU_LEVEL);
-  });
+  // The town's ground, straight from the plan: paving where the plan says so,
+  // lawn on the blocks, the fringe left to its biome. Paving over the hub's
+  // podium keeps the podium's level (the kind changes, the level stays).
+  const reach = PLATEAU_RADIUS_TILES + 1;
+  for (let kz = -reach; kz <= reach; kz++) {
+    for (let kx = -reach; kx <= reach; kx++) {
+      const tx = C + kx;
+      const tz = C + kz;
+      if (!inBounds(map, tx, tz)) continue;
+      const i = tileIndex(map, tx, tz);
+      if (map.kind[i] === TileKind.water) continue;
+      const zone = townZone(kx, kz);
+      if (zone === "outside" || zone === "fringe") continue;
+      const lvl = map.level[i] === PODIUM_LEVEL ? PODIUM_LEVEL : PLATEAU_LEVEL;
+      if (zone === "square") {
+        // Garden beds in runs along the square's rim; its corners stay paved.
+        const cheb = Math.max(Math.abs(kx), Math.abs(kz));
+        const along = Math.abs(kx) === PLAZA_HALF_TILES ? kz : kx;
+        const bed =
+          cheb === PLAZA_HALF_TILES &&
+          Math.abs(along) < PLAZA_HALF_TILES - 1 &&
+          Math.floor((along + PLAZA_HALF_TILES) / 3) % 2 === 1;
+        paintLand(map, i, bed ? TileKind.garden : TileKind.plaza, lvl);
+      } else if (isPavedZone(zone)) {
+        paintLand(map, i, TileKind.path, lvl);
+      } else {
+        // A block's lawn, with drifts of flowers in the back gardens.
+        const bloom = fbm(kx * 0.23 + 7, kz * 0.23 + 3, ISLAND_SEED + 41) > 0.58;
+        paintLand(map, i, bloom ? TileKind.garden : TileKind.grass, lvl);
+      }
+    }
+  }
 
-  // Ring road around the houses — it climbs the hub's podium rather than
-  // vanishing under it: the kind changes, the level stays.
-  paintDisc(map, C, C, RING_ROAD_TILES - 1, RING_ROAD_TILES + 1, (i) => {
-    const lvl = map.level[i] === PODIUM_LEVEL ? PODIUM_LEVEL : PLATEAU_LEVEL;
-    paintLand(map, i, TileKind.path, lvl);
-  });
+  // The hub's forecourt: the paved apron between the boulevard and the
+  // podium's stair, where the north avenue ends at the palace.
+  const [hx, hz] = PLACE_TILES.hub;
+  for (let tz = hz + PLOT_HALF.hub[1] + 1; tz <= hz + PLOT_HALF.hub[1] + 4; tz++) {
+    fillRect(map, hx, tz, PLOT_HALF.hub[0], 0, (i) => paintLand(map, i, TileKind.plaza, PLATEAU_LEVEL));
+  }
 
-  // Spokes from the square out to the quarters (width 3), graded.
+  // The avenues run on from the boulevard as the spokes (width 3), graded.
   for (const spoke of SPOKES) {
-    const from = PLAZA_RADIUS_TILES - 1;
+    const from = TOWN_EDGE_TILES - 1;
     gradeRoad(map, [C + spoke.dir[0] * from, C + spoke.dir[1] * from], spoke.dir, spoke.toTiles - from, PLATEAU_LEVEL);
   }
-  // The mine's branch: off the north spoke, west to the quarry, at the spoke's level there.
+  // North around the hub to the archive, leg by leg: each starts at the level
+  // the last one reached, so the climb never breaks a walker's one-level step rule.
+  gradeLegs(map, NORTH_ROAD, PLATEAU_LEVEL);
+  // The mine's branch: off the archive road, west to the quarry, at the road's level there.
   const junction = map.level[tileIndex(map, MINE_ROAD.fromX + 1, MINE_ROAD.z)];
   gradeRoad(map, [MINE_ROAD.fromX, MINE_ROAD.z], [-1, 0], MINE_ROAD.length, junction);
-  // On up the mountain to the foundry: each leg starts at the level the last
-  // one reached, so the climb never breaks a walker's one-level step rule.
-  let climb = map.level[tileIndex(map, SUMMIT_ROAD[0].from[0] + 1, SUMMIT_ROAD[0].from[1])];
-  for (const leg of SUMMIT_ROAD) {
-    gradeRoad(map, leg.from, leg.dir, leg.length, climb);
-    const end: [number, number] = [
-      leg.from[0] + leg.dir[0] * leg.length,
-      leg.from[1] + leg.dir[1] * leg.length,
-    ];
-    if (inBounds(map, end[0], end[1])) climb = map.level[tileIndex(map, end[0], end[1])];
-  }
+  // On up the mountain to the foundry.
+  gradeLegs(map, SUMMIT_ROAD, map.level[tileIndex(map, SUMMIT_ROAD[0].from[0] + 1, SUMMIT_ROAD[0].from[1])]);
 
   // Buildings block walking; their tiles keep the plot level.
   for (const id of Object.keys(BUILDING_HALF) as PlaceId[]) {
@@ -1073,31 +1249,79 @@ function buildVillage(map: IslandMap): void {
   }
 }
 
-/** The house ring: 16 slots, the four gate directions left open, the hub north. */
-function placeHouses(): HousePlot[] {
-  const houses: HousePlot[] = [];
+/**
+ * A house's footprint in tiles — 6.8 × 4.8 m, a hair inside its lot of 4 × 3
+ * whole tiles (`LOT_W` × `LOT_D`) so the wall margin stays on the lot and the
+ * street in front stays clear.
+ */
+export const HOUSE_W_TILES = 3.4;
+export const HOUSE_D_TILES = 2.4;
+/** A house's lot in whole tiles: four along its street, three deep. */
+const LOT_W = 4;
+const LOT_D = 3;
+
+/** Whether every tile of a lot is block ground the plan gives to houses. */
+function lotOnBlock(x0: number, z0: number, x1: number, z1: number): boolean {
+  for (let z = z0; z <= z1; z++) {
+    for (let x = x0; x <= x1; x++) if (townZone(x, z) !== "block") return false;
+  }
+  return true;
+}
+
+/**
+ * The houses of one block: a row along its south front, east to west, wall
+ * to wall, doors on the street south of the block; then a column up its east
+ * front, north to south, doors on the street east of it, stopping short of
+ * the south row. The block's north row and west column are its hedge. Every
+ * door faces south or east — the camera's side.
+ */
+function blockHouses(rect: BlockRect, out: HousePlot[]): void {
   const variants: HouseVariant[] = ["solar-barrel", "garden-roof", "glass-loft"];
-  const slots = 16;
-  const taken = new Set(Object.values(RING_KIT_SLOTS).flat());
-  for (let k = 0; k < slots; k++) {
-    if (k % 4 === 0) continue; // N, E, S, W are gates (N also holds the hub)
-    if (taken.has(k)) continue; // a kit building stands here
-    const [x, z] = ringSlotWorld(k);
-    const seed = hash2(k, 7, ISLAND_SEED);
-    const rotation = houseDefaultRotation(x, z);
-    houses.push({
-      slot: k,
+  const push = (x: number, z: number, rotation: number) => {
+    const slot = out.length;
+    out.push({
+      slot,
       x,
       z,
-      w: 3,
-      d: 2,
+      w: HOUSE_W_TILES,
+      d: HOUSE_D_TILES,
       rotation,
       defaultRotation: rotation,
-      variant: variants[k % variants.length],
-      seed,
+      variant: variants[slot % variants.length],
+      seed: hash2(slot, 7, ISLAND_SEED),
     });
+  };
+  let southRow = 0;
+  for (let x1 = rect.x1; x1 - (LOT_W - 1) >= rect.x0 + 1; x1 -= LOT_W) {
+    const x0 = x1 - (LOT_W - 1);
+    const z0 = rect.z1 - (LOT_D - 1);
+    if (!lotOnBlock(x0, z0, x1, rect.z1)) continue;
+    push(x0 + x1 + 1, z0 + rect.z1 + 1, FRONT_ROTATION.south);
+    southRow++;
   }
-  return houses;
+  const zStop = rect.z1 - (southRow > 0 ? LOT_D : 0);
+  for (let z0 = rect.z0 + 1; z0 + (LOT_W - 1) <= zStop; z0 += LOT_W) {
+    const z1 = z0 + LOT_W - 1;
+    const x0 = rect.x1 - (LOT_D - 1);
+    if (!lotOnBlock(x0, z0, rect.x1, z1)) continue;
+    push(x0 + rect.x1 + 1, z0 + z1 + 1, FRONT_ROTATION.east);
+  }
+}
+
+let houseCache: HousePlot[] | null = null;
+
+/**
+ * Every house of the town, block by block in plan order (`townBlocks`); a
+ * house's slot is its index. Pure and cached; callers get fresh copies, since
+ * `applyBuildingYaws` turns the built island's houses in place.
+ */
+export function townHouses(): HousePlot[] {
+  if (!houseCache) {
+    const out: HousePlot[] = [];
+    for (const b of townBlocks()) if (!b.kit) blockHouses(b.rect, out);
+    houseCache = out;
+  }
+  return houseCache.map((h) => ({ ...h }));
 }
 
 /**
@@ -1157,31 +1381,60 @@ function blockPost(map: IslandMap, x: number, z: number): void {
   map.blocked[i] = 1;
 }
 
-/** The hedge ring with its four gates, and the lamps along ring and spokes. */
-function placeRingFurniture(map: IslandMap): { hedges: Post[]; lamps: Post[] } {
+/** Hedges along every block's back sides, and the lamps along the streets and roads. */
+function placeStreetFurniture(map: IslandMap): { hedges: Post[]; lamps: Post[] } {
   const hedges: Post[] = [];
   const lamps: Post[] = [];
-  const r = HEDGE_RING_TILES * TILE_M;
-  const circumference = 2 * Math.PI * r;
-  const segments = Math.round(circumference / 2.2);
-  for (let s = 0; s < segments; s++) {
-    const angle = (s / segments) * Math.PI * 2;
-    // A gate is a gap centred on each cardinal direction; the north gate is
-    // the hub's podium, so its gap is as wide as the podium.
-    const toNorth = Math.min(angle, Math.PI * 2 - angle);
-    const gapTiles = toNorth < Math.PI / 4 ? HUB_GATE_GAP_TILES : GATE_GAP_TILES;
-    const gapHalf = (gapTiles * TILE_M) / r;
-    const toCardinal = Math.abs(((angle + Math.PI / 4) % (Math.PI / 2)) - Math.PI / 4);
-    if (toCardinal < gapHalf) continue;
-    const x = Math.sin(angle) * r;
-    const z = -Math.cos(angle) * r;
-    hedges.push({ x, z, y: groundY(map, x, z), rotation: -angle });
-    const [tx, tz] = worldToTile(x, z);
-    if (inBounds(map, tx, tz)) map.blocked[tileIndex(map, tx, tz)] = 1;
+  const C = CENTER_TILE;
+  const post = (kx: number, kz: number, rotation: number, into: Post[]) => {
+    const [x, z] = tileToWorld(C + kx, C + kz);
+    into.push({ x, z, y: groundY(map, x, z), rotation });
+  };
+  // Hedges: the north row and the west column of each block — its two sides
+  // without doors — one segment per tile, so the block reads as a closed lot.
+  for (const b of townBlocks()) {
+    for (let kx = b.rect.x0; kx <= b.rect.x1; kx++) post(kx, b.rect.z0, 0, hedges);
+    for (let kz = b.rect.z0 + 1; kz <= b.rect.z1; kz++) post(b.rect.x0, kz, Math.PI / 2, hedges);
   }
-  // Lamps: along the spokes every 8 tiles, on the road's shoulders.
+  // Lamps on the outer rows of the frame street, the middle street and the
+  // boulevard's straight runs, spaced along each side and never in a mouth
+  // where an avenue or an alley opens. Only on paving: the boulevard's
+  // corners bend away from the row and drop out by themselves.
+  const lampRing = (row: number, step: number, phase: number) => {
+    for (let k = -row + phase; k < row; k += step) {
+      const ak = Math.abs(k);
+      if (ak <= TOWN.avenueHalf + 1) continue;
+      if (ak >= TOWN.alley.from - 1 && ak <= TOWN.alley.to + 1) continue;
+      for (const [kx, kz] of [
+        [k, -row],
+        [k, row],
+        [-row, k],
+        [row, k],
+      ] as const) {
+        const tx = C + kx;
+        const tz = C + kz;
+        if (!inBounds(map, tx, tz)) continue;
+        const i = tileIndex(map, tx, tz);
+        if (map.kind[i] !== TileKind.path || map.blocked[i]) continue;
+        post(kx, kz, 0, lamps);
+      }
+    }
+  };
+  lampRing(TOWN.frame.to, 5, 3);
+  lampRing(TOWN.middle.to, 6, 2);
+  lampRing(TOWN.boulevard.to - 1, 8, 4);
+  // The square's four corners.
+  for (const [kx, kz] of [
+    [-PLAZA_HALF_TILES, -PLAZA_HALF_TILES],
+    [PLAZA_HALF_TILES, -PLAZA_HALF_TILES],
+    [-PLAZA_HALF_TILES, PLAZA_HALF_TILES],
+    [PLAZA_HALF_TILES, PLAZA_HALF_TILES],
+  ] as const) {
+    post(kx, kz, 0, lamps);
+  }
+  // Lamps along the spokes every 8 tiles, on the road's shoulders.
   for (const spoke of SPOKES) {
-    for (let s = PLAZA_RADIUS_TILES + 3; s <= spoke.toTiles - 2; s += 8) {
+    for (let s = TOWN_EDGE_TILES + 3; s <= spoke.toTiles - 2; s += 8) {
       for (const side of [-2.5, 2.5]) {
         const x = (spoke.dir[0] * s + spoke.dir[1] * side) * TILE_M;
         const z = (spoke.dir[1] * s + spoke.dir[0] * side) * TILE_M;
@@ -1191,30 +1444,23 @@ function placeRingFurniture(map: IslandMap): { hedges: Post[]; lamps: Post[] } {
       }
     }
   }
-  // Lamps around the square's rim and along the ring road, between the gates.
-  const ringLamps = (radiusTiles: number, count: number, offset: number) => {
-    for (let k = 0; k < count; k++) {
-      const angle = ((k + offset) / count) * Math.PI * 2;
-      // Never in a gate or on a spoke.
-      const toCardinal = Math.abs(((angle + Math.PI / 4) % (Math.PI / 2)) - Math.PI / 4);
-      if (toCardinal < 0.12) continue;
-      const x = Math.sin(angle) * radiusTiles * TILE_M;
-      const z = -Math.cos(angle) * radiusTiles * TILE_M;
-      const [tx, tz] = worldToTile(x, z);
-      if (!inBounds(map, tx, tz) || map.blocked[tileIndex(map, tx, tz)]) continue;
+  // Lanterns along the archive road and the mine's road, on one shoulder.
+  for (const leg of NORTH_ROAD) {
+    for (let s = 4; s < leg.length; s += 8) {
+      const tx = leg.from[0] + leg.dir[0] * s + leg.dir[1] * 2;
+      const tz = leg.from[1] + leg.dir[1] * s + leg.dir[0] * 2;
+      const [x, z] = tileToWorld(tx, tz);
       lamps.push({ x, z, y: groundY(map, x, z), rotation: 0 });
     }
-  };
-  ringLamps(PLAZA_RADIUS_TILES + 2.2, 16, 0.5);
-  ringLamps(RING_ROAD_TILES + 1.8, 16, 0.5);
-  // Lanterns along the dock and the mine's road.
-  for (let tz = DOCK_TILES.from + 2; tz <= DOCK_TILES.to; tz += 4) {
-    const [x, z] = tileToWorld(CENTER_TILE + DOCK_TILES.halfWidth, tz);
-    lamps.push({ x: x + 0.7, z, y: DOCK_Y, rotation: 0 });
   }
   for (let s = 4; s < MINE_ROAD.length; s += 8) {
     const [x, z] = tileToWorld(MINE_ROAD.fromX - s, MINE_ROAD.z + 2);
     lamps.push({ x, z, y: groundY(map, x, z), rotation: 0 });
+  }
+  // Lanterns along the dock.
+  for (let tz = DOCK_TILES.from + 2; tz <= DOCK_TILES.to; tz += 4) {
+    const [x, z] = tileToWorld(CENTER_TILE + DOCK_TILES.halfWidth, tz);
+    lamps.push({ x: x + 0.7, z, y: DOCK_Y, rotation: 0 });
   }
   return { hedges, lamps };
 }
@@ -1222,7 +1468,7 @@ function placeRingFurniture(map: IslandMap): { hedges: Post[]; lamps: Post[] } {
 /** Eight poles around the square that carry the festoon lights over it. */
 function placeFestoonPoles(map: IslandMap): Post[] {
   const poles: Post[] = [];
-  const r = (PLAZA_RADIUS_TILES - 1.5) * TILE_M;
+  const r = (PLAZA_HALF_TILES - 1.5) * TILE_M;
   for (let k = 0; k < 8; k++) {
     const angle = ((k + 0.5) / 8) * Math.PI * 2;
     const x = Math.sin(angle) * r;
@@ -1355,11 +1601,11 @@ function placeTrees(map: IslandMap): TreeSpot[] {
       if (map.blocked[i]) continue;
       const choice = treeChoice(map, tx, tz);
       if (!choice) continue;
-      const rTiles = Math.hypot(tx + 0.5 - C, tz + 0.5 - C);
-      // Inside the village only a few trees, between the houses and the hedge.
-      const inVillage = rTiles < HEDGE_RING_TILES + 1;
-      if (inVillage && (rTiles < HOUSE_RING_TILES + 2 || rTiles > RING_ROAD_TILES + 1.5)) continue;
-      const density = inVillage ? 0.05 : choice.density;
+      // In the town, trees grow in the blocks' back gardens; the fringe
+      // around the boulevard is the town's green belt.
+      const zone = townZone(tx - C, tz - C);
+      if (isPavedZone(zone)) continue;
+      const density = zone === "block" ? 0.16 : zone === "fringe" ? Math.max(choice.density, 0.1) : choice.density;
       if (hash2(tx, tz, ISLAND_SEED + 55) > density) continue;
       // Keep a clear margin to anything built or paved.
       let clear = true;
@@ -1403,7 +1649,7 @@ function placeBoulders(map: IslandMap): Boulder[] {
       const i = tileIndex(map, tx, tz);
       const k = map.kind[i];
       if (k === TileKind.water || k === TileKind.pool || k === TileKind.path || k === TileKind.plaza || k === TileKind.dock) continue;
-      if (Math.hypot(tx + 0.5 - C, tz + 0.5 - C) < HEDGE_RING_TILES + 4) continue;
+      if (townZone(tx - C, tz - C) !== "outside") continue;
       let density: number;
       if (k === TileKind.rock || k === TileKind.snow) density = 0.05;
       else if (k === TileKind.quarry) density = 0.09;
@@ -1561,7 +1807,7 @@ export function buildIsland(): Island {
   buildTerrain(map);
   buildPlots(map);
   buildVillage(map);
-  const houses = placeHouses();
+  const houses = townHouses();
   const kitPoses: Record<KitPlace, KitPose> = {
     plugins: kitPose("plugins"),
     foundry: kitPose("foundry"),
@@ -1575,7 +1821,7 @@ export function buildIsland(): Island {
   stampTurnables(map, map.blocked, houses, kitPoses, 1);
   blockSquareFurniture(map);
   blockLandmarkFurniture(map);
-  const { hedges, lamps } = placeRingFurniture(map);
+  const { hedges, lamps } = placeStreetFurniture(map);
   // A hedge is a wall to a walker; a lamp post is a post.
   for (const h of hedges) stampFootprint(map.blocked, map, h.x, h.z, HEDGE_SEGMENT_M[0], HEDGE_SEGMENT_M[1], h.rotation, 0.3, 1);
   for (const l of lamps) blockPost(map, l.x, l.z);
@@ -1619,7 +1865,7 @@ export function resetIslandCache(): void {
 // Turning buildings — the viewer's own headings over the designed ones
 // ---------------------------------------------------------------------------
 
-/** Stable id of a building a viewer may turn: a ring house by slot, a ring hub by place. */
+/** Stable id of a building a viewer may turn: a house by slot, a hall by place. */
 export type BuildingId = `house:${number}` | `kit:${KitPlace}`;
 
 export function houseId(slot: number): BuildingId {
@@ -1630,18 +1876,11 @@ export function kitId(place: KitPlace): BuildingId {
   return `kit:${place}`;
 }
 
-/** Centre of ring slot `slot` (0..15, clockwise from north), world metres. */
-export function ringSlotWorld(slot: number, radiusTiles = HOUSE_RING_TILES): [number, number] {
-  const angle = (slot / 16) * Math.PI * 2;
-  const r = radiusTiles * TILE_M;
-  return [Math.sin(angle) * r, -Math.cos(angle) * r];
-}
-
 /** The heading a building rests at — what "reset" returns to. */
 export function defaultBuildingYaw(id: BuildingId): number {
   if (id.startsWith("kit:")) return kitPose(id.slice(4) as KitPlace).rotation;
-  const [x, z] = ringSlotWorld(Number(id.slice(6)));
-  return houseDefaultRotation(x, z);
+  const slot = Number(id.slice(6));
+  return townHouses().find((h) => h.slot === slot)?.defaultRotation ?? 0;
 }
 
 /** Size of one hedge segment (along the ring × across), metres — `Village.tsx` draws it so. */
@@ -1877,7 +2116,7 @@ export function randomPlazaTile(map: IslandMap, rng: () => number): [number, num
   for (let attempt = 0; attempt < 32; attempt++) {
     const angle = rng() * Math.PI * 2;
     // From just outside the ring bench to just inside the garden beds.
-    const r = 4 + rng() * (PLAZA_RADIUS_TILES - 5);
+    const r = 4 + rng() * (PLAZA_HALF_TILES - 5);
     const tx = Math.floor(CENTER_TILE + Math.cos(angle) * r);
     const tz = Math.floor(CENTER_TILE + Math.sin(angle) * r);
     if (isWalkable(map, tx, tz)) return [tx, tz];

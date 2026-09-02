@@ -21,7 +21,7 @@ gesture becomes a typed event, and the figure follows because the truth changed.
 
 | checkpoint | island place | the agent is… |
 |---|---|---|
-| `home` | its own house on the ring | off duty: paused, or between runs at night |
+| `home` | its own house on one of the town's blocks | off duty: paused, or between runs at night |
 | `square` | the table under the tree | in a bounded room (`ROOM_OPEN … ROOM_SETTLE`), or idling on the square |
 | `hub:plugins` | **Plugin Docks** | running a task whose dominant hands are **plugin tools** (Gmail, calendar, files via a plugin…) |
 | `hub:skills` | Skill Forge | running a task whose dominant hands are skills |
