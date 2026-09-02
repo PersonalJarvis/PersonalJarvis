@@ -23,9 +23,9 @@ import { boardScrolls } from "./questBoard";
 import { useSocietyQuests } from "./questsData";
 
 /** Radius of the hover/selection ring under the monument, in metres. */
-const RING_R = 6.4;
+const RING_R = 7.2;
 /** Where the floating scrolls orbit, in metres from the obelisk. */
-const SCROLL_R = 3.4;
+const SCROLL_R = 4.2;
 
 const SCROLL_COLOR: Record<SocietyQuestRow["state"], string> = {
   open: PAL.wall,
@@ -37,24 +37,24 @@ const SCROLL_COLOR: Record<SocietyQuestRow["state"], string> = {
 };
 
 function NoticeBoard({ kit, angle, lit }: { kit: Kit; angle: number; lit: boolean }) {
-  const r = 5.6;
+  const r = 6.2;
   const x = Math.sin(angle) * r;
   const z = Math.cos(angle) * r;
   return (
     <group position={[x, 0, z]} rotation={[0, angle, 0]}>
       {/* two posts */}
-      <Block kit={kit} at={[-1.1, 1.1, 0]} size={[0.22, 2.2, 0.22]} color={PAL.woodDark} />
-      <Block kit={kit} at={[1.1, 1.1, 0]} size={[0.22, 2.2, 0.22]} color={PAL.woodDark} />
+      <Block kit={kit} at={[-1.5, 1.4, 0]} size={[0.26, 2.8, 0.26]} color={PAL.woodDark} />
+      <Block kit={kit} at={[1.5, 1.4, 0]} size={[0.26, 2.8, 0.26]} color={PAL.woodDark} />
       {/* the board and its parchment */}
-      <Block kit={kit} at={[0, 1.55, 0]} size={[2.7, 1.5, 0.14]} color={PAL.wood} />
-      <Block kit={kit} at={[0, 1.55, 0.1]} size={[2.3, 1.15, 0.05]} color={PAL.wall} />
+      <Block kit={kit} at={[0, 1.9, 0]} size={[3.5, 2.0, 0.16]} color={PAL.wood} />
+      <Block kit={kit} at={[0, 1.9, 0.12]} size={[3.0, 1.55, 0.05]} color={PAL.wall} />
       {/* three lines of "writing" */}
       {[0.3, 0, -0.3].map((dy) => (
-        <Block key={dy} kit={kit} at={[-0.15, 1.55 + dy, 0.14]} size={[1.5 - Math.abs(dy), 0.08, 0.02]} color={PAL.trim} />
+        <Block key={dy} kit={kit} at={[-0.2, 1.9 + dy * 1.4, 0.16]} size={[2.0 - Math.abs(dy), 0.1, 0.02]} color={PAL.trim} />
       ))}
       {/* a little roof that glows when the board carries a quest */}
-      <Block kit={kit} at={[0, 2.42, 0.15]} size={[3.0, 0.14, 0.9]} color={PAL.wood} />
-      <Block kit={kit} at={[0, 2.32, 0.55]} size={[2.6, 0.06, 0.12]} color={lit ? PAL.beacon : PAL.trim} glow={lit} />
+      <Block kit={kit} at={[0, 3.05, 0.2]} size={[3.9, 0.16, 1.1]} color={PAL.wood} />
+      <Block kit={kit} at={[0, 2.93, 0.7]} size={[3.4, 0.07, 0.14]} color={lit ? PAL.beacon : PAL.trim} glow={lit} />
     </group>
   );
 }
@@ -78,11 +78,11 @@ function Scroll({
     if (!ref.current || paused) return;
     const t = clock.getElapsedTime();
     const a = phase + t * 0.25;
-    ref.current.position.set(Math.sin(a) * SCROLL_R, 4.6 + Math.sin(t * 1.6 + phase) * 0.25, Math.cos(a) * SCROLL_R);
+    ref.current.position.set(Math.sin(a) * SCROLL_R, 5.6 + Math.sin(t * 1.6 + phase) * 0.25, Math.cos(a) * SCROLL_R);
     ref.current.rotation.y = -a + Math.PI / 2;
   });
   return (
-    <group ref={ref} position={[Math.sin(phase) * SCROLL_R, 4.6, Math.cos(phase) * SCROLL_R]}>
+    <group ref={ref} position={[Math.sin(phase) * SCROLL_R, 5.6, Math.cos(phase) * SCROLL_R]}>
       {/* a rolled scroll: parchment tube with two wooden knobs and a coloured seal */}
       <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.wall)} rotation={[0, 0, Math.PI / 2]} scale={[0.34, 1.1, 0.34]} />
       <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.woodDark)} rotation={[0, 0, Math.PI / 2]} position={[0.62, 0, 0]} scale={[0.16, 0.16, 0.16]} />
@@ -120,7 +120,7 @@ export function QuestMonument({
     if (band.current) band.current.rotation.y = t * 0.35;
     if (crystal.current) {
       const pulse = 1 + Math.sin(t * (working ? 3.2 : 1.4)) * 0.08;
-      crystal.current.scale.setScalar(0.9 * pulse);
+      crystal.current.scale.setScalar(1.2 * pulse);
       crystal.current.rotation.y = t * 0.8;
     }
   });
@@ -157,19 +157,19 @@ export function QuestMonument({
       <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.wallShade)} position={[0, 0.55, 0]} scale={[6.4, 0.3, 6.4]} />
       <mesh geometry={kit.g.cylinder} material={kit.m.lit(PAL.trim)} position={[0, 0.85, 0]} scale={[4.6, 0.3, 4.6]} />
       {/* the obelisk: a tapering pale shaft on a dark foot, capped by a copper pyramid */}
-      <Block kit={kit} at={[0, 1.5, 0]} size={[2.6, 1.0, 2.6]} color={PAL.solar} />
-      <mesh geometry={kit.g.cone} material={kit.m.lit(PAL.wall)} position={[0, 6.0, 0]} scale={[2.6, 9.0, 2.6]} />
-      <mesh geometry={kit.g.cone} material={kit.m.lit(PAL.hubAccent)} position={[0, 10.9, 0]} scale={[1.05, 1.4, 1.05]} />
+      <Block kit={kit} at={[0, 1.6, 0]} size={[3.6, 1.2, 3.6]} color={PAL.solar} />
+      <mesh geometry={kit.g.cone} material={kit.m.lit(PAL.wall)} position={[0, 8.2, 0]} scale={[3.4, 12.0, 3.4]} />
+      <mesh geometry={kit.g.cone} material={kit.m.lit(PAL.hubAccent)} position={[0, 14.6, 0]} scale={[1.5, 2.0, 1.5]} />
       {/* rune band: a turning glowing ring around the shaft */}
-      <mesh ref={band} geometry={kit.g.ring} material={kit.m.glow(lit ? PAL.beacon : PAL.hubGlass)} position={[0, 3.6, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[3.6, 3.6, 1.6]} />
+      <mesh ref={band} geometry={kit.g.ring} material={kit.m.glow(lit ? PAL.beacon : PAL.hubGlass)} position={[0, 4.6, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[4.6, 4.6, 2.4]} />
       {/* four glowing rune slots on the shaft faces */}
       {[0, Math.PI / 2, Math.PI, -Math.PI / 2].map((a) => (
         <group key={a} rotation={[0, a, 0]}>
-          <Block kit={kit} at={[0, 5.2, 1.0]} size={[0.5, 2.2, 0.06]} color={working ? PAL.glass : PAL.beacon} glow />
+          <Block kit={kit} at={[0, 7.0, 1.3]} size={[0.7, 3.4, 0.08]} color={working ? PAL.glass : PAL.beacon} glow />
         </group>
       ))}
       {/* the crystal that breathes on top */}
-      <mesh ref={crystal} geometry={kit.g.blob} material={kit.m.glow(working ? PAL.glassEmissive : PAL.beaconCore)} position={[0, 12.3, 0]} scale={0.9} />
+      <mesh ref={crystal} geometry={kit.g.blob} material={kit.m.glow(working ? PAL.glassEmissive : PAL.beaconCore)} position={[0, 16.4, 0]} scale={1.2} />
       {/* three notice boards facing outward */}
       {[0, (Math.PI * 2) / 3, (Math.PI * 4) / 3].map((a, i) => (
         <NoticeBoard key={a} kit={kit} angle={a + Math.PI / 6} lit={lit && i < scrolls.length} />
