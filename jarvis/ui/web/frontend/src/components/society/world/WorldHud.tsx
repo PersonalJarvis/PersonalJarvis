@@ -26,14 +26,17 @@ export function WorldHud({ agents, sample, awake, reducedMotion, topRight }: Pro
   const zoom = useCameraStore((s) => s.zoom);
   const zoomStep = useCameraStore((s) => s.zoomStep);
   const active = agents.filter((a) => a.state === "working").length;
+  // The main locale file may override these keys with the `{0}` placeholder
+  // convention the society rail uses; accept both spellings.
+  const count = (key: string, n: number) => fill(t(key), { count: n }).replace("{0}", String(n));
   return (
     <div className="sw-hud" aria-live="off">
       <div className="sw-hud-top">
         <div className="sw-chip-row">
           <div className="sw-chip">
-            <strong>{fill(t("society.world.hud_agents"), { count: agents.length })}</strong>
+            <strong>{count("society.world.hud_agents", agents.length)}</strong>
             <span className="sw-chip-sep" />
-            <span>{fill(t("society.world.hud_active"), { count: active })}</span>
+            <span>{count("society.world.hud_active", active)}</span>
           </div>
           {sample && <div className="sw-chip sw-chip-note">{t("society.world.sample_badge")}</div>}
           {reducedMotion && <div className="sw-chip sw-chip-note">{t("society.world.reduced_motion_note")}</div>}
