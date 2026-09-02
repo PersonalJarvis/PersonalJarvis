@@ -160,7 +160,12 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const seats = useMemo<BrainSeat[]>(() => {
     const providers = catalog.data?.providers ?? [];
     if (!providers.length || !connections.data || !societyProviders.data || !keylessModels.data) return [];
-    return brainSeats(joinProviderOptions(providers, connections.data), societyProviders.data, liveModels);
+    return brainSeats(
+      joinProviderOptions(providers, connections.data),
+      societyProviders.data,
+      liveModels,
+      new Set(connections.data.map((c) => c.jarvis)),
+    );
   }, [catalog.data, connections.data, societyProviders.data, keylessModels.data, liveModels]);
   const seat = seats.find((s) => s.provider.id === providerId) ?? null;
   const accounts = accountChoice(seat);

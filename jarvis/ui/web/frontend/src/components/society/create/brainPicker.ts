@@ -45,11 +45,19 @@ function kindOf(option: ProviderOption, row: SocietyProviderRow | undefined): Br
  * local seat with nothing installed or nothing running is not listed
  * (maintainer, 2026-09-02: an empty "Local server" row beside Ollama is
  * noise). Rows whose list has not arrived yet are left out until it does.
+ *
+ * A subscription seat needs PROOF of a login, not just an installed binary:
+ * a signed-in account this app can read (`accounts`), or a card on the
+ * Agents tab that reports it connected (`known` — the ids that tab has a row
+ * for). The chat's composer lists an installed CLI it cannot read the login
+ * of (OpenCode, Kimi, Cursor…) and lets the turn say what is wrong; the
+ * creator does not — "connect it first" is the whole point of this list.
  */
 export function brainSeats(
   options: ProviderOption[],
   society: SocietyProviderRow[],
   liveModels: Record<string, CuratedModel[]> = {},
+  known: ReadonlySet<string> = new Set(),
 ): BrainSeat[] {
   const byId = new Map(society.map((r) => [r.id, r]));
   return options
@@ -63,6 +71,7 @@ export function brainSeats(
       const accounts = kind === "subscription" ? (row?.accounts ?? []).filter((a) => a.connected) : [];
       return { provider, kind, accounts };
     })
+    .filter((s) => s.kind !== "subscription" || s.accounts.length > 0 || known.has(s.provider.id))
     .sort(
       (a, b) =>
         KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.provider.label.localeCompare(b.provider.label),

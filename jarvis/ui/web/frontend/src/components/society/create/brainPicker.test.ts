@@ -89,8 +89,26 @@ describe("brainSeats", () => {
     const seats = brainSeats(
       [option({ id: "openai-codex", label: "Codex", runner: "codex-cli", cli_installed: true })],
       [],
+      {},
+      new Set(["openai-codex"]),
     );
     expect(seats[0].kind).toBe("subscription");
+  });
+
+  it("lists a subscription seat only with a signed-in account or an Agents-tab card", () => {
+    const rows = [
+      option({ id: "opencode", label: "OpenCode", runner: "opencode-cli", cli_installed: true }),
+      option({ id: "openai-codex", label: "Codex", runner: "codex-cli", cli_installed: true }),
+      option({ id: "grok-build", label: "Grok Build", runner: "grok-cli", cli_installed: true }),
+    ];
+    const society = [
+      societyRow({ id: "grok-build", runner: "grok-cli", subscription: true, platform: "grok", accounts: [account("g")] }),
+    ];
+    // Installed but unreadable and uncarded: not offered here.
+    expect(brainSeats(rows, society, {}, new Set(["openai-codex"])).map((s) => s.provider.id)).toEqual([
+      "openai-codex",
+      "grok-build",
+    ]);
   });
 
   it("keeps only signed-in logins and offers a choice only when there are two", () => {
