@@ -225,6 +225,24 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
     return {"agent": updated.to_dict()}
 
 
+@router.post("/agents/{agent_id}/chat")
+async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
+    """The agent's canonical chat (``society:<agent_id>``), created or re-seated
+    to the roster row. Idempotent and free of spend: nothing runs until a
+    message is sent. The model card calls it before it opens the chat column."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    svc = rt.chat_service()
+    if svc is None:
+        raise HTTPException(503, "agent chat service unavailable")
+    from jarvis.society.chat_binding import ensure_session
+
+    session = ensure_session(svc, rt.config(), agent)
+    return {"session": session.to_dict(), "agent_id": agent.agent_id}
+
+
 @router.delete("/agents/{agent_id}")
 async def archive_agent(agent_id: str, request: Request) -> dict[str, Any]:
     rt = await _runtime(request)

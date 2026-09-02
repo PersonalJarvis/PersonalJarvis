@@ -23,7 +23,8 @@ import type { ReasoningBlock, TimelineItem, ToolBlock, TurnItem, UserItem } from
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { useAgentChatStore } from "@/store/agentChat";
+import { createAgentChatStore, useAgentChatStore } from "@/store/agentChat";
+import type { AgentChatSurface } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
@@ -39,21 +40,113 @@ export interface AgentChatPanelProps {
   roster: SocietyAgent[];
 }
 
+/**
+ * Every other agent speaks in its OWN canonical chat (`society:<agent_id>`,
+ * surface `society`): the backend binds the session to the roster row on
+ * request, and this store — one socket for the society surface — opens it.
+ * The brain is the roster's choice, so the column shows it instead of the
+ * front page's pickers.
+ */
+const useSocietyChatStore = createAgentChatStore("society");
+
 export function AgentChatPanel({ agent, roster }: AgentChatPanelProps) {
-  if (agent.tier !== "lead") return <NotBoundYet />;
+  if (agent.tier === "lead") {
+    return (
+      <AgentChatStoreProvider store={useAgentChatStore}>
+        <JarvisChat agent={agent} roster={roster} />
+      </AgentChatStoreProvider>
+    );
+  }
+  if (!agent.chatSessionId) return <NotBoundYet />;
   return (
-    <AgentChatStoreProvider store={useAgentChatStore}>
-      <JarvisChat agent={agent} roster={roster} />
+    <AgentChatStoreProvider store={useSocietyChatStore}>
+      <SpecialistChat agent={agent} roster={roster} />
     </AgentChatStoreProvider>
   );
 }
 
-function NotBoundYet() {
+function NotBoundYet({ detail }: { detail?: string | null }) {
   const t = useT();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
       <p className="text-sm font-medium text-foreground">{t("society.card.chat_empty_title")}</p>
-      <p className="max-w-[30ch] text-xs text-muted-foreground">{t("society.card.chat_empty_hint")}</p>
+      <p className="max-w-[30ch] text-xs text-muted-foreground">{detail ?? t("society.card.chat_empty_hint")}</p>
+    </div>
+  );
+}
+
+async function bindAgentChat(agentId: string): Promise<void> {
+  const res = await fetch(`/api/society/agents/${encodeURIComponent(agentId)}/chat`, { method: "POST" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
+  const t = useT();
+  const items = useAgentChat((s) => s.timeline.items);
+  const activeSessionId = useAgentChat((s) => s.activeSessionId);
+  const busy = useAgentChat((s) => s.busy);
+  const lastError = useAgentChat((s) => s.lastError);
+  const loadCatalog = useAgentChat((s) => s.loadCatalog);
+  const loadSessions = useAgentChat((s) => s.loadSessions);
+  const openSession = useAgentChat((s) => s.openSession);
+  const send = useAgentChat((s) => s.send);
+  const cancel = useAgentChat((s) => s.cancel);
+  const decide = useAgentChat((s) => s.decide);
+  const [bindError, setBindError] = useState<string | null>(null);
+  const sessionId = agent.chatSessionId;
+
+  // Bind first (idempotent, no spend), then open: the socket needs the row to exist.
+  useEffect(() => {
+    if (!sessionId) return;
+    let alive = true;
+    setBindError(null);
+    void (async () => {
+      try {
+        await bindAgentChat(agent.agentId);
+        await loadCatalog();
+        await loadSessions();
+        if (alive) openSession(sessionId);
+      } catch (err) {
+        if (alive) setBindError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [agent.agentId, sessionId, loadCatalog, loadSessions, openSession]);
+
+  const mentionable = useMemo(
+    () => roster.filter((a) => a.agentId !== agent.agentId && a.tier !== "lead"),
+    [roster, agent.agentId],
+  );
+
+  if (bindError) return <NotBoundYet detail={`${t("society.card.chat_bind_failed")} (${bindError})`} />;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col" data-testid="society-chat">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+        {agent.provider ? <ProviderLogo providerId={agent.provider} label={agent.providerLabel} size="sm" /> : null}
+        <span className="truncate text-foreground">{agent.providerLabel || t("society.chat.model_default")}</span>
+        {agent.model ? <span className="truncate font-mono">{agent.model}</span> : null}
+        {agent.effort ? <span className="ml-auto rounded-full border border-border px-2 py-0.5">{agent.effort}</span> : null}
+      </div>
+      <Transcript items={items} agent={agent} busy={busy} onDecide={decide} />
+      {lastError ? (
+        <p role="alert" className="px-4 pb-1 text-xs text-destructive">
+          {lastError}
+        </p>
+      ) : null}
+      <Composer
+        agent={agent}
+        mentionable={mentionable}
+        busy={busy || activeSessionId !== sessionId}
+        sessionId={activeSessionId}
+        cwd=""
+        provider={agent.provider}
+        surface="society"
+        onSend={send}
+        onCancel={cancel}
+      />
     </div>
   );
 }
@@ -501,11 +594,13 @@ interface ComposerProps {
   sessionId: string | null;
   cwd: string;
   provider: string;
+  /** Which chat surface the attachments belong to (the front page by default). */
+  surface?: AgentChatSurface;
   onSend: (text: string, attachments?: ReturnType<typeof useChatAttachments>["attachments"]) => Promise<void>;
   onCancel: () => Promise<void>;
 }
 
-function Composer({ agent, mentionable, busy, sessionId, cwd, provider, onSend, onCancel }: ComposerProps) {
+function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onSend, onCancel }: ComposerProps) {
   const t = useT();
   const [value, setValue] = useState("");
   const [plusOpen, setPlusOpen] = useState(false);
@@ -513,7 +608,7 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, onSend, 
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const attachments = useChatAttachments({ sessionId, cwd, provider, surface: "jarvis" }, (message) => setProblem(message));
+  const attachments = useChatAttachments({ sessionId, cwd, provider, surface }, (message) => setProblem(message));
   const dictation = useComposerDictation(value, setValue);
 
   const resize = useCallback(() => {

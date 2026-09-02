@@ -5282,7 +5282,8 @@
       "last_active": "Última actividad",
       "never": "nunca",
       "chat_empty_title": "Aún no hay conversación",
-      "chat_empty_hint": "El chat del agente se abre aquí cuando el backend de la sociedad vincule su sesión."
+      "chat_empty_hint": "El chat del agente se abre aquí cuando el backend de la sociedad vincule su sesión.",
+      "chat_bind_failed": "No se pudo vincular el chat."
     },
     "figure": {
       "drag_hint": "Arrastra para girar e inclinar · rueda para acercar · doble clic restablece",
@@ -5330,6 +5331,7 @@
       "tools_loading": "Cargando el catálogo de capacidades…",
       "tools_unavailable": "No hay catálogo de capacidades — las herramientas se fijan después en la ficha.",
       "style": "Estilo",
+      "style_import_hint": "Trae tu propia figura con Importar .glb",
       "style_soon": "Aún no hay figuras de este estilo — la canalización acepta cualquier estilo que pase la revisión",
       "none": "Ninguno",
       "title": "Crear un agente",

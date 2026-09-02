@@ -163,6 +163,14 @@ class SocietyRuntime:
     def data_dir(self) -> Path:
         return self._data_dir
 
+    def chat_service(self) -> Any | None:
+        """The agent-chat service, when the app has one (None in the bare runtime)."""
+        return self._get_chat()
+
+    def config(self) -> Any:
+        """The live app config the chat binding reads provider defaults from."""
+        return self._get_cfg()
+
     async def close(self) -> None:
         await self.browser.close()
         for task in list(self._watchers):

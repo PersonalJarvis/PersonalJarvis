@@ -5282,7 +5282,8 @@
       "last_active": "Zuletzt aktiv",
       "never": "nie",
       "chat_empty_title": "Noch kein Gespräch",
-      "chat_empty_hint": "Der Chat des Agenten öffnet sich hier, sobald das Society-Backend seine Sitzung anbindet."
+      "chat_empty_hint": "Der Chat des Agenten öffnet sich hier, sobald das Society-Backend seine Sitzung anbindet.",
+      "chat_bind_failed": "Der Chat konnte nicht verbunden werden."
     },
     "figure": {
       "drag_hint": "Ziehen zum Drehen und Kippen · Rad zum Zoomen · Doppelklick setzt zurück",
@@ -5330,6 +5331,7 @@
       "tools_loading": "Fähigkeitenkatalog wird geladen…",
       "tools_unavailable": "Kein Fähigkeitenkatalog erreichbar — Werkzeuge werden später auf der Karte gesetzt.",
       "style": "Stil",
+      "style_import_hint": "Eigene Figur über „.glb importieren“ hereinholen",
       "style_soon": "Noch keine Figuren in diesem Stil — die Pipeline nimmt jeden Stil, der die Prüfung besteht",
       "none": "Keins",
       "title": "Agent erstellen",

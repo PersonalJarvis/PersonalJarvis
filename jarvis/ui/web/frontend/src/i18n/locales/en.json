@@ -5282,7 +5282,8 @@
       "last_active": "Last active",
       "never": "never",
       "chat_empty_title": "No conversation yet",
-      "chat_empty_hint": "The agent's chat opens here once the society backend binds its session."
+      "chat_empty_hint": "The agent's chat opens here once the society backend binds its session.",
+      "chat_bind_failed": "The chat could not be bound."
     },
     "figure": {
       "drag_hint": "Drag to turn and tilt · wheel to zoom · double-click to reset",
@@ -5330,6 +5331,7 @@
       "tools_loading": "Loading the capability catalog…",
       "tools_unavailable": "No capability catalog reachable — tools are set on the card later.",
       "style": "Style",
+      "style_import_hint": "Bring your own figure in with Import .glb",
       "style_soon": "No figures in this style yet — the pipeline takes any style that passes the gate",
       "none": "None",
       "title": "Create an agent",

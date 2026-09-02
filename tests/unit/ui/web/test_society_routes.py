@@ -354,6 +354,50 @@ def test_memory_overview_recall_and_promotion_through_approvals(memory_client):
     assert c.post("/api/society/memory/999/dismiss").status_code == 404
 
 
+def test_bind_agent_chat_creates_the_canonical_session(tmp_path: Path):
+    from jarvis.agent_chat.store import AgentChatStore
+
+    class FakeService:
+        def __init__(self, store: AgentChatStore) -> None:
+            self.store = store
+
+        def is_running(self, session_id: str) -> bool:
+            return False
+
+    svc = FakeService(AgentChatStore(tmp_path / "chat.db"))
+    cfg = SimpleNamespace(
+        memory=SimpleNamespace(data_dir=str(tmp_path / "data")),
+        wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")),
+    )
+    runtime = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.state.society = None
+    app.state.society_factory = lambda: runtime
+    with TestClient(app) as c:
+        c.post(
+            "/api/society/agents", json={"name": "Scout", "provider": "openai", "model": "gpt-5"}
+        )
+        res = c.post("/api/society/agents/scout/chat")
+        assert res.status_code == 200, res.text
+        session = res.json()["session"]
+        assert session["session_id"] == "society:scout" and session["surface"] == "society"
+        assert session["provider"] == "openai" and session["model"] == "gpt-5"
+        # Idempotent: the same session comes back, nothing is duplicated.
+        again = c.post("/api/society/agents/scout/chat").json()["session"]
+        assert again["session_id"] == session["session_id"]
+        assert c.post("/api/society/agents/nobody/chat").status_code == 404
+    svc.store.close()
+
+
+def test_bind_agent_chat_without_a_chat_service_is_503(memory_client):
+    c, _ = memory_client
+    c.post("/api/society/agents", json={"name": "Scout"})
+    assert c.post("/api/society/agents/scout/chat").status_code == 503
+
+
 def test_pausing_moves_the_figure_home(memory_client):
     c, _ = memory_client
     c.post("/api/society/agents", json={"name": "Scout"})
