@@ -69,3 +69,19 @@ The event subscriber routes events matching the `event_selector` of an `on_event
 
 - Time zone: all `due_at_ns` are UTC in the DB. User input "in two hours" is computed relative to `time.time_ns()` → no TZ questions. "Tomorrow 9am" comes via `zoneinfo.ZoneInfo` from the system zone — the trigger parser translates it.
 - Drift on long delays (days): not relevant, as long as `await asyncio.wait_for` with TimeoutError tolerance covers it.
+
+## Amendment 2026-09-02 — misfire handling (BUG-212)
+
+"Misfire handling" above was listed as not required. It was: a slot the app
+was not running for (box off, asleep, restarted hours later) was caught up at
+the first tick after boot, which put a 07:30 routine at 15:04 and 20:49 on
+different days. The rule now lives in `jarvis/core/misfire.py` and binds every
+scheduler in the repo (tasks, workflows, Conductor):
+
+- a recurring slot late by at most `MISFIRE_GRACE_S` (30 min) still fires;
+- an older slot is **missed**: recorded (a `missed` workflow run / a `missed`
+  task step), never run, and the schedule continues from the next occurrence
+  relative to now — for `every` tasks on their `start_at` grid, never
+  `now + interval`;
+- one-shot triggers (`after_delay`, `at_time`) are exempt and keep firing late:
+  a reminder survives a crash (H9) and has no next occurrence to skip to.

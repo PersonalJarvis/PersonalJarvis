@@ -13,7 +13,12 @@ import contextlib
 import logging
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
+
+#: Misfire grace — a slot later than this is skipped, not caught up (BUG-212).
+#: Conductor is a standalone package, so this mirrors ``jarvis.core.misfire``
+#: instead of importing it; ``tests/unit/conductor`` pins the two together.
+MISFIRE_GRACE_NS: Final[int] = 30 * 60 * 1_000_000_000
 
 try:
     from croniter import croniter  # type: ignore
@@ -88,6 +93,21 @@ class Scheduler:
                 await self._store.set_next_run(row["id"], stored_next)
 
             if stored_next <= now_ns:
+                if stored_next + MISFIRE_GRACE_NS < now_ns:
+                    # BUG-212: the slot passed while the app was not
+                    # running — skip to the next occurrence, never catch
+                    # up a stale slot hours later.
+                    log.warning(
+                        "Conductor job %r missed its slot (%.0f min late) — "
+                        "skipped, not caught up",
+                        row.get("name") or row["id"],
+                        (now_ns - stored_next) / 60e9,
+                    )
+                    next_after = _compute_next(sched_type, expr, now_ns)
+                    await self._store.set_next_run(row["id"], next_after)
+                    if next_after and (upcoming_min is None or next_after < upcoming_min):
+                        upcoming_min = next_after
+                    continue
                 due_ids.append(row["id"])
                 # Set a new next_run_at_ns before we trigger, so slow
                 # execution doesn't cause a double trigger.

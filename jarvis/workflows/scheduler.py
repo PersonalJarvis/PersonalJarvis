@@ -5,6 +5,10 @@ A single ``asyncio`` loop polls the workflow list, computes the next
 ``next_run_at_ns`` for each active cron workflow, and sleeps until the
 earliest one. On firing: ``runner.trigger(workflow_id, trigger_reason="cron")``.
 
+A slot that passed while the app was not running is NOT caught up: past the
+shared misfire grace (``jarvis.core.misfire``) it is recorded as a ``missed``
+run and the schedule continues from the next occurrence (BUG-212).
+
 This is deliberately not the same code-path architecture as skills-cron
 (``skills/trigger_matcher.run_cron_scheduler``) — skills yield an
 ``AsyncIterator`` that the supervisor consumes; here the scheduler fires
@@ -28,6 +32,7 @@ except Exception:  # pragma: no cover
 
 from jarvis.core.bus import EventBus
 from jarvis.core.events import AnnouncementRequested, WorkflowScheduled
+from jarvis.core.misfire import is_missed, late_by_s
 from jarvis.voice.action_phrases import action_phrase, resolve_ambient_language
 
 from .runner import FailureAnnouncer
@@ -145,6 +150,20 @@ class WorkflowScheduler:
                 )
 
             if stored_next <= now_ns:
+                if is_missed(stored_next, now_ns):
+                    # BUG-212: the slot passed while the app was not running.
+                    # Catching it up hours later is what put the 07:30
+                    # Morning Briefing at 15:04 and 20:49. Record the miss,
+                    # skip to the next occurrence from NOW, never run it.
+                    next_after = await self._skip_missed(
+                        wid, cron_expr, stored_next, now_ns,
+                        name=_name_for(rows, wid),
+                    )
+                    if next_after is not None and (
+                        upcoming_min_ns is None or next_after < upcoming_min_ns
+                    ):
+                        upcoming_min_ns = next_after
+                    continue
                 due.append((stored_next, wid))
             else:
                 if upcoming_min_ns is None or stored_next < upcoming_min_ns:
@@ -187,6 +206,47 @@ class WorkflowScheduler:
         delta_s = max(1.0, (upcoming_min_ns - time.time_ns()) / 1e9)
         return min(delta_s, 60.0)
 
+    async def _skip_missed(
+        self,
+        wid: str,
+        cron_expr: str,
+        stored_next: int,
+        now_ns: int,
+        *,
+        name: str,
+    ) -> int | None:
+        """Record a missed slot and move the workflow to its next occurrence.
+
+        Returns the new ``next_run_at_ns`` (``None`` for a broken cron
+        expression). The missed run row is best effort: a store without
+        ``record_missed_run`` (older fakes) still gets rescheduled, so a
+        bookkeeping failure can never turn back into a catch-up firing.
+        """
+        late_s = late_by_s(stored_next, now_ns)
+        log.warning(
+            "Workflow %r missed its slot at %s (%.0f min late) — skipped, "
+            "not caught up",
+            name, _iso_local(stored_next), late_s / 60,
+        )
+        record = getattr(self._store, "record_missed_run", None)
+        if callable(record):
+            try:
+                await record(wid, due_at_ns=stored_next, late_by_s=late_s)
+            except Exception:  # noqa: BLE001
+                log.exception("Could not record the missed run for workflow %s", wid)
+        next_after = _compute_next_cron_ns(cron_expr, now_ns)
+        await self._store.set_next_run(wid, next_after)
+        if next_after is not None:
+            await self._bus.publish(
+                WorkflowScheduled(
+                    workflow_id=wid,
+                    next_run_ns=next_after,
+                    reason="missed",
+                    source_layer="workflows.scheduler",
+                )
+            )
+        return next_after
+
     # ------------------------------------------------------------------
 
     async def _announce(self, key: str, phrase_key: str, **fmt: object) -> None:
@@ -225,6 +285,14 @@ class WorkflowScheduler:
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
+def _iso_local(ns: int) -> str:
+    """Local wall-clock rendering of a ns timestamp for log lines."""
+    try:
+        return datetime.fromtimestamp(ns / 1e9).astimezone().isoformat(timespec="minutes")
+    except (OverflowError, OSError, ValueError):
+        return str(ns)
+
 
 def _compute_next_cron_ns(cron_expr: str, base_ns: int) -> int | None:
     """Next fire time in ns, or None if the cron syntax is broken."""

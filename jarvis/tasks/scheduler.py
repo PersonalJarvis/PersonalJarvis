@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from jarvis.core.bus import EventBus
 from jarvis.core.events import Event, TaskScheduled
+from jarvis.core.misfire import is_missed, late_by_s
 from jarvis.tasks.schema import PAUSABLE_TRIGGER_TYPES, TERMINAL_STATES, TaskSpec
 
 if TYPE_CHECKING:
@@ -384,14 +385,51 @@ class TaskScheduler:
         if self._hydrated:
             return
         rows = await self._store.all_pending_scheduled()
+        now_ns = time.time_ns()
         for row in rows:
             spec = await self._store.get_spec(row["id"])
             if spec is None:
                 continue
             stored_due = row.get("due_at_ns")
+            if (
+                spec.trigger.type == "every"
+                and stored_due is not None
+                and is_missed(int(stored_due), now_ns)
+            ):
+                # BUG-212: a recurring slot that passed while the app was
+                # down is missed, not caught up at boot. Skip to the next
+                # occurrence on the task's own grid.
+                stored_due = await self._skip_missed_every(
+                    row["id"], spec, int(stored_due), now_ns,
+                )
             self._register_in_memory(spec, row["id"],
                                       stored_due_at_ns=stored_due)
         self._hydrated = True
+
+    async def _skip_missed_every(
+        self, task_id: str, spec: TaskSpec, due_ns: int, now_ns: int,
+    ) -> int:
+        """Record a missed recurring slot and return the next due time."""
+        next_due = next_every_due_ns(spec, now_ns)
+        late_s = late_by_s(due_ns, now_ns)
+        log.warning(
+            "Task %r missed its slot (%.0f min late) — skipped to the next "
+            "occurrence, not caught up", spec.title, late_s / 60,
+        )
+        try:
+            await self._store.append_step(
+                task_id, "log",
+                {
+                    "event": "missed",
+                    "due_at_ns": due_ns,
+                    "late_by_s": int(late_s),
+                    "next_due_at_ns": next_due,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("Could not record the missed slot for task %s", task_id)
+        await self._store.set_next_due(task_id, next_due)
+        return next_due
 
     def _register_in_memory(
         self,
@@ -497,18 +535,33 @@ class TaskScheduler:
         blocks the scheduler loop.
         """
         while self._heap and self._heap[0][0] <= now_ns:
-            _due, tid = heapq.heappop(self._heap)
+            due, tid = heapq.heappop(self._heap)
             self._known.discard(tid)
             spec = await self._store.get_spec(tid)
-            await self._dispatch_runner(tid)
             if spec is not None and spec.trigger.type == "every":
+                if is_missed(due, now_ns):
+                    # The process lived but did not tick (machine asleep,
+                    # loop blocked): same rule as at boot — skip, never
+                    # catch up (BUG-212).
+                    next_due = await self._skip_missed_every(tid, spec, due, now_ns)
+                    heapq.heappush(self._heap, (next_due, tid))
+                    self._known.add(tid)
+                    continue
+                await self._dispatch_runner(tid)
                 await self._rearm_every(tid, spec, now_ns)
+                continue
+            await self._dispatch_runner(tid)
 
     async def _rearm_every(self, task_id: str, spec: TaskSpec, now_ns: int) -> None:
-        """Re-insert a recurring task at ``now + interval`` and persist the
+        """Re-insert a recurring task at its next occurrence and persist the
         new due time so a restart picks the schedule back up.
+
+        Anchored tasks stay on their wall-clock grid (``start_at + k *
+        interval``); ``now + interval`` used to be the rule for every task,
+        so one late firing shifted a daily 07:30 automation permanently
+        (BUG-212). Unanchored tasks still re-arm one interval from now.
         """
-        next_due = now_ns + int(spec.trigger.interval_seconds * 1e9)
+        next_due = next_every_due_ns(spec, now_ns)
         heapq.heappush(self._heap, (next_due, task_id))
         self._known.add(task_id)
         await self._store.set_next_due(task_id, next_due)

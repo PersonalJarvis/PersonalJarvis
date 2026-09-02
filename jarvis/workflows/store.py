@@ -13,7 +13,7 @@ from typing import Any
 
 import aiosqlite
 
-from .schema import WorkflowDef
+from .schema import WORKFLOW_RUN_TERMINAL_STATES, WorkflowDef
 
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
@@ -199,7 +199,7 @@ class WorkflowStore:
     ) -> None:
         conn = self._require_conn()
         now = time.time_ns()
-        if state in ("completed", "failed", "cancelled"):
+        if state in WORKFLOW_RUN_TERMINAL_STATES:
             await conn.execute(
                 """
                 UPDATE workflow_runs
@@ -213,6 +213,45 @@ class WorkflowStore:
                 "UPDATE workflow_runs SET state = ?, error = COALESCE(?, error) WHERE id = ?",
                 (state, error, run_id),
             )
+
+    async def record_missed_run(
+        self,
+        workflow_id: str,
+        *,
+        due_at_ns: int,
+        late_by_s: float,
+    ) -> str:
+        """Persist a cron slot that passed while the app was not running.
+
+        A terminal ``missed`` run row, timestamped at the slot it stands for,
+        so the Runs list says WHY there was no 07:30 briefing instead of
+        showing nothing (BUG-212). The workflow's ``last_run`` is updated the
+        same way a real run would, so the card reads "missed" until the next
+        occurrence ran.
+        """
+        conn = self._require_conn()
+        from uuid import uuid4
+        run_id = str(uuid4())
+        now = time.time_ns()
+        minutes = int(late_by_s // 60)
+        await conn.execute(
+            """
+            INSERT INTO workflow_runs
+                (id, workflow_id, state, trigger, started_at_ns, finished_at_ns,
+                 error, input_json)
+            VALUES (?, ?, 'missed', 'cron', ?, ?, ?, '{}')
+            """,
+            (
+                run_id,
+                workflow_id,
+                due_at_ns,
+                now,
+                f"Slot missed: the app was not running at the scheduled time "
+                f"({minutes} min late when it came up); skipped to the next occurrence.",
+            ),
+        )
+        await self.set_last_run(workflow_id, due_at_ns, "missed")
+        return run_id
 
     async def list_runs(
         self,

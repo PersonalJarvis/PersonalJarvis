@@ -75,6 +75,15 @@ class BrainPromptStep(BaseModel):
     label: str = Field(default="", max_length=128)
     prompt: str = Field(min_length=1, max_length=16_384)
     max_output_chars: int = Field(default=2000, ge=100, le=50_000)
+    #: Tool allowlist for the isolated turn — the same grant names the
+    #: Automations use (``search_web``, ``gmail``, ``google_calendar``,
+    #: ``wiki-recall``, a plugin prefix like ``github``). A granted tool that
+    #: is not connected on this install is skipped, so the step degrades to
+    #: whatever is live instead of failing (BUG-212: the seed briefing had no
+    #: tools at all and could only greet).
+    tools: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
+    #: ``fast``/``auto`` = the provider's fast model, ``deep`` = its deep one.
+    model_tier: Literal["fast", "deep", "auto"] = "auto"
 
 
 class HarnessDispatchStep(BaseModel):
@@ -182,7 +191,11 @@ WorkflowRunState = Literal[
     "completed",    # all steps succeeded
     "failed",       # a step raised
     "cancelled",    # manually cancelled
+    "missed",       # the cron slot passed while the app was not running (BUG-212)
 ]
+
+#: Run states that never change again. Mirrored in ``hooks/useWorkflows.ts``.
+WORKFLOW_RUN_TERMINAL_STATES: tuple[str, ...] = ("completed", "failed", "cancelled", "missed")
 
 
 class WorkflowRun(BaseModel):

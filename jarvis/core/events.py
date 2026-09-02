@@ -1438,7 +1438,9 @@ class WorkflowScheduled(Event):
     """
     workflow_id: str = ""
     next_run_ns: int = 0
-    reason: str = "cron_next"       # "cron_next" | "registered" | "toggled_on"
+    # "cron_next" | "registered" | "toggled_on" | "missed" — the last one says
+    # the previous slot passed while the app was down and was skipped (BUG-212).
+    reason: str = "cron_next"
 
 
 @dataclass(frozen=True, slots=True)
