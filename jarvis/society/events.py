@@ -30,6 +30,7 @@ __all__ = [
     "KnowledgeScope",
     "MsgType",
     "PermissionCeiling",
+    "QuestState",
     "RoomState",
     "RunState",
     "SocietyEnvelope",
@@ -131,6 +132,22 @@ class RoomState(StrEnum):
     RUNNING = "running"
     SETTLED = "settled"
     FAILED = "failed"
+
+
+class QuestState(StrEnum):
+    """A quest on the board: posted by the person, taken by one agent.
+
+    ``open`` = no taker yet (routing found nobody and forging was not
+    possible); ``assigned`` = an ASSIGN is on the board; ``running`` = the
+    taker CLAIMed it; the three terminal states never change again.
+    """
+
+    OPEN = "open"
+    ASSIGNED = "assigned"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class ApprovalState(StrEnum):

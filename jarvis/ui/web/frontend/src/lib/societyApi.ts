@@ -55,6 +55,9 @@ export type RoomState = (typeof ROOM_STATES)[number];
 export const APPROVAL_STATES = ["pending", "approved", "denied", "expired", "blocked"] as const;
 export type ApprovalState = (typeof APPROVAL_STATES)[number];
 
+export const QUEST_STATES = ["open", "assigned", "running", "done", "failed", "cancelled"] as const;
+export type QuestState = (typeof QUEST_STATES)[number];
+
 /** One row of the board, as GET /api/society/events returns it. */
 export interface SocietyEnvelope {
   seq: number;

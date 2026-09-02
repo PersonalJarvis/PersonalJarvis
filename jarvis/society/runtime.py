@@ -28,10 +28,11 @@ from .bridge import MissionBridge
 from .browser.session import BrowserJobs
 from .capabilities import CapabilityRow, build_catalog
 from .checkpoints import CheckpointEngine
-from .events import MsgType, RoomState, SocietyEnvelope, Tier
+from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier
 from .focus import derive_approval_rules, derive_focus
 from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_factory
 from .memory import SocietyMemory
+from .quests import Quests
 from .rooms import Rooms
 from .roster import LEAD_AGENT_ID, AgentRecord, Roster
 from .scheduler import DeliverHook, SocietyScheduler
@@ -119,6 +120,8 @@ class SocietyRuntime:
         self.checkpoints = CheckpointEngine(self)
         #: The society's one memory service; every touch moves the figure to the Memory House.
         self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
+        #: The Quest Board: the person's jobs, routed to one taker, read back off the board.
+        self.quests = Quests(self)
         #: Roster rows the society surface read for a turn - the sync tool
         #: filter reads them here (the briefing fills the cache first).
         self._agent_cache: dict[str, AgentRecord] = {}
@@ -142,6 +145,7 @@ class SocietyRuntime:
         if bus is not None:
             self.bridge.attach(bus)
         self.checkpoints.attach()
+        self.quests.attach()
         await self.seed_lead()
         if self._seed_starter_team:
             created = await seed_first_run(self.roster, self.store)
@@ -164,6 +168,7 @@ class SocietyRuntime:
         self.scheduler.detach()
         self.bridge.detach()
         self.checkpoints.detach()
+        self.quests.detach()
         await self.store.close()
         self._started = False
         if current_runtime() is self:
@@ -416,6 +421,9 @@ class SocietyRuntime:
             "running": running,
             "last_seq": await self.store.last_seq(),
             "rooms_running": len(await self.rooms.list(state=RoomState.RUNNING)),
+            "quests_open": len(await self.quests.list(state=QuestState.OPEN))
+            + len(await self.quests.list(state=QuestState.ASSIGNED))
+            + len(await self.quests.list(state=QuestState.RUNNING)),
             "db_path": str(self.store.path),
         }
 

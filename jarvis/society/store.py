@@ -423,6 +423,62 @@ class SocietyStore:
 
     # ----------------------------------------------------------- knowledge
 
+    # -------------------------------------------------------------- quests
+
+    async def insert_quest(self, row: dict[str, Any]) -> None:
+        cols = ", ".join(row)
+        marks = ", ".join("?" for _ in row)
+        await self.conn.execute(
+            f"INSERT INTO society_quests ({cols}) VALUES ({marks})",  # noqa: S608 — identifiers from the caller's fixed dict, values bound
+            tuple(row.values()),
+        )
+
+    async def update_quest(self, quest_id: str, fields: dict[str, Any]) -> bool:
+        if not fields:
+            return False
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        cur = await self.conn.execute(
+            f"UPDATE society_quests SET {sets} WHERE quest_id = ?",  # noqa: S608 — identifiers from a fixed allowlist, values bound
+            (*fields.values(), quest_id),
+        )
+        await cur.close()
+        return bool(cur.rowcount)
+
+    async def get_quest_row(self, quest_id: str) -> dict[str, Any] | None:
+        self.conn.row_factory = aiosqlite.Row
+        cur = await self.conn.execute(
+            "SELECT * FROM society_quests WHERE quest_id = ?", (quest_id,)
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        return dict(row) if row else None
+
+    async def get_quest_row_by_trace(self, trace_id: str) -> dict[str, Any] | None:
+        self.conn.row_factory = aiosqlite.Row
+        cur = await self.conn.execute(
+            "SELECT * FROM society_quests WHERE trace_id = ?", (trace_id,)
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        return dict(row) if row else None
+
+    async def list_quest_rows(
+        self, *, state: str | None = None, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        self.conn.row_factory = aiosqlite.Row
+        if state is not None:
+            cur = await self.conn.execute(
+                "SELECT * FROM society_quests WHERE state = ? ORDER BY created_ms DESC LIMIT ?",
+                (state, int(limit)),
+            )
+        else:
+            cur = await self.conn.execute(
+                "SELECT * FROM society_quests ORDER BY created_ms DESC LIMIT ?", (int(limit),)
+            )
+        rows = await cur.fetchall()
+        await cur.close()
+        return [dict(r) for r in rows]
+
     async def insert_knowledge(self, row: dict[str, Any]) -> int:
         cols = ", ".join(row.keys())
         marks = ", ".join("?" for _ in row)

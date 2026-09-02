@@ -122,6 +122,29 @@ CREATE TABLE IF NOT EXISTS approvals (
 CREATE INDEX IF NOT EXISTS idx_approvals_state ON approvals(state, created_ms);
 CREATE INDEX IF NOT EXISTS idx_approvals_agent ON approvals(agent_id, state);
 
+-- Quests: one job the person posts on the board; trusted Python routes it to
+-- exactly one agent (jarvis/society/quests.py) and the lifecycle is read off
+-- society_events on the quest's trace, never written by a model.
+CREATE TABLE IF NOT EXISTS society_quests (
+    quest_id            TEXT PRIMARY KEY,
+    title               TEXT NOT NULL,
+    text                TEXT NOT NULL DEFAULT '',
+    state               TEXT NOT NULL DEFAULT 'open'
+                        CHECK (state IN ('open', 'assigned', 'running', 'done', 'failed', 'cancelled')),
+    created_by          TEXT NOT NULL DEFAULT 'user',
+    agent_id            TEXT,                       -- the taker, once routed
+    trace_id            TEXT NOT NULL UNIQUE,
+    assign_event_id     TEXT,
+    run_id              TEXT NOT NULL DEFAULT '',
+    routing_json        TEXT NOT NULL DEFAULT '{}', -- how the taker was chosen
+    result_json         TEXT NOT NULL DEFAULT '{}', -- the handoff, or the typed refusal
+    created_ms          INTEGER NOT NULL,
+    updated_ms          INTEGER NOT NULL,
+    done_ms             INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_society_quests_state ON society_quests(state, created_ms);
+
 -- Kill switch, schema version and other single values.
 CREATE TABLE IF NOT EXISTS society_meta (
     key                 TEXT PRIMARY KEY,

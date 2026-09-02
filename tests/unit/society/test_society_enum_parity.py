@@ -32,6 +32,7 @@ _PINS = [
     (events.KnowledgeOrigin, "origin", "KNOWLEDGE_ORIGINS"),
     (events.RoomState, None, "ROOM_STATES"),
     (events.ApprovalState, None, "APPROVAL_STATES"),
+    (events.QuestState, "society_quests.state", "QUEST_STATES"),
     (events.RunState, None, "RUN_STATES"),
 ]
 

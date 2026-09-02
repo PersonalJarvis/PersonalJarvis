@@ -2147,6 +2147,23 @@ class SocietyCheckpointChanged(Event):
     previous: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class SocietyQuestChanged(Event):
+    """A quest on the society's board changed state.
+
+    Published by :class:`jarvis.society.quests.Quests` after the row was
+    updated — posted, routed to a taker, claimed, done, failed or cancelled.
+    The WebSocket forwards it; the Quest Board in the world re-reads its list
+    within a second instead of on the next poll.
+    """
+
+    quest_id: str = ""
+    state: str = ""
+    previous: str = ""
+    agent_id: str = ""
+    title: str = ""
+
+
 # ----------------------------------------------------------------------
 # Visible-Feedback Contract (ADR-0016)
 # ----------------------------------------------------------------------

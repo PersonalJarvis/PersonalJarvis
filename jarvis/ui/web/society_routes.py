@@ -127,6 +127,12 @@ class AssignBody(BaseModel):
     lang: str | None = None
 
 
+class CreateQuestBody(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+    title: str = Field(default="", max_length=120)
+    lang: str | None = None
+
+
 class OpenRoomBody(BaseModel):
     members: list[str] = Field(min_length=2, max_length=6)
     topic: str = ""
@@ -309,6 +315,66 @@ async def kill_agent(agent_id: str, request: Request) -> dict[str, Any]:
                 log.debug("society kill: mission %s not cancellable", run_id)
     paused = await rt.roster.update(agent.agent_id, {"state": "paused"})
     return {"agent": paused.to_dict(), "runs_dropped": dropped}
+
+
+# ------------------------------------------------------------------ quests
+
+
+@router.get("/quests")
+async def list_quests(
+    request: Request, state: str | None = None, limit: int = 200
+) -> dict[str, Any]:
+    """The Quest Board: newest first, optionally one state only."""
+    rt = await _runtime(request)
+    quests = await rt.quests.list(state=state or None, limit=max(1, min(int(limit), 1000)))
+    return {"quests": [q.to_dict() for q in quests]}
+
+
+@router.post("/quests", openapi_extra={"x-jarvis-dangerous": True})
+async def create_quest(body: CreateQuestBody, request: Request) -> dict[str, Any]:
+    """Post a quest: trusted Python routes it to one agent (forging one when
+    nobody fits) and the scheduler starts the work — this spends."""
+    rt = await _runtime(request)
+    try:
+        quest = await rt.quests.create(body.text, title=body.title, lang=body.lang)
+    except RosterError as exc:
+        raise _typed_error(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"quest": quest.to_dict()}
+
+
+@router.get("/quests/{quest_id}")
+async def get_quest(quest_id: str, request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    quest = await rt.quests.get(quest_id)
+    if quest is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    events = await rt.store.events_for_trace(quest.trace_id)
+    return {"quest": quest.to_dict(), "events": [e.model_dump() for e in events]}
+
+
+@router.post("/quests/{quest_id}/cancel", openapi_extra={"x-jarvis-dangerous": True})
+async def cancel_quest(quest_id: str, request: Request) -> dict[str, Any]:
+    rt = await _runtime(request)
+    try:
+        quest = await rt.quests.cancel(quest_id)
+    except KeyError as exc:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+    return {"quest": quest.to_dict()}
+
+
+@router.post("/quests/{quest_id}/retry", openapi_extra={"x-jarvis-dangerous": True})
+async def retry_quest(quest_id: str, request: Request) -> dict[str, Any]:
+    """A failed or open quest is routed again (the taker may differ)."""
+    rt = await _runtime(request)
+    try:
+        quest = await rt.quests.retry(quest_id)
+    except KeyError as exc:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+    except RosterError as exc:
+        raise _typed_error(exc) from exc
+    return {"quest": quest.to_dict()}
 
 
 # ------------------------------------------------------------------- board

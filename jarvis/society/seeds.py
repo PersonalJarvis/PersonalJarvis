@@ -23,7 +23,7 @@ from .events import Tier
 from .focus import derive_approval_rules, derive_focus
 from .roster import Roster
 
-__all__ = ["STARTER_TEAM", "propose_seeds", "seed_first_run"]
+__all__ = ["STARTER_TEAM", "proposal_for_capability", "propose_seeds", "seed_first_run"]
 
 _SEEDED_KEY: Final[str] = "seeded_starter_team"
 
@@ -134,6 +134,26 @@ def propose_seeds(
             }
         )
     return out
+
+
+def proposal_for_capability(cap_id: str, catalog: list[CapabilityRow]) -> dict[str, Any] | None:
+    """The teammate proposed for ONE connected capability, ready for ``Roster.create``
+    (the quest board forges it when nobody on the roster fits a quest)."""
+    if not any(row.id == cap_id and row.connected for row in catalog):
+        return None
+    for proposal_cap, proposal in _PROPOSALS:
+        if proposal_cap != cap_id:
+            continue
+        focus = derive_focus(proposal["title"], proposal["description"], catalog)
+        if cap_id not in focus:
+            focus = [cap_id, *focus]
+        return {
+            **proposal,
+            "tier": str(Tier.SPECIALIST),
+            "focus": focus,
+            "approval_rules": derive_approval_rules(proposal["description"], focus),
+        }
+    return None
 
 
 async def seed_first_run(roster: Roster, store: Any) -> list[str]:
