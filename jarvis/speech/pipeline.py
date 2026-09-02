@@ -10262,6 +10262,67 @@ class SpeechPipeline:
             and self._capture_permission_allowed()
         )
 
+    def dictation_engine_status(self) -> dict[str, Any]:
+        """Which recognizer the dictation lane will really use, for the UI.
+
+        The settings name a provider; the lane in front of the microphone may
+        be a different one (an environment override, a keyless family crossed
+        to another, the on-device final pass ahead of them all — P-41). Four
+        days of dictations ran on a recognizer the settings did not name
+        before anyone could see it. This answers with what is actually armed:
+
+        ``local`` — whether the on-device pass is in front; ``provider`` /
+        ``model`` — the recognizer that answers the next press (the local
+        engine when it is up, else the first cloud family behind it);
+        ``fallback`` — the provider one step behind; ``detail`` — why the
+        local engine is NOT in front right now, when it is not (a full card,
+        a CPU-only host, a missing runtime), so the reason is a sentence on
+        the card instead of a log line. Never raises.
+        """
+        status: dict[str, Any] = {
+            "local": False,
+            "provider": "",
+            "model": "",
+            "fallback": "",
+            "detail": "",
+        }
+        try:
+            stt = self._dictation_stt()
+        except Exception as exc:  # noqa: BLE001 — a status probe never breaks the view
+            log.debug("dictation engine status: provider unavailable (%s)", exc)
+            return status
+        if stt is None:
+            return status
+        # Walk down through the transparent wrappers (meter, dictionary) to the
+        # chain; each one delegates unknown attributes, so the private handles
+        # of FallbackSTT are reachable without naming the wrappers.
+        primary = getattr(stt, "_primary", None)
+        alternates = list(getattr(stt, "_alternate_names", ()) or ())
+        if primary is None:
+            status["provider"] = str(
+                getattr(stt, "provider_label", "") or getattr(stt, "name", "") or ""
+            )
+            status["model"] = str(getattr(stt, "last_used_model", "") or "")
+            return status
+        from jarvis.dictation.local_final import LocalFinalSTT
+
+        if isinstance(primary, LocalFinalSTT):
+            status["local"] = bool(primary.is_warm)
+            status["detail"] = "" if primary.is_warm else str(primary.unavailable_reason)
+            if primary.is_warm:
+                status["provider"] = primary.provider_label
+                status["model"] = primary.last_used_model
+                status["fallback"] = alternates[0] if alternates else ""
+            else:
+                status["provider"] = alternates[0] if alternates else ""
+                status["fallback"] = alternates[1] if len(alternates) > 1 else ""
+                status["model"] = ""
+            return status
+        status["provider"] = str(getattr(stt, "provider_label", "") or "")
+        status["model"] = str(getattr(stt, "last_used_model", "") or "")
+        status["fallback"] = alternates[0] if alternates else ""
+        return status
+
     def start_dictation(self, *, target: str = "chat", source: str = "api") -> bool:
         """Begin a transcribe-only dictation session (idempotent-safe).
 

@@ -253,6 +253,78 @@ def test_the_lane_puts_the_local_engine_in_front_of_the_configured_provider(
     assert built == []
 
 
+def test_the_engine_status_names_what_really_answers_the_next_press(
+    _local_ok: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Four days of dictations ran on a recognizer the settings did not name;
+    the status card now says which one is armed and why the local one is not."""
+    import jarvis.plugins.stt as stt_plugins
+    import jarvis.speech.pipeline as pipeline_mod
+    import jarvis.speech.stt_dictionary as dictionary
+    from jarvis.core.config import DictationConfig, STTConfig
+    from jarvis.speech.pipeline import SpeechPipeline
+
+    monkeypatch.setattr(
+        stt_plugins, "build_stt_from_config", lambda cfg, **_k: SimpleNamespace(name="groq")
+    )
+    monkeypatch.setattr(
+        pipeline_mod, "_resolve_stt_fallback_chain", lambda *_a, **_k: ("openai-api",)
+    )
+    monkeypatch.setattr(dictionary, "wrap_stt_with_dictionary", lambda provider: provider)
+
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._dictation_stt_instance = None
+    pipe._utterance_stt = object()
+    pipe._dictation_cfg = DictationConfig()
+    pipe._config = SimpleNamespace(stt=STTConfig(provider="groq-api"))
+
+    # Before the worker is up, the configured cloud provider answers.
+    before = pipe.dictation_engine_status()
+    assert before["local"] is False
+    assert before["provider"] == "groq-api"
+    assert before["fallback"] == "openai-api"
+
+    # After warm-up the local engine is in front and the cloud is one behind.
+    pipe._dictation_stt()._primary.warm_up()
+    after = pipe.dictation_engine_status()
+    assert after["local"] is True
+    assert after["provider"] == "faster-whisper"
+    assert after["model"] == local_final_mod.DEFAULT_FINAL_MODEL
+    assert after["fallback"] == "groq-api"
+    assert after["detail"] == ""
+
+
+def test_the_engine_status_explains_a_declined_local_engine(
+    _local_ok: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import jarvis.hardware.detection as detection
+    import jarvis.plugins.stt as stt_plugins
+    import jarvis.speech.pipeline as pipeline_mod
+    import jarvis.speech.stt_dictionary as dictionary
+    from jarvis.core.config import DictationConfig, STTConfig
+    from jarvis.speech.pipeline import SpeechPipeline
+
+    monkeypatch.setattr(detection, "free_accelerator_gb", lambda: (0.4, "nvml"))
+    monkeypatch.setattr(
+        stt_plugins, "build_stt_from_config", lambda cfg, **_k: SimpleNamespace(name="groq")
+    )
+    monkeypatch.setattr(pipeline_mod, "_resolve_stt_fallback_chain", lambda *_a, **_k: ())
+    monkeypatch.setattr(dictionary, "wrap_stt_with_dictionary", lambda provider: provider)
+
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._dictation_stt_instance = None
+    pipe._utterance_stt = object()
+    pipe._dictation_cfg = DictationConfig()
+    pipe._config = SimpleNamespace(stt=STTConfig(provider="groq-api"))
+    pipe._dictation_stt()._primary.warm_up()  # declined: 0.4 GB free
+
+    status = pipe.dictation_engine_status()
+
+    assert status["local"] is False
+    assert status["provider"] == "groq-api"
+    assert "0.4 GB" in status["detail"]
+
+
 def test_the_switch_keeps_the_configured_provider_in_front(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

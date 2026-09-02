@@ -671,10 +671,28 @@ async def get_status(request: Request) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         log.debug("insertion probe failed: %s", exc)
 
+    # Which recognizer really answers the next press (P-41): the settings
+    # name one provider, an environment override or a keyless crossing may
+    # have put another in front, and the on-device pass sits ahead of both.
+    engine: dict[str, Any] = {
+        "local": False,
+        "provider": "",
+        "model": "",
+        "fallback": "",
+        "detail": "",
+    }
+    probe = getattr(pipeline, "dictation_engine_status", None)
+    if callable(probe):
+        try:
+            engine = dict(probe())
+        except Exception as exc:  # noqa: BLE001 — never 500 a status probe
+            log.debug("dictation engine probe failed: %s", exc)
+
     return {
         "available": available,
         "active": active,
         "reason": reason,
+        "engine": engine,
         "hotkey": str(getattr(trigger, "hotkey_dictate", "") or ""),
         # The hands-free key is its own action, not a mode of the hold key, so
         # both can be armed at once. Reported separately for the same reason:

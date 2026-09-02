@@ -188,6 +188,19 @@ export interface DictationStatus {
     reason: string;
     detail: string;
   };
+  /**
+   * Which recognizer really answers the next press (P-41). `local` is true
+   * while the on-device final pass is armed in front; `provider`/`model`
+   * name whatever answers next, `fallback` the one behind it, and `detail`
+   * says why the local engine is NOT in front when it is not.
+   */
+  engine?: {
+    local: boolean;
+    provider: string;
+    model: string;
+    fallback: string;
+    detail: string;
+  };
 }
 
 /** One recorded dictation — raw transcript alongside what was inserted. */

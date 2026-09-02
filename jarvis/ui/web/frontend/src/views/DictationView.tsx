@@ -249,6 +249,20 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
                         : t("dictation.shortcut_unset")
                       : status?.reason || t("dictation.state_unavailable")}
                   </p>
+                  {/* Which recognizer really answers the next press (P-41):
+                      the settings name one, the lane may hold another. */}
+                  {status?.available && status.engine?.provider && (
+                    <p className="mt-1 text-meta text-muted-foreground">
+                      {status.engine.local
+                        ? t("dictation.engine_local")
+                            .replace("{0}", status.engine.model || status.engine.provider)
+                            .replace("{1}", status.engine.fallback || "—")
+                        : t("dictation.engine_cloud").replace("{0}", status.engine.provider)}
+                      {!status.engine.local && status.engine.detail
+                        ? ` ${t("dictation.engine_local_off").replace("{0}", status.engine.detail)}`
+                        : ""}
+                    </p>
+                  )}
                 </div>
                 <Button
                   className="gap-2"
