@@ -65,21 +65,22 @@
          replaced by the real UI automatically.
 
          The two grounds match the pywebview window colour for their theme
-         (jarvis/ui/shell/window.py), so the window frame and its contents are
-         one surface from the first frame. Keep the pairs in lockstep. */
+         (jarvis/ui/theme.py WINDOW_BACKGROUND) and --background in index.css,
+         so the window frame and its contents are one surface from the first
+         frame. The accent is --accent. Keep the three in lockstep. */
       :root {
-        --jbs-bg: #fcfbf8;
-        --jbs-accent: #a86b00;
-        --jbs-ring: rgba(168, 107, 0, 0.22);
-        --jbs-name: #2b2b33;
-        --jbs-sub: #6b6b76;
+        --jbs-bg: #ffffff;
+        --jbs-accent: #0a6ff5;
+        --jbs-ring: rgba(10, 111, 245, 0.22);
+        --jbs-name: #171717;
+        --jbs-sub: #666666;
       }
       :root.dark {
-        --jbs-bg: #0a0e14;
-        --jbs-accent: #e7c46e;
-        --jbs-ring: rgba(231, 196, 110, 0.2);
-        --jbs-name: #e6e6e6;
-        --jbs-sub: #9aa3ad;
+        --jbs-bg: #0a0a0a;
+        --jbs-accent: #3d8bff;
+        --jbs-ring: rgba(61, 139, 255, 0.2);
+        --jbs-name: #fafafa;
+        --jbs-sub: #a1a1a1;
       }
       html, body { margin: 0; height: 100%; background: var(--jbs-bg); }
       #jarvis-boot-splash {
@@ -105,8 +106,8 @@
       }
       @keyframes jbs-spin { to { transform: rotate(360deg); } }
     </style>
-    <script type="module" crossorigin src="/assets/index-Dx7oTHUC.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-C_bkMriJ.css">
+    <script type="module" crossorigin src="/assets/index-9BrGGQBk.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DxyxIg8I.css">
   </head>
   <body>
     <div id="root">
@@ -451,6 +452,6 @@
           report();
         }, POLL_MS);
       })();
-    </script>
+    </script>
   </body>
 </html>
