@@ -132,6 +132,7 @@
     "reset": "Leeren",
     "reset_done": "Anweisungen geleert",
     "load_template": "Mit Vorlage starten",
+    "write_from_scratch": "Selbst schreiben",
     "applies_next_turn": "Gilt ab der nächsten Antwort deines Assistenten — kein Neustart nötig."
   },
   "extensions": {
@@ -5098,6 +5099,37 @@
     "mode_pipeline": "Stimme rein und raus"
   },
   "society": {
+    "chat": {
+      "placeholder": "Nachricht an {0}",
+      "more": "Mehr",
+      "attach": "Datei anhängen",
+      "record": "Sprachnachricht aufnehmen",
+      "stop_recording": "Aufnahme beenden",
+      "send": "Senden",
+      "stop": "Stopp",
+      "new_chat": "Neue Unterhaltung",
+      "model": "Modell",
+      "model_default": "Gehirn von Jarvis",
+      "model_provider_default": "Anbieter-Standard",
+      "models_loading": "Modelle werden geladen…",
+      "effort": "Denkaufwand",
+      "effort_default": "auto",
+      "today": "Heute",
+      "empty_title": "Sprich mit {0}",
+      "empty_hint": "Tippen, sprechen oder einen anderen Agenten mit @ nennen — Jarvis gibt die Aufgabe weiter und meldet sich zurück.",
+      "thinking": "Denkt nach…",
+      "thought_for": "{0} s nachgedacht",
+      "thought": "Nachgedacht",
+      "thought_hidden": "Das Modell hält sein Denken privat; es hat hier nachgedacht.",
+      "tool_running": "läuft",
+      "tool_done": "fertig",
+      "tool_failed": "fehlgeschlagen",
+      "tool_waiting": "wartet auf deine Freigabe",
+      "approve": "Erlauben",
+      "deny": "Ablehnen",
+      "mention_hint": "Agenten",
+      "delegate_line": "Hand this to the agent '{0}' (id {1}) with delegate-to-agent and report back here when it is done."
+    },
     "world": {
       "minimap_label": "Inselkarte",
       "mode_world": "Die Insel",

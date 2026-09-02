@@ -64,7 +64,7 @@ export function SocietyView() {
         onOpen={setOpenAgentId}
         onCreate={() => setCreating(true)}
       />
-      <AgentCardOverlay agent={openAgent} onClose={() => setOpenAgentId(null)} />
+      <AgentCardOverlay agent={openAgent} roster={agents} onClose={() => setOpenAgentId(null)} />
       <CreateAgentDialog open={creating} onClose={() => setCreating(false)} onCreated={onCreated} />
     </div>
   );

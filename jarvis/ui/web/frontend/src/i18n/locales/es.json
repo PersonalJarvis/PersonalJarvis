@@ -132,6 +132,7 @@
     "reset": "Vaciar",
     "reset_done": "Instrucciones vaciadas",
     "load_template": "Empezar con plantilla",
+    "write_from_scratch": "Escribir desde cero",
     "applies_next_turn": "Se aplica en el próximo mensaje de tu asistente — sin reinicio."
   },
   "extensions": {
@@ -5098,6 +5099,37 @@
     "mode_pipeline": "voz de entrada y salida"
   },
   "society": {
+    "chat": {
+      "placeholder": "Mensaje a {0}",
+      "more": "Más",
+      "attach": "Adjuntar un archivo",
+      "record": "Grabar un mensaje de voz",
+      "stop_recording": "Detener la grabación",
+      "send": "Enviar",
+      "stop": "Parar",
+      "new_chat": "Nueva conversación",
+      "model": "Modelo",
+      "model_default": "Cerebro de Jarvis",
+      "model_provider_default": "predeterminado del proveedor",
+      "models_loading": "Cargando modelos…",
+      "effort": "Esfuerzo de razonamiento",
+      "effort_default": "auto",
+      "today": "Hoy",
+      "empty_title": "Habla con {0}",
+      "empty_hint": "Escribe, habla o nombra a otro agente con @: Jarvis le pasa la tarea e informa aquí.",
+      "thinking": "Pensando…",
+      "thought_for": "Pensó {0} s",
+      "thought": "Pensó",
+      "thought_hidden": "El modelo mantiene privado su razonamiento; aquí sí pensó.",
+      "tool_running": "en curso",
+      "tool_done": "hecho",
+      "tool_failed": "falló",
+      "tool_waiting": "esperando tu aprobación",
+      "approve": "Permitir",
+      "deny": "Denegar",
+      "mention_hint": "Agentes",
+      "delegate_line": "Hand this to the agent '{0}' (id {1}) with delegate-to-agent and report back here when it is done."
+    },
     "world": {
       "minimap_label": "Mapa de la isla",
       "mode_world": "La isla",

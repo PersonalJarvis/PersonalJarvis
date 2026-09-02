@@ -132,6 +132,7 @@
     "reset": "Clear",
     "reset_done": "Instructions cleared",
     "load_template": "Start from template",
+    "write_from_scratch": "Write from scratch",
     "applies_next_turn": "Applies on your assistant's next message — no restart needed."
   },
   "extensions": {
@@ -5098,6 +5099,37 @@
     "mode_pipeline": "voice in and out"
   },
   "society": {
+    "chat": {
+      "placeholder": "Message {0}",
+      "more": "More",
+      "attach": "Attach a file",
+      "record": "Record a voice message",
+      "stop_recording": "Stop recording",
+      "send": "Send",
+      "stop": "Stop",
+      "new_chat": "New conversation",
+      "model": "Model",
+      "model_default": "Jarvis' brain",
+      "model_provider_default": "provider default",
+      "models_loading": "Loading models…",
+      "effort": "Thinking effort",
+      "effort_default": "auto",
+      "today": "Today",
+      "empty_title": "Talk to {0}",
+      "empty_hint": "Type, speak, or name another agent with @ — Jarvis hands the task over and reports back.",
+      "thinking": "Thinking…",
+      "thought_for": "Thought for {0} s",
+      "thought": "Thought",
+      "thought_hidden": "The model keeps its reasoning private; it did think here.",
+      "tool_running": "running",
+      "tool_done": "done",
+      "tool_failed": "failed",
+      "tool_waiting": "waiting for your approval",
+      "approve": "Allow",
+      "deny": "Deny",
+      "mention_hint": "Agents",
+      "delegate_line": "Hand this to the agent '{0}' (id {1}) with delegate-to-agent and report back here when it is done."
+    },
     "world": {
       "minimap_label": "Island map",
       "mode_world": "The island",

@@ -190,6 +190,48 @@
         "work"
       ],
       "height_m": 2.187
+    },
+    {
+      "id": "spirit/gigi",
+      "file": "spirit-gigi.glb",
+      "archetype": "spirit",
+      "variant": "default",
+      "base": "gigi",
+      "label": "Gigi",
+      "styles": [
+        "spirit"
+      ],
+      "heightM": 1.9,
+      "palette": {
+        "skin": "#f4b68f",
+        "skin_shade": "#d99a75",
+        "hair": "#9e5d47",
+        "eyes": "#050505",
+        "primary": "#0e0e0e",
+        "primary_shade": "#5a5a5a",
+        "secondary": "#ffffff",
+        "secondary_shade": "#c9c9c9",
+        "accent": "#ffd166",
+        "metal": "#919da2",
+        "leather": "#9a5944",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#4a2e22",
+        "eye_white": "#ffffff",
+        "emissive": "#ffffff"
+      },
+      "source": "Gigi mascot (first-party) / Gigi",
+      "license": "first-party",
+      "triangles": 3540,
+      "clips": [
+        "celebrate",
+        "idle",
+        "sleep",
+        "talk",
+        "walk",
+        "wave"
+      ],
+      "height_m": 1.8967
     }
   ],
   "parts": [

@@ -1,0 +1,31 @@
+{
+  "$comment": "Gigi, the app's own pixel-ghost mascot, as the society's lead figure (spirit archetype). No external file: gigi_builder.py models the figure from the same SVG outline the deck room extrudes (components/deck/room/GigiFigure.tsx, wiki-video/public/gigi.svg) and keys its clips by script, so the whole character is first-party and reproducible.",
+  "name": "Gigi mascot (first-party)",
+  "author": "Personal Jarvis",
+  "license": "first-party",
+  "license_url": "",
+  "procedural": "gigi",
+  "files": {},
+  "characters": {
+    "Gigi": {
+      "default_palette": {
+        "skin": "#f4b68f",
+        "skin_shade": "#d99a75",
+        "hair": "#9e5d47",
+        "eyes": "#050505",
+        "primary": "#0e0e0e",
+        "primary_shade": "#5a5a5a",
+        "secondary": "#ffffff",
+        "secondary_shade": "#c9c9c9",
+        "accent": "#ffd166",
+        "metal": "#919da2",
+        "leather": "#9a5944",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#4a2e22",
+        "eye_white": "#ffffff",
+        "emissive": "#ffffff"
+      }
+    }
+  }
+}

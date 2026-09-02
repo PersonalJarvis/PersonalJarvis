@@ -143,7 +143,8 @@ const LOCAL_ROSTER: SocietyAgent[] = [];
 /** A default look for a backend row that never chose one: deterministic per id, so it stays. */
 export function defaultFigureFor(agentId: string, tier: AgentTier): FigureRecipe {
   if (tier === "lead") {
-    return SAMPLE_ROSTER[0].figure ?? { contract: 1, archetype: "biped", base: "rogue", parts: {} };
+    // The lead is Jarvis, and Jarvis is Gigi — the app's own mascot.
+    return { contract: 1, archetype: "spirit", base: "gigi", parts: {}, style: "spirit" };
   }
   let h = 0;
   for (let i = 0; i < agentId.length; i++) h = (h * 31 + agentId.charCodeAt(i)) | 0;

@@ -12,6 +12,7 @@ into `scripts/figures/cache/` and verified by sha256 before the build touches th
 | `biped-knight.glb` | KayKit Character Pack: Adventurers 1.0 / Knight | CC0-1.0 | body meshes joined; IK/control bones dropped; 23 deform bones renamed; clips kept/renamed, root XZ zeroed, loops closed; faces re-UV'd onto the palette strip; hair as its own primitive; FWD marker; extras |
 | `biped-mage.glb` | KayKit Character Pack: Adventurers 1.0 / Mage | CC0-1.0 | body meshes joined; IK/control bones dropped; 23 deform bones renamed; clips kept/renamed, root XZ zeroed, loops closed; faces re-UV'd onto the palette strip; hair as its own primitive; FWD marker; extras |
 | `biped-rogue.glb` | KayKit Character Pack: Adventurers 1.0 / Rogue | CC0-1.0 | body meshes joined; IK/control bones dropped; 23 deform bones renamed; clips kept/renamed, root XZ zeroed, loops closed; faces re-UV'd onto the palette strip; hair as its own primitive; FWD marker; extras |
+| `spirit-gigi.glb` | Gigi mascot (first-party) / Gigi | first-party | body meshes joined; IK/control bones dropped; 23 deform bones renamed; clips kept/renamed, root XZ zeroed, loops closed; faces re-UV'd onto the palette strip; hair as its own primitive; FWD marker; extras |
 | `back-fur-cape.glb` | KayKit Character Pack: Adventurers 1.0 / Barbarian_Cape | CC0-1.0 | unparented at rest, skinned to `chest` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `back-knight-cape.glb` | KayKit Character Pack: Adventurers 1.0 / Knight_Cape | CC0-1.0 | unparented at rest, skinned to `chest` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `back-mage-cape.glb` | KayKit Character Pack: Adventurers 1.0 / Mage_Cape | CC0-1.0 | unparented at rest, skinned to `chest` with weight 1; re-UV'd onto the palette strip; no clips; extras |
@@ -33,5 +34,6 @@ into `scripts/figures/cache/` and verified by sha256 before the build touches th
   - `Knight.glb` sha256 `60428e3abc09ba83e595d256e3af8c5c976b46cdae599f0802fc82b4a3445168`
   - `Mage.glb` sha256 `cf898585da33fab50c724d31605fb931eb2912e6d2280092141e98ca81ad507d`
   - `Barbarian.glb` sha256 `cefc311a0e10c7858b6141f5ada7e33268727564fb8ac1347aab97d000669cc6`
+- **Gigi mascot (first-party)** — Personal Jarvis, first-party (); files:
 
 Licenses recorded at fetch time. CC0 needs no attribution; credit is given anyway.

@@ -18,22 +18,13 @@ import type { FigureRecipe } from "./figures/figureRecipe";
 const SAMPLE_LAST_ACTIVE_MS = Date.UTC(2026, 7, 20, 12, 0, 0);
 const SAMPLE_CREATED_MS = Date.UTC(2026, 7, 1, 9, 0, 0);
 
+/** Jarvis is Gigi — the app's own pixel-ghost mascot, built as the spirit base. */
 const LEAD_FIGURE: FigureRecipe = {
   contract: 1,
-  archetype: "biped",
-  base: "rogue",
-  parts: { hand_r: "hand_r-mug" },
-  palette: {
-    skin: "#f1c4a0",
-    hair: "#3b2a20",
-    primary: "#1f2a44",
-    secondary: "#f2f2ee",
-    accent: "#c9a227",
-    metal: "#c9a227",
-    leather: "#2b2b2b",
-    shoes: "#1a1a1a",
-  },
-  heightM: 1.82,
+  archetype: "spirit",
+  base: "gigi",
+  parts: {},
+  style: "spirit",
 };
 
 const SCOUT_FIGURE: FigureRecipe = {

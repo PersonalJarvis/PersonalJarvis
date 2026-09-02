@@ -61,35 +61,122 @@
         "foot_r",
         "toes_r"
       ],
-      "feet": ["toes_l", "toes_r"],
+      "feet": [
+        "toes_l",
+        "toes_r"
+      ],
       "slots": {
-        "hair": { "attach": "head" },
-        "headgear": { "attach": "head" },
-        "face_extra": { "attach": "head" },
-        "torso_over": { "attach": "chest" },
-        "belt": { "attach": "hips" },
-        "back": { "attach": "chest" },
-        "hand_l": { "attach": "handslot_l" },
-        "hand_r": { "attach": "handslot_r" },
-        "feet": { "attach": "hips" }
+        "hair": {
+          "attach": "head"
+        },
+        "headgear": {
+          "attach": "head"
+        },
+        "face_extra": {
+          "attach": "head"
+        },
+        "torso_over": {
+          "attach": "chest"
+        },
+        "belt": {
+          "attach": "hips"
+        },
+        "back": {
+          "attach": "chest"
+        },
+        "hand_l": {
+          "attach": "handslot_l"
+        },
+        "hand_r": {
+          "attach": "handslot_r"
+        },
+        "feet": {
+          "attach": "hips"
+        }
       },
       "clips": {
-        "idle": { "loop": true, "duration": [0.8, 6.0] },
-        "walk": { "loop": true, "duration": [0.8, 1.2], "stride": true },
-        "run": { "loop": true, "duration": [0.5, 0.9], "stride": true },
-        "work": { "loop": true, "duration": [0.5, 4.0] },
-        "talk": { "loop": true, "duration": [0.8, 3.0] },
-        "sit": { "loop": true, "duration": [1.0, 6.0] },
-        "sleep": { "loop": true, "duration": [1.0, 6.0] },
-        "celebrate": { "loop": false, "duration": [0.5, 4.0] },
-        "wave": { "loop": false, "duration": [0.5, 3.0] }
+        "idle": {
+          "loop": true,
+          "duration": [
+            0.8,
+            6.0
+          ]
+        },
+        "walk": {
+          "loop": true,
+          "duration": [
+            0.8,
+            1.2
+          ],
+          "stride": true
+        },
+        "run": {
+          "loop": true,
+          "duration": [
+            0.5,
+            0.9
+          ],
+          "stride": true
+        },
+        "work": {
+          "loop": true,
+          "duration": [
+            0.5,
+            4.0
+          ]
+        },
+        "talk": {
+          "loop": true,
+          "duration": [
+            0.8,
+            3.0
+          ]
+        },
+        "sit": {
+          "loop": true,
+          "duration": [
+            1.0,
+            6.0
+          ]
+        },
+        "sleep": {
+          "loop": true,
+          "duration": [
+            1.0,
+            6.0
+          ]
+        },
+        "celebrate": {
+          "loop": false,
+          "duration": [
+            0.5,
+            4.0
+          ]
+        },
+        "wave": {
+          "loop": false,
+          "duration": [
+            0.5,
+            3.0
+          ]
+        }
       },
       "variants": {
-        "small": { "height_m": 1.15 },
-        "medium": { "height_m": 1.75 },
-        "large": { "height_m": 2.3 }
+        "small": {
+          "height_m": 1.15
+        },
+        "medium": {
+          "height_m": 1.75
+        },
+        "large": {
+          "height_m": 2.3
+        }
       },
-      "budget": { "triangles": 4500, "materials": 2, "primitives": 2 }
+      "budget": {
+        "triangles": 4500,
+        "materials": 2,
+        "primitives": 2
+      }
     },
     "quadruped": {
       "bones": [
@@ -115,44 +202,169 @@
         "lower_leg_br",
         "foot_br"
       ],
-      "optional_bones": ["ear_l", "ear_r", "wing_l", "wing_r"],
-      "feet": ["foot_fl", "foot_fr", "foot_bl", "foot_br"],
+      "optional_bones": [
+        "ear_l",
+        "ear_r",
+        "wing_l",
+        "wing_r"
+      ],
+      "feet": [
+        "foot_fl",
+        "foot_fr",
+        "foot_bl",
+        "foot_br"
+      ],
       "slots": {
-        "headgear": { "attach": "head" },
-        "collar": { "attach": "neck" },
-        "back": { "attach": "chest" },
-        "tail_extra": { "attach": "tail_2" }
+        "headgear": {
+          "attach": "head"
+        },
+        "collar": {
+          "attach": "neck"
+        },
+        "back": {
+          "attach": "chest"
+        },
+        "tail_extra": {
+          "attach": "tail_2"
+        }
       },
       "clips": {
-        "idle": { "loop": true, "duration": [0.8, 6.0] },
-        "walk": { "loop": true, "duration": [0.6, 1.4], "stride": true },
-        "run": { "loop": true, "duration": [0.4, 0.9], "stride": true },
-        "talk": { "loop": true, "duration": [0.8, 3.0] },
-        "sit": { "loop": true, "duration": [1.0, 6.0] },
-        "sleep": { "loop": true, "duration": [1.0, 6.0] },
-        "celebrate": { "loop": false, "duration": [0.5, 4.0] }
+        "idle": {
+          "loop": true,
+          "duration": [
+            0.8,
+            6.0
+          ]
+        },
+        "walk": {
+          "loop": true,
+          "duration": [
+            0.6,
+            1.4
+          ],
+          "stride": true
+        },
+        "run": {
+          "loop": true,
+          "duration": [
+            0.4,
+            0.9
+          ],
+          "stride": true
+        },
+        "talk": {
+          "loop": true,
+          "duration": [
+            0.8,
+            3.0
+          ]
+        },
+        "sit": {
+          "loop": true,
+          "duration": [
+            1.0,
+            6.0
+          ]
+        },
+        "sleep": {
+          "loop": true,
+          "duration": [
+            1.0,
+            6.0
+          ]
+        },
+        "celebrate": {
+          "loop": false,
+          "duration": [
+            0.5,
+            4.0
+          ]
+        }
       },
-      "variants": { "default": { "height_m": 0.9 } },
-      "budget": { "triangles": 4500, "materials": 2, "primitives": 2 }
+      "variants": {
+        "default": {
+          "height_m": 0.9
+        }
+      },
+      "budget": {
+        "triangles": 4500,
+        "materials": 2,
+        "primitives": 2
+      }
     },
     "spirit": {
-      "bones": ["root", "body", "face"],
+      "bones": [
+        "root",
+        "body",
+        "face"
+      ],
       "feet": [],
       "slots": {
-        "headgear": { "attach": "body" },
-        "hand_l": { "attach": "body" },
-        "hand_r": { "attach": "body" }
+        "headgear": {
+          "attach": "body"
+        },
+        "hand_l": {
+          "attach": "body"
+        },
+        "hand_r": {
+          "attach": "body"
+        }
       },
       "clips": {
-        "idle": { "loop": true, "duration": [0.8, 6.0] },
-        "walk": { "loop": true, "duration": [0.6, 2.0], "stride": false },
-        "talk": { "loop": true, "duration": [0.8, 3.0] },
-        "sleep": { "loop": true, "duration": [1.0, 6.0] },
-        "celebrate": { "loop": false, "duration": [0.5, 4.0] },
-        "wave": { "loop": false, "duration": [0.5, 3.0] }
+        "idle": {
+          "loop": true,
+          "duration": [
+            0.8,
+            6.0
+          ]
+        },
+        "walk": {
+          "loop": true,
+          "duration": [
+            0.6,
+            2.0
+          ],
+          "stride": false
+        },
+        "talk": {
+          "loop": true,
+          "duration": [
+            0.8,
+            3.0
+          ]
+        },
+        "sleep": {
+          "loop": true,
+          "duration": [
+            1.0,
+            6.0
+          ]
+        },
+        "celebrate": {
+          "loop": false,
+          "duration": [
+            0.5,
+            4.0
+          ]
+        },
+        "wave": {
+          "loop": false,
+          "duration": [
+            0.5,
+            3.0
+          ]
+        }
       },
-      "variants": { "default": { "height_m": 1.9 } },
-      "budget": { "triangles": 1200, "materials": 3, "primitives": 3 }
+      "variants": {
+        "default": {
+          "height_m": 1.9
+        }
+      },
+      "budget": {
+        "triangles": 4000,
+        "materials": 3,
+        "primitives": 3
+      }
     }
   },
   "limits": {
@@ -176,7 +388,10 @@
       "source": "kaykit-adventurers",
       "character": "Rogue",
       "label": "Ranger",
-      "styles": ["modern", "fantasy"]
+      "styles": [
+        "modern",
+        "fantasy"
+      ]
     },
     {
       "id": "biped-knight",
@@ -186,7 +401,9 @@
       "source": "kaykit-adventurers",
       "character": "Knight",
       "label": "Knight",
-      "styles": ["fantasy"]
+      "styles": [
+        "fantasy"
+      ]
     },
     {
       "id": "biped-mage",
@@ -196,7 +413,9 @@
       "source": "kaykit-adventurers",
       "character": "Mage",
       "label": "Mage",
-      "styles": ["fantasy"]
+      "styles": [
+        "fantasy"
+      ]
     },
     {
       "id": "biped-barbarian",
@@ -206,7 +425,21 @@
       "source": "kaykit-adventurers",
       "character": "Barbarian",
       "label": "Barbarian",
-      "styles": ["fantasy"]
+      "styles": [
+        "fantasy"
+      ]
+    },
+    {
+      "id": "spirit-gigi",
+      "archetype": "spirit",
+      "variant": "default",
+      "base": "gigi",
+      "source": "gigi-mascot",
+      "character": "Gigi",
+      "label": "Gigi",
+      "styles": [
+        "spirit"
+      ]
     }
   ]
 }

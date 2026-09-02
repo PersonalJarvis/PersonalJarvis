@@ -126,10 +126,11 @@ export function assembleFigure(
       | THREE.MeshBasicMaterial;
     const map = original.map ?? null;
     if (map && !painted) painted = paintPalette(map, palette);
-    const material = new THREE.MeshLambertMaterial({
-      map: painted ?? map,
-      color: 0xffffff,
-    });
+    // A "-marks" slot (Gigi's eyes, mouth, scanlines) glows: unlit, so it
+    // reads white on the dark body under any light, like the mascot in 2D.
+    const material = original.name.endsWith("-marks")
+      ? new THREE.MeshBasicMaterial({ map: painted ?? map, color: 0xffffff })
+      : new THREE.MeshLambertMaterial({ map: painted ?? map, color: 0xffffff });
     material.name = original.name;
     node.material = material;
     // A skinned mesh's bounds ignore its bones; culling it by the rest pose

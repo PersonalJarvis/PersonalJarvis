@@ -33,20 +33,23 @@ async def test_starter_team_is_seeded_once(tmp_path: Path):
     await store.close()
 
 
-async def test_runtime_seeds_lead_and_team_by_default(tmp_path: Path):
+async def test_runtime_seeds_only_the_lead_by_default(tmp_path: Path):
+    """Only Jarvis is on the roster out of the box (maintainer, 2026-09-02); the
+    starter team is a seed PROPOSAL, seeded only when asked for."""
     runtime = SocietyRuntime(tmp_path)
     await runtime.ensure_started()
     try:
-        ids = [a.agent_id for a in await runtime.roster.list()]
-        assert ids == ["jarvis", "scout", "archivist"]
+        lead = await runtime.roster.list()
+        assert [a.agent_id for a in lead] == ["jarvis"]
+        assert lead[0].avatar["archetype"] == "spirit" and lead[0].avatar["base"] == "gigi"
     finally:
         await runtime.close()
-    quiet = SocietyRuntime(tmp_path / "quiet", seed_starter_team=False)
-    await quiet.ensure_started()
+    team = SocietyRuntime(tmp_path / "team", seed_starter_team=True)
+    await team.ensure_started()
     try:
-        assert [a.agent_id for a in await quiet.roster.list()] == ["jarvis"]
+        assert [a.agent_id for a in await team.roster.list()] == ["jarvis", "scout", "archivist"]
     finally:
-        await quiet.close()
+        await team.close()
 
 
 def test_proposals_follow_connected_capabilities():

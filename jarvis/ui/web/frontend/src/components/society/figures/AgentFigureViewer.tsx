@@ -42,7 +42,7 @@ const ZOOM_MIN = 0.55;
 const ZOOM_MAX = 2.4;
 
 /** The look a fresh open starts from: a little above eye level, three-quarter turned. */
-const REST_VIEW = { yaw: -0.45, pitch: 0.18, zoom: 1 };
+const REST_VIEW = { yaw: -0.45, pitch: 0.1, zoom: 1 };
 
 interface OrbitState {
   yaw: number;
@@ -116,6 +116,13 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
         drag.current ? "cursor-grabbing" : "cursor-grab",
         className,
       )}
+      // The figure stage is the island's own bright space, not the app's ink
+      // (MASTERPLAN §4.3): warm light in both themes, so a dark figure — Gigi
+      // is near-black with white marks — reads instead of vanishing.
+      style={{
+        background:
+          "radial-gradient(120% 90% at 50% 38%, #fbf6ee 0%, #ebe2d2 52%, #d9cdb9 100%)",
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -130,7 +137,7 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
             dpr={1}
             frameloop={frameloop}
             gl={{ antialias: false, alpha: true, powerPreference: "low-power" }}
-            camera={{ fov: 26, near: 0.1, far: 40, position: [0, heightM * 0.55, heightM * 2.6] }}
+            camera={{ fov: 26, near: 0.1, far: 40, position: [0, heightM * 0.55, heightM * 2.4] }}
             onCreated={({ gl }) => {
               gl.setClearColor(0x000000, 0);
             }}
@@ -155,7 +162,7 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
       ) : (
         <PaletteTile palette={palette} label={t("society.figure.no_figure")} />
       )}
-      <p className="pointer-events-none absolute inset-x-0 bottom-2 text-center text-[11px] text-white/70 [text-shadow:0_1px_2px_rgba(0,0,0,.45)]">
+      <p className="pointer-events-none absolute inset-x-0 bottom-2 text-center text-[11px] text-[#5b5245]/80">
         {reduced ? t("society.figure.reduced_motion") : t("society.figure.drag_hint")}
       </p>
     </div>
@@ -225,8 +232,10 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
     const group = groupRef.current;
     const o = orbit.current;
     if (group) group.rotation.y = o.yaw;
-    const mid = heightM * 0.52;
-    const distance = (heightM * 2.6) / o.zoom;
+    // 2.4 heights of distance: larger than the 2.6 it opened with (maintainer:
+    // "about a fifth"), with the crown and the hem still inside the frame.
+    const mid = heightM * 0.5;
+    const distance = (heightM * 2.4) / o.zoom;
     camera.position.set(0, mid + Math.sin(o.pitch) * distance, Math.cos(o.pitch) * distance);
     camera.lookAt(0, mid, 0);
     camera.updateProjectionMatrix();

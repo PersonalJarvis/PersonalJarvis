@@ -573,6 +573,8 @@ def build_target(target: dict, out_dir: Path, ledger: Path) -> tuple[dict, list[
     source = load_source(target["source"])
     character = source["characters"][target["character"]]
     part_specs = character.get("parts", [])
+    if source.get("procedural") == "gigi":
+        return build_procedural_gigi(target, source, archetype, out_dir)
     src_file = fetch_source_file(source, f"{target['character']}.glb")
     log(f"building {target['id']} from {src_file.name}")
 
@@ -658,6 +660,42 @@ def build_target(target: dict, out_dir: Path, ledger: Path) -> tuple[dict, list[
             }
         )
     return base_entry, part_entries
+
+
+def build_procedural_gigi(
+    target: dict, source: dict, archetype: dict, out_dir: Path
+) -> tuple[dict, list[dict]]:
+    """The mascot: modelled and keyed by gigi_builder.py, finished like any base."""
+    import gigi_builder  # noqa: PLC0415 — Blender-only module beside this file
+
+    log(f"building {target['id']} procedurally")
+    reset_scene()
+    bpy.context.scene.render.fps = gigi_builder.FPS
+    character = source["characters"][target["character"]]
+    sheet_path = CACHE / f"{target['id']}-sheet.png"
+    write_sheet(sheet_path, character["default_palette"])
+    img = load_sheet(sheet_path)
+    arm, body, uv_report = gigi_builder.build_gigi(CONTRACT["sheet"], img, sheet_material)
+    fwd = add_forward_marker(arm)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    base_path = out_dir / f"{target['id']}.glb"
+    export_glb(base_path, [body, arm, fwd], animations=True)
+    facts = finish_base(base_path, target, source, archetype, uv_report)
+    entry = {
+        "id": f"{target['archetype']}/{target['base']}",
+        "file": base_path.name,
+        "archetype": target["archetype"],
+        "variant": target["variant"],
+        "base": target["base"],
+        "label": target["label"],
+        "styles": target.get("styles", []),
+        "heightM": archetype["variants"][target["variant"]]["height_m"],
+        "palette": character["default_palette"],
+        "source": f"{source['name']} / {target['character']}",
+        "license": source["license"],
+        **facts,
+    }
+    return entry, []
 
 
 def write_ledger(

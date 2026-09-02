@@ -27,9 +27,11 @@ from .approvals import Approvals
 from .bridge import MissionBridge
 from .browser.session import BrowserJobs
 from .capabilities import CapabilityRow, build_catalog
+from .checkpoints import CheckpointEngine
 from .events import MsgType, RoomState, SocietyEnvelope, Tier
 from .focus import derive_approval_rules, derive_focus
 from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_factory
+from .memory import SocietyMemory
 from .rooms import Rooms
 from .roster import LEAD_AGENT_ID, AgentRecord, Roster
 from .scheduler import DeliverHook, SocietyScheduler
@@ -82,7 +84,9 @@ class SocietyRuntime:
         deliver: DeliverHook | None = None,
         chat_service: Callable[[], Any | None] | None = None,
         cfg: Callable[[], Any] | None = None,
-        seed_starter_team: bool = True,
+        # Only Jarvis is on the roster by default (maintainer, 2026-09-02); the
+        # starter team is offered as seed proposals instead.
+        seed_starter_team: bool = False,
     ) -> None:
         self._data_dir = Path(data_dir)
         self._get_manager = mission_manager or (lambda: None)
@@ -111,6 +115,10 @@ class SocietyRuntime:
             self.store, owner_of=self.owner_of, on_run_ended=self.scheduler.note_run_ended
         )
         self._owners: dict[str, str] = {}
+        #: Where an agent is on the island, derived from the board (memory-house.md §3.4).
+        self.checkpoints = CheckpointEngine(self)
+        #: The society's one memory service; every touch moves the figure to the Memory House.
+        self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
         #: Roster rows the society surface read for a turn - the sync tool
         #: filter reads them here (the briefing fills the cache first).
         self._agent_cache: dict[str, AgentRecord] = {}
@@ -133,6 +141,7 @@ class SocietyRuntime:
         bus = self._get_mission_bus()
         if bus is not None:
             self.bridge.attach(bus)
+        self.checkpoints.attach()
         await self.seed_lead()
         if self._seed_starter_team:
             created = await seed_first_run(self.roster, self.store)
@@ -154,6 +163,7 @@ class SocietyRuntime:
         self._watchers.clear()
         self.scheduler.detach()
         self.bridge.detach()
+        self.checkpoints.detach()
         await self.store.close()
         self._started = False
         if current_runtime() is self:
@@ -198,6 +208,8 @@ class SocietyRuntime:
                 "The voice-steered lead of the society. Delegates, never does the work itself."
             ),
             tier=Tier.LEAD,
+            # Jarvis is Gigi, the app's own mascot (character-pipeline.md, spirit archetype).
+            avatar={"contract": 1, "archetype": "spirit", "base": "gigi", "parts": {}},
         )
         return lead
 

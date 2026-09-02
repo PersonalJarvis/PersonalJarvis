@@ -13,22 +13,25 @@
  * of inventing a transcript.
  */
 import * as Dialog from "@radix-ui/react-dialog";
-import { MessageSquareDashed, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { useT } from "@/i18n";
 
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
+import { AgentChatPanel } from "../chat/AgentChatPanel";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
 import { AgentSpecSheet } from "./AgentSpecSheet";
 
 export interface AgentCardOverlayProps {
   agent: SocietyAgent | null;
+  /** Every agent, for @mentions in the chat. */
+  roster: SocietyAgent[];
   onClose: () => void;
 }
 
-export function AgentCardOverlay({ agent, onClose }: AgentCardOverlayProps) {
+export function AgentCardOverlay({ agent, roster, onClose }: AgentCardOverlayProps) {
   const t = useT();
   const open = agent !== null;
   return (
@@ -66,13 +69,8 @@ export function AgentCardOverlay({ agent, onClose }: AgentCardOverlayProps) {
                 <section className="society-figure-column relative min-h-0" aria-label={t("society.card.figure")}>
                   <AgentFigureViewer recipe={agent.figure} />
                 </section>
-                <section
-                  className="flex min-h-0 flex-col items-center justify-center gap-2 border-l border-border p-6 text-center"
-                  aria-label={t("society.card.chat")}
-                >
-                  <MessageSquareDashed className="h-6 w-6 text-muted-foreground" aria-hidden />
-                  <p className="text-sm font-medium text-foreground">{t("society.card.chat_empty_title")}</p>
-                  <p className="max-w-[30ch] text-xs text-muted-foreground">{t("society.card.chat_empty_hint")}</p>
+                <section className="flex min-h-0 flex-col border-l border-border" aria-label={t("society.card.chat")}>
+                  <AgentChatPanel agent={agent} roster={roster} />
                 </section>
               </div>
             </>

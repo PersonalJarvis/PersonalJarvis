@@ -17,7 +17,7 @@ import { assembleFigure, type LoadedGltf } from "./assembleFigure";
 import { recipeKey, resolvePalette, type FigureRecipe } from "./figureRecipe";
 import { figureAssetFor, partAssetsFor } from "./figureRegistry";
 
-const SIZE = 96;
+const SIZE = 128;
 const IDLE_RELEASE_MS = 4000;
 
 const crops = new Map<string, Promise<string | null>>();
@@ -86,14 +86,17 @@ async function renderCrop(recipe: FigureRecipe): Promise<string | null> {
   if (!figure) return null;
   const { renderer, scene, camera } = acquireStage();
   try {
-    // Turn the figure three-quarters toward the light, frame the head.
-    figure.root.rotation.y = -0.35;
+    // Turn the figure a little toward the light and frame head and shoulders:
+    // a face fills the circle, a whole figure would be a stripe. A spirit
+    // carries its face lower on the body than a biped carries its head.
+    figure.root.rotation.y = -0.25;
     scene.add(figure.root);
     figure.actions.idle?.play();
     figure.mixer.update(0.4);
-    const headY = height * 0.8;
-    camera.position.set(0.12, headY + height * 0.02, height * 0.62);
-    camera.lookAt(0, headY, 0);
+    const spirit = figure.extras.archetype === "spirit";
+    const headY = height * (spirit ? 0.66 : 0.78);
+    camera.position.set(0.06, headY + height * 0.03, height * (spirit ? 0.95 : 0.72));
+    camera.lookAt(0, headY - height * 0.02, 0);
     camera.updateProjectionMatrix();
     renderer.render(scene, camera);
     return renderer.domElement.toDataURL("image/png");
