@@ -47,7 +47,7 @@ import { createAgentChatStore, useAgentChatStore } from "@/store/agentChat";
 import type { AgentChatSurface } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
-import type { SocietyAgent } from "../data";
+import { useResolveProposal, type SocietyAgent } from "../data";
 
 /** A gap this long between messages earns a fresh time stamp. */
 const STAMP_GAP_MS = 30 * 60_000;
@@ -530,7 +530,11 @@ function Transcript({
               ) : item.type === "turn" ? (
                 <TurnBubble item={item} onDecide={onDecide} />
               ) : item.type === "notice" ? (
-                <NoticeLine item={item} />
+                item.kind === "proposal" ? (
+                  <ProposalCard item={item} />
+                ) : (
+                  <NoticeLine item={item} />
+                )
               ) : (
                 <p className="self-start rounded-2xl bg-destructive/10 px-3 py-2 text-xs text-destructive">{item.text}</p>
               )}
@@ -570,6 +574,127 @@ function NoticeLine({ item }: { item: NoticeItem }) {
     <div className="flex max-w-[85%] flex-col gap-0.5 self-start rounded-2xl rounded-bl-md border border-border bg-card px-3.5 py-2 text-xs">
       {headline ? <p className="font-medium text-foreground">{headline}</p> : null}
       {item.text ? <p className="whitespace-pre-wrap leading-relaxed text-muted-foreground">{item.text}</p> : null}
+    </div>
+  );
+}
+
+/** One human-readable line per proposal kind, read off the typed payload. */
+function proposalDetail(kind: string, payload: Record<string, unknown>): string {
+  const list = (v: unknown): string => (Array.isArray(v) ? v.map(String).join(", ") : "");
+  switch (kind) {
+    case "rule":
+      return String(payload.text ?? "");
+    case "skill":
+      return `${String(payload.name ?? "")}: ${String(payload.goal ?? "")}`;
+    case "routine": {
+      const schedule = (payload.schedule ?? {}) as Record<string, unknown>;
+      const when = Object.entries(schedule)
+        .map(([k, v]) => `${k}=${String(v)}`)
+        .join(" ");
+      return `${String(payload.title ?? "")} — ${when}`;
+    }
+    case "approval_rule": {
+      const parts: string[] = [];
+      if (list(payload.require_approval)) parts.push(`ask first: ${list(payload.require_approval)}`);
+      if (list(payload.always_allow)) parts.push(`always allow: ${list(payload.always_allow)}`);
+      return parts.join(" · ");
+    }
+    case "focus":
+      return list(payload.focus);
+    case "team":
+      return list(payload.names);
+    default:
+      return "";
+  }
+}
+
+/**
+ * The agent proposed a change to itself (a standing rule, a skill, a routine,
+ * approval rules, its focus). Nothing has changed yet: the person decides here,
+ * and the outcome patches this same card.
+ */
+function ProposalCard({ item }: { item: NoticeItem }) {
+  const t = useT();
+  const resolve = useResolveProposal();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const kind = String(item.data.proposal_kind ?? "");
+  const proposalId = String(item.data.proposal_id ?? "");
+  const summary = String(item.data.summary ?? item.text);
+  const reason = String(item.data.reason ?? "");
+  const payload = (item.data.payload ?? {}) as Record<string, unknown>;
+  const detail = proposalDetail(kind, payload);
+  const outcome = item.text.includes("\n") ? item.text.slice(item.text.indexOf("\n") + 1) : "";
+  const decide = async (approve: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      await resolve(proposalId, approve);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const resolvedLabel =
+    item.resolved === "applied"
+      ? t("society.chat.proposal_applied")
+      : item.resolved === "rejected"
+        ? t("society.chat.proposal_rejected")
+        : item.resolved
+          ? t("society.chat.proposal_failed")
+          : "";
+  return (
+    <div
+      className={cn(
+        "flex max-w-[85%] flex-col gap-1.5 self-start rounded-2xl rounded-bl-md border px-3.5 py-2.5 text-xs",
+        item.resolved === "applied"
+          ? "border-primary/40 bg-primary/5"
+          : item.resolved
+            ? "border-border bg-card"
+            : "border-primary/60 bg-card",
+      )}
+    >
+      <p className="font-medium text-foreground">
+        {t("society.chat.proposal_title").replace("{0}", item.agentName || t("society.chat.result_agent"))}
+      </p>
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+        {kind ? t(`society.chat.proposal_kind_${kind}`) : ""}
+      </p>
+      <p className="whitespace-pre-wrap leading-relaxed text-foreground">{detail || summary}</p>
+      {reason ? (
+        <p className="leading-relaxed text-muted-foreground">
+          <span className="font-medium">{t("society.chat.proposal_reason")}: </span>
+          {reason}
+        </p>
+      ) : null}
+      {item.resolved ? (
+        <p className={cn("font-medium", item.resolved === "failed" ? "text-destructive" : "text-foreground")}>
+          {resolvedLabel}
+          {outcome ? <span className="font-normal text-muted-foreground"> — {outcome}</span> : null}
+        </p>
+      ) : (
+        <div className="mt-1 flex items-center gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void decide(true)}
+            className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {t("society.chat.proposal_confirm")}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void decide(false)}
+            className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+          >
+            {t("society.chat.proposal_reject")}
+          </button>
+          <span className="text-muted-foreground">{t("society.chat.proposal_pending")}</span>
+        </div>
+      )}
+      {error ? <p className="text-destructive">{error}</p> : null}
     </div>
   );
 }

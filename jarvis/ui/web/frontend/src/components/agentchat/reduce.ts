@@ -133,6 +133,10 @@ export interface NoticeItem {
   /** "done" | "blocked" | "" for notices that carry no outcome. */
   status: string;
   tsMs: number;
+  /** The raw notice payload — a proposal card reads its kind, summary, reason, payload. */
+  data: Record<string, unknown>;
+  /** A proposal's outcome once the person decided: "applied" | "rejected" | "failed" | "". */
+  resolved: string;
 }
 
 export type TimelineItem = UserItem | TurnItem | ErrorItem | NoticeItem;
@@ -574,6 +578,25 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       const text = str(p.text);
       const kind = str(p.kind);
       if (!text && !kind) return base;
+      if (kind === "proposal_resolved") {
+        // The outcome of a proposal patches the card it answers, never a second row.
+        const proposalId = str(p.proposal_id);
+        const index = base.items.findIndex(
+          (item) => item.type === "notice" && item.kind === "proposal" && str(item.data.proposal_id) === proposalId,
+        );
+        if (index >= 0) {
+          const card = base.items[index] as NoticeItem;
+          return {
+            ...base,
+            items: replaceAt(base.items, index, {
+              ...card,
+              resolved: str(p.status) || "applied",
+              status: str(p.status),
+              text: text ? `${card.text}\n${text}` : card.text,
+            }),
+          };
+        }
+      }
       return {
         ...base,
         items: [
@@ -587,6 +610,8 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
             agentId: str(p.agent_id),
             status: str(p.status),
             tsMs: ev.ts_ms,
+            data: p as Record<string, unknown>,
+            resolved: "",
           },
         ],
       };

@@ -400,6 +400,27 @@ export function useCreateAgent() {
   );
 }
 
+/**
+ * Decide a configuration proposal the agent made in its chat
+ * (`POST /api/society/proposals/{id}/resolve`). A yes APPLIES the change on
+ * the roster, so the roster query is refreshed afterwards.
+ */
+export function useResolveProposal() {
+  const client = useQueryClient();
+  return useCallback(
+    async (proposalId: string, approve: boolean, note = ""): Promise<void> => {
+      const res = await fetch(`/api/society/proposals/${encodeURIComponent(proposalId)}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approve, note }),
+      });
+      if (!res.ok) throw new Error(`proposal ${res.status}`);
+      await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+    },
+    [client],
+  );
+}
+
 /** Pause or resume an agent (`PATCH /api/society/agents/{id}`); sample rows flip locally. */
 export function useSetAgentPaused() {
   const client = useQueryClient();

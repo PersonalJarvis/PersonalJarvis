@@ -208,4 +208,43 @@ describe("agent-chat reduce: notices", () => {
   it("drops an empty notice", () => {
     expect(reduceEvent(EMPTY_TIMELINE, ev("notice", {}, false))).toBe(EMPTY_TIMELINE);
   });
+
+  it("folds a proposal notice and its resolution into one row", () => {
+    const tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("notice", {
+        kind: "proposal",
+        proposal_id: "p1",
+        proposal_kind: "rule",
+        summary: "Add a standing rule: Always answer in English.",
+        payload: { text: "Always answer in English." },
+        reason: "asked",
+        status: "pending",
+        agent_id: "mailbox",
+        agent_name: "Mailbox",
+        text: "Add a standing rule: Always answer in English.",
+      }),
+      ev("notice", {
+        kind: "proposal_resolved",
+        proposal_id: "p1",
+        status: "applied",
+        text: "standing rule added to the description",
+        agent_id: "mailbox",
+        agent_name: "Mailbox",
+      }),
+    ]);
+    expect(tl.items).toHaveLength(1);
+    const card = tl.items[0];
+    if (card.type !== "notice") throw new Error("unreachable");
+    expect(card.kind).toBe("proposal");
+    expect(card.resolved).toBe("applied");
+    expect(card.data.proposal_kind).toBe("rule");
+    expect((card.data.payload as { text: string }).text).toBe("Always answer in English.");
+    expect(card.text).toContain("standing rule added");
+    // An outcome for a card this timeline never saw is still shown, as its own row.
+    const orphan = reduceEvent(
+      EMPTY_TIMELINE,
+      ev("notice", { kind: "proposal_resolved", proposal_id: "p9", status: "rejected", text: "Rejected." }),
+    );
+    expect(orphan.items).toHaveLength(1);
+  });
 });
