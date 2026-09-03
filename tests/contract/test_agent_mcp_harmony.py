@@ -69,6 +69,9 @@ WITHHELD: Final[dict[str, str]] = {
         "confirming a proposal changes an agent's rules, routines or skills — the "
         "owner's decision at their own keyboard, never a remote client's"
     ),
+    "POST /api/society/onboarding/start": (
+        "the one-time team offer is onboarding UI in the lead's chat, not an API verb"
+    ),
     "GET /api/society/seeds": "starter-team proposals are onboarding UI, not an API verb",
     "POST /api/society/seeds/apply": (
         "onboarding, and it creates several agents at once — quest_post forges "

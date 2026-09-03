@@ -232,15 +232,28 @@ class SocietyRuntime:
         await self._notify_chat(agent, payload)
 
     async def _notify_chat(self, agent: AgentRecord, payload: dict[str, Any]) -> None:
-        """A society notice in the agent's own chat (learned skill, login needed)."""
+        """A society notice in the agent's own chat (learned skill, login needed).
+
+        The LEAD is the one agent whose card shows the app's own Jarvis chat
+        rather than a ``society:`` session, so its notices go to the newest
+        session of that surface — otherwise they would land where nobody looks.
+        """
         svc = self._get_chat()
         post = getattr(svc, "post_notice", None)
         if svc is None or post is None:
             return
-        session = svc.store.get_session(agent.session_id)
-        if session is None:
+        session_id = agent.session_id
+        if agent.agent_id == LEAD_AGENT_ID:
+            try:
+                seen = svc.store.list_sessions(limit=1, surface="jarvis")
+            except Exception:  # noqa: BLE001 — falls back to the society session below
+                log.warning("society: could not read the Jarvis chat sessions", exc_info=True)
+                seen = []
+            if seen:
+                session_id = seen[0].session_id
+        if svc.store.get_session(session_id) is None:
             return
-        await post(agent.session_id, payload)
+        await post(session_id, payload)
 
     def cache_agent(self, agent: AgentRecord) -> None:
         self._agent_cache[agent.agent_id] = agent
@@ -570,6 +583,9 @@ class SocietyRuntime:
             + len(await self.quests.list(state=QuestState.ASSIGNED))
             + len(await self.quests.list(state=QuestState.RUNNING)),
             "db_path": str(self.store.path),
+            # The frontend offers the lead's team card once; this says whether
+            # that offer has already been made (seeds.ONBOARDING_KEY).
+            "onboarding_done": await self.store.get_meta("onboarding_done", "0") == "1",
         }
 
     async def say(

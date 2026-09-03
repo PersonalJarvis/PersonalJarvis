@@ -23,9 +23,25 @@ from .events import Tier
 from .focus import derive_approval_rules, derive_focus
 from .roster import Roster
 
-__all__ = ["STARTER_TEAM", "proposal_for_capability", "propose_seeds", "seed_first_run"]
+__all__ = [
+    "ONBOARDING_KEY",
+    "STARTER_TEAM",
+    "create_from_proposals",
+    "onboarding_done",
+    "proposal_for_capability",
+    "propose_seeds",
+    "seed_first_run",
+]
 
 _SEEDED_KEY: Final[str] = "seeded_starter_team"
+#: Set once the lead has offered a team in its chat — the offer is made ONCE
+#: whether or not the person answers it (agent-definition §6).
+ONBOARDING_KEY: Final[str] = "onboarding_done"
+
+
+async def onboarding_done(store: Any) -> bool:
+    return await store.get_meta(ONBOARDING_KEY, "0") == "1"
+
 
 STARTER_TEAM: Final[tuple[dict[str, Any], ...]] = (
     {

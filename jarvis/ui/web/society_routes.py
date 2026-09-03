@@ -880,6 +880,58 @@ async def list_proposals(request: Request, agent_id: str | None = None) -> dict[
     return {"proposals": [a.to_dict() for a in items], "total": len(items)}
 
 
+@router.post("/onboarding/start")
+async def start_onboarding(request: Request) -> dict[str, Any]:
+    """Offer a team ONCE, in the lead's own chat.
+
+    The lead asks which tools the person uses and proposes the teammates the
+    connected capabilities suggest — as one ``team`` proposal card the person
+    confirms with the names they want. A no-op when the offer was already made
+    or the roster already has teammates; the flag is set as soon as the offer
+    goes out, so an unanswered card is never re-sent.
+    """
+    from jarvis.society import proposals
+    from jarvis.society.roster import LEAD_AGENT_ID
+    from jarvis.society.seeds import ONBOARDING_KEY, onboarding_done, propose_seeds
+
+    rt = await _runtime(request)
+    if await onboarding_done(rt.store):
+        return {"offered": False, "reason": "already_offered"}
+    roster = await rt.roster.list(include_archived=True)
+    if len(roster) > 1:
+        await rt.store.set_meta(ONBOARDING_KEY, "1")
+        return {"offered": False, "reason": "roster_not_empty"}
+    lead = await rt.roster.get(LEAD_AGENT_ID)
+    if lead is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    candidates = propose_seeds(rt.catalog(), {a.name for a in roster})
+    if not candidates:
+        await rt.store.set_meta(ONBOARDING_KEY, "1")
+        return {"offered": False, "reason": "nothing_connected"}
+    try:
+        item = await proposals.propose(
+            rt,
+            lead,
+            kind="team",
+            payload={
+                "names": [c["name"] for c in candidates],
+                "proposals": [
+                    {"name": c["name"], "title": c["title"], "reason": c.get("reason", "")}
+                    for c in candidates
+                ],
+            },
+            reason=(
+                "These teammates fit the tools you already have connected. "
+                "Pick the ones you want; you can add more at any time."
+            ),
+            session_id=lead.session_id,
+        )
+    except proposals.ProposalRefused as exc:
+        raise HTTPException(409, {"reason": str(exc.reason), "detail": exc.detail}) from exc
+    await rt.store.set_meta(ONBOARDING_KEY, "1")
+    return {"offered": True, "proposal": item.to_dict()}
+
+
 @router.post("/proposals/{proposal_id}/resolve", openapi_extra={"x-jarvis-dangerous": True})
 async def resolve_proposal(
     proposal_id: str, body: ResolveProposalBody, request: Request

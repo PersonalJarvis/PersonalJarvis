@@ -63,6 +63,9 @@ const CHAT_MEASURE = "mx-auto w-full max-w-[820px]";
 /** The line appended to a message that names an agent; Jarvis delegates on it. */
 const DELEGATE_MARK = "[to jarvis]";
 
+/** The team offer is asked for once per app load; the backend decides the rest. */
+let onboardingAsked = false;
+
 export interface AgentChatPanelProps {
   agent: SocietyAgent;
   roster: SocietyAgent[];
@@ -203,6 +206,17 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
     void loadCatalog();
     void loadSessions();
   }, [loadCatalog, loadSessions]);
+
+  // First time the lead's card opens on a fresh society: it offers a team.
+  // The backend decides whether anything is offered and remembers that it
+  // asked, so this may fire as often as it likes.
+  useEffect(() => {
+    if (onboardingAsked) return;
+    onboardingAsked = true;
+    void fetch("/api/society/onboarding/start", { method: "POST" })
+      .then(() => loadSessions())
+      .catch(() => undefined);
+  }, [loadSessions]);
 
   // The front page's current conversation, or the latest one when the card
   // opens before the front page ever did.
@@ -625,11 +639,20 @@ function ProposalCard({ item }: { item: NoticeItem }) {
   const payload = (item.data.payload ?? {}) as Record<string, unknown>;
   const detail = proposalDetail(kind, payload);
   const outcome = item.text.includes("\n") ? item.text.slice(item.text.indexOf("\n") + 1) : "";
+  // A team offer is a pick list: everyone is proposed, the person keeps the
+  // ones they want and the picked names ride along in the decision's note.
+  const offered = useMemo(() => {
+    const rows = (payload.proposals ?? []) as { name?: string; title?: string }[];
+    if (rows.length > 0) return rows.map((r) => ({ name: String(r.name ?? ""), title: String(r.title ?? "") }));
+    return ((payload.names ?? []) as string[]).map((n) => ({ name: String(n), title: "" }));
+  }, [payload]);
+  const [picked, setPicked] = useState<string[] | null>(null);
+  const chosen = picked ?? offered.map((o) => o.name);
   const decide = async (approve: boolean) => {
     setBusy(true);
     setError("");
     try {
-      await resolve(proposalId, approve);
+      await resolve(proposalId, approve, kind === "team" && approve ? chosen.join(", ") : "");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -661,7 +684,34 @@ function ProposalCard({ item }: { item: NoticeItem }) {
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
         {kind ? t(`society.chat.proposal_kind_${kind}`) : ""}
       </p>
-      <p className="whitespace-pre-wrap leading-relaxed text-foreground">{detail || summary}</p>
+      {kind === "team" && !item.resolved ? (
+        <ul className="flex flex-col gap-1">
+          {offered.map((row) => (
+            <li key={row.name} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id={`${proposalId}-${row.name}`}
+                checked={chosen.includes(row.name)}
+                disabled={busy}
+                onChange={(e) =>
+                  setPicked(
+                    e.target.checked
+                      ? [...chosen, row.name]
+                      : chosen.filter((name) => name !== row.name),
+                  )
+                }
+                className="h-3.5 w-3.5 accent-[var(--primary)]"
+              />
+              <label htmlFor={`${proposalId}-${row.name}`} className="cursor-pointer text-foreground">
+                <span className="font-medium">{row.name}</span>
+                {row.title ? <span className="text-muted-foreground"> — {row.title}</span> : null}
+              </label>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="whitespace-pre-wrap leading-relaxed text-foreground">{detail || summary}</p>
+      )}
       {reason ? (
         <p className="leading-relaxed text-muted-foreground">
           <span className="font-medium">{t("society.chat.proposal_reason")}: </span>
