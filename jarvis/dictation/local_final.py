@@ -66,11 +66,33 @@ FINAL_BEAM_SIZE = 5
 #: plus a CUDA context, with a little headroom.
 DEFAULT_MIN_FREE_GB = 1.5
 
+#: The recognition setting a user picks when they want per-utterance detection.
+#: Every cloud STT plugin normalises it away before the call (``groq_api``,
+#: ``fwhisper``, ``gemini_api``, ``deepgram_api``); this module is the only one
+#: that drives faster-whisper DIRECTLY, and the library rejects the word with a
+#: ``ValueError`` listing its 99 codes. Passing it through cost every dictation
+#: on this box: the local pass died on its first decode, the worker was replaced
+#: and locked out for a minute, and the call crossed to the cloud round-trip the
+#: local pass exists to avoid (live logs 2026-09-03, 8 of 8 calls).
+AUTO_LANGUAGE = "auto"
+
 #: How long a refused or failed spawn is remembered before the next call may
 #: try again. Free memory moves with every model load, so the door is not
 #: closed for the process — but probing the card on every press would turn
 #: a full card into a slow cloud.
 _RETRY_AFTER_S = 60.0
+
+
+def _concrete_language(language: str | None) -> str | None:
+    """A decoder-ready language code, or ``None`` to let Whisper detect one.
+
+    ``None`` for both the empty value and :data:`AUTO_LANGUAGE`, which mean the
+    same thing to faster-whisper and only one of which it accepts.
+    """
+    value = str(language or "").strip()
+    if not value or value.lower() == AUTO_LANGUAGE:
+        return None
+    return value
 
 
 class LocalEngineUnavailable(RuntimeError):
@@ -208,10 +230,11 @@ class LocalFinalSTT:
         import numpy as np
 
         samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        asked_for = _concrete_language(language)
         started = time.perf_counter()
         try:
             segments, info = worker.transcribe(
-                samples, language=language or None, beam_size=self._beam_size
+                samples, language=asked_for, beam_size=self._beam_size
             )
         except Exception as exc:  # noqa: BLE001 — classified as crossable below
             with self._spawn_lock:
@@ -235,7 +258,7 @@ class LocalFinalSTT:
             }
             for seg in segments
         )
-        detected = str(getattr(info, "language", "") or "") or (language or "")
+        detected = str(getattr(info, "language", "") or "") or (asked_for or "")
         try:
             confidence = float(getattr(info, "language_probability", 0.0) or 0.0)
         except (TypeError, ValueError):

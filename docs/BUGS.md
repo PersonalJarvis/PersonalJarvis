@@ -14930,3 +14930,46 @@ app-wide one), `tests/unit/workflows/test_brain_prompt_isolated.py`,
 **Related.** ADR-0005 (misfire handling was listed as "not required" — it
 was), AU-02 (the one cron seed that ships on), AP-31 (the grace is a module
 constant, not a config field nobody reads).
+
+## BUG-213: dictation waited 8-45 s for a cloud that answers in 0.6 s (HIGH, FIXED 2026-09-03)
+
+**Symptom.** Every dictation felt slow, and some lost their audio outright:
+`dictation ended (0 chars, 4.8s spoken / 13.8s elapsed, stt error: unavailable
+(the provider did not answer within 10s for 4.8s of audio), LOST 3.3s)`, up to
+`68.9s elapsed` for 23.9 s of speech. The configured cloud recogniser was
+measured at **0.57 s** for the same audio from the same box, so the wait was
+never the network.
+
+**Root cause.** The on-device final pass (`jarvis/dictation/local_final.py`,
+built the day before) is the only module that drives faster-whisper DIRECTLY;
+every STT *plugin* normalises the recognition setting `"auto"` away before the
+call (`groq_api._detect_or`, `fwhisper`, `gemini_api`, `deepgram_api`), and
+this one did not. faster-whisper answers the word itself with
+`ValueError: 'auto' is not a valid language code`, and the dictation lane
+resolves `[stt].language = "auto"` into exactly that string. So on every press:
+
+1. the local worker spawned and loaded its CUDA model (the expensive part,
+   ~11 s cold),
+2. the first decode raised, so the worker was replaced and the local engine
+   locked out for `_RETRY_AFTER_S` (60 s),
+3. only then did the call cross to the cloud — inside a timeout ceiling that
+   had already been burning, which is why calls hit `wait_for` and the tail of
+   the recording was dropped.
+
+The local pass was not merely inert; it was the delay it existed to remove.
+Eight of eight calls in one live session took that path.
+
+**Fix.** `_concrete_language()` in `local_final.py` maps `"auto"` and the empty
+value to `None` — "detect it yourself", which is what faster-whisper accepts —
+and the detected code, not the setting, is reported back as the transcript's
+language. A pinned language still reaches the decoder untouched.
+
+**Guard.** `tests/unit/dictation/test_local_final.py`: the fake worker now
+holds faster-whisper's real contract (an ISO code or nothing; anything else is
+a `ValueError`), which is what let the bug through, plus
+`test_auto_recognition_reaches_the_decoder_as_detect_it_yourself` and
+`test_a_pinned_language_still_reaches_the_decoder`.
+
+**Related.** AP-24 (a wedged native engine is replaced, never waited on — the
+replacement worked, it was the call that was wrong), AP-22 (the local pass
+declines crossably, so the chain behind it always had a provider).

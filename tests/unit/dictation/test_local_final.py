@@ -22,6 +22,9 @@ from jarvis.dictation.local_final import (
 )
 from jarvis.speech.stt_failure import classify_stt_failure, is_crossable_failure
 
+#: The slice of faster-whisper's accepted codes these tests speak.
+_KNOWN_LANGUAGE_CODES = frozenset({"de", "en", "es"})
+
 
 class _FakeWorker:
     def __init__(self, device: str = "cuda", *, fail: str = "") -> None:
@@ -37,6 +40,14 @@ class _FakeWorker:
         self.calls.append(
             {"n": int(np.asarray(samples).size), "language": language, "beam": beam_size}
         )
+        # faster-whisper takes an ISO code or nothing, and answers anything else
+        # with a ValueError listing its 99 codes. The fake used to accept every
+        # string, which is why "auto" reached the live worker on every press.
+        if language is not None and language not in _KNOWN_LANGUAGE_CODES:
+            raise ValueError(
+                f"{language!r} is not a valid language code "
+                "(accepted language codes: de, en, es, ...)"
+            )
         if self._fail:
             raise RuntimeError(self._fail)
         segments = [
@@ -96,6 +107,32 @@ def test_the_final_pass_decodes_with_a_beam_and_keeps_the_timings(
     assert stt.last_used_model == "large-v3-turbo"
     assert stt.provider_label == "faster-whisper"
     assert stt.is_warm
+
+
+def test_auto_recognition_reaches_the_decoder_as_detect_it_yourself(
+    _local_ok: dict[str, Any],
+) -> None:
+    """ "auto" is a SETTING, not a language. faster-whisper answers the word
+    itself with a ValueError, which killed the worker, locked the local pass
+    out for a minute and sent every press to the cloud (live logs 2026-09-03)."""
+    stt = LocalFinalSTT()
+
+    transcript = asyncio.run(stt.transcribe_pcm(_pcm(), language="auto"))
+
+    assert stt._worker.calls[0]["language"] is None
+    assert transcript.text == "Hallo Welt."
+    assert transcript.language == "de"  # what the decoder detected, not "auto"
+    assert stt.is_warm  # the worker survived — nothing crossed to the cloud
+
+
+def test_a_pinned_language_still_reaches_the_decoder(
+    _local_ok: dict[str, Any],
+) -> None:
+    stt = LocalFinalSTT()
+
+    asyncio.run(stt.transcribe_pcm(_pcm(), language="de"))
+
+    assert stt._worker.calls[0]["language"] == "de"
 
 
 def test_a_full_card_declines_the_spawn_and_crosses_over(
