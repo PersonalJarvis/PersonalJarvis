@@ -1,24 +1,61 @@
 /**
- * The model card's left column: what the agent IS, as a spec sheet —
- * brain with the provider's mark, tier, its standing instructions, the
- * tools it reaches for first and the ones it may use (each with the
- * service's real logo), approval rules, permission ceiling and budget,
- * routines with the next run, lifetime stats, and the actions
- * (MASTERPLAN §4.2, agent-definition §2). Ink & Paper chrome; every string
- * through the locale files.
+ * The model card's spec column — a champion card of the island.
+ *
+ * It used to be a stack of grey headings and sentences, and the sentence that
+ * mattered most read "No focus tools" above an empty list: `GRANTED TOOLS`
+ * only ever filled for an allow-list agent, and almost every agent runs
+ * `grant_mode = all`. So the card said nothing about the one thing that makes
+ * a Gmail agent a Gmail agent.
+ *
+ * It now leads with HANDS — what this agent reaches for first, as tiles
+ * carrying the services' real marks — and says in one quiet line that
+ * everything else stays in reach, because it does (agent-definition §3.2).
+ * Below that: the ceiling and the reach as meters, the brain, the standing
+ * orders, routines, and the lifetime record.
+ *
+ * The skin is the world's, not the app's (maintainer, 2026-09-03): the card
+ * wears the island's daylight the way the 3D column beside it does. How that
+ * works without any component writing a literal colour is explained at the
+ * top of `agentCard.css`. Jarvis keeps its two special sections — its brain
+ * is the app's chat brain and its orders are the user's own instructions
+ * file — and inherits the skin through the same token scope.
+ *
+ * Every string goes through the locale files.
  */
 import { useMemo, useState } from "react";
 import { MessageSquare, Pause, Play, Send } from "lucide-react";
 
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 
 import { CapabilityChip } from "../CapabilityChip";
-import { useSetAgentPaused, useSocietyCapabilities, type Capability, type SocietyAgent } from "../data";
+import {
+  useSetAgentPaused,
+  useSocietyCapabilities,
+  type AgentRunState,
+  type Capability,
+  type PermissionCeiling,
+  type SocietyAgent,
+} from "../data";
+import { CapabilityTile } from "./CapabilityTile";
 import { LeadBrain, LeadInstructions } from "./LeadSections";
+
+import "./agentCard.css";
+
+/** How far up the three-step ladder a ceiling sits. `block` never reaches a card. */
+const CEILING_STEP: Record<PermissionCeiling, number> = { safe: 1, monitor: 2, ask: 3 };
+
+/** The state dot's fill — the same three status jobs the rest of the app uses. */
+const STATE_FILL: Record<AgentRunState, string> = {
+  idle: "bg-muted-foreground/40",
+  working: "bg-success",
+  waiting: "bg-warning",
+  paused: "bg-muted-foreground/25",
+};
+
+const REACH_STEPS = 6;
 
 function formatDate(ms: number | null, fallback: string): string {
   if (ms === null) return fallback;
@@ -59,8 +96,24 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
     return map;
   }, [capabilities.data]);
 
-  const granted = agent.grantMode === "allowlist" ? agent.toolGrants : [];
+  // The catalog is optional enrichment: the query does not retry, and a card
+  // with no catalog still names every tool through the brand resolver. What
+  // it must NOT do is print a total it does not have.
+  const catalogSize = capabilities.data?.length ?? 0;
+  const allowlist = agent.grantMode === "allowlist";
+
+  /** What the agent reaches for first — its allow-list is its hands when it has no focus. */
+  const hands = agent.focus.length > 0 ? agent.focus : allowlist ? agent.toolGrants : [];
   const paused = agent.lifecycle === "paused" || agent.state === "paused";
+
+  const reachFilled = allowlist
+    ? Math.max(1, Math.round((agent.toolGrants.length / Math.max(catalogSize, 1)) * REACH_STEPS))
+    : REACH_STEPS;
+  const reachValue = allowlist
+    ? t("society.card.reach_allowlist")
+        .replace("{0}", String(agent.toolGrants.length))
+        .replace("{1}", String(catalogSize))
+    : t("society.card.reach_all");
 
   const togglePause = async () => {
     setBusy(true);
@@ -72,85 +125,52 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="ac-card" data-testid="agent-card-sheet">
+      <header className="ac-band" data-tier={agent.tier}>
+        <span className="min-w-0 flex-1">
+          <span className="ac-band-name block truncate">{agent.name}</span>
+          {/* Jarvis' title IS "Lead", so the tier would read twice. */}
+          <span className="ac-band-title block truncate">
+            {[t(`society.tier.${agent.tier}`), agent.title]
+              .filter((part, i, all) => part && all.indexOf(part) === i)
+              .join(" · ")}
+          </span>
+        </span>
+        <span className={cn("ac-dot", STATE_FILL[agent.state])} data-state={agent.state} aria-hidden />
+        <span className="shrink-0 text-xs text-muted-foreground">{t(`society.state.${agent.state}`)}</span>
+      </header>
+
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-5 p-5">
           <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {t("society.card.brain")}
-            </h3>
-            {agent.tier === "lead" ? (
-              <LeadBrain />
+            <h3 className="ac-head mb-2.5">{t("society.card.hands")}</h3>
+            {hands.length === 0 ? (
+              <p className="ac-prose text-xs leading-relaxed text-muted-foreground">
+                {t("society.card.hands_empty")}
+              </p>
             ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              {agent.provider ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs text-foreground">
-                  <ProviderLogo providerId={agent.provider} label={agent.providerLabel || agent.provider} size="sm" />
-                  {agent.providerLabel || agent.provider}
-                </span>
-              ) : (
-                <Badge variant="outline">{t("society.card.default_brain")}</Badge>
-              )}
-              {agent.model ? (
-                <Badge variant="secondary" className="font-mono text-xs">
-                  {agent.model}
-                </Badge>
-              ) : null}
-              {agent.effort ? <Badge variant="outline">{agent.effort}</Badge> : null}
-              <Badge variant="outline">{t(`society.tier.${agent.tier}`)}</Badge>
-            </div>
-            )}
-          </section>
-
-          <section>
-            {agent.tier === "lead" ? (
-              <LeadInstructions />
-            ) : (
-              <>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {t("society.card.description")}
-                </h3>
-                {agent.description ? (
-                  <p className="whitespace-pre-line text-sm leading-relaxed text-foreground">{agent.description}</p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">{t("society.card.no_description")}</p>
-                )}
-              </>
-            )}
-          </section>
-
-          <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {t("society.card.focus")}
-            </h3>
-            {agent.focus.length === 0 ? (
-              <p className="text-xs text-muted-foreground">{t("society.card.no_focus")}</p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {agent.focus.map((id) => (
-                  <CapabilityChip key={id} id={id} capability={byId.get(id)} disconnectedHint={t("society.card.not_connected")} />
+              <ul className="flex flex-wrap gap-3">
+                {hands.map((id) => (
+                  <CapabilityTile
+                    key={id}
+                    id={id}
+                    capability={byId.get(id)}
+                    palette={agent.palette}
+                    disconnectedHint={t("society.card.not_connected")}
+                  />
                 ))}
-              </div>
+              </ul>
             )}
-          </section>
-
-          <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {t("society.card.tools")}
-            </h3>
-            <p className="mb-2 text-xs text-muted-foreground">
-              {agent.grantMode === "all" ? t("society.card.tools_all") : t("society.card.tools_allowlist")}
+            <p className="ac-prose mt-3 text-xs leading-relaxed text-muted-foreground">
+              {allowlist
+                ? t("society.card.hands_rest_allowlist")
+                : catalogSize > 0
+                  ? t("society.card.hands_rest").replace("{0}", String(catalogSize))
+                  : t("society.card.hands_rest_plain")}
             </p>
-            {granted.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {granted.map((id) => (
-                  <CapabilityChip key={id} id={id} capability={byId.get(id)} disconnectedHint={t("society.card.not_connected")} />
-                ))}
-              </div>
-            ) : null}
             {agent.denies.length > 0 ? (
-              <div className="mt-2">
-                <p className="mb-1 text-xs text-muted-foreground">{t("society.card.denied")}</p>
+              <div className="mt-3">
+                <p className="ac-prose mb-1.5 text-xs text-muted-foreground">{t("society.card.denied")}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {agent.denies.map((id) => (
                     <CapabilityChip key={id} id={id} capability={byId.get(id)} className="line-through opacity-60" />
@@ -160,18 +180,69 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
             ) : null}
           </section>
 
-          <section className="grid grid-cols-2 gap-x-4 gap-y-3">
-            <Fact label={t("society.card.permission")} value={t(`society.ceiling.${agent.permissionCeiling}`)} />
-            <Fact label={t("society.card.budget")} value={`$${agent.dailyBudgetUsd.toFixed(2)}`} />
-            <Fact label={t("society.card.place")} value={t(`society.checkpoint.${agent.checkpoint}`)} />
-            <Fact label={t("society.card.state")} value={t(`society.state.${agent.state}`)} />
+          <section className="flex flex-col gap-2">
+            <StepMeter
+              label={t("society.card.permission")}
+              steps={3}
+              filled={CEILING_STEP[agent.permissionCeiling] ?? 0}
+              value={t(`society.ceiling.${agent.permissionCeiling}`)}
+            />
+            <StepMeter
+              label={t("society.card.meter_reach")}
+              steps={REACH_STEPS}
+              filled={reachFilled}
+              value={reachValue}
+            />
+          </section>
+
+          <section className="grid grid-cols-3 gap-2">
+            <Plate label={t("society.card.budget")} value={`$${agent.dailyBudgetUsd.toFixed(2)}`} />
+            <Plate label={t("society.card.focus")} value={String(agent.focus.length)} />
+            <Plate label={t("society.card.place")} value={t(`society.checkpoint.${agent.checkpoint}`)} />
+          </section>
+
+          <section>
+            <h3 className="ac-head mb-2">{t("society.card.brain")}</h3>
+            {agent.tier === "lead" ? (
+              <LeadBrain />
+            ) : (
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                {agent.provider ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <ProviderLogo
+                      providerId={agent.provider}
+                      label={agent.providerLabel || agent.provider}
+                      size="sm"
+                    />
+                    <span className="font-medium">{agent.providerLabel || agent.provider}</span>
+                  </span>
+                ) : (
+                  <span className="font-medium">{t("society.card.default_brain")}</span>
+                )}
+                {agent.model ? <span className="ac-prose font-mono text-xs">{agent.model}</span> : null}
+                {agent.effort ? <span className="text-xs text-muted-foreground">{agent.effort}</span> : null}
+              </div>
+            )}
+          </section>
+
+          <section className="ac-prose">
+            {agent.tier === "lead" ? (
+              <LeadInstructions />
+            ) : (
+              <>
+                <h3 className="ac-head mb-2">{t("society.card.description")}</h3>
+                {agent.description ? (
+                  <p className="whitespace-pre-line text-sm leading-relaxed">{agent.description}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{t("society.card.no_description")}</p>
+                )}
+              </>
+            )}
           </section>
 
           {agent.approvalRules.requireApproval.length > 0 || agent.approvalRules.alwaysAllow.length > 0 ? (
             <section>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {t("society.card.approval_rules")}
-              </h3>
+              <h3 className="ac-head mb-2">{t("society.card.approval_rules")}</h3>
               {agent.approvalRules.requireApproval.length > 0 ? (
                 <RuleRow label={t("society.card.require_approval")} ids={agent.approvalRules.requireApproval} byId={byId} />
               ) : null}
@@ -182,18 +253,16 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
           ) : null}
 
           <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {t("society.card.routines")}
-            </h3>
+            <h3 className="ac-head mb-2">{t("society.card.routines")}</h3>
             {agent.routines.length === 0 ? (
-              <p className="text-xs text-muted-foreground">{t("society.card.no_routines")}</p>
+              <p className="ac-prose text-xs text-muted-foreground">{t("society.card.no_routines")}</p>
             ) : (
-              <ul className="flex flex-col gap-1.5">
+              <ul className="ac-prose flex flex-col gap-1.5">
                 {agent.routines.map((routine) => {
                   const due = relativeUntil(routine.nextFire, t);
                   return (
                     <li key={routine.id} className="flex items-baseline justify-between gap-3 text-sm">
-                      <span className="truncate text-foreground">{routine.label}</span>
+                      <span className="truncate">{routine.label}</span>
                       <span className="shrink-0 text-xs text-muted-foreground">
                         {routine.schedule}
                         {due ? ` · ${due}` : ""}
@@ -205,32 +274,86 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
             )}
           </section>
 
-          <section className="grid grid-cols-3 gap-3">
-            <Fact label={t("society.card.runs")} value={String(agent.stats.runs)} />
-            <Fact label={t("society.card.cost")} value={`$${agent.stats.totalCostUsd.toFixed(2)}`} />
-            <Fact label={t("society.card.last_active")} value={formatDate(agent.stats.lastActiveMs, t("society.card.never"))} />
+          <section>
+            <h3 className="ac-head mb-2">{t("society.card.record")}</h3>
+            <div className="grid grid-cols-3 gap-2">
+              <Plate label={t("society.card.runs")} value={String(agent.stats.runs)} />
+              <Plate label={t("society.card.cost")} value={`$${agent.stats.totalCostUsd.toFixed(2)}`} />
+              <Plate
+                label={t("society.card.last_active")}
+                value={formatDate(agent.stats.lastActiveMs, t("society.card.never"))}
+              />
+            </div>
           </section>
         </div>
       </ScrollArea>
-      <div className="flex shrink-0 items-center gap-2 border-t border-border px-4 py-3">
-        <Button
-          size="sm"
-          variant="secondary"
+
+      <div className="ac-actions">
+        <button
+          type="button"
+          className="ac-btn"
+          data-accent="1"
           disabled={!onOpenChat}
           title={onOpenChat ? undefined : t("society.card.chat_soon")}
           onClick={onOpenChat}
         >
-          <MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+          <MessageSquare className="h-3.5 w-3.5" aria-hidden />
           {t("society.card.action_chat")}
-        </Button>
-        <Button size="sm" variant="secondary" disabled title={t("society.card.assign_soon")}>
-          <Send className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+        </button>
+        <button type="button" className="ac-btn" disabled title={t("society.card.assign_soon")}>
+          <Send className="h-3.5 w-3.5" aria-hidden />
           {t("society.card.action_assign")}
-        </Button>
-        <Button size="sm" variant="outline" className="ml-auto" disabled={busy} onClick={() => void togglePause()}>
-          {paused ? <Play className="mr-1.5 h-3.5 w-3.5" aria-hidden /> : <Pause className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+        </button>
+        <button
+          type="button"
+          className="ac-btn ml-auto"
+          disabled={busy}
+          onClick={() => void togglePause()}
+        >
+          {paused ? <Play className="h-3.5 w-3.5" aria-hidden /> : <Pause className="h-3.5 w-3.5" aria-hidden />}
           {paused ? t("society.card.action_resume") : t("society.card.action_pause")}
-        </Button>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A value on a short discrete ladder, drawn as filled notches. Only used for
+ * things that really are steps — the three permission ceilings, the share of
+ * the catalog an allow-list keeps — never for a number dressed up as one.
+ */
+function StepMeter({
+  label,
+  steps,
+  filled,
+  value,
+}: {
+  label: string;
+  steps: number;
+  filled: number;
+  value: string;
+}) {
+  return (
+    <div className="ac-meter">
+      <span className="ac-meter-label">{label}</span>
+      <span className="ac-meter-track" role="img" aria-label={`${label}: ${value}`}>
+        {Array.from({ length: steps }, (_, i) => (
+          <span key={i} className="ac-meter-seg" data-on={i < filled ? "1" : "0"} />
+        ))}
+      </span>
+      <span className="ac-meter-value">{value}</span>
+    </div>
+  );
+}
+
+function Plate({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="ac-plate">
+      <div className="ac-plate-label truncate">{label}</div>
+      <div className="ac-plate-value truncate">
+        {value}
+        {hint ? <span className="ac-plate-label"> {hint}</span> : null}
       </div>
     </div>
   );
@@ -239,21 +362,12 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
 function RuleRow({ label, ids, byId }: { label: string; ids: string[]; byId: Map<string, Capability> }) {
   return (
     <div className="mb-2">
-      <p className="mb-1 text-xs text-muted-foreground">{label}</p>
+      <p className="ac-prose mb-1 text-xs text-muted-foreground">{label}</p>
       <div className="flex flex-wrap gap-1.5">
         {ids.map((id) => (
           <CapabilityChip key={id} id={id} capability={byId.get(id.split(":").slice(0, 2).join(":"))} />
         ))}
       </div>
-    </div>
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="truncate text-sm font-medium text-foreground">{value}</div>
     </div>
   );
 }

@@ -13,8 +13,9 @@
  * which made the thing you actually talk to the smallest pane on screen. Now
  * the chat owns the middle six eighths, the roster rail from the island moves
  * in on the left so you can switch agents without closing the card, and the
- * right eighth is held empty on purpose — delimited, named, with nothing
- * invented in it until it gets its controls.
+ * right eighth holds the agent's own controls. The first of them is Retire:
+ * it archives the row AND has the island play the execution
+ * (`world/retirement.ts`), which is why the card closes on its way out.
  *
  * Clicking the agent's identity in the header (or "Profile") turns the card
  * over: specs and the 3D figure, no chat, exactly the two panes the old card
@@ -31,7 +32,7 @@
  */
 import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { MessageSquare, User, X } from "lucide-react";
+import { MessageSquare, Skull, User, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,7 +40,7 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { AgentSwatch } from "../AgentSwatch";
-import type { SocietyAgent } from "../data";
+import { findLead, useRetireAgent, type SocietyAgent } from "../data";
 import { AgentChatPanel } from "../chat/AgentChatPanel";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
 import { RosterRail } from "../roster/RosterRail";
@@ -169,12 +170,15 @@ export function AgentCardOverlay({
                     >
                       <AgentChatPanel agent={agent} roster={roster} />
                     </section>
-                    <OptionsRail />
+                    <OptionsRail agent={agent} roster={roster} onRetired={onClose} />
                   </>
                 ) : (
                   <>
+                    {/* No app border here: the sheet is a card of the world and
+                        carries its own edge — its parchment against the figure's
+                        lit lobby is the separation. */}
                     <section
-                      className="min-h-0 border-r border-border"
+                      className="min-h-0"
                       aria-label={t("society.card.specs")}
                       data-testid="agent-card-specs"
                     >
@@ -199,11 +203,20 @@ export function AgentCardOverlay({
 }
 
 /**
- * The right eighth. Held open on purpose: the column is drawn and named so
- * the layout is settled, and it stays empty rather than filled with a
- * placeholder pretending to be a control.
+ * The right eighth: what you can DO to this agent, as opposed to what you can
+ * say to it. Retirement is the only entry so far, and it sits at the bottom
+ * away from everything else — it is not a control anyone should reach for by
+ * accident.
  */
-function OptionsRail() {
+function OptionsRail({
+  agent,
+  roster,
+  onRetired,
+}: {
+  agent: SocietyAgent;
+  roster: SocietyAgent[];
+  onRetired: () => void;
+}) {
   const t = useT();
   return (
     <aside
@@ -217,6 +230,81 @@ function OptionsRail() {
         </h2>
       </div>
       <p className="px-3 pt-2 text-xs text-muted-foreground">{t("society.card.options_hint")}</p>
+      <div className="mt-auto p-3">
+        <RetireControl agent={agent} roster={roster} onRetired={onRetired} />
+      </div>
     </aside>
+  );
+}
+
+/**
+ * Retire this agent. Two presses, because it cannot be taken back: the first
+ * arms it, the second archives the row and sends the lead across the island
+ * to do it in person. The card closes so the ceremony is visible.
+ *
+ * The lead itself is never retirable — the roster refuses to archive it
+ * (`roster.archive`), so the button says so rather than failing at the API.
+ */
+function RetireControl({
+  agent,
+  roster,
+  onRetired,
+}: {
+  agent: SocietyAgent;
+  roster: SocietyAgent[];
+  onRetired: () => void;
+}) {
+  const t = useT();
+  const retire = useRetireAgent();
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Arming never survives a switch to another agent in the rail.
+  useEffect(() => {
+    setArmed(false);
+    setError(null);
+  }, [agent.agentId]);
+
+  if (agent.tier === "lead") {
+    return <p className="text-xs text-muted-foreground">{t("society.card.retire_lead_blocked")}</p>;
+  }
+
+  const run = async () => {
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await retire(agent, findLead(roster));
+      onRetired();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setArmed(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <Button
+        size="sm"
+        variant={armed ? "destructive" : "outline"}
+        className="w-full gap-1.5"
+        disabled={busy}
+        onClick={() => void run()}
+        data-testid="agent-card-retire"
+      >
+        <Skull className="h-3.5 w-3.5" aria-hidden />
+        {armed ? t("society.card.retire_confirm") : t("society.card.retire")}
+      </Button>
+      <p className="text-xs text-muted-foreground">
+        {armed ? t("society.card.retire_armed_hint") : t("society.card.retire_hint")}
+      </p>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
   );
 }

@@ -192,7 +192,12 @@ world and clicking a row in the rail open the SAME model card (§4.2).
 
 The card is a large **overlay window above the world** (maintainer sketch 2026-09-01): almost
 full-screen, the world stays visible behind it through a dimmed, blurred scrim; Esc / ✕ close it.
-Three columns, in this order: **Specs | 3D figure | Chat.**
+
+**Revised 2026-09-03 (maintainer):** the card has TWO faces, and the chat is the one you land on.
+Read across a viewport cut into eight — chat face: **roster (1/8) | chat (6/8) | options (1/8)**;
+profile face: **roster (1/8) | specs | 3D figure**. Clicking the agent's identity in the header
+turns the card over. The chat used to be the narrowest of three equal columns, which made the
+thing you actually talk to the smallest pane on screen.
 
 - **Specs (left):** the spec sheet described below.
 - **3D figure (center):** rotating figure — the agent's **low-poly character with pixel-art textures** (maintainer
@@ -224,9 +229,18 @@ surface.** Direction: bright, beautiful, high-quality video-game art — warm li
 friendly colors, real game feel. Explicitly NOT in scope for the world: the Cursor-derived design
 doc (`PersonalJarvisDesignDesign.md.md` — cream/grey editorial canvas, Cursor Orange; that
 document never styles the world), and NOT the app's Ink & Paper monochrome. The surrounding app
-chrome (sidebar, drawers, ledger, the model card's spec sheet) stays Ink & Paper; the world
+chrome (sidebar, drawers, ledger) stays Ink & Paper; the world
 viewport and everything rendered inside it (tiles, light, sky mood, in-world labels, speech
-bubbles) is its own branded space with its own palette and type. A dedicated art-direction pass
+bubbles) is its own branded space with its own palette and type.
+
+**Revised 2026-09-03 (maintainer):** the model card's **spec sheet moved to the world's side of
+this line** — it is a champion card of the island, so it wears the island's daylight, identical in
+light and dark mode the way the viewport is. It leads with the agent's specialisation, drawn with
+the tools' real brand marks. The rail, the card header and the options column around it stay app
+chrome. Mechanically the sheet redeclares the theme tokens for the region it encloses, the way
+`.dark` does, so every component inside it follows without knowing (`card/agentCard.css`).
+
+A dedicated art-direction pass
 (palette, lighting, tile-set mood boards) is part of M3 before any environment assets are built.
 
 ### 4.4 Communication surfaces

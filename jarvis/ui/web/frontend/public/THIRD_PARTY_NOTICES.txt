@@ -34,7 +34,11 @@ Copyright 2020 The JetBrains Mono Project Authors
 Space Grotesk
 Copyright 2020 Florian Karsten (https://github.com/floriankarsten/space-grotesk)
 
-The three families are bundled as web fonts (via the @fontsource packages)
+Pixelify Sans
+Copyright 2021 The Pixelify Sans Project Authors
+(https://github.com/eifetx/Pixelify-Sans)
+
+The four families are bundled as web fonts (via the @fontsource packages)
 and are licensed under the SIL Open Font License, Version 1.1. The full
 licence text and a FAQ are available at https://openfontlicense.org. The
 fonts may be used, studied, modified and redistributed freely as long as

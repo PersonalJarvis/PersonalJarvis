@@ -13,6 +13,11 @@
 @import "@fontsource/jetbrains-mono/500.css";
 @import "@fontsource/jetbrains-mono/600.css";
 @import "@fontsource/jetbrains-mono/700.css";
+/* The island's display face. `components/society/world/world.css` has asked for
+   it since M3 and silently got Inter, because nothing ever shipped the file;
+   the agent card wants it for real. Two weights, same offline rule. */
+@import "@fontsource/pixelify-sans/400.css";
+@import "@fontsource/pixelify-sans/600.css";
 
 @tailwind base;
 @tailwind components;
