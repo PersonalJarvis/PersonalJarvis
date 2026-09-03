@@ -119,9 +119,25 @@ class Suggestion:
         return asdict(self)
 
 
-def triggers_for(runner: str) -> tuple[str, ...]:
-    """The trigger characters a seat honours; unknown runners get none."""
-    return TRIGGERS_BY_RUNNER.get(runner, ())
+#: surface -> the trigger characters that surface honours, whatever runner it
+#: sits on. A society agent runs on the brain runner (``/`` only by default),
+#: but its chat completes teammates and capabilities with ``@`` as well.
+TRIGGERS_BY_SURFACE: Final[dict[str, tuple[str, ...]]] = {
+    "society": (SLASH, MENTION),
+}
+
+
+def triggers_for(runner: str, surface: str = "") -> tuple[str, ...]:
+    """The trigger characters a seat honours; unknown runners get none.
+
+    A surface may honour more than its runner does (see
+    ``TRIGGERS_BY_SURFACE``); it never honours less.
+    """
+    own = TRIGGERS_BY_RUNNER.get(runner, ())
+    extra = TRIGGERS_BY_SURFACE.get(surface, ())
+    if not extra:
+        return own
+    return tuple(dict.fromkeys((*own, *extra)))
 
 
 def suggest(
@@ -131,6 +147,8 @@ def suggest(
     trigger: str,
     query: str = "",
     limit: int = 40,
+    surface: str = "",
+    agent_id: str = "",
 ) -> dict[str, Any]:
     """The list for one trigger on one seat, filtered by ``query``.
 
@@ -138,16 +156,25 @@ def suggest(
     honour yields an empty list rather than an error, so a stale picker on a
     changed seat degrades to "nothing here".
     """
-    if trigger not in triggers_for(runner):
+    if trigger not in triggers_for(runner, surface):
         return {"trigger": trigger, "items": [], "truncated": False}
     folder = Path(cwd).expanduser() if cwd else None
     q = (query or "").strip()
+    society = surface == "society"
     rows: list[Suggestion]
     if trigger == SLASH:
         rows = jarvis_skills() if runner == "brain" else claude_slash(folder)
+        if society:
+            # The agent's OWN learned skills come first: they are the ones it
+            # can run with society_run_skill.
+            rows = learned_skills(agent_id) + rows
         rows = _filter_definitions(rows, q)
     elif trigger == SKILL_REF:
         rows = _filter_definitions(codex_skills(folder), q)
+    elif society:
+        # Teammates and connected capabilities — never the folder's files: an
+        # agent works in its own workspace and reaches tools by name.
+        rows = _filter_definitions(teammates(agent_id) + connected_capabilities(), q)
     else:
         rows = claude_agents(folder) if runner in _CLAUDE_SHAPED else []
         rows = _filter_definitions(rows, q) if q else rows
@@ -158,6 +185,90 @@ def suggest(
         "items": [r.to_dict() for r in rows[:limit]],
         "truncated": truncated,
     }
+
+
+# ----------------------------------------------------------------- society
+
+
+def _society_runtime() -> Any:
+    """The society runtime, or ``None`` on a stripped install (lazy, AP-26)."""
+    from jarvis.society.runtime import current_runtime
+
+    return current_runtime()
+
+
+def teammates(agent_id: str) -> list[Suggestion]:
+    """The other active agents — who this one can address with ``@``."""
+    try:
+        rt = _society_runtime()
+        if rt is None:
+            return []
+        rows = rt.roster.snapshot()
+    except Exception:  # noqa: BLE001 — a composer must never 500 on a missing society
+        log.warning("typeahead: the roster could not be listed", exc_info=True)
+        return []
+    out: list[Suggestion] = []
+    for agent in rows:
+        if agent.agent_id == agent_id or str(agent.state) != "active":
+            continue
+        out.append(
+            Suggestion(
+                value=agent.name,
+                label=agent.name,
+                hint=agent.title,
+                kind="agent",
+                group=GROUP_AGENTS,
+            )
+        )
+    return out
+
+
+def connected_capabilities() -> list[Suggestion]:
+    """Every connected plugin, CLI, MCP tool and skill, by capability id."""
+    try:
+        rt = _society_runtime()
+        if rt is None:
+            return []
+        catalog = rt.catalog()
+    except Exception:  # noqa: BLE001 — same: an empty list, never an error
+        log.warning("typeahead: the capability catalog is unavailable", exc_info=True)
+        return []
+    return [
+        Suggestion(
+            value=row.id,
+            label=row.label,
+            hint=row.one_liner,
+            kind="capability",
+            group=GROUP_PLUGINS,
+        )
+        for row in catalog
+        if row.connected
+    ]
+
+
+def learned_skills(agent_id: str) -> list[Suggestion]:
+    """The agent's own learned skills (``society_run_skill`` runs one)."""
+    if not agent_id:
+        return []
+    try:
+        rt = _society_runtime()
+        if rt is None:
+            return []
+        rows = rt.skills_for(agent_id).summaries()
+    except Exception:  # noqa: BLE001 — a broken registry costs the rows, not the composer
+        log.warning("typeahead: learned skills unavailable for %s", agent_id, exc_info=True)
+        return []
+    return [
+        Suggestion(
+            value=str(row.get("slug", "")),
+            label=str(row.get("name") or row.get("slug", "")),
+            hint=str(row.get("description", "")),
+            kind="skill",
+            group=GROUP_AGENTS,
+        )
+        for row in rows
+        if row.get("slug")
+    ]
 
 
 # ------------------------------------------------------------- definitions

@@ -352,3 +352,58 @@ def test_typeahead_route_resolves_the_seat_and_reads_the_folder(
             params={"trigger": "@", "provider": "claude-api", "cwd": str(folder / "missing")},
         )
         assert res.status_code == 400
+
+
+def test_a_society_session_lists_teammates_and_connected_capabilities(tmp_path, monkeypatch):
+    """The society chat honours "@" even though the brain runner does not, and
+    the list is teammates plus connected capabilities — never the folder."""
+    from types import SimpleNamespace
+
+    from jarvis.agent_chat import typeahead as ta
+
+    assert ta.triggers_for("brain") == ("/",)
+    assert ta.triggers_for("brain", "society") == ("/", "@")
+
+    rows = [
+        SimpleNamespace(agent_id="mailbox", name="Mailbox", title="Gmail agent", state="active"),
+        SimpleNamespace(agent_id="scout", name="Scout", title="Research", state="active"),
+        SimpleNamespace(agent_id="ghost", name="Ghost", title="", state="archived"),
+    ]
+    catalog = [
+        SimpleNamespace(id="plugin:gmail", label="gmail", one_liner="Mail.", connected=True),
+        SimpleNamespace(id="cli:gh", label="gh", one_liner="GitHub.", connected=False),
+    ]
+    skills = SimpleNamespace(
+        summaries=lambda: [{"slug": "weekly-digest", "name": "Weekly digest", "description": "d"}]
+    )
+    runtime = SimpleNamespace(
+        roster=SimpleNamespace(snapshot=lambda: rows),
+        catalog=lambda: catalog,
+        skills_for=lambda _id: skills,
+    )
+    monkeypatch.setattr(ta, "_society_runtime", lambda: runtime)
+
+    at = ta.suggest(
+        runner="brain", cwd=tmp_path, trigger="@", surface="society", agent_id="mailbox"
+    )
+    values = [i["value"] for i in at["items"]]
+    assert values == ["Scout", "plugin:gmail"]  # self and archived out, unconnected out
+
+    slash = ta.suggest(
+        runner="brain", cwd=tmp_path, trigger="/", surface="society", agent_id="mailbox"
+    )
+    assert slash["items"][0]["value"] == "weekly-digest"  # its own skills first
+
+
+def test_a_society_lookup_without_a_runtime_is_empty_not_an_error(tmp_path, monkeypatch):
+    from jarvis.agent_chat import typeahead as ta
+
+    monkeypatch.setattr(ta, "_society_runtime", lambda: None)
+    got = ta.suggest(runner="brain", cwd=tmp_path, trigger="@", surface="society", agent_id="x")
+    assert got == {"trigger": "@", "items": [], "truncated": False}
+
+    def boom():
+        raise RuntimeError("society is down")
+
+    monkeypatch.setattr(ta, "_society_runtime", boom)
+    assert ta.teammates("x") == [] and ta.connected_capabilities() == []

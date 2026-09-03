@@ -47,7 +47,7 @@ import { createAgentChatStore, useAgentChatStore } from "@/store/agentChat";
 import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
-import { useResolveProposal, type SocietyAgent } from "../data";
+import { useResolveProposal, useSocietyCapabilities, type SocietyAgent } from "../data";
 
 /** A gap this long between messages earns a fresh time stamp. */
 const STAMP_GAP_MS = 30 * 60_000;
@@ -62,6 +62,9 @@ const CHAT_MEASURE = "mx-auto w-full max-w-[820px]";
 
 /** The line appended to a message that names an agent; Jarvis delegates on it. */
 const DELEGATE_MARK = "[to jarvis]";
+
+/** The line a message adds when it names a capability: pin those tools for the turn. */
+const TOOL_PIN_MARK = "[tools:";
 
 /** The team offer is asked for once per app load; the backend decides the rest. */
 let onboardingAsked = false;
@@ -754,6 +757,7 @@ function visibleUserText(text: string): string {
   return text
     .split("\n")
     .filter((line) => !line.trimStart().startsWith(DELEGATE_MARK))
+    .filter((line) => !line.trimStart().startsWith(TOOL_PIN_MARK))
     .join("\n")
     .trimEnd();
 }
@@ -1060,17 +1064,36 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
   }, []);
   useEffect(resize, [value, resize]);
 
+  // On the society surface "@" also completes CAPABILITIES — the connected
+  // plugins, CLIs and MCP tools, by their capability id. Naming one pins it
+  // for the turn (see `submit`), which is how a person points the agent at a
+  // tool without editing its focus.
+  const capabilities = useSocietyCapabilities();
+  const capabilityRows = useMemo(
+    () => (surface === "society" ? (capabilities.data ?? []) : []),
+    [surface, capabilities.data],
+  );
+
   const onChange = (next: string, caret: number) => {
     setValue(next);
     const before = next.slice(0, caret);
     const m = /(?:^|\s)@([^\s@]*)$/.exec(before);
-    setMention(m && mentionable.length > 0 ? { query: m[1].toLowerCase(), start: caret - m[1].length - 1 } : null);
+    const offers = mentionable.length > 0 || capabilityRows.length > 0;
+    setMention(m && offers ? { query: m[1].toLowerCase(), start: caret - m[1].length - 1 } : null);
   };
 
-  const matches = useMemo(
-    () => (mention ? mentionable.filter((a) => a.name.toLowerCase().startsWith(mention.query)).slice(0, 6) : []),
-    [mention, mentionable],
-  );
+  const matches = useMemo(() => {
+    if (!mention) return [] as { key: string; value: string; label: string; agent?: SocietyAgent }[];
+    const q = mention.query;
+    const agents = mentionable
+      .filter((a) => a.name.toLowerCase().startsWith(q))
+      .map((a) => ({ key: a.agentId, value: a.name, label: a.name, agent: a }));
+    const caps = capabilityRows
+      .filter((c) => c.id.toLowerCase().includes(q) || c.label.toLowerCase().startsWith(q))
+      .slice(0, 6)
+      .map((c) => ({ key: c.id, value: c.id, label: c.label, agent: undefined }));
+    return [...agents, ...caps].slice(0, 8);
+  }, [mention, mentionable, capabilityRows]);
 
   const insertMention = (name: string) => {
     if (!mention) return;
@@ -1086,9 +1109,12 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
     const text = value.trim();
     if (!text || busy) return;
     const named = mentionable.filter((a) => text.includes(`@${a.name}`));
-    const hint = named
-      .map((a) => `${DELEGATE_MARK} ${t("society.chat.delegate_line").replace("{0}", a.name).replace("{1}", a.agentId)}`)
-      .join("\n");
+    const lines = named.map(
+      (a) => `${DELEGATE_MARK} ${t("society.chat.delegate_line").replace("{0}", a.name).replace("{1}", a.agentId)}`,
+    );
+    const pinned = capabilityRows.filter((c) => text.includes(`@${c.id}`)).map((c) => c.id);
+    if (pinned.length > 0) lines.push(`${TOOL_PIN_MARK} ${pinned.join(", ")}]`);
+    const hint = lines.join("\n");
     setValue("");
     setMention(null);
     setProblem(null);
@@ -1108,17 +1134,17 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
       </div>
       {matches.length > 0 ? (
         <ul className={cn(CHAT_MEASURE, "mb-1 flex flex-wrap gap-1 px-1")} role="listbox" aria-label={t("society.chat.mention_hint")}>
-          {matches.map((a) => (
-            <li key={a.agentId}>
+          {matches.map((m) => (
+            <li key={m.key}>
               <button
                 type="button"
                 role="option"
                 aria-selected={false}
-                onClick={() => insertMention(a.name)}
+                onClick={() => insertMention(m.value)}
                 className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs text-foreground hover:bg-secondary"
               >
-                <AgentSwatch agent={a} size={16} />
-                {a.name}
+                {m.agent ? <AgentSwatch agent={m.agent} size={16} /> : null}
+                {m.label}
               </button>
             </li>
           ))}
@@ -1194,7 +1220,7 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              if (matches.length > 0 && mention) insertMention(matches[0].name);
+              if (matches.length > 0 && mention) insertMention(matches[0].value);
               else void submit();
             }
             if (e.key === "Escape" && mention) setMention(null);

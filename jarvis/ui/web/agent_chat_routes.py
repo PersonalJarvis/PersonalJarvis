@@ -247,7 +247,7 @@ async def get_catalog(request: Request, surface: SurfaceName = "agent") -> dict[
         # Which characters open the composer's typeahead on this seat —
         # decided here, from the runner, so the box never offers a "/" list
         # to a seat that would read it as plain text.
-        d["typeahead"] = list(typeahead.triggers_for(runner))
+        d["typeahead"] = list(typeahead.triggers_for(runner, surface))
         rows.append(d)
     return {
         "providers": rows,
@@ -268,6 +268,7 @@ async def get_typeahead(
     cwd: str | None = None,
     q: str = Query("", max_length=200),
     limit: int = Query(40, ge=1, le=200),
+    session_id: str = "",
 ) -> dict[str, Any]:
     """What the composer lists after ``/``, ``@`` or ``$`` on one seat.
 
@@ -280,6 +281,13 @@ async def get_typeahead(
     svc = _service(request)
     runner = resolve_runner(provider, surface=surface) if provider else "api"
     folder = _validate_cwd(cwd) or svc.default_cwd(surface)
+    # A society chat completes its own teammates, capabilities and learned
+    # skills, so the list needs to know WHICH agent is typing.
+    agent_id = ""
+    if surface == "society" and session_id:
+        from jarvis.society.surface import agent_id_of
+
+        agent_id = agent_id_of(session_id) or ""
     return await asyncio.to_thread(
         typeahead.suggest,
         runner=runner,
@@ -287,6 +295,8 @@ async def get_typeahead(
         trigger=trigger,
         query=q,
         limit=limit,
+        surface=surface,
+        agent_id=agent_id,
     )
 
 
