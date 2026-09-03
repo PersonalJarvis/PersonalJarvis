@@ -125,6 +125,12 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        # The app logs em dashes and arrows; without this the reader
+        # decodes them as cp1252 on Windows, dies on the first one, and
+        # the harness reports a boot that never reached its anchor when
+        # the boot was fine (AP-1).
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
