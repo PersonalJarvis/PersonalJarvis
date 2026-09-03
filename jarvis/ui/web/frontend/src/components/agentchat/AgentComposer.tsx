@@ -30,6 +30,7 @@ import { usePasteRescue } from "@/components/agentchat/usePasteRescue";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
+import { DictationStatus } from "@/components/agentchat/DictationStatus";
 import { GigiMark } from "@/components/GigiMark";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { fill, useT } from "@/i18n";
@@ -435,19 +436,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           {t("agent_chat.attach_drop_hint")}
         </div>
       )}
-      {dictating && (
-        <div
-          className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary"
-          role="status"
-          aria-live="polite"
-        >
-          <span className="relative flex h-2 w-2" aria-hidden>
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/70" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-foreground/70" />
-          </span>
-          <span className="font-medium">{t("chats_view.dictation_listening")}</span>
-        </div>
-      )}
+      {/* The blue variant of this strip lived here; a running microphone is a
+          live state, not the accent, so it now shares the one green strip. */}
+      <DictationStatus onStop={stopDictation} />
       <ChatAttachmentStrip
         attachments={files.attachments}
         analyzing={files.analyzing}
@@ -659,7 +650,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           className={cn(
             "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors disabled:opacity-50",
             dictating
-              ? "animate-jarvis-pulse border-primary/50 bg-primary/15 text-primary"
+              ? "border-success/40 bg-success/10 text-success motion-safe:animate-jarvis-pulse"
               : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
           )}
         >

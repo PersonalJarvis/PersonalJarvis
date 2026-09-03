@@ -6,6 +6,7 @@ import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
+import { DictationStatus } from "@/components/agentchat/DictationStatus";
 
 // Safety net: if the brain doesn't respond within 60s (no reply, no error event),
 // we revert the indicator. A backend hang must not leave the UI stuck in the
@@ -176,22 +177,9 @@ export function ChatInput() {
         "transition-[box-shadow] focus-within:ring-2 focus-within:ring-border-strong",
       )}
     >
-      {dictating && (
-        <div
-          className="flex items-center gap-row rounded-md bg-secondary px-3 py-1.5 text-meta text-foreground"
-          role="status"
-          aria-live="polite"
-        >
-          {/* Listening is a live state, and life is green. It used to be
-              --primary, which on near-black is pure white — the loudest mark
-              on the screen for a thing that is merely running. */}
-          <span className="relative flex h-2 w-2" aria-hidden>
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/70" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-          </span>
-          <span>{t("chats_view.dictation_listening")}</span>
-        </div>
-      )}
+      {/* Listening is a live state, and life is green — the shared strip owns
+          that rule now, plus the clock and its own way out. */}
+      <DictationStatus onStop={stopDictation} />
       <textarea
         // Marks the composer as the app's fallback dictation sink. The
         // delivery path needs to know whether it is on screen at all before

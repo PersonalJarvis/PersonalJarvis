@@ -20,13 +20,14 @@
  * runner can drive. The header says so while voice is showing.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Brain, ChevronRight, MessageSquare, Mic, MicOff, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
+import { Brain, ChevronRight, MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { AgentChatStoreProvider, useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
+import { DictationStatus } from "@/components/agentchat/DictationStatus";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import type { ReasoningBlock, TimelineItem, ToolBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
 import { formatThoughtDuration } from "@/components/home/TurnSteps";
@@ -909,11 +910,15 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
           ))}
         </ul>
       ) : null}
+      <DictationStatus onStop={dictation.stop} className={cn(CHAT_MEASURE, "mb-1.5")} />
       <div
         className={cn(
           CHAT_MEASURE,
           "relative flex items-end gap-1 rounded-[22px] border border-border bg-background px-1.5 py-1",
           attachments.dragging && "border-border-strong",
+          // The whole composer reads as armed while the mic is open, not just
+          // the 32px button someone has to go looking for.
+          dictation.dictating && "border-success/40 ring-1 ring-success/25",
         )}
         {...attachments.dragHandlers}
       >
@@ -988,11 +993,13 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
           aria-label={dictation.dictating ? t("society.chat.stop_recording") : t("society.chat.record")}
           aria-pressed={dictation.dictating}
           className={cn(
-            "flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground",
-            dictation.dictating && "bg-destructive/15 text-destructive",
+            "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+            dictation.dictating
+              ? "bg-secondary text-success motion-safe:animate-jarvis-pulse"
+              : "text-muted-foreground hover:bg-secondary hover:text-foreground",
           )}
         >
-          {dictation.dictating ? <MicOff className="h-4 w-4" aria-hidden /> : <Mic className="h-4 w-4" aria-hidden />}
+          {dictation.dictating ? <Square className="h-4 w-4" aria-hidden /> : <Mic className="h-4 w-4" aria-hidden />}
         </button>
         {busy ? (
           <button
