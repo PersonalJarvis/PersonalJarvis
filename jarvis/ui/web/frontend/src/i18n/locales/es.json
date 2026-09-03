@@ -5113,7 +5113,8 @@
       "proposal_kind_routine": "Rutina",
       "proposal_kind_approval_rule": "Reglas de aprobación",
       "proposal_kind_focus": "Herramientas a usar primero",
-      "proposal_kind_team": "Compañeros de equipo"
+      "proposal_kind_team": "Compañeros de equipo",
+      "allow_always": "Permitir siempre"
     },
     "world": {
       "minimap_label": "Mapa de la isla",

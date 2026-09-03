@@ -5113,7 +5113,8 @@
       "proposal_kind_routine": "Routine",
       "proposal_kind_approval_rule": "Freigaberegeln",
       "proposal_kind_focus": "Werkzeuge, die zuerst genutzt werden",
-      "proposal_kind_team": "Teammitglieder"
+      "proposal_kind_team": "Teammitglieder",
+      "allow_always": "Immer erlauben"
     },
     "world": {
       "minimap_label": "Inselkarte",

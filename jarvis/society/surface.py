@@ -34,7 +34,7 @@ from .agent_tools import (
     ShellTool,
     WikiNoteTool,
 )
-from .capabilities import CapabilityKind, CapabilityRow, select_tools
+from .capabilities import CapabilityKind, CapabilityRow, capability_id_for_tool, select_tools
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
 from .roster import AgentRecord, canonical_session_id
@@ -47,6 +47,7 @@ __all__ = [
     "agent_id_of",
     "build_briefing",
     "capability_epoch",
+    "remember_always_allow",
     "society_system_extra",
     "society_tool_filter",
     "society_tools",
@@ -160,6 +161,114 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     return tools
 
 
+#: Argument keys that name WHAT a mixed-action tool does (``gmail: send``).
+_VERB_KEYS: Final[tuple[str, ...]] = ("action", "operation", "method", "command", "mode")
+
+
+def _verb_of(args: dict[str, Any]) -> str:
+    for key in _VERB_KEYS:
+        raw = args.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()[:40]
+    return ""
+
+
+class _GatedTool:
+    """A granted tool wrapped with the agent's approval rules.
+
+    The executor asks ``risk_tier_for_args`` before every call; this wrapper
+    answers with ``approvals.decide`` over the roster row's rules and ceiling:
+    a require-approval match or a call above the ceiling reads as ``ask`` (the
+    chat card appears), an always-allow match lets an ask-tier call run, a
+    blocked class stays ``block``. Everything else — schema, flags, execute —
+    is the inner tool's own.
+    """
+
+    def __init__(self, inner: Any, agent: AgentRecord, capability_id: str) -> None:
+        self._inner = inner
+        self._agent = agent
+        self._capability_id = capability_id
+        self.name = inner.name
+        self.description = inner.description
+        self.schema = inner.schema
+        self.risk_tier = inner.risk_tier
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
+
+    def risk_tier_for_args(self, args: dict[str, Any]) -> str | None:
+        from .approvals import Verdict, decide
+
+        base = str(self.risk_tier or "monitor")
+        hook = getattr(self._inner, "risk_tier_for_args", None)
+        if callable(hook):
+            try:
+                own = hook(args)
+            except Exception:  # noqa: BLE001 — a broken inner hook falls back to the static tier
+                log.warning("society gate: %s.risk_tier_for_args raised", self.name, exc_info=True)
+                own = None
+            if isinstance(own, str) and own:
+                base = own
+        try:
+            verdict = decide(self._agent, self._capability_id, base, verb=_verb_of(args))
+        except Exception:  # noqa: BLE001 — the static tier still gates the call
+            log.warning("society gate: decide failed for %s", self.name, exc_info=True)
+            return base
+        if verdict is Verdict.BLOCK:
+            return "block"
+        if verdict is Verdict.QUEUE:
+            return "ask"
+        # RUN: an always-allow rule lifts an ask-tier call to monitor — the
+        # person's standing yes; anything lower keeps its own tier.
+        return "monitor" if base == "ask" else base
+
+    async def execute(self, args: dict[str, Any], ctx: Any) -> Any:
+        return await self._inner.execute(args, ctx)
+
+
+async def remember_always_allow(session: Any, tool_name: str, args: dict[str, Any]) -> bool:
+    """The card's "Always allow" on a society session writes the agent's OWN
+    rule (``approval_rules.always_allow``: ``capability`` or ``capability:verb``)
+    instead of flipping the session to auto. Returns False when this is not a
+    society session or the tool has no capability id, so the caller falls back.
+    """
+    rt = current_runtime()
+    agent_id = agent_id_of(getattr(session, "session_id", "") or "")
+    if rt is None or agent_id is None:
+        return False
+    cap_id = capability_id_for_tool(tool_name)
+    if cap_id is None:
+        return False
+    agent = await rt.roster.get(agent_id)
+    if agent is None:
+        return False
+    verb = _verb_of(args)
+    pattern = f"{cap_id}:{verb}" if verb else cap_id
+    rules = {
+        "require_approval": list(agent.approval_rules.get("require_approval", [])),
+        "always_allow": list(agent.approval_rules.get("always_allow", [])),
+    }
+    if pattern not in rules["always_allow"]:
+        rules["always_allow"].append(pattern)
+        rules["always_allow"].sort()
+        updated = await rt.roster.update(agent.agent_id, {"approval_rules": rules})
+        rt.cache_agent(updated)
+    try:
+        await rt.post_chat_notice(
+            agent,
+            {
+                "kind": "always_allow",
+                "pattern": pattern,
+                "agent_id": agent.agent_id,
+                "agent_name": agent.name,
+                "text": f"{agent.name} may now run {pattern} without asking.",
+            },
+        )
+    except Exception:  # noqa: BLE001 — the rule is saved; the notice is a projection
+        log.warning("society: always-allow notice not posted for %s", agent_id, exc_info=True)
+    return True
+
+
 class _ContainedTool:
     """A folder tool whose path arguments must stay inside the workspace."""
 
@@ -236,6 +345,14 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
             focus=agent.focus,
             denies=agent.denies,
         )
+        # Every granted hand obeys the agent's own approval rules and ceiling
+        # (agent-definition §3.4): the gate rides on the executor's per-call
+        # tier hook, so the chat card and the queue stay the one approval path.
+        picked = {
+            name: cast(Tool, _GatedTool(tool, agent, cap_id))
+            for name, tool in picked.items()
+            if (cap_id := capability_id_for_tool(name)) is not None
+        }
         ordered: dict[str, Tool] = {}
         ordered.update(own)
         ordered.update(picked)

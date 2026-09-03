@@ -10,7 +10,8 @@ person decides.
 Rule evaluation (``decide``), in order: global blacklist (not here — the
 ToolExecutor raises before anything), the agent's ``require_approval``
 patterns (queue), its ``always_allow`` patterns (run when the tool's own
-tier is at most ``monitor``), then the tool's risk tier against the ceiling.
+tier is at most ``ask`` — the person's standing yes), then the tool's risk
+tier against the ceiling.
 Patterns are capability ids (``plugin:gmail``), ``capability:verb``
 (``plugin:gmail:send``) or ``capability:*``.
 """
@@ -67,7 +68,10 @@ def decide(agent: AgentRecord, capability_id: str, tool_tier: str, *, verb: str 
     if any(matches(p, capability_id, verb) for p in rules.get("require_approval", [])):
         return Verdict.QUEUE
     if any(matches(p, capability_id, verb) for p in rules.get("always_allow", [])):
-        return Verdict.RUN if _TIER_RANK.get(tool_tier, 1) <= 1 else Verdict.QUEUE
+        # An explicit always-allow rule is the person's standing "yes" for this
+        # exact action (the card's "Always allow", agent-definition §3.4): it
+        # runs up to the ask tier. Block stays block — it never had a card.
+        return Verdict.RUN if _TIER_RANK.get(tool_tier, 1) <= 2 else Verdict.QUEUE
     ceiling = _TIER_RANK[str(agent.permission_ceiling)]
     tier = _TIER_RANK.get(tool_tier, 1)
     if tier <= ceiling and tool_tier != str(PermissionCeiling.ASK):

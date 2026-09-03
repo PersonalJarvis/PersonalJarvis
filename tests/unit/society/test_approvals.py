@@ -43,7 +43,8 @@ async def test_verdict_order(world):
     assert decide(agent, "plugin:gmail", "monitor", verb="read") is Verdict.RUN
     assert decide(agent, "plugin:gmail", "monitor", verb="send") is Verdict.QUEUE
     assert decide(agent, "cli:gh", "monitor") is Verdict.RUN
-    assert decide(agent, "cli:gh", "ask") is Verdict.QUEUE  # always_allow never lifts ask
+    assert decide(agent, "cli:gh", "ask") is Verdict.RUN  # always_allow = a standing yes up to ask
+    assert decide(agent, "cli:gh", "block") is Verdict.BLOCK
     assert decide(agent, "core:search-web", "safe") is Verdict.RUN
     assert decide(agent, "core:run-shell", "ask") is Verdict.QUEUE
     assert decide(agent, "plugin:spotify", "block") is Verdict.BLOCK
@@ -107,3 +108,18 @@ async def test_expiry_parks_and_resurfaces(world):
     revived = await approvals.resurface()
     assert [a.state for a in revived] == [ApprovalState.PENDING]
     assert revived[0].expires_ms > item.expires_ms
+
+
+async def test_an_always_allow_pattern_runs_an_ask_tier_call(world):
+    """The card's "Always allow" is the person's standing yes: it lifts an
+    ask-tier call; a blocked class stays blocked."""
+    _, roster, _ = world
+    agent, _ = await roster.create(
+        name="Mailbox",
+        permission_ceiling="ask",
+        approval_rules={"require_approval": [], "always_allow": ["plugin:gmail:send"]},
+    )
+    assert decide(agent, "plugin:gmail", "ask", verb="send") is Verdict.RUN
+    assert decide(agent, "plugin:gmail", "monitor", verb="send") is Verdict.RUN
+    assert decide(agent, "plugin:gmail", "block", verb="send") is Verdict.BLOCK
+    assert decide(agent, "plugin:gmail", "ask", verb="read") is Verdict.QUEUE

@@ -553,7 +553,18 @@ class AgentChatService:
         )
         if decision == "allow_always":
             session = self.store.get_session(session_id)
-            if session is not None and session.surface == "jarvis":
+            handled = False
+            hook = kit_for(session.surface).session_always_allow if session is not None else None
+            if hook is not None:
+                # A surface with its own memory for "always allow" (a society
+                # agent's approval rules) keeps the session's stance untouched.
+                try:
+                    handled = bool(await hook(session, name, args))
+                except Exception:  # noqa: BLE001 — falls back to the session-wide default below
+                    log.warning("agent chat: always-allow hook failed for %s", name, exc_info=True)
+            if handled:
+                pass
+            elif session is not None and session.surface == "jarvis":
                 self._always_allowed.setdefault(session_id, set()).add(name)
             else:
                 self.store.update_session(session_id, permission_mode="auto")

@@ -5146,7 +5146,8 @@
       "proposal_kind_routine": "Routine",
       "proposal_kind_approval_rule": "Approval rules",
       "proposal_kind_focus": "Tools to reach for first",
-      "proposal_kind_team": "Teammates"
+      "proposal_kind_team": "Teammates",
+      "allow_always": "Always allow"
     },
     "world": {
       "minimap_label": "Island map",

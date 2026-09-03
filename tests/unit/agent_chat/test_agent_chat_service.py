@@ -547,3 +547,45 @@ def test_an_uncreatable_workspace_falls_back_instead_of_failing_the_chat(
     svc = AgentChatService(AgentChatStore(tmp_path / "db.sqlite"), default_cwd=lambda: str(home))
 
     assert svc.default_cwd("jarvis") == str(home)
+
+
+def test_allow_always_on_a_kit_that_handles_it_does_not_flip_the_mode(
+    tmp_path: Path, scripted, monkeypatch: pytest.MonkeyPatch
+):
+    """A surface with its own memory for "always allow" (a society agent's
+    approval rules) keeps the session's stance; the default surfaces still
+    flip to auto (the test above)."""
+    from dataclasses import replace
+
+    from jarvis.agent_chat import service as service_mod
+
+    remembered: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def hook(session: Any, name: str, args: dict[str, Any]) -> bool:
+        remembered.append((session.session_id, name, dict(args)))
+        return True
+
+    real_kit_for = service_mod.kit_for
+    monkeypatch.setattr(
+        service_mod,
+        "kit_for",
+        lambda surface: replace(real_kit_for(surface), session_always_allow=hook),
+    )
+    ScriptedBrain.script = [
+        [BrainDelta(tool_call={"id": "c1", "name": "RunCommand", "input": {"command": "echo x"}})],
+        [BrainDelta(content="ok")],
+    ]
+
+    async def scenario() -> None:
+        svc = AgentChatService(AgentChatStore(":memory:"))
+        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+        q = svc.subscribe(session.session_id)
+        await svc.send(session.session_id, "run things")
+        ev = (await _drain(q, "approval_required"))[-1]["payload"]
+        svc.resolve_approval(session.session_id, ev["approval_id"], "allow_always")
+        events = await _drain(q, "turn_finished")
+        assert "session_updated" not in [e["kind"] for e in events]
+        assert svc.store.get_session(session.session_id).permission_mode != "auto"  # type: ignore[union-attr]
+        assert remembered == [(session.session_id, "RunCommand", {"command": "echo x"})]
+
+    asyncio.run(scenario())

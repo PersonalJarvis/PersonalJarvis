@@ -41,6 +41,11 @@ ExtraBuilder = Callable[[Any, Any], Awaitable[str]]
 SessionToolsBuilder = Callable[[Any, Any, Any], dict[str, Tool]]
 SessionExtraBuilder = Callable[[Any, Any, Any], Awaitable[str]]
 SessionFilterBuilder = Callable[[Any], Callable[[dict[str, Tool]], dict[str, Tool]] | None]
+#: ``(session, tool_name, args) -> handled``: what "Always allow" on the
+#: approval card means on this surface. ``True`` = the surface remembered it
+#: its own way (a society agent writes its own approval rule); ``False`` =
+#: the service falls back to its default (the session flips to auto).
+SessionAlwaysAllow = Callable[[Any, str, dict[str, Any]], Awaitable[bool]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +103,8 @@ class SurfaceKit:
     session_tools: SessionToolsBuilder | None = None
     session_system_extra: SessionExtraBuilder | None = None
     session_tool_filter: SessionFilterBuilder | None = None
+    #: How the card's "Always allow" is remembered here (see the alias above).
+    session_always_allow: SessionAlwaysAllow | None = None
 
 
 def _chat_workspace() -> Path:
@@ -147,6 +154,13 @@ def _society_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, Tool]
     from jarvis.society.surface import society_tool_filter
 
     return society_tool_filter(session)
+
+
+async def _society_always_allow(session: Any, tool_name: str, args: dict[str, Any]) -> bool:
+    """ "Always allow" writes the agent's own approval rule (lazy)."""
+    from jarvis.society.surface import remember_always_allow
+
+    return await remember_always_allow(session, tool_name, args)
 
 
 def _only_local_models(tools: dict[str, Tool]) -> dict[str, Tool]:
@@ -225,6 +239,7 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         session_tools=_society_tools,
         session_system_extra=_society_extra,
         session_tool_filter=_society_filter,
+        session_always_allow=_society_always_allow,
         workspace_dir=_chat_workspace,
     ),
 }

@@ -158,3 +158,52 @@ async def test_capability_epoch_changes_when_hands_change(rt: SocietyRuntime):
     before = capability_epoch(rt.catalog())
     rt._get_tools = lambda: {**TOOLS, "spotify": _tool("spotify")}  # noqa: SLF001 — test seam
     assert capability_epoch(rt.catalog()) != before
+
+
+async def test_a_granted_tool_is_gated_by_the_agents_rules(rt: SocietyRuntime, tmp_path: Path):
+    """Every granted hand obeys the roster row's approval rules and ceiling
+    through the executor's per-call tier hook (agent-definition §3.4)."""
+    await rt.roster.create(
+        name="Mailbox",
+        title="Gmail agent",
+        description="Handle my mail.",
+        focus=["plugin:gmail"],
+        permission_ceiling="monitor",
+        approval_rules={"require_approval": ["plugin:gmail:send"], "always_allow": []},
+    )
+    cfg = SimpleNamespace(wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")))
+    session = SimpleNamespace(session_id="society:mailbox")
+    await society_system_extra(cfg, None, session)
+    filt = society_tool_filter(session)
+    assert filt is not None
+    picked = filt({**TOOLS, **society_tools(cfg, None, session)})
+    gmail = picked["gmail"]
+    assert gmail.name == "gmail" and gmail.schema == TOOLS["gmail"].schema
+    assert gmail.risk_tier_for_args({"action": "list"}) in (None, "monitor")
+    assert gmail.risk_tier_for_args({"action": "send"}) == "ask"  # require_approval
+    # Own hands are never wrapped: the society tools gate themselves.
+    assert not hasattr(picked[SHELL_TOOL_NAME], "_capability_id")
+    # An always-allow rule is the person's standing yes: an ask-tier call runs.
+    await rt.roster.update(
+        "mailbox",
+        {"approval_rules": {"require_approval": [], "always_allow": ["plugin:gmail:send"]}},
+    )
+    await society_system_extra(cfg, None, session)
+    gmail = society_tool_filter(session)({**TOOLS})["gmail"]  # type: ignore[misc]
+    gmail.risk_tier = "ask"
+    assert gmail.risk_tier_for_args({"action": "send"}) == "monitor"
+
+
+async def test_always_allow_writes_the_agents_own_rule(rt: SocietyRuntime):
+    from jarvis.society.surface import remember_always_allow
+
+    await rt.roster.create(name="Mailbox", title="Gmail agent", focus=["plugin:gmail"])
+    session = SimpleNamespace(session_id="society:mailbox")
+    assert await remember_always_allow(session, "gmail", {"action": "send"}) is True
+    agent = await rt.roster.get("mailbox")
+    assert agent is not None and agent.approval_rules["always_allow"] == ["plugin:gmail:send"]
+    # Idempotent, and a tool without a capability id (an own hand) is not remembered.
+    assert await remember_always_allow(session, "gmail", {"action": "send"}) is True
+    assert (await rt.roster.get("mailbox")).approval_rules["always_allow"] == ["plugin:gmail:send"]
+    assert await remember_always_allow(session, "spawn-worker", {}) is False
+    assert await remember_always_allow(SimpleNamespace(session_id="agent:x"), "gmail", {}) is False

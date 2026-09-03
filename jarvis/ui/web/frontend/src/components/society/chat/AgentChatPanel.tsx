@@ -44,7 +44,7 @@ import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { createAgentChatStore, useAgentChatStore } from "@/store/agentChat";
-import type { AgentChatSurface } from "@/lib/agentChatApi";
+import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
 import { useResolveProposal, type SocietyAgent } from "../data";
@@ -496,7 +496,7 @@ function Transcript({
   items: TimelineItem[];
   agent: SocietyAgent;
   busy: boolean;
-  onDecide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
   const t = useT();
   const bottom = useRef<HTMLDivElement>(null);
@@ -732,7 +732,7 @@ function TurnBubble({
   onDecide,
 }: {
   item: TurnItem;
-  onDecide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
   const t = useT();
   const running = item.status === "running";
@@ -929,7 +929,7 @@ function ToolLine({
   onDecide,
 }: {
   block: ToolBlock;
-  onDecide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
   const t = useT();
   const pending = block.approval && block.approval.decision === null;
@@ -952,6 +952,14 @@ function ToolLine({
             className="rounded-full border border-border px-2 py-0.5 text-foreground hover:bg-secondary"
           >
             {t("society.chat.approve")}
+          </button>
+          <button
+            type="button"
+            onClick={() => void onDecide(block.approval!.approvalId, "allow_always")}
+            title={t("society.chat.allow_always")}
+            className="rounded-full border border-border px-2 py-0.5 text-foreground hover:bg-secondary"
+          >
+            {t("society.chat.allow_always")}
           </button>
           <button
             type="button"
