@@ -182,3 +182,30 @@ describe("a user message with files", () => {
     expect("url" in doc).toBe(false);
   });
 });
+
+describe("agent-chat reduce: notices", () => {
+  it("folds a society result notice into a notice item the timeline can show", () => {
+    const tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("user_message", { text: "@Gmail agent answer the invoice mail" }),
+      ev("notice", {
+        kind: "society_result",
+        agent_id: "gmail-agent",
+        agent_name: "Gmail agent",
+        status: "done",
+        text: "Invoice answered.",
+      }),
+    ]);
+    expect(tl.items).toHaveLength(2);
+    const notice = tl.items[1];
+    expect(notice.type).toBe("notice");
+    if (notice.type !== "notice") throw new Error("unreachable");
+    expect(notice.kind).toBe("society_result");
+    expect(notice.agentName).toBe("Gmail agent");
+    expect(notice.status).toBe("done");
+    expect(notice.text).toBe("Invoice answered.");
+  });
+
+  it("drops an empty notice", () => {
+    expect(reduceEvent(EMPTY_TIMELINE, ev("notice", {}, false))).toBe(EMPTY_TIMELINE);
+  });
+});

@@ -74,7 +74,7 @@
   "nav": {
     "chat_workspace": "Chat",
     "chats": "Chats",
-    "agents": "{name}-Agents",
+    "agents": "Agentes",
     "extensions": "Skills, Plugins & MCPs",
     "skills": "Habilidades",
     "plugins": "Plugins",
@@ -5163,6 +5163,9 @@
       "approve": "Permitir",
       "deny": "Denegar",
       "mention_hint": "Agentes",
+      "result_done": "{0} ha terminado",
+      "result_blocked": "{0} se quedó atascado",
+      "result_agent": "Un agente",
       "delegate_line": "Hand this to the agent '{0}' (id {1}) with delegate-to-agent and report back here when it is done."
     },
     "world": {

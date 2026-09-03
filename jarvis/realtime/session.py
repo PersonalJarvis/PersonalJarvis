@@ -684,7 +684,9 @@ _DELEGATE_DECLARATION: dict[str, Any] = {
         "open apps or views, change settings, control the computer on screen "
         "(click, type, and navigate inside any application window until the "
         "task is finished), manage files, start a background research or "
-        "coding mission the user explicitly asked to run, read or write the "
+        "coding mission the user explicitly asked to run, hand a task to one "
+        "of the user's named agents (their agent society) or ask which agents "
+        "exist and what one is doing, read or write the "
         "user's private Wiki memory — including recalling anything from the "
         "user's own past (what they did, said, visited, planned, or once "
         "told Jarvis) — and inspect the current MCP, CLI, tool, "
@@ -2194,6 +2196,7 @@ def _session_instructions(
     skill_directive: str = "",
     skills_directive: str = "",
     workspace_directive: str = "",
+    society_directive: str = "",
     compact: bool = False,
     history_lost: bool = False,
 ) -> str:
@@ -2344,6 +2347,7 @@ def _session_instructions(
             identity_line,
             history_lost_line,
             workspace_directive,
+            society_directive,
             skills_directive,
             skill_directive,
             input_directive,
@@ -2369,6 +2373,11 @@ def _session_instructions(
         # that must always reach the action function instead of the model's own
         # knowledge.
         workspace_directive,
+        # The agent society's roster, for the same reason again: the user named
+        # these agents at creation time, and a name the model has never heard
+        # is routed to its own knowledge ("I do not know who that is") instead
+        # of the action function that holds the team card (2026-09-03).
+        society_directive,
         # The installed-skill roster, for the same reason the workspace roster
         # is here: a name the model has never seen is a name it cannot call.
         # Without it the model guessed the run-skill argument from the user's
@@ -3075,6 +3084,7 @@ class RealtimeVoiceSession:
                 context=context,
                 skill_index=self._skill_match_index(),
                 workspace_names=self._workspace_call_signs(),
+                agent_names=self._society_agent_names(),
                 requires_public_fact_grounding=(
                     self._active_requires_public_fact_grounding
                 ),
@@ -3110,8 +3120,51 @@ class RealtimeVoiceSession:
         except Exception:  # noqa: BLE001 - optional surface, never fatal
             return ()
 
+    @staticmethod
+    def _society_agent_names() -> tuple[str, ...]:
+        """Names of the user's live society agents, or ``()``.
+
+        Pure in-memory read of the roster snapshot (``society.lead_card``), so
+        it is free on the hot path; any fault answers "no society".
+        """
+        try:
+            from jarvis.society.lead_card import society_agent_names
+
+            return society_agent_names()
+        except Exception:  # noqa: BLE001 - optional surface, never fatal
+            return ()
+
+    def _society_directive(self) -> str:
+        """Tell the live model which of the user's agents exist, by name.
+
+        The society twin of ``_workspace_directive``. Asked "welche Agents hast
+        du?" with a freshly created Gmail agent on the island, the live model
+        answered from the retired sub-agent system, and "Gmail agent, check my
+        inbox" went native because the name was typed into the Agents section
+        by the user and no vocabulary could hold it (2026-09-03). Names and the
+        routing rule only: the team card with each agent's hands lives with
+        the orchestrator, which owns delegate_to_agent and society_status.
+        """
+        names = self._society_agent_names()
+        if not names:
+            return ""
+        roster = ", ".join(names)
+        return (
+            "[Agent society — the user's own agents, live right now]\n"
+            f"Agents on the user's team: {roster}.\n"
+            "Those are the user's OWN AGENTS from the Agents section (each with "
+            "its own chat, tools and instructions) — not people you know, not "
+            "coding terminals, and not the retired sub-agent system. When the "
+            "user names one of them, says \"agent\", \"my agents\" or \"the "
+            "team\", hands work to an agent, or asks which agents exist or what "
+            "one is doing: call your action function — the orchestrator holds "
+            "the team card and delegates. Never answer that you do not know who "
+            "that is, never guess what an agent is doing, and never say an agent "
+            "has been told anything unless your action function reported it."
+        )
+
     def _workspace_directive(self) -> str:
-        """Tell the live model which coding agents are running, by name.
+        """Tell the live model which coding terminals are running, by name.
 
         The live 2026-07-27 miss in one sentence: asked what a named pane had
         done, the model said it did not know which person that was — and it was
@@ -3137,9 +3190,10 @@ class RealtimeVoiceSession:
             return ""
         roster = ", ".join(names)
         return (
-            "[Agentic IDE — coding agents are running right now]\n"
+            "[Agentic IDE — coding terminals are running right now]\n"
             f"Terminals open in the user's coding workspace: {roster}.\n"
-            "Those are RUNNING CODING AGENTS, not people you know. Each is "
+            "Those are RUNNING CODING TERMINALS, not people and not society "
+            "agents. Each is "
             "named T plus its place in the grid, and the user says that "
             "number however a number is said — \"T2\", \"terminal two\", "
             "\"the second terminal\" all mean the same pane. Never answer "
@@ -3751,6 +3805,7 @@ class RealtimeVoiceSession:
                         ),
                     ),
                     workspace_directive=self._workspace_directive(),
+                    society_directive=self._society_directive(),
                     skills_directive=self._skills_directive(
                         compact=bool(
                             getattr(provider, "prefers_compact_instructions", False)
@@ -5327,6 +5382,7 @@ class RealtimeVoiceSession:
                                 # call, and a roster naming a terminal that is
                                 # gone is worse than none.
                                 workspace_directive=self._workspace_directive(),
+                                society_directive=self._society_directive(),
                                 compact=getattr(
                                     self, "_compact_instructions", False
                                 ),
@@ -7203,6 +7259,7 @@ class RealtimeVoiceSession:
                         compact=getattr(self, "_compact_instructions", False),
                     ),
                     workspace_directive=self._workspace_directive(),
+                    society_directive=self._society_directive(),
                     skills_directive=self._skills_directive(),
                     compact=getattr(self, "_compact_instructions", False),
                     history_lost=self._suppress_history_seed,

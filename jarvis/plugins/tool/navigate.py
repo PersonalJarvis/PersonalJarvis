@@ -92,12 +92,32 @@ _ALIASES: dict[str, str] = {
     "einstellungen": "settings",
     "config": "settings",
     "konfiguration": "settings",
+    # The Agents section is the agent society (the island, the roster, the
+    # cards). The retired "sub-agents" wording still lands there rather than
+    # nowhere, and the society's own names are spoken forms too.
     "agents": "agents",
     "agenten": "agents",
     "sub-agents": "agents",
     "sub agents": "agents",
     "subagents": "agents",
     "subagenten": "agents",
+    "society": "agents",
+    "agent society": "agents",
+    "agenten-gesellschaft": "agents",  # i18n-allow: input vocab
+    "gesellschaft": "agents",  # i18n-allow: input vocab
+    "my agents": "agents",
+    "meine agenten": "agents",  # i18n-allow: input vocab
+    "mis agentes": "agents",  # i18n-allow: input vocab
+    "team": "agents",
+    "island": "agents",
+    "insel": "agents",  # i18n-allow: input vocab
+    "isla": "agents",  # i18n-allow: input vocab
+    # The Agentic IDE holds coding TERMINALS, not agents: the spoken forms
+    # that say so land on the workspace, never on the society.
+    "terminals": "agentic-ide",
+    "coding terminals": "agentic-ide",
+    "terminal grid": "agentic-ide",
+    "coding clis": "agentic-ide",
     "chat": "chats",
     "skill": "skills",
     "fähigkeiten": "skills",

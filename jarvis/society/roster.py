@@ -355,6 +355,30 @@ def _coerce(field_name: str, value: Any) -> Any:
 class Roster:
     def __init__(self, store: SocietyStore) -> None:
         self._store = store
+        #: The live (non-archived) rows as of the last write or ``list()`` —
+        #: what a synchronous reader on the brain's hot path may see without
+        #: touching the database (the lead card, ``lead_card.py``). Every
+        #: write through this class refreshes it, so a freshly created agent
+        #: is on the very next turn's card.
+        self._snapshot: tuple[AgentRecord, ...] = ()
+        self._epoch: int = 0
+
+    def snapshot(self) -> list[AgentRecord]:
+        """The roster as last read — synchronous, no IO; ``[]`` before the first read."""
+        return list(self._snapshot)
+
+    @property
+    def epoch(self) -> int:
+        """Bumps on every roster write; a cheap "did the team change" probe."""
+        return self._epoch
+
+    async def refresh(self) -> list[AgentRecord]:
+        """Re-read the live rows into the snapshot (``list()`` does the same)."""
+        return await self.list()
+
+    def _remember(self, agents: list[AgentRecord]) -> None:
+        self._snapshot = tuple(agents)
+        self._epoch += 1
 
     async def create(
         self,
@@ -408,7 +432,9 @@ class Roster:
         await self._store.insert_agent(row)
         created = await self._store.get_agent_row(agent_id)
         assert created is not None
-        return await self._hydrate(created), True
+        record = await self._hydrate(created)
+        await self.refresh()
+        return record, True
 
     async def get(self, agent_id: str) -> AgentRecord | None:
         row = await self._store.get_agent_row(agent_id)
@@ -425,7 +451,10 @@ class Roster:
 
     async def list(self, *, include_archived: bool = False) -> list[AgentRecord]:
         rows = await self._store.list_agent_rows(include_archived=include_archived)
-        return [await self._hydrate(r) for r in rows]
+        agents = [await self._hydrate(r) for r in rows]
+        if not include_archived:
+            self._remember(agents)
+        return agents
 
     async def update(self, agent_id: str, fields: dict[str, Any]) -> AgentRecord:
         current = await self._store.get_agent_row(agent_id)
@@ -450,7 +479,9 @@ class Roster:
         await self._store.update_agent(agent_id, columns)
         row = await self._store.get_agent_row(agent_id)
         assert row is not None
-        return await self._hydrate(row)
+        record = await self._hydrate(row)
+        await self.refresh()
+        return record
 
     async def archive(self, agent_id: str) -> AgentRecord:
         if agent_id == LEAD_AGENT_ID:

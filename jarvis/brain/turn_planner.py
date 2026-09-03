@@ -39,6 +39,7 @@ class TurnReason(StrEnum):
     PUBLIC_FACT = "public_fact"
     SCREEN_CONTEXT = "screen_context"
     SKILL = "skill"
+    SOCIETY = "society"
     UNCERTAIN = "uncertain"
     WORKSPACE = "workspace"
 
@@ -652,6 +653,53 @@ def _is_workspace_turn(text: str, workspace_names: Sequence[str]) -> bool:
         return False
 
 
+# The society shapes no roster is needed for: asking who is on the team, or
+# handing work to "an agent" / "the team" in DE / EN / ES. Recall over
+# precision within the shape, tight on the shape itself: "agent" alone (the
+# noun in a news sentence, "travel agent") does not qualify — a question
+# about the agents or an order to an agent does.  # i18n-allow: trigger vocabulary
+_SOCIETY_TEAM_RE = re.compile(
+    r"(?:\b(?:welche|was fuer|was für|wie viele|wieviele|which|what|how many|que|qué|"
+    r"cuantos|cuántos|cuales|cuáles)\b[^.?!]{0,40}\b(?:agents?|agenten|agentes?)\b)"
+    r"|(?:\b(?:agents?|agenten|agentes?)\b[^.?!]{0,30}\b(?:hast du|habe ich|gibt es|"
+    r"zur verfuegung|zur verfügung|verfuegbar|verfügbar|do you have|do i have|are there|"
+    r"available|on the team|im team|tienes|tengo|hay|disponibles?)\b)"
+    r"|(?:\b(?:delegier\w*|uebergib|übergib|gib das|gib es|schick das|schick es|"
+    r"delegate|hand (?:this|that|it)|give (?:this|that|it)|pass (?:this|that|it)|"
+    r"delega|pasa(?:le)?|dale)\b[^.?!]{0,30}\b(?:agents?|agenten|agentes?|team|equipo)\b)"
+    r"|(?:\b(?:lass|let|deja)\b[^.?!]{0,20}\b(?:einen?|den|the|an|a|al|un)\s+"
+    r"(?:agent\w*|agente)\b)",
+    re.IGNORECASE,
+)
+
+
+def _is_society_turn(text: str, agent_names: Sequence[str]) -> bool:
+    """Whether this turn names one of the user's agents or asks about the team.
+
+    The society half of the workspace lesson. Asked "welche Agents hast du",
+    the live model answered from the retired sub-agent system, and "Gmail
+    agent, check my inbox" was routed natively because "Gmail agent" is a
+    name the user typed into the Agents section — no static vocabulary can
+    hold it. The roster is the evidence, and a named agent is as strong as a
+    named pane: the orchestrator holds the team card and the delegate tool.
+
+    Two shapes qualify: (1) a roster name appears in the turn, as whole words;
+    (2) the turn asks about the agents or hands work to an agent / the team
+    (``_SOCIETY_TEAM_RE``). Pure text work, no IO and no LLM.
+    """
+    raw = str(text or "")
+    if not raw.strip():
+        return False
+    folded = _normalize(raw)
+    for name in agent_names:
+        needle = _normalize(str(name or "")).strip()
+        if len(needle) < 3:
+            continue
+        if re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", folded):
+            return True
+    return bool(_SOCIETY_TEAM_RE.search(folded))
+
+
 def _is_workspace_retry(
     text: str, context: Sequence[str], workspace_names: Sequence[str]
 ) -> bool:
@@ -793,6 +841,7 @@ def plan_turn(
     skill_index: Any | None = None,
     workspace_names: Sequence[str] = (),
     requires_public_fact_grounding: bool = False,
+    agent_names: Sequence[str] = (),
 ) -> TurnPlan:
     """Return the conservative shared execution plan for ``text``.
 
@@ -824,12 +873,23 @@ def plan_turn(
     one-shot ``search_web`` evidence path used for explicitly fresh facts.
     Hosted providers keep the default false and retain the native evergreen
     fast path.
+
+    ``agent_names`` is the live roster of the user's agent society
+    (``society.lead_card.society_agent_names``), passed in for the same
+    reason as the call-signs: an agent is named by the user at creation
+    time, so no static vocabulary can hold "Gmail agent"; see
+    ``_is_society_turn``.
     """  # i18n-allow: names the German trigger words the static branch matches
     normalized = _normalize(text).strip()
     if not normalized:
         return TurnPlan(path=TurnPath.NATIVE_REALTIME)
 
     reasons: set[TurnReason] = set()
+    # Same standing as a named pane, for the same reason: "what is the Gmail
+    # agent doing" reads as third-party smalltalk to every suppressor below,
+    # and only the orchestrator holds the roster that can answer it.
+    if _is_society_turn(text, agent_names):
+        reasons.add(TurnReason.SOCIETY)
     screen_context_intent = classify_screen_context(text).intent
     if screen_context_intent is not VisualIntent.NONE:
         # The native realtime model cannot see a one-shot image that only the

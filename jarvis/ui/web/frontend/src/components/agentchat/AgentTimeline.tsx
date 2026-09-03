@@ -183,6 +183,28 @@ export function AgentTimeline({
             </div>
           );
         }
+        if (item.type === "notice") {
+          // The society reporting back on a task Jarvis handed out: the
+          // agent's name as the headline, its summary underneath. Muted and
+          // centred like a stamp — it is not Jarvis speaking.
+          const headline =
+            item.kind === "society_result"
+              ? t(item.status === "done" ? "society.chat.result_done" : "society.chat.result_blocked").replace(
+                  "{0}",
+                  item.agentName || t("society.chat.result_agent"),
+                )
+              : item.agentName;
+          return (
+            <div
+              key={item.id}
+              data-message-id={item.id}
+              className="mx-auto flex max-w-[85%] flex-col gap-0.5 rounded-lg bg-card px-4 py-3 text-body"
+            >
+              {headline ? <span className="font-medium text-foreground">{headline}</span> : null}
+              {item.text ? <span className="whitespace-pre-wrap text-muted-foreground">{item.text}</span> : null}
+            </div>
+          );
+        }
         return (
           <Turn
             key={item.id}

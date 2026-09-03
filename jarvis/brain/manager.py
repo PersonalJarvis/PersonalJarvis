@@ -4309,6 +4309,26 @@ class BrainManager:
         except Exception:  # noqa: BLE001
             log.debug("connected-CLIs section omitted", exc_info=True)
 
+        # The lead's team card (2026-09-03): the agent society's roster with
+        # each agent's hands, plus the rule that "agent" means one of THEM.
+        # Without it Jarvis answered "which agents do you have" from the
+        # retired sub-agent system it was trained on while a freshly created
+        # Gmail agent stood on the island. Rendered from the roster snapshot
+        # (no IO), byte-stable between roster changes like the CLI section.
+        # Skipped on a society agent's own turn: that turn carries its own
+        # briefing (TurnOverride.system_extra), and a specialist must not be
+        # told it is the lead.
+        _turn_override = _TURN_OVERRIDE.get()
+        if _turn_override is None or not _turn_override.system_extra:
+            try:
+                from jarvis.society.lead_card import lead_card_section
+
+                _lead_card = lead_card_section(lead_name=name)
+                if _lead_card:
+                    parts.append(_lead_card)
+            except Exception:  # noqa: BLE001 — the card is a convenience, never a turn breaker
+                log.debug("lead card section omitted", exc_info=True)
+
         # Evidence gate directive (per-turn, AD-CLI8): forces a tool call
         # before any answer about an external-data domain. Empty on normal
         # turns; set by generate() when the gate returns require_tool.
@@ -4324,7 +4344,6 @@ class BrainManager:
 
         # Per-turn addendum (TurnOverride.system_extra): a surface's own
         # briefing for THIS turn only; empty on every other turn.
-        _turn_override = _TURN_OVERRIDE.get()
         if _turn_override is not None and _turn_override.system_extra:
             parts.append(_turn_override.system_extra)
 
@@ -4342,9 +4361,10 @@ class BrainManager:
             "Persona-Beschreibung weiter oben in diesem Prompt; halte dich an sie "
             "und erfinde keine eigenen Stil- oder Laengen-Regeln. "
             "Bei Aktionen: passende Tools sofort aufrufen, mehrere im selben Turn "
-            "wenn noetig. Bei echten Brocken (Code bauen/refactoren, langer Bericht, "
-            "Multi-Step-Aufgabe): spawn_worker mit der User-Utterance. "
-            "Bildschirm/Apps bedienen: computer_use."
+            "wenn noetig. Aufgaben fuer einen deiner Agenten (Karte 'Your agent "
+            "society'): delegate_to_agent. Bei echten Brocken ohne passenden Agenten "
+            "(Code bauen/refactoren, langer Bericht, Multi-Step-Aufgabe): spawn_worker "
+            "mit der User-Utterance. Bildschirm/Apps bedienen: computer_use."
         )
         parts.append(base)
 

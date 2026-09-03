@@ -45,6 +45,18 @@ __all__ = ["SocietyRuntime", "current_runtime", "set_current_runtime"]
 
 _DB_NAME = "society.db"
 
+#: What the person hears when a task Jarvis handed out comes back.
+_LEAD_DONE: dict[str, str] = {
+    "de": "{name} ist fertig: {text}",  # i18n-allow: spoken completion
+    "en": "{name} is done: {text}",
+    "es": "{name} ha terminado: {text}",
+}
+_LEAD_BLOCKED: dict[str, str] = {
+    "de": "{name} kam nicht weiter: {text}",  # i18n-allow: spoken completion
+    "en": "{name} got stuck: {text}",
+    "es": "{name} se quedó atascado: {text}",
+}
+
 _current: SocietyRuntime | None = None
 
 
@@ -121,6 +133,9 @@ class SocietyRuntime:
         # ``event_publish`` is the app bus the WebSocket forwards (server.py hands
         # it in); without it the engine falls back to the process default bus.
         self.checkpoints = CheckpointEngine(self, publish=event_publish)
+        #: The same app bus, for what the lead has to SAY: a delegated task's
+        #: result is announced to the person (voice + front-page chat).
+        self._publish_event = event_publish
         #: The society's one memory service; every touch moves the figure to the Memory House.
         self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
         #: The Quest Board: the person's jobs, routed to one taker, read back off the board.
@@ -154,6 +169,10 @@ class SocietyRuntime:
             created = await seed_first_run(self.roster, self.store)
             if created:
                 log.info("society: starter team seeded: %s", ", ".join(created))
+        # Warm the roster snapshot so the lead card (lead_card.py) — a
+        # synchronous reader on the brain's prompt build — sees the team from
+        # the first turn, not from the first REST listing.
+        await self.roster.refresh()
         self._started = True
         set_current_runtime(self)
         log.info("society runtime started (%s)", self.store.path)
@@ -362,6 +381,8 @@ class SocietyRuntime:
             )
         except Exception:  # noqa: BLE001 - the slot is free either way; the loss is one RESULT row
             log.warning("society: RESULT for %s could not be written", run_id, exc_info=True)
+        if env.from_agent == LEAD_AGENT_ID:
+            await self.report_to_lead(target, env, status=status, summary=summary)
         digest = TurnDigest(
             task=env.text or str(env.payload.get("task") or ""),
             final_text=final_text,
@@ -372,6 +393,94 @@ class SocietyRuntime:
         learner = asyncio.create_task(self._learn(target, digest))
         self._watchers.add(learner)
         learner.add_done_callback(self._watchers.discard)
+
+    # ------------------------------------------------------------ the lead
+
+    async def report_to_lead(
+        self, target: AgentRecord, env: SocietyEnvelope, *, status: str, summary: str
+    ) -> None:
+        """Close the loop on a task Jarvis handed out: tell the person.
+
+        Jarvis delegates by voice or from the front-page chat and acknowledges
+        at once ("Scout is on it"); the work then ends on the board, where the
+        person only sees it by opening the Agents section. So the RESULT of a
+        lead-assigned task also goes where the order came from — spoken as a
+        completion announcement on the app bus (the TTS pipeline and the
+        realtime session both read ``AnnouncementRequested``) and posted as a
+        notice into the newest front-page chat. Neither leg may fail the run.
+        """
+        lang = str(env.payload.get("lang") or "en").lower()
+        line = (_LEAD_DONE if status == "done" else _LEAD_BLOCKED).get(
+            lang, (_LEAD_DONE if status == "done" else _LEAD_BLOCKED)["en"]
+        )
+        text = line.format(name=target.name, text=" ".join(summary.split())[:400])
+        svc = self._get_chat()
+        post = getattr(svc, "post_notice", None)
+        if svc is not None and post is not None:
+            try:
+                sessions = svc.store.list_sessions(limit=1, surface="jarvis")
+                if sessions:
+                    await post(
+                        sessions[0].session_id,
+                        {
+                            "kind": "society_result",
+                            "agent_id": target.agent_id,
+                            "agent_name": target.name,
+                            "status": status,
+                            "text": summary[:1000],
+                            "session_id": target.session_id,
+                            "trace_id": env.trace_id,
+                        },
+                    )
+            except Exception:  # noqa: BLE001 - the chat notice is a courtesy; the voice leg still runs
+                log.warning("society: result notice for the lead chat failed", exc_info=True)
+        if self._publish_event is None:
+            return
+        try:
+            from jarvis.core.events import AnnouncementRequested
+
+            maybe = self._publish_event(
+                AnnouncementRequested(
+                    source_layer="society.lead",
+                    text=text,
+                    priority="normal",
+                    language=lang if lang in _LEAD_DONE else "en",
+                    kind="completion",
+                    detail=f"agent={target.agent_id} trace={env.trace_id}",
+                )
+            )
+            if asyncio.iscoroutine(maybe):
+                await maybe
+        except Exception:  # noqa: BLE001 - a silent completion is a lost courtesy, not a lost result
+            log.warning("society: result announcement for the lead failed", exc_info=True)
+
+    def pick_agent(self, task: str) -> AgentRecord | None:
+        """The active agent whose hands fit ``task`` best, or ``None``.
+
+        The lead delegating without a name ("give that to the team") — and a
+        realtime model that heard "Gmail agent" as "email agent" — need a
+        deterministic pick: the capability ids the task points at
+        (``derive_focus``) against each agent's own focus, strongest first.
+        A task no agent's focus touches picks nobody; the caller then says so
+        rather than guessing. Synchronous: the roster snapshot, no IO.
+        """
+        wanted = derive_focus("", task, self.catalog(), limit=8)
+        if not wanted:
+            return None
+        weight = {cap_id: len(wanted) - i for i, cap_id in enumerate(wanted)}
+        best: tuple[int, str, AgentRecord] | None = None
+        for agent in self.roster.snapshot():
+            if agent.agent_id == LEAD_AGENT_ID or str(agent.state) != "active":
+                continue
+            score = sum(
+                weight.get(cap_id, 0) for cap_id in agent.focus if cap_id not in agent.denies
+            )
+            if score <= 0:
+                continue
+            key = (score, agent.name.casefold(), agent)
+            if best is None or score > best[0] or (score == best[0] and key[1] < best[1]):
+                best = key
+        return best[2] if best is not None else None
 
     async def _learn(self, target: AgentRecord, digest: TurnDigest) -> None:
         try:

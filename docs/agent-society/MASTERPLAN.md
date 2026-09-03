@@ -21,8 +21,14 @@ and `society-status` (ADR-0011 amendment). **Agent mechanics wave (2026-09-02):*
 has its own contained shell and file hands, its own persistent browser through browser-use
 (out of process, login sessions for the user's accounts, attach mode), and learns
 automatically — finished tasks become skills in its own namespace (see
-`agent-definition.md` §3.1). **M3 world** is the maintainer's parallel track. Open in M4:
-rooms live under the scheduler, the curator.
+`agent-definition.md` §3.1). **The lead knows the society (2026-09-03):** Jarvis' prompt
+carries the team card (roster + hands, byte-stable, current on the next turn after any roster
+write), the router's decision table has a DELEGATE way ahead of `spawn_worker`, the realtime
+session gets a names directive and the turn planner a `SOCIETY` reason, `delegate_to_agent`
+picks the fitting agent when no name is given, and a lead-assigned result comes back as a
+spoken completion plus a notice in the front-page chat (`agent-definition.md` §3.5). **M3
+world** is the maintainer's parallel track. Open in M4: rooms live under the scheduler, the
+curator.
 
 The research behind every claim here lives in [`research/`](research/):
 [Branch A — product & UI](research/branch-a-product-ui.md) (Hermes Agent, Grok Bot, 3D stack,

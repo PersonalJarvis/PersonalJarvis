@@ -116,7 +116,26 @@ export interface ErrorItem {
   tsMs: number;
 }
 
-export type TimelineItem = UserItem | TurnItem | ErrorItem;
+/**
+ * A system line that is not a turn: the agent society posts a delegated
+ * task's result here ("Gmail agent is done: …"), a learned skill, a login
+ * request. Stored server-side as a `notice` event, so a reopened chat still
+ * shows it.
+ */
+export interface NoticeItem {
+  type: "notice";
+  id: string;
+  /** The server's notice kind — "society_result", "learned_skill", … */
+  kind: string;
+  text: string;
+  agentName: string;
+  agentId: string;
+  /** "done" | "blocked" | "" for notices that carry no outcome. */
+  status: string;
+  tsMs: number;
+}
+
+export type TimelineItem = UserItem | TurnItem | ErrorItem | NoticeItem;
 
 export interface PendingApproval {
   approvalId: string;
@@ -548,6 +567,28 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       return {
         ...base,
         items: [...base.items, { type: "error", id: `e-${seq || ev.ts_ms}`, text, tsMs: ev.ts_ms }],
+      };
+    }
+
+    case "notice": {
+      const text = str(p.text);
+      const kind = str(p.kind);
+      if (!text && !kind) return base;
+      return {
+        ...base,
+        items: [
+          ...base.items,
+          {
+            type: "notice",
+            id: `n-${seq || ev.ts_ms}`,
+            kind,
+            text,
+            agentName: str(p.agent_name),
+            agentId: str(p.agent_id),
+            status: str(p.status),
+            tsMs: ev.ts_ms,
+          },
+        ],
       };
     }
 

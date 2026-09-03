@@ -220,6 +220,42 @@ it.
 The anti-harm blacklist class (mass outbound, credential probing, repeated actions against
 non-consenting endpoints) is seeded at tier `block` and is not overridable by any agent field.
 
+### 3.5 The lead's team card — how Jarvis knows the society
+
+Jarvis is the harness itself and the one lead; it never runs on the society surface, so §3.3
+gives it nothing. Until 2026-09-03 its router prompt still described the retired sub-agent
+(mission worker) system and listed the word "Agent" as the trigger for `spawn_worker` —
+asked "which agents do you have?", Jarvis answered from that system while a freshly created
+Gmail agent stood on the island. The team card (`jarvis/society/lead_card.py`) is the fix:
+
+- **What it is.** A deterministic, byte-stable block rendered from the roster snapshot and the
+  capability catalog — no model call, no database read on the hot path. A rule block (what
+  "agent" means, `delegate_to_agent` for work, `society_status` for questions, `spawn_worker`
+  only for heavy background work no agent covers, coding terminals are not agents), then one
+  line per live agent: name, title, tier, state (`idle` / `busy (n runs)` / `paused`), hands
+  (focus labels; granted labels; or "every connected tool") and a 140-char brief. Archived
+  agents are left out. Open Agentic-IDE terminals are listed on their own line, marked as not
+  society agents. A roster epoch closes the card.
+- **Where it goes.** `BrainManager._build_system_prompt` appends it beside the CLI section on
+  every prompt build (typed front-page chat AND every delegated voice turn), except on a
+  society agent's own turn, which carries its briefing instead. The realtime session condenses
+  it to a per-turn directive (`_society_directive`: names + the routing rule; the hands stay
+  with the orchestrator), and the turn planner takes the names (`plan_turn(agent_names=…)`,
+  `TurnReason.SOCIETY`) so a turn naming an agent or asking about the team is routed to the
+  orchestrator, never answered natively.
+- **How it stays current.** `Roster` refreshes an in-memory snapshot on every write, so an
+  agent created in the Agents section is on the very next turn's card — no restart, no hook,
+  no model call. `Roster.epoch` is the cheap "did the team change" probe.
+- **The loop closes.** `delegate_to_agent` takes an optional name: without one (or with a
+  name the roster does not know, "email agent") the lead picks the agent whose focus fits the
+  task (`SocietyRuntime.pick_agent`, `derive_focus` over the task text) or says that nobody
+  fits. When a lead-assigned run ends, `SocietyRuntime.report_to_lead` posts a `notice` event
+  into the newest front-page chat session (rendered as a muted result line) and publishes an
+  `AnnouncementRequested(kind="completion")` the TTS pipeline and the realtime session speak.
+- **Words.** The section is "Agents" (`nav.agents`); the Agentic IDE holds "coding terminals"
+  in every prompt and directive; `navigate` maps "society", "team", "island", "my agents" to
+  the section and "terminals", "terminal grid" to the IDE.
+
 ---
 
 ## 4. Talking: agents, Jarvis and the user

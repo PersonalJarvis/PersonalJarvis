@@ -39,6 +39,11 @@ _NO_AGENT: Final[dict[str, str]] = {
     "en": "I do not know an agent called {target}.",
     "es": "No conozco ningún agente llamado {target}.",
 }
+_NO_FIT: Final[dict[str, str]] = {
+    "de": "Keiner deiner Agenten passt zu dieser Aufgabe.",  # i18n-allow: spoken reply
+    "en": "None of your agents fits this task.",
+    "es": "Ninguno de tus agentes encaja con esta tarea.",
+}
 _REFUSED: Final[dict[str, str]] = {
     "de": "{name} kann das gerade nicht übernehmen: {reason}.",  # i18n-allow: spoken reply
     "en": "{name} cannot take that right now: {reason}.",
@@ -102,18 +107,26 @@ class DelegateToAgentTool:
     name: str = "delegate_to_agent"
     risk_tier: str = "monitor"
     description: str = (
-        "Hand a task to one of the user's named agents (their agent society): 'let Scout "
-        "research X', 'Mailbox, answer the invoice mail'. Use when the user names an agent "
-        "or asks for the team. The agent works in the background; you acknowledge now. "
+        "Hand a task to one of the user's named agents (their agent society, listed on your "
+        "team card): 'let Scout research X', 'Mailbox, answer the invoice mail', 'give that "
+        "to the team'. Use when the user names an agent or asks for the team; leave `agent` "
+        "empty to let the lead pick the agent whose hands fit the task. The agent works in "
+        "the background; you acknowledge now and its result is announced when it lands. "
         "Never for tasks the user wants done right here in this turn."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "agent": {"type": "string", "description": "The agent's name as the user said it."},
+            "agent": {
+                "type": "string",
+                "description": (
+                    "The agent's name as the user said it; empty when the user did not "
+                    "name one (the best-fitting agent is picked from the task)."
+                ),
+            },
             "task": {"type": "string", "description": "The task, in full, in the user's words."},
         },
-        "required": ["agent", "task"],
+        "required": ["task"],
     }
     is_action_tool: bool = True
 
@@ -124,20 +137,25 @@ class DelegateToAgentTool:
         lang = _lang(args, ctx)
         target_key = str(args.get("agent") or "").strip()
         task = str(args.get("task") or "").strip()
-        if not target_key or not task:
-            return ToolResult(
-                success=False, output=_NOT_READY[lang], error="agent and task required"
-            )
+        if not task:
+            return ToolResult(success=False, output=_NOT_READY[lang], error="task required")
         runtime = await self._runtime()
         if runtime is None:
             return ToolResult(success=False, output=_NOT_READY[lang], error="society unavailable")
-        target = await runtime.roster.resolve(target_key)
+        target = await runtime.roster.resolve(target_key) if target_key else None
         if target is None:
-            return ToolResult(
-                success=False,
-                output=_NO_AGENT[lang].format(target=target_key),
-                error="target_unknown",
-            )
+            # No name, or a name the roster does not know ("email agent" for
+            # the Gmail agent): the task's own words pick the agent whose
+            # hands fit. Nobody fits → say so; never guess a stranger.
+            target = runtime.pick_agent(f"{target_key} {task}".strip())
+        if target is None:
+            if target_key:
+                return ToolResult(
+                    success=False,
+                    output=_NO_AGENT[lang].format(target=target_key),
+                    error="target_unknown",
+                )
+            return ToolResult(success=False, output=_NO_FIT[lang], error="no_agent_fits")
         from jarvis.society.events import MsgType
 
         env = await runtime.say(

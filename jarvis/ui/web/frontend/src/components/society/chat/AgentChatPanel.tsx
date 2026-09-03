@@ -29,7 +29,14 @@ import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip"
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { DictationStatus } from "@/components/agentchat/DictationStatus";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
-import type { ReasoningBlock, TimelineItem, ToolBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
+import type {
+  NoticeItem,
+  ReasoningBlock,
+  TimelineItem,
+  ToolBlock,
+  TurnItem,
+  UserItem,
+} from "@/components/agentchat/reduce";
 import { formatThoughtDuration } from "@/components/home/TurnSteps";
 import { VoiceStage } from "@/components/home/VoiceStage";
 import { LiveCore } from "@/components/LiveCore";
@@ -522,6 +529,8 @@ function Transcript({
                 <UserBubble item={item} />
               ) : item.type === "turn" ? (
                 <TurnBubble item={item} onDecide={onDecide} />
+              ) : item.type === "notice" ? (
+                <NoticeLine item={item} />
               ) : (
                 <p className="self-start rounded-2xl bg-destructive/10 px-3 py-2 text-xs text-destructive">{item.text}</p>
               )}
@@ -541,6 +550,28 @@ function TimeStamp({ ms }: { ms: number }) {
   const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   const day = today ? t("society.chat.today") : date.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
   return <p className="my-1 text-center text-xs text-muted-foreground">{`${day} ${time}`}</p>;
+}
+
+/**
+ * A delegated task coming back: the agent's name as the headline, its
+ * summary underneath, muted — it is the society reporting, not Jarvis
+ * speaking, so it never wears an assistant bubble.
+ */
+function NoticeLine({ item }: { item: NoticeItem }) {
+  const t = useT();
+  const headline =
+    item.kind === "society_result"
+      ? t(item.status === "done" ? "society.chat.result_done" : "society.chat.result_blocked").replace(
+          "{0}",
+          item.agentName || t("society.chat.result_agent"),
+        )
+      : item.agentName;
+  return (
+    <div className="flex max-w-[85%] flex-col gap-0.5 self-start rounded-2xl rounded-bl-md border border-border bg-card px-3.5 py-2 text-xs">
+      {headline ? <p className="font-medium text-foreground">{headline}</p> : null}
+      {item.text ? <p className="whitespace-pre-wrap leading-relaxed text-muted-foreground">{item.text}</p> : null}
+    </div>
+  );
 }
 
 /** What the person typed, without the delegation line the composer added. */
