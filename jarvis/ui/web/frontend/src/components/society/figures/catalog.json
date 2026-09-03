@@ -1756,9 +1756,9 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / face_extra-glasses",
       "license": "first-party",
       "palette_cells": {
-        "metal": 30
+        "metal": 66
       },
-      "triangles": 60,
+      "triangles": 132,
       "two_sided": false
     },
     {
