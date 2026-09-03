@@ -13,7 +13,7 @@
  * the store is emptied, so an idle society costs exactly nothing (MASTERPLAN
  * §2.8).
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import { useEventStore } from "@/store/events";
 import type { SocietyAgent } from "../data";
@@ -76,9 +76,11 @@ function asRoom(payload: unknown): IncomingRoom | null {
  * one-sided or dropped rather than drawn as a beam into empty water.
  */
 export function useConversationFeed(agents: SocietyAgent[], enabled: boolean): void {
-  // The set is rebuilt whenever the roster identity changes; the roster query
-  // hands back the same array between refetches, so this is not per-render.
-  const ids = agents.map((a) => a.agentId).join(",");
+  // The roster lives in a ref, not in the subscription's closure: it arrives a
+  // moment after the island mounts, and a subscription rebuilt on every roster
+  // refetch would reset its cursor and replay whatever was in flight.
+  const known = useRef<Set<string>>(new Set());
+  known.current = new Set(agents.map((a) => a.agentId));
 
   useEffect(() => {
     const store = useConversationStore.getState();
@@ -86,7 +88,6 @@ export function useConversationFeed(agents: SocietyAgent[], enabled: boolean): v
       store.reset();
       return;
     }
-    const known = new Set(ids ? ids.split(",") : []);
     let cursor: string | null = useEventStore.getState().events[0]?.id ?? null;
 
     return useEventStore.subscribe((state) => {
@@ -108,14 +109,14 @@ export function useConversationFeed(agents: SocietyAgent[], enabled: boolean): v
         const item = fresh[i];
         if (item.name === MESSAGE_EVENT) {
           const message = asMessage(item.payload);
-          if (message) convo.noteMessage(message, known);
+          if (message) convo.noteMessage(message, known.current);
         } else if (item.name === ROOM_EVENT) {
           const room = asRoom(item.payload);
           if (room) convo.noteRoom(room);
         }
       }
     });
-  }, [enabled, ids]);
+  }, [enabled]);
 
   useEffect(() => () => useConversationStore.getState().reset(), []);
 }

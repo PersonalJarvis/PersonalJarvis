@@ -91,6 +91,192 @@
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
 }
 
+/* ---- speech: what an agent just said ------------------------------------ */
+
+/* A bubble is a nameplate that grew a tail. Same parchment, same hard shadow,
+   same island type -- a viewer should read it as the figure speaking, not as
+   an app notification that wandered onto the map. */
+.sw-bubble {
+  font-family: "Pixelify Sans", "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  position: relative;
+  display: block;
+  /* drei's <Html> wrapper is zero-width, so a bare max-width made every word
+     wrap onto its own line. Take the natural width first, then cap it. */
+  width: max-content;
+  max-width: 216px;
+  padding: 6px 9px 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.32;
+  color: #1f2a3a;
+  text-align: left;
+  overflow-wrap: break-word;
+  background: rgba(255, 252, 245, 0.94);
+  border: 1px solid rgba(31, 42, 58, 0.2);
+  border-left-width: 3px;
+  border-radius: 6px;
+  box-shadow: 0 2px 0 rgba(31, 42, 58, 0.25);
+  animation: sw-bubble-in 180ms cubic-bezier(0.34, 1.42, 0.64, 1) both;
+}
+
+/* The tail points down at the head it belongs to. Two triangles: the rim, then
+   the fill a pixel above it, so the border reads all the way round. */
+.sw-bubble::after,
+.sw-bubble::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+}
+.sw-bubble::before {
+  bottom: -7px;
+  border-top: 7px solid rgba(31, 42, 58, 0.2);
+}
+.sw-bubble::after {
+  bottom: -5px;
+  border-top: 6px solid rgba(255, 252, 245, 0.94);
+}
+
+/* The speaker's accent runs down the left edge -- the same colour as their
+   nameplate dot and their minimap pin, so nothing new has to be learned. */
+.sw-bubble[data-accent] {
+  border-left-color: var(--sw-accent, rgba(31, 42, 58, 0.2));
+}
+
+/* A question leans forward, an answer sits back, a proposal is marked. The
+   label is a word, not an icon: an icon here would need its own legend. */
+/* Who is speaking, and what kind of line it is. The bubble floats above the
+   nameplate rather than over it, but the name rides along anyway: at a wide
+   zoom the plate is a smudge and the bubble is the only readable thing left. */
+.sw-bubble-kind {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 3px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: rgba(31, 42, 58, 0.78);
+}
+.sw-bubble-kind em {
+  font-style: normal;
+  font-weight: 500;
+  text-transform: lowercase;
+  color: rgba(31, 42, 58, 0.5);
+}
+.sw-bubble-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  border: 1px solid rgba(31, 42, 58, 0.4);
+  flex: none;
+}
+
+/* "+3 more" -- the lines that arrived faster than anyone could read them. */
+.sw-bubble-digest {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 5px 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #fffaf0;
+  background: rgba(31, 42, 58, 0.62);
+  border-radius: 4px;
+}
+
+/* The listener's end: three dots, the cheapest possible "is being spoken to". */
+.sw-bubble[data-listening] {
+  max-width: none;
+  padding: 5px 8px 6px;
+  line-height: 0;
+}
+.sw-bubble-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.sw-bubble-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(31, 42, 58, 0.55);
+  animation: sw-bubble-dot 1.1s ease-in-out infinite;
+}
+.sw-bubble-dots i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.sw-bubble-dots i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes sw-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes sw-bubble-dot {
+  0%,
+  100% {
+    opacity: 0.32;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* The island freezes under reduced motion; a bubble that still pops would be
+   the one thing left moving. It stays, it just arrives already there. */
+@media (prefers-reduced-motion: reduce) {
+  .sw-bubble {
+    animation: none;
+  }
+  .sw-bubble-dots i {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* A room in session over the Town Hall: the topic and which round it is on. */
+.sw-roomsign {
+  font-family: "Pixelify Sans", "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 4px 9px 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fffaf0;
+  background: rgba(31, 42, 58, 0.72);
+  border-radius: 5px;
+  white-space: nowrap;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+.sw-roomsign-topic {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  opacity: 0.86;
+}
+.sw-roomsign-round {
+  flex: none;
+  padding: 1px 5px 2px;
+  font-size: 10.5px;
+  background: rgba(255, 252, 245, 0.2);
+  border-radius: 4px;
+}
+
 /* ---- the game HUD ------------------------------------------------------- */
 
 .sw-hud {

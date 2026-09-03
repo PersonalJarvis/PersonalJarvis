@@ -183,8 +183,12 @@ export const useConversationStore = create<ConvoState & ConvoActions>((set, get)
     // monotone row number, which is exactly why it rides on the event.
     if (m.seq > 0 && m.seq <= state.lastSeq) return;
 
-    const speakerKnown = known.has(m.fromAgent);
-    const partnerKnown = m.toAgent !== "" && known.has(m.toAgent);
+    // An empty roster means "not loaded yet", never "nobody exists": dropping
+    // the first sentence of a conversation because the query had not resolved
+    // is a race nobody would ever reproduce on purpose.
+    const rosterKnown = known.size > 0;
+    const speakerKnown = !rosterKnown || known.has(m.fromAgent);
+    const partnerKnown = m.toAgent !== "" && (!rosterKnown || known.has(m.toAgent));
     // Nobody on the island said this and nobody on the island heard it — the
     // board's own plumbing talking to itself. There is nothing to draw.
     if (!speakerKnown && !partnerKnown) {

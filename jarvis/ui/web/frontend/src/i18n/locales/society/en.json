@@ -1,6 +1,21 @@
 {
   "society": {
     "world": {
+      "talk_kind_query": "asks",
+      "talk_kind_answer": "answers",
+      "talk_kind_propose": "proposes",
+      "talk_digest": "+{0} more",
+      "talk_listening": "is listening",
+      "talk_calling": "calling {0}",
+      "talk_more": "…",
+      "hud_talking": "{0} talking",
+      "room_round": "Round {0}/{1}",
+      "room_settled": "Room closed",
+      "room_reason_message_cap": "everything was said",
+      "room_reason_round_cap": "the rounds ran out",
+      "room_reason_silence": "nobody spoke",
+      "room_reason_user": "closed by you",
+      "room_reason_kill_switch": "the society was halted",
       "mode_label": "Agents view",
       "mode_world": "World",
       "mode_ledger": "Ledger",

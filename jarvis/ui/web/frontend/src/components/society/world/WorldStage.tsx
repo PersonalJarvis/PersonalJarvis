@@ -30,6 +30,7 @@ import { useSocietyRoster } from "../data";
 import { syncBuildingPoses, useBuildingPoses } from "./buildingPoses";
 import { useCameraStore } from "./cameraStore";
 import { Clouds } from "./Clouds";
+import { ConversationScene } from "./ConversationScene";
 import { FoundryDrawer } from "./FoundryDrawer";
 import { Landmarks } from "./Landmarks";
 import { MemoryDrawer } from "./MemoryDrawer";
@@ -45,6 +46,7 @@ import { Terrain, Water } from "./Terrain";
 import { Trees } from "./Trees";
 import { Village } from "./Village";
 import { Walkers } from "./Walkers";
+import { useConversationFeed } from "./useConversationFeed";
 import { useWorldControls } from "./useWorldControls";
 import { WorldCameraRig } from "./WorldCameraRig";
 import { WorldComposer } from "./WorldComposer";
@@ -103,6 +105,9 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent, onSelectPlac
   const [memoryOpen, setMemoryOpen] = useState(false);
 
   useWorldControls(hostRef, webgl);
+  // The island listens to the board only while it is actually drawing:
+  // reduced motion and a window with no WebGL cost nothing at all.
+  useConversationFeed(agents, webgl && !reduced);
 
   // An agent created in this window: look at the foundry, so its maker sees
   // the figure come out instead of it happening on a mountain off screen.
@@ -220,6 +225,7 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent, onSelectPlac
               {/* A retirement drives the walkers above; it must mount after them. */}
               <RetirementScene paused={reduced} />
             </Shadowed>
+            <ConversationScene agents={agents} paused={reduced} />
             {shadows && <Clouds paused={reduced} />}
             {ready && <PlaceLabels />}
           </WorldKitProvider>

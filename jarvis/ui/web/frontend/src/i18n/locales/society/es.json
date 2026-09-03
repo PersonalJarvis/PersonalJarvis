@@ -1,6 +1,21 @@
 {
   "society": {
     "world": {
+      "talk_kind_query": "pregunta",
+      "talk_kind_answer": "responde",
+      "talk_kind_propose": "propone",
+      "talk_digest": "+{0} más",
+      "talk_listening": "está escuchando",
+      "talk_calling": "llamando a {0}",
+      "talk_more": "…",
+      "hud_talking": "{0} hablando",
+      "room_round": "Ronda {0}/{1}",
+      "room_settled": "Sala cerrada",
+      "room_reason_message_cap": "ya se dijo todo",
+      "room_reason_round_cap": "se acabaron las rondas",
+      "room_reason_silence": "nadie habló",
+      "room_reason_user": "la cerraste tú",
+      "room_reason_kill_switch": "la sociedad se detuvo",
       "mode_label": "Vista de agentes",
       "mode_world": "Mundo",
       "mode_ledger": "Registro",

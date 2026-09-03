@@ -41,6 +41,7 @@ import {
 } from "./walkerKinematics";
 import { WORLD_HERO_SCALE, WalkerFigure, type WalkerAnim, type WalkerMode } from "./WalkerFigure";
 import { forgetRetired, retirementPose } from "./retireStore";
+import { speechPose } from "./conversationStore";
 import { claimEntrance } from "./spawnStore";
 import { clearWalkerPin, setWalkerPin } from "./walkerRegistry";
 import { mulberry32, nextBeat, seedFromString } from "./wander";
@@ -346,6 +347,17 @@ function Walker({
       // Ground snap with a short ease so a level step reads as a step.
       const targetY = groundY(map, s.x, s.z) + s.lift;
       s.y += (targetY - s.y) * Math.min(1, step * 12);
+    }
+
+    // A conversation turns the head and opens the mouth. It NEVER moves the
+    // figure (world-behaviour-manual.md §1), and it never touches one that is
+    // walking or asleep — so the sim above is never fought over.
+    const say = speechPose(agent.agentId);
+    if (say && !paused && (s.mode === "rest" || s.mode === "work")) {
+      if (say.heading !== null) {
+        s.heading = turnToward(s.heading, say.heading, TURN_RATE_RAD_S * step);
+      }
+      if (say.talking) s.mode = "talk";
     }
 
     anim.current.mode = s.mode;

@@ -145,6 +145,16 @@ describe("who is on the island", () => {
     expect(talk.partnerId).toBe("scout");
   });
 
+  it("keeps a line that arrived before the roster query resolved", () => {
+    // The island mounts a moment before /api/society/agents answers. An empty
+    // set means "not loaded yet", not "nobody exists" — dropping the opening
+    // sentence of a conversation over that race is invisible and maddening.
+    useConversationStore.getState().noteMessage(message(), new Set());
+    const talk = useConversationStore.getState().talks[pairKey("scout", "archivist")];
+    expect(talk).toBeDefined();
+    expect(talk.partnerId).toBe("archivist");
+  });
+
   it("draws nothing at all when neither side has a figure", () => {
     send(message({ fromAgent: "scheduler", toAgent: "user" }));
     expect(useConversationStore.getState().talks).toEqual({});

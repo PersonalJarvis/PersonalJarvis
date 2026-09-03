@@ -1,6 +1,21 @@
 {
   "society": {
     "world": {
+      "talk_kind_query": "fragt",
+      "talk_kind_answer": "antwortet",
+      "talk_kind_propose": "schlägt vor",
+      "talk_digest": "+{0} weitere",
+      "talk_listening": "hört zu",
+      "talk_calling": "ruft {0} an",
+      "talk_more": "…",
+      "hud_talking": "{0} im Gespräch",
+      "room_round": "Runde {0}/{1}",
+      "room_settled": "Runde beendet",
+      "room_reason_message_cap": "alles gesagt",
+      "room_reason_round_cap": "die Runden sind aufgebraucht",
+      "room_reason_silence": "niemand hat gesprochen",
+      "room_reason_user": "von dir beendet",
+      "room_reason_kill_switch": "die Society wurde gestoppt",
       "mode_label": "Agenten-Ansicht",
       "mode_world": "Welt",
       "mode_ledger": "Ledger",
