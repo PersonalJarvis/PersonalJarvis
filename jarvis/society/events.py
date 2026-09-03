@@ -92,12 +92,23 @@ class Checkpoint(StrEnum):
     ARCHIVE = "archive"
     GATE = "gate"
     IDLE = "idle"
+    #: A RESULT was just delivered: the figure carries it to the Gallery.
+    GALLERY = "gallery"
     #: The hub shops of the island (world-behaviour-manual.md §2): a running
     #: agent stands at the shop of the capability family it is using.
     HUB_PLUGINS = "hub:plugins"
     HUB_SKILLS = "hub:skills"
     HUB_MCP = "hub:mcp"
     HUB_CLI = "hub:cli"
+    #: The town's own halls, for the work that used to disappear into ``core``:
+    #: writing to people, driving the desktop, reading the web, and thinking on
+    #: a local model. Same derivation as the four above — the dominant family of
+    #: the last tool calls — except ``hub:models``, which is a property of the
+    #: agent's brain and outranks the family while the model runs.
+    HUB_COMMS = "hub:comms"
+    HUB_DESKTOP = "hub:desktop"
+    HUB_WEB = "hub:web"
+    HUB_MODELS = "hub:models"
 
 
 class PermissionCeiling(StrEnum):

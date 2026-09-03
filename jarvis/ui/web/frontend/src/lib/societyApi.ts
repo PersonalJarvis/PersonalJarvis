@@ -37,10 +37,15 @@ export const CHECKPOINTS = [
   "archive",
   "gate",
   "idle",
+  "gallery",
   "hub:plugins",
   "hub:skills",
   "hub:mcp",
   "hub:cli",
+  "hub:comms",
+  "hub:desktop",
+  "hub:web",
+  "hub:models",
 ] as const;
 export type Checkpoint = (typeof CHECKPOINTS)[number];
 

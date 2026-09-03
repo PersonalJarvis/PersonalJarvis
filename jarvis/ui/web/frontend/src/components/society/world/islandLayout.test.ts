@@ -158,7 +158,9 @@ describe("islandLayout", () => {
     const { map, content } = island;
     expect(map.kind[tileIndex(map, CENTER_TILE + 5, CENTER_TILE + 5)]).toBe(TileKind.plaza);
     expect(map.kind[tileIndex(map, CENTER_TILE + PLAZA_HALF_TILES + 2, CENTER_TILE)]).toBe(TileKind.path);
-    // Twenty blocks, four of them taken by the halls; the rest carry the houses.
+    // Twenty blocks. The ten inner ones carry the halls — the public half of
+    // the town, one hall per kind of work an agent can be seen doing; the outer
+    // band and what is left of the inner one carry the houses.
     const blocks = townBlocks();
     expect(blocks.length).toBe(20);
     expect(
@@ -166,8 +168,21 @@ describe("islandLayout", () => {
         .filter((b) => b.kit)
         .map((b) => b.kit)
         .sort(),
-    ).toEqual(["cli", "mcp", "plugins", "skills"]);
-    expect(content.houses.length).toBe(40);
+    ).toEqual([
+      "civic",
+      "cli",
+      "comms",
+      "desktop",
+      "gallery",
+      "mcp",
+      "models",
+      "plugins",
+      "skills",
+      "web",
+    ]);
+    // Every block without a hall still carries houses, and nothing is empty.
+    expect(content.houses.length).toBeGreaterThan(0);
+    expect(new Set(content.houses.map((h) => h.slot)).size).toBe(content.houses.length);
     for (const h of content.houses) {
       // A door faces south or east — the camera's side — never north or west.
       expect([FRONT_ROTATION.south, FRONT_ROTATION.east], `house ${h.slot}`).toContain(h.rotation);

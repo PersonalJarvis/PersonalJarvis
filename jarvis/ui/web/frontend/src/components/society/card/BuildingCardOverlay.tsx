@@ -107,18 +107,20 @@ export function BuildingCardOverlay({ place, onClose, onCreateAgent }: BuildingC
                         {t("society.world.card_create_agent")}
                       </Button>
                     ) : null}
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        setActiveSection(card.section);
-                        onClose();
-                      }}
-                    >
-                      <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                      {t("society.world.card_open_section")}
-                    </Button>
+                    {card.section ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          if (card.section) setActiveSection(card.section);
+                          onClose();
+                        }}
+                      >
+                        <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        {t("society.world.card_open_section")}
+                      </Button>
+                    ) : null}
                   </footer>
                 </section>
               </div>

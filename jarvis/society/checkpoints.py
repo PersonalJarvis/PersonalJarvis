@@ -7,13 +7,21 @@ rule that matches wins:
 
 1. paused                                  -> idle   (home, until the superset lands)
 2. an open approval for the agent          -> gate
-3. member of a running room                -> meeting
-4. memory activity within the hold window  -> archive (the Memory House, 60 s)
-5. a turn or run in flight under its identity:
-     on a CLI seat                         -> hub:cli   (the Terminal Cantina)
-     dominant tool family plugin/skill/mcp -> hub:<family>
-     otherwise                             -> desk      (the workshop)
-6. otherwise                               -> idle
+3. member of a running room                -> meeting  (the Town Hall)
+4. a RESULT within the delivery window     -> gallery  (the Gallery, 6 s)
+5. memory activity within the hold window  -> archive  (the Memory House, 60 s)
+6. a turn or run in flight under its identity:
+     dominant family of its tool calls     -> hub:<family>
+     no calls yet, on a local brain        -> hub:models (the Boiler House)
+     no calls yet, on a CLI seat           -> hub:cli    (the Terminal Cantina)
+     otherwise                             -> desk       (the workshop)
+7. otherwise                               -> idle
+
+A family is either a CAPABILITY (``plugin | skill | mcp | cli | core``, where
+the hand comes from) or a kind of WORK (``comms | desktop | web``, what the
+agent is doing). Work wins over capability, because the island shows what an
+agent does, not how it is plumbed: a mail goes to the Signal Office whether it
+leaves through a plugin, an MCP server or a CLI.
 
 "In flight" covers BOTH ways work reaches an agent: an ``ASSIGN`` the scheduler
 dispatched (its run id sits in ``scheduler.running``) and a message typed
@@ -53,8 +61,12 @@ from .memory import MEMORY_HOLD_S
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "FAMILY_COMMS",
+    "FAMILY_DESKTOP",
     "FAMILY_HYSTERESIS_S",
+    "FAMILY_WEB",
     "FAMILY_WINDOW",
+    "GALLERY_HOLD_S",
     "CheckpointEngine",
     "Facts",
     "derive",
@@ -68,6 +80,18 @@ FAMILY_HYSTERESIS_S: Final[float] = 20.0
 #: The watcher re-checks a turn that emits nothing for this long (a stuck runner
 #: never leaves a figure standing in a shop forever).
 _WATCH_IDLE_S: Final[float] = 15.0
+#: How long a delivered RESULT keeps the figure at the Gallery
+#: (world-behaviour-manual.md §3 rule 4).
+GALLERY_HOLD_S: Final[float] = 6.0
+
+#: The three town halls that stand for a KIND OF WORK rather than a kind of
+#: capability. They are families in their own right, decided by the tool name
+#: before its registry kind, because what the viewer sees an agent do is the
+#: work, not the plumbing: sending mail is a trip to the Signal Office whether
+#: the mail goes through a plugin, an MCP server or a CLI.
+FAMILY_COMMS: Final[str] = "comms"
+FAMILY_DESKTOP: Final[str] = "desktop"
+FAMILY_WEB: Final[str] = "web"
 
 #: Capability family -> the hub the figure stands at. ``core`` is the workshop.
 _FAMILY_HUB: Final[dict[str, Checkpoint]] = {
@@ -75,10 +99,50 @@ _FAMILY_HUB: Final[dict[str, Checkpoint]] = {
     str(CapabilityKind.SKILL): Checkpoint.HUB_SKILLS,
     str(CapabilityKind.MCP): Checkpoint.HUB_MCP,
     str(CapabilityKind.CLI): Checkpoint.HUB_CLI,
+    FAMILY_COMMS: Checkpoint.HUB_COMMS,
+    FAMILY_DESKTOP: Checkpoint.HUB_DESKTOP,
+    FAMILY_WEB: Checkpoint.HUB_WEB,
 }
 
-#: Society-surface tools that are not plugins: the shell, the browser, the memory
-#: hands and teammate messaging are core work; a learned skill is a skill.
+#: Tool name -> work family, checked before the capability kind. Names only —
+#: never a provider, never a model id (AP-21): a tool that does the same job
+#: under another vendor still belongs at the same hall.
+_WORK_FAMILY: Final[dict[str, str]] = {
+    # Writing to people: mail, chat, contacts, the telephone.
+    "gmail": FAMILY_COMMS,
+    "slack": FAMILY_COMMS,
+    "discord": FAMILY_COMMS,
+    "telegram": FAMILY_COMMS,
+    "contact-lookup": FAMILY_COMMS,
+    "contact-upsert": FAMILY_COMMS,
+    "call-contact": FAMILY_COMMS,
+    "society_message_agent": FAMILY_COMMS,
+    # The hand on the desktop: every pointer, key and window tool.
+    "open-app": FAMILY_DESKTOP,
+    "type-text": FAMILY_DESKTOP,
+    "hotkey": FAMILY_DESKTOP,
+    "click": FAMILY_DESKTOP,
+    "click-element": FAMILY_DESKTOP,
+    "scroll": FAMILY_DESKTOP,
+    "drag": FAMILY_DESKTOP,
+    "move-mouse": FAMILY_DESKTOP,
+    "switch-window": FAMILY_DESKTOP,
+    "screen-snapshot": FAMILY_DESKTOP,
+    "read-visible-ui-state": FAMILY_DESKTOP,
+    "wait-for-ui-state": FAMILY_DESKTOP,
+    "wait-for-element": FAMILY_DESKTOP,
+    "inspect-pointer": FAMILY_DESKTOP,
+    "computer-use": FAMILY_DESKTOP,
+    # Reading the world outside.
+    "search-web": FAMILY_WEB,
+    "search-backends": FAMILY_WEB,
+    "verify-via-curl": FAMILY_WEB,
+    "society_browser": FAMILY_WEB,
+}
+
+#: Society-surface tools that are not plugins: the shell, the memory hands and
+#: the wiki note are core work; a learned skill is a skill, and the browser and
+#: teammate messaging carry their own work family (``_WORK_FAMILY``).
 _SOCIETY_SKILL_TOOL: Final[str] = "society_run_skill"
 _SOCIETY_PREFIX: Final[str] = "society_"
 #: A coding CLI names an MCP tool ``mcp__<server>__<tool>``; Jarvis' own server
@@ -88,7 +152,14 @@ _JARVIS_MCP_SERVER: Final[str] = "jarvis"
 
 
 def family_of_tool(tool_name: str, *, cli_seat: bool = False) -> str:
-    """The capability family of a tool call: ``plugin | skill | mcp | cli | core``.
+    """The family of a tool call — the hall the figure walks to.
+
+    Two kinds of family share one vocabulary. A WORK family (``comms |
+    desktop | web``) says what the agent is doing and is decided by the tool
+    name; a CAPABILITY family (``plugin | skill | mcp | cli | core``) says
+    where the hand came from. Work wins, because that is what a viewer reads
+    off the island: sending mail is a trip to the Signal Office whether the
+    mail goes out through a plugin or an MCP server.
 
     ``cli_seat`` says the call came from a coding CLI (Claude Code, Codex, …):
     its native tools (Bash, Read, Edit, …) are CLI work, and its MCP calls are
@@ -100,6 +171,9 @@ def family_of_tool(tool_name: str, *, cli_seat: bool = False) -> str:
         if server == _JARVIS_MCP_SERVER and inner:
             return family_of_tool(inner)
         return str(CapabilityKind.MCP)
+    work = _WORK_FAMILY.get(tool_name)
+    if work is not None:
+        return work
     if tool_name == _SOCIETY_SKILL_TOOL:
         return str(CapabilityKind.SKILL)
     if tool_name.startswith(_SOCIETY_PREFIX):
@@ -117,11 +191,16 @@ class Facts:
     paused: bool = False
     open_approval: bool = False
     in_room: bool = False
+    #: A RESULT was emitted inside the delivery window (the Gallery hold).
+    delivering: bool = False
     memory_active: bool = False
     #: A scheduler run (ASSIGN) or a chat turn is in flight under the agent's identity.
     running: bool = False
     #: The agent answers on a coding-CLI seat (Claude Code, Codex, …).
     cli_seat: bool = False
+    #: Its brain runs on-device (a keyless, local provider), so a running turn
+    #: IS the model thinking — the Boiler House, outranking the tool family.
+    local_brain: bool = False
     #: Dominant capability family of its recent tool calls, after hysteresis; None = none yet.
     family: str | None = None
 
@@ -134,6 +213,8 @@ def derive(facts: Facts) -> Checkpoint:
         return Checkpoint.GATE
     if facts.in_room:
         return Checkpoint.MEETING
+    if facts.delivering:
+        return Checkpoint.GALLERY
     if facts.memory_active:
         return Checkpoint.ARCHIVE
     if facts.running:
@@ -141,6 +222,9 @@ def derive(facts: Facts) -> Checkpoint:
         # tool yet (or only its native ones) sits in the Cantina.
         if facts.family is not None:
             return _FAMILY_HUB.get(facts.family, Checkpoint.DESK)
+        # A local brain with no tool calls yet is the model itself working.
+        if facts.local_brain:
+            return Checkpoint.HUB_MODELS
         if facts.cli_seat:
             return Checkpoint.HUB_CLI
         return Checkpoint.DESK
@@ -221,6 +305,9 @@ class CheckpointEngine:
         self._publish = publish
         self._clock = clock
         self._memory_until: dict[str, float] = {}
+        self._gallery_until: dict[str, float] = {}
+        #: provider id -> does it run on-device (``_local_brain``, per-process).
+        self._keyless: dict[str, bool] = {}
         self._families: dict[str, _FamilyTrack] = {}
         #: One refresh per agent at a time: a RESULT and the VETO it may draw arrive together.
         self._locks: dict[str, asyncio.Lock] = {}
@@ -310,6 +397,11 @@ class CheckpointEngine:
             for member in members:
                 await self.refresh(str(member))
             return
+        if env.msg_type is MsgType.RESULT and env.from_agent and env.from_agent != "user":
+            # The work is done: the figure carries the crate to the Gallery for
+            # a beat before the next rule takes over.
+            self._gallery_until[env.from_agent] = self._clock() + GALLERY_HOLD_S
+            self._arm(env.from_agent, "gallery", GALLERY_HOLD_S + 0.05)
         for who in (env.from_agent, env.to_agent):
             if who and who != "user":
                 await self.refresh(who)
@@ -384,6 +476,10 @@ class CheckpointEngine:
     def memory_active(self, agent_id: str) -> bool:
         return self._memory_until.get(agent_id, 0.0) > self._clock()
 
+    def delivering(self, agent_id: str) -> bool:
+        """A RESULT left this agent inside the Gallery hold."""
+        return self._gallery_until.get(agent_id, 0.0) > self._clock()
+
     def family_for(self, agent_id: str) -> str | None:
         track = self._families.get(agent_id)
         if track is None:
@@ -403,6 +499,31 @@ class CheckpointEngine:
             log.debug("society checkpoints: runner lookup failed for %s", provider, exc_info=True)
             return False
 
+    def _local_brain(self, agent: Any) -> bool:
+        """Whether the agent's brain runs on-device.
+
+        Read off the provider row's CAPABILITY — ``keyless``, "runs on the
+        person's own hardware" — never its name or model id (AP-21), so a new
+        on-device engine joins the Boiler House without a line of code here.
+        The answer is cached per provider: this runs on every refresh.
+        """
+        provider = str(getattr(agent, "provider", "") or "")
+        if not provider:
+            return False
+        cached = self._keyless.get(provider)
+        if cached is not None:
+            return cached
+        try:
+            from jarvis.agent_chat.catalog import provider_row
+
+            row = provider_row(provider)
+            answer = row is not None and bool(row.keyless)
+        except Exception:  # noqa: BLE001 — a missing catalog row is not a local brain
+            log.debug("society checkpoints: provider lookup failed for %s", provider, exc_info=True)
+            answer = False
+        self._keyless[provider] = answer
+        return answer
+
     async def facts_for(self, agent_id: str) -> Facts | None:
         rt = self._runtime
         agent = await rt.roster.get(agent_id)
@@ -415,9 +536,11 @@ class CheckpointEngine:
             paused=agent.state is not AgentState.ACTIVE,
             open_approval=any(a.agent_id == agent_id for a in pending),
             in_room=any(agent_id in r.members for r in rooms),
+            delivering=self.delivering(agent_id),
             memory_active=self.memory_active(agent_id),
             running=running,
             cli_seat=running and self._cli_seat(agent),
+            local_brain=running and self._local_brain(agent),
             family=self.family_for(agent_id) if running else None,
         )
 

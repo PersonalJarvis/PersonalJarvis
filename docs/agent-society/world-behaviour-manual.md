@@ -22,23 +22,34 @@ gesture becomes a typed event, and the figure follows because the truth changed.
 | checkpoint | island place | the agent is… |
 |---|---|---|
 | `home` | its own house on one of the town's blocks | off duty: paused, or between runs at night |
-| `square` | the table under the tree | in a bounded room (`ROOM_OPEN … ROOM_SETTLE`), or idling on the square |
-| `hub:plugins` | **Plugin Docks** | running a task whose dominant hands are **plugin tools** (Gmail, calendar, files via a plugin…) |
+| `meeting` | **Town Hall** | in a bounded room (`ROOM_OPEN … ROOM_SETTLE`) |
+| `hub:plugins` | **Plugin Docks** | running a task whose dominant hands are **plugin tools** (Drive, calendar, files via a plugin…) |
 | `hub:skills` | Skill Forge | running a task whose dominant hands are skills |
 | `hub:mcp` | Relay Tower | calling MCP servers |
 | `hub:cli` | Terminal Cantina | working through a CLI seat (Claude Code, Codex, …) |
+| `hub:comms` | **Signal Office** | writing to someone: mail, chat, contacts, a call, a message to a teammate |
+| `hub:desktop` | **Control Room** | driving the desktop: clicks, keys, windows, what is on screen |
+| `hub:web` | **The Lookout** | reading the world outside: web search, the agent's own browser |
+| `hub:models` | **Boiler House** | its brain is a local (keyless) model and a turn is running |
 | `hub:workshop` | Workshop | core file/shell work, no dominant family |
-| `hub:models` | Model Foundry | its brain is a local model that is currently inferring |
 | `archive` | **Memory House** | touching the shared memory: a recall, a memory line, a note, a share proposal (60 s hold — `memory-house.md` §3.4) |
-| `gallery` | Gallery | delivering a `RESULT` (carries the crate) |
+| `gallery` | **Gallery** | delivering a `RESULT` (carries the crate, 6 s hold) |
 | `gate` | Harbor Gate | waiting for an `ask`-tier approval |
 | `foundry` | Agent Foundry | being created (3 s), or changing its avatar |
 | `wander` | the square and its own street | idle; the rest-biased model picks the beats |
 
-Shipped vocabulary (2026-09-02): `desk | meeting | archive | gate | idle | hub:plugins | hub:skills |
-hub:mcp | hub:cli` — in all five layers (Python enum ↔ SQL CHECK ↔ Pydantic ↔ TS ↔ UI, AP-4; an
-older `society.db` is rebuilt to the wider CHECK on open). `home`, `gallery`, `hub:workshop` and
-`hub:models` are still this table's superset and join the same way — never as free strings.
+Shipped vocabulary (2026-09-03): `desk | meeting | archive | gate | idle | gallery | hub:plugins |
+hub:skills | hub:mcp | hub:cli | hub:comms | hub:desktop | hub:web | hub:models` — in all five
+layers (Python enum ↔ SQL CHECK ↔ Pydantic ↔ TS ↔ UI, AP-4; an older `society.db` is rebuilt to
+the wider CHECK on open). `home` and `hub:workshop` are still this table's superset and join the
+same way — never as free strings.
+
+**Two kinds of family share one vocabulary.** A CAPABILITY family (`plugin | skill | mcp | cli |
+core`) says where the hand came from; a WORK family (`comms | desktop | web`) says what the agent
+is doing. Work wins, decided by the tool name before its registry kind, because the island shows
+what an agent DOES and not how it is plumbed: a mail is a trip to the Signal Office whether it
+leaves through a plugin, an MCP server or a CLI seat. `jarvis/society/checkpoints.py` holds the
+one table (`_WORK_FAMILY`), and `HubDrawer.tsx` lists the same tools in each hall's drawer.
 
 ## 3. Derivation — who decides the place (trusted Python, no LLM)
 
@@ -50,11 +61,12 @@ sees. Rules, in priority order; the first that matches wins:
 3. The agent is a member of an open room → `square`.
 4. A `RESULT` was emitted in the last 6 s → `gallery` (then rule 6 or 8 applies).
 5. A worker runs under the agent's identity → `hub:<family>` where family is the **dominant
-   capability family of its last 8 tool calls** (`plugin | skill | mcp | cli | core`, from the ONE
-   capability catalog of `agent-definition.md` §3.1). The place changes only when a different
-   family has dominated for **≥ 20 s** — hysteresis, so a figure never ping-pongs between shops.
-   A local-brain agent whose model is inferring right now → `hub:models` outranks the family.
-6. A memory touch in the last 60 s → `archive` (the Memory House). **Built:** `jarvis/society/checkpoints.py` derives `paused → idle`, `gate`, `meeting`, `archive`, `hub:cli`, `hub:plugins | hub:skills | hub:mcp` (dominant family of the last 8 tool calls, 20 s hysteresis), `desk`, `idle` and publishes `SocietyCheckpointChanged`. "A worker runs under the agent's identity" means EITHER a scheduler run (`ASSIGN`) OR a turn typed into the agent's card: the society surface reports every turn start (`note_turn_started`), and the engine watches that turn's `tool_call` / `turn_finished` events. `hub:workshop` and `hub:models` are still open.
+   family of its last 8 tool calls** (`comms | desktop | web` first, else `plugin | skill | mcp |
+   cli | core` from the ONE capability catalog of `agent-definition.md` §3.1). The place changes
+   only when a different family has dominated for **≥ 20 s** — hysteresis, so a figure never
+   ping-pongs between shops. An agent on a keyless (local) provider that has not called a tool
+   yet stands at the Boiler House: its own model thinking IS the work.
+6. A memory touch in the last 60 s → `archive` (the Memory House). **Built:** `jarvis/society/checkpoints.py` derives `paused → idle`, `gate`, `meeting`, `gallery`, `archive`, `hub:cli`, `hub:models`, `hub:plugins | hub:skills | hub:mcp | hub:comms | hub:desktop | hub:web` (dominant family of the last 8 tool calls, 20 s hysteresis), `desk`, `idle` and publishes `SocietyCheckpointChanged`. "A worker runs under the agent's identity" means EITHER a scheduler run (`ASSIGN`) OR a turn typed into the agent's card: the society surface reports every turn start (`note_turn_started`), and the engine watches that turn's `tool_call` / `turn_finished` events. `hub:workshop` is still open — core file and shell work sends the figure to the Workshop through `desk`.
 7. Being created / avatar change → `foundry`.
 8. Otherwise → `wander`.
 
@@ -70,12 +82,14 @@ short, cached section — the world card — and nothing else:
 
 ```
 You live in a small island village with your fellow agents. Places: your house (rest),
-the market square (group discussions), the Plugin Docks (plugin tools), the Skill
-Forge (skills), the Relay Tower (MCP servers), the Terminal Cantina (coding CLIs),
-the Workshop (files and shell), the Memory House (the shared memory), the Gallery (finished
-work), the Harbor Gate (waiting for approval), the Agent Foundry (where agents are
-created). You are placed by what you actually do; you cannot move yourself. When you
-mention your location, use these names.
+the market square (strolling), the Town Hall (rooms with the others), the Plugin Docks
+(plugin tools), the Skill Forge (skills), the Relay Tower (MCP servers), the Terminal
+Cantina (coding CLIs), the Signal Office (mail, chat, contacts, calls), the Control Room
+(driving the desktop), the Lookout (web search and your browser), the Boiler House (a local
+model thinking), the Workshop (files and shell), the Memory House (the shared memory), the
+Gallery (work you delivered), the Harbor Gate (waiting for approval), the Agent Foundry
+(where agents are created). You are placed by what you actually do; you cannot move
+yourself. When you mention your location, use these names.
 ```
 
 Rules: prefix-stable (cached), ≤ 120 tokens, identical for every agent, never carries live state

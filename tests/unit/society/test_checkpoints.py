@@ -7,7 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.society.checkpoints import CheckpointEngine, Facts, derive, family_of_tool
+from jarvis.society.checkpoints import (
+    FAMILY_COMMS,
+    FAMILY_DESKTOP,
+    FAMILY_WEB,
+    CheckpointEngine,
+    Facts,
+    derive,
+    family_of_tool,
+)
 from jarvis.society.events import Checkpoint, MsgType, SocietyEnvelope
 from jarvis.society.runtime import SocietyRuntime
 
@@ -83,11 +91,12 @@ async def test_board_envelopes_move_agents(rt: SocietyRuntime):
             msg_type=MsgType.RESULT, from_agent="scout", to_agent="user", trace_id="t2", payload={}
         )
     )
-    assert (await rt.roster.get("scout")).checkpoint is Checkpoint.IDLE
+    # Delivered work goes to the Gallery for the hold, not straight home.
+    assert (await rt.roster.get("scout")).checkpoint is Checkpoint.GALLERY
     by_agent = {}
     for p in pushed:
         by_agent.setdefault(p.agent_id, []).append(p.checkpoint)
-    assert by_agent["scout"] == ["gate", "idle", "meeting", "idle", "desk", "idle"]
+    assert by_agent["scout"] == ["gate", "idle", "meeting", "idle", "desk", "gallery"]
     assert by_agent["archivist"] == ["meeting", "idle"]
 
 
@@ -119,20 +128,63 @@ def test_running_agents_stand_at_the_shop_of_their_tools():
 
 
 def test_family_of_tool():
-    assert family_of_tool("gmail") == "plugin"
+    assert family_of_tool("google_drive") == "plugin"
     assert family_of_tool("cli_claude") == "cli"
     assert family_of_tool("github/search_issues") == "mcp"
     assert family_of_tool("society_run_skill") == "skill"
     assert family_of_tool("society_shell") == "core"
-    assert family_of_tool("society_browser") == "core"
     assert family_of_tool("spawn-worker") == "core"
     # A coding CLI: native tools are CLI work, Jarvis' MCP server hands out the plugins.
     assert family_of_tool("Bash", cli_seat=True) == "cli"
     assert family_of_tool("Read", cli_seat=True) == "cli"
-    assert family_of_tool("mcp__jarvis__gmail", cli_seat=True) == "plugin"
+    assert family_of_tool("mcp__jarvis__google_drive", cli_seat=True) == "plugin"
     assert family_of_tool("mcp__jarvis__society_run_skill", cli_seat=True) == "skill"
     assert family_of_tool("mcp__github__search_issues", cli_seat=True) == "mcp"
     assert family_of_tool("mcp__github__search_issues") == "mcp"
+
+
+def test_work_family_beats_the_capability_kind():
+    """What the agent DOES decides the hall, not where the hand came from: a
+    mail is a trip to the Signal Office whether it leaves through a plugin, a
+    CLI seat or Jarvis' own MCP server."""
+    assert family_of_tool("gmail") == "comms"
+    assert family_of_tool("call-contact") == "comms"
+    assert family_of_tool("society_message_agent") == "comms"
+    assert family_of_tool("gmail", cli_seat=True) == "comms"
+    assert family_of_tool("mcp__jarvis__gmail", cli_seat=True) == "comms"
+    # The desktop hands, including the two that used to read as plain core work.
+    assert family_of_tool("click") == "desktop"
+    assert family_of_tool("computer-use") == "desktop"
+    assert family_of_tool("screen-snapshot") == "desktop"
+    # The world outside.
+    assert family_of_tool("search-web") == "web"
+    assert family_of_tool("society_browser") == "web"
+    # A server that is not Jarvis' stays an MCP capability, name or no name.
+    assert family_of_tool("mcp__acme__gmail") == "mcp"
+
+
+def test_every_work_family_has_a_hall():
+    """No family may derive to a place the island cannot draw."""
+    for family in (FAMILY_COMMS, FAMILY_DESKTOP, FAMILY_WEB):
+        place = derive(Facts(running=True, family=family))
+        assert place is not Checkpoint.DESK, f"{family} has no hall"
+
+
+def test_a_local_brain_stands_at_the_boiler_house():
+    """Its own model thinking is the work; a tool call takes over once one lands."""
+    assert derive(Facts(running=True, local_brain=True)) is Checkpoint.HUB_MODELS
+    # A CLI seat does not outrank it, a tool family does.
+    assert derive(Facts(running=True, local_brain=True, cli_seat=True)) is Checkpoint.HUB_MODELS
+    assert derive(Facts(running=True, local_brain=True, family=FAMILY_WEB)) is Checkpoint.HUB_WEB
+    # Idle, it is nobody's business which brain the agent has.
+    assert derive(Facts(local_brain=True)) is Checkpoint.IDLE
+
+
+def test_a_delivery_outranks_the_shop_but_not_a_room():
+    assert derive(Facts(running=True, delivering=True, family="plugin")) is Checkpoint.GALLERY
+    assert derive(Facts(delivering=True, memory_active=True)) is Checkpoint.GALLERY
+    assert derive(Facts(delivering=True, in_room=True)) is Checkpoint.MEETING
+    assert derive(Facts(delivering=True, paused=True)) is Checkpoint.IDLE
 
 
 class FakeChatService:
@@ -176,7 +228,7 @@ async def test_a_typed_turn_walks_to_the_docks_and_back(rt: SocietyRuntime):
     await _settle()
     assert (await rt.roster.get("scout")).checkpoint is Checkpoint.DESK
     assert rt.checkpoints.is_busy("scout")
-    svc.emit(session, "tool_call", name="gmail", input={})
+    svc.emit(session, "tool_call", name="google_drive", input={})
     await _settle()
     assert (await rt.roster.get("scout")).checkpoint is Checkpoint.HUB_PLUGINS
     # A second watcher for the same agent is not started while one runs.
@@ -199,7 +251,7 @@ async def test_family_hysteresis(rt: SocietyRuntime):
     rt.checkpoints = engine
     engine.attach()
     rt.scheduler.note_run_started("run-1", "scout")
-    await engine.note_tool_call("scout", "gmail")
+    await engine.note_tool_call("scout", "google_drive")
     assert (await rt.roster.get("scout")).checkpoint is Checkpoint.HUB_PLUGINS
     for _ in range(3):
         await engine.note_tool_call("scout", "github/list_prs")

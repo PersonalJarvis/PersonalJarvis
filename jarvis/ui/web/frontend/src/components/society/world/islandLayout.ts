@@ -169,7 +169,13 @@ export type PlaceId =
   | "foundry"
   | "skills"
   | "mcp"
-  | "cli";
+  | "cli"
+  | "comms"
+  | "desktop"
+  | "web"
+  | "models"
+  | "civic"
+  | "gallery";
 
 export interface Place {
   id: PlaceId;
@@ -258,8 +264,27 @@ export interface IslandContent {
   kitPoses: Record<KitPlace, KitPose>;
 }
 
-/** Places that are World Kit buildings — the halls on the town's blocks and the foundry on the summit (world-masterplan-v2.md §5). */
-export type KitPlace = "plugins" | "foundry" | "skills" | "mcp" | "cli";
+/**
+ * Places that are World Kit buildings — the halls on the town's blocks and the
+ * foundry on the summit (world-masterplan-v2.md §5).
+ *
+ * The first five are the original four capability halls plus the foundry. The
+ * six after them are the town halls added for the work that used to have no
+ * address at all: writing to people, driving the desktop, reading the web,
+ * thinking on a local model, meeting in a room, and delivering a result.
+ */
+export type KitPlace =
+  | "plugins"
+  | "foundry"
+  | "skills"
+  | "mcp"
+  | "cli"
+  | "comms"
+  | "desktop"
+  | "web"
+  | "models"
+  | "civic"
+  | "gallery";
 
 export interface KitPose {
   x: number;
@@ -518,6 +543,18 @@ export const KIT_BLOCKS: Record<Exclude<KitPlace, "foundry">, { template: number
   skills: { template: 0, sx: 1, sz: -1, front: "south" },
   mcp: { template: 1, sx: 1, sz: -1, front: "south" },
   cli: { template: 2, sx: -1, sz: -1, front: "east" },
+  // The town halls take the blocks SOUTH of the square, the half of the town
+  // nearest the camera: the Signal Office and the Control Room flank the south
+  // avenue, the Gallery and the Town Hall stand on the two blocks east and west
+  // of it, the Boiler House takes the north-west corner block (its chimney
+  // belongs against the mountain) and the Lookout the south-east one, where the
+  // island falls away toward the sea it watches.
+  comms: { template: 0, sx: 1, sz: 1, front: "south" },
+  desktop: { template: 0, sx: -1, sz: 1, front: "south" },
+  gallery: { template: 2, sx: 1, sz: 1, front: "east" },
+  civic: { template: 2, sx: -1, sz: 1, front: "east" },
+  models: { template: 1, sx: -1, sz: -1, front: "south" },
+  web: { template: 1, sx: 1, sz: 1, front: "south" },
 };
 
 export interface TownBlock {
@@ -568,6 +605,12 @@ export const KIT_FOOTPRINT_TILES: Record<KitPlace, { w: number; d: number }> = {
   skills: { w: 7, d: 5 },
   mcp: { w: 5, d: 5 },
   cli: { w: 7, d: 5 },
+  comms: { w: 7, d: 5 },
+  desktop: { w: 7, d: 5 },
+  gallery: { w: 7, d: 5 },
+  civic: { w: 7, d: 5 },
+  models: { w: 5, d: 5 },
+  web: { w: 5, d: 5 },
 };
 
 /**
@@ -590,7 +633,19 @@ export const KIT_FACING: Partial<Record<KitPlace, number>> = { foundry: Math.PI 
 export const SUMMIT_TILE: readonly [number, number] = [CENTER_TILE - 65, CENTER_TILE - 70];
 
 /** Every kit place, on a block or not — the world's hub roster. */
-export const KIT_PLACES: readonly KitPlace[] = ["plugins", "foundry", "skills", "mcp", "cli"];
+export const KIT_PLACES: readonly KitPlace[] = [
+  "plugins",
+  "foundry",
+  "skills",
+  "mcp",
+  "cli",
+  "comms",
+  "desktop",
+  "web",
+  "models",
+  "civic",
+  "gallery",
+];
 
 /** Whether a place id names a World Kit hub (the ones a click opens). */
 export function isKitPlace(id: string): id is KitPlace {
@@ -693,6 +748,12 @@ const PLACE_TILES: Record<PlaceId, [number, number]> = {
   skills: kitTile("skills"),
   mcp: kitTile("mcp"),
   cli: kitTile("cli"),
+  comms: kitTile("comms"),
+  desktop: kitTile("desktop"),
+  web: kitTile("web"),
+  models: kitTile("models"),
+  civic: kitTile("civic"),
+  gallery: kitTile("gallery"),
 };
 
 /**
@@ -749,6 +810,13 @@ const PLOT_HALF: Record<PlaceId, [number, number]> = {
   skills: [0, 0],
   mcp: [0, 0],
   cli: [0, 0],
+  // The town halls stand on the plateau like the four before them.
+  comms: [0, 0],
+  desktop: [0, 0],
+  web: [0, 0],
+  models: [0, 0],
+  civic: [0, 0],
+  gallery: [0, 0],
 };
 
 /** The terrain level each plot is flattened to — its terrace in the landscape. */
@@ -767,6 +835,12 @@ const PLOT_LEVEL: Record<PlaceId, number> = {
   skills: PLATEAU_LEVEL,
   mcp: PLATEAU_LEVEL,
   cli: PLATEAU_LEVEL,
+  comms: PLATEAU_LEVEL,
+  desktop: PLATEAU_LEVEL,
+  web: PLATEAU_LEVEL,
+  models: PLATEAU_LEVEL,
+  civic: PLATEAU_LEVEL,
+  gallery: PLATEAU_LEVEL,
 };
 
 /** Building footprints (half extents, tiles) that block walking. */
@@ -1696,6 +1770,13 @@ export const KIT_STAND_AHEAD_M: Record<KitPlace, number> = {
   skills: 7.5,
   mcp: 7.0,
   cli: 7.5,
+  // The town halls' own `stand` anchors, out of their GLB extras.
+  comms: 7.2,
+  desktop: 7.2,
+  gallery: 7.6,
+  models: 7.2,
+  civic: 8.0,
+  web: 6.6,
 };
 
 /** A stand point in front of a kit building at `pose`, facing it. */
@@ -1732,6 +1813,12 @@ function buildPlaces(map: IslandMap): Record<PlaceId, Place> {
     skills: kitPlace("skills"),
     mcp: kitPlace("mcp"),
     cli: kitPlace("cli"),
+    comms: kitPlace("comms"),
+    desktop: kitPlace("desktop"),
+    gallery: kitPlace("gallery"),
+    models: kitPlace("models"),
+    civic: kitPlace("civic"),
+    web: kitPlace("web"),
   };
   // Make sure every stand tile is walkable — a place nobody can reach is a bug.
   for (const p of Object.values(places)) {
@@ -1814,6 +1901,12 @@ export function buildIsland(): Island {
     skills: kitPose("skills"),
     mcp: kitPose("mcp"),
     cli: kitPose("cli"),
+    comms: kitPose("comms"),
+    desktop: kitPose("desktop"),
+    gallery: kitPose("gallery"),
+    models: kitPose("models"),
+    civic: kitPose("civic"),
+    web: kitPose("web"),
   };
   // Houses, kit halls and the foundry's belt block walking at their resting
   // headings for now, so trees and furniture keep clear of them; the final

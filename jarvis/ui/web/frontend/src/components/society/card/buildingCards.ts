@@ -25,8 +25,8 @@ export interface BuildingCard {
   doesKey: string;
   /** `society.world.<key>` — how a person uses it, a paragraph. */
   howKey: string;
-  /** The app section this building stands for. */
-  section: SectionId;
+  /** The app section this building stands for; null when it stands for none. */
+  section: SectionId | null;
   /** The hub whose live contents the card lists; null for a building that lists nothing. */
   hub: KitPlace | null;
   /** The Foundry builds agents: its card offers the creator. */
@@ -84,6 +84,66 @@ export const BUILDING_CARDS: Record<BuildingPlace, BuildingCard> = {
     howKey: "card_cli_how",
     section: "clis",
     hub: "cli",
+  },
+  comms: {
+    place: "comms",
+    model: "signal-office",
+    nameKey: "place_comms",
+    taglineKey: "drawer_comms_hint",
+    doesKey: "card_comms_does",
+    howKey: "card_comms_how",
+    section: "contacts",
+    hub: "comms",
+  },
+  desktop: {
+    place: "desktop",
+    model: "control-room",
+    nameKey: "place_desktop",
+    taglineKey: "drawer_desktop_hint",
+    doesKey: "card_desktop_does",
+    howKey: "card_desktop_how",
+    section: "settings",
+    hub: "desktop",
+  },
+  web: {
+    place: "web",
+    model: "observatory",
+    nameKey: "place_web",
+    taglineKey: "drawer_web_hint",
+    doesKey: "card_web_does",
+    howKey: "card_web_how",
+    section: null,
+    hub: "web",
+  },
+  models: {
+    place: "models",
+    model: "model-boilerhouse",
+    nameKey: "place_models",
+    taglineKey: "drawer_models_hint",
+    doesKey: "card_models_does",
+    howKey: "card_models_how",
+    section: "local-models",
+    hub: null,
+  },
+  civic: {
+    place: "civic",
+    model: "town-hall",
+    nameKey: "place_civic",
+    taglineKey: "drawer_civic_hint",
+    doesKey: "card_civic_does",
+    howKey: "card_civic_how",
+    section: "board",
+    hub: null,
+  },
+  gallery: {
+    place: "gallery",
+    model: "gallery-hall",
+    nameKey: "place_gallery",
+    taglineKey: "drawer_gallery_hint",
+    doesKey: "card_gallery_does",
+    howKey: "card_gallery_how",
+    section: "visualization",
+    hub: null,
   },
   archive: {
     place: "archive",

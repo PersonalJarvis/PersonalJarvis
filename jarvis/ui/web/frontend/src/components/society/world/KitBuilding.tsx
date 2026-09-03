@@ -14,10 +14,16 @@ import { Color, Mesh, MeshBasicMaterial, MeshStandardMaterial, MeshToonMaterial,
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 
 import agentFoundryUrl from "@/assets/society/world/kit/agent-foundry.glb";
+import controlRoomUrl from "@/assets/society/world/kit/control-room.glb";
+import galleryHallUrl from "@/assets/society/world/kit/gallery-hall.glb";
+import modelBoilerhouseUrl from "@/assets/society/world/kit/model-boilerhouse.glb";
+import observatoryUrl from "@/assets/society/world/kit/observatory.glb";
 import pluginDocksUrl from "@/assets/society/world/kit/plugin-docks.glb";
 import relayTowerUrl from "@/assets/society/world/kit/relay-tower.glb";
+import signalOfficeUrl from "@/assets/society/world/kit/signal-office.glb";
 import skillForgeUrl from "@/assets/society/world/kit/skill-forge.glb";
 import terminalCantinaUrl from "@/assets/society/world/kit/terminal-cantina.glb";
+import townHallUrl from "@/assets/society/world/kit/town-hall.glb";
 import { useBuildingPoses, useBuildingYaw } from "./buildingPoses";
 import { useCameraStore } from "./cameraStore";
 import { buildIsland, groundY, kitId, type KitPlace } from "./islandLayout";
@@ -31,6 +37,12 @@ export const KIT_URLS = {
   "relay-tower": relayTowerUrl,
   "terminal-cantina": terminalCantinaUrl,
   "agent-foundry": agentFoundryUrl,
+  "signal-office": signalOfficeUrl,
+  "control-room": controlRoomUrl,
+  "gallery-hall": galleryHallUrl,
+  "model-boilerhouse": modelBoilerhouseUrl,
+  "town-hall": townHallUrl,
+  observatory: observatoryUrl,
 } as const;
 export type KitId = keyof typeof KIT_URLS;
 
@@ -41,6 +53,12 @@ const KIT_RING_R: Record<KitId, number> = {
   "skill-forge": 8.6,
   "relay-tower": 6.4,
   "terminal-cantina": 8.8,
+  "signal-office": 8.6,
+  "control-room": 8.6,
+  "gallery-hall": 8.6,
+  "model-boilerhouse": 7.0,
+  "town-hall": 8.8,
+  observatory: 5.8,
 };
 
 /** Which kit file stands at which kit place; the pose comes from the island layout. */
@@ -50,6 +68,12 @@ export const KIT_PLACEMENTS: ReadonlyArray<{ kit: KitId; place: KitPlace }> = [
   { kit: "skill-forge", place: "skills" },
   { kit: "relay-tower", place: "mcp" },
   { kit: "terminal-cantina", place: "cli" },
+  { kit: "signal-office", place: "comms" },
+  { kit: "control-room", place: "desktop" },
+  { kit: "gallery-hall", place: "gallery" },
+  { kit: "model-boilerhouse", place: "models" },
+  { kit: "town-hall", place: "civic" },
+  { kit: "observatory", place: "web" },
 ];
 
 /** Emission above this strength renders unlit (a lamp, a neon tube), below it stays a lit toon. */

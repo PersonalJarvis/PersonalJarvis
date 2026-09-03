@@ -40,6 +40,7 @@ import {
   turnToward,
 } from "./walkerKinematics";
 import { WORLD_HERO_SCALE, WalkerFigure, type WalkerAnim, type WalkerMode } from "./WalkerFigure";
+import { forgetRetired, retirementPose } from "./retireStore";
 import { claimEntrance } from "./spawnStore";
 import { clearWalkerPin, setWalkerPin } from "./walkerRegistry";
 import { mulberry32, nextBeat, seedFromString } from "./wander";
@@ -47,14 +48,20 @@ import { mulberry32, nextBeat, seedFromString } from "./wander";
 /** Semantic place → island place (MASTERPLAN §2.7 checkpoints). */
 export const CHECKPOINT_PLACE: Record<AgentCheckpoint, PlaceId | null> = {
   desk: "workshop",
-  meeting: "market",
+  // A room has a room now: the Town Hall, not the open square.
+  meeting: "civic",
   archive: "archive",
   gate: "harbor",
   idle: null,
+  gallery: "gallery",
   "hub:plugins": "plugins",
   "hub:skills": "skills",
   "hub:mcp": "mcp",
   "hub:cli": "cli",
+  "hub:comms": "comms",
+  "hub:desktop": "desktop",
+  "hub:web": "web",
+  "hub:models": "models",
 };
 
 interface Sim {
@@ -222,7 +229,13 @@ function Walker({
     }
   }, [agent.checkpoint, agent.state]);
 
-  useEffect(() => () => clearWalkerPin(agent.agentId), [agent.agentId]);
+  useEffect(
+    () => () => {
+      clearWalkerPin(agent.agentId);
+      forgetRetired(agent.agentId);
+    },
+    [agent.agentId],
+  );
 
   useFrame((_, dt) => {
     const s = sim.current;
@@ -230,6 +243,45 @@ function Walker({
     if (!s || !g) return;
     const { map, content } = buildIsland();
     const step = Math.min(dt, 0.1);
+
+    // A retirement in progress owns this figure outright (retirement.ts): the
+    // wander sim stands still and is kept in step with the pose, so a lead
+    // handed back after the shot resumes from where it is actually standing
+    // rather than snapping back to where it was when the order came.
+    const staged = retirementPose(agent.agentId);
+    if (staged) {
+      s.x = staged.x;
+      s.z = staged.z;
+      s.y = staged.y;
+      s.heading = staged.heading;
+      s.mode = "rest";
+      s.waypoints = [];
+      s.index = 0;
+      s.timer = 1;
+      s.atPurpose = false;
+      s.exiting = false;
+      s.lift = 0;
+      anim.current.mode = staged.mode;
+      anim.current.speed = staged.speed;
+      anim.current.aim = staged.aim;
+      anim.current.flash = staged.flash;
+      g.visible = !staged.hidden;
+      g.position.set(staged.x, staged.y, staged.z);
+      g.rotation.y = staged.heading;
+      g.rotation.x = staged.pitch;
+      setWalkerPin(agent.agentId, {
+        x: staged.x,
+        z: staged.z,
+        color: agent.palette.accent,
+        name: agent.name,
+      });
+      return;
+    }
+    // Free again: nothing of the ceremony's pose may linger.
+    g.visible = true;
+    g.rotation.x = 0;
+    anim.current.aim = 0;
+    anim.current.flash = 0;
 
     if (!paused) {
       const gen = useBuildingPoses.getState().generation;
@@ -318,6 +370,7 @@ function Walker({
   return (
     <group
       ref={group}
+      rotation-order="YXZ"
       onClick={onClick}
       onPointerOver={(e) => {
         e.stopPropagation();

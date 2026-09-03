@@ -23,11 +23,40 @@ export interface Group {
 export interface HubConfig {
   titleKey: string;
   hintKey: string;
-  section: SectionId;
+  /**
+   * The app section this hub stands for, or null when it stands for none —
+   * the Lookout watches the world outside, which has no page in this app. A
+   * null section hides the footer link rather than inventing a destination.
+   */
+  section: SectionId | null;
   /** Absent for hubs that list nothing (the Foundry explains itself). */
   load?: () => Promise<Group[]>;
   bodyKey?: string;
+  /** A hub whose contents are a fixed set of hands, not a live registry. */
+  groups?: Group[];
 }
+
+/**
+ * The hands behind the three work halls. They are a FIXED list because that is
+ * what they are: the tool names `society/checkpoints.py` maps to each work
+ * family. The drawer and the derivation must name the same tools, so the two
+ * lists are pinned to each other by `hubGroups.test.ts`.
+ */
+const COMMS_TOOLS = ["gmail", "slack", "discord", "telegram"];
+const COMMS_PEOPLE = ["contact-lookup", "contact-upsert", "call-contact", "society_message_agent"];
+const DESKTOP_POINTER = ["click", "click-element", "type-text", "hotkey", "scroll", "drag", "move-mouse"];
+const DESKTOP_SCREEN = [
+  "open-app",
+  "switch-window",
+  "screen-snapshot",
+  "read-visible-ui-state",
+  "wait-for-ui-state",
+  "wait-for-element",
+  "inspect-pointer",
+  "computer-use",
+];
+const WEB_SEARCH = ["search-web", "search-backends", "verify-via-curl"];
+const WEB_BROWSER = ["society_browser"];
 
 const PLUGIN_FAMILIES: ReadonlyArray<{ group: string; key: string; color: string }> = [
   { group: "jarvis.brain", key: "plugin_group_brain", color: "#9b5de5" },
@@ -112,6 +141,57 @@ export const HUBS: Record<KitPlace, HubConfig> = {
       ];
     },
   },
+  foundry: {
+    titleKey: "drawer_foundry_title",
+    hintKey: "drawer_foundry_hint",
+    section: "agents",
+    bodyKey: "drawer_foundry_body",
+  },
+  comms: {
+    titleKey: "drawer_comms_title",
+    hintKey: "drawer_comms_hint",
+    section: "contacts",
+    groups: [
+      { labelKey: "comms_group_mail", color: "#06d6a0", items: COMMS_TOOLS },
+      { labelKey: "comms_group_people", color: "#4cc9f0", items: COMMS_PEOPLE },
+    ],
+  },
+  desktop: {
+    titleKey: "drawer_desktop_title",
+    hintKey: "drawer_desktop_hint",
+    section: "settings",
+    groups: [
+      { labelKey: "desktop_group_pointer", color: "#ff5fa2", items: DESKTOP_POINTER },
+      { labelKey: "desktop_group_screen", color: "#ffb703", items: DESKTOP_SCREEN },
+    ],
+  },
+  web: {
+    titleKey: "drawer_web_title",
+    hintKey: "drawer_web_hint",
+    section: null,
+    groups: [
+      { labelKey: "web_group_search", color: "#4cc9f0", items: WEB_SEARCH },
+      { labelKey: "web_group_browser", color: "#2ec4b6", items: WEB_BROWSER },
+    ],
+  },
+  models: {
+    titleKey: "drawer_models_title",
+    hintKey: "drawer_models_hint",
+    section: "local-models",
+    bodyKey: "drawer_models_body",
+  },
+  civic: {
+    titleKey: "drawer_civic_title",
+    hintKey: "drawer_civic_hint",
+    section: "board",
+    bodyKey: "drawer_civic_body",
+  },
+  gallery: {
+    titleKey: "drawer_gallery_title",
+    hintKey: "drawer_gallery_hint",
+    section: "visualization",
+    bodyKey: "drawer_gallery_body",
+  },
 };
 
 export function HubDrawer({ hub, onClose }: { hub: KitPlace; onClose: () => void }) {
@@ -133,7 +213,8 @@ export function HubDrawer({ hub, onClose }: { hub: KitPlace; onClose: () => void
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const total = groups.data ? groups.data.reduce((n, g) => n + g.items.length, 0) : 0;
+  const shown = cfg.groups ?? groups.data;
+  const total = shown ? shown.reduce((n, g) => n + g.items.length, 0) : 0;
 
   return (
     <aside
@@ -160,7 +241,7 @@ export function HubDrawer({ hub, onClose }: { hub: KitPlace; onClose: () => void
         {cfg.load && groups.isLoading && <p className="text-sm text-muted-foreground">{t("society.world.drawer_loading")}</p>}
         {groups.isError && <p className="text-sm text-destructive">{String(groups.error)}</p>}
         {cfg.load && groups.data && total === 0 && <p className="text-sm text-muted-foreground">{t("society.world.drawer_empty")}</p>}
-        {groups.data
+        {shown
           ?.filter((g) => g.items.length > 0)
           .map((g) => (
             <section key={g.labelKey} className="mb-4">
@@ -179,16 +260,18 @@ export function HubDrawer({ hub, onClose }: { hub: KitPlace; onClose: () => void
             </section>
           ))}
       </div>
-      <footer className="border-t border-border px-4 py-3">
-        <button
-          type="button"
-          onClick={() => setActiveSection(cfg.section)}
-          className="inline-flex h-8 items-center gap-2 rounded-md bg-secondary px-3 text-sm font-medium text-foreground hover:bg-muted"
-        >
-          <ExternalLink size={14} />
-          {t("society.world.drawer_open_section")}
-        </button>
-      </footer>
+      {cfg.section ? (
+        <footer className="border-t border-border px-4 py-3">
+          <button
+            type="button"
+            onClick={() => setActiveSection(cfg.section as SectionId)}
+            className="inline-flex h-8 items-center gap-2 rounded-md bg-secondary px-3 text-sm font-medium text-foreground hover:bg-muted"
+          >
+            <ExternalLink size={14} />
+            {t("society.world.drawer_open_section")}
+          </button>
+        </footer>
+      ) : null}
     </aside>
   );
 }

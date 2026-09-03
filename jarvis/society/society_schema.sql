@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS society_agents (
     avatar_json         TEXT NOT NULL DEFAULT '{}',
     checkpoint          TEXT NOT NULL DEFAULT 'idle'
                         CHECK (checkpoint IN ('desk', 'meeting', 'archive', 'gate', 'idle',
-                                              'hub:plugins', 'hub:skills', 'hub:mcp', 'hub:cli')),
+                                              'gallery',
+                                              'hub:plugins', 'hub:skills', 'hub:mcp', 'hub:cli',
+                                              'hub:comms', 'hub:desktop', 'hub:web', 'hub:models')),
     provider            TEXT NOT NULL DEFAULT '',
     model               TEXT NOT NULL DEFAULT '',
     effort              TEXT NOT NULL DEFAULT '',

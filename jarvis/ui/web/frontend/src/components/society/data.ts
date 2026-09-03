@@ -15,26 +15,25 @@
 import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { SocietyAgentRow } from "@/lib/societyApi";
+import type { Checkpoint, SocietyAgentRow } from "@/lib/societyApi";
 
 import { PALETTE_PRESETS, resolvePalette, type FigureRecipe } from "./figures/figureRecipe";
 import { SAMPLE_ROSTER } from "./mockRoster";
+import { beginRetirement, retirementRunning } from "./world/retireStore";
 import { announceSpawn } from "./world/spawnStore";
 
 /** MASTERPLAN §2.5 — exactly one lead (Jarvis), orchestrators may ASSIGN. */
 export type AgentTier = "lead" | "orchestrator" | "specialist";
 
-/** Semantic place in the world (§2.7) — the backend owns this, never pixels. */
-export type AgentCheckpoint =
-  | "desk"
-  | "meeting"
-  | "archive"
-  | "gate"
-  | "idle"
-  | "hub:plugins"
-  | "hub:skills"
-  | "hub:mcp"
-  | "hub:cli";
+/**
+ * Semantic place in the world (§2.7) — the backend owns this, never pixels.
+ *
+ * An ALIAS of the checked list, not a second copy of it: `CHECKPOINTS` in
+ * lib/societyApi.ts is what the five-layer parity test pins to the Python
+ * enum, and a hand-kept duplicate here is exactly the enum drift that keeps
+ * costing bugs (docs/BUGS.md).
+ */
+export type AgentCheckpoint = Checkpoint;
 
 /** Coarse run state for rows and badges; the event log holds the detail. */
 export type AgentRunState = "idle" | "working" | "waiting" | "paused";
@@ -146,6 +145,12 @@ export interface RosterData {
 /** Agents created in THIS window while the backend is unreachable — sample data, not persisted. */
 const LOCAL_ROSTER: SocietyAgent[] = [];
 
+/**
+ * Sample rows retired in this window. The sample roster is a frozen module
+ * constant, so a retirement there is remembered here instead of mutating it.
+ */
+const RETIRED_SAMPLE = new Set<string>();
+
 // ---------------------------------------------------------------------------
 // row ↔ agent
 // ---------------------------------------------------------------------------
@@ -246,7 +251,8 @@ async function fetchSocietyRoster(): Promise<RosterData> {
   } catch {
     // Unreachable backend: the sample roster below says so on the rail.
   }
-  return { agents: [...SAMPLE_ROSTER, ...LOCAL_ROSTER], sample: true };
+  const rows = [...SAMPLE_ROSTER, ...LOCAL_ROSTER].filter((a) => !RETIRED_SAMPLE.has(a.agentId));
+  return { agents: rows, sample: true };
 }
 
 export function useSocietyRoster() {
@@ -254,7 +260,9 @@ export function useSocietyRoster() {
     queryKey: ROSTER_QUERY_KEY,
     queryFn: fetchSocietyRoster,
     staleTime: 15_000,
-    refetchInterval: 30_000,
+    // A refetch mid-ceremony would delete the figure being carried to the
+    // mine out from under the animation; the commit invalidates instead.
+    refetchInterval: () => (retirementRunning() ? false : 30_000),
   });
 }
 
@@ -413,4 +421,62 @@ export function useSetAgentPaused() {
     },
     [client],
   );
+}
+
+/**
+ * Retire an agent: `DELETE /api/society/agents/{id}` archives the row, and the
+ * island plays the execution (`world/retirement.ts`) before the roster is
+ * refreshed and the figure leaves.
+ *
+ * The order matters. The deletion goes FIRST, so a refusal — the lead cannot
+ * be archived, the backend is down — is an error the person sees straight
+ * away, instead of a twenty-second ceremony ending in a figure that quietly
+ * comes back. The roster query is invalidated only when the body is in the
+ * mine; the refetch interval is paused for the same reason.
+ */
+export function useRetireAgent() {
+  const client = useQueryClient();
+  return useCallback(
+    async (agent: SocietyAgent, executioner: SocietyAgent | null): Promise<void> => {
+      if (agent.tier === "lead") throw new Error("the lead cannot be retired");
+      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      if (sample) {
+        RETIRED_SAMPLE.add(agent.agentId);
+        const local = LOCAL_ROSTER.indexOf(agent);
+        if (local >= 0) LOCAL_ROSTER.splice(local, 1);
+      } else {
+        const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const detail = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+          const reason =
+            detail && typeof detail.detail === "object" && detail.detail !== null
+              ? String((detail.detail as { reason?: unknown }).reason ?? res.status)
+              : String(detail?.detail ?? res.status);
+          throw new Error(`retire ${reason}`);
+        }
+      }
+      const started = beginRetirement({
+        agentId: agent.agentId,
+        name: agent.name,
+        figure: agent.figure,
+        palette: agent.palette,
+        executionerId: executioner?.agentId ?? null,
+        commit: () => {
+          void client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+        },
+      });
+      // Another retirement already has the lead: the row is gone either way,
+      // so the roster is refreshed at once rather than waiting for a ceremony
+      // that will never run for this agent.
+      if (!started) await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+    },
+    [client],
+  );
+}
+
+/** The one lead of the society (MASTERPLAN §2.5) — the agent who carries out a retirement. */
+export function findLead(agents: readonly SocietyAgent[]): SocietyAgent | null {
+  return agents.find((a) => a.tier === "lead") ?? null;
 }
