@@ -328,3 +328,24 @@
     transform: none;
   }
 }
+
+/* Retiring an agent is the one action on the card that cannot be undone, so
+   the second press is coloured like what it is. `--destructive` stays a real
+   colour in both appearances (Ink & Paper keeps it), and the text token comes
+   with it so the label survives light mode. */
+.ac-btn[data-armed] {
+  color: hsl(var(--destructive-foreground));
+  background: hsl(var(--destructive));
+  border-color: hsl(var(--destructive));
+}
+.ac-btn[data-armed]:hover:not(:disabled) {
+  background: hsl(var(--destructive) / 0.88);
+}
+.ac-retire-error {
+  margin-left: auto;
+  font-size: 12px;
+  color: hsl(var(--destructive));
+}
+.ac-retire-error + .ac-btn {
+  margin-left: 8px;
+}

@@ -38,6 +38,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
+import { RetireButton } from "./RetireButton";
 import { CapabilityChip } from "../CapabilityChip";
 import { useAgentActivity, useAgentRoutines, useAgentSkills, type AgentActivity } from "../cardData";
 import {
@@ -195,9 +196,14 @@ export interface AgentSpecSheetProps {
    * while the chat had no place of its own.
    */
   onOpenChat?: () => void;
+  /**
+   * The agent was retired: the card closes so the island's ceremony
+   * (`world/retirement.ts`) is actually visible behind it.
+   */
+  onRetired?: () => void;
 }
 
-export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
+export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetProps) {
   const t = useT();
   const capabilities = useSocietyCapabilities();
   const activity = useAgentActivity(agent.agentId);
@@ -490,6 +496,8 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
           {paused ? <Play className="h-3.5 w-3.5" aria-hidden /> : <Pause className="h-3.5 w-3.5" aria-hidden />}
           {paused ? t("society.card.action_resume") : t("society.card.action_pause")}
         </button>
+        {/* Last, and on its own: pausing is a Tuesday, retiring is forever. */}
+        <RetireButton agent={agent} onRetired={onRetired} />
       </div>
     </div>
   );

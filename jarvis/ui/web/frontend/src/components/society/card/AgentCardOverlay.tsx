@@ -32,7 +32,7 @@
  */
 import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { MessageSquare, Skull, User, X } from "lucide-react";
+import { MessageSquare, User, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,11 +40,12 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { AgentSwatch } from "../AgentSwatch";
-import { findLead, useRetireAgent, type SocietyAgent } from "../data";
+import type { SocietyAgent } from "../data";
 import { AgentChatPanel } from "../chat/AgentChatPanel";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
 import { RosterRail } from "../roster/RosterRail";
 import { AgentSpecSheet } from "./AgentSpecSheet";
+import { RetireButton } from "./RetireButton";
 
 /** Which face of the card is showing. */
 type CardFace = "chat" | "profile";
@@ -170,7 +171,7 @@ export function AgentCardOverlay({
                     >
                       <AgentChatPanel agent={agent} roster={roster} />
                     </section>
-                    <OptionsRail agent={agent} roster={roster} onRetired={onClose} />
+                    <OptionsRail agent={agent} onRetired={onClose} />
                   </>
                 ) : (
                   <>
@@ -182,7 +183,7 @@ export function AgentCardOverlay({
                       aria-label={t("society.card.specs")}
                       data-testid="agent-card-specs"
                     >
-                      <AgentSpecSheet agent={agent} onOpenChat={() => setFace("chat")} />
+                      <AgentSpecSheet agent={agent} onOpenChat={() => setFace("chat")} onRetired={onClose} />
                     </section>
                     <section
                       className="society-figure-column relative min-h-0"
@@ -206,17 +207,10 @@ export function AgentCardOverlay({
  * The right eighth: what you can DO to this agent, as opposed to what you can
  * say to it. Retirement is the only entry so far, and it sits at the bottom
  * away from everything else — it is not a control anyone should reach for by
- * accident.
+ * accident. The same button is in the profile face's action bar; both go
+ * through `RetireButton`.
  */
-function OptionsRail({
-  agent,
-  roster,
-  onRetired,
-}: {
-  agent: SocietyAgent;
-  roster: SocietyAgent[];
-  onRetired: () => void;
-}) {
+function OptionsRail({ agent, onRetired }: { agent: SocietyAgent; onRetired: () => void }) {
   const t = useT();
   return (
     <aside
@@ -231,80 +225,8 @@ function OptionsRail({
       </div>
       <p className="px-3 pt-2 text-xs text-muted-foreground">{t("society.card.options_hint")}</p>
       <div className="mt-auto p-3">
-        <RetireControl agent={agent} roster={roster} onRetired={onRetired} />
+        <RetireButton agent={agent} onRetired={onRetired} variant="rail" />
       </div>
     </aside>
-  );
-}
-
-/**
- * Retire this agent. Two presses, because it cannot be taken back: the first
- * arms it, the second archives the row and sends the lead across the island
- * to do it in person. The card closes so the ceremony is visible.
- *
- * The lead itself is never retirable — the roster refuses to archive it
- * (`roster.archive`), so the button says so rather than failing at the API.
- */
-function RetireControl({
-  agent,
-  roster,
-  onRetired,
-}: {
-  agent: SocietyAgent;
-  roster: SocietyAgent[];
-  onRetired: () => void;
-}) {
-  const t = useT();
-  const retire = useRetireAgent();
-  const [armed, setArmed] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Arming never survives a switch to another agent in the rail.
-  useEffect(() => {
-    setArmed(false);
-    setError(null);
-  }, [agent.agentId]);
-
-  if (agent.tier === "lead") {
-    return <p className="text-xs text-muted-foreground">{t("society.card.retire_lead_blocked")}</p>;
-  }
-
-  const run = async () => {
-    if (!armed) {
-      setArmed(true);
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await retire(agent, findLead(roster));
-      onRetired();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setArmed(false);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="space-y-2">
-      <Button
-        size="sm"
-        variant={armed ? "destructive" : "outline"}
-        className="w-full gap-1.5"
-        disabled={busy}
-        onClick={() => void run()}
-        data-testid="agent-card-retire"
-      >
-        <Skull className="h-3.5 w-3.5" aria-hidden />
-        {armed ? t("society.card.retire_confirm") : t("society.card.retire")}
-      </Button>
-      <p className="text-xs text-muted-foreground">
-        {armed ? t("society.card.retire_armed_hint") : t("society.card.retire_hint")}
-      </p>
-      {error && <p className="text-xs text-destructive">{error}</p>}
-    </div>
   );
 }
