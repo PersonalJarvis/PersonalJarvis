@@ -250,11 +250,12 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   // Which wardrobe fits this body: a hat cut for one skull is not offered on
   // another, even when the two share a style.
   const family = baseEntry?.family ?? null;
+  const fitSize = baseEntry?.fitSize ?? null;
   const styleOptions = useMemo(() => stylesWithBases(), []);
   const bases = useMemo(() => basesForStyle(style), [style]);
   const slots = useMemo(
-    () => (imported ? [] : slotsWithParts(archetype, style, family)),
-    [imported, archetype, style, family],
+    () => (imported ? [] : slotsWithParts(archetype, style, family, fitSize)),
+    [imported, archetype, style, family, fitSize],
   );
   const heights = imported ? IMPORTED_RANGE : (HEIGHT_RANGE[archetype] ?? HEIGHT_RANGE.biped);
   const defaultHeight = baseEntry?.heightM ?? 1.75;
@@ -271,6 +272,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     const nextArchetype: FigureArchetype = entry?.archetype ?? "biped";
     const band = HEIGHT_RANGE[nextArchetype] ?? HEIGHT_RANGE.biped;
     const nextFamily = entry?.family ?? null;
+    const nextSize = entry?.fitSize ?? null;
     setStyle(nextStyle);
     setRecipe((r) => {
       const next: FigureRecipe = {
@@ -278,7 +280,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         archetype: nextArchetype,
         base,
         style: nextStyle,
-        parts: keepablePartsFor(r.parts, nextArchetype, nextStyle, nextFamily),
+        parts: keepablePartsFor(r.parts, nextArchetype, nextStyle, nextFamily, nextSize),
         heightM: Math.min(band.max, Math.max(band.min, r.heightM ?? entry?.heightM ?? 1.75)),
         // Colours a person chose are theirs and survive the switch; colours
         // they never touched are the OLD figure's defaults and have no
@@ -719,7 +721,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                           value={recipe.parts[slot] ?? ""}
                           options={[
                             { value: "", label: t("society.create.none") },
-                            ...partsForSlot(slot, archetype, style, family).map((part) => ({
+                            ...partsForSlot(slot, archetype, style, family, fitSize).map((part) => ({
                               value: part.id,
                               label: part.label,
                             })),

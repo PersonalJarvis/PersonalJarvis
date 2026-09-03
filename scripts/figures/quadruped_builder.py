@@ -43,6 +43,13 @@ LEG_X = 0.115
 KNEE_Z = 0.24
 ANKLE_Z = 0.09
 EAR_Z = 0.88
+#: Where tail_1 hands over to tail_2, for every shape. Fixed on purpose: a bow
+#: is one file worn by six animals, and it can only ride a segment they all
+#: have in the same place.
+TAIL_JOINT = 0.26
+#: The shortest a tail may be, so the second segment always exists — and it
+#: is only just long enough, so a bear keeps a stub and a fox keeps a plume.
+TAIL_MIN = 0.30
 
 #: (name, parent, head, tail). Order is the export order; `root` must be first
 #: and the only bone without a parent — the gate insists on exactly one top.
@@ -127,7 +134,9 @@ class Shape:
     leg_r: float = 0.043
     #: How bushy the tail is, as a half-width.
     tail_r: float = 0.075
-    #: How far the tail reaches back from the rump, in metres.
+    #: How far the tail reaches back from the rump, in metres. The tail is
+    #: built in two segments that meet at a FIXED point (`TAIL_JOINT`), so a
+    #: `tail_extra` piece rides every animal; only the tip's reach varies.
     tail_len: float = 0.52
     #: Where the ear tips end. The ear BONE ends at EAR_Z; a shorter ear simply
     #: leaves the top of it bare, a longer one runs past it and still follows.
@@ -184,10 +193,10 @@ SHAPES: dict[str, Shape] = {
         body_w=0.115,
         head_w=0.092,
         leg_r=0.040,
-        tail_r=0.055,
-        tail_len=0.16,
-        ear_top=1.18,
-        ear_w=0.058,
+        tail_r=0.088,
+        tail_len=0.30,
+        ear_top=1.06,
+        ear_w=0.076,
         muzzle_y=-0.62,
         muzzle_w=0.66,
     ),
@@ -196,8 +205,8 @@ SHAPES: dict[str, Shape] = {
         body_w=0.175,
         head_w=0.128,
         leg_r=0.062,
-        tail_r=0.045,
-        tail_len=0.12,
+        tail_r=0.052,
+        tail_len=0.30,
         ear_top=0.76,
         ear_w=0.070,
         muzzle_y=-0.64,
@@ -415,7 +424,7 @@ def body_pieces(s: Shape) -> list[Piece]:
             "tail_1",
             s.coat,
             (-s.tail_r, s.tail_r),
-            (HIP_Y + 0.04, HIP_Y + 0.06 + s.tail_len * 0.5),
+            (HIP_Y + 0.04, HIP_Y + TAIL_JOINT + 0.02),
             (HIP_Z - 0.05, HIP_Z + 0.09),
         ),
         box(
@@ -423,7 +432,7 @@ def body_pieces(s: Shape) -> list[Piece]:
             "tail_2",
             s.tail_tip,
             (-s.tail_r + 0.012, s.tail_r - 0.012),
-            (HIP_Y + 0.04 + s.tail_len * 0.5, HIP_Y + 0.04 + s.tail_len),
+            (HIP_Y + TAIL_JOINT, HIP_Y + 0.04 + max(s.tail_len, TAIL_MIN)),
             (HIP_Z - 0.12, HIP_Z + 0.04),
         ),
     ]
@@ -768,17 +777,17 @@ PART_SPECS: dict[str, dict] = {
                 "Blanket",
                 "chest",
                 "primary",
-                (-0.155, 0.155),
-                (CHEST_Y - 0.14, CHEST_Y + 0.22),
-                (BACK_Z - 0.14, BACK_Z + 0.04),
+                (-0.185, 0.185),
+                (CHEST_Y - 0.18, CHEST_Y + 0.26),
+                (BACK_Z - 0.20, BACK_Z + 0.05),
             ),
             box(
                 "BlanketTrim",
                 "chest",
                 "accent",
-                (-0.16, 0.16),
-                (CHEST_Y - 0.16, CHEST_Y - 0.12),
-                (BACK_Z - 0.15, BACK_Z + 0.05),
+                (-0.19, 0.19),
+                (CHEST_Y - 0.21, CHEST_Y - 0.16),
+                (BACK_Z - 0.21, BACK_Z + 0.06),
             ),
         ],
     },
@@ -791,25 +800,25 @@ PART_SPECS: dict[str, dict] = {
                 "BowKnot",
                 "tail_2",
                 "accent",
-                (-0.035, 0.035),
-                (HIP_Y + 0.40, HIP_Y + 0.47),
-                (HIP_Z - 0.08, HIP_Z - 0.01),
+                (-0.075, 0.075),
+                (HIP_Y + TAIL_JOINT + 0.01, HIP_Y + TAIL_JOINT + 0.08),
+                (HIP_Z - 0.08, HIP_Z + 0.02),
             ),
             box(
                 "BowL",
                 "tail_2",
                 "accent",
-                (0.035, 0.105),
-                (HIP_Y + 0.41, HIP_Y + 0.46),
-                (HIP_Z - 0.10, HIP_Z + 0.01),
+                (0.075, 0.128),
+                (HIP_Y + TAIL_JOINT + 0.02, HIP_Y + TAIL_JOINT + 0.07),
+                (HIP_Z - 0.10, HIP_Z + 0.03),
             ),
             box(
                 "BowR",
                 "tail_2",
                 "accent",
-                (-0.105, -0.035),
-                (HIP_Y + 0.41, HIP_Y + 0.46),
-                (HIP_Z - 0.10, HIP_Z + 0.01),
+                (-0.128, -0.075),
+                (HIP_Y + TAIL_JOINT + 0.02, HIP_Y + TAIL_JOINT + 0.07),
+                (HIP_Z - 0.10, HIP_Z + 0.03),
             ),
         ],
     },
@@ -824,7 +833,7 @@ PART_SPECS: dict[str, dict] = {
                 "leather",
                 (0.045, 0.075),
                 (HEAD_Y - 0.03, HEAD_Y + 0.01),
-                (HEAD_Z + 0.11, HEAD_Z + 0.34),
+                (HEAD_Z + 0.11, HEAD_Z + 0.44),
             ),
             box(
                 "AntlerR",
@@ -832,7 +841,7 @@ PART_SPECS: dict[str, dict] = {
                 "leather",
                 (-0.075, -0.045),
                 (HEAD_Y - 0.03, HEAD_Y + 0.01),
-                (HEAD_Z + 0.11, HEAD_Z + 0.34),
+                (HEAD_Z + 0.11, HEAD_Z + 0.44),
             ),
             box(
                 "TineL",
@@ -840,7 +849,7 @@ PART_SPECS: dict[str, dict] = {
                 "leather",
                 (0.075, 0.155),
                 (HEAD_Y - 0.03, HEAD_Y + 0.01),
-                (HEAD_Z + 0.26, HEAD_Z + 0.30),
+                (HEAD_Z + 0.33, HEAD_Z + 0.38),
             ),
             box(
                 "TineR",
@@ -848,7 +857,7 @@ PART_SPECS: dict[str, dict] = {
                 "leather",
                 (-0.155, -0.075),
                 (HEAD_Y - 0.03, HEAD_Y + 0.01),
-                (HEAD_Z + 0.26, HEAD_Z + 0.30),
+                (HEAD_Z + 0.33, HEAD_Z + 0.38),
             ),
         ],
     },

@@ -645,6 +645,7 @@ def build_target(target: dict, out_dir: Path, ledger: Path) -> tuple[dict, list[
         "heightM": archetype["variants"][target["variant"]]["height_m"],
         "palette": character["default_palette"],
         "family": source.get("family", source_slug(source)),
+        "fitSize": None,
         "source": f"{source['name']} / {target['character']}",
         "license": source["license"],
         **facts,
@@ -684,6 +685,9 @@ def build_target(target: dict, out_dir: Path, ledger: Path) -> tuple[dict, list[
                 "styles": spec.get("styles", []),
                 "hides": spec.get("hides", []),
                 "fits_family": spec.get("fits_family"),
+                "fits_size": spec.get("fits_size"),
+                "asymmetric": bool(spec.get("asymmetric")),
+                "covers": spec.get("covers", []),
                 "from_base": target["base"],
                 "source": f"{source['name']} / {spec['object']}",
                 "license": source["license"],
@@ -739,6 +743,7 @@ def build_procedural_quadruped(
         "heightM": archetype["variants"][target["variant"]]["height_m"],
         "palette": character["default_palette"],
         "family": source.get("family", source_slug(source)),
+        "fitSize": None,
         "clipsFrom": borrowed["file"],
         "source": f"{source['name']} / {target['character']}",
         "license": source["license"],
@@ -778,6 +783,9 @@ def build_procedural_quadruped(
                 "styles": spec.get("styles", []),
                 "hides": spec.get("hides", []),
                 "fits_family": spec.get("fits_family"),
+                "fits_size": spec.get("fits_size"),
+                "asymmetric": bool(spec.get("asymmetric")),
+                "covers": spec.get("covers", []),
                 "from_base": target["base"],
                 "source": f"{source['name']} / {part_id}",
                 "license": source["license"],
@@ -818,6 +826,7 @@ def build_procedural_gigi(
         "heightM": archetype["variants"][target["variant"]]["height_m"],
         "palette": character["default_palette"],
         "family": source.get("family", source_slug(source)),
+        "fitSize": None,
         "source": f"{source['name']} / {target['character']}",
         "license": source["license"],
         **facts,
@@ -927,6 +936,8 @@ def build_procedural_humanoid(
     borrowed = ensure_clip_library(
         source, archetype, out_dir, lambda: normalize_donor_rig(source, archetype)
     )
+    profile = humanoid_builder.PROFILES[character["profile"]]
+    fit_size = humanoid_builder.fit_size(profile)
     log(f"building {target['id']} procedurally on the {source['rig_character']} rig")
     arm = normalize_donor_rig(source, archetype)
 
@@ -954,6 +965,7 @@ def build_procedural_humanoid(
         "heightM": archetype["variants"][target["variant"]]["height_m"],
         "palette": character["default_palette"],
         "family": source.get("family", source_slug(source)),
+        "fitSize": fit_size,
         "clipsFrom": borrowed["file"],
         "source": f"{source['name']} / {target['character']}",
         "license": source["license"],
@@ -973,37 +985,48 @@ def build_procedural_humanoid(
     part_entries = []
     parts_dir = out_dir / "parts" / target["archetype"]
     for part_id in character.get("parts", []):
-        spec = dict(humanoid_builder.PART_SPECS[part_id])
-        spec["id"] = part_id
-        spec["object"] = part_id
-        attach = archetype["slots"][spec["slot"]]["attach"]
-        part, report = humanoid_builder.build_part(
-            part_id, arm, CONTRACT["sheet"], img, sheet_material
-        )
-        apply_materials(part, img, part_id, [])
-        parts_dir.mkdir(parents=True, exist_ok=True)
-        part_path = parts_dir / f"{part_id}.glb"
-        export_glb(part_path, [part, arm], animations=False)
-        pfacts = finish_part(part_path, spec, target, source, attach)
-        bpy.data.objects.remove(part, do_unlink=True)
-        part_entries.append(
-            {
-                "id": part_id,
-                "file": f"parts/{target['archetype']}/{part_path.name}",
-                "archetype": target["archetype"],
-                "slot": spec["slot"],
-                "attach": attach,
-                "label": spec["label"],
-                "styles": spec.get("styles", []),
-                "hides": spec.get("hides", []),
-                "fits_family": spec.get("fits_family"),
-                "from_base": target["base"],
-                "source": f"{source['name']} / {part_id}",
-                "license": source["license"],
-                "palette_cells": report["used"],
-                **pfacts,
-            }
-        )
+        base_spec = humanoid_builder.PART_SPECS[part_id]
+        # A garment that wraps the torso is cut to a girth, so it is built once
+        # per size class; everything else hangs on a bone the rig places the
+        # same way for every body and is built once.
+        sizes = sorted(humanoid_builder.WRAP_SIZES) if base_spec.get("wrapping") else [None]
+        for size in sizes:
+            spec = dict(base_spec)
+            variant_id = part_id if size in (None, "slim") else f"{part_id}-{size}"
+            spec["id"] = variant_id
+            spec["object"] = variant_id
+            spec["fits_size"] = size
+            attach = archetype["slots"][spec["slot"]]["attach"]
+            part, report = humanoid_builder.build_part(
+                part_id, arm, CONTRACT["sheet"], img, sheet_material, size=size
+            )
+            apply_materials(part, img, variant_id, [])
+            parts_dir.mkdir(parents=True, exist_ok=True)
+            part_path = parts_dir / f"{variant_id}.glb"
+            export_glb(part_path, [part, arm], animations=False)
+            pfacts = finish_part(part_path, spec, target, source, attach)
+            bpy.data.objects.remove(part, do_unlink=True)
+            part_entries.append(
+                {
+                    "id": variant_id,
+                    "file": f"parts/{target['archetype']}/{part_path.name}",
+                    "archetype": target["archetype"],
+                    "slot": spec["slot"],
+                    "attach": attach,
+                    "label": spec["label"],
+                    "styles": spec.get("styles", []),
+                    "hides": spec.get("hides", []),
+                    "fits_family": spec.get("fits_family"),
+                    "fits_size": spec.get("fits_size"),
+                    "asymmetric": bool(spec.get("asymmetric")),
+                    "covers": spec.get("covers", []),
+                    "from_base": target["base"],
+                    "source": f"{source['name']} / {part_id}",
+                    "license": source["license"],
+                    "palette_cells": report["used"],
+                    **pfacts,
+                }
+            )
     return entry, part_entries
 
 

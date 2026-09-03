@@ -348,7 +348,10 @@ def key_clips(arm: bpy.types.Object) -> None:
 
 
 def build_gigi(sheet: dict, img, sheet_material) -> tuple[bpy.types.Object, bpy.types.Object, dict]:
-    """Build the whole figure into the current (empty) scene. Returns (armature, body, uv_report)."""
+    """Build the whole figure into the current (empty) scene.
+
+    Returns (armature, body, uv_report).
+    """
     pieces, _marks = build_parts()
     body, report = assemble(pieces, sheet["cells"], sheet, img, sheet_material)
     arm = build_armature()

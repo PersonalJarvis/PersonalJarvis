@@ -35,6 +35,12 @@ export interface CatalogBase {
    */
   family?: string;
   /**
+   * Which cut of a wrapping garment this body takes. The skull is one size
+   * for every body this rig makes, but the torso runs from bulk 0.88 to 1.32,
+   * so a vest, a plate, an apron and a belt come in two.
+   */
+  fitSize?: string | null;
+  /**
    * The file this base borrows its animation from, beside it in the same
    * folder. Nine clips of a 23-bone rig outweigh a procedural body five to
    * one, so every look built on one rig shares a single copy.
@@ -64,6 +70,10 @@ export interface CatalogPart {
    * which every biped of the rig places identically.
    */
   fits_family?: string | null;
+  /** Set on a garment that wraps the torso: the size class it was cut for. */
+  fits_size?: string | null;
+  /** True for a piece worn deliberately off centre — a shoulder bag. */
+  asymmetric?: boolean;
 }
 
 export interface FigureCatalog {
@@ -228,19 +238,34 @@ export function partsForSlot(
   archetype: FigureArchetype = "biped",
   style: string | null = null,
   family: string | null = null,
+  size: string | null = null,
 ): CatalogPart[] {
   return CATALOG.parts.filter(
     (p) =>
       p.archetype === archetype &&
       p.slot === slot &&
       (!style || p.styles.includes(style)) &&
-      fitsFamily(p, family),
+      fitsBody(p, family, size),
   );
 }
 
 /** A part with no family fits every body of its archetype; one with a family fits only that family. */
 export function fitsFamily(part: CatalogPart, family: string | null): boolean {
   return !part.fits_family || !family || part.fits_family === family;
+}
+
+/** Same idea one size down: a wrapping garment fits only the girth it was cut for. */
+export function fitsSize(part: CatalogPart, size: string | null | undefined): boolean {
+  return !part.fits_size || !size || part.fits_size === size;
+}
+
+/** Both fit tests at once — what the creator asks before it offers a piece. */
+export function fitsBody(
+  part: CatalogPart,
+  family: string | null,
+  size: string | null | undefined,
+): boolean {
+  return fitsFamily(part, family) && fitsSize(part, size);
 }
 
 /**
@@ -252,12 +277,13 @@ export function slotsWithParts(
   archetype: FigureArchetype = "biped",
   style: string | null = null,
   family: string | null = null,
+  size: string | null = null,
 ): string[] {
   const seen: string[] = [];
   for (const p of CATALOG.parts) {
     if (p.archetype !== archetype) continue;
     if (style && !p.styles.includes(style)) continue;
-    if (!fitsFamily(p, family)) continue;
+    if (!fitsBody(p, family, size)) continue;
     if (!seen.includes(p.slot)) seen.push(p.slot);
   }
   return seen;
@@ -273,13 +299,27 @@ export function keepablePartsFor(
   archetype: FigureArchetype,
   style: string | null,
   family: string | null = null,
+  size: string | null = null,
 ): Record<string, string> {
   const kept: Record<string, string> = {};
   for (const [slot, id] of Object.entries(parts ?? {})) {
     const part = CATALOG.parts.find((p) => p.id === id);
     if (!part || part.archetype !== archetype || part.slot !== slot) continue;
     if (style && !part.styles.includes(style)) continue;
-    if (!fitsFamily(part, family)) continue;
+    if (!fitsBody(part, family, size)) {
+      // A vest is a vest whichever girth it was cut for: when the new body
+      // takes the other cut, swap to it rather than silently undressing.
+      const swap = CATALOG.parts.find(
+        (p) =>
+          p.slot === part.slot &&
+          p.label === part.label &&
+          p.archetype === archetype &&
+          (!style || p.styles.includes(style)) &&
+          fitsBody(p, family, size),
+      );
+      if (swap) kept[slot] = swap.id;
+      continue;
+    }
     kept[slot] = id;
   }
   return kept;

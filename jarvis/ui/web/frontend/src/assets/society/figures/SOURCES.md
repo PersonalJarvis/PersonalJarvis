@@ -48,7 +48,9 @@ into `scripts/figures/cache/` and verified by sha256 before the build touches th
 | `back-saddlebag.glb` | Personal Jarvis animals (first-party) / back-saddlebag | first-party | unparented at rest, skinned to `chest` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `back-satchel.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / back-satchel | first-party | unparented at rest, skinned to `chest` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `belt-sash.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / belt-sash | first-party | unparented at rest, skinned to `hips` with weight 1; re-UV'd onto the palette strip; no clips; extras |
+| `belt-sash-broad.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / belt-sash | first-party | unparented at rest, skinned to `hips` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `belt-toolbelt.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / belt-toolbelt | first-party | unparented at rest, skinned to `hips` with weight 1; re-UV'd onto the palette strip; no clips; extras |
+| `belt-toolbelt-broad.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / belt-toolbelt | first-party | unparented at rest, skinned to `hips` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `collar-band.glb` | Personal Jarvis animals (first-party) / collar-band | first-party | unparented at rest, skinned to `neck` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `collar-bandana.glb` | Personal Jarvis animals (first-party) / collar-bandana | first-party | unparented at rest, skinned to `neck` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `collar-scarf.glb` | Personal Jarvis animals (first-party) / collar-scarf | first-party | unparented at rest, skinned to `neck` with weight 1; re-UV'd onto the palette strip; no clips; extras |
@@ -84,8 +86,11 @@ into `scripts/figures/cache/` and verified by sha256 before the build touches th
 | `headgear-top-hat.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / headgear-top-hat | first-party | unparented at rest, skinned to `head` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `tail_extra-bow.glb` | Personal Jarvis animals (first-party) / tail_extra-bow | first-party | unparented at rest, skinned to `tail_2` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `torso_over-apron.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / torso_over-apron | first-party | unparented at rest, skinned to `chest` with weight 1; re-UV'd onto the palette strip; no clips; extras |
+| `torso_over-apron-broad.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / torso_over-apron | first-party | unparented at rest, skinned to `chest` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `torso_over-plate.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / torso_over-plate | first-party | unparented at rest, skinned to `chest` with weight 1; re-UV'd onto the palette strip; no clips; extras |
+| `torso_over-plate-broad.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / torso_over-plate | first-party | unparented at rest, skinned to `chest` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 | `torso_over-vest.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / torso_over-vest | first-party | unparented at rest, skinned to `chest` with weight 1; re-UV'd onto the palette strip; no clips; extras |
+| `torso_over-vest-broad.glb` | Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / torso_over-vest | first-party | unparented at rest, skinned to `chest` with weight 1; re-UV'd onto the palette strip; no clips; extras |
 
 - **KayKit Character Pack: Adventurers 1.0** — Kay Lousberg (kaylousberg.com), CC0-1.0 (https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0/blob/main/LICENSE.txt); files:
   - `Rogue.glb` sha256 `e825437cd4d2ee9c1960b517a74a69101e33eb409ae7fa8cedc7134a998fbb7d`

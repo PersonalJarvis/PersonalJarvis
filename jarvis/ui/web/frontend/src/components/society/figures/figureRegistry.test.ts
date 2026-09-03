@@ -14,6 +14,7 @@ import {
   archetypeOfBase,
   basesForStyle,
   catalogBaseFor,
+  fitsBody,
   keepablePartsFor,
   partAssetsFor,
   partsForSlot,
@@ -90,6 +91,37 @@ describe("a part is only ever offered where it fits", () => {
     for (const base of basesForStyle(style)) {
       const slots = slotsWithParts(base.archetype, style, base.family ?? null);
       expect(slots.length, `${base.label} (${style})`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  /**
+   * The Knight bug: a plate cut for one torso hung in front of a wider one as
+   * a narrow board, with the body showing past both edges. A garment that
+   * wraps the body is now cut per girth and only offered to the girth it fits.
+   */
+  it("offers exactly one cut of every wrapping garment per body", () => {
+    const wrapping = CATALOG.parts.filter((p) => p.fits_size);
+    expect(wrapping.length).toBeGreaterThan(0);
+    for (const base of CATALOG.bases) {
+      const labels = new Map<string, number>();
+      for (const part of wrapping) {
+        if (part.archetype !== base.archetype) continue;
+        if (!base.styles.some((s) => part.styles.includes(s))) continue;
+        if (!fitsBody(part, base.family ?? null, base.fitSize)) continue;
+        const key = `${part.slot}/${part.label}`;
+        labels.set(key, (labels.get(key) ?? 0) + 1);
+      }
+      for (const [key, count] of labels) {
+        expect(count, `${base.label} is offered ${count} of ${key}`).toBe(1);
+      }
+    }
+  });
+
+  it("never offers a wrapping garment to a body with no cut of its own", () => {
+    // The KayKit bodies have their own build; a garment measured against this
+    // module's torso must not reach them at all.
+    for (const part of CATALOG.parts.filter((p) => p.fits_size)) {
+      expect(part.fits_family, part.id).toBeTruthy();
     }
   });
 

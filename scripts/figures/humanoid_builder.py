@@ -211,6 +211,7 @@ PROFILES: dict[str, Profile] = {
     # A flight suit under a visored helmet, with shoulder rigs and boots.
     "pilot": Profile(
         head_h=0.74,
+        head_cell="secondary",
         visor=True,
         hair=False,
         shoulders=True,
@@ -276,6 +277,24 @@ PROFILES: dict[str, Profile] = {
         belt_cell="accent",
     ),
 }
+
+
+#: Half-extents a wrapping garment is cut to, per size class. Each clears the
+#: widest torso in its class: slim covers up to bulk 1.05, broad up to 1.35.
+#: A body picks its class from its own bulk (`Profile.fit_size`), and the
+#: creator only ever offers the matching cut.
+WRAP_SIZES: dict[str, tuple[float, float]] = {
+    "slim": (0.335, 0.225),
+    "broad": (0.450, 0.310),
+}
+
+#: Above this bulk a body wears the broad cut.
+BROAD_FROM = 1.06
+
+
+def fit_size(profile: Profile) -> str:
+    """Which cut of a wrapping garment this body takes."""
+    return "broad" if profile.bulk >= BROAD_FROM else "slim"
 
 
 # ---------------------------------------------------------------------------
@@ -436,16 +455,29 @@ def head_pieces(p: Profile) -> list[Piece]:
                 )
             )
     if p.beard:
-        # Chin-length and squared off. Deliberately NOT in `hair_cells`: a
-        # helmet hides the skull, and a beard under one still shows.
+        # A CHIN beard: narrower than the face and starting below the mouth.
+        # Run from under the eyes and across the full width, as it first was,
+        # and it reads as a bar taped over the face instead of a beard.
+        # Deliberately NOT in `hair_cells`: a helmet hides the skull, and a
+        # beard under one still shows.
         pieces.append(
             box(
                 "Beard",
                 "head",
                 "hair",
-                (-w * 0.66, w * 0.66),
-                (face - 0.03, d * 0.35),
-                (chin - 0.16, eye_z - 0.13),
+                (-w * 0.5, w * 0.5),
+                (face - 0.025, d * 0.2),
+                (chin - 0.13, eye_z - 0.20),
+            )
+        )
+        pieces.append(
+            box(
+                "Moustache",
+                "head",
+                "hair",
+                (-w * 0.30, w * 0.30),
+                (face - 0.03, -d + 0.02),
+                (eye_z - 0.22, eye_z - 0.16),
             )
         )
     if p.pointed_ears:
@@ -522,8 +554,27 @@ def head_pieces(p: Profile) -> list[Piece]:
                 (top - 0.14, top + 0.03),
             )
         )
+        # Full width down to the ears, then a narrower nape: two steps is
+        # enough shape for the back of a head to stop being a blank rectangle.
         pieces.append(
-            box("HairBack", "head", "hair", (-cap, cap), (d - 0.04, d + 0.03), (chin + 0.16, top))
+            box(
+                "HairBack",
+                "head",
+                "hair",
+                (-cap, cap),
+                (d - 0.04, d + 0.03),
+                (chin + p.head_h * 0.42, top),
+            )
+        )
+        pieces.append(
+            box(
+                "HairNape",
+                "head",
+                "hair",
+                (-cap * 0.62, cap * 0.62),
+                (d - 0.03, d + 0.025),
+                (chin + p.head_h * 0.18, chin + p.head_h * 0.44),
+            )
         )
         if p.hair_long:
             for side, lo, hi in (("L", w - 0.02, cap), ("R", -cap, -w + 0.02)):
@@ -1240,54 +1291,66 @@ PART_SPECS: dict[str, dict] = {
     # ---- over the torso -----------------------------------------------------
     "torso_over-vest": {
         "slot": "torso_over",
+        "covers": ["sides"],
         "label": "Vest",
         "styles": ["modern", "fantasy", "scifi", "cartoon"],
-        "pieces": lambda: [
+        "fits_family": "jarvis-biped",
+        "wrapping": True,
+        "pieces": lambda w, d: [
             box(
-                "VestL",
-                "chest",
-                "leather",
-                (0.13, 0.34),
-                (-0.24, 0.24),
-                (WAIST_Z + 0.06, NECK_Z + 0.02),
+                "VestL", "chest", "leather", (w * 0.42, w), (-d, d), (WAIST_Z + 0.06, NECK_Z + 0.02)
             ),
             box(
                 "VestR",
                 "chest",
                 "leather",
-                (-0.34, -0.13),
-                (-0.24, 0.24),
+                (-w, -w * 0.42),
+                (-d, d),
                 (WAIST_Z + 0.06, NECK_Z + 0.02),
             ),
             box(
                 "VestBack",
                 "chest",
                 "leather",
-                (-0.34, 0.34),
-                (0.20, 0.25),
+                (-w, w),
+                (d * 0.82, d),
                 (WAIST_Z + 0.06, NECK_Z + 0.02),
             ),
         ],
     },
     "torso_over-plate": {
         "slot": "torso_over",
+        "covers": ["sides", "front_back"],
         "label": "Chest plate",
         "styles": ["scifi", "fantasy"],
-        "pieces": lambda: [
+        "fits_family": "jarvis-biped",
+        "wrapping": True,
+        "pieces": lambda w, d: [
             box(
-                "Plate",
-                "chest",
-                "metal",
-                (-0.30, 0.30),
-                (-0.28, -0.19),
-                (CHEST_Z - 0.02, NECK_Z + 0.02),
+                "Plate", "chest", "metal", (-w, w), (-d, -d * 0.72), (CHEST_Z - 0.02, NECK_Z + 0.02)
             ),
             box(
                 "PlateBack",
                 "chest",
                 "metal",
-                (-0.30, 0.30),
-                (0.19, 0.28),
+                (-w, w),
+                (d * 0.72, d),
+                (CHEST_Z - 0.02, NECK_Z + 0.02),
+            ),
+            box(
+                "PlateSideL",
+                "chest",
+                "metal",
+                (w * 0.88, w),
+                (-d, d),
+                (CHEST_Z - 0.02, NECK_Z + 0.02),
+            ),
+            box(
+                "PlateSideR",
+                "chest",
+                "metal",
+                (-w, -w * 0.88),
+                (-d, d),
                 (CHEST_Z - 0.02, NECK_Z + 0.02),
             ),
             box(
@@ -1295,38 +1358,41 @@ PART_SPECS: dict[str, dict] = {
                 "chest",
                 "accent",
                 (-0.06, 0.06),
-                (-0.31, -0.27),
+                (-d - 0.03, -d + 0.01),
                 (CHEST_Z + 0.12, CHEST_Z + 0.24),
             ),
         ],
     },
     "torso_over-apron": {
         "slot": "torso_over",
+        "covers": ["sides"],
         "label": "Apron",
         "styles": ["modern", "fantasy", "cartoon", "scifi"],
-        "pieces": lambda: [
+        "fits_family": "jarvis-biped",
+        "wrapping": True,
+        "pieces": lambda w, d: [
             box(
                 "ApronBody",
                 "spine",
                 "secondary",
-                (-0.26, 0.26),
-                (-0.27, -0.20),
+                (-w, w),
+                (-d, -d * 0.78),
                 (HIP_Z - 0.18, CHEST_Z + 0.02),
             ),
             box(
                 "ApronStrapL",
                 "chest",
                 "secondary",
-                (0.08, 0.18),
-                (-0.24, 0.24),
+                (w * 0.24, w * 0.62),
+                (-d, d),
                 (NECK_Z - 0.06, NECK_Z + 0.02),
             ),
             box(
                 "ApronStrapR",
                 "chest",
                 "secondary",
-                (-0.18, -0.08),
-                (-0.24, 0.24),
+                (-w * 0.62, -w * 0.24),
+                (-d, d),
                 (NECK_Z - 0.06, NECK_Z + 0.02),
             ),
         ],
@@ -1334,54 +1400,46 @@ PART_SPECS: dict[str, dict] = {
     # ---- belt ---------------------------------------------------------------
     "belt-toolbelt": {
         "slot": "belt",
+        "covers": ["sides", "front_back"],
         "label": "Tool belt",
-        "styles": ["modern", "scifi", "cartoon"],
-        "pieces": lambda: [
-            box(
-                "BeltStrap",
-                "hips",
-                "leather",
-                (-0.33, 0.33),
-                (-0.24, 0.24),
-                (WAIST_Z - 0.07, WAIST_Z + 0.01),
-            ),
+        "styles": ["modern", "scifi", "cartoon", "fantasy"],
+        "fits_family": "jarvis-biped",
+        "wrapping": True,
+        "pieces": lambda w, d: [
+            box("BeltStrap", "hips", "leather", (-w, w), (-d, d), (WAIST_Z - 0.07, WAIST_Z + 0.01)),
             box(
                 "PouchL",
                 "hips",
                 "leather",
-                (0.16, 0.33),
-                (-0.26, -0.14),
+                (w * 0.48, w),
+                (-d - 0.02, -d * 0.55),
                 (WAIST_Z - 0.20, WAIST_Z - 0.05),
             ),
             box(
                 "PouchR",
                 "hips",
                 "metal",
-                (-0.33, -0.16),
-                (-0.26, -0.14),
+                (-w, -w * 0.48),
+                (-d - 0.02, -d * 0.55),
                 (WAIST_Z - 0.18, WAIST_Z - 0.05),
             ),
         ],
     },
     "belt-sash": {
         "slot": "belt",
+        "covers": ["sides", "front_back"],
         "label": "Sash",
-        "styles": ["fantasy", "cartoon"],
-        "pieces": lambda: [
-            box(
-                "SashBand",
-                "hips",
-                "accent",
-                (-0.33, 0.33),
-                (-0.24, 0.24),
-                (WAIST_Z - 0.09, WAIST_Z + 0.02),
-            ),
+        "styles": ["fantasy", "cartoon", "modern"],
+        "fits_family": "jarvis-biped",
+        "wrapping": True,
+        "pieces": lambda w, d: [
+            box("SashBand", "hips", "accent", (-w, w), (-d, d), (WAIST_Z - 0.09, WAIST_Z + 0.02)),
             box(
                 "SashTail",
                 "hips",
                 "accent",
-                (0.16, 0.28),
-                (-0.26, -0.17),
+                (w * 0.42, w * 0.82),
+                (-d - 0.01, -d * 0.62),
                 (HIP_Z - 0.10, WAIST_Z - 0.06),
             ),
         ],
@@ -1390,6 +1448,7 @@ PART_SPECS: dict[str, dict] = {
     "back-satchel": {
         "slot": "back",
         "label": "Satchel",
+        "asymmetric": True,
         "styles": ["modern", "fantasy", "cartoon"],
         "pieces": lambda: [
             box(
@@ -1791,12 +1850,23 @@ PART_SPECS: dict[str, dict] = {
 }
 
 
-def build_part(part_id: str, arm: bpy.types.Object, sheet: dict, img, sheet_material):
-    """Build one accessory: boxes, UVs on the strip, weight 1 on its attach bone."""
+def build_part(
+    part_id: str, arm: bpy.types.Object, sheet: dict, img, sheet_material, size: str | None = None
+):
+    """Build one accessory: boxes, UVs on the strip, weight 1 on its attach bone.
+
+    A wrapping garment is cut to `size`; everything else hangs on a bone the
+    rig places identically for every body and takes no size at all.
+    """
     spec = PART_SPECS.get(part_id)
     if spec is None:
         raise SystemExit(f"unknown procedural part {part_id!r}")
-    pieces = spec["pieces"]()
+    if spec.get("wrapping"):
+        if size not in WRAP_SIZES:
+            raise SystemExit(f"{part_id} is a wrapping garment and needs a size, got {size!r}")
+        pieces = spec["pieces"](*WRAP_SIZES[size])
+    else:
+        pieces = spec["pieces"]()
     bones = {b.name for b in arm.data.bones}
     stray = sorted({p.bone for p in pieces} - bones)
     if stray:
