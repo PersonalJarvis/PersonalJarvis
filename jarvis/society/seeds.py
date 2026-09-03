@@ -156,6 +156,31 @@ def proposal_for_capability(cap_id: str, catalog: list[CapabilityRow]) -> dict[s
     return None
 
 
+async def create_from_proposals(
+    roster: Roster, catalog: list[CapabilityRow], names: list[str] | None = None
+) -> list[str]:
+    """Create the picked seed proposals (all when ``names`` is empty). Returns
+    the ids created. Shared by the seeds route and the onboarding proposal, so
+    the two paths cannot drift."""
+    taken = {a.name for a in await roster.list(include_archived=True)}
+    wanted = {n.strip().lower() for n in (names or []) if n.strip()}
+    created: list[str] = []
+    for proposal in propose_seeds(catalog, taken):
+        if wanted and proposal["name"].lower() not in wanted:
+            continue
+        fields = {k: v for k, v in proposal.items() if k in ("focus", "approval_rules")}
+        agent, was_created = await roster.create(
+            name=proposal["name"],
+            title=proposal["title"],
+            description=proposal["description"],
+            tier=proposal["tier"],
+            **fields,
+        )
+        if was_created:
+            created.append(agent.agent_id)
+    return created
+
+
 async def seed_first_run(roster: Roster, store: Any) -> list[str]:
     """Create the starter team once. Returns the ids created (empty later)."""
     if await store.get_meta(_SEEDED_KEY, "0") == "1":

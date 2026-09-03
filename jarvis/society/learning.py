@@ -208,9 +208,22 @@ class LearningPass:
         self._daily_cap = daily_cap
         self._notify = notify
 
-    async def run(self, agent: AgentRecord, digest: TurnDigest) -> str | None:
-        """Learn from one finished turn; returns the new skill's slug or None."""
-        if not should_learn(digest):
+    async def run(
+        self,
+        agent: AgentRecord,
+        digest: TurnDigest,
+        *,
+        name_hint: str = "",
+        force: bool = False,
+    ) -> str | None:
+        """Learn from one finished turn; returns the new skill's slug or None.
+
+        ``force`` skips the deterministic pre-filter — an explicitly requested
+        save ("save this as a skill called X", a confirmed proposal) has no
+        minimum step count. ``name_hint`` names the skill. The daily cap
+        stays either way.
+        """
+        if not force and not should_learn(digest):
             return None
         rt = self._runtime
         key = _day_key(agent.agent_id)
@@ -234,9 +247,16 @@ class LearningPass:
         extra = f"Agent: {agent.name}" + (f", {agent.title}" if agent.title else "")
         if agent.description.strip():
             extra += f"\nStanding instructions: {agent.description.strip()[:800]}"
+        if name_hint.strip():
+            intent += f"\n\nName the skill: {name_hint.strip()[:80]}"
         try:
             authored = await creator.author(
-                SkillCreatorInput(intent=intent, extra_context=extra, category="learned")
+                SkillCreatorInput(
+                    intent=intent,
+                    extra_context=extra,
+                    category="learned",
+                    name_hint=name_hint.strip()[:80],
+                )
             )
         except Exception as exc:  # noqa: BLE001 — learning never breaks anything
             log.info("society learning: %s could not author a skill: %s", agent.agent_id, exc)

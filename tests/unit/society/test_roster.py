@@ -172,3 +172,16 @@ def test_record_to_dict_is_json_shaped(tmp_path: Path):
     assert d["approval_rules"] == {"require_approval": [], "always_allow": []}
     assert d["skills"] == ["a"]
     assert d["session_id"] == "society:x"
+
+
+async def test_focus_keeps_the_order_it_was_given(roster: Roster):
+    """Focus is what the agent reaches for FIRST, in that order — never sorted."""
+    agent, _ = await roster.create(
+        name="Mailbox",
+        focus=["plugin:gmail", "cli:gh", "plugin:gmail", "core:search-web"],
+        grants=["z", "a"],
+    )
+    assert agent.focus == ["plugin:gmail", "cli:gh", "core:search-web"]
+    assert agent.grants == ["a", "z"]  # grants stay a sorted set
+    updated = await roster.update("mailbox", {"focus": ["core:search-web", "plugin:gmail"]})
+    assert updated.focus == ["core:search-web", "plugin:gmail"]

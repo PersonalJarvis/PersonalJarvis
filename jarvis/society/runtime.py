@@ -218,6 +218,14 @@ class SocietyRuntime:
             self._skills[agent_id] = skills
         return skills
 
+    def background(self, coro: Any) -> asyncio.Task[Any]:
+        """Run a coroutine as a tracked task (cancelled on close, AP-30: its
+        own body reports failures — nothing here swallows them)."""
+        task = asyncio.create_task(coro)
+        self._watchers.add(task)
+        task.add_done_callback(self._watchers.discard)
+        return task
+
     async def post_chat_notice(self, agent: AgentRecord, payload: dict[str, Any]) -> None:
         """A society notice in the agent's own chat — proposals, routine results,
         learned skills. A no-op without a chat service or a bound session."""

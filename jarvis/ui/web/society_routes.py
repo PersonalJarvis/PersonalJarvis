@@ -448,24 +448,14 @@ class ApplySeedsBody(BaseModel):
 @router.post("/seeds/apply")
 async def apply_seed_proposals(body: ApplySeedsBody, request: Request) -> dict[str, Any]:
     """Create the picked proposals (all of them when ``names`` is empty)."""
-    from jarvis.society.seeds import propose_seeds
+    from jarvis.society.seeds import create_from_proposals
 
     rt = await _runtime(request)
-    taken = {a.name for a in await rt.roster.list(include_archived=True)}
-    wanted = {n.lower() for n in body.names}
+    ids = await create_from_proposals(rt.roster, rt.catalog(), body.names)
     created = []
-    for proposal in propose_seeds(rt.catalog(), taken):
-        if wanted and proposal["name"].lower() not in wanted:
-            continue
-        fields = {k: v for k, v in proposal.items() if k in ("focus", "approval_rules")}
-        agent, was_created = await rt.roster.create(
-            name=proposal["name"],
-            title=proposal["title"],
-            description=proposal["description"],
-            tier=proposal["tier"],
-            **fields,
-        )
-        if was_created:
+    for agent_id in ids:
+        agent = await rt.roster.get(agent_id)
+        if agent is not None:
             created.append(agent.to_dict())
     return {"agents": created, "total": len(created)}
 
@@ -823,7 +813,20 @@ async def list_approvals(request: Request, agent_id: str | None = None) -> dict[
 async def resolve_approval(
     approval_id: str, body: ResolveApprovalBody, request: Request
 ) -> dict[str, Any]:
+    from jarvis.society.proposals import kind_of
+
     rt = await _runtime(request)
+    current = await rt.approvals.get(approval_id)
+    if current is not None and kind_of(current.capability) is not None:
+        # A configuration proposal is applied by ITS route, never by this one:
+        # confirming here would flip the row without changing the agent.
+        raise HTTPException(
+            409,
+            {
+                "reason": str(FailureReason.BLOCKED_BY_POLICY),
+                "detail": f"use POST /api/society/proposals/{approval_id}/resolve",
+            },
+        )
     try:
         item = await rt.approvals.resolve(approval_id, approve=body.approve, note=body.note)
     except KeyError as exc:
@@ -844,6 +847,53 @@ async def resurface_approvals(request: Request) -> dict[str, Any]:
     rt = await _runtime(request)
     revived = await rt.approvals.resurface()
     return {"approvals": [a.to_dict() for a in revived], "total": len(revived)}
+
+
+# ---------------------------------------------------------------- proposals
+
+
+class ResolveProposalBody(BaseModel):
+    approve: bool
+    note: str = ""
+
+
+@router.get("/proposals")
+async def list_proposals(request: Request, agent_id: str | None = None) -> dict[str, Any]:
+    """Configuration proposals still waiting for the person (agent-definition §3.5)."""
+    from jarvis.society.proposals import kind_of
+
+    rt = await _runtime(request)
+    await rt.approvals.expire_due()
+    items = [a for a in await rt.approvals.pending() if kind_of(a.capability) is not None]
+    if agent_id:
+        items = [a for a in items if a.agent_id == agent_id]
+    return {"proposals": [a.to_dict() for a in items], "total": len(items)}
+
+
+@router.post("/proposals/{proposal_id}/resolve", openapi_extra={"x-jarvis-dangerous": True})
+async def resolve_proposal(
+    proposal_id: str, body: ResolveProposalBody, request: Request
+) -> dict[str, Any]:
+    """The person decided on the card: a yes APPLIES the change (rule, focus,
+    approval rules, routine, skill, team), a no changes nothing."""
+    from jarvis.society import proposals
+
+    rt = await _runtime(request)
+    try:
+        return await proposals.resolve(
+            rt,
+            proposal_id,
+            approve=body.approve,
+            note=body.note,
+            task_store=getattr(request.app.state, "task_store", None),
+            scheduler=getattr(request.app.state, "task_scheduler", None),
+        )
+    except KeyError as exc:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            409, {"reason": str(FailureReason.BLOCKED_BY_POLICY), "detail": str(exc)}
+        ) from exc
 
 
 # ------------------------------------------------------------------- memory

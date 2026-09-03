@@ -35,10 +35,12 @@ __all__ = [
     "CAPABILITY_PREFIX",
     "PROPOSAL_KINDS",
     "ProposalRefused",
+    "apply",
     "capability_for",
     "kind_of",
     "propose",
     "proposal_notice",
+    "resolve",
     "resolved_notice",
     "summarize",
     "validate",
@@ -285,3 +287,162 @@ async def propose(
     except Exception:  # noqa: BLE001 — the queue holds the proposal; the card is a projection
         log.warning("society: proposal card not posted for %s", agent.agent_id, exc_info=True)
     return item
+
+
+# ------------------------------------------------------------------- apply
+
+
+def _merge_rules(current: dict[str, list[str]], add: dict[str, Any]) -> dict[str, list[str]]:
+    merged: dict[str, list[str]] = {}
+    for key in ("require_approval", "always_allow"):
+        seen = [x for x in current.get(key, []) if x]
+        for pattern in _strings(add.get(key)):
+            if pattern not in seen:
+                seen.append(pattern)
+        merged[key] = sorted(seen)
+    return merged
+
+
+async def _notify(rt: Any, agent: AgentRecord, item: Approval, *, status: str, text: str) -> None:
+    try:
+        await rt.post_chat_notice(agent, resolved_notice(agent, item, status=status, text=text))
+    except Exception:  # noqa: BLE001 — the change is applied; the card is a projection
+        log.warning("society: proposal outcome not posted for %s", agent.agent_id, exc_info=True)
+
+
+async def _apply_skill_later(rt: Any, agent: AgentRecord, item: Approval, payload: dict) -> None:
+    """Author the skill in the background (a model call) and report on the card."""
+    from .learning import TurnDigest
+
+    digest = TurnDigest(
+        task=str(payload.get("goal") or ""),
+        final_text=str(payload.get("outcome") or "") or "Done as described.",
+        tool_steps=list(payload.get("steps") or []),
+    )
+    name = str(payload.get("name") or "")
+    try:
+        slug = await rt.learning.run(agent, digest, name_hint=name, force=True)
+    except Exception:  # noqa: BLE001 — reported on the card, never lost in a log line alone
+        log.warning(
+            "society: skill proposal %s failed for %s", item.id, agent.agent_id, exc_info=True
+        )
+        slug = None
+    if slug:
+        await _notify(rt, agent, item, status="applied", text=f"Skill '{name}' saved as {slug}.")
+    else:
+        await _notify(
+            rt,
+            agent,
+            item,
+            status="failed",
+            text=f"Skill '{name}' could not be authored (no brain, or the daily cap is reached).",
+        )
+
+
+async def apply(
+    rt: Any, item: Approval, *, task_store: Any = None, scheduler: Any = None
+) -> dict[str, Any]:
+    """Apply one APPROVED proposal; returns ``{"applied", "detail", "kind"}``.
+
+    Never routed through ``PATCH /agents/{id}``: that route re-derives focus
+    and may overwrite approval rules, and a confirmed change must touch
+    exactly the field the person confirmed.
+    """
+    action = item.action
+    kind = str(action.get("kind") or kind_of(item.capability) or "")
+    payload = action.get("payload") or {}
+    agent = await rt.roster.get(item.agent_id)
+    if agent is None:
+        return {"applied": False, "detail": "the agent no longer exists", "kind": kind}
+    if not isinstance(payload, dict) or kind not in PROPOSAL_KINDS:
+        return {"applied": False, "detail": "malformed proposal", "kind": kind}
+    if kind == "rule":
+        text = (agent.description.rstrip() + "\n\n" + str(payload.get("text") or "")).strip()
+        await rt.roster.update(agent.agent_id, {"description": text})
+        return {"applied": True, "detail": "standing rule added to the description", "kind": kind}
+    if kind == "approval_rule":
+        merged = _merge_rules(agent.approval_rules, payload)
+        await rt.roster.update(agent.agent_id, {"approval_rules": merged})
+        return {"applied": True, "detail": "approval rules updated", "kind": kind}
+    if kind == "focus":
+        focus = _strings(payload.get("focus"))
+        await rt.roster.update(agent.agent_id, {"focus": focus})
+        return {"applied": True, "detail": "focus order updated", "kind": kind}
+    if kind == "routine":
+        from .routines import (
+            MAX_ROUTINES_PER_AGENT,
+            build_task_spec,
+            count_routines,
+            create_routine,
+        )
+
+        if task_store is None:
+            return {"applied": False, "detail": "the task store is not available", "kind": kind}
+        if await count_routines(task_store, agent.agent_id) >= MAX_ROUTINES_PER_AGENT:
+            return {"applied": False, "detail": "routine cap reached", "kind": kind}
+        try:
+            spec = build_task_spec(
+                agent,
+                title=str(payload.get("title") or ""),
+                prompt=str(payload.get("prompt") or ""),
+                schedule=dict(payload.get("schedule") or {}),
+                announce_on_success=payload.get("announce_on_success"),
+            )
+        except (ValueError, KeyError) as exc:
+            return {"applied": False, "detail": f"invalid routine: {exc}", "kind": kind}
+        task_id = await create_routine(task_store, scheduler, spec)
+        return {"applied": True, "detail": f"routine scheduled ({task_id})", "kind": kind}
+    if kind == "skill":
+        rt.background(_apply_skill_later(rt, agent, item, payload))
+        return {"applied": True, "detail": "authoring the skill", "kind": kind}
+    # team — onboarding
+    from .seeds import create_from_proposals
+
+    created = await create_from_proposals(rt.roster, rt.catalog(), _strings(payload.get("names")))
+    detail = "created " + ", ".join(created) if created else "no teammate created"
+    return {"applied": bool(created), "detail": detail, "kind": kind}
+
+
+async def resolve(
+    rt: Any,
+    approval_id: str,
+    *,
+    approve: bool,
+    note: str = "",
+    task_store: Any = None,
+    scheduler: Any = None,
+) -> dict[str, Any]:
+    """The person decided: record it, apply on yes, and report on the card.
+
+    Raises ``KeyError`` for an unknown id and ``ValueError`` when the item is
+    not a proposal or is already resolved.
+    """
+    current = await rt.approvals.get(approval_id)
+    if current is None:
+        raise KeyError(approval_id)
+    if kind_of(current.capability) is None:
+        raise ValueError("not a configuration proposal")
+    if current.state in (ApprovalState.APPROVED, ApprovalState.DENIED):
+        raise ValueError("already resolved")
+    if note.strip() and approve and current.action.get("kind") == "team":
+        # The card sends the picked names in the note (a comma-separated list).
+        picked = _strings([n.strip() for n in note.split(",")])
+        if picked:
+            current.action["payload"] = {**current.action.get("payload", {}), "names": picked}
+    item = await rt.approvals.resolve(approval_id, approve=approve, note=note)
+    item.action = current.action  # the picked names ride along for apply
+    agent = await rt.roster.get(item.agent_id)
+    if not approve:
+        if agent is not None:
+            await _notify(rt, agent, item, status="rejected", text="Rejected; nothing changed.")
+        return {"proposal": item.to_dict(), "applied": False, "detail": "rejected"}
+    outcome = await apply(rt, item, task_store=task_store, scheduler=scheduler)
+    if agent is not None and outcome["kind"] != "skill":
+        await _notify(
+            rt,
+            agent,
+            item,
+            status="applied" if outcome["applied"] else "failed",
+            text=str(outcome["detail"]),
+        )
+    return {"proposal": item.to_dict(), **outcome}

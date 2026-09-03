@@ -61,6 +61,14 @@ WITHHELD: Final[dict[str, str]] = {
     "POST /api/society/agents/{agent_id}/model": (
         "provider/model choice spends the owner's subscription — theirs to make"
     ),
+    "GET /api/society/proposals": (
+        "configuration proposals are decided on the card in the agent's chat by the "
+        "person who owns the agent; a remote client has no such card"
+    ),
+    "POST /api/society/proposals/{proposal_id}/resolve": (
+        "confirming a proposal changes an agent's rules, routines or skills — the "
+        "owner's decision at their own keyboard, never a remote client's"
+    ),
     "GET /api/society/seeds": "starter-team proposals are onboarding UI, not an API verb",
     "POST /api/society/seeds/apply": (
         "onboarding, and it creates several agents at once — quest_post forges "

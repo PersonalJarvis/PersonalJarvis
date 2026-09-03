@@ -315,6 +315,16 @@ def _coerce(field_name: str, value: Any) -> Any:
             raise RosterError(
                 FailureReason.BLOCKED_BY_POLICY, f"{field_name} must be a list of capability ids"
             )
+        if field_name == "focus":
+            # Focus is an ORDERED list: the tools the agent reaches for first, in
+            # that order (the briefing and the tool schema list follow it). Dedupe,
+            # first occurrence wins, never sort — grants and denies are sets.
+            ordered: list[str] = []
+            for raw in value:
+                cap = raw.strip()
+                if cap and cap not in ordered:
+                    ordered.append(cap)
+            return json.dumps(ordered)
         return json.dumps(sorted({x.strip() for x in value if x.strip()}))
     if field_name == "skills":
         if value is None:
