@@ -27,6 +27,7 @@ import {
   type ProviderHealth,
 } from "@/lib/agentChatApi";
 import { EMPTY_TIMELINE, reduceEvent, reduceEvents, type Timeline } from "@/components/agentchat/reduce";
+import { jitteredDelay, requestConnect } from "../lib/connectBudget";
 
 /**
  * The agent chat's store — one per SURFACE (`createAgentChatStore`).
@@ -66,7 +67,10 @@ export function draftKey(surface: AgentChatSurface): string {
   // folder, the ladder's default — instead of on a coding session's picks.
   return surface === "jarvis" ? "jarvis.agentChat.draft.v2" : `jarvis.agentChat.draft.${surface}.v1`;
 }
+/** First retry delay; each further failure doubles it under full jitter. */
 const RECONNECT_MS = 1500;
+/** Ceiling on the retry wait — a flat 1.5 s forever is a spin, not a retry. */
+const RECONNECT_MAX_MS = 30_000;
 /** How many sessions the list holds — the "All chats" archive shows them all. */
 const SESSION_LIST_LIMIT = 500;
 
@@ -266,13 +270,14 @@ export function createAgentChatStore(surface: AgentChatSurface) {
 
   let socket: WebSocket | null = null;
   let socketSession: string | null = null;
-  let reconnectTimer: number | null = null;
+  /** Cancels the reconnect waiting in the shared connect budget. */
+  let cancelReconnect: (() => void) | null = null;
+  /** Consecutive failed reconnects — the exponent under the jitter. */
+  let reconnectAttempt = 0;
 
   function closeSocket(): void {
-    if (reconnectTimer !== null) {
-      window.clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
+    cancelReconnect?.();
+    cancelReconnect = null;
     const s = socket;
     socket = null;
     socketSession = null;
@@ -298,7 +303,11 @@ export function createAgentChatStore(surface: AgentChatSurface) {
       const ws = new WebSocket(agentChatSocketUrl(sessionId, afterSeq));
       socket = ws;
       ws.onopen = () => {
-        if (socket === ws) set({ socketState: "open" });
+        if (socket !== ws) return;
+        // A socket that opened is proof the backend is back: the next outage
+        // starts its backoff from the fast end again.
+        reconnectAttempt = 0;
+        set({ socketState: "open" });
       };
       ws.onmessage = (msg) => {
         if (socket !== ws) return;
@@ -330,13 +339,22 @@ export function createAgentChatStore(surface: AgentChatSurface) {
         set({ socketState: "closed" });
         // Reconnect while this session is still the open one; the backend
         // replays what was missed from the last seq.
-        reconnectTimer = window.setTimeout(() => {
-          reconnectTimer = null;
-          const st = get();
-          if (st.activeSessionId === sessionId && socketSession === sessionId) {
-            connect(sessionId, st.timeline.lastSeq);
-          }
-        }, RECONNECT_MS);
+        // Jittered, escalating and paid for out of the shared connect budget.
+        // It used to be a flat 1.5 s with no cap and no spread: every window
+        // holding this session retried in the same millisecond, forever, which
+        // is one of the loops that emptied the machine's socket pool when the
+        // backend went away for a while (BUG-215, AP-33).
+        reconnectAttempt += 1;
+        cancelReconnect = requestConnect(
+          () => {
+            cancelReconnect = null;
+            const st = get();
+            if (st.activeSessionId === sessionId && socketSession === sessionId) {
+              connect(sessionId, st.timeline.lastSeq);
+            }
+          },
+          jitteredDelay(reconnectAttempt - 1, RECONNECT_MS, RECONNECT_MAX_MS),
+        );
       };
       ws.onerror = () => {
         /* onclose follows and schedules the reconnect */

@@ -392,6 +392,19 @@ async def _run_headless(args) -> int:
         # behaviour we had yesterday; a boot that fails is not.
         pass
 
+    # Watch the machine's socket pool from off the loop. A headless host is the
+    # case this matters MOST for: it runs the same polling loops as the desktop
+    # and typically has a far tighter file-descriptor ceiling (1024 on a stock
+    # slim image against 28 232 ports), so it hits EMFILE and dies where a
+    # desktop merely freezes (BUG-215). Costs one sleeping thread; the first
+    # census is a full interval away, so nothing lands on the boot path (AP-26).
+    try:
+        from jarvis.core.socket_budget import start_default_watchdog
+
+        start_default_watchdog()
+    except Exception:  # noqa: BLE001,S110 - a diagnostic never breaks a boot.
+        pass
+
     # The single-instance lock (and its heavy ``desktop_app`` import — pywebview +
     # win32, ~420 ms) is acquired in the deferred section below, OFF the
     # time-to-serving path. It only needs to set JARVIS_PRIMARY_INSTANCE before

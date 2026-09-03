@@ -11,6 +11,13 @@
  * the TerminalView to receive raw frames including the terminal.spawned reply.
  */
 
+import {
+  MAX_BACKOFF_MS,
+  MIN_BACKOFF_MS,
+  jitteredDelay,
+  requestConnect,
+} from "./connectBudget";
+
 export type WSHandler = (data: unknown) => void;
 
 export interface WSCloseInfo {
@@ -57,8 +64,8 @@ export async function mintWsTicket(): Promise<string | null> {
   }
 }
 
-const MIN_BACKOFF = 500;
-const MAX_BACKOFF = 10_000;
+const MIN_BACKOFF = MIN_BACKOFF_MS;
+const MAX_BACKOFF = MAX_BACKOFF_MS;
 const PING_INTERVAL = 30_000;
 
 /**
@@ -85,9 +92,16 @@ const SILENCE_LIMIT = PING_INTERVAL * 2.5;
 
 export class WSClient {
   private ws: WebSocket | null = null;
-  private backoff = MIN_BACKOFF;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Cancels the reconnect waiting in the shared connect budget, or null
+   * when none is pending. Not a bare `setTimeout` handle any more: every
+   * reconnect in the app now queues behind one speed limit, so a wake
+   * storm cannot empty the machine's socket pool (BUG-215, AP-33).
+   */
+  private cancelReconnect: (() => void) | null = null;
+  /** Consecutive failed attempts - the exponent under the jitter. */
+  private reconnectAttempt = 0;
   private stopped = false;
   private lastCloseCode: number | undefined;
   private pendingTicket: string | null = null;
@@ -170,12 +184,15 @@ export class WSClient {
     // A wait that was scheduled while the window was hidden has been stretched
     // by an unknown amount and may still be minutes out. Being looked at is
     // fresh evidence: start over at the fast end of the backoff, now.
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    this.backoff = MIN_BACKOFF;
-    this.openSocket();
+    // A wait scheduled while the window was hidden has been stretched by an
+    // unknown amount and may still be minutes out. Being looked at is fresh
+    // evidence: start over at the fast end - but still through the budget.
+    // Connecting straight from here is what made waking a storm: this handler
+    // runs in every window, for every pane, in the same millisecond.
+    this.cancelReconnect?.();
+    this.cancelReconnect = null;
+    this.reconnectAttempt = 0;
+    this.queueReconnect(jitteredDelay(0, MIN_BACKOFF, MIN_BACKOFF));
   };
 
   /**
@@ -196,7 +213,7 @@ export class WSClient {
       /* already gone */
     }
     this.onClose?.(undefined);
-    this.backoff = MIN_BACKOFF;
+    this.reconnectAttempt = 0;
     this.scheduleReconnect();
   }
 
@@ -228,7 +245,7 @@ export class WSClient {
 
     socket.addEventListener("open", () => {
       if (!current()) return;
-      this.backoff = MIN_BACKOFF;
+      this.reconnectAttempt = 0;
       this.lastFrameAt = Date.now();
       this.startPing();
       this.onOpen?.();
@@ -293,11 +310,8 @@ export class WSClient {
     if (retrying) {
       // Fixed short retry, like the 1013 warming path: the very next attempt
       // carries a fresh credential, so backoff escalation would only delay it.
-      if (this.reconnectTimer) return;
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectTimer = null;
-        this.openSocket();
-      }, MIN_BACKOFF);
+      if (this.cancelReconnect) return;
+      this.queueReconnect(jitteredDelay(0, MIN_BACKOFF, MIN_BACKOFF));
       return;
     }
     // The session is gone, the backend vanished mid-mint, or fresh tickets
@@ -333,18 +347,32 @@ export class WSClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectTimer) return;
+    if (this.cancelReconnect) return;
     // The fast-boot bootstrap closes a warming WS with code 1013 ("try again
-    // later"): the backend is still booting, this is NOT a failure. Retry at a
-    // fixed short interval instead of escalating the backoff, so the window
-    // reconnects within ~1s of the real app becoming ready.
+    // later"): the backend is still booting, this is NOT a failure. Keep the
+    // attempt counter where it is so the retry stays at the fast end and the
+    // window reconnects within ~1s of the real app becoming ready.
     const warming = this.lastCloseCode === 1013;
-    const delay = warming ? MIN_BACKOFF : this.backoff;
-    if (!warming) this.backoff = Math.min(MAX_BACKOFF, this.backoff * 2);
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
+    const attempt = warming ? 0 : this.reconnectAttempt++;
+    const cap = warming ? MIN_BACKOFF : MAX_BACKOFF;
+    // Full jitter, not a plain doubling. Every window and every pane starts
+    // its backoff in the same millisecond when the machine wakes, so an
+    // unjittered schedule keeps them in lockstep and they collide at 0.5s,
+    // then 1s, then 2s - measured in this app on 2026-07-27.
+    this.queueReconnect(jitteredDelay(attempt, MIN_BACKOFF, cap));
+  }
+
+  /**
+   * Hand one reconnect to the shared budget.
+   *
+   * Everything that reopens this socket goes through here, so the tab has
+   * exactly one place that knows how many connections are in flight.
+   */
+  private queueReconnect(delayMs: number): void {
+    this.cancelReconnect = requestConnect(() => {
+      this.cancelReconnect = null;
       this.openSocket();
-    }, delay);
+    }, delayMs);
   }
 
   send(payload: unknown): void {
@@ -363,10 +391,8 @@ export class WSClient {
     this.stopped = true;
     this.stopPing();
     this.stopListeningForWake();
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.cancelReconnect?.();
+    this.cancelReconnect = null;
     this.ws?.close();
     this.ws = null;
   }

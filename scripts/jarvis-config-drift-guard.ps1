@@ -74,6 +74,31 @@ $logFile = Join-Path $logDir "config-drift-guard.log"
 if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
+
+# ---------- Log rotation ---------------------------------------------------
+#
+# This guard runs every five minutes for as long as the machine is on, and it
+# used to append forever: the log reached 28 MB and 276 000 lines before anyone
+# looked (2026-09-03). One generation is enough — the interesting window is the
+# last few days, and a 4 MB file still holds weeks of it.
+#
+# Rotated HERE, at the very start of a run, because that is the one moment no
+# writer holds the file open on Windows (the same reason the local-server
+# supervisor rotates at its spawn boundary).
+$maxLogBytes = 4MB
+if (Test-Path $logFile) {
+    $existing = Get-Item $logFile
+    if ($existing.Length -ge $maxLogBytes) {
+        $rolled = "$logFile.1"
+        try {
+            if (Test-Path $rolled) { Remove-Item $rolled -Force }
+            Move-Item -Path $logFile -Destination $rolled -Force
+        } catch {
+            # Another run holds it open: keep appending rather than lose the
+            # run. The next run rotates it.
+        }
+    }
+}
 if (-not (Test-Path $tomlFile)) {
     Write-Host "FATAL: jarvis.toml was not found at $tomlFile"
     exit 2
@@ -152,6 +177,9 @@ function Test-IsScalarConfigValue {
 
 # Metadata keys use an underscore prefix and are intentionally ignored.
 $drifts = @()
+# Desired values for keys jarvis.toml does not spell out. Reported as one line
+# after the sweep instead of one line each, every five minutes, forever.
+$absentKeys = @()
 
 foreach ($section in $desired.PSObject.Properties) {
     if ($section.Name.StartsWith("_")) { continue }
@@ -179,7 +207,12 @@ foreach ($section in $desired.PSObject.Properties) {
         $keyPattern = "(?m)^\s*$key\s*=\s*(?:`"([^`"]*)`"|([^\s#`r`n]+))"
         $keyMatch = [regex]::Match($sectionBody, $keyPattern)
         if (-not $keyMatch.Success) {
-            Write-Log "WARN" "Key '$key' in [$sectionName] was not found; desired '$desiredValue' was skipped"
+            # Collected, not logged one-per-key. These are the SAME keys every
+            # run (a desired value for a setting jarvis.toml does not spell
+            # out, because it still holds its default), and at seventeen of
+            # them every five minutes they were ~5 800 lines a day of identical
+            # text. One summary line below keeps every name without the flood.
+            $absentKeys += "$sectionName.$key"
             continue
         }
         if ($keyMatch.Groups[1].Success) {
@@ -200,6 +233,14 @@ foreach ($section in $desired.PSObject.Properties) {
             }
         }
     }
+}
+
+if ($absentKeys.Count -gt 0) {
+    # Still a WARN, and still every name: a desired value that cannot be
+    # enforced because the key is absent from jarvis.toml is worth knowing
+    # about. It is just one line instead of seventeen.
+    $absentList = ($absentKeys | Sort-Object) -join ", "
+    Write-Log "WARN" "$($absentKeys.Count) desired keys are absent from jarvis.toml and were skipped: $absentList"
 }
 
 # ---------- Environment comparison ----------------------------------------

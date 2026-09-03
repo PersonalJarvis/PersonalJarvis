@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openPaneSocket } from "./paneSocket";
+import { MIN_BACKOFF_MS, resetConnectBudgetForTests } from "../../lib/connectBudget";
 
 /** Minimal WebSocket stand-in, mirroring the one in __tests__/ws.test.ts. */
 class MockWebSocket {
@@ -78,6 +79,14 @@ describe("openPaneSocket", () => {
     MockWebSocket.last = null;
     MockWebSocket.opened = [];
     vi.useFakeTimers();
+    // Reconnect delays are jittered and paid for out of a shared per-tab
+    // budget (BUG-215, AP-33). Neither is what these tests are about — the
+    // spread has its own tests in `lib/connectBudget.test.ts` — so pin the
+    // draw to the middle of its range and start each test with a full bucket.
+    // A pinned 0.5 makes `spreadDelay(d)` exactly `d`, which is what the
+    // "every half minute" assertions below mean by half a minute.
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    resetConnectBudgetForTests();
   });
 
   afterEach(() => {
@@ -278,7 +287,7 @@ describe("openPaneSocket", () => {
     socket.close();
   });
 
-  it("retries at once when the window comes back, without waiting out the clamp", async () => {
+  it("retries promptly when the window comes back, without waiting out the clamp", async () => {
     /*
      * The live 2026-07-27 20:11 failure. A hidden document has its timers
      * clamped to about once a second, and to once a minute after a few minutes
@@ -287,8 +296,16 @@ describe("openPaneSocket", () => {
      * opening, and surfaced their agents around two minutes later. The prompts
      * had gone out on time; only the screen was late.
      *
-     * Being looked at ends the wait. No timer is advanced in this test on
-     * purpose: that is the whole point — the retry must not depend on one.
+     * Being looked at ends that wait: the pane abandons the stretched timer
+     * and comes back inside the fast window instead of minutes later.
+     *
+     * It must NOT come back in the same tick, and that is pinned below.
+     * `visibilitychange` fires for every pane of every window simultaneously,
+     * so reconnecting straight out of the handler put hundreds of sockets on
+     * the wire in one millisecond and emptied the machine's ephemeral-port
+     * pool — at which point nothing on the computer could connect for two
+     * minutes (BUG-215, AP-33). A few hundred milliseconds is invisible to
+     * the user; the freeze was not.
      */
     const cb = handlers();
     const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
@@ -304,6 +321,11 @@ describe("openPaneSocket", () => {
     hidden(false);
     document.dispatchEvent(new Event("visibilitychange"));
 
+    // Not in the handler's own tick — that is the storm.
+    expect(MockWebSocket.opened.length).toBe(spent);
+
+    // But well inside the fast window, not out at the clamped delay.
+    await vi.advanceTimersByTimeAsync(MIN_BACKOFF_MS);
     expect(MockWebSocket.opened.length).toBe(spent + 1);
 
     MockWebSocket.last!.fire("open");
@@ -405,6 +427,14 @@ describe("openPaneSocket delivery receipts", () => {
     MockWebSocket.last = null;
     MockWebSocket.opened = [];
     vi.useFakeTimers();
+    // Reconnect delays are jittered and paid for out of a shared per-tab
+    // budget (BUG-215, AP-33). Neither is what these tests are about — the
+    // spread has its own tests in `lib/connectBudget.test.ts` — so pin the
+    // draw to the middle of its range and start each test with a full bucket.
+    // A pinned 0.5 makes `spreadDelay(d)` exactly `d`, which is what the
+    // "every half minute" assertions below mean by half a minute.
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    resetConnectBudgetForTests();
   });
 
   afterEach(() => {
@@ -570,6 +600,14 @@ describe("openPaneSocket geometry reconciliation", () => {
     MockWebSocket.last = null;
     MockWebSocket.opened = [];
     vi.useFakeTimers();
+    // Reconnect delays are jittered and paid for out of a shared per-tab
+    // budget (BUG-215, AP-33). Neither is what these tests are about — the
+    // spread has its own tests in `lib/connectBudget.test.ts` — so pin the
+    // draw to the middle of its range and start each test with a full bucket.
+    // A pinned 0.5 makes `spreadDelay(d)` exactly `d`, which is what the
+    // "every half minute" assertions below mean by half a minute.
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    resetConnectBudgetForTests();
   });
 
   afterEach(() => {

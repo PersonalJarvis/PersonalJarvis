@@ -15081,3 +15081,143 @@ reach), AP-21 (gate on capability, never a provider name), AP-24 (a wedged
 native engine is replaced, never waited on), AP-26 (nothing initialises on the
 boot critical path — this removes work from it), AP-30 (every new skip branch
 logs its reason).
+
+## BUG-215: the whole PC became unusable after time away, then healed itself — Jarvis emptied the machine's ephemeral-port pool (HIGH, FIXED 2026-09-03)
+
+**Symptom.** The maintainer came back to the machine after a while away and
+could barely operate it: windows unresponsive, the start menu dead, the browser
+stuck. After a few minutes it recovered on its own, with nothing to show for
+it. Reported 2026-09-03 ~10:20.
+
+This was not the first time. Windows logs event 4231 ("failed to allocate an
+ephemeral port from the global TCP port pool — all ports are in use") and it had
+fired on **23 of the previous 31 days**, most recently that morning at 09:30;
+the UDP twin (4266) fired about as often. The oldest entry the log still held
+was 2026-08-04, so the bug is at least a month old and probably older than the
+retention window.
+
+**What it was not** — measured on the live box while the forensics ran, because
+each of these is the usual suspect and each was innocent:
+
+| Suspect | Reading |
+|---|---|
+| GPU memory | 6 145 of 16 303 MiB, no model loaded |
+| RAM / paging | pagefile peak 5 970 MB against 5 196 MB current — no paging storm |
+| CPU | 3.1 of 16 cores under load |
+| Disk | ~0 MB/s on every candidate process |
+| Sleep / resume | no Kernel-Power transition; the machine was awake throughout |
+| App hangs | no Application-log hang or crash entry in the window |
+
+Every other machine-wide resource was fine. The one resource Windows itself
+reported running out of was ephemeral ports.
+
+**Why that reads as "the whole computer is broken".** Every outbound connection
+borrows a port from a pool the OS owns, and a *closed* connection keeps its port
+through TIME_WAIT — 120 s on Windows, against a default pool of 16 384. Drain
+the pool and nothing on the machine can open a socket: not Jarvis, not Explorer,
+not the start menu, not the browser. And then TIME_WAIT expires, the pool
+refills, and the evidence is gone. Windows throttles event 4231 to roughly one
+an hour, so the entry usually lands in the wrong minute and never names a
+process — which is why a month of this produced no diagnosis.
+
+**Root cause — a wake storm on top of a standing idle burn.**
+
+*The storm.* While nobody is at the machine, windows are hidden, timers are
+clamped, and open WebSockets die without a `close` event — the peer is gone but
+`readyState` still says OPEN. `lib/ws.ts:69-71` had already documented exactly
+this. The instant the user comes back, `visibilitychange` and `online` fire in
+the same millisecond and **every socket client reconnects at once, with no delay
+and no jitter**:
+
+| Client | Behaviour before |
+|---|---|
+| `lib/ws.ts` (app socket) | reconnected immediately on wake; plain doubling, no jitter |
+| `components/agentic/paneSocket.ts` | **one socket per terminal pane**, each reconnecting immediately on wake; no jitter |
+| `store/agentChat.ts` | flat 1 500 ms retry, **no cap, no backoff, no attempt limit** |
+| `lib/realtimeTransportBroker.ts` | exponential and capped, but no jitter |
+| `jarvis/plugins/realtime/openai_realtime.py:2293` | flat 2 s step, up to 60 attempts in a 120 s window |
+
+Multiply by the panes in a workspace, by the open windows, and by the two app
+instances that run on this box (prod + dev). A search for jitter over the whole
+tree returned only audio jitter buffers: there was no spreading anywhere. The
+codebase had even *measured* this shape once before — `paneSocket.ts:33-44`
+records five panes knocking at 10.174, 11.174, 12.162, 13.170 on 2026-07-27,
+"a flat one-second grid where the backoff asked for 0.5 s, 1 s, 2 s, 4 s" — and
+fixed the symptom for panes without ever adding jitter or a shared ceiling.
+
+*The standing burn the storm landed on top of.* Measured 2026-09-03 on an idle
+app with nobody using local models: **32 requests a minute to Ollama**, 421 of
+the last 549 of them `POST /api/show`. `ollama_inventory._make_client` opened a
+NEW client — and so a new connection — per call ("One client per call", said its
+own docstring), a sweep is `/api/tags` plus one `/api/show` per installed
+download, and `DEFAULT_SNAPSHOT_MAX_AGE_S` was **5 s against a 15 s UI poll**, so
+the cache could never hit and every poll swept. Alongside it,
+`desktop_app._wait_for_backend` probed `127.0.0.1/api/health` every 250 ms with a
+fresh `httpx.get()` — while the reused client it should have used sat ten lines
+below it — and the local-realtime monitor opened a fresh
+`socket.create_connection` plus a fresh `http.client` connection every 5 s, for
+as long as a voice server lived.
+
+**Fix.**
+
+1. `jarvis/ui/web/frontend/src/lib/connectBudget.ts` — one shared speed limit
+   for every socket the tab opens. Two mechanisms, both needed: full jitter
+   (`jitteredDelay`) so clients that started together do not stay together, and
+   a token bucket (`requestConnect`, 6 connects/s with a burst of 8) so that
+   even when they collide the total is survivable. It delays connections; it
+   never drops them. `spreadDelay` keeps a *repeating* knock's average interval
+   while destroying its phase.
+2. All four socket clients now go through it, and waking **queues** a reconnect
+   instead of opening one from the event handler. `store/agentChat.ts` also
+   gained the backoff and the cap it never had.
+3. Connections are reused rather than rebuilt: `jarvis/core/http_pool.py`
+   (promoted from `jarvis/plugins/tool/_http_pool.py`, now with explicit
+   `httpx.Limits`) backs the Ollama inventory, the desktop health probe and the
+   local-realtime readiness probe. `DEFAULT_SNAPSHOT_MAX_AGE_S` is 60 s — longer
+   than any poll that reads it, which is the only way a cache helps — and safe
+   because the three moments the inventory really changes all call
+   `invalidate_snapshot`.
+4. `supervisor._port_open` closes with `SO_LINGER = 0`, so the kernel sends RST
+   instead of FIN and the probe leaves **no** TIME_WAIT at all. Nothing about an
+   "is anyone listening" check wants a graceful shutdown.
+5. `jarvis/core/socket_budget.py` — the watchdog that makes the next occurrence
+   diagnosable instead of invisible. Off the event loop (like
+   `core/loop_watchdog.py`, and for the same reason), one census every 30 s,
+   armed by both entry points. It reads the ceiling per platform, warns at 60 %
+   with a census naming the busiest destinations and processes, and stands
+   optional traffic down at 80 % while voice and brain keep working.
+
+**Three operating systems, three ceilings, one failure.** The fix is to cap the
+burst, never to widen a limit:
+
+| System | Ephemeral ports | TIME_WAIT | What gives out first |
+|---|---:|---:|---|
+| Windows | 16 384 | 120 s | the port pool — the whole desktop stalls |
+| Linux | 28 232 | 60 s | usually `RLIMIT_NOFILE` (1024 on a slim image) — the process dies instead |
+| macOS | 16 384 | 15 s | the port pool, but it recovers fastest |
+
+Windows is the hard case: smallest pool, longest linger. Code that stays inside
+the budget there is safe everywhere.
+
+**Guard.** `tests/contract/test_socket_budget.py` fakes each host in turn —
+including a `netsh` that answers in German and in Japanese, because `netsh`
+translates its own field names and a label-matching parser reports "no limit" on
+most of the install base. `tests/unit/core/test_socket_budget_watchdog.py` pins
+when the watchdog speaks and what it says.
+`jarvis/ui/web/frontend/src/lib/connectBudget.test.ts` pins that twenty clients
+waking together are paced to the budget and that none of them is dropped.
+`tests/unit/ui/test_desktop_health_probe.py` gained the boot-wait case.
+`paneSocket.test.ts` now pins that waking does NOT connect in the handler's own
+tick, and does connect inside the fast window.
+
+**Verification.** Before: ~165 sockets in TIME_WAIT on an idle machine and 32
+Ollama requests a minute. The watchdog's own first census on the live box named
+the three destinations the forensics had found by hand (`127.0.0.1:47821` ×44,
+`127.0.0.1:47921` ×30, `::1:11434` ×20). After the build, re-read both numbers
+and hide/show the app windows twenty times while watching the TIME_WAIT count.
+
+**Related.** AP-33 (the new anti-pattern), AP-26 (nothing initialises on the
+boot critical path — the watchdog's first census is a full interval away), AP-30
+(the probe's silence is explained by its documented "None means not ready"
+contract), BUG-113 (the pane-reconnect storm whose symptom was fixed in 2026-07
+while this cause was left standing), `docs/os-parity.md` (the ceilings table).

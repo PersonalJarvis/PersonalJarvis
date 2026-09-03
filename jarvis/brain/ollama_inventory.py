@@ -39,11 +39,14 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
+from jarvis.core.http_pool import HttpClientPool, default_limits
 from jarvis.plugins.brain.ollama import CLIENT_TIMEOUT, normalize_server_root
 
 log = logging.getLogger(__name__)
@@ -187,8 +190,47 @@ def is_hidden_alias(name: str) -> bool:
 
 
 def _make_client(transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
-    """One client per call; tests inject a fake transport here."""
-    return httpx.AsyncClient(timeout=CLIENT_TIMEOUT, transport=transport)
+    """Build one client. The single construction point; tests replace THIS.
+
+    Called with a transport for a throwaway client, and without one by the
+    shared pool below. Both paths land here so a monkeypatched factory reaches
+    the pooled client too.
+    """
+    return httpx.AsyncClient(timeout=CLIENT_TIMEOUT, transport=transport, limits=default_limits())
+
+
+#: The pooled client every real sweep shares.
+#:
+#: A sweep is ``/api/tags`` plus one ``/api/show`` per installed download --
+#: sixteen requests on the maintainer's machine. Built per call, that was
+#: sixteen fresh TCP connections to Ollama every time, each holding an
+#: ephemeral port for two minutes afterwards on Windows, for a panel nobody was
+#: looking at. Measured 2026-09-03 while the app sat idle: 32 requests a
+#: minute, 421 of the last 549 of them ``/api/show``. Pooled, one sweep rides
+#: one connection (BUG-215, AP-33).
+_pool = HttpClientPool(timeout_s=CLIENT_TIMEOUT, factory=lambda: _make_client())
+
+
+@asynccontextmanager
+async def _client(
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> AsyncIterator[httpx.AsyncClient]:
+    """The client for one sweep -- pooled normally, throwaway under a fake.
+
+    A test that injects a transport gets its own client and gets it closed, so
+    nothing leaks between tests. Everything else borrows the shared one and
+    must NOT close it: the next sweep wants those connections still warm.
+    """
+    if transport is not None:
+        async with _make_client(transport) as client:
+            yield client
+        return
+    yield _pool.client()
+
+
+async def aclose_pool() -> None:
+    """Close the shared client. Called on shutdown; safe to call repeatedly."""
+    await _pool.aclose()
 
 
 def _unreachable(root: str, exc: Exception) -> OllamaServerError:
@@ -316,7 +358,7 @@ async def list_models(
     ``/api/show`` only leaves that row without capabilities.
     """
     root = normalize_server_root(root)
-    async with _make_client(transport) as client:
+    async with _client(transport) as client:
         probed, _names = await _sweep(client, root, include_hidden=include_hidden)
     return probed
 
@@ -364,7 +406,7 @@ async def running_models(
     """What ``/api/ps`` says is loaded right now (aliases included — they DO
     occupy memory, and the caller maps them back to their base by name)."""
     root = normalize_server_root(root)
-    async with _make_client(transport) as client:
+    async with _client(transport) as client:
         payload = await _get_json(client, root, "/api/ps")
     rows = payload.get("models") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
@@ -403,7 +445,7 @@ async def unload_model(
     name = name.strip()
     if not name:
         raise OllamaServerError("A model name is required to unload it.")
-    async with _make_client(transport) as client:
+    async with _client(transport) as client:
         try:
             resp = await client.post(f"{root}/api/generate", json={"model": name, "keep_alive": 0})
         except httpx.HTTPError as exc:
@@ -430,7 +472,7 @@ async def delete_model(
     name = name.strip()
     if not name:
         raise OllamaServerError("A model name is required to delete it.")
-    async with _make_client(transport) as client:
+    async with _client(transport) as client:
         try:
             resp = await client.request("DELETE", f"{root}/api/delete", json={"model": name})
         except httpx.HTTPError as exc:
@@ -456,10 +498,19 @@ async def disk_usage(root: str, *, transport: httpx.AsyncBaseTransport | None = 
 
 # ── Shared snapshot ──────────────────────────────────────────────────────
 
-#: How long one sweep serves every reader. Five seconds covers one paint of
-#: the section (inventory, roles, server and shortlist ask within the same
-#: second) without hiding a model that a voice turn just loaded for long.
-DEFAULT_SNAPSHOT_MAX_AGE_S = 5.0
+#: How long one sweep serves every reader.
+#:
+#: This has to be LONGER than the interval that polls it, or the cache never
+#: hits and every poll is a full sweep. It was five seconds against a fifteen
+#: second poll, which is exactly that failure: measured 2026-09-03, an idle app
+#: swept Ollama 32 times a minute for a panel nobody had open (BUG-215).
+#:
+#: A minute is safe because staleness is not what this window guards. The three
+#: moments the inventory actually changes because of Jarvis -- an unload, a
+#: delete, a finished pull -- all call :func:`invalidate_snapshot`, so the only
+#: thing a longer window can hide is a model pulled from an outside terminal,
+#: which nobody is waiting on a spinner for.
+DEFAULT_SNAPSHOT_MAX_AGE_S = 60.0
 
 #: Per-root memo: the last good snapshot, or the last failure (so an offline
 #: server is not asked five times per paint either — the sentence is the same).
@@ -505,10 +556,16 @@ def invalidate_snapshot(root: str) -> None:
 
 
 def _reset_for_tests() -> None:
-    """Drop every memoised snapshot, failure and lock (tests only)."""
+    """Drop every memoised snapshot, failure, lock and client (tests only).
+
+    The client matters as much as the snapshots: a test that replaces
+    :func:`_make_client` with a fake gets nowhere if the pool is still holding
+    the one the previous test built.
+    """
     _snapshots.clear()
     _failures.clear()
     _locks.clear()
+    _pool.forget()
 
 
 async def cached_snapshot(
@@ -535,7 +592,7 @@ async def cached_snapshot(
         if failed is not None and time.time() - failed[0] < max_age_s:
             raise failed[1]
         try:
-            async with _make_client(transport) as client:
+            async with _client(transport) as client:
                 models, names = await _sweep(client, root, include_hidden=False)
                 try:
                     running = await running_models(root, transport=transport)
@@ -577,7 +634,7 @@ async def embed_probe(
     :class:`OllamaServerError` when the server refused or is unreachable.
     """
     root = normalize_server_root(root)
-    async with _make_client(transport) as client:
+    async with _client(transport) as client:
         try:
             resp = await client.post(f"{root}/api/embed", json={"model": model, "input": "ping"})
         except httpx.HTTPError as exc:

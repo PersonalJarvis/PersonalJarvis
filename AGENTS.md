@@ -35,6 +35,13 @@ These cost real bugs. Nothing catches them but you.
 - **A stall watchdog resets its counter per unit of work** (AP-19); a WebSocket
   receive loop treats ANY read error as terminal and breaks (AP-20); a subscriber
   exception never leaves `EventBus._safe_dispatch` (AP-18).
+- **Every reconnect is jittered and pays the shared connect budget.** A retry
+  grid with no jitter, or a wake handler that opens a socket directly, is not
+  an app bug: N panes x M windows x 2 instances firing on one
+  `visibilitychange` empties the OS ephemeral-port pool and NOTHING on the
+  machine can connect for two minutes. Frontend goes through
+  `lib/connectBudget.ts`; a poll reuses a client from `jarvis/core/http_pool.py`.
+  (AP-33)
 - **No Windows Service** — SYSTEM has no microphone. (AP-17)
 - **Never gate a CI check on `isinstance` against an unpinned library.** Green
   locally, red in CI on the next release. Discriminate by capability. (AP-28)
@@ -112,7 +119,9 @@ it (AP-14); new `[phase6.*]` / `[memory.wiki.*]` keys need
 wake upgrade only on the out-of-process inference probe, never on CUDA presence
 (AP-25); verify a wake word on audio energy and candidate shape, never on
 transcript content (AP-27); a WebGL scene releases its context and survives
-losing it (AP-32). Detail and history for any of them: `docs/BUGS.md`.
+losing it (AP-32); a reconnect without jitter and without a shared connect
+budget is an outage of the whole machine, not an app bug (AP-33). Detail and
+history for any of them: `docs/BUGS.md`.
 
 ## 4. How work ships
 

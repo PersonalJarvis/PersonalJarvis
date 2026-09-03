@@ -32,6 +32,7 @@ import logging
 import os
 import re
 import socket
+import struct
 import subprocess
 import threading
 import time
@@ -85,6 +86,11 @@ RUNTIME_MONITOR_POOL_INTERVAL_S = 5.0
 RUNTIME_MONITOR_UNREADY_GRACE_S = 30.0
 
 _MAX_POOL_RESPONSE_BYTES = 64 * 1024
+
+#: Fallback timeout on the shared probe client. Every caller passes its own
+#: per-request timeout (0.25 s for a decision, 0.75 s for the monitor); this is
+#: only what the client is built with.
+RUNTIME_PROBE_TIMEOUT_S = 0.75
 
 #: Rotate the shared server log once it passes this size. Large enough that a
 #: whole boot transcript plus a long session's noise stays in one file for the
@@ -252,8 +258,19 @@ def _is_loopback(host: str) -> bool:
 
 
 def _port_open(port: int, timeout: float = 1.0) -> bool:
+    """Is anything accepting on this loopback port right now?
+
+    Closed with ``SO_LINGER = 0`` on purpose, which makes the kernel send RST
+    instead of FIN and skip TIME_WAIT entirely. An ordinary close would park
+    the ephemeral port for two minutes on Windows, and this probe runs on every
+    status poll and every spawn decision — enough of them together drained the
+    machine's port pool and froze the whole desktop (BUG-215, AP-33). Nothing
+    here wants a graceful shutdown; the question was only whether someone
+    accepts, and the answer arrives before the handshake is even finished.
+    """
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
             return True
     except OSError:
         # Connection refused/timed out — the port simply is not open yet.
@@ -282,6 +299,37 @@ def _pool_url(base_url: str) -> str:
     return urlunsplit((parsed.scheme, netloc, f"{path}/pool", "", ""))
 
 
+#: One keep-alive client for every readiness probe this module makes.
+#:
+#: ``_runtime_monitor`` probes every 5 s for as long as a local voice server
+#: lives, and ``wait_until_ready`` probes twice a second while one boots. Built
+#: per call, each of those left a dead loopback socket holding an ephemeral
+#: port for two minutes (Windows), and enough such loops together emptied the
+#: machine's port pool — at which point nothing on the computer can connect
+#: (BUG-215, AP-33). Pooled, the whole monitor costs one connection.
+_probe_pool: Any | None = None
+_probe_pool_lock = threading.Lock()
+
+
+def _probe_client() -> Any | None:
+    """The shared probe client, built once. ``None`` when httpx is absent."""
+    global _probe_pool
+    with _probe_pool_lock:
+        if _probe_pool is None:
+            try:
+                from jarvis.core.http_pool import SyncHttpClientPool
+            except Exception as exc:  # noqa: BLE001 — a build without httpx
+                log.debug("local-realtime probe: httpx unavailable (%s)", exc)
+                return None
+            _probe_pool = SyncHttpClientPool(timeout_s=RUNTIME_PROBE_TIMEOUT_S)
+        pool = _probe_pool
+    try:
+        return pool.client()
+    except Exception as exc:  # noqa: BLE001 — httpx missing at call time
+        log.debug("local-realtime probe: no client (%s)", exc)
+        return None
+
+
 def probe_runtime(base_url: str, timeout: float = 0.75) -> dict[str, int] | None:
     """Return a sanitized live pool snapshot, or ``None`` when not ready.
 
@@ -295,33 +343,37 @@ def probe_runtime(base_url: str, timeout: float = 0.75) -> dict[str, int] | None
     host, _port = _host_port(base_url)
     if parsed.scheme not in {"http", "https"} or not _is_loopback(host):
         return None
-    import http.client
-
     url = _pool_url(base_url)
-    target = urlsplit(url)
-    target_host = target.hostname
-    if target_host is None:
+    if urlsplit(url).hostname is None:
         return None
-    connection_type = (
-        http.client.HTTPSConnection if target.scheme == "https" else http.client.HTTPConnection
-    )
-    connection = connection_type(
-        target_host,
-        target.port,
-        timeout=max(0.05, timeout),
-    )
+    client = _probe_client()
+    if client is None:
+        return None
     try:
-        connection.request("GET", target.path, headers={"Accept": "application/json"})
-        response = connection.getresponse()
-        if response.status != 200:
-            return None
-        raw = response.read(_MAX_POOL_RESPONSE_BYTES + 1)
-    except (http.client.HTTPException, OSError, TimeoutError, ValueError):
-        # Reported through the documented "None means not ready" return contract above.
-        return None
-    finally:
-        connection.close()
-    if len(raw) > _MAX_POOL_RESPONSE_BYTES:
+        # Streamed so the response size stays capped: the body is read in
+        # chunks and abandoned the moment it exceeds the cap, instead of
+        # trusting the far end to be small.
+        with client.stream(
+            "GET",
+            url,
+            headers={"Accept": "application/json"},
+            timeout=max(0.05, timeout),
+        ) as response:
+            if response.status_code != 200:
+                return None
+            chunks: list[bytes] = []
+            size = 0
+            for chunk in response.iter_bytes():
+                size += len(chunk)
+                if size > _MAX_POOL_RESPONSE_BYTES:
+                    return None
+                chunks.append(chunk)
+            raw = b"".join(chunks)
+    except Exception:  # noqa: BLE001
+        # Reported through the documented "None means not ready" return contract
+        # above — a refused, slow or malformed answer all mean the same thing
+        # to every caller, and this runs on a 5 s monitor loop where logging
+        # each miss would bury the log.
         return None
     try:
         payload = json.loads(raw.decode("utf-8"))

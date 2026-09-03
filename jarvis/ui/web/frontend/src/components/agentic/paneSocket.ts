@@ -48,6 +48,11 @@
  */
 
 import { mintWsTicket } from "@/lib/ws";
+import {
+  jitteredDelay,
+  requestConnect,
+  spreadDelay,
+} from "../../lib/connectBudget";
 
 /** Server close code: the handshake credential was missing or invalid. */
 const CLOSE_UNAUTHORIZED = 4401;
@@ -275,7 +280,8 @@ export function openPaneSocket(
   handlers: PaneSocketHandlers,
 ): PaneSocket {
   let ws: WebSocket | null = null;
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  /** Cancels the reconnect waiting in the shared connect budget. */
+  let cancelPending: (() => void) | null = null;
   /** Set once nothing further should happen on this pane, for any reason. */
   let stopped = false;
   /** The agent reported its own exit — a later close is not a lost wire. */
@@ -297,12 +303,27 @@ export function openPaneSocket(
    */
   let serverReason = "";
 
+  /**
+   * The one place a pane reopens its socket, and the one that pays the budget.
+   *
+   * Every delay handed in here is already jittered by its caller: a workspace
+   * of twenty panes settles into the same schedule at the same instant, so an
+   * exact delay means twenty sockets in the same millisecond. On top of that,
+   * `requestConnect` caps how many any client may open per second — the panes
+   * of one window are only ever a fraction of what wakes at once (BUG-215).
+   */
   const schedule = (delay: number) => {
-    if (timer !== null || stopped) return;
-    timer = setTimeout(() => {
-      timer = null;
+    if (cancelPending !== null || stopped) return;
+    cancelPending = requestConnect(() => {
+      cancelPending = null;
       if (!stopped) open();
     }, delay);
+  };
+
+  /** Drop a reconnect waiting in the budget, if there is one. */
+  const unschedule = () => {
+    cancelPending?.();
+    cancelPending = null;
   };
 
   /**
@@ -320,12 +341,17 @@ export function openPaneSocket(
    */
   const onDocumentVisible = () => {
     if (stopped || typeof document === "undefined" || document.hidden) return;
-    if (timer === null) return;
-    clearTimeout(timer);
-    timer = null;
+    if (cancelPending === null) return;
+    unschedule();
     attempts = 0;
     waits = 0;
-    open();
+    // Not `open()`. This handler fires for every pane of every window in the
+    // same millisecond, and calling straight through here is what turned
+    // coming back to the machine into a connection storm big enough to empty
+    // the OS socket pool. Re-queue at the fast end instead: the pane is live
+    // again within a few hundred milliseconds, and the budget keeps the total
+    // survivable (BUG-215, AP-33).
+    schedule(jitteredDelay(0, MIN_BACKOFF, MIN_BACKOFF));
   };
   if (typeof document !== "undefined") {
     document.addEventListener("visibilitychange", onDocumentVisible);
@@ -344,11 +370,11 @@ export function openPaneSocket(
       // keeps knocking every half minute, so a backend that comes back finds
       // its terminals waiting rather than needing every one of them reopened.
       handlers.onTrouble(message, false);
-      schedule(IDLE_BACKOFF);
+      schedule(spreadDelay(IDLE_BACKOFF));
       return;
     }
     handlers.onTrouble(message, true);
-    schedule(Math.min(MAX_BACKOFF, MIN_BACKOFF * 2 ** (attempts - 1)));
+    schedule(jitteredDelay(attempts - 1, MIN_BACKOFF, MAX_BACKOFF));
   };
 
   const authRetry = async (): Promise<void> => {
@@ -362,7 +388,7 @@ export function openPaneSocket(
       handlers.onTrouble("Authorizing the terminal…", true);
       // Fixed short delay: the very next attempt carries a fresh credential,
       // so escalating the backoff would only postpone a working terminal.
-      schedule(MIN_BACKOFF);
+      schedule(jitteredDelay(0, MIN_BACKOFF, MIN_BACKOFF));
       return;
     }
     retryLater("Terminal authorization failed — retrying.");
@@ -417,8 +443,8 @@ export function openPaneSocket(
       if (waits === MAX_ATTEMPTS + 1) askForFreshState("waited-out");
       schedule(
         waits > MAX_ATTEMPTS
-          ? IDLE_BACKOFF
-          : Math.min(MAX_BACKOFF, MIN_BACKOFF * 2 ** (waits - 1)),
+          ? spreadDelay(IDLE_BACKOFF)
+          : jitteredDelay(waits - 1, MIN_BACKOFF, MAX_BACKOFF),
       );
       return;
     }
@@ -577,10 +603,7 @@ export function openPaneSocket(
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onDocumentVisible);
       }
-      if (timer !== null) {
-        clearTimeout(timer);
-        timer = null;
-      }
+      unschedule();
       try {
         ws?.close();
       } catch {

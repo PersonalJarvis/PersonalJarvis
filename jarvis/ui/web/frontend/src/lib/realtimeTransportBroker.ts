@@ -5,6 +5,7 @@ import {
 } from "./realtimeTransportIssue";
 import { fetchRealtimeOfferRequirement } from "./voiceApi";
 import { mintWsTicket } from "./ws";
+import { jitteredDelay } from "./connectBudget";
 
 declare global {
   interface Window {
@@ -294,10 +295,13 @@ export class RealtimeTransportBroker {
 
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer !== null) return;
-    // Exponential, capped. A constant 1.5 s loop against a socket that answers
-    // 4401/1008 is a spin against a backend that has already said no.
-    const delay = Math.min(
-      RECONNECT_DELAY_MS * 2 ** Math.max(0, this.failures - 1),
+    // Exponential, capped and jittered. A constant 1.5 s loop against a socket
+    // that answers 4401/1008 is a spin against a backend that has already said
+    // no; an unjittered one is worse still, because every window retries in
+    // the same millisecond after a wake (BUG-215, AP-33).
+    const delay = jitteredDelay(
+      Math.max(0, this.failures - 1),
+      RECONNECT_DELAY_MS,
       RECONNECT_DELAY_MAX_MS,
     );
     this.reconnectTimer = this.deps.schedule(() => {

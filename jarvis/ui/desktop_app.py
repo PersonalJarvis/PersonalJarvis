@@ -2779,6 +2779,13 @@ class DesktopApp:
             # and a sampling profiler attached to the live process was the only
             # way to learn it was a TOML parse). Costs one sleeping thread.
             self._start_loop_watchdog(loop)
+            # And watch the OTHER shared resource a stall can be blamed on.
+            # A loop can be perfectly healthy while the machine has run out of
+            # ephemeral ports, at which point nothing anywhere can connect and
+            # the user reports the whole computer freezing for a few minutes
+            # and then healing itself. Off-loop, one census every 30 s, and it
+            # names the destination the ports went to (BUG-215).
+            self._start_socket_budget_watchdog()
             self._backend_serving_since = time.monotonic()
             # run_forever() has exactly one legitimate way out: shutdown()
             # calling loop.stop(). Every OTHER way out — a BaseException from
@@ -2801,6 +2808,7 @@ class DesktopApp:
                 self._note_backend_stopped("the loop was stopped")
         finally:
             self._stop_loop_watchdog()
+            self._stop_socket_budget_watchdog()
             try:
                 loop.close()
             except Exception:  # noqa: BLE001, S110
@@ -2844,6 +2852,20 @@ class DesktopApp:
             watchdog.stop()
         except Exception:  # noqa: BLE001, S110 — teardown of a diagnostic
             pass
+
+    # ---- Socket-budget watchdog ---------------------------------------------
+
+    def _start_socket_budget_watchdog(self) -> None:
+        """Arm the ephemeral-port watchdog. Never fatal — it is a diagnostic."""
+        from jarvis.core.socket_budget import start_default_watchdog
+
+        start_default_watchdog()
+
+    def _stop_socket_budget_watchdog(self) -> None:
+        """Retire it with the backend."""
+        from jarvis.core.socket_budget import stop_default_watchdog
+
+        stop_default_watchdog()
 
     # ---- Backend death -------------------------------------------------------
 
@@ -4834,8 +4856,6 @@ class DesktopApp:
         alive the wait continues past ``timeout_s`` (with one log line) up to
         ``hard_timeout_s``; only a dead thread or the hard cap gives up.
         """
-        import httpx
-
         url = f"http://127.0.0.1:{self.cfg.ui.admin_api_port}/api/health"
         start = time.monotonic()
         slow_boot_logged = False
@@ -4858,7 +4878,10 @@ class DesktopApp:
                     hard_timeout_s,
                 )
             try:
-                r = httpx.get(url, timeout=0.5)
+                client = self._health_probe_client()
+                if client is None:
+                    return False
+                r = client.get(url, timeout=0.5)
                 if r.status_code == 200:
                     return True
             except Exception:  # noqa: BLE001, S110
@@ -4881,12 +4904,19 @@ class DesktopApp:
         was **54 % of all backend CPU time**, by a wide margin the single
         hottest thing the process did while idle. Built once and reused, it is
         paid once per run.
+
+        Since BUG-215 the CPU is the smaller half of the argument. A client per
+        call is also a TCP connection per call, and a closed loopback
+        connection holds its ephemeral port for 120 s on Windows. The boot wait
+        below polls four times a second; unpooled, that alone parks ~480 dead
+        sockets in a pool of 16 384 for as long as the boot takes. Pooled, it
+        holds exactly one.
         """
         existing = getattr(self, "_health_http", None)
         if existing is not None:
             return existing
         try:
-            import httpx
+            from jarvis.core.http_pool import SyncHttpClientPool
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
 
@@ -4894,7 +4924,13 @@ class DesktopApp:
             return None
         # Annotated loosely on purpose: httpx is an optional import here, so
         # the attribute must also be allowed to go back to None on shutdown.
-        client: Any = httpx.Client(timeout=1.0)
+        try:
+            client: Any = SyncHttpClientPool(timeout_s=1.0).client()
+        except Exception as exc:  # noqa: BLE001
+            from loguru import logger
+
+            logger.debug("Health probe: httpx unavailable ({})", exc)
+            return None
         self._health_http = client
         _silence_health_probe_log()
         return client
