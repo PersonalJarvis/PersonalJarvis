@@ -134,3 +134,13 @@ async def test_scheduler_is_preferred(agent):
     spec = build_task_spec(agent, title="brief", prompt="p", schedule={"kind": "every"})
     task_id = await create_routine(store, scheduler, spec)
     assert scheduler.scheduled == [task_id]
+
+
+def test_the_agent_id_is_read_off_the_tags():
+    from jarvis.society.routines import agent_id_from_tags
+
+    assert agent_id_from_tags(("society", "agent:mailbox")) == "mailbox"
+    assert agent_id_from_tags(["agent:scout"]) == "scout"
+    assert agent_id_from_tags(("society", "agent:")) is None
+    assert agent_id_from_tags(()) is None
+    assert agent_id_from_tags(("automation",)) is None

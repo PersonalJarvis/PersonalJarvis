@@ -13,6 +13,7 @@ runner already understands.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import Any, Final
 
 from jarvis.tasks.schema import (
@@ -100,6 +101,16 @@ def build_task_spec(
         tags=(ROUTINE_TAG, agent_tag(agent.agent_id)),
         announce_on_success=announce_on_success,
     )
+
+
+def agent_id_from_tags(tags: Sequence[str]) -> str | None:
+    """The owning agent behind a task's tags (``agent:<id>``), else ``None``."""
+    prefix = agent_tag("")
+    for tag in tags:
+        text = str(tag)
+        if text.startswith(prefix) and len(text) > len(prefix):
+            return text[len(prefix) :]
+    return None
 
 
 def _tags_of(row: dict[str, Any]) -> tuple[str, ...]:

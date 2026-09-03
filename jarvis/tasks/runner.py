@@ -33,7 +33,7 @@ import contextlib
 import logging
 import re
 import time
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID, uuid4
 
@@ -122,6 +122,7 @@ class TaskRunner:
         tool_registry: _ToolRegistryLike | Any = None,
         agent_brain: _AgentBrainLike | None = None,
         auto_approver: _AutoApproverLike | None = None,
+        result_sink: Callable[[tuple[str, ...], str, str], Awaitable[None]] | None = None,
     ) -> None:
         self._store = store
         self._bus = bus
@@ -131,6 +132,10 @@ class TaskRunner:
         self._tools = tool_registry
         self._brain = agent_brain
         self._approver = auto_approver
+        #: ``(tags, text, status)`` after an agent action — where a tagged
+        #: task's result also goes (a society agent's routine reports into its
+        #: own chat). Optional: tasks never import the society.
+        self._result_sink = result_sink
 
     # ------------------------------------------------------------------
 
@@ -260,7 +265,8 @@ class TaskRunner:
         elif action.kind == "tool_call":
             await self._run_tool_call(task_id, action, cancel_token)
         elif action.kind == "agent":
-            await self._run_agent(task_id, action, cancel_token, ctx)
+            tags = tuple(str(t) for t in (getattr(spec, "tags", None) or ()))
+            await self._run_agent(task_id, action, cancel_token, ctx, tags=tags)
         else:  # pragma: no cover — the schema does not allow anything else
             raise RuntimeError(f"Unknown action kind: {action.kind}")
 
@@ -470,10 +476,14 @@ class TaskRunner:
         action: Any,
         cancel_token: CancelToken | None,
         ctx: dict[str, Any],
+        *,
+        tags: tuple[str, ...] = (),
     ) -> None:
         """Run an agentic brain turn: the prompt is executed with the toggled
         plugins as the tool allowlist. Each grant's scope is forwarded so the
-        brain can pre-authorize unattended ask-tier actions.
+        brain can pre-authorize unattended ask-tier actions. ``tags`` are the
+        task's tags, handed to the result sink so a tagged owner (a society
+        agent) gets the result in its own chat.
         """
         if self._brain is None:
             raise RuntimeError(
@@ -528,6 +538,13 @@ class TaskRunner:
             TaskStepRecorded(task_id=task_id, seq=seq, kind="log",
                              source_layer="tasks.runner")
         )
+        if self._result_sink is not None and tags:
+            try:
+                await self._result_sink(tags, text, "done")
+            except Exception:  # noqa: BLE001 — the task succeeded; a failed delivery is logged
+                log.warning(
+                    "task %s: result sink failed for tags %s", task_id, tags, exc_info=True
+                )
         # Delivery: speak the result at the next VAD turn-boundary. The TTS
         # pipeline scrubs it; on a muted/headless runtime this is a logged
         # no-op (cloud-first). The result also stays visible as the step above
