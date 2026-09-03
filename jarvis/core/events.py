@@ -2164,6 +2164,72 @@ class SocietyQuestChanged(Event):
     title: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class SocietyMessageSent(Event):
+    """One agent said something to another, or into a room.
+
+    The island's only source for the talk/call animation: two figures turn to
+    each other and speak, or a signal arcs across the map between them.
+    Published by :class:`jarvis.society.world_feed.WorldFeed` after the
+    envelope is on disk; the WebSocket forwards it like every other bus event.
+
+    ``text`` is a BUBBLE-SIZED PREVIEW, never the body. The record stays behind
+    ``GET /api/society/events?trace_id=...`` and in the receiver's own chat --
+    a message body is not broadcast to every open window.
+
+    The board's own trace rides as ``society_trace``: ``Event.trace_id`` is a
+    UUID and the WS sanitizer lifts it out of the payload, so a field of that
+    name here would silently vanish.
+    """
+
+    #: The board envelope's uuid7 -- a stable key for dedupe and deep links.
+    event_id: str = ""
+    #: Server-assigned board sequence, monotonic. The client drops anything
+    #: it has already drawn, so an overlapping subscription is harmless.
+    seq: int = 0
+    #: ``MsgType``: SAY | QUERY | ANSWER | PROPOSE.
+    msg_type: str = ""
+    from_agent: str = ""
+    #: "" means the line went into a room rather than to one teammate.
+    to_agent: str = ""
+    #: "" means a direct message.
+    room_id: str = ""
+    #: Named for the builtin it would otherwise shadow (``round``).
+    room_round: int = 0
+    #: ``chat:<a>:<b>`` or ``room:<id>``.
+    society_trace: str = ""
+    #: Whitespace-collapsed preview, cut on a word boundary.
+    text: str = ""
+    #: Length of the original, so the bubble can offer "read the rest".
+    text_chars: int = 0
+    truncated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SocietyRoomChanged(Event):
+    """A bounded group discussion opened or settled (``jarvis/society/rooms.py``).
+
+    The members are already standing at the Town Hall -- the checkpoint engine
+    put them there. This only tells the island that the table is in session,
+    which round it is on, and why it broke up.
+    """
+
+    room_id: str = ""
+    #: "open" | "settle".
+    phase: str = ""
+    opened_by: str = ""
+    members: tuple[str, ...] = ()
+    #: Preview of the room's topic (``ROOM_OPEN`` only).
+    topic: str = ""
+    #: message_cap | round_cap | silence | user | kill_switch (``settle`` only).
+    reason: str = ""
+    rounds: int = 0
+    messages: int = 0
+    max_rounds: int = 0
+    max_messages: int = 0
+    society_trace: str = ""
+
+
 # ----------------------------------------------------------------------
 # Visible-Feedback Contract (ADR-0016)
 # ----------------------------------------------------------------------

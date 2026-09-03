@@ -38,6 +38,7 @@ from .roster import LEAD_AGENT_ID, AgentRecord, Roster
 from .scheduler import DeliverHook, SocietyScheduler
 from .seeds import seed_first_run
 from .store import SocietyStore
+from .world_feed import WorldFeed
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +141,9 @@ class SocietyRuntime:
         self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
         #: The Quest Board: the person's jobs, routed to one taker, read back off the board.
         self.quests = Quests(self)
+        #: Speech on the board, projected onto the island: two agents talking
+        #: turn to each other, two agents apart call across the map.
+        self.world_feed = WorldFeed(self, publish=event_publish)
         #: Roster rows the society surface read for a turn - the sync tool
         #: filter reads them here (the briefing fills the cache first).
         self._agent_cache: dict[str, AgentRecord] = {}
@@ -164,6 +168,7 @@ class SocietyRuntime:
             self.bridge.attach(bus)
         self.checkpoints.attach()
         self.quests.attach()
+        self.world_feed.attach()
         await self.seed_lead()
         if self._seed_starter_team:
             created = await seed_first_run(self.roster, self.store)
@@ -199,6 +204,7 @@ class SocietyRuntime:
         self.bridge.detach()
         self.checkpoints.detach()
         self.quests.detach()
+        self.world_feed.detach()
         await self.store.close()
         self._started = False
         if current_runtime() is self:
