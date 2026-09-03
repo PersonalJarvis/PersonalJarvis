@@ -490,7 +490,7 @@ def head_pieces(p: Profile) -> list[Piece]:
                     p.head_cell,
                     xs,
                     (-d * 0.25, d * 0.3),
-                    (eye_z - 0.02, eye_z + 0.20),
+                    (eye_z - 0.21, eye_z - 0.01),
                 )
             )
     if p.goggles:
@@ -1298,7 +1298,7 @@ PART_SPECS: dict[str, dict] = {
         "wrapping": True,
         "pieces": lambda w, d: [
             box(
-                "VestL", "chest", "leather", (w * 0.42, w), (-d, d), (WAIST_Z + 0.06, NECK_Z + 0.02)
+                "VestL", "chest", "leather", (w * 0.42, w), (-d, d), (WAIST_Z + 0.06, NECK_Z - 0.15)
             ),
             box(
                 "VestR",
@@ -1306,7 +1306,7 @@ PART_SPECS: dict[str, dict] = {
                 "leather",
                 (-w, -w * 0.42),
                 (-d, d),
-                (WAIST_Z + 0.06, NECK_Z + 0.02),
+                (WAIST_Z + 0.06, NECK_Z - 0.15),
             ),
             box(
                 "VestBack",
@@ -1314,7 +1314,7 @@ PART_SPECS: dict[str, dict] = {
                 "leather",
                 (-w, w),
                 (d * 0.82, d),
-                (WAIST_Z + 0.06, NECK_Z + 0.02),
+                (WAIST_Z + 0.06, NECK_Z - 0.15),
             ),
         ],
     },
@@ -1327,7 +1327,7 @@ PART_SPECS: dict[str, dict] = {
         "wrapping": True,
         "pieces": lambda w, d: [
             box(
-                "Plate", "chest", "metal", (-w, w), (-d, -d * 0.72), (CHEST_Z - 0.02, NECK_Z + 0.02)
+                "Plate", "chest", "metal", (-w, w), (-d, -d * 0.72), (CHEST_Z - 0.02, NECK_Z - 0.15)
             ),
             box(
                 "PlateBack",
@@ -1335,7 +1335,7 @@ PART_SPECS: dict[str, dict] = {
                 "metal",
                 (-w, w),
                 (d * 0.72, d),
-                (CHEST_Z - 0.02, NECK_Z + 0.02),
+                (CHEST_Z - 0.02, NECK_Z - 0.15),
             ),
             box(
                 "PlateSideL",
@@ -1343,7 +1343,7 @@ PART_SPECS: dict[str, dict] = {
                 "metal",
                 (w * 0.88, w),
                 (-d, d),
-                (CHEST_Z - 0.02, NECK_Z + 0.02),
+                (CHEST_Z - 0.02, NECK_Z - 0.15),
             ),
             box(
                 "PlateSideR",
@@ -1351,7 +1351,7 @@ PART_SPECS: dict[str, dict] = {
                 "metal",
                 (-w, -w * 0.88),
                 (-d, d),
-                (CHEST_Z - 0.02, NECK_Z + 0.02),
+                (CHEST_Z - 0.02, NECK_Z - 0.15),
             ),
             box(
                 "PlateStud",
@@ -1359,7 +1359,7 @@ PART_SPECS: dict[str, dict] = {
                 "accent",
                 (-0.06, 0.06),
                 (-d - 0.03, -d + 0.01),
-                (CHEST_Z + 0.12, CHEST_Z + 0.24),
+                (CHEST_Z + 0.02, CHEST_Z + 0.10),
             ),
         ],
     },
@@ -1385,7 +1385,7 @@ PART_SPECS: dict[str, dict] = {
                 "secondary",
                 (w * 0.24, w * 0.62),
                 (-d, d),
-                (NECK_Z - 0.06, NECK_Z + 0.02),
+                (NECK_Z - 0.20, NECK_Z - 0.13),
             ),
             box(
                 "ApronStrapR",
@@ -1393,7 +1393,7 @@ PART_SPECS: dict[str, dict] = {
                 "secondary",
                 (-w * 0.62, -w * 0.24),
                 (-d, d),
-                (NECK_Z - 0.06, NECK_Z + 0.02),
+                (NECK_Z - 0.20, NECK_Z - 0.13),
             ),
         ],
     },

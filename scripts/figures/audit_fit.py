@@ -172,9 +172,19 @@ def joint_boxes(gt, path: Path) -> dict[str, Box]:
 SLICE = 0.04
 
 
+def material_slot(doc: dict, primitive: dict) -> str:
+    """The slot a primitive paints, read off its material name (`<id>-hair`)."""
+    index = primitive.get("material")
+    if index is None:
+        return ""
+    name = doc.get("materials", [])[index].get("name", "")
+    cut = name.rfind("-")
+    return name[cut + 1 :] if cut >= 0 else ""
+
+
 def slice_profile(
     gt, path: pathlib.Path
-) -> tuple[dict[str, Box], dict[str, dict[int, tuple[float, float, float, float]]]]:
+) -> tuple[dict[str, Box], dict[str, dict[str, dict[int, tuple[float, float, float, float]]]]]:
     """Per-joint boxes AND, per joint, the X/Z span of each height slice.
 
     The slices are what makes "does this cover the body" answerable: a garment
@@ -189,7 +199,8 @@ def slice_profile(
     worlds = gt.world_matrices(doc)
     nodes = doc.get("nodes", [])
     boxes: dict[str, list[list[float]]] = defaultdict(lambda: [[1e9] * 3, [-1e9] * 3])
-    slices: dict[str, dict[int, list[float]]] = defaultdict(dict)
+    # joint -> material slot -> height slice -> (x lo, x hi, z lo, z hi)
+    slices: dict[str, dict[str, dict[int, list[float]]]] = defaultdict(lambda: defaultdict(dict))
     for node_index in gt.skinned_mesh_nodes(doc):
         mesh = doc["meshes"][nodes[node_index]["mesh"]]
         matrix = worlds[node_index]
@@ -197,6 +208,7 @@ def slice_profile(
             attrs = prim["attributes"]
             if "JOINTS_0" not in attrs or "WEIGHTS_0" not in attrs:
                 continue
+            slot = material_slot(doc, prim)
             positions = _accessor(gt, glb, attrs["POSITION"])
             joint_ids = _accessor(gt, glb, attrs["JOINTS_0"])
             weights = _accessor(gt, glb, attrs["WEIGHTS_0"])
@@ -211,9 +223,9 @@ def slice_profile(
                     box[0][axis] = min(box[0][axis], world[axis])
                     box[1][axis] = max(box[1][axis], world[axis])
                 key = int(world[1] // SLICE)
-                cur = slices[name].get(key)
+                cur = slices[name][slot].get(key)
                 if cur is None:
-                    slices[name][key] = [world[0], world[0], world[2], world[2]]
+                    slices[name][slot][key] = [world[0], world[0], world[2], world[2]]
                 else:
                     cur[0] = min(cur[0], world[0])
                     cur[1] = max(cur[1], world[0])
@@ -221,15 +233,19 @@ def slice_profile(
                     cur[3] = max(cur[3], world[2])
     return (
         {k: Box(tuple(v[0]), tuple(v[1])) for k, v in boxes.items()},
-        {k: {i: tuple(v) for i, v in s.items()} for k, s in slices.items()},
+        {
+            joint: {slot: {i: tuple(v) for i, v in run.items()} for slot, run in by_slot.items()}
+            for joint, by_slot in slices.items()
+        },
     )
 
 
 def body_under(
-    body_slices: dict[str, dict[int, tuple[float, float, float, float]]],
+    body_slices: dict[str, dict[str, dict[int, tuple[float, float, float, float]]]],
     joints: list[str],
     lo_y: float,
     hi_y: float,
+    hidden: set[str] | None = None,
 ) -> Box | None:
     """The body's own box, clipped to the height band a garment occupies.
 
@@ -241,16 +257,28 @@ def body_under(
     lo = [1e9, lo_y, 1e9]
     hi = [-1e9, hi_y, -1e9]
     found = False
+    hidden = hidden or set()
     for joint in joints:
-        for key, span in body_slices.get(joint, {}).items():
-            centre = (key + 0.5) * SLICE
-            if not (lo_y - SLICE <= centre <= hi_y + SLICE):
+        for slot, run in body_slices.get(joint, {}).items():
+            # A hat that hides the hair is measured against the head WITHOUT
+            # it: the pack's mage keeps his bun in its own material slot so a
+            # helmet can switch it off, and comparing against a bun that is
+            # not drawn reports head showing that nobody sees.
+            if slot in hidden:
                 continue
-            found = True
-            lo[0] = min(lo[0], span[0])
-            hi[0] = max(hi[0], span[1])
-            lo[2] = min(lo[2], span[2])
-            hi[2] = max(hi[2], span[3])
+            for key, span in run.items():
+                # The band is the garment's OWN height, exactly. A slice of
+                # slack either side let the shoulder pads just above a vest,
+                # and the ear tips just below a beanie, count as body the
+                # garment failed to cover.
+                centre = (key + 0.5) * SLICE
+                if not (lo_y <= centre <= hi_y):
+                    continue
+                found = True
+                lo[0] = min(lo[0], span[0])
+                hi[0] = max(hi[0], span[1])
+                lo[2] = min(lo[2], span[2])
+                hi[2] = max(hi[2], span[3])
     return Box(tuple(lo), tuple(hi)) if found else None
 
 
@@ -311,8 +339,17 @@ def audit_pair(
     if slot == "headgear" and "hair" in part.get("hides", []):
         covers = ["sides", "front_back"]
     if covers:
-        under = body_under(base_slices, joints, part_box.lo[1], part_box.hi[1]) or body_box
-        for name in covers:
+        under = body_under(
+            base_slices,
+            joints,
+            part_box.lo[1],
+            part_box.hi[1],
+            hidden=set(part.get("hides", [])),
+        )
+        # No body in the garment's own height band means there is nothing for
+        # it to cover. Falling back to the whole joint here measured a chest
+        # plate against a hood two hand-widths above it.
+        for name in covers if under else ():
             axis = COVER_AXES[name]
             short = max(under.hi[axis] - part_box.hi[axis], part_box.lo[axis] - under.lo[axis])
             if short > COVER_TOLERANCE:
