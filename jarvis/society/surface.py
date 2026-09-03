@@ -27,7 +27,13 @@ from typing import Any, Final, cast
 
 from jarvis.core.protocols import Tool
 
-from .agent_tools import MemoryRecallTool, MessageAgentTool, ShellTool, WikiNoteTool
+from .agent_tools import (
+    MemoryRecallTool,
+    MessageAgentTool,
+    ProposeChangeTool,
+    ShellTool,
+    WikiNoteTool,
+)
 from .capabilities import CapabilityKind, CapabilityRow, select_tools
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
@@ -77,6 +83,10 @@ society_wiki_note (kind memory for durable facts, note for findings, shared to p
 knowledge the user reviews). Never edit the user's own pages.
 - Routines: recurring work runs from the Automations section as tasks tagged with your name; \
 their results arrive in this chat.
+- Configuring yourself: when the user states a lasting preference, a rule, a procedure worth \
+keeping, or recurring work, call society_propose_change (kinds rule, skill, routine, \
+approval_rule, focus). The user confirms it on a card in this chat; nothing changes before \
+that, so never claim a rule or routine exists until the card says it was applied.
 - Approvals: actions above your permission ceiling queue for the user (chat card, Jarvis bar, \
 voice). A queued action is not refused — say what you are waiting for and continue with what \
 you can. Secrets are never typed into a chat; credentials come from the keyring.
@@ -135,6 +145,12 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
             ),
             ShellTool.name: cast(Tool, ShellTool(rt, agent_id, workspace=workspace)),
             RunLearnedSkillTool.name: cast(Tool, RunLearnedSkillTool(rt, agent_id)),
+            ProposeChangeTool.name: cast(
+                Tool,
+                ProposeChangeTool(
+                    rt, agent_id, session_id=str(getattr(session, "session_id", "") or "")
+                ),
+            ),
         }
     )
     if rt.browser.is_installed():

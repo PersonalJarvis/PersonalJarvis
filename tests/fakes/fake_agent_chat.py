@@ -32,6 +32,7 @@ class FakeChatService:
     def __init__(self, store: Any, script: list[dict[str, Any]] | None = None) -> None:
         self.store = store
         self.sent: list[tuple[str, str]] = []
+        self.notices: list[tuple[str, dict[str, Any]]] = []
         self.busy: set[str] = set()
         self._subs: dict[str, set[asyncio.Queue[Any]]] = {}
         self._script = script
@@ -57,6 +58,13 @@ class FakeChatService:
             for q in self._subs.get(session_id, set()):
                 q.put_nowait({"kind": event["kind"], "payload": payload})
         return turn_id
+
+    async def post_notice(self, session_id: str, payload: dict[str, Any]) -> None:
+        """A notice outside a turn (a proposal card, a routine result), recorded
+        and fanned out like the real service does."""
+        self.notices.append((session_id, dict(payload)))
+        for q in self._subs.get(session_id, set()):
+            q.put_nowait({"kind": "notice", "payload": dict(payload)})
 
 
 __all__ = ["FakeChatService", "default_script"]

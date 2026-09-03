@@ -11,6 +11,7 @@ from jarvis.society import runtime as runtime_mod
 from jarvis.society.agent_tools import (
     MEMORY_RECALL_TOOL_NAME,
     MESSAGE_TOOL_NAME,
+    PROPOSE_TOOL_NAME,
     SHELL_TOOL_NAME,
     WIKI_NOTE_TOOL_NAME,
 )
@@ -82,6 +83,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         WIKI_NOTE_TOOL_NAME,
         SHELL_TOOL_NAME,
         MEMORY_RECALL_TOOL_NAME,
+        PROPOSE_TOOL_NAME,
         *FOLDER,
     }
     assert "RunCommand" not in own
@@ -98,6 +100,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         WIKI_NOTE_TOOL_NAME,
         SHELL_TOOL_NAME,
         MEMORY_RECALL_TOOL_NAME,
+        PROPOSE_TOOL_NAME,
         *FOLDER,
     }
     assert set(picked[: len(own_names)]) == own_names

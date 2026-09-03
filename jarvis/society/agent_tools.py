@@ -37,10 +37,12 @@ log = logging.getLogger(__name__)
 __all__ = [
     "MEMORY_RECALL_TOOL_NAME",
     "MESSAGE_TOOL_NAME",
+    "PROPOSE_TOOL_NAME",
     "SHELL_TOOL_NAME",
     "WIKI_NOTE_TOOL_NAME",
     "MemoryRecallTool",
     "MessageAgentTool",
+    "ProposeChangeTool",
     "ShellTool",
     "WikiNoteTool",
 ]
@@ -49,6 +51,7 @@ MESSAGE_TOOL_NAME: Final[str] = "society_message_agent"
 WIKI_NOTE_TOOL_NAME: Final[str] = "society_wiki_note"
 SHELL_TOOL_NAME: Final[str] = "society_shell"
 MEMORY_RECALL_TOOL_NAME: Final[str] = "society_memory_recall"
+PROPOSE_TOOL_NAME: Final[str] = "society_propose_change"
 _KINDS: Final[dict[str, MsgType]] = {
     "say": MsgType.SAY,
     "query": MsgType.QUERY,
@@ -288,6 +291,87 @@ class MemoryRecallTool:
             output={
                 "hits": [h.to_dict() for h in hits],
                 "text": "\n".join(lines) if lines else "No memory matches.",
+            },
+        )
+
+
+class ProposeChangeTool:
+    """``society_propose_change`` — configuration by chat (agent-definition §3.5).
+
+    The agent proposes ONE change to itself; the proposal parks in the
+    approvals queue and shows as a card in this chat. Nothing changes until
+    the person confirms it there — proposing is therefore a safe-tier action.
+    """
+
+    name: str = PROPOSE_TOOL_NAME
+    risk_tier: str = "safe"
+    description: str = (
+        "Propose ONE change to how you work - the user confirms it on a card in this chat "
+        "before anything changes. kind 'rule' adds a standing instruction to your "
+        "description ({text}); 'skill' saves the procedure you just used under a name "
+        "({name, goal, steps[], outcome}); 'routine' schedules recurring work "
+        "({title, prompt, schedule: {kind: every|at_time|after_delay|on_event, ...}}); "
+        "'approval_rule' changes what needs the user's approval ({require_approval[], "
+        "always_allow[]} of capability ids like plugin:gmail:send); 'focus' changes which "
+        "tools you reach for first ({focus[]}, the full ordered list). Say why in 'reason'. "
+        "Use it when the user states a lasting preference, asks you to remember a way of "
+        "working, to save a procedure, or to run something regularly. Never propose the "
+        "same thing twice in one turn."
+    )
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "kind": {
+                "type": "string",
+                "enum": ["rule", "skill", "routine", "approval_rule", "focus"],
+                "description": "What kind of change you propose.",
+            },
+            "payload": {
+                "type": "object",
+                "description": "The change itself; keys depend on kind (see the tool description).",
+            },
+            "reason": {
+                "type": "string",
+                "description": "One sentence: why this change helps the user.",
+            },
+        },
+        "required": ["kind", "payload"],
+    }
+
+    def __init__(self, runtime: Any, agent_id: str, *, session_id: str = "") -> None:
+        self._runtime = runtime
+        self._agent_id = agent_id
+        self._session_id = session_id
+
+    async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
+        from .proposals import ProposalRefused, propose
+
+        rt = self._runtime
+        if await rt.store.kill_switch():
+            return _failure(FailureReason.KILL_SWITCH, "the society is halted")
+        caller = await rt.roster.get(self._agent_id)
+        if caller is None or caller.state is not AgentState.ACTIVE:
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "caller is not an active agent")
+        kind = str(args.get("kind") or "").strip().lower()
+        try:
+            item = await propose(
+                rt,
+                caller,
+                kind=kind,
+                payload=args.get("payload"),
+                reason=str(args.get("reason") or ""),
+                session_id=self._session_id or caller.session_id,
+            )
+        except ProposalRefused as exc:
+            return _failure(exc.reason, exc.detail)
+        return ToolResult(
+            success=True,
+            output={
+                "proposal_id": item.id,
+                "kind": kind,
+                "status": "pending",
+                "summary": item.summary,
+                "note": "waiting for the user to confirm on the card in this chat",
             },
         )
 

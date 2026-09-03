@@ -212,6 +212,11 @@ class SocietyRuntime:
             self._skills[agent_id] = skills
         return skills
 
+    async def post_chat_notice(self, agent: AgentRecord, payload: dict[str, Any]) -> None:
+        """A society notice in the agent's own chat — proposals, routine results,
+        learned skills. A no-op without a chat service or a bound session."""
+        await self._notify_chat(agent, payload)
+
     async def _notify_chat(self, agent: AgentRecord, payload: dict[str, Any]) -> None:
         """A society notice in the agent's own chat (learned skill, login needed)."""
         svc = self._get_chat()
