@@ -1316,11 +1316,52 @@ def build_wake_whisper(
     )
 
 
+def wake_whisper_is_consumed(app_cfg: Any) -> tuple[bool, str]:
+    """Whether THIS configuration will build a local wake Whisper at all.
+
+    ``(will_it, reason)``. The predicate is the same expression the build site
+    uses (``desktop_app._start_speech_and_orb``): a wake Whisper is only ever
+    constructed for ``[trigger].heavy_local_whisper`` or a plan whose engine
+    needs one. Every other engine — vosk_kws, custom_onnx, openWakeWord, or no
+    wake at all — never builds one, so the prefetched weights are never adopted
+    (the only adopter is ``FasterWhisperProvider._build_model``) and sit in the
+    hand-over cache for the life of the process.
+
+    Cold-boot forensics 2026-09-03: on a vosk_kws host that dead prefetch spent
+    ~50 s of cold disk and one priming decode competing with the wake models and
+    the dictation model it delayed.
+
+    Resolving the plan is cheap and pure (config + a few directory stats), and
+    this runs off the boot path. Any failure answers ``True`` — reproducing
+    today's unconditional behaviour rather than risking a slower wake.
+    """
+    try:
+        import importlib.util as _ilu
+
+        from jarvis.speech.wake_model_fetch import resolve_wake_language
+        from jarvis.speech.wake_phrase import resolve_wake_plan
+
+        trigger = getattr(app_cfg, "trigger", None)
+        if bool(getattr(trigger, "heavy_local_whisper", False)):
+            return True, "trigger.heavy_local_whisper is on"
+        plan = resolve_wake_plan(
+            app_cfg.trigger.wake_word,
+            local_whisper_available=_ilu.find_spec("faster_whisper") is not None,
+            language=resolve_wake_language(app_cfg),
+        )
+        if plan.needs_local_whisper:
+            return True, f"the {plan.engine} wake engine transcribes locally"
+        return False, f"the {plan.engine} wake engine never builds one"
+    except Exception as exc:  # noqa: BLE001 — an unreadable plan must not skip the prefetch
+        return True, f"the wake plan could not be resolved ({exc}); prefetching anyway"
+
+
 def start_wake_model_prefetch(
     stt_cfg: Any,
     *,
     language: str | None = None,
     wake_phrase: str | None = None,
+    app_cfg: Any = None,
 ) -> Any:
     """Load the fast-first wake Whisper MODEL in a daemon thread, off the boot
     critical path (TTU iteration 10, docs/diagnostics/BOOT-TTU-NOTES.md).
@@ -1340,10 +1381,16 @@ def start_wake_model_prefetch(
     no torch; the first real torch import (Silero VAD) happens seconds later
     in the deferred loaders, so the shield race window stays clear.
 
+    ``app_cfg``, when given, decides whether this host has a consumer for the
+    weights at all (:func:`wake_whisper_is_consumed`) — the check runs INSIDE
+    the thread, so the caller pays nothing for it. Without it the prefetch
+    behaves exactly as before and always loads.
+
     No-op when voice is disabled (``JARVIS_VOICE``) or on any failure —
     a prefetch must never break boot. Returns the thread or ``None``.
     """
     import threading
+    import time
 
     from jarvis.speech.warmup_prefetch import _voice_disabled
 
@@ -1352,6 +1399,16 @@ def start_wake_model_prefetch(
 
     def _load() -> None:
         try:
+            if app_cfg is not None:
+                consumed, why = wake_whisper_is_consumed(app_cfg)
+                if not consumed:
+                    logger.info(
+                        "Wake-model prefetch skipped: {} — nothing would adopt "
+                        "the weights, and loading them competes with the wake "
+                        "model for a cold disk.",
+                        why,
+                    )
+                    return
             from jarvis.plugins.stt.fwhisper import prefetch_model
 
             probe = build_wake_whisper(
@@ -1360,11 +1417,21 @@ def start_wake_model_prefetch(
                 wake_phrase=wake_phrase,
                 fast_first=True,
             )
+            started = time.perf_counter()
             prefetch_model(
                 probe._model_name,  # noqa: SLF001 — resolved params, same module family
                 probe._device,  # noqa: SLF001
                 probe._compute_type,  # noqa: SLF001
                 probe._cpu_threads,  # noqa: SLF001
+            )
+            # Timed because it is invisible otherwise: the load holds no lock
+            # anyone logs and left a 38 s hole in the 2026-09-03 cold boot.
+            logger.info(
+                "Wake-model prefetch done in {:.0f} ms ({}/{}/{}).",
+                (time.perf_counter() - started) * 1000.0,
+                probe._model_name,  # noqa: SLF001
+                probe._device,  # noqa: SLF001
+                probe._compute_type,  # noqa: SLF001
             )
         except Exception as exc:  # noqa: BLE001 — a prefetch must never break boot
             logger.debug("Wake-model prefetch skipped: {}", exc)
@@ -1386,4 +1453,5 @@ __all__ = [
     "start_wake_model_prefetch",
     "stt_family_id",
     "wake_gpu_probe_cached",
+    "wake_whisper_is_consumed",
 ]

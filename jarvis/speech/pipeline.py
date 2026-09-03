@@ -11080,6 +11080,22 @@ class SpeechPipeline:
             or getattr(self, "_dictation_warmup_provider", None) is not provider
         ):
             return provider
+        # A local engine that is still COMING UP is not something to wait out
+        # when there is a provider behind it: the first load after a PC reboot
+        # took 137 s (2026-09-03), and a press that waited for it would be far
+        # slower than the cloud round-trip it is holding up. Leave the warm-up
+        # running — cancelling it here is what used to spawn a second engine
+        # onto the same card — and let the chain cross for THIS press.
+        # Without an alternate there is nothing to cross to, so the patient
+        # join stays: an honest wait beats an honest error.
+        if getattr(provider, "is_loading", False) and getattr(
+            provider, "_alternate_names", ()
+        ):
+            log.info(
+                "Dictation STT is still starting its local engine; this press "
+                "goes to the next provider and the load keeps running."
+            )
+            return provider
         try:
             await self._await_warmup_or_cold_load(task, provider)
             return provider

@@ -7,6 +7,7 @@ No subprocess and no model anywhere here — the worker proxy is a fake with the
 from __future__ import annotations
 
 import asyncio
+import threading
 from types import SimpleNamespace
 from typing import Any
 
@@ -216,6 +217,60 @@ def test_a_failing_worker_is_replaced_and_the_call_crosses_over(
     transcript = asyncio.run(stt.transcribe_pcm(_pcm()))
     assert transcript.text == "Hallo Welt."
     assert len(_local_ok["args"]) == 2
+
+
+def test_a_press_during_a_cold_spawn_crosses_instead_of_waiting_it_out(
+    _local_ok: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cold spawn takes minutes on a contended box (137 s measured on the
+    2026-09-03 boot). A press must not park a worker thread behind it — it
+    crosses to the cloud and comes back to the local engine once it is up."""
+    import jarvis.dictation.local_preview as preview_mod
+
+    release = threading.Event()
+    spawning = threading.Event()
+
+    spawns: list[str] = []
+
+    def _slow_spawn(model_name: str, *, compute: str | None = None) -> _FakeWorker:
+        spawns.append(model_name)
+        spawning.set()
+        release.wait(timeout=5.0)
+        return _FakeWorker()
+
+    monkeypatch.setattr(preview_mod, "_spawn_worker_model", _slow_spawn)
+    stt = LocalFinalSTT()
+
+    warmer = threading.Thread(target=stt.warm_up, name="test-warmup")
+    warmer.start()
+    try:
+        assert spawning.wait(timeout=5.0)
+        assert stt.is_loading is True  # starting, not wedged
+
+        with pytest.raises(LocalEngineUnavailable) as caught:
+            asyncio.run(stt.transcribe_pcm(_pcm()))
+        assert "still starting" in str(caught.value)
+        # Crossable, so the chain reaches the cloud rather than ending the press.
+        assert is_crossable_failure(classify_stt_failure(caught.value))
+    finally:
+        release.set()
+        warmer.join(timeout=5.0)
+
+    assert stt.is_warm
+    assert stt.is_loading is False
+    # One spawn, not two: the press never started a second worker on the card.
+    assert len(spawns) == 1
+
+
+def test_is_loading_is_false_when_nothing_is_starting(_local_ok: dict[str, Any]) -> None:
+    """The dictation lane reads this to tell a slow first load from a hang; it
+    must not claim a load that is not happening."""
+    stt = LocalFinalSTT()
+
+    assert stt.is_loading is False
+    asyncio.run(stt.transcribe_pcm(_pcm()))
+    assert stt.is_loading is False
+    assert stt.is_warm
 
 
 def test_a_second_caller_replaces_an_abandoned_worker(

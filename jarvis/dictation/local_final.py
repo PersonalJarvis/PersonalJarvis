@@ -137,6 +137,12 @@ class LocalFinalSTT:
         self._engine_compute = ""
         self._spawn_lock = threading.Lock()
         self._call_lock = threading.Lock()
+        #: True while a worker spawn is in flight. Read WITHOUT the lock (a bool
+        #: read is atomic) because the whole point is to answer while the lock is
+        #: held: a cold spawn takes minutes on a contended box (137 s on the
+        #: 2026-09-03 boot), and both a press and the dictation lane's own
+        #: patience check must be able to see "starting" rather than "wedged".
+        self._spawn_in_flight = False
         self._next_attempt_at = 0.0
         self._last_refusal = ""
 
@@ -159,6 +165,20 @@ class LocalFinalSTT:
     @property
     def is_warm(self) -> bool:
         return self._worker is not None
+
+    @property
+    def is_loading(self) -> bool:
+        """True while the worker is coming up — starting, not wedged.
+
+        The dictation lane reads this through the chain's attribute forwarding
+        (``FallbackSTT.__getattr__``) to tell a slow FIRST load from a hung
+        provider. Without it a cold load looked like a wedge: the lane gave up
+        at its 20 s ceiling, cancelled the warm-up and rebuilt the chain — and
+        since cancelling ``asyncio.to_thread`` does not stop the running thread,
+        the fresh instance spawned a SECOND multi-gigabyte worker onto a card
+        already loading one (the BUG-204 shape).
+        """
+        return self._spawn_in_flight
 
     @property
     def device(self) -> str:
@@ -224,7 +244,7 @@ class LocalFinalSTT:
             self._call_lock.release()
 
     def _transcribe_blocking(self, pcm_bytes: bytes, language: str | None) -> Transcript:
-        worker = self._ensure_worker()
+        worker = self._ensure_worker(blocking=False)
         if worker is None:
             raise LocalEngineUnavailable(self._last_refusal or "no local dictation worker")
         import numpy as np
@@ -285,49 +305,78 @@ class LocalFinalSTT:
     # Worker ownership
     # ------------------------------------------------------------------
 
-    def _ensure_worker(self) -> Any:
-        """The live worker, spawning one when allowed; ``None`` when declined."""
-        with self._spawn_lock:
-            if self._worker is not None:
-                return self._worker
-            now = time.monotonic()
-            if now < self._next_attempt_at:
-                return None
-            self._next_attempt_at = now + _RETRY_AFTER_S
-            refusal = self._spawn_refusal()
-            if refusal:
-                self._last_refusal = refusal
-                log.info("Local dictation engine not started: %s", refusal)
-                return None
-            from jarvis.dictation.local_preview import _spawn_worker_model
+    def _ensure_worker(self, *, blocking: bool = True) -> Any:
+        """The live worker, spawning one when allowed; ``None`` when declined.
 
-            worker = _spawn_worker_model(self._model_name, compute=self._compute)
-            if worker is None:
-                self._last_refusal = "the dictation worker did not come up"
-                return None
-            device = str(getattr(worker, "device", "") or "")
-            if device == "cpu":
-                # A beam-search turbo decode of a 25 s window on a CPU takes
-                # longer than the cloud round-trip it would replace; the
-                # preview keeps its own CPU floor, the final pass does not.
-                worker.close()
-                self._last_refusal = (
-                    "the local engine only runs on the CPU here, which is slower "
-                    "than the configured provider for a final pass"
-                )
-                log.info("Local dictation engine declined: %s", self._last_refusal)
-                return None
-            self._worker = worker
-            self._device = device
-            self._engine_compute = str(getattr(worker, "compute", "") or "")
-            self._last_refusal = ""
-            log.info(
-                "Local dictation engine ready: %s on %s (%s), out of process.",
-                self._model_name,
-                self._device,
-                self._engine_compute,
+        ``blocking=False`` is the PRESS path. A caller that would have to queue
+        behind an in-flight spawn is told so instead of waiting it out, so the
+        chain crosses to the cloud in milliseconds rather than holding a worker
+        thread for the length of a cold model load — 137 s on the 2026-09-03
+        boot, during which every dictation would otherwise have stalled.
+        """
+        if self._worker is not None:
+            return self._worker  # set once, never mutated in place
+        if not self._spawn_lock.acquire(blocking=blocking):
+            raise LocalEngineUnavailable(
+                "the local dictation engine is still starting; this call goes "
+                "to the next provider"
             )
-            return worker
+        try:
+            return self._spawn_worker_locked()
+        finally:
+            self._spawn_lock.release()
+
+    def _spawn_worker_locked(self) -> Any:
+        """Spawn and adopt a worker. Caller holds ``_spawn_lock``."""
+        if self._worker is not None:
+            return self._worker
+        now = time.monotonic()
+        if now < self._next_attempt_at:
+            return None
+        self._next_attempt_at = now + _RETRY_AFTER_S
+        refusal = self._spawn_refusal()
+        if refusal:
+            self._last_refusal = refusal
+            log.info("Local dictation engine not started: %s", refusal)
+            return None
+        from jarvis.dictation.local_preview import _spawn_worker_model
+
+        started = time.perf_counter()
+        self._spawn_in_flight = True
+        try:
+            worker = _spawn_worker_model(self._model_name, compute=self._compute)
+        finally:
+            self._spawn_in_flight = False
+        if worker is None:
+            self._last_refusal = "the dictation worker did not come up"
+            return None
+        device = str(getattr(worker, "device", "") or "")
+        if device == "cpu":
+            # A beam-search turbo decode of a 25 s window on a CPU takes
+            # longer than the cloud round-trip it would replace; the
+            # preview keeps its own CPU floor, the final pass does not.
+            worker.close()
+            self._last_refusal = (
+                "the local engine only runs on the CPU here, which is slower "
+                "than the configured provider for a final pass"
+            )
+            log.info("Local dictation engine declined: %s", self._last_refusal)
+            return None
+        self._worker = worker
+        self._device = device
+        self._engine_compute = str(getattr(worker, "compute", "") or "")
+        self._last_refusal = ""
+        # Timed: a cold load is two orders of magnitude slower than a warm one
+        # (137 s against 3.5 s measured), and the number is the only way to see
+        # from the log which one a boot got.
+        log.info(
+            "Local dictation engine ready in %.0f ms: %s on %s (%s), out of process.",
+            (time.perf_counter() - started) * 1000.0,
+            self._model_name,
+            self._device,
+            self._engine_compute,
+        )
+        return worker
 
     def _spawn_refusal(self) -> str:
         """Why the worker must not be started right now, or ``""``."""

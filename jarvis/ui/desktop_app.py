@@ -1371,6 +1371,37 @@ def _silence_health_probe_log() -> None:
     logging.getLogger("httpx").addFilter(_health_probe_log_filter)
 
 
+def detector_gates_the_backend(pipeline: Any) -> bool:
+    """Whether the heavy backend must wait for THIS wake detector to warm up.
+
+    The boot gate (``_heavy_backend_bg``) holds the server, brain, MCP,
+    workflows and the conductor behind the wake model so the load the user is
+    waiting for is not starved by housekeeping. It used to be armed only when
+    voice boot built a local Whisper — which left every other detector that
+    loads its own models ungated. ``vosk_kws`` loads one Kaldi model per
+    installed language inside ``wake.start()``, so on a cold boot the gate
+    released BEFORE the load began and a wiki FTS rebuild, the mission stack
+    and a worktree prune ran straight through it (BUG-214: en 21.8 s + de
+    11.4 s, wake ready 2 min 12 s after launch).
+
+    Gate on the CAPABILITY, never on an engine name (AP-21):
+
+    * the detector must REPORT warmth — without ``is_warm`` there is nothing to
+      wait for and waiting would be a guess;
+    * it must actually be STARTED — ``_openwakeword_enabled`` is the same flag
+      ``SpeechPipeline._start_wake`` checks, and the pipeline lowers it for a
+      non-primary instance, so a second instance never taxes the first's boot.
+
+    False keeps the historical behaviour: release the gate at once. Every
+    caller of this still holds its own ceiling, so a detector that never warms
+    costs a bounded wait, never a hang.
+    """
+    detector = getattr(pipeline, "_wake", None)
+    if getattr(detector, "is_warm", None) is None:
+        return False
+    return bool(getattr(pipeline, "_openwakeword_enabled", False))
+
+
 class DesktopApp:
     """Orchestrates the pywebview window + backend thread.
 
@@ -1676,10 +1707,14 @@ class DesktopApp:
         # Wake-model prefetch overlaps the heavy backend build and is adopted by
         # the later provider warm-up. It is a no-op when voice is disabled and
         # must never make the visible desktop startup load-bearing.
+        # ``app_cfg`` lets it skip itself on a host whose wake engine never
+        # builds a Whisper to adopt the weights (vosk_kws, custom_onnx, OWW):
+        # there the load was ~50 s of cold disk for nothing, in front of the
+        # models the user is actually waiting for (BUG-214).
         try:
             from jarvis.plugins.stt import start_wake_model_prefetch
 
-            start_wake_model_prefetch(self.cfg.stt)
+            start_wake_model_prefetch(self.cfg.stt, app_cfg=self.cfg)
         except Exception:  # noqa: BLE001, S110 — prefetch never blocks boot
             pass
 
@@ -4173,10 +4208,14 @@ class DesktopApp:
 
             from jarvis.core import runtime_refs as _rr_ready
 
-            if stt is None:
+            if stt is None and not detector_gates_the_backend(pipeline):
                 self._wake_model_loaded.set()
                 _rr_ready.signal_wake_model_ready()
             else:
+                # Tell the boot-storm housekeeping (deferred registry disk scans)
+                # that a wake model is loading, so it yields disk to it first.
+                # This used to be signalled only on the local-Whisper path.
+                _rr_ready.signal_wake_model_expected()
 
                 async def _signal_wake_model_loaded() -> None:
                     for _ in range(40):  # ~20 s cap, then release the gate anyway

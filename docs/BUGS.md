@@ -14973,3 +14973,111 @@ a `ValueError`), which is what let the bug through, plus
 **Related.** AP-24 (a wedged native engine is replaced, never waited on — the
 replacement worked, it was the call that was wrong), AP-22 (the local pass
 declines crossably, so the chain behind it always had a provider).
+
+## BUG-214: the first start after a PC reboot left voice dead for minutes (HIGH, FIXED 2026-09-03)
+
+**Symptom.** After a Windows reboot the wake word and dictation were unusable
+for minutes; restarting the app by hand a few minutes later was fine. The wake
+detector's own boot number says it plainly — `Warm-up Phase A (wake-critical)
+per-loader (ms): wake-start=…` across the retained desktop logs:
+
+| when | wake-start | kind |
+|---|---:|---|
+| 2026-08-28 19:41 | 7 562 ms | warm restart |
+| **2026-08-29 09:40** | **53 391 ms** | **first start after reboot** |
+| 2026-08-29 09:43 (3 min later) | 3 531 ms | warm restart |
+| 2026-08-31 19:12 – 19:52 (4×) | 1 907 – 3 203 ms | warm restarts |
+| **2026-09-01 15:05** | **31 641 ms** | **first start after reboot** |
+| 2026-09-01 16:23 – 2026-09-02 17:01 (8×) | 0 – 3 609 ms | warm restarts |
+| **2026-09-03 08:10** | **34 797 ms** | **first start after reboot** |
+
+Dictation was worse. On the 2026-09-03 boot (PC up 08:07:14, app launched
+08:08:28) `Dictation STT warm-up done in 137610 ms` landed at 08:12:59 — the
+local engine was usable **4 min 31 s after power-on**, and every press until
+then crossed to a cloud that answers in 0.57 s. The same model loads in 3.5 s
+warm, measured directly.
+
+**Root cause.** Four independent things, none of them the machine being slow.
+
+1. *A model load nothing would ever adopt.* `start_wake_model_prefetch` fired
+   unconditionally from `desktop_app._run_backend`. Its weights land in a
+   hand-over cache whose only reader is `FasterWhisperProvider._build_model`,
+   and that provider is built only for `heavy_local_whisper` or a plan with
+   `needs_local_whisper`. On a `vosk_kws` / `custom_onnx` / openWakeWord host
+   neither holds, so a cold-disk `base` load plus a priming decode ran for
+   nothing — the silent 08:09:21 → 08:09:59 hole in the log — competing for the
+   disk with the models the user was waiting for, and then sat in a module
+   global for the life of the process.
+2. *The two Vosk wake models loaded one after the other.* `VoskKwsProvider.start`
+   gathers over the model paths and its docstring claims concurrency, but
+   `_ensure_model` holds ONE provider-wide lock around each `Model()` load:
+   en 21.8 s **then** de 11.4 s (warm: 0.5 + 0.7). Loading both languages is
+   deliberate and stays — a phrase and the speaker's language routinely diverge.
+3. *The wake-priority gate was armed only for local Whisper.* `_heavy_backend_bg`
+   holds the server, brain, MCP, workflows and conductor behind the wake model
+   with a 12 s ceiling, and `_wake_model_is_loaded()` already preferred the
+   detector's own `is_warm` — written for exactly this case after the 2026-07-17
+   forensic. It was never reached: the gate was released whenever `stt is None`,
+   which is every non-Whisper wake engine. So it opened BEFORE
+   `VoskKwsProvider.start()` began, and a wiki FTS rebuild of 94 pages, the
+   mission stack, a worktree prune and the session recorder all ran straight
+   through the wake load. The same condition guarded
+   `signal_wake_model_expected()`, so the deferred registry disk scans never
+   yielded either.
+4. *A press during the cold dictation load made it worse.* `LocalFinalSTT`
+   exposed no `is_loading`, so `_await_warmup_or_cold_load` read a 137 s first
+   load as a wedge, gave up at 20 s, cancelled the warm-up and rebuilt the
+   chain — and since cancelling `asyncio.to_thread` does not stop the running
+   thread, the fresh instance spawned a SECOND multi-gigabyte worker onto a card
+   already loading one (the BUG-204 shape). A press also queued on the blocking
+   spawn lock for the whole load.
+
+**Fix.**
+1. `wake_whisper_is_consumed()` (`jarvis/plugins/stt/__init__.py`) resolves the
+   wake plan INSIDE the prefetch thread and skips the load where nothing would
+   adopt it; an unreadable plan prefetches anyway, reproducing the old
+   behaviour rather than risking a slower wake for the hosts that need it.
+2. `detector_gates_the_backend()` (`jarvis/ui/desktop_app.py`) gates on the
+   capability, never an engine name (AP-21): a detector that reports warmth AND
+   will actually be started is one worth waiting for. It also signals
+   `signal_wake_model_expected()` on that path. Every ceiling stays — 12 s on
+   the heavy backend, the ~20 s poll cap, 12 s in `await_wake_model_ready` — so
+   a detector that never warms costs a bounded wait, never a hang.
+3. `LocalFinalSTT.is_loading` tells a slow first load from a hang, and
+   `_ensure_worker(blocking=False)` on the press path answers a queued caller
+   with the crossable `LocalEngineUnavailable` instead of parking a thread for
+   the length of the load. `_join_dictation_warmup` returns immediately while a
+   local engine is still starting and an alternate exists — the load keeps
+   running, the press crosses.
+4. Both slow loads now log their duration, because neither did: the wake-model
+   prefetch and the dictation engine were the two silent stretches of the boot.
+
+Item 2 of the root cause (the serial Vosk load, ~11 s) is deliberately NOT
+fixed here: `Model()` does not go through `vosk_native.native_call`, so two
+concurrent `vosk_model_new` calls have never run in this codebase, and BUG-151's
+history says not to assume. It needs a `model-concurrent` mode in
+`scripts/vosk_native_stress.py` and the same acceptance bar (3 × 180 s clean on
+Windows) before the lock is narrowed.
+
+**Guard.** `tests/unit/stt/test_wake_prefetch_gate.py` (the predicate's truth
+table, including "stt_match still prefetches" and "an unreadable config
+prefetches"), `tests/unit/ui/test_wake_gate_predicate.py` (which detectors gate
+the backend, and that headless/voice-off/second-instance never pay a ceiling),
+and two new cases in `tests/unit/dictation/test_local_final.py` pinning that a
+press during a cold spawn crosses rather than waiting and that exactly one
+worker is ever spawned.
+
+**Verification.** The honest test is a real reboot; every harness in the tree
+(`scripts/measure_desktop_boot.py`, `scripts/ci/check_boot_budget.py`) measures
+an isolated boot on a WARM page cache and cannot see this class. On the next
+cold boot read `wake-start=` (target < 10 000 ms), `Local dictation engine ready
+in …` (target < 30 000 ms), and confirm no `Processing audio with duration
+00:01.000` line appears on a vosk_kws host.
+
+**Related.** BUG-189 (the cold-boot storm and the `wake-start` metric),
+BUG-210 (autostart priority — the 2026-09-01 six-wave fix, which improved this
+but did not close it), BUG-204 (VRAM oversubscription — the shape item 4 could
+reach), AP-21 (gate on capability, never a provider name), AP-24 (a wedged
+native engine is replaced, never waited on), AP-26 (nothing initialises on the
+boot critical path — this removes work from it), AP-30 (every new skip branch
+logs its reason).
