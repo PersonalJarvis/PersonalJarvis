@@ -43,6 +43,7 @@ import { useAgentActivity, useAgentRoutines, useAgentSkills, type AgentActivity 
 import {
   useSetAgentPaused,
   useSocietyCapabilities,
+  useUpdateAgentDescription,
   type AgentRunState,
   type Capability,
   type PermissionCeiling,
@@ -67,6 +68,88 @@ const STATE_FILL: Record<AgentRunState, string> = {
 const REACH_STEPS = 6;
 /** More rows than this and the log stops being a glance. */
 const LOG_ROWS = 6;
+
+/**
+ * The agent's standing instructions, editable in place. Rules mostly arrive
+ * through the chat (the agent proposes, the person confirms), but a person may
+ * also write them directly; the PATCH sends the description alone and the route
+ * keeps the focus and approval rules the agent earned.
+ */
+function DescriptionEditor({ agent }: { agent: SocietyAgent }) {
+  const t = useT();
+  const update = useUpdateAgentDescription();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(agent.description);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const begin = () => {
+    setDraft(agent.description);
+    setError("");
+    setEditing(true);
+  };
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      await update(agent, draft.trim());
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 className="ac-head">{t("society.card.description")}</h3>
+        {editing ? null : (
+          <button
+            type="button"
+            onClick={begin}
+            className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+          >
+            {t("society.card.edit")}
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <div className="flex flex-col gap-2">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={Math.min(14, Math.max(4, draft.split(/\r?\n/).length + 1))}
+            disabled={saving}
+            className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-sm leading-relaxed text-foreground outline-none focus:border-primary"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void save()}
+              className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {saving ? t("society.card.saving") : t("society.card.save")}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => setEditing(false)}
+              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              {t("society.card.cancel")}
+            </button>
+            {error ? <span className="text-xs text-destructive">{error}</span> : null}
+          </div>
+        </div>
+      ) : agent.description ? (
+        <p className="whitespace-pre-line text-sm leading-relaxed">{agent.description}</p>
+      ) : (
+        <p className="text-xs text-muted-foreground">{t("society.card.no_description")}</p>
+      )}
+    </>
+  );
+}
 
 function formatDate(ms: number | null, fallback: string): string {
   if (ms === null) return fallback;
@@ -317,18 +400,7 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
           </section>
 
           <section className="ac-prose">
-            {agent.tier === "lead" ? (
-              <LeadInstructions />
-            ) : (
-              <>
-                <h3 className="ac-head mb-2">{t("society.card.description")}</h3>
-                {agent.description ? (
-                  <p className="whitespace-pre-line text-sm leading-relaxed">{agent.description}</p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">{t("society.card.no_description")}</p>
-                )}
-              </>
-            )}
+            {agent.tier === "lead" ? <LeadInstructions /> : <DescriptionEditor agent={agent} />}
           </section>
 
           {agent.approvalRules.requireApproval.length > 0 || agent.approvalRules.alwaysAllow.length > 0 ? (
