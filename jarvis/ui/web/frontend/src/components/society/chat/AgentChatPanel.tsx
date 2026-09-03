@@ -44,6 +44,14 @@ import type { SocietyAgent } from "../data";
 /** A gap this long between messages earns a fresh time stamp. */
 const STAMP_GAP_MS = 30 * 60_000;
 
+/**
+ * The chat owns six eighths of the agent card, which is far wider than a line
+ * of prose should ever be. Transcript and composer share this one measure so
+ * the column reads like a chat instead of a stretched log; the panes, borders
+ * and scrollbars still span the full width.
+ */
+const CHAT_MEASURE = "mx-auto w-full max-w-[820px]";
+
 /** The line appended to a message that names an agent; Jarvis delegates on it. */
 const DELEGATE_MARK = "[to jarvis]";
 
@@ -501,7 +509,7 @@ function Transcript({
   let lastStamp = 0;
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-      <div className="flex flex-col gap-2">
+      <div className={cn(CHAT_MEASURE, "flex flex-col gap-2")}>
         {items.map((item) => {
           const ts = item.type === "user" ? item.tsMs : item.type === "turn" ? item.startedMs : 0;
           const stamp = ts && ts - lastStamp > STAMP_GAP_MS ? ts : 0;
@@ -880,9 +888,11 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
   return (
     <div className="shrink-0 border-t border-border px-3 pb-3 pt-2">
       {problem ? <p className="mb-1 px-1 text-xs text-destructive">{problem}</p> : null}
-      <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
+      <div className={CHAT_MEASURE}>
+        <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
+      </div>
       {matches.length > 0 ? (
-        <ul className="mb-1 flex flex-wrap gap-1 px-1" role="listbox" aria-label={t("society.chat.mention_hint")}>
+        <ul className={cn(CHAT_MEASURE, "mb-1 flex flex-wrap gap-1 px-1")} role="listbox" aria-label={t("society.chat.mention_hint")}>
           {matches.map((a) => (
             <li key={a.agentId}>
               <button
@@ -901,6 +911,7 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
       ) : null}
       <div
         className={cn(
+          CHAT_MEASURE,
           "relative flex items-end gap-1 rounded-[22px] border border-border bg-background px-1.5 py-1",
           attachments.dragging && "border-border-strong",
         )}

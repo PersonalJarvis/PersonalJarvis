@@ -1335,7 +1335,17 @@
     "title": "Run Inspector",
     "subtitle": "Developer forensics per run: environment, decisions, latency, tool I/O and the raw event stream.",
     "empty": "Select a run to inspect.",
+    "empty_hint": "Pick a run on the left to see its turns, decisions, latency and raw events.",
+    "empty_title": "No runs recorded yet",
+    "empty_body": "Every voice or chat session appears here with its full forensic trail.",
     "unavailable": "Run recorder is disabled.",
+    "unavailable_body": "Turn the run recorder on in Settings to record what each session did.",
+    "search": "Search runs…",
+    "no_matches": "No run matches this search.",
+    "no_turns": "This run recorded no completed turn.",
+    "loading": "Loading runs…",
+    "back": "Back",
+    "latency": "latency",
     "export_raw": "Export raw (JSON)",
     "full_transcript": "Full conversation",
     "deep_dive": "Metrics & deep dive",
@@ -1350,6 +1360,27 @@
       "tools": "Tools",
       "errors": "Errors",
       "events": "Events"
+    },
+    "tab": {
+      "turns": "Turns",
+      "environment": "Environment",
+      "metrics": "Metrics",
+      "errors": "Errors",
+      "session_events": "Session events"
+    },
+    "errors": {
+      "empty": "No errors recorded."
+    },
+    "metrics": {
+      "think": "Think",
+      "speak": "Speak",
+      "tokens_in": "Tokens in",
+      "tokens_out": "Tokens out",
+      "interruptions": "Interruptions",
+      "worst_latency": "Worst latency",
+      "cost_by_provider": "Cost by provider",
+      "recorded_events": "Recorded events",
+      "tool_usage": "Tool usage"
     },
     "environment": "Run environment",
     "session_events": "Session-level events",
@@ -1380,7 +1411,9 @@
       "cache_hit": "hit",
       "cache_miss": "miss",
       "interrupted": "interrupted",
-      "context": "context"
+      "context": "context",
+      "turns": "turns",
+      "tokens": "tokens"
     },
     "env": {
       "mode": "Mode",
@@ -1731,6 +1764,17 @@
     "ask_next": "Next",
     "ask_say_prefix": "Just say",
     "more_to_learn": "{0} more to learn",
+    "hero_teach_intro": "Two ways to teach {name} about you",
+    "hero_teach_voice": "Say it out loud in a conversation — {name} listens and writes it down.",
+    "hero_teach_file": "Or write it into the source file yourself.",
+    "hero_open_source": "Open the file",
+    "ask_empty_title": "Nothing left to ask",
+    "ask_empty_body": "Every field on this page has an answer. Anything new you mention gets added on its own.",
+    "error_title": "The profile could not be loaded",
+    "group_filled": "{0} of {1} known",
+    "source_updated": "Updated {0}",
+    "source_empty_title": "Nothing written yet",
+    "source_empty_body": "The curator has not put anything in this file. You can write the first lines yourself.",
     "value_yes": "yes",
     "value_no": "no",
     "field_edit": "Edit",
@@ -3249,7 +3293,9 @@
     "download_file_action": "Download as file:",
     "open_editor_action": "Open in editor:",
     "opened_in_editor": "Opened in editor",
-    "open_failed": "Couldn't open in editor"
+    "open_failed": "Couldn't open in editor",
+    "back_to_sessions": "Back to sessions",
+    "you": "You"
   },
   "turn_card": {
     "turn": "Turn",
@@ -5305,6 +5351,10 @@
       "specs": "Specs",
       "figure": "Figure",
       "chat": "Chat",
+      "profile": "Profile",
+      "open_profile": "Open this agent's profile",
+      "options": "Options",
+      "options_hint": "Held open for this agent's controls.",
       "close": "Close",
       "brain": "Brain",
       "description": "Standing instructions",

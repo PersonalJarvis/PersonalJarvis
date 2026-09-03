@@ -38,7 +38,17 @@ export function relativeUntil(iso: string | null, t: (key: string) => string): s
   return t("society.card.due_in").replace("{0}", `${Math.round(hours / 24)} d`);
 }
 
-export function AgentSpecSheet({ agent }: { agent: SocietyAgent }) {
+export interface AgentSpecSheetProps {
+  agent: SocietyAgent;
+  /**
+   * Hands the card back to its chat. The profile is the card's second face,
+   * so "Chat" here is a real way back rather than the placeholder it was
+   * while the chat had no place of its own.
+   */
+  onOpenChat?: () => void;
+}
+
+export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
   const t = useT();
   const capabilities = useSocietyCapabilities();
   const setPaused = useSetAgentPaused();
@@ -203,7 +213,13 @@ export function AgentSpecSheet({ agent }: { agent: SocietyAgent }) {
         </div>
       </ScrollArea>
       <div className="flex shrink-0 items-center gap-2 border-t border-border px-4 py-3">
-        <Button size="sm" variant="secondary" disabled title={t("society.card.chat_soon")}>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={!onOpenChat}
+          title={onOpenChat ? undefined : t("society.card.chat_soon")}
+          onClick={onOpenChat}
+        >
           <MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden />
           {t("society.card.action_chat")}
         </Button>

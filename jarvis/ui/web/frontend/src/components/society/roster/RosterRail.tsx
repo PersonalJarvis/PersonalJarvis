@@ -6,6 +6,10 @@
  *
  * The rail is app chrome: Ink & Paper tokens, both modes. The world beside
  * it carries its own branding; nothing here leaks into the viewport.
+ *
+ * It sits on either edge. Beside the island it is the RIGHT rail with its own
+ * fixed width; inside the agent card it is the LEFT eighth and takes its width
+ * from the grid cell — same rows, same sizes, only the divider swaps sides.
  */
 import { useMemo, useState } from "react";
 import { Plus, Search } from "lucide-react";
@@ -34,9 +38,22 @@ export interface RosterRailProps {
   activeAgentId: string | null;
   onOpen: (agentId: string) => void;
   onCreate: () => void;
+  /** Which edge the rail sits on; decides which side carries the divider. */
+  side?: "left" | "right";
+  /** Replaces the fixed width when the rail is a grid cell rather than a flex sibling. */
+  className?: string;
 }
 
-export function RosterRail({ agents, loading, sample, activeAgentId, onOpen, onCreate }: RosterRailProps) {
+export function RosterRail({
+  agents,
+  loading,
+  sample,
+  activeAgentId,
+  onOpen,
+  onCreate,
+  side = "right",
+  className,
+}: RosterRailProps) {
   const t = useT();
   const [query, setQuery] = useState("");
 
@@ -53,7 +70,11 @@ export function RosterRail({ agents, loading, sample, activeAgentId, onOpen, onC
   return (
     <aside
       data-testid="society-roster-rail"
-      className="flex h-full w-[300px] shrink-0 flex-col border-l border-border bg-sidebar"
+      className={cn(
+        "flex h-full min-h-0 flex-col border-border bg-sidebar",
+        side === "left" ? "border-r" : "border-l",
+        className ?? "w-[300px] shrink-0",
+      )}
     >
       <div className="flex items-center justify-between gap-2 px-3 pt-3">
         <div className="flex min-w-0 items-center gap-2">

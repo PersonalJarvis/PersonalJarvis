@@ -85,7 +85,20 @@ export function SocietyView() {
         onOpen={setOpenAgentId}
         onCreate={() => setCreating(true)}
       />
-      <AgentCardOverlay agent={openAgent} roster={agents} onClose={() => setOpenAgentId(null)} />
+      <AgentCardOverlay
+        agent={openAgent}
+        roster={agents}
+        rosterLoading={roster.isLoading}
+        sample={sample}
+        onSelectAgent={setOpenAgentId}
+        onCreate={() => {
+          // The creator ends with the newcomer walking out of the foundry on
+          // the island; the card sits on top of exactly that, so it closes.
+          setOpenAgentId(null);
+          setCreating(true);
+        }}
+        onClose={() => setOpenAgentId(null)}
+      />
       <BuildingCardOverlay
         place={openPlace}
         onClose={() => setOpenPlace(null)}
