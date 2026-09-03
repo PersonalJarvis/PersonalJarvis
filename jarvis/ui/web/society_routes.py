@@ -209,11 +209,21 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
     fields = body.model_dump(exclude_none=True)
     if ("title" in fields or "description" in fields) and "focus" not in fields:
+        # A prose edit must not wipe what the agent earned in its chat: the
+        # derived focus is APPENDED to the existing order (existing first,
+        # deduped) and derived approval rules are written only when the agent
+        # has none — a person editing the description never silently loses the
+        # rules they confirmed on a card.
         title = fields.get("title", agent.title)
         description = fields.get("description", agent.description)
         derived_focus, derived_rules = rt.derive(title, description)
-        fields["focus"] = derived_focus
-        if "approval_rules" not in fields and derived_rules["require_approval"]:
+        merged_focus = list(agent.focus)
+        for cap_id in derived_focus:
+            if cap_id not in merged_focus:
+                merged_focus.append(cap_id)
+        fields["focus"] = merged_focus
+        has_rules = any(agent.approval_rules.get(k) for k in ("require_approval", "always_allow"))
+        if "approval_rules" not in fields and not has_rules and derived_rules["require_approval"]:
             fields["approval_rules"] = derived_rules
     try:
         updated = await rt.roster.update(agent.agent_id, fields)

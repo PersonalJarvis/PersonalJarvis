@@ -5309,7 +5309,8 @@
       "never": "nunca",
       "chat_empty_title": "Aún no hay conversación",
       "chat_empty_hint": "El chat del agente se abre aquí cuando el backend de la sociedad vincule su sesión.",
-      "chat_bind_failed": "No se pudo vincular el chat."
+      "chat_bind_failed": "No se pudo vincular el chat.",
+      "cancel": "Cancelar"
     },
     "figure": {
       "drag_hint": "Arrastra para girar e inclinar · rueda para acercar · doble clic restablece",

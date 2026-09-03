@@ -5342,7 +5342,8 @@
       "never": "never",
       "chat_empty_title": "No conversation yet",
       "chat_empty_hint": "The agent's chat opens here once the society backend binds its session.",
-      "chat_bind_failed": "The chat could not be bound."
+      "chat_bind_failed": "The chat could not be bound.",
+      "cancel": "Cancel"
     },
     "figure": {
       "drag_hint": "Drag to turn and tilt · wheel to zoom · double-click to reset",

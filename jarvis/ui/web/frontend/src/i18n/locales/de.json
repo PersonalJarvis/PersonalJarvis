@@ -5309,7 +5309,8 @@
       "never": "nie",
       "chat_empty_title": "Noch kein Gespräch",
       "chat_empty_hint": "Der Chat des Agenten öffnet sich hier, sobald das Society-Backend seine Sitzung anbindet.",
-      "chat_bind_failed": "Der Chat konnte nicht verbunden werden."
+      "chat_bind_failed": "Der Chat konnte nicht verbunden werden.",
+      "cancel": "Abbrechen"
     },
     "figure": {
       "drag_hint": "Ziehen zum Drehen und Kippen · Rad zum Zoomen · Doppelklick setzt zurück",

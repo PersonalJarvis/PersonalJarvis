@@ -421,6 +421,32 @@ export function useResolveProposal() {
   );
 }
 
+/**
+ * Edit an agent's standing instructions (`PATCH /api/society/agents/{id}` with
+ * the description only). The route keeps the focus and approval rules the
+ * agent earned in its chat.
+ */
+export function useUpdateAgentDescription() {
+  const client = useQueryClient();
+  return useCallback(
+    async (agent: SocietyAgent, description: string): Promise<void> => {
+      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      if (!sample) {
+        const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ description }),
+        });
+        if (!res.ok) throw new Error(`description ${res.status}`);
+      } else {
+        agent.description = description;
+      }
+      await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+    },
+    [client],
+  );
+}
+
 /** Pause or resume an agent (`PATCH /api/society/agents/{id}`); sample rows flip locally. */
 export function useSetAgentPaused() {
   const client = useQueryClient();
