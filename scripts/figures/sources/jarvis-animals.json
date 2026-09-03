@@ -2,14 +2,26 @@
   "$comment": "Four-legged companions, modelled and keyed by scripts/figures/quadruped_builder.py. The `animal` style has no CC0 donor of the right archetype, so the whole character is first-party: the contract's 21-bone quadruped rig, a blocky body on it and its seven clips written frame by frame. Nothing is downloaded.",
   "name": "Personal Jarvis animals (first-party)",
   "author": "Personal Jarvis",
+  "family": "jarvis-quadruped",
   "license": "first-party",
   "license_url": "",
   "procedural": "quadruped",
+  "clip_library": "quadruped-clips.glb",
+  "clip_archetype": "quadruped",
   "files": {},
   "characters": {
     "Fox": {
       "shape": "fox",
-      "parts": ["collar-band"],
+      "parts": [
+        "collar-scarf",
+        "back-blanket",
+        "tail_extra-bow",
+        "headgear-antlers",
+        "collar-bandana",
+        "back-saddlebag",
+        "headgear-pet-cap",
+        "collar-band"
+      ],
       "default_palette": {
         "skin": "#f0b5a8",
         "skin_shade": "#d29488",
@@ -24,6 +36,111 @@
         "leather": "#6b4a33",
         "fur": "#c8622b",
         "fur_shade": "#f4efe6",
+        "shoes": "#2b2320",
+        "eye_white": "#fbf8f2",
+        "emissive": "#ffd166"
+      }
+    },
+    "Cat": {
+      "shape": "cat",
+      "default_palette": {
+        "skin": "#f0b5a8",
+        "skin_shade": "#d29488",
+        "hair": "#b8532a",
+        "eyes": "#3fae6a",
+        "primary": "#c25a2a",
+        "primary_shade": "#9a4420",
+        "secondary": "#f0ece4",
+        "secondary_shade": "#d8d0c2",
+        "accent": "#7fd1a8",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#3c3a42",
+        "fur_shade": "#8e8a96",
+        "shoes": "#2b2320",
+        "eye_white": "#fbf8f2",
+        "emissive": "#ffd166"
+      }
+    },
+    "Dog": {
+      "shape": "dog",
+      "default_palette": {
+        "skin": "#f0b5a8",
+        "skin_shade": "#d29488",
+        "hair": "#b8532a",
+        "eyes": "#2a1d14",
+        "primary": "#c25a2a",
+        "primary_shade": "#9a4420",
+        "secondary": "#f4efe6",
+        "secondary_shade": "#d8d0c2",
+        "accent": "#d24b3a",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#a9793f",
+        "fur_shade": "#e8dcc6",
+        "shoes": "#2b2320",
+        "eye_white": "#fbf8f2",
+        "emissive": "#ffd166"
+      }
+    },
+    "Wolf": {
+      "shape": "wolf",
+      "default_palette": {
+        "skin": "#f0b5a8",
+        "skin_shade": "#d29488",
+        "hair": "#b8532a",
+        "eyes": "#d8c24a",
+        "primary": "#c25a2a",
+        "primary_shade": "#9a4420",
+        "secondary": "#e4e8ec",
+        "secondary_shade": "#d8d0c2",
+        "accent": "#8fb8d8",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#6d7580",
+        "fur_shade": "#c6ccd2",
+        "shoes": "#2b2320",
+        "eye_white": "#fbf8f2",
+        "emissive": "#ffd166"
+      }
+    },
+    "Rabbit": {
+      "shape": "rabbit",
+      "default_palette": {
+        "skin": "#f0b5b8",
+        "skin_shade": "#d29488",
+        "hair": "#b8532a",
+        "eyes": "#4a2e2a",
+        "primary": "#c25a2a",
+        "primary_shade": "#9a4420",
+        "secondary": "#f6f2ea",
+        "secondary_shade": "#d8d0c2",
+        "accent": "#e8a0b0",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#d9cfc2",
+        "fur_shade": "#f6f2ea",
+        "shoes": "#2b2320",
+        "eye_white": "#fbf8f2",
+        "emissive": "#ffd166"
+      }
+    },
+    "Bear": {
+      "shape": "bear",
+      "default_palette": {
+        "skin": "#f0b5a8",
+        "skin_shade": "#d29488",
+        "hair": "#b8532a",
+        "eyes": "#1a1210",
+        "primary": "#c25a2a",
+        "primary_shade": "#9a4420",
+        "secondary": "#3a2a20",
+        "secondary_shade": "#d8d0c2",
+        "accent": "#d9a441",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#6b4630",
+        "fur_shade": "#a98157",
         "shoes": "#2b2320",
         "eye_white": "#fbf8f2",
         "emissive": "#ffd166"

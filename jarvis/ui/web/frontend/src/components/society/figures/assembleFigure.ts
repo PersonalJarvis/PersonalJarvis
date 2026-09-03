@@ -151,6 +151,7 @@ export function assembleFigure(
   palette: Palette,
   heightM: number,
   parts: LoadedGltf[] = [],
+  clips: LoadedGltf | null = null,
 ): AssembledFigure | null {
   const extras = readFigureExtras(gltf);
   if (!extras) return null;
@@ -245,7 +246,10 @@ export function assembleFigure(
 
   const mixer = new THREE.AnimationMixer(body);
   const actions: Record<string, THREE.AnimationAction> = {};
-  for (const clip of gltf.animations) {
+  // A body may ship its own clips or borrow a rig's shared set; three.js binds
+  // a track by node name, so a borrowed clip drives this skeleton unchanged.
+  const animations = gltf.animations.length > 0 ? gltf.animations : (clips?.animations ?? []);
+  for (const clip of animations) {
     const action = mixer.clipAction(clip, body);
     const facts = extras.clips[clip.name];
     action.loop = facts && !facts.loop ? THREE.LoopOnce : THREE.LoopRepeat;

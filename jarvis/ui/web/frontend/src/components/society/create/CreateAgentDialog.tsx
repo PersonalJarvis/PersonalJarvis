@@ -71,6 +71,7 @@ import {
 import {
   basesForStyle,
   catalogBaseFor,
+  isReservedStyle,
   keepablePartsFor,
   partsForSlot,
   slotsWithParts,
@@ -246,11 +247,14 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const imported = Boolean(recipe.model);
   const baseEntry = imported ? null : catalogBaseFor(recipe);
   const archetype: FigureArchetype = baseEntry?.archetype ?? recipe.archetype;
+  // Which wardrobe fits this body: a hat cut for one skull is not offered on
+  // another, even when the two share a style.
+  const family = baseEntry?.family ?? null;
   const styleOptions = useMemo(() => stylesWithBases(), []);
   const bases = useMemo(() => basesForStyle(style), [style]);
   const slots = useMemo(
-    () => (imported ? [] : slotsWithParts(archetype, style)),
-    [imported, archetype, style],
+    () => (imported ? [] : slotsWithParts(archetype, style, family)),
+    [imported, archetype, style, family],
   );
   const heights = imported ? IMPORTED_RANGE : (HEIGHT_RANGE[archetype] ?? HEIGHT_RANGE.biped);
   const defaultHeight = baseEntry?.heightM ?? 1.75;
@@ -266,6 +270,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     const entry = CATALOG.bases.find((b) => b.base === base) ?? null;
     const nextArchetype: FigureArchetype = entry?.archetype ?? "biped";
     const band = HEIGHT_RANGE[nextArchetype] ?? HEIGHT_RANGE.biped;
+    const nextFamily = entry?.family ?? null;
     setStyle(nextStyle);
     setRecipe((r) => {
       const next: FigureRecipe = {
@@ -273,7 +278,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         archetype: nextArchetype,
         base,
         style: nextStyle,
-        parts: keepablePartsFor(r.parts, nextArchetype, nextStyle),
+        parts: keepablePartsFor(r.parts, nextArchetype, nextStyle, nextFamily),
         heightM: Math.min(band.max, Math.max(band.min, r.heightM ?? entry?.heightM ?? 1.75)),
         // Colours a person chose are theirs and survive the switch; colours
         // they never touched are the OLD figure's defaults and have no
@@ -674,7 +679,9 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                     <span className="w-16 text-xs text-muted-foreground">{t("society.create.style")}</span>
                     <Segmented
                       value={style}
-                      options={Object.keys(CATALOG.styles).map((id) => {
+                      options={Object.keys(CATALOG.styles)
+                        .filter((id) => !isReservedStyle(id))
+                        .map((id) => {
                         // "Imported" is not a style to pick — it is where the
                         // Import button lands, so it lights up once a GLB is in.
                         const live = id === "custom" ? imported : styleOptions.includes(id);
@@ -712,7 +719,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                           value={recipe.parts[slot] ?? ""}
                           options={[
                             { value: "", label: t("society.create.none") },
-                            ...partsForSlot(slot, archetype, style).map((part) => ({
+                            ...partsForSlot(slot, archetype, style, family).map((part) => ({
                               value: part.id,
                               label: part.label,
                             })),

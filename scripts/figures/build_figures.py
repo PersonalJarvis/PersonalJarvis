@@ -472,8 +472,19 @@ def finish_common(glb: gt.Glb, two_sided: bool = False) -> gt.Glb:
 
 
 def finish_base(
-    glb_path: Path, target: dict, source: dict, archetype: dict, uv_report: dict
+    glb_path: Path,
+    target: dict,
+    source: dict,
+    archetype: dict,
+    uv_report: dict,
+    borrowed: dict | None = None,
 ) -> dict:
+    """Write a base's extras. `borrowed` = the clip facts of a shared library.
+
+    A body that borrows its clips carries no animation of its own, so the
+    facts the runtime needs — duration, loop, stride — are copied from the
+    library and the file it came from is named in `clips_from`.
+    """
     glb = finish_common(gt.read_glb(glb_path))
     doc = glb.doc
     skinned = gt.skinned_mesh_nodes(doc)
@@ -486,7 +497,7 @@ def finish_base(
         lo = [min(a, b) for a, b in zip(lo, mlo, strict=True)]
         hi = [max(a, b) for a, b in zip(hi, mhi, strict=True)]
         tris += gt.triangle_count(doc, mesh)
-    clips: dict[str, dict] = {}
+    clips: dict[str, dict] = dict(borrowed["clips"]) if borrowed else {}
     for name, spec in archetype["clips"].items():
         anim = gt.clip_by_name(doc, name)
         if anim is None:
@@ -511,6 +522,8 @@ def finish_base(
         "hair_primitive": bool(uv_report["hair_faces"]),
         "source": f"{source['name']} ({source['license']}) / {target['character']}",
     }
+    if borrowed:
+        extras["clips_from"] = borrowed["file"]
     doc.setdefault("asset", {})["extras"] = {"jarvis_figure": extras}
     doc["asset"]["generator"] = "Personal Jarvis build_figures.py"
     gt.write_glb(glb_path, doc, glb.blob)
@@ -631,6 +644,7 @@ def build_target(target: dict, out_dir: Path, ledger: Path) -> tuple[dict, list[
         "styles": target.get("styles", []),
         "heightM": archetype["variants"][target["variant"]]["height_m"],
         "palette": character["default_palette"],
+        "family": source.get("family", source_slug(source)),
         "source": f"{source['name']} / {target['character']}",
         "license": source["license"],
         **facts,
@@ -669,6 +683,7 @@ def build_target(target: dict, out_dir: Path, ledger: Path) -> tuple[dict, list[
                 "label": spec["label"],
                 "styles": spec.get("styles", []),
                 "hides": spec.get("hides", []),
+                "fits_family": spec.get("fits_family"),
                 "from_base": target["base"],
                 "source": f"{source['name']} / {spec['object']}",
                 "license": source["license"],
@@ -690,6 +705,13 @@ def build_procedural_quadruped(
     import quadruped_builder  # noqa: PLC0415 — Blender-only module beside this file
 
     log(f"building {target['id']} procedurally")
+
+    def make_rig():
+        reset_scene()
+        bpy.context.scene.render.fps = quadruped_builder.FPS
+        return quadruped_builder.build_rig_with_clips()
+
+    borrowed = ensure_clip_library(source, archetype, out_dir, make_rig)
     reset_scene()
     bpy.context.scene.render.fps = quadruped_builder.FPS
     character = source["characters"][target["character"]]
@@ -700,16 +722,12 @@ def build_procedural_quadruped(
         character["shape"], CONTRACT["sheet"], img, sheet_material
     )
     apply_materials(body, img, target["id"], uv_report["hair_faces"])
-    for name, spec in archetype["clips"].items():
-        action = bpy.data.actions.get(name)
-        if action is not None:
-            normalize_clip(action, spec["loop"])
     fwd = add_forward_marker(arm)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     base_path = out_dir / f"{target['id']}.glb"
-    export_glb(base_path, [body, arm, fwd], animations=True)
-    facts = finish_base(base_path, target, source, archetype, uv_report)
+    export_glb(base_path, [body, arm, fwd], animations=False)
+    facts = finish_base(base_path, target, source, archetype, uv_report, borrowed=borrowed)
     entry = {
         "id": f"{target['archetype']}/{target['base']}",
         "file": base_path.name,
@@ -720,6 +738,8 @@ def build_procedural_quadruped(
         "styles": target.get("styles", []),
         "heightM": archetype["variants"][target["variant"]]["height_m"],
         "palette": character["default_palette"],
+        "family": source.get("family", source_slug(source)),
+        "clipsFrom": borrowed["file"],
         "source": f"{source['name']} / {target['character']}",
         "license": source["license"],
         "note": (
@@ -757,6 +777,7 @@ def build_procedural_quadruped(
                 "label": spec["label"],
                 "styles": spec.get("styles", []),
                 "hides": spec.get("hides", []),
+                "fits_family": spec.get("fits_family"),
                 "from_base": target["base"],
                 "source": f"{source['name']} / {part_id}",
                 "license": source["license"],
@@ -796,11 +817,98 @@ def build_procedural_gigi(
         "styles": target.get("styles", []),
         "heightM": archetype["variants"][target["variant"]]["height_m"],
         "palette": character["default_palette"],
+        "family": source.get("family", source_slug(source)),
         "source": f"{source['name']} / {target['character']}",
         "license": source["license"],
         **facts,
     }
     return entry, []
+
+
+def normalize_donor_rig(source: dict, archetype: dict) -> bpy.types.Object:
+    """Import the CC0 donor, keep its skeleton and clips, drop every mesh it ships.
+
+    Shared by the clip library and by every body built on that rig, so the two
+    can never drift: the bones a body is weighted to are the bones the clips
+    animate, because both came out of this function.
+    """
+    rig = load_source(source["rig_source"])
+    rig_file = fetch_source_file(rig, f"{source['rig_character']}.glb")
+    reset_scene()
+    import_glb(rig_file, int(rig.get("fps", 30)))
+    arm = find_armature()
+    keep_objects(arm, set())
+    dropped = drop_bones(arm, rig["drop_bone_patterns"])
+    log(f"dropped {len(dropped)} control bones")
+    rename_bones(arm, rig["bone_map"], archetype["bones"])
+    kept = filter_clips(rig["clip_map"], archetype["clips"])
+    for name, action in kept.items():
+        normalize_clip(action, archetype["clips"][name]["loop"])
+    return arm
+
+
+def clip_library_path(source: dict, out_dir: Path) -> Path:
+    return out_dir / source["clip_library"]
+
+
+def build_clip_library(source: dict, archetype: dict, out_dir: Path, make_rig) -> dict:
+    """The nine clips of one rig, once, in a file with no body.
+
+    Nine clips of 23 bones are ~200 KB — five times a procedural body's
+    geometry — so shipping a copy inside every look would make a new look cost
+    240 KB instead of 40 KB, and rewrite all of them on every rebuild. The
+    bodies name this file in `extras.clips_from`; three.js binds a clip by node
+    name, and every body of this rig has those nodes.
+    """
+    arm = make_rig()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = clip_library_path(source, out_dir)
+    export_glb(path, [arm], animations=True)
+
+    glb = finish_common(gt.read_glb(path))
+    doc = glb.doc
+    clips: dict[str, dict] = {}
+    for name, spec in archetype["clips"].items():
+        anim = gt.clip_by_name(doc, name)
+        if anim is None:
+            raise SystemExit(f"clip library is missing {name!r}")
+        entry: dict = {
+            "duration": round(gt.clip_duration(glb, anim), 4),
+            "loop": bool(spec["loop"]),
+        }
+        if spec.get("stride"):
+            entry["stride_m"] = round(gt.measure_stride(glb, anim, archetype["feet"]), 4)
+        clips[name] = entry
+    doc.setdefault("asset", {})["extras"] = {
+        "jarvis_clips": {
+            "contract": CONTRACT["contract"],
+            "archetype": source["clip_archetype"],
+            "clips": clips,
+            "source": clip_source_credit(source),
+        }
+    }
+    doc["asset"]["generator"] = "Personal Jarvis build_figures.py"
+    gt.write_glb(path, doc, glb.blob)
+    log(f"clip library {path.name}: {path.stat().st_size // 1024} KB, clips {sorted(clips)}")
+    return {"file": path.name, "clips": clips}
+
+
+def clip_source_credit(source: dict) -> str:
+    """Who the clips came from — a CC0 donor, or this repo."""
+    if not source.get("rig_source"):
+        return f"{source['name']} ({source['license']}) / written by script"
+    rig = load_source(source["rig_source"])
+    return f"{rig['name']} ({rig['license']}) / {source['rig_character']}"
+
+
+def ensure_clip_library(source: dict, archetype: dict, out_dir: Path, make_rig) -> dict:
+    """Build the library if it is not beside the bodies yet, else read its facts."""
+    path = clip_library_path(source, out_dir)
+    if path.exists():
+        facts = gt.clips_extras(gt.read_glb(path).doc)
+        if facts and facts.get("contract") == CONTRACT["contract"]:
+            return {"file": path.name, "clips": facts["clips"]}
+    return build_clip_library(source, archetype, out_dir, make_rig)
 
 
 def build_procedural_humanoid(
@@ -816,19 +924,11 @@ def build_procedural_humanoid(
 
     rig = load_source(source["rig_source"])
     character = source["characters"][target["character"]]
-    rig_file = fetch_source_file(rig, f"{source['rig_character']}.glb")
+    borrowed = ensure_clip_library(
+        source, archetype, out_dir, lambda: normalize_donor_rig(source, archetype)
+    )
     log(f"building {target['id']} procedurally on the {source['rig_character']} rig")
-
-    reset_scene()
-    import_glb(rig_file, int(rig.get("fps", 30)))
-    arm = find_armature()
-    keep_objects(arm, set())  # the donor's own meshes go; the rig and clips stay
-    dropped = drop_bones(arm, rig["drop_bone_patterns"])
-    log(f"dropped {len(dropped)} control bones")
-    rename_bones(arm, rig["bone_map"], archetype["bones"])
-    kept = filter_clips(rig["clip_map"], archetype["clips"])
-    for name, action in kept.items():
-        normalize_clip(action, archetype["clips"][name]["loop"])
+    arm = normalize_donor_rig(source, archetype)
 
     sheet_path = CACHE / f"{target['id']}-sheet.png"
     write_sheet(sheet_path, character["default_palette"])
@@ -841,8 +941,8 @@ def build_procedural_humanoid(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     base_path = out_dir / f"{target['id']}.glb"
-    export_glb(base_path, [body, arm, fwd], animations=True)
-    facts = finish_base(base_path, target, source, archetype, uv_report)
+    export_glb(base_path, [body, arm, fwd], animations=False)
+    facts = finish_base(base_path, target, source, archetype, uv_report, borrowed=borrowed)
     entry = {
         "id": f"{target['archetype']}/{target['base']}",
         "file": base_path.name,
@@ -853,6 +953,8 @@ def build_procedural_humanoid(
         "styles": target.get("styles", []),
         "heightM": archetype["variants"][target["variant"]]["height_m"],
         "palette": character["default_palette"],
+        "family": source.get("family", source_slug(source)),
+        "clipsFrom": borrowed["file"],
         "source": f"{source['name']} / {target['character']}",
         "license": source["license"],
         "note": (
@@ -894,6 +996,7 @@ def build_procedural_humanoid(
                 "label": spec["label"],
                 "styles": spec.get("styles", []),
                 "hides": spec.get("hides", []),
+                "fits_family": spec.get("fits_family"),
                 "from_base": target["base"],
                 "source": f"{source['name']} / {part_id}",
                 "license": source["license"],
@@ -905,7 +1008,11 @@ def build_procedural_humanoid(
 
 
 def write_ledger(
-    path: Path, bases: list[dict], parts: list[dict], sources: dict[str, dict]
+    path: Path,
+    bases: list[dict],
+    parts: list[dict],
+    sources: dict[str, dict],
+    libraries: list[dict],
 ) -> None:
     lines = [
         "# Figure assets — provenance ledger",
@@ -927,6 +1034,12 @@ def write_ledger(
     for b in bases:
         lines.append(
             f"| `{b['file']}` | {b['source']} | {b['license']} | {b.get('note') or imported_note} |"
+        )
+    for lib in libraries:
+        lines.append(
+            f"| `{lib['file']}` | {lib['source']} | {lib['license']} | rig imported, IK/control "
+            "bones dropped, 23 deform bones renamed; clips kept/renamed, root XZ zeroed, loops "
+            "closed; every donor mesh deleted — clips only, borrowed by the bodies of this rig |"
         )
     for p in parts:
         lines.append(
@@ -983,11 +1096,28 @@ def main() -> None:
     catalog["bases"] = sorted(bases.values(), key=lambda b: b["id"])
     catalog["parts"] = sorted(parts.values(), key=lambda p: p["id"])
     sources = {t["source"]: load_source(t["source"]) for t in CONTRACT["targets"]}
-    write_ledger(ledger, catalog["bases"], catalog["parts"], sources)
+    # Every clip library a shipped base borrows from, whether this run built it
+    # or found it already beside the bodies.
+    libraries = []
+    for src in sources.values():
+        if not src.get("clip_library"):
+            continue
+        rig = load_source(src["rig_source"]) if src.get("rig_source") else src
+        libraries.append(
+            {
+                "file": src["clip_library"],
+                "source": f"{clip_source_credit(src)} — rig and clips only",
+                "license": rig["license"],
+            }
+        )
+    write_ledger(ledger, catalog["bases"], catalog["parts"], sources, libraries)
     CATALOG_PATH.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
     log(f"catalog: {len(catalog['bases'])} bases, {len(catalog['parts'])} parts")
 
     # The gate runs last, against the regenerated ledger.
+    for lib in libraries:
+        if (out_dir / lib["file"]).exists():
+            run_gate(out_dir / lib["file"], ledger)
     for b in built_bases:
         run_gate(out_dir / b["file"], ledger)
     for p in built_parts:

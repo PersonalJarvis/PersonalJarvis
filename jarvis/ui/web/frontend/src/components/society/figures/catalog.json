@@ -39,6 +39,8 @@
         "eye_white": "#e6ecef",
         "emissive": "#6ff2e3"
       },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Android",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `android`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
@@ -55,6 +57,54 @@
         "work"
       ],
       "height_m": 2.39
+    },
+    {
+      "id": "biped/athlete",
+      "file": "biped-athlete.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "athlete",
+      "label": "Athlete",
+      "styles": [
+        "modern"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#8d5b3f",
+        "skin_shade": "#6f4630",
+        "hair": "#1c1512",
+        "eyes": "#1b2427",
+        "primary": "#e04f5f",
+        "primary_shade": "#2b3441",
+        "secondary": "#f4f6f7",
+        "secondary_shade": "#cfd4d8",
+        "accent": "#f4f6f7",
+        "metal": "#9aa3a8",
+        "leather": "#5b4130",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#f4f6f7",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Athlete",
+      "license": "first-party",
+      "note": "body modelled by humanoid_builder.py (profile `athlete`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
+      "triangles": 348,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.18
     },
     {
       "id": "biped/barbarian",
@@ -85,6 +135,7 @@
         "eye_white": "#e6ecef",
         "emissive": "#ffd166"
       },
+      "family": "kaykit-adventurers",
       "source": "KayKit Character Pack: Adventurers 1.0 / Barbarian",
       "license": "CC0-1.0",
       "triangles": 4045,
@@ -100,6 +151,54 @@
         "work"
       ],
       "height_m": 2.1863
+    },
+    {
+      "id": "biped/blockhead",
+      "file": "biped-blockhead.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "blockhead",
+      "label": "Blockhead",
+      "styles": [
+        "cartoon"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#c98b62",
+        "skin_shade": "#c9926d",
+        "hair": "#3b2a20",
+        "eyes": "#1b2427",
+        "primary": "#7bb26a",
+        "primary_shade": "#588a49",
+        "secondary": "#5d4a3a",
+        "secondary_shade": "#666b71",
+        "accent": "#e0533f",
+        "metal": "#9aa3a8",
+        "leather": "#5b4130",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#3a2f28",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Blockhead",
+      "license": "first-party",
+      "note": "body modelled by humanoid_builder.py (profile `blockhead`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
+      "triangles": 324,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.15
     },
     {
       "id": "biped/casual",
@@ -130,6 +229,8 @@
         "eye_white": "#f4f7f8",
         "emissive": "#ffd166"
       },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Casual",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `casual`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
@@ -176,10 +277,108 @@
         "eye_white": "#ffffff",
         "emissive": "#ffe066"
       },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Chibi",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `chibi`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
       "triangles": 336,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.18
+    },
+    {
+      "id": "biped/dwarf",
+      "file": "biped-dwarf.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "dwarf",
+      "label": "Dwarf",
+      "styles": [
+        "fantasy"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#e0a074",
+        "skin_shade": "#c9926d",
+        "hair": "#a8492a",
+        "eyes": "#1b2427",
+        "primary": "#7a4a2c",
+        "primary_shade": "#5a3520",
+        "secondary": "#4f6b3f",
+        "secondary_shade": "#3a4f2e",
+        "accent": "#d9a441",
+        "metal": "#9aa3a8",
+        "leather": "#4a3223",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#3a2a1e",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Dwarf",
+      "license": "first-party",
+      "note": "body modelled by humanoid_builder.py (profile `dwarf`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
+      "triangles": 336,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.18
+    },
+    {
+      "id": "biped/elf",
+      "file": "biped-elf.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "elf",
+      "label": "Elf",
+      "styles": [
+        "fantasy"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#f2d3b6",
+        "skin_shade": "#d6b195",
+        "hair": "#e6d29a",
+        "eyes": "#1b2427",
+        "primary": "#3f6d52",
+        "primary_shade": "#2b4e39",
+        "secondary": "#6b8f5f",
+        "secondary_shade": "#4d6b44",
+        "accent": "#d9c56b",
+        "metal": "#9aa3a8",
+        "leather": "#5b4130",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#4a3a26",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Elf",
+      "license": "first-party",
+      "note": "body modelled by humanoid_builder.py (profile `elf`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
+      "triangles": 384,
       "clips": [
         "celebrate",
         "idle",
@@ -222,6 +421,7 @@
         "eye_white": "#e6ecef",
         "emissive": "#ffd166"
       },
+      "family": "kaykit-adventurers",
       "source": "KayKit Character Pack: Adventurers 1.0 / Knight",
       "license": "CC0-1.0",
       "triangles": 4148,
@@ -267,6 +467,7 @@
         "eye_white": "#e6ecef",
         "emissive": "#ffd166"
       },
+      "family": "kaykit-adventurers",
       "source": "KayKit Character Pack: Adventurers 1.0 / Mage",
       "license": "CC0-1.0",
       "triangles": 4029,
@@ -282,6 +483,102 @@
         "work"
       ],
       "height_m": 2.2027
+    },
+    {
+      "id": "biped/medic",
+      "file": "biped-medic.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "medic",
+      "label": "Medic",
+      "styles": [
+        "modern"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#f1c4a0",
+        "skin_shade": "#c9926d",
+        "hair": "#6b6b6b",
+        "eyes": "#1b2427",
+        "primary": "#4f8fb0",
+        "primary_shade": "#2b3441",
+        "secondary": "#f6f8f8",
+        "secondary_shade": "#d6dbdd",
+        "accent": "#d2453c",
+        "metal": "#9aa3a8",
+        "leather": "#5b4130",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#241f1c",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Medic",
+      "license": "first-party",
+      "note": "body modelled by humanoid_builder.py (profile `medic`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
+      "triangles": 384,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.18
+    },
+    {
+      "id": "biped/monk",
+      "file": "biped-monk.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "monk",
+      "label": "Monk",
+      "styles": [
+        "fantasy"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#d8a37c",
+        "skin_shade": "#c9926d",
+        "hair": "#3b2a20",
+        "eyes": "#1b2427",
+        "primary": "#8a5a34",
+        "primary_shade": "#66401f",
+        "secondary": "#c4a06a",
+        "secondary_shade": "#666b71",
+        "accent": "#d9a441",
+        "metal": "#9aa3a8",
+        "leather": "#4a3223",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#3a2a1e",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Monk",
+      "license": "first-party",
+      "note": "body modelled by humanoid_builder.py (profile `monk`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
+      "triangles": 336,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.15
     },
     {
       "id": "biped/office",
@@ -312,6 +609,8 @@
         "eye_white": "#f4f7f8",
         "emissive": "#ffd166"
       },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Office",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `office`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
@@ -328,6 +627,54 @@
         "work"
       ],
       "height_m": 2.18
+    },
+    {
+      "id": "biped/pilot",
+      "file": "biped-pilot.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "pilot",
+      "label": "Pilot",
+      "styles": [
+        "scifi"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#e8b48c",
+        "skin_shade": "#c9926d",
+        "hair": "#3b2a20",
+        "eyes": "#1b2427",
+        "primary": "#e8a33d",
+        "primary_shade": "#b57a24",
+        "secondary": "#3b4550",
+        "secondary_shade": "#262d35",
+        "accent": "#e8a33d",
+        "metal": "#b6c0c6",
+        "leather": "#4a3a2c",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#2b2320",
+        "eye_white": "#f4f7f8",
+        "emissive": "#7fdcff"
+      },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Pilot",
+      "license": "first-party",
+      "note": "body modelled by humanoid_builder.py (profile `pilot`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
+      "triangles": 288,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.15
     },
     {
       "id": "biped/rogue",
@@ -358,6 +705,7 @@
         "eye_white": "#e6ecef",
         "emissive": "#ffd166"
       },
+      "family": "kaykit-adventurers",
       "source": "KayKit Character Pack: Adventurers 1.0 / Rogue",
       "license": "CC0-1.0",
       "triangles": 4263,
@@ -373,6 +721,336 @@
         "work"
       ],
       "height_m": 2.187
+    },
+    {
+      "id": "biped/scientist",
+      "file": "biped-scientist.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "scientist",
+      "label": "Scientist",
+      "styles": [
+        "scifi"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#e9c3a3",
+        "skin_shade": "#c9926d",
+        "hair": "#8a8f96",
+        "eyes": "#1b2427",
+        "primary": "#4a7fb0",
+        "primary_shade": "#2b3441",
+        "secondary": "#f6f8f8",
+        "secondary_shade": "#c3c9cc",
+        "accent": "#5ad1c0",
+        "metal": "#9aa3a8",
+        "leather": "#3a3f45",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#2b2f33",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Scientist",
+      "license": "first-party",
+      "note": "body modelled by humanoid_builder.py (profile `scientist`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
+      "triangles": 408,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.18
+    },
+    {
+      "id": "biped/toon",
+      "file": "biped-toon.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "toon",
+      "label": "Toon",
+      "styles": [
+        "cartoon"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#f6cdaa",
+        "skin_shade": "#c9926d",
+        "hair": "#1c1512",
+        "eyes": "#1b2427",
+        "primary": "#d63d47",
+        "primary_shade": "#2b3441",
+        "secondary": "#ffffff",
+        "secondary_shade": "#d9d9d9",
+        "accent": "#f5c542",
+        "metal": "#9aa3a8",
+        "leather": "#5b4130",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#f2b43a",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Toon",
+      "license": "first-party",
+      "note": "body modelled by humanoid_builder.py (profile `toon`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
+      "triangles": 336,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.18
+    },
+    {
+      "id": "biped/trooper",
+      "file": "biped-trooper.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "trooper",
+      "label": "Trooper",
+      "styles": [
+        "scifi"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#e8b48c",
+        "skin_shade": "#c9926d",
+        "hair": "#3b2a20",
+        "eyes": "#1b2427",
+        "primary": "#2b3a4a",
+        "primary_shade": "#1c2733",
+        "secondary": "#e6eaec",
+        "secondary_shade": "#9aa3a8",
+        "accent": "#d84b3a",
+        "metal": "#6f797f",
+        "leather": "#5b4130",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#2b2320",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ff6a4d"
+      },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Trooper",
+      "license": "first-party",
+      "note": "body modelled by humanoid_builder.py (profile `trooper`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
+      "triangles": 288,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.15
+    },
+    {
+      "id": "biped/worker",
+      "file": "biped-worker.glb",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "worker",
+      "label": "Worker",
+      "styles": [
+        "modern"
+      ],
+      "heightM": 1.75,
+      "palette": {
+        "skin": "#d8a37c",
+        "skin_shade": "#c9926d",
+        "hair": "#4a3529",
+        "eyes": "#1b2427",
+        "primary": "#c9d2d8",
+        "primary_shade": "#2b3441",
+        "secondary": "#3f6d9e",
+        "secondary_shade": "#2c4d70",
+        "accent": "#f2b43a",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#b87556",
+        "fur_shade": "#8d4c39",
+        "shoes": "#3a2c22",
+        "eye_white": "#f4f7f8",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-biped",
+      "clipsFrom": "biped-clips.glb",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Worker",
+      "license": "first-party",
+      "note": "body modelled by humanoid_builder.py (profile `worker`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
+      "triangles": 372,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk",
+        "wave",
+        "work"
+      ],
+      "height_m": 2.18
+    },
+    {
+      "id": "quadruped/bear",
+      "file": "quadruped-bear.glb",
+      "archetype": "quadruped",
+      "variant": "default",
+      "base": "bear",
+      "label": "Bear",
+      "styles": [
+        "animal"
+      ],
+      "heightM": 0.9,
+      "palette": {
+        "skin": "#f0b5a8",
+        "skin_shade": "#d29488",
+        "hair": "#b8532a",
+        "eyes": "#1a1210",
+        "primary": "#c25a2a",
+        "primary_shade": "#9a4420",
+        "secondary": "#3a2a20",
+        "secondary_shade": "#d8d0c2",
+        "accent": "#d9a441",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#6b4630",
+        "fur_shade": "#a98157",
+        "shoes": "#2b2320",
+        "eye_white": "#fbf8f2",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-quadruped",
+      "clipsFrom": "quadruped-clips.glb",
+      "source": "Personal Jarvis animals (first-party) / Bear",
+      "license": "first-party",
+      "note": "rig, body and clips written by quadruped_builder.py (shape `bear`); no external source",
+      "triangles": 396,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk"
+      ],
+      "height_m": 0.76
+    },
+    {
+      "id": "quadruped/cat",
+      "file": "quadruped-cat.glb",
+      "archetype": "quadruped",
+      "variant": "default",
+      "base": "cat",
+      "label": "Cat",
+      "styles": [
+        "animal"
+      ],
+      "heightM": 0.9,
+      "palette": {
+        "skin": "#f0b5a8",
+        "skin_shade": "#d29488",
+        "hair": "#b8532a",
+        "eyes": "#3fae6a",
+        "primary": "#c25a2a",
+        "primary_shade": "#9a4420",
+        "secondary": "#f0ece4",
+        "secondary_shade": "#d8d0c2",
+        "accent": "#7fd1a8",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#3c3a42",
+        "fur_shade": "#8e8a96",
+        "shoes": "#2b2320",
+        "eye_white": "#fbf8f2",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-quadruped",
+      "clipsFrom": "quadruped-clips.glb",
+      "source": "Personal Jarvis animals (first-party) / Cat",
+      "license": "first-party",
+      "note": "rig, body and clips written by quadruped_builder.py (shape `cat`); no external source",
+      "triangles": 396,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk"
+      ],
+      "height_m": 0.8
+    },
+    {
+      "id": "quadruped/dog",
+      "file": "quadruped-dog.glb",
+      "archetype": "quadruped",
+      "variant": "default",
+      "base": "dog",
+      "label": "Dog",
+      "styles": [
+        "animal"
+      ],
+      "heightM": 0.9,
+      "palette": {
+        "skin": "#f0b5a8",
+        "skin_shade": "#d29488",
+        "hair": "#b8532a",
+        "eyes": "#2a1d14",
+        "primary": "#c25a2a",
+        "primary_shade": "#9a4420",
+        "secondary": "#f4efe6",
+        "secondary_shade": "#d8d0c2",
+        "accent": "#d24b3a",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#a9793f",
+        "fur_shade": "#e8dcc6",
+        "shoes": "#2b2320",
+        "eye_white": "#fbf8f2",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-quadruped",
+      "clipsFrom": "quadruped-clips.glb",
+      "source": "Personal Jarvis animals (first-party) / Dog",
+      "license": "first-party",
+      "note": "rig, body and clips written by quadruped_builder.py (shape `dog`); no external source",
+      "triangles": 396,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk"
+      ],
+      "height_m": 0.78
     },
     {
       "id": "quadruped/fox",
@@ -403,6 +1081,8 @@
         "eye_white": "#fbf8f2",
         "emissive": "#ffd166"
       },
+      "family": "jarvis-quadruped",
+      "clipsFrom": "quadruped-clips.glb",
       "source": "Personal Jarvis animals (first-party) / Fox",
       "license": "first-party",
       "note": "rig, body and clips written by quadruped_builder.py (shape `fox`); no external source",
@@ -417,6 +1097,98 @@
         "walk"
       ],
       "height_m": 0.88
+    },
+    {
+      "id": "quadruped/rabbit",
+      "file": "quadruped-rabbit.glb",
+      "archetype": "quadruped",
+      "variant": "default",
+      "base": "rabbit",
+      "label": "Rabbit",
+      "styles": [
+        "animal"
+      ],
+      "heightM": 0.9,
+      "palette": {
+        "skin": "#f0b5b8",
+        "skin_shade": "#d29488",
+        "hair": "#b8532a",
+        "eyes": "#4a2e2a",
+        "primary": "#c25a2a",
+        "primary_shade": "#9a4420",
+        "secondary": "#f6f2ea",
+        "secondary_shade": "#d8d0c2",
+        "accent": "#e8a0b0",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#d9cfc2",
+        "fur_shade": "#f6f2ea",
+        "shoes": "#2b2320",
+        "eye_white": "#fbf8f2",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-quadruped",
+      "clipsFrom": "quadruped-clips.glb",
+      "source": "Personal Jarvis animals (first-party) / Rabbit",
+      "license": "first-party",
+      "note": "rig, body and clips written by quadruped_builder.py (shape `rabbit`); no external source",
+      "triangles": 396,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk"
+      ],
+      "height_m": 1.18
+    },
+    {
+      "id": "quadruped/wolf",
+      "file": "quadruped-wolf.glb",
+      "archetype": "quadruped",
+      "variant": "default",
+      "base": "wolf",
+      "label": "Wolf",
+      "styles": [
+        "animal"
+      ],
+      "heightM": 0.9,
+      "palette": {
+        "skin": "#f0b5a8",
+        "skin_shade": "#d29488",
+        "hair": "#b8532a",
+        "eyes": "#d8c24a",
+        "primary": "#c25a2a",
+        "primary_shade": "#9a4420",
+        "secondary": "#e4e8ec",
+        "secondary_shade": "#d8d0c2",
+        "accent": "#8fb8d8",
+        "metal": "#9aa3a8",
+        "leather": "#6b4a33",
+        "fur": "#6d7580",
+        "fur_shade": "#c6ccd2",
+        "shoes": "#2b2320",
+        "eye_white": "#fbf8f2",
+        "emissive": "#ffd166"
+      },
+      "family": "jarvis-quadruped",
+      "clipsFrom": "quadruped-clips.glb",
+      "source": "Personal Jarvis animals (first-party) / Wolf",
+      "license": "first-party",
+      "note": "rig, body and clips written by quadruped_builder.py (shape `wolf`); no external source",
+      "triangles": 396,
+      "clips": [
+        "celebrate",
+        "idle",
+        "run",
+        "sit",
+        "sleep",
+        "talk",
+        "walk"
+      ],
+      "height_m": 0.86
     },
     {
       "id": "spirit/gigi",
@@ -447,6 +1219,7 @@
         "eye_white": "#ffffff",
         "emissive": "#ffffff"
       },
+      "family": "gigi",
       "source": "Gigi mascot (first-party) / Gigi",
       "license": "first-party",
       "triangles": 3540,
@@ -475,6 +1248,7 @@
         "scifi"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "office",
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / back-backpack",
       "license": "first-party",
@@ -484,6 +1258,52 @@
       },
       "triangles": 48,
       "two_sided": false
+    },
+    {
+      "id": "back-blanket",
+      "file": "parts/quadruped/back-blanket.glb",
+      "archetype": "quadruped",
+      "slot": "back",
+      "attach": "chest",
+      "label": "Blanket",
+      "styles": [
+        "animal"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "fox",
+      "source": "Personal Jarvis animals (first-party) / back-blanket",
+      "license": "first-party",
+      "palette_cells": {
+        "primary": 6,
+        "accent": 6
+      },
+      "triangles": 24,
+      "two_sided": false
+    },
+    {
+      "id": "back-cloak",
+      "file": "parts/biped/back-cloak.glb",
+      "archetype": "biped",
+      "slot": "back",
+      "attach": "chest",
+      "label": "Cloak",
+      "styles": [
+        "fantasy",
+        "cartoon",
+        "scifi"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / back-cloak",
+      "license": "first-party",
+      "palette_cells": {
+        "primary_shade": 6,
+        "accent": 6
+      },
+      "triangles": 24,
+      "two_sided": true
     },
     {
       "id": "back-fur-cape",
@@ -496,6 +1316,7 @@
         "fantasy"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "barbarian",
       "source": "KayKit Character Pack: Adventurers 1.0 / Barbarian_Cape",
       "license": "CC0-1.0",
@@ -504,6 +1325,29 @@
       },
       "triangles": 78,
       "two_sided": true
+    },
+    {
+      "id": "back-jetpack",
+      "file": "parts/biped/back-jetpack.glb",
+      "archetype": "biped",
+      "slot": "back",
+      "attach": "chest",
+      "label": "Jetpack",
+      "styles": [
+        "scifi"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / back-jetpack",
+      "license": "first-party",
+      "palette_cells": {
+        "metal": 12,
+        "emissive": 6,
+        "leather": 12
+      },
+      "triangles": 60,
+      "two_sided": false
     },
     {
       "id": "back-knight-cape",
@@ -516,6 +1360,7 @@
         "fantasy"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "knight",
       "source": "KayKit Character Pack: Adventurers 1.0 / Knight_Cape",
       "license": "CC0-1.0",
@@ -536,6 +1381,7 @@
         "fantasy"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "mage",
       "source": "KayKit Character Pack: Adventurers 1.0 / Mage_Cape",
       "license": "CC0-1.0",
@@ -544,6 +1390,29 @@
       },
       "triangles": 84,
       "two_sided": true
+    },
+    {
+      "id": "back-quiver",
+      "file": "parts/biped/back-quiver.glb",
+      "archetype": "biped",
+      "slot": "back",
+      "attach": "chest",
+      "label": "Quiver",
+      "styles": [
+        "fantasy",
+        "cartoon"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / back-quiver",
+      "license": "first-party",
+      "palette_cells": {
+        "leather": 12,
+        "secondary_shade": 6
+      },
+      "triangles": 36,
+      "two_sided": false
     },
     {
       "id": "back-rogue-cape",
@@ -556,6 +1425,7 @@
         "fantasy"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "rogue",
       "source": "KayKit Character Pack: Adventurers 1.0 / Rogue_Cape",
       "license": "CC0-1.0",
@@ -564,6 +1434,98 @@
       },
       "triangles": 84,
       "two_sided": true
+    },
+    {
+      "id": "back-saddlebag",
+      "file": "parts/quadruped/back-saddlebag.glb",
+      "archetype": "quadruped",
+      "slot": "back",
+      "attach": "chest",
+      "label": "Saddle bag",
+      "styles": [
+        "animal"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "fox",
+      "source": "Personal Jarvis animals (first-party) / back-saddlebag",
+      "license": "first-party",
+      "palette_cells": {
+        "leather": 12,
+        "secondary_shade": 6
+      },
+      "triangles": 36,
+      "two_sided": false
+    },
+    {
+      "id": "back-satchel",
+      "file": "parts/biped/back-satchel.glb",
+      "archetype": "biped",
+      "slot": "back",
+      "attach": "chest",
+      "label": "Satchel",
+      "styles": [
+        "modern",
+        "fantasy",
+        "cartoon"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / back-satchel",
+      "license": "first-party",
+      "palette_cells": {
+        "leather": 12,
+        "secondary_shade": 6
+      },
+      "triangles": 36,
+      "two_sided": false
+    },
+    {
+      "id": "belt-sash",
+      "file": "parts/biped/belt-sash.glb",
+      "archetype": "biped",
+      "slot": "belt",
+      "attach": "hips",
+      "label": "Sash",
+      "styles": [
+        "fantasy",
+        "cartoon"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / belt-sash",
+      "license": "first-party",
+      "palette_cells": {
+        "accent": 12
+      },
+      "triangles": 24,
+      "two_sided": false
+    },
+    {
+      "id": "belt-toolbelt",
+      "file": "parts/biped/belt-toolbelt.glb",
+      "archetype": "biped",
+      "slot": "belt",
+      "attach": "hips",
+      "label": "Tool belt",
+      "styles": [
+        "modern",
+        "scifi",
+        "cartoon"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / belt-toolbelt",
+      "license": "first-party",
+      "palette_cells": {
+        "leather": 12,
+        "metal": 6
+      },
+      "triangles": 36,
+      "two_sided": false
     },
     {
       "id": "collar-band",
@@ -576,6 +1538,7 @@
         "animal"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "fox",
       "source": "Personal Jarvis animals (first-party) / collar-band",
       "license": "first-party",
@@ -584,6 +1547,172 @@
         "accent": 6
       },
       "triangles": 24,
+      "two_sided": false
+    },
+    {
+      "id": "collar-bandana",
+      "file": "parts/quadruped/collar-bandana.glb",
+      "archetype": "quadruped",
+      "slot": "collar",
+      "attach": "neck",
+      "label": "Bandana",
+      "styles": [
+        "animal"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "fox",
+      "source": "Personal Jarvis animals (first-party) / collar-bandana",
+      "license": "first-party",
+      "palette_cells": {
+        "accent": 12
+      },
+      "triangles": 24,
+      "two_sided": false
+    },
+    {
+      "id": "collar-scarf",
+      "file": "parts/quadruped/collar-scarf.glb",
+      "archetype": "quadruped",
+      "slot": "collar",
+      "attach": "neck",
+      "label": "Scarf",
+      "styles": [
+        "animal"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "fox",
+      "source": "Personal Jarvis animals (first-party) / collar-scarf",
+      "license": "first-party",
+      "palette_cells": {
+        "primary": 6,
+        "primary_shade": 6
+      },
+      "triangles": 24,
+      "two_sided": false
+    },
+    {
+      "id": "face_extra-glasses",
+      "file": "parts/biped/face_extra-glasses.glb",
+      "archetype": "biped",
+      "slot": "face_extra",
+      "attach": "head",
+      "label": "Glasses",
+      "styles": [
+        "modern",
+        "scifi",
+        "cartoon",
+        "fantasy"
+      ],
+      "hides": [],
+      "fits_family": "jarvis-biped",
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / face_extra-glasses",
+      "license": "first-party",
+      "palette_cells": {
+        "metal": 30
+      },
+      "triangles": 60,
+      "two_sided": false
+    },
+    {
+      "id": "face_extra-respirator",
+      "file": "parts/biped/face_extra-respirator.glb",
+      "archetype": "biped",
+      "slot": "face_extra",
+      "attach": "head",
+      "label": "Respirator",
+      "styles": [
+        "scifi",
+        "modern"
+      ],
+      "hides": [],
+      "fits_family": "jarvis-biped",
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / face_extra-respirator",
+      "license": "first-party",
+      "palette_cells": {
+        "metal": 6,
+        "accent": 6,
+        "leather": 6
+      },
+      "triangles": 36,
+      "two_sided": false
+    },
+    {
+      "id": "face_extra-shades",
+      "file": "parts/biped/face_extra-shades.glb",
+      "archetype": "biped",
+      "slot": "face_extra",
+      "attach": "head",
+      "label": "Shades",
+      "styles": [
+        "modern",
+        "cartoon",
+        "scifi",
+        "fantasy"
+      ],
+      "hides": [],
+      "fits_family": "jarvis-biped",
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / face_extra-shades",
+      "license": "first-party",
+      "palette_cells": {
+        "eyes": 6,
+        "secondary": 6
+      },
+      "triangles": 24,
+      "two_sided": false
+    },
+    {
+      "id": "hand_l-clipboard",
+      "file": "parts/biped/hand_l-clipboard.glb",
+      "archetype": "biped",
+      "slot": "hand_l",
+      "attach": "handslot_l",
+      "label": "Clipboard",
+      "styles": [
+        "modern",
+        "scifi",
+        "cartoon",
+        "fantasy"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / hand_l-clipboard",
+      "license": "first-party",
+      "palette_cells": {
+        "leather": 6,
+        "secondary": 6,
+        "metal": 6
+      },
+      "triangles": 36,
+      "two_sided": false
+    },
+    {
+      "id": "hand_l-lantern",
+      "file": "parts/biped/hand_l-lantern.glb",
+      "archetype": "biped",
+      "slot": "hand_l",
+      "attach": "handslot_l",
+      "label": "Lantern",
+      "styles": [
+        "fantasy",
+        "modern",
+        "cartoon"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / hand_l-lantern",
+      "license": "first-party",
+      "palette_cells": {
+        "emissive": 6,
+        "metal": 12
+      },
+      "triangles": 36,
       "two_sided": false
     },
     {
@@ -597,6 +1726,7 @@
         "fantasy"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "knight",
       "source": "KayKit Character Pack: Adventurers 1.0 / Round_Shield",
       "license": "CC0-1.0",
@@ -618,6 +1748,7 @@
         "fantasy"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "mage",
       "source": "KayKit Character Pack: Adventurers 1.0 / Spellbook",
       "license": "CC0-1.0",
@@ -639,9 +1770,11 @@
       "label": "Tablet",
       "styles": [
         "modern",
-        "scifi"
+        "scifi",
+        "cartoon"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "office",
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / hand_l-tablet",
       "license": "first-party",
@@ -663,6 +1796,7 @@
         "fantasy"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "barbarian",
       "source": "KayKit Character Pack: Adventurers 1.0 / Barbarian_Round_Shield",
       "license": "CC0-1.0",
@@ -686,6 +1820,7 @@
         "fantasy"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "barbarian",
       "source": "KayKit Character Pack: Adventurers 1.0 / 1H_Axe",
       "license": "CC0-1.0",
@@ -695,6 +1830,30 @@
         "metal": 82
       },
       "triangles": 274,
+      "two_sided": false
+    },
+    {
+      "id": "hand_r-broom",
+      "file": "parts/biped/hand_r-broom.glb",
+      "archetype": "biped",
+      "slot": "hand_r",
+      "attach": "handslot_r",
+      "label": "Broom",
+      "styles": [
+        "modern",
+        "cartoon",
+        "fantasy"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / hand_r-broom",
+      "license": "first-party",
+      "palette_cells": {
+        "leather": 6,
+        "accent": 6
+      },
+      "triangles": 24,
       "two_sided": false
     },
     {
@@ -708,6 +1867,7 @@
         "fantasy"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "rogue",
       "source": "KayKit Character Pack: Adventurers 1.0 / Knife",
       "license": "CC0-1.0",
@@ -732,6 +1892,7 @@
         "scifi"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "barbarian",
       "source": "KayKit Character Pack: Adventurers 1.0 / Mug",
       "license": "CC0-1.0",
@@ -741,6 +1902,30 @@
         "metal": 198
       },
       "triangles": 426,
+      "two_sided": false
+    },
+    {
+      "id": "hand_r-scanner",
+      "file": "parts/biped/hand_r-scanner.glb",
+      "archetype": "biped",
+      "slot": "hand_r",
+      "attach": "handslot_r",
+      "label": "Scanner",
+      "styles": [
+        "scifi",
+        "modern"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / hand_r-scanner",
+      "license": "first-party",
+      "palette_cells": {
+        "primary_shade": 6,
+        "metal": 6,
+        "emissive": 6
+      },
+      "triangles": 36,
       "two_sided": false
     },
     {
@@ -754,6 +1939,7 @@
         "fantasy"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "mage",
       "source": "KayKit Character Pack: Adventurers 1.0 / 2H_Staff",
       "license": "CC0-1.0",
@@ -776,6 +1962,7 @@
         "fantasy"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "knight",
       "source": "KayKit Character Pack: Adventurers 1.0 / 1H_Sword",
       "license": "CC0-1.0",
@@ -784,6 +1971,30 @@
         "metal": 220
       },
       "triangles": 300,
+      "two_sided": false
+    },
+    {
+      "id": "hand_r-torch",
+      "file": "parts/biped/hand_r-torch.glb",
+      "archetype": "biped",
+      "slot": "hand_r",
+      "attach": "handslot_r",
+      "label": "Torch",
+      "styles": [
+        "fantasy",
+        "cartoon",
+        "scifi"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / hand_r-torch",
+      "license": "first-party",
+      "palette_cells": {
+        "leather": 6,
+        "emissive": 6
+      },
+      "triangles": 24,
       "two_sided": false
     },
     {
@@ -799,6 +2010,7 @@
         "scifi"
       ],
       "hides": [],
+      "fits_family": null,
       "from_base": "office",
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / hand_r-wrench",
       "license": "first-party",
@@ -807,6 +2019,54 @@
         "secondary_shade": 6
       },
       "triangles": 24,
+      "two_sided": false
+    },
+    {
+      "id": "headgear-antlers",
+      "file": "parts/quadruped/headgear-antlers.glb",
+      "archetype": "quadruped",
+      "slot": "headgear",
+      "attach": "head",
+      "label": "Antlers",
+      "styles": [
+        "animal"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "fox",
+      "source": "Personal Jarvis animals (first-party) / headgear-antlers",
+      "license": "first-party",
+      "palette_cells": {
+        "leather": 24
+      },
+      "triangles": 48,
+      "two_sided": false
+    },
+    {
+      "id": "headgear-beanie",
+      "file": "parts/biped/headgear-beanie.glb",
+      "archetype": "biped",
+      "slot": "headgear",
+      "attach": "head",
+      "label": "Beanie",
+      "styles": [
+        "modern",
+        "cartoon",
+        "fantasy"
+      ],
+      "hides": [
+        "hair"
+      ],
+      "fits_family": "jarvis-biped",
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / headgear-beanie",
+      "license": "first-party",
+      "palette_cells": {
+        "primary": 6,
+        "primary_shade": 6,
+        "accent": 6
+      },
+      "triangles": 36,
       "two_sided": false
     },
     {
@@ -824,6 +2084,7 @@
       "hides": [
         "hair"
       ],
+      "fits_family": "jarvis-biped",
       "from_base": "office",
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / headgear-cap",
       "license": "first-party",
@@ -831,6 +2092,78 @@
         "primary": 12,
         "primary_shade": 6,
         "accent": 6
+      },
+      "triangles": 48,
+      "two_sided": false
+    },
+    {
+      "id": "headgear-crown",
+      "file": "parts/biped/headgear-crown.glb",
+      "archetype": "biped",
+      "slot": "headgear",
+      "attach": "head",
+      "label": "Crown",
+      "styles": [
+        "fantasy",
+        "cartoon"
+      ],
+      "hides": [],
+      "fits_family": "jarvis-biped",
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / headgear-crown",
+      "license": "first-party",
+      "palette_cells": {
+        "accent": 24,
+        "emissive": 6
+      },
+      "triangles": 60,
+      "two_sided": false
+    },
+    {
+      "id": "headgear-hardhat",
+      "file": "parts/biped/headgear-hardhat.glb",
+      "archetype": "biped",
+      "slot": "headgear",
+      "attach": "head",
+      "label": "Hard hat",
+      "styles": [
+        "modern",
+        "scifi"
+      ],
+      "hides": [
+        "hair"
+      ],
+      "fits_family": "jarvis-biped",
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / headgear-hardhat",
+      "license": "first-party",
+      "palette_cells": {
+        "accent": 12,
+        "primary_shade": 6
+      },
+      "triangles": 36,
+      "two_sided": false
+    },
+    {
+      "id": "headgear-headset",
+      "file": "parts/biped/headgear-headset.glb",
+      "archetype": "biped",
+      "slot": "headgear",
+      "attach": "head",
+      "label": "Headset",
+      "styles": [
+        "modern",
+        "scifi",
+        "cartoon"
+      ],
+      "hides": [],
+      "fits_family": "jarvis-biped",
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / headgear-headset",
+      "license": "first-party",
+      "palette_cells": {
+        "primary_shade": 12,
+        "metal": 12
       },
       "triangles": 48,
       "two_sided": false
@@ -848,6 +2181,7 @@
       "hides": [
         "hair"
       ],
+      "fits_family": null,
       "from_base": "barbarian",
       "source": "KayKit Character Pack: Adventurers 1.0 / Barbarian_Hat",
       "license": "CC0-1.0",
@@ -872,6 +2206,7 @@
       "hides": [
         "hair"
       ],
+      "fits_family": null,
       "from_base": "knight",
       "source": "KayKit Character Pack: Adventurers 1.0 / Knight_Helmet",
       "license": "CC0-1.0",
@@ -894,6 +2229,7 @@
       "hides": [
         "hair"
       ],
+      "fits_family": null,
       "from_base": "mage",
       "source": "KayKit Character Pack: Adventurers 1.0 / Mage_Hat",
       "license": "CC0-1.0",
@@ -903,6 +2239,170 @@
         "metal": 64
       },
       "triangles": 396,
+      "two_sided": false
+    },
+    {
+      "id": "headgear-pet-cap",
+      "file": "parts/quadruped/headgear-pet-cap.glb",
+      "archetype": "quadruped",
+      "slot": "headgear",
+      "attach": "head",
+      "label": "Cap",
+      "styles": [
+        "animal"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "fox",
+      "source": "Personal Jarvis animals (first-party) / headgear-pet-cap",
+      "license": "first-party",
+      "palette_cells": {
+        "primary": 6,
+        "primary_shade": 6
+      },
+      "triangles": 24,
+      "two_sided": false
+    },
+    {
+      "id": "headgear-space-helmet",
+      "file": "parts/biped/headgear-space-helmet.glb",
+      "archetype": "biped",
+      "slot": "headgear",
+      "attach": "head",
+      "label": "Space helmet",
+      "styles": [
+        "scifi"
+      ],
+      "hides": [
+        "hair"
+      ],
+      "fits_family": "jarvis-biped",
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / headgear-space-helmet",
+      "license": "first-party",
+      "palette_cells": {
+        "secondary": 6,
+        "emissive": 6,
+        "metal": 6
+      },
+      "triangles": 36,
+      "two_sided": false
+    },
+    {
+      "id": "headgear-top-hat",
+      "file": "parts/biped/headgear-top-hat.glb",
+      "archetype": "biped",
+      "slot": "headgear",
+      "attach": "head",
+      "label": "Top hat",
+      "styles": [
+        "cartoon",
+        "modern"
+      ],
+      "hides": [
+        "hair"
+      ],
+      "fits_family": "jarvis-biped",
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / headgear-top-hat",
+      "license": "first-party",
+      "palette_cells": {
+        "primary": 12,
+        "accent": 6
+      },
+      "triangles": 36,
+      "two_sided": false
+    },
+    {
+      "id": "tail_extra-bow",
+      "file": "parts/quadruped/tail_extra-bow.glb",
+      "archetype": "quadruped",
+      "slot": "tail_extra",
+      "attach": "tail_2",
+      "label": "Bow",
+      "styles": [
+        "animal"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "fox",
+      "source": "Personal Jarvis animals (first-party) / tail_extra-bow",
+      "license": "first-party",
+      "palette_cells": {
+        "accent": 18
+      },
+      "triangles": 36,
+      "two_sided": false
+    },
+    {
+      "id": "torso_over-apron",
+      "file": "parts/biped/torso_over-apron.glb",
+      "archetype": "biped",
+      "slot": "torso_over",
+      "attach": "chest",
+      "label": "Apron",
+      "styles": [
+        "modern",
+        "fantasy",
+        "cartoon",
+        "scifi"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / torso_over-apron",
+      "license": "first-party",
+      "palette_cells": {
+        "secondary": 18
+      },
+      "triangles": 36,
+      "two_sided": false
+    },
+    {
+      "id": "torso_over-plate",
+      "file": "parts/biped/torso_over-plate.glb",
+      "archetype": "biped",
+      "slot": "torso_over",
+      "attach": "chest",
+      "label": "Chest plate",
+      "styles": [
+        "scifi",
+        "fantasy"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / torso_over-plate",
+      "license": "first-party",
+      "palette_cells": {
+        "metal": 12,
+        "accent": 6
+      },
+      "triangles": 36,
+      "two_sided": false
+    },
+    {
+      "id": "torso_over-vest",
+      "file": "parts/biped/torso_over-vest.glb",
+      "archetype": "biped",
+      "slot": "torso_over",
+      "attach": "chest",
+      "label": "Vest",
+      "styles": [
+        "modern",
+        "fantasy",
+        "scifi",
+        "cartoon"
+      ],
+      "hides": [],
+      "fits_family": null,
+      "from_base": "office",
+      "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / torso_over-vest",
+      "license": "first-party",
+      "palette_cells": {
+        "leather": 18
+      },
+      "triangles": 36,
       "two_sided": false
     }
   ]

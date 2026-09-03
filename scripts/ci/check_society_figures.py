@@ -91,9 +91,12 @@ def check_file(
     # 1 — extras
     figure = gt.figure_extras(doc)
     part = gt.part_extras(doc)
-    extras = figure or part
+    library = gt.clips_extras(doc)
+    extras = figure or part or library
     if extras is None:
-        return ["no asset.extras.jarvis_figure / jarvis_part block (contract §4.2)"]
+        return [
+            "no asset.extras.jarvis_figure / jarvis_part / jarvis_clips block (contract §4.2)"
+        ]
     if extras.get("contract") != contract["contract"]:
         problems.append(f"contract version {extras.get('contract')!r} != {contract['contract']}")
     archetype_name = extras.get("archetype")
@@ -256,7 +259,30 @@ def check_file(
     by_name = {a.get("name"): a for a in anims}
     if part and anims:
         problems.append(f"part carries {len(anims)} animations; parts have none")
-    if figure:
+    borrowed = figure.get("clips_from") if figure else None
+    if borrowed:
+        # The body ships no clips of its own; the library it names must exist,
+        # sit beside it, and be a library for the same archetype.
+        if anims:
+            problems.append(f"figure borrows clips from {borrowed!r} but also carries {len(anims)}")
+        lib_path = path.parent / borrowed
+        if not lib_path.exists():
+            problems.append(f"clips_from {borrowed!r} is not beside this file")
+        else:
+            try:
+                lib = gt.clips_extras(gt.read_glb(lib_path).doc)
+            except (ValueError, OSError) as exc:
+                lib = None
+                problems.append(f"clips_from {borrowed!r} unreadable: {exc}")
+            if lib is not None and lib.get("archetype") != archetype_name:
+                problems.append(
+                    f"clips_from {borrowed!r} is a {lib.get('archetype')!r} library, "
+                    f"not {archetype_name!r}"
+                )
+        missing = set(archetype["clips"]) - set(figure.get("clips", {}))
+        if missing:
+            problems.append(f"extras.clips is missing facts for {sorted(missing)}")
+    if (figure and not borrowed) or library:
         for clip, spec in archetype["clips"].items():
             anim = by_name.get(clip)
             if anim is None:
@@ -301,7 +327,8 @@ def check_file(
                         )
                         break
             if spec.get("stride"):
-                recorded = float(figure.get("clips", {}).get(clip, {}).get("stride_m", 0) or 0)
+                facts = (figure or library).get("clips", {})
+                recorded = float(facts.get(clip, {}).get("stride_m", 0) or 0)
                 measured = gt.measure_stride(glb, anim, archetype["feet"])
                 if recorded <= 0:
                     problems.append(f"clip {clip!r} has no stride_m in extras")

@@ -28,6 +28,18 @@ export interface CatalogBase {
   triangles: number;
   clips: string[];
   height_m: number;
+  /**
+   * Which wardrobe fits this body. A cap cut for one crown exposes the top of
+   * a wider head, and two bodies of different families now share a style, so
+   * the style tag alone can no longer keep them apart.
+   */
+  family?: string;
+  /**
+   * The file this base borrows its animation from, beside it in the same
+   * folder. Nine clips of a 23-bone rig outweigh a procedural body five to
+   * one, so every look built on one rig shares a single copy.
+   */
+  clipsFrom?: string;
 }
 
 export interface CatalogPart {
@@ -46,6 +58,12 @@ export interface CatalogPart {
   triangles: number;
   /** Flat cloth (a cape) has no back face of its own; the runtime renders it from both sides. */
   two_sided?: boolean;
+  /**
+   * Set when the piece is measured against one body family — a hat, a pair of
+   * glasses. Null on anything that hangs off `chest`, `hips` or a handslot,
+   * which every biped of the rig places identically.
+   */
+  fits_family?: string | null;
 }
 
 export interface FigureCatalog {
@@ -77,6 +95,8 @@ const LEGACY_BASES: Record<string, string> = { medium: "rogue", small: "rogue", 
 
 export interface FigureAsset {
   url: string;
+  /** Where the clips live, when the base does not carry its own. */
+  clipsUrl: string | null;
   archetype: FigureArchetype;
   base: string;
   defaultHeightM: number;
@@ -113,6 +133,7 @@ export function figureAssetFor(
   if (recipe.model) {
     return {
       url: recipe.model,
+      clipsUrl: null,
       archetype: recipe.archetype,
       base: recipe.base,
       defaultHeightM: recipe.heightM ?? 1.75,
@@ -126,6 +147,7 @@ export function figureAssetFor(
   if (!url) return null;
   return {
     url,
+    clipsUrl: entry.clipsFrom ? urlForFile(entry.clipsFrom) : null,
     archetype: entry.archetype,
     base: entry.base,
     defaultHeightM: entry.heightM,
@@ -165,6 +187,16 @@ export function partAssetsFor(
 }
 
 /**
+ * Styles nobody creates into, whatever the catalog holds.
+ *
+ * `spirit` is Jarvis. There is one of him, he stands on the map, and the
+ * base stays in the catalog so his card and his walker still render — but a
+ * style with a cast of one is a label, not a choice, so the creator does not
+ * offer it (maintainer, 2026-09-02).
+ */
+const RESERVED_STYLES = new Set(["spirit"]);
+
+/**
  * Styles that have at least one base today, in catalog order; the creator
  * disables the rest. `custom` is the import lane and never appears here — it
  * has no catalog base by definition; the creator enables it once a person's
@@ -172,7 +204,12 @@ export function partAssetsFor(
  */
 export function stylesWithBases(): string[] {
   const live = new Set(CATALOG.bases.flatMap((b) => b.styles));
-  return Object.keys(CATALOG.styles).filter((s) => live.has(s));
+  return Object.keys(CATALOG.styles).filter((s) => live.has(s) && !RESERVED_STYLES.has(s));
+}
+
+/** True for a style the creator never lists — reserved, or the import lane. */
+export function isReservedStyle(style: string): boolean {
+  return RESERVED_STYLES.has(style);
 }
 
 /**
@@ -190,10 +227,20 @@ export function partsForSlot(
   slot: string,
   archetype: FigureArchetype = "biped",
   style: string | null = null,
+  family: string | null = null,
 ): CatalogPart[] {
   return CATALOG.parts.filter(
-    (p) => p.archetype === archetype && p.slot === slot && (!style || p.styles.includes(style)),
+    (p) =>
+      p.archetype === archetype &&
+      p.slot === slot &&
+      (!style || p.styles.includes(style)) &&
+      fitsFamily(p, family),
   );
+}
+
+/** A part with no family fits every body of its archetype; one with a family fits only that family. */
+export function fitsFamily(part: CatalogPart, family: string | null): boolean {
+  return !part.fits_family || !family || part.fits_family === family;
 }
 
 /**
@@ -201,11 +248,16 @@ export function partsForSlot(
  * order the catalog lists them. A slot with nothing to offer is not a row of
  * one "None" button — it is not a row at all.
  */
-export function slotsWithParts(archetype: FigureArchetype = "biped", style: string | null = null): string[] {
+export function slotsWithParts(
+  archetype: FigureArchetype = "biped",
+  style: string | null = null,
+  family: string | null = null,
+): string[] {
   const seen: string[] = [];
   for (const p of CATALOG.parts) {
     if (p.archetype !== archetype) continue;
     if (style && !p.styles.includes(style)) continue;
+    if (!fitsFamily(p, family)) continue;
     if (!seen.includes(p.slot)) seen.push(p.slot);
   }
   return seen;
@@ -220,12 +272,14 @@ export function keepablePartsFor(
   parts: Record<string, string>,
   archetype: FigureArchetype,
   style: string | null,
+  family: string | null = null,
 ): Record<string, string> {
   const kept: Record<string, string> = {};
   for (const [slot, id] of Object.entries(parts ?? {})) {
     const part = CATALOG.parts.find((p) => p.id === id);
     if (!part || part.archetype !== archetype || part.slot !== slot) continue;
     if (style && !part.styles.includes(style)) continue;
+    if (!fitsFamily(part, family)) continue;
     kept[slot] = id;
   }
   return kept;

@@ -2,6 +2,7 @@
   "$comment": "KayKit Character Pack: Adventurers 1.0 by Kay Lousberg — CC0 (LICENSE.txt in the repo). The biped skeleton + clip base and the first four bodies and fifteen parts (character-pipeline.md §8 route A, §11). Every file is fetched by URL into scripts/figures/cache/ and verified by sha256 before the build touches it.",
   "name": "KayKit Character Pack: Adventurers 1.0",
   "author": "Kay Lousberg (kaylousberg.com)",
+  "family": "kaykit-adventurers",
   "license": "CC0-1.0",
   "license_url": "https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0/blob/main/LICENSE.txt",
   "base_url": "https://raw.githubusercontent.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0/main/addons/kaykit_character_pack_adventures/Characters/gltf/",

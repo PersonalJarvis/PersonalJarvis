@@ -477,6 +477,138 @@
       ]
     },
     {
+      "id": "biped-worker",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "worker",
+      "source": "jarvis-humanoids",
+      "character": "Worker",
+      "label": "Worker",
+      "styles": [
+        "modern"
+      ]
+    },
+    {
+      "id": "biped-athlete",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "athlete",
+      "source": "jarvis-humanoids",
+      "character": "Athlete",
+      "label": "Athlete",
+      "styles": [
+        "modern"
+      ]
+    },
+    {
+      "id": "biped-medic",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "medic",
+      "source": "jarvis-humanoids",
+      "character": "Medic",
+      "label": "Medic",
+      "styles": [
+        "modern"
+      ]
+    },
+    {
+      "id": "biped-toon",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "toon",
+      "source": "jarvis-humanoids",
+      "character": "Toon",
+      "label": "Toon",
+      "styles": [
+        "cartoon"
+      ]
+    },
+    {
+      "id": "biped-blockhead",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "blockhead",
+      "source": "jarvis-humanoids",
+      "character": "Blockhead",
+      "label": "Blockhead",
+      "styles": [
+        "cartoon"
+      ]
+    },
+    {
+      "id": "biped-pilot",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "pilot",
+      "source": "jarvis-humanoids",
+      "character": "Pilot",
+      "label": "Pilot",
+      "styles": [
+        "scifi"
+      ]
+    },
+    {
+      "id": "biped-trooper",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "trooper",
+      "source": "jarvis-humanoids",
+      "character": "Trooper",
+      "label": "Trooper",
+      "styles": [
+        "scifi"
+      ]
+    },
+    {
+      "id": "biped-scientist",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "scientist",
+      "source": "jarvis-humanoids",
+      "character": "Scientist",
+      "label": "Scientist",
+      "styles": [
+        "scifi"
+      ]
+    },
+    {
+      "id": "biped-dwarf",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "dwarf",
+      "source": "jarvis-humanoids",
+      "character": "Dwarf",
+      "label": "Dwarf",
+      "styles": [
+        "fantasy"
+      ]
+    },
+    {
+      "id": "biped-elf",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "elf",
+      "source": "jarvis-humanoids",
+      "character": "Elf",
+      "label": "Elf",
+      "styles": [
+        "fantasy"
+      ]
+    },
+    {
+      "id": "biped-monk",
+      "archetype": "biped",
+      "variant": "medium",
+      "base": "monk",
+      "source": "jarvis-humanoids",
+      "character": "Monk",
+      "label": "Monk",
+      "styles": [
+        "fantasy"
+      ]
+    },
+    {
       "id": "quadruped-fox",
       "archetype": "quadruped",
       "variant": "default",
@@ -484,6 +616,66 @@
       "source": "jarvis-animals",
       "character": "Fox",
       "label": "Fox",
+      "styles": [
+        "animal"
+      ]
+    },
+    {
+      "id": "quadruped-cat",
+      "archetype": "quadruped",
+      "variant": "default",
+      "base": "cat",
+      "source": "jarvis-animals",
+      "character": "Cat",
+      "label": "Cat",
+      "styles": [
+        "animal"
+      ]
+    },
+    {
+      "id": "quadruped-dog",
+      "archetype": "quadruped",
+      "variant": "default",
+      "base": "dog",
+      "source": "jarvis-animals",
+      "character": "Dog",
+      "label": "Dog",
+      "styles": [
+        "animal"
+      ]
+    },
+    {
+      "id": "quadruped-wolf",
+      "archetype": "quadruped",
+      "variant": "default",
+      "base": "wolf",
+      "source": "jarvis-animals",
+      "character": "Wolf",
+      "label": "Wolf",
+      "styles": [
+        "animal"
+      ]
+    },
+    {
+      "id": "quadruped-rabbit",
+      "archetype": "quadruped",
+      "variant": "default",
+      "base": "rabbit",
+      "source": "jarvis-animals",
+      "character": "Rabbit",
+      "label": "Rabbit",
+      "styles": [
+        "animal"
+      ]
+    },
+    {
+      "id": "quadruped-bear",
+      "archetype": "quadruped",
+      "variant": "default",
+      "base": "bear",
+      "source": "jarvis-animals",
+      "character": "Bear",
+      "label": "Bear",
       "styles": [
         "animal"
       ]

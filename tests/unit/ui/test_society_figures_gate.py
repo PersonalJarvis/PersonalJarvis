@@ -56,6 +56,17 @@ def test_png_codec_round_trips():
     assert decoded == rows
 
 
+def _pick_figure(gt, own_clips: bool) -> Path:
+    """A shipped figure, chosen by whether it carries its own animation."""
+    for path in _shipped():
+        doc = gt.read_glb(path).doc
+        if gt.figure_extras(doc) is None:
+            continue  # a part, or the clip library itself
+        if bool(doc.get("animations")) == own_clips:
+            return path
+    pytest.skip(f"no shipped figure with own_clips={own_clips}")
+
+
 @pytest.mark.skipif(not _shipped(), reason="no figure asset built yet")
 @pytest.mark.parametrize(
     "mutate, expected",
@@ -65,12 +76,16 @@ def test_png_codec_round_trips():
         ("drop_walk", "clip 'walk' missing"),
         ("root_motion", "root motion"),
         ("blur", "NEAREST"),
+        ("lose_the_clip_library", "clips_from"),
     ],
 )
 def test_the_gate_catches_a_broken_figure(tmp_path: Path, mutate: str, expected: str):
     gate = _load(_GATE, "check_society_figures")
     gt = _load(_TOOLS, "glb_tools")
-    source = _shipped()[0]
+    # A body that BORROWS its clips carries none of its own, so breaking a clip
+    # inside it proves nothing; those mutations need a figure that ships them.
+    wants_own_clips = mutate in {"drop_walk", "root_motion"}
+    source = _pick_figure(gt, own_clips=wants_own_clips)
     glb = gt.read_glb(source)
     doc = glb.doc
     names = gt.node_index_by_name(doc)
@@ -93,6 +108,12 @@ def test_the_gate_catches_a_broken_figure(tmp_path: Path, mutate: str, expected:
     elif mutate == "blur":
         for sampler in doc["samplers"]:
             sampler["magFilter"] = 9729
+    elif mutate == "lose_the_clip_library":
+        # A body that borrows its clips is dead without the file it names; the
+        # gate must say so at build time, not the runtime at render time.
+        extras = doc["asset"]["extras"]["jarvis_figure"]
+        extras["clips_from"] = "no-such-clips.glb"
+        doc["animations"] = []
     broken = tmp_path / source.name
     gt.write_glb(broken, doc, glb.blob)
     (tmp_path / "SOURCES.md").write_text(

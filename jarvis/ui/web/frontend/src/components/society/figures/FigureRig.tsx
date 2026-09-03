@@ -64,6 +64,7 @@ function LoadedRig({ recipe, drive, paused, heightM, onReady }: FigureRigProps) 
       palette,
       height,
       assets.parts.map((p) => p.gltf),
+      assets.clips,
     );
     const group = groupRef.current;
     figureRef.current = figure;

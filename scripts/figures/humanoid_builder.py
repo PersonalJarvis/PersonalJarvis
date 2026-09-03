@@ -75,7 +75,11 @@ LANDMARKS = {
 
 @dataclass(frozen=True)
 class Profile:
-    """Everything one look decides. The rig decides the rest."""
+    """Everything one look decides. The rig decides the rest.
+
+    Adding a look is adding an entry to `PROFILES` — no geometry, no export
+    step, ~45 KB of file, because the clips live in the shared library.
+    """
 
     #: How far the head reaches DOWN from `HEAD_TOP`; the width is shared.
     head_h: float = 0.78
@@ -96,43 +100,100 @@ class Profile:
     torso_d: float = 0.20
     arm_r: float = 0.105
     leg_r: float = 0.125
-    # features
+    #: One multiplier on every width: a trooper is not a scientist.
+    bulk: float = 1.0
+    # --- head ---
     hair: bool = True
     hair_long: bool = False
-    hood: bool = False
-    tie: bool = False
+    #: A beard is NOT part of the hidable hair primitive — a helmet covers the
+    #: skull, not the chin.
+    beard: bool = False
+    pointed_ears: bool = False
+    goggles: bool = False
+    headband: bool = False
     visor: bool = False
     antenna: bool = False
+    # --- torso ---
+    hood: bool = False
+    tie: bool = False
     pocket: bool = False
+    #: The bib and straps of a pair of overalls.
+    bib: bool = False
+    #: A work apron down the front.
+    apron: bool = False
+    #: Two long panels down the sides — a lab coat, a duster.
+    coat: bool = False
+    #: A ring of cloth at the neck.
+    scarf: bool = False
+    #: Armour pads over the shoulders.
+    shoulders: bool = False
+    # --- limbs ---
+    #: Bare arms from the shoulder down.
+    sleeveless: bool = False
+    #: Hands in their own cell instead of bare.
+    glove_cell: str | None = None
+    #: Boots climb the shin; shoes stop at the ankle.
+    boots: bool = False
+    #: One skirt from the hips down instead of two trouser legs.
+    robe: bool = False
     #: Cells that belong to the hidable hair primitive.
     hair_cells: tuple[str, ...] = field(default=("hair",))
 
 
 PROFILES: dict[str, Profile] = {
+    # ---- modern -------------------------------------------------------------
     # An everyday person in a shirt: the plain silhouette every other look
     # departs from, and the one the "modern" style was missing entirely.
-    "office": Profile(tie=True, sleeve_cell="primary", leg_cell="secondary"),
+    "office": Profile(tie=True),
     # Same body, softer clothes: a hood behind the head reads at 20 px where a
     # drawstring does not.
-    "casual": Profile(
-        head_h=0.80,
-        hair_long=True,
-        hood=True,
-        pocket=True,
-        sleeve_cell="primary",
+    "casual": Profile(head_h=0.80, hair_long=True, hood=True, pocket=True),
+    # Overalls over a work shirt, gloves and boots.
+    "worker": Profile(
+        head_h=0.76,
+        bulk=1.12,
+        bib=True,
+        beard=True,
+        boots=True,
+        glove_cell="leather",
         leg_cell="secondary",
     ),
+    # Bare arms, shorts, a headband: the silhouette does the talking.
+    "athlete": Profile(
+        head_h=0.76,
+        bulk=0.92,
+        sleeveless=True,
+        headband=True,
+        shoe_cell="secondary",
+    ),
+    # A long coat over the shirt, gloves, short hair.
+    "medic": Profile(coat=True, glove_cell="secondary", tie=False, pocket=True),
+    # ---- cartoon ------------------------------------------------------------
     # Kart-racer proportions: the head is nearly half the figure, the eyes are
     # a third of the face, and the body is a stub under it.
-    "chibi": Profile(
-        head_h=1.06,
-        eye_w=0.13,
-        eye_h=0.24,
-        torso_w=0.27,
-        arm_r=0.115,
-        leg_r=0.135,
-        hair=True,
+    "chibi": Profile(head_h=1.06, eye_w=0.13, eye_h=0.24, torso_w=0.27, bulk=1.1),
+    # Rubber-hose cartoon: enormous eyes, white gloves, boots too big for it.
+    "toon": Profile(
+        head_h=1.14,
+        eye_w=0.16,
+        eye_h=0.30,
+        bulk=0.95,
+        glove_cell="secondary",
+        boots=True,
+        shoe_cell="shoes",
     ),
+    # All corners and no neck; two dots for eyes.
+    "blockhead": Profile(
+        head_h=0.92,
+        eye_w=0.05,
+        eye_h=0.07,
+        bulk=1.3,
+        torso_w=0.33,
+        torso_d=0.23,
+        hair=False,
+        scarf=True,
+    ),
+    # ---- sci-fi -------------------------------------------------------------
     # No skin, no hair: a metal shell with a lit visor and a panelled chest.
     "android": Profile(
         head_h=0.70,
@@ -146,6 +207,73 @@ PROFILES: dict[str, Profile] = {
         hair=False,
         visor=True,
         antenna=True,
+    ),
+    # A flight suit under a visored helmet, with shoulder rigs and boots.
+    "pilot": Profile(
+        head_h=0.74,
+        visor=True,
+        hair=False,
+        shoulders=True,
+        boots=True,
+        glove_cell="leather",
+        belt_cell="accent",
+        shoe_cell="primary_shade",
+    ),
+    # Heavy plate: wide shoulders, a slab of chest, nothing human showing.
+    "trooper": Profile(
+        head_h=0.72,
+        bulk=1.32,
+        torso_w=0.33,
+        torso_d=0.22,
+        head_cell="secondary",
+        torso_cell="secondary",
+        leg_cell="secondary_shade",
+        sleeve_cell="secondary",
+        limb_cell="secondary_shade",
+        glove_cell="metal",
+        shoe_cell="metal",
+        belt_cell="metal",
+        hair=False,
+        visor=True,
+        shoulders=True,
+        boots=True,
+    ),
+    # A lab coat and goggles pushed up on the forehead.
+    "scientist": Profile(
+        bulk=0.95,
+        coat=True,
+        goggles=True,
+        glove_cell="secondary",
+        leg_cell="secondary_shade",
+    ),
+    # ---- fantasy ------------------------------------------------------------
+    # Short, broad and mostly beard.
+    "dwarf": Profile(
+        head_h=0.98,
+        bulk=1.28,
+        torso_w=0.31,
+        beard=True,
+        boots=True,
+        belt_cell="leather",
+        leg_cell="secondary",
+    ),
+    # Tall, slim, pointed ears and long hair.
+    "elf": Profile(
+        head_h=0.72,
+        bulk=0.88,
+        pointed_ears=True,
+        hair_long=True,
+        boots=True,
+        leg_cell="secondary",
+    ),
+    # A hooded robe and nothing else to look at.
+    "monk": Profile(
+        head_h=0.76,
+        hood=True,
+        robe=True,
+        hair=False,
+        glove_cell=None,
+        belt_cell="accent",
     ),
 }
 
@@ -238,7 +366,7 @@ def head_pieces(p: Profile) -> list[Piece]:
         ),
     ]
     if p.visor:
-        # One lit band instead of eyes: an android reads as a machine from the
+        # One lit band instead of eyes: a machine reads as a machine from the
         # silhouette down to 20 px, which two dots never manage.
         pieces.append(
             box(
@@ -296,14 +424,76 @@ def head_pieces(p: Profile) -> list[Piece]:
                 (eye_z - 0.12, eye_z - 0.02),
             )
         )
+        if not p.beard:
+            pieces.append(
+                box(
+                    "Mouth",
+                    "head",
+                    "skin_shade",
+                    (-0.09, 0.09),
+                    (face - 0.02, -d + 0.02),
+                    (eye_z - 0.26, eye_z - 0.21),
+                )
+            )
+    if p.beard:
+        # Chin-length and squared off. Deliberately NOT in `hair_cells`: a
+        # helmet hides the skull, and a beard under one still shows.
         pieces.append(
             box(
-                "Mouth",
+                "Beard",
                 "head",
-                "skin_shade",
-                (-0.09, 0.09),
-                (face - 0.02, -d + 0.02),
-                (eye_z - 0.26, eye_z - 0.21),
+                "hair",
+                (-w * 0.66, w * 0.66),
+                (face - 0.03, d * 0.35),
+                (chin - 0.16, eye_z - 0.13),
+            )
+        )
+    if p.pointed_ears:
+        for side, sx in (("L", 1.0), ("R", -1.0)):
+            xs = sorted((sx * w, sx * (w + 0.075)))
+            pieces.append(
+                box(
+                    f"Ear{side}",
+                    "head",
+                    p.head_cell,
+                    xs,
+                    (-d * 0.25, d * 0.3),
+                    (eye_z - 0.02, eye_z + 0.20),
+                )
+            )
+    if p.goggles:
+        # Pushed up on the forehead, where a scientist actually keeps them.
+        pieces.append(
+            box(
+                "GoggleBand",
+                "head",
+                "leather",
+                (-w - 0.02, w + 0.02),
+                (-d - 0.03, d + 0.03),
+                (top - 0.24, top - 0.16),
+            )
+        )
+        for side, sx in (("L", 1.0), ("R", -1.0)):
+            xs = sorted((sx * 0.05, sx * 0.21))
+            pieces.append(
+                box(
+                    f"Lens{side}",
+                    "head",
+                    "accent",
+                    xs,
+                    (-d - 0.05, -d + 0.01),
+                    (top - 0.26, top - 0.14),
+                )
+            )
+    if p.headband:
+        pieces.append(
+            box(
+                "Headband",
+                "head",
+                "accent",
+                (-w - 0.02, w + 0.02),
+                (-d - 0.02, d + 0.02),
+                (top - 0.26, top - 0.18),
             )
         )
     if p.antenna:
@@ -336,26 +526,17 @@ def head_pieces(p: Profile) -> list[Piece]:
             box("HairBack", "head", "hair", (-cap, cap), (d - 0.04, d + 0.03), (chin + 0.16, top))
         )
         if p.hair_long:
-            pieces.append(
-                box(
-                    "HairSideL",
-                    "head",
-                    "hair",
-                    (w - 0.02, cap),
-                    (-d * 0.4, d + 0.03),
-                    (chin + 0.05, top),
+            for side, lo, hi in (("L", w - 0.02, cap), ("R", -cap, -w + 0.02)):
+                pieces.append(
+                    box(
+                        f"HairSide{side}",
+                        "head",
+                        "hair",
+                        (lo, hi),
+                        (-d * 0.4, d + 0.03),
+                        (chin + 0.05, top),
+                    )
                 )
-            )
-            pieces.append(
-                box(
-                    "HairSideR",
-                    "head",
-                    "hair",
-                    (-cap, -w + 0.02),
-                    (-d * 0.4, d + 0.03),
-                    (chin + 0.05, top),
-                )
-            )
     if p.hood:
         # The hood rides the chest, not the head: it stays put when the head turns.
         pieces.append(
@@ -372,7 +553,7 @@ def head_pieces(p: Profile) -> list[Piece]:
 
 
 def torso_pieces(p: Profile) -> list[Piece]:
-    w, d = p.torso_w, p.torso_d
+    w, d = p.torso_w * p.bulk, p.torso_d * p.bulk
     pieces = [
         box("Chest", "chest", p.torso_cell, (-w, w), (-d, d), (CHEST_Z - 0.02, NECK_Z + 0.03)),
         box(
@@ -425,7 +606,90 @@ def torso_pieces(p: Profile) -> list[Piece]:
                 (WAIST_Z + 0.06, WAIST_Z + 0.20),
             )
         )
-    if p.visor:
+    if p.bib:
+        # Overalls: a panel up the front and two straps over the shoulders.
+        pieces.append(
+            box(
+                "Bib",
+                "chest",
+                p.leg_cell,
+                (-w * 0.62, w * 0.62),
+                (-d - 0.02, -d + 0.04),
+                (CHEST_Z - 0.02, NECK_Z - 0.05),
+            )
+        )
+        for side, sx in (("L", 1.0), ("R", -1.0)):
+            xs = sorted((sx * w * 0.30, sx * w * 0.62))
+            pieces.append(
+                box(
+                    f"Strap{side}",
+                    "chest",
+                    p.leg_cell,
+                    xs,
+                    (-d - 0.02, d + 0.02),
+                    (NECK_Z - 0.07, NECK_Z + 0.02),
+                )
+            )
+    if p.apron:
+        pieces.append(
+            box(
+                "Apron",
+                "spine",
+                "secondary",
+                (-w * 0.8, w * 0.8),
+                (-d - 0.03, -d + 0.01),
+                (HIP_Z - 0.16, CHEST_Z),
+            )
+        )
+    if p.coat:
+        # Two long panels, one per side, so the legs still read between them.
+        for side, sx in (("L", 1.0), ("R", -1.0)):
+            xs = sorted((sx * (w - 0.02), sx * (w + 0.035)))
+            pieces.append(
+                box(
+                    f"Coat{side}",
+                    "chest",
+                    "secondary",
+                    xs,
+                    (-d - 0.02, d + 0.02),
+                    (KNEE_Z + 0.04, NECK_Z + 0.02),
+                )
+            )
+        pieces.append(
+            box(
+                "CoatBack",
+                "chest",
+                "secondary",
+                (-w - 0.03, w + 0.03),
+                (d - 0.01, d + 0.035),
+                (KNEE_Z + 0.04, NECK_Z + 0.02),
+            )
+        )
+    if p.scarf:
+        pieces.append(
+            box(
+                "Scarf",
+                "chest",
+                "accent",
+                (-0.20, 0.20),
+                (-d - 0.03, d + 0.03),
+                (NECK_Z - 0.04, NECK_Z + 0.06),
+            )
+        )
+    if p.shoulders:
+        for side, sx in (("L", 1.0), ("R", -1.0)):
+            xs = sorted((sx * (w - 0.04), sx * (w + 0.10)))
+            pieces.append(
+                box(
+                    f"Pad{side}",
+                    "chest",
+                    "metal",
+                    xs,
+                    (-d - 0.01, d + 0.01),
+                    (NECK_Z - 0.13, NECK_Z + 0.05),
+                )
+            )
+    if p.visor and not p.shoulders:
         pieces.append(
             box(
                 "CoreLight",
@@ -436,24 +700,29 @@ def torso_pieces(p: Profile) -> list[Piece]:
                 (CHEST_Z + 0.10, CHEST_Z + 0.24),
             )
         )
-        pieces.append(
-            box(
-                "PanelL",
-                "chest",
-                "primary",
-                (0.12, w - 0.01),
-                (-d - 0.01, -d + 0.03),
-                (CHEST_Z + 0.02, NECK_Z - 0.02),
+        for side, sx in (("L", 1.0), ("R", -1.0)):
+            xs = sorted((sx * 0.12, sx * (w - 0.01)))
+            pieces.append(
+                box(
+                    f"Panel{side}",
+                    "chest",
+                    "primary",
+                    xs,
+                    (-d - 0.01, -d + 0.03),
+                    (CHEST_Z + 0.02, NECK_Z - 0.02),
+                )
             )
-        )
+    if p.robe:
+        # One skirt on the hips: it does not bend with the knees, which is
+        # exactly how a robe hangs.
         pieces.append(
             box(
-                "PanelR",
-                "chest",
-                "primary",
-                (-w + 0.01, -0.12),
-                (-d - 0.01, -d + 0.03),
-                (CHEST_Z + 0.02, NECK_Z - 0.02),
+                "Robe",
+                "hips",
+                p.torso_cell,
+                (-w - 0.03, w + 0.03),
+                (-d - 0.02, d + 0.02),
+                (ANKLE_Z + 0.02, WAIST_Z + 0.02),
             )
         )
     return pieces
@@ -461,13 +730,16 @@ def torso_pieces(p: Profile) -> list[Piece]:
 
 def limb_pieces(p: Profile) -> list[Piece]:
     """One side's arm and leg; the other side is the mirror of these."""
-    r = p.arm_r
-    lr = p.leg_r
+    r = p.arm_r * p.bulk
+    lr = p.leg_r * p.bulk
+    upper_arm_cell = p.limb_cell if p.sleeveless else p.sleeve_cell
+    hand_cell = p.glove_cell or p.limb_cell
+    boot_top = ANKLE_Z + 0.13 if p.boots else ANKLE_Z + 0.02
     left = [
         box(
             "UpperArmL",
             "upper_arm_l",
-            p.sleeve_cell,
+            upper_arm_cell,
             (SHOULDER_X - 0.02, ELBOW_X),
             (-r, r),
             (ARM_Z - r, ARM_Z + r),
@@ -483,7 +755,7 @@ def limb_pieces(p: Profile) -> list[Piece]:
         box(
             "HandL",
             "hand_l",
-            p.limb_cell,
+            hand_cell,
             (HAND_X - 0.02, FINGER_X),
             (-r, r),
             (ARM_Z - r, ARM_Z + r),
@@ -510,7 +782,7 @@ def limb_pieces(p: Profile) -> list[Piece]:
             p.shoe_cell,
             (LEG_X - lr, LEG_X + lr),
             (TOE_Y, lr + 0.01),
-            (GROUND, ANKLE_Z + 0.02),
+            (GROUND, boot_top),
         ),
         box(
             "ToeL",
@@ -639,6 +911,755 @@ HANDSLOT_R = (-0.8831, 0.0, 1.0493)
 #: tagged only to the styles built on that skull, never to the wider KayKit
 #: heads the fantasy hats were cut for.
 PART_SPECS: dict[str, dict] = {
+    # ---- headgear -----------------------------------------------------------
+    "headgear-beanie": {
+        "slot": "headgear",
+        "fits_family": "jarvis-biped",
+        "label": "Beanie",
+        "styles": ["modern", "cartoon", "fantasy"],
+        "hides": ["hair"],
+        "pieces": lambda: [
+            box(
+                "BeanieBody",
+                "head",
+                "primary",
+                (-HEAD_W - 0.03, HEAD_W + 0.03),
+                (-HEAD_D - 0.03, HEAD_D + 0.03),
+                (HEAD_TOP - 0.32, HEAD_TOP + 0.03),
+            ),
+            box(
+                "BeanieBrim",
+                "head",
+                "primary_shade",
+                (-HEAD_W - 0.045, HEAD_W + 0.045),
+                (-HEAD_D - 0.045, HEAD_D + 0.045),
+                (HEAD_TOP - 0.36, HEAD_TOP - 0.28),
+            ),
+            box(
+                "BeanieBobble",
+                "head",
+                "accent",
+                (-0.06, 0.06),
+                (-0.06, 0.06),
+                (HEAD_TOP + 0.03, HEAD_TOP + 0.12),
+            ),
+        ],
+    },
+    "headgear-hardhat": {
+        "slot": "headgear",
+        "fits_family": "jarvis-biped",
+        "label": "Hard hat",
+        "styles": ["modern", "scifi"],
+        "hides": ["hair"],
+        "pieces": lambda: [
+            box(
+                "HatShell",
+                "head",
+                "accent",
+                (-HEAD_W - 0.04, HEAD_W + 0.04),
+                (-HEAD_D - 0.03, HEAD_D + 0.03),
+                (HEAD_TOP - 0.24, HEAD_TOP + 0.05),
+            ),
+            box(
+                "HatBrim",
+                "head",
+                "accent",
+                (-HEAD_W - 0.06, HEAD_W + 0.06),
+                (-HEAD_D - 0.14, HEAD_D + 0.06),
+                (HEAD_TOP - 0.26, HEAD_TOP - 0.21),
+            ),
+            box(
+                "HatRidge",
+                "head",
+                "primary_shade",
+                (-0.05, 0.05),
+                (-HEAD_D - 0.03, HEAD_D + 0.03),
+                (HEAD_TOP + 0.05, HEAD_TOP + 0.10),
+            ),
+        ],
+    },
+    "headgear-headset": {
+        "slot": "headgear",
+        "fits_family": "jarvis-biped",
+        "label": "Headset",
+        "styles": ["modern", "scifi", "cartoon"],
+        "pieces": lambda: [
+            box(
+                "Band",
+                "head",
+                "primary_shade",
+                (-HEAD_W - 0.03, HEAD_W + 0.03),
+                (-0.05, 0.05),
+                (HEAD_TOP - 0.06, HEAD_TOP + 0.05),
+            ),
+            box(
+                "CupL",
+                "head",
+                "metal",
+                (HEAD_W - 0.01, HEAD_W + 0.06),
+                (-0.12, 0.12),
+                (HEAD_TOP - 0.30, HEAD_TOP - 0.08),
+            ),
+            box(
+                "CupR",
+                "head",
+                "metal",
+                (-HEAD_W - 0.06, -HEAD_W + 0.01),
+                (-0.12, 0.12),
+                (HEAD_TOP - 0.30, HEAD_TOP - 0.08),
+            ),
+            box(
+                "Mic",
+                "head",
+                "primary_shade",
+                (HEAD_W * 0.30, HEAD_W + 0.02),
+                (-HEAD_D - 0.10, -HEAD_D + 0.02),
+                (HEAD_TOP - 0.34, HEAD_TOP - 0.30),
+            ),
+        ],
+    },
+    "headgear-crown": {
+        "slot": "headgear",
+        "fits_family": "jarvis-biped",
+        "label": "Crown",
+        "styles": ["fantasy", "cartoon"],
+        "pieces": lambda: [
+            box(
+                "CrownBand",
+                "head",
+                "accent",
+                (-HEAD_W - 0.03, HEAD_W + 0.03),
+                (-HEAD_D - 0.03, HEAD_D + 0.03),
+                (HEAD_TOP - 0.14, HEAD_TOP + 0.01),
+            ),
+            box(
+                "SpikeC",
+                "head",
+                "accent",
+                (-0.05, 0.05),
+                (-HEAD_D - 0.03, -HEAD_D + 0.02),
+                (HEAD_TOP + 0.01, HEAD_TOP + 0.11),
+            ),
+            box(
+                "SpikeL",
+                "head",
+                "accent",
+                (HEAD_W - 0.10, HEAD_W - 0.01),
+                (-HEAD_D - 0.03, -HEAD_D + 0.02),
+                (HEAD_TOP + 0.01, HEAD_TOP + 0.08),
+            ),
+            box(
+                "SpikeR",
+                "head",
+                "accent",
+                (-HEAD_W + 0.01, -HEAD_W + 0.10),
+                (-HEAD_D - 0.03, -HEAD_D + 0.02),
+                (HEAD_TOP + 0.01, HEAD_TOP + 0.08),
+            ),
+            box(
+                "Gem",
+                "head",
+                "emissive",
+                (-0.035, 0.035),
+                (-HEAD_D - 0.04, -HEAD_D - 0.02),
+                (HEAD_TOP - 0.11, HEAD_TOP - 0.04),
+            ),
+        ],
+    },
+    "headgear-space-helmet": {
+        "slot": "headgear",
+        "fits_family": "jarvis-biped",
+        "label": "Space helmet",
+        "styles": ["scifi"],
+        "hides": ["hair"],
+        "pieces": lambda: [
+            box(
+                "HelmShell",
+                "head",
+                "secondary",
+                (-HEAD_W - 0.06, HEAD_W + 0.06),
+                (-HEAD_D - 0.05, HEAD_D + 0.06),
+                (HEAD_TOP - HEAD_D * 1.9, HEAD_TOP + 0.06),
+            ),
+            box(
+                "HelmGlass",
+                "head",
+                "emissive",
+                (-HEAD_W * 0.85, HEAD_W * 0.85),
+                (-HEAD_D - 0.075, -HEAD_D - 0.04),
+                (HEAD_TOP - 0.52, HEAD_TOP - 0.16),
+            ),
+            box(
+                "HelmCollar",
+                "head",
+                "metal",
+                (-HEAD_W - 0.07, HEAD_W + 0.07),
+                (-HEAD_D - 0.06, HEAD_D + 0.07),
+                (HEAD_TOP - HEAD_D * 2.0, HEAD_TOP - HEAD_D * 1.85),
+            ),
+        ],
+    },
+    "headgear-top-hat": {
+        "slot": "headgear",
+        "fits_family": "jarvis-biped",
+        "label": "Top hat",
+        "styles": ["cartoon", "modern"],
+        "hides": ["hair"],
+        "pieces": lambda: [
+            box(
+                "HatBrim",
+                "head",
+                "primary",
+                (-HEAD_W - 0.16, HEAD_W + 0.16),
+                (-HEAD_D - 0.16, HEAD_D + 0.16),
+                (HEAD_TOP - 0.06, HEAD_TOP - 0.01),
+            ),
+            box(
+                "HatTube",
+                "head",
+                "primary",
+                (-HEAD_W - 0.01, HEAD_W + 0.01),
+                (-HEAD_D - 0.01, HEAD_D + 0.01),
+                (HEAD_TOP - 0.06, HEAD_TOP + 0.34),
+            ),
+            box(
+                "HatBand",
+                "head",
+                "accent",
+                (-HEAD_W - 0.02, HEAD_W + 0.02),
+                (-HEAD_D - 0.02, HEAD_D + 0.02),
+                (HEAD_TOP + 0.01, HEAD_TOP + 0.08),
+            ),
+        ],
+    },
+    # ---- face ---------------------------------------------------------------
+    "face_extra-glasses": {
+        "slot": "face_extra",
+        "fits_family": "jarvis-biped",
+        "label": "Glasses",
+        "styles": ["modern", "scifi", "cartoon", "fantasy"],
+        "pieces": lambda: [
+            box(
+                "LensL",
+                "head",
+                "metal",
+                (0.055, 0.215),
+                (-HEAD_D - 0.045, -HEAD_D - 0.015),
+                (HEAD_TOP - 0.52, HEAD_TOP - 0.38),
+            ),
+            box(
+                "LensR",
+                "head",
+                "metal",
+                (-0.215, -0.055),
+                (-HEAD_D - 0.045, -HEAD_D - 0.015),
+                (HEAD_TOP - 0.52, HEAD_TOP - 0.38),
+            ),
+            box(
+                "Bridge",
+                "head",
+                "metal",
+                (-0.055, 0.055),
+                (-HEAD_D - 0.04, -HEAD_D - 0.02),
+                (HEAD_TOP - 0.47, HEAD_TOP - 0.43),
+            ),
+            box(
+                "TempleL",
+                "head",
+                "metal",
+                (HEAD_W - 0.02, HEAD_W + 0.02),
+                (-HEAD_D - 0.02, 0.0),
+                (HEAD_TOP - 0.47, HEAD_TOP - 0.43),
+            ),
+            box(
+                "TempleR",
+                "head",
+                "metal",
+                (-HEAD_W - 0.02, -HEAD_W + 0.02),
+                (-HEAD_D - 0.02, 0.0),
+                (HEAD_TOP - 0.47, HEAD_TOP - 0.43),
+            ),
+        ],
+    },
+    "face_extra-shades": {
+        "slot": "face_extra",
+        "fits_family": "jarvis-biped",
+        "label": "Shades",
+        "styles": ["modern", "cartoon", "scifi", "fantasy"],
+        "pieces": lambda: [
+            box(
+                "ShadeBar",
+                "head",
+                "eyes",
+                (-HEAD_W - 0.01, HEAD_W + 0.01),
+                (-HEAD_D - 0.05, -HEAD_D - 0.02),
+                (HEAD_TOP - 0.52, HEAD_TOP - 0.37),
+            ),
+            box(
+                "ShadeGlint",
+                "head",
+                "secondary",
+                (0.10, 0.20),
+                (-HEAD_D - 0.055, -HEAD_D - 0.045),
+                (HEAD_TOP - 0.49, HEAD_TOP - 0.44),
+            ),
+        ],
+    },
+    "face_extra-respirator": {
+        "slot": "face_extra",
+        "fits_family": "jarvis-biped",
+        "label": "Respirator",
+        "styles": ["scifi", "modern"],
+        "pieces": lambda: [
+            box(
+                "MaskBody",
+                "head",
+                "metal",
+                (-HEAD_W * 0.7, HEAD_W * 0.7),
+                (-HEAD_D - 0.07, -HEAD_D + 0.02),
+                (HEAD_TOP - 0.72, HEAD_TOP - 0.50),
+            ),
+            box(
+                "MaskFilter",
+                "head",
+                "accent",
+                (-0.07, 0.07),
+                (-HEAD_D - 0.12, -HEAD_D - 0.06),
+                (HEAD_TOP - 0.68, HEAD_TOP - 0.56),
+            ),
+            box(
+                "MaskStrap",
+                "head",
+                "leather",
+                (-HEAD_W - 0.02, HEAD_W + 0.02),
+                (-HEAD_D - 0.01, HEAD_D + 0.02),
+                (HEAD_TOP - 0.66, HEAD_TOP - 0.58),
+            ),
+        ],
+    },
+    # ---- over the torso -----------------------------------------------------
+    "torso_over-vest": {
+        "slot": "torso_over",
+        "label": "Vest",
+        "styles": ["modern", "fantasy", "scifi", "cartoon"],
+        "pieces": lambda: [
+            box(
+                "VestL",
+                "chest",
+                "leather",
+                (0.13, 0.34),
+                (-0.24, 0.24),
+                (WAIST_Z + 0.06, NECK_Z + 0.02),
+            ),
+            box(
+                "VestR",
+                "chest",
+                "leather",
+                (-0.34, -0.13),
+                (-0.24, 0.24),
+                (WAIST_Z + 0.06, NECK_Z + 0.02),
+            ),
+            box(
+                "VestBack",
+                "chest",
+                "leather",
+                (-0.34, 0.34),
+                (0.20, 0.25),
+                (WAIST_Z + 0.06, NECK_Z + 0.02),
+            ),
+        ],
+    },
+    "torso_over-plate": {
+        "slot": "torso_over",
+        "label": "Chest plate",
+        "styles": ["scifi", "fantasy"],
+        "pieces": lambda: [
+            box(
+                "Plate",
+                "chest",
+                "metal",
+                (-0.30, 0.30),
+                (-0.28, -0.19),
+                (CHEST_Z - 0.02, NECK_Z + 0.02),
+            ),
+            box(
+                "PlateBack",
+                "chest",
+                "metal",
+                (-0.30, 0.30),
+                (0.19, 0.28),
+                (CHEST_Z - 0.02, NECK_Z + 0.02),
+            ),
+            box(
+                "PlateStud",
+                "chest",
+                "accent",
+                (-0.06, 0.06),
+                (-0.31, -0.27),
+                (CHEST_Z + 0.12, CHEST_Z + 0.24),
+            ),
+        ],
+    },
+    "torso_over-apron": {
+        "slot": "torso_over",
+        "label": "Apron",
+        "styles": ["modern", "fantasy", "cartoon", "scifi"],
+        "pieces": lambda: [
+            box(
+                "ApronBody",
+                "spine",
+                "secondary",
+                (-0.26, 0.26),
+                (-0.27, -0.20),
+                (HIP_Z - 0.18, CHEST_Z + 0.02),
+            ),
+            box(
+                "ApronStrapL",
+                "chest",
+                "secondary",
+                (0.08, 0.18),
+                (-0.24, 0.24),
+                (NECK_Z - 0.06, NECK_Z + 0.02),
+            ),
+            box(
+                "ApronStrapR",
+                "chest",
+                "secondary",
+                (-0.18, -0.08),
+                (-0.24, 0.24),
+                (NECK_Z - 0.06, NECK_Z + 0.02),
+            ),
+        ],
+    },
+    # ---- belt ---------------------------------------------------------------
+    "belt-toolbelt": {
+        "slot": "belt",
+        "label": "Tool belt",
+        "styles": ["modern", "scifi", "cartoon"],
+        "pieces": lambda: [
+            box(
+                "BeltStrap",
+                "hips",
+                "leather",
+                (-0.33, 0.33),
+                (-0.24, 0.24),
+                (WAIST_Z - 0.07, WAIST_Z + 0.01),
+            ),
+            box(
+                "PouchL",
+                "hips",
+                "leather",
+                (0.16, 0.33),
+                (-0.26, -0.14),
+                (WAIST_Z - 0.20, WAIST_Z - 0.05),
+            ),
+            box(
+                "PouchR",
+                "hips",
+                "metal",
+                (-0.33, -0.16),
+                (-0.26, -0.14),
+                (WAIST_Z - 0.18, WAIST_Z - 0.05),
+            ),
+        ],
+    },
+    "belt-sash": {
+        "slot": "belt",
+        "label": "Sash",
+        "styles": ["fantasy", "cartoon"],
+        "pieces": lambda: [
+            box(
+                "SashBand",
+                "hips",
+                "accent",
+                (-0.33, 0.33),
+                (-0.24, 0.24),
+                (WAIST_Z - 0.09, WAIST_Z + 0.02),
+            ),
+            box(
+                "SashTail",
+                "hips",
+                "accent",
+                (0.16, 0.28),
+                (-0.26, -0.17),
+                (HIP_Z - 0.10, WAIST_Z - 0.06),
+            ),
+        ],
+    },
+    # ---- back ---------------------------------------------------------------
+    "back-satchel": {
+        "slot": "back",
+        "label": "Satchel",
+        "styles": ["modern", "fantasy", "cartoon"],
+        "pieces": lambda: [
+            box(
+                "Bag",
+                "chest",
+                "leather",
+                (0.18, 0.40),
+                (-0.10, 0.16),
+                (WAIST_Z - 0.04, CHEST_Z + 0.06),
+            ),
+            box(
+                "BagFlap",
+                "chest",
+                "secondary_shade",
+                (0.17, 0.41),
+                (-0.11, 0.17),
+                (CHEST_Z - 0.02, CHEST_Z + 0.07),
+            ),
+            box(
+                "BagStrap",
+                "chest",
+                "leather",
+                (-0.16, 0.30),
+                (-0.24, 0.24),
+                (CHEST_Z + 0.10, NECK_Z + 0.02),
+            ),
+        ],
+    },
+    "back-jetpack": {
+        "slot": "back",
+        "label": "Jetpack",
+        "styles": ["scifi"],
+        "pieces": lambda: [
+            box(
+                "TankL",
+                "chest",
+                "metal",
+                (0.06, 0.22),
+                (0.20, 0.42),
+                (CHEST_Z - 0.06, NECK_Z),
+            ),
+            box(
+                "TankR",
+                "chest",
+                "metal",
+                (-0.22, -0.06),
+                (0.20, 0.42),
+                (CHEST_Z - 0.06, NECK_Z),
+            ),
+            box(
+                "Thrust",
+                "chest",
+                "emissive",
+                (-0.20, 0.20),
+                (0.24, 0.38),
+                (CHEST_Z - 0.14, CHEST_Z - 0.06),
+            ),
+            box(
+                "PackStrapL",
+                "chest",
+                "leather",
+                (0.10, 0.19),
+                (-0.23, 0.21),
+                (NECK_Z - 0.06, NECK_Z + 0.01),
+            ),
+            box(
+                "PackStrapR",
+                "chest",
+                "leather",
+                (-0.19, -0.10),
+                (-0.23, 0.21),
+                (NECK_Z - 0.06, NECK_Z + 0.01),
+            ),
+        ],
+    },
+    "back-quiver": {
+        "slot": "back",
+        "label": "Quiver",
+        "styles": ["fantasy", "cartoon"],
+        "pieces": lambda: [
+            box(
+                "QuiverTube",
+                "chest",
+                "leather",
+                (0.14, 0.30),
+                (0.18, 0.34),
+                (WAIST_Z, NECK_Z - 0.02),
+            ),
+            box(
+                "Arrows",
+                "chest",
+                "secondary_shade",
+                (0.17, 0.27),
+                (0.21, 0.31),
+                (NECK_Z - 0.04, NECK_Z + 0.18),
+            ),
+            box(
+                "QuiverStrap",
+                "chest",
+                "leather",
+                (-0.24, 0.24),
+                (-0.23, 0.22),
+                (CHEST_Z + 0.06, CHEST_Z + 0.16),
+            ),
+        ],
+    },
+    "back-cloak": {
+        "slot": "back",
+        "label": "Cloak",
+        "styles": ["fantasy", "cartoon", "scifi"],
+        "two_sided": True,
+        "pieces": lambda: [
+            box(
+                "CloakSheet",
+                "chest",
+                "primary_shade",
+                (-0.40, 0.40),
+                (0.235, 0.245),
+                (HIP_Z - 0.22, NECK_Z + 0.02),
+            ),
+            box(
+                "CloakCollar",
+                "chest",
+                "accent",
+                (-0.28, 0.28),
+                (-0.24, 0.26),
+                (NECK_Z - 0.03, NECK_Z + 0.05),
+            ),
+        ],
+    },
+    # ---- hands --------------------------------------------------------------
+    "hand_l-clipboard": {
+        "slot": "hand_l",
+        "label": "Clipboard",
+        "styles": ["modern", "scifi", "cartoon", "fantasy"],
+        "pieces": lambda: [
+            box(
+                "Board",
+                "handslot_l",
+                "leather",
+                (HANDSLOT_L[0] - 0.04, HANDSLOT_L[0] + 0.03),
+                (-0.44, -0.08),
+                (HANDSLOT_L[2] - 0.24, HANDSLOT_L[2] + 0.22),
+            ),
+            box(
+                "Paper",
+                "handslot_l",
+                "secondary",
+                (HANDSLOT_L[0] + 0.03, HANDSLOT_L[0] + 0.045),
+                (-0.41, -0.11),
+                (HANDSLOT_L[2] - 0.21, HANDSLOT_L[2] + 0.16),
+            ),
+            box(
+                "Clip",
+                "handslot_l",
+                "metal",
+                (HANDSLOT_L[0] + 0.03, HANDSLOT_L[0] + 0.05),
+                (-0.34, -0.18),
+                (HANDSLOT_L[2] + 0.16, HANDSLOT_L[2] + 0.22),
+            ),
+        ],
+    },
+    "hand_l-lantern": {
+        "slot": "hand_l",
+        "label": "Lantern",
+        "styles": ["fantasy", "modern", "cartoon"],
+        "pieces": lambda: [
+            box(
+                "LanternGlass",
+                "handslot_l",
+                "emissive",
+                (HANDSLOT_L[0] - 0.07, HANDSLOT_L[0] + 0.07),
+                (-0.30, -0.16),
+                (HANDSLOT_L[2] - 0.30, HANDSLOT_L[2] - 0.12),
+            ),
+            box(
+                "LanternCap",
+                "handslot_l",
+                "metal",
+                (HANDSLOT_L[0] - 0.08, HANDSLOT_L[0] + 0.08),
+                (-0.31, -0.15),
+                (HANDSLOT_L[2] - 0.12, HANDSLOT_L[2] - 0.05),
+            ),
+            box(
+                "LanternHoop",
+                "handslot_l",
+                "metal",
+                (HANDSLOT_L[0] - 0.02, HANDSLOT_L[0] + 0.02),
+                (-0.25, -0.21),
+                (HANDSLOT_L[2] - 0.05, HANDSLOT_L[2] + 0.06),
+            ),
+        ],
+    },
+    "hand_r-broom": {
+        "slot": "hand_r",
+        "label": "Broom",
+        "styles": ["modern", "cartoon", "fantasy"],
+        "pieces": lambda: [
+            box(
+                "Handle",
+                "handslot_r",
+                "leather",
+                (HANDSLOT_R[0] - 0.025, HANDSLOT_R[0] + 0.025),
+                (-0.30, 0.62),
+                (HANDSLOT_R[2] - 0.025, HANDSLOT_R[2] + 0.025),
+            ),
+            box(
+                "Bristles",
+                "handslot_r",
+                "accent",
+                (HANDSLOT_R[0] - 0.07, HANDSLOT_R[0] + 0.07),
+                (0.62, 0.86),
+                (HANDSLOT_R[2] - 0.07, HANDSLOT_R[2] + 0.07),
+            ),
+        ],
+    },
+    "hand_r-torch": {
+        "slot": "hand_r",
+        "label": "Torch",
+        "styles": ["fantasy", "cartoon", "scifi"],
+        "pieces": lambda: [
+            box(
+                "Shaft",
+                "handslot_r",
+                "leather",
+                (HANDSLOT_R[0] - 0.03, HANDSLOT_R[0] + 0.03),
+                (-0.34, 0.10),
+                (HANDSLOT_R[2] - 0.03, HANDSLOT_R[2] + 0.03),
+            ),
+            box(
+                "Flame",
+                "handslot_r",
+                "emissive",
+                (HANDSLOT_R[0] - 0.06, HANDSLOT_R[0] + 0.06),
+                (-0.50, -0.34),
+                (HANDSLOT_R[2] - 0.06, HANDSLOT_R[2] + 0.06),
+            ),
+        ],
+    },
+    "hand_r-scanner": {
+        "slot": "hand_r",
+        "label": "Scanner",
+        "styles": ["scifi", "modern"],
+        "pieces": lambda: [
+            box(
+                "Grip",
+                "handslot_r",
+                "primary_shade",
+                (HANDSLOT_R[0] - 0.035, HANDSLOT_R[0] + 0.035),
+                (-0.20, 0.02),
+                (HANDSLOT_R[2] - 0.035, HANDSLOT_R[2] + 0.035),
+            ),
+            box(
+                "Head",
+                "handslot_r",
+                "metal",
+                (HANDSLOT_R[0] - 0.06, HANDSLOT_R[0] + 0.06),
+                (-0.34, -0.20),
+                (HANDSLOT_R[2] - 0.06, HANDSLOT_R[2] + 0.06),
+            ),
+            box(
+                "Beam",
+                "handslot_r",
+                "emissive",
+                (HANDSLOT_R[0] - 0.03, HANDSLOT_R[0] + 0.03),
+                (-0.42, -0.34),
+                (HANDSLOT_R[2] - 0.03, HANDSLOT_R[2] + 0.03),
+            ),
+        ],
+    },
     "back-backpack": {
         "slot": "back",
         "label": "Backpack",
@@ -679,7 +1700,7 @@ PART_SPECS: dict[str, dict] = {
     "hand_l-tablet": {
         "slot": "hand_l",
         "label": "Tablet",
-        "styles": ["modern", "scifi"],
+        "styles": ["modern", "scifi", "cartoon"],
         "pieces": lambda: [
             box(
                 "TabletShell",
@@ -724,6 +1745,7 @@ PART_SPECS: dict[str, dict] = {
     },
     "headgear-cap": {
         "slot": "headgear",
+        "fits_family": "jarvis-biped",
         "label": "Cap",
         "styles": ["modern", "cartoon", "scifi"],
         "hides": ["hair"],

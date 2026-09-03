@@ -106,7 +106,13 @@ ALL_LEGS = FRONT_LEGS + BACK_LEGS
 
 @dataclass(frozen=True)
 class Shape:
-    """What tells one animal from the next; the rig and the clips are shared."""
+    """What tells one animal from the next; the rig and the clips are shared.
+
+    A second animal is an entry here and a `contract.json` target — no new rig,
+    no new clips, ~50 KB of file. The bones never move between shapes, so a
+    shape changes what hangs on them: how tall the ears stand, how far the
+    muzzle reaches, how bushy the tail is, how heavy the body sits.
+    """
 
     #: Palette cell of the coat, the underside, the paws and the tail tip.
     coat: str = "fur"
@@ -121,11 +127,82 @@ class Shape:
     leg_r: float = 0.043
     #: How bushy the tail is, as a half-width.
     tail_r: float = 0.075
+    #: How far the tail reaches back from the rump, in metres.
+    tail_len: float = 0.52
+    #: Where the ear tips end. The ear BONE ends at EAR_Z; a shorter ear simply
+    #: leaves the top of it bare, a longer one runs past it and still follows.
+    ear_top: float = EAR_Z
+    #: Half-width of an ear, and how far apart the pair sits.
+    ear_w: float = 0.085
+    #: How far forward the muzzle reaches; a bear has none to speak of.
+    muzzle_y: float = MUZZLE_Y
+    #: Muzzle half-width as a fraction of the skull.
+    muzzle_w: float = 0.52
 
 
 SHAPES: dict[str, Shape] = {
     # A fox: narrow muzzle, big ears, a tail almost as thick as the body.
     "fox": Shape(),
+    # A cat: small round ears, a slim body, a thin tail held long.
+    "cat": Shape(
+        body_w=0.115,
+        head_w=0.098,
+        leg_r=0.038,
+        tail_r=0.032,
+        tail_len=0.56,
+        ear_top=0.80,
+        ear_w=0.072,
+        muzzle_y=-0.66,
+        muzzle_w=0.62,
+    ),
+    # A dog: a blunt square muzzle and a medium tail.
+    "dog": Shape(
+        body_w=0.140,
+        head_w=0.112,
+        leg_r=0.047,
+        tail_r=0.048,
+        tail_len=0.44,
+        ear_top=0.78,
+        ear_w=0.095,
+        muzzle_y=-0.70,
+        muzzle_w=0.70,
+    ),
+    # A wolf: longer in the leg and the muzzle than a dog, heavier in the chest.
+    "wolf": Shape(
+        body_w=0.150,
+        head_w=0.110,
+        leg_r=0.049,
+        tail_r=0.062,
+        tail_len=0.50,
+        ear_top=0.86,
+        ear_w=0.082,
+        muzzle_y=-0.76,
+        muzzle_w=0.56,
+    ),
+    # A rabbit: the ears are the whole silhouette, the tail is a puff.
+    "rabbit": Shape(
+        body_w=0.115,
+        head_w=0.092,
+        leg_r=0.040,
+        tail_r=0.055,
+        tail_len=0.16,
+        ear_top=1.18,
+        ear_w=0.058,
+        muzzle_y=-0.62,
+        muzzle_w=0.66,
+    ),
+    # A bear: all barrel, small ears, barely a muzzle, a stub of a tail.
+    "bear": Shape(
+        body_w=0.175,
+        head_w=0.128,
+        leg_r=0.062,
+        tail_r=0.045,
+        tail_len=0.12,
+        ear_top=0.76,
+        ear_w=0.070,
+        muzzle_y=-0.64,
+        muzzle_w=0.62,
+    ),
 }
 
 
@@ -201,8 +278,8 @@ def head_pieces(s: Shape) -> list[Piece]:
             "Muzzle",
             "head",
             s.coat,
-            (-w * 0.52, w * 0.52),
-            (MUZZLE_Y, HEAD_Y - 0.18),
+            (-w * s.muzzle_w, w * s.muzzle_w),
+            (s.muzzle_y, HEAD_Y - 0.18),
             (HEAD_Z - 0.09, HEAD_Z + 0.02),
         ),
         box(
@@ -218,7 +295,7 @@ def head_pieces(s: Shape) -> list[Piece]:
             "head",
             s.nose,
             (-0.026, 0.026),
-            (MUZZLE_Y - 0.022, MUZZLE_Y + 0.01),
+            (s.muzzle_y - 0.022, s.muzzle_y + 0.01),
             (HEAD_Z - 0.05, HEAD_Z - 0.01),
         ),
         box(
@@ -226,7 +303,7 @@ def head_pieces(s: Shape) -> list[Piece]:
             "jaw",
             s.belly,
             (-w * 0.5, w * 0.5),
-            (MUZZLE_Y + 0.01, HEAD_Y - 0.08),
+            (s.muzzle_y + 0.01, HEAD_Y - 0.08),
             (HEAD_Z - 0.115, HEAD_Z - 0.075),
         ),
     ]
@@ -257,7 +334,7 @@ def head_pieces(s: Shape) -> list[Piece]:
             )
         )
         bone = f"ear_{'l' if sx > 0 else 'r'}"
-        ox = sorted((sx * 0.030, sx * 0.115))
+        ox = sorted((sx * 0.030, sx * (0.030 + s.ear_w)))
         pieces.append(
             box(
                 f"Ear{side}",
@@ -265,10 +342,10 @@ def head_pieces(s: Shape) -> list[Piece]:
                 s.coat,
                 ox,
                 (HEAD_Y - 0.02, HEAD_Y + 0.05),
-                (HEAD_Z + 0.10, EAR_Z),
+                (HEAD_Z + 0.10, s.ear_top),
             )
         )
-        ix = sorted((sx * 0.046, sx * 0.099))
+        ix = sorted((sx * 0.046, sx * (0.046 + s.ear_w * 0.62)))
         pieces.append(
             box(
                 f"EarIn{side}",
@@ -276,7 +353,7 @@ def head_pieces(s: Shape) -> list[Piece]:
                 s.ear_inner,
                 ix,
                 (HEAD_Y - 0.032, HEAD_Y - 0.015),
-                (HEAD_Z + 0.12, EAR_Z - 0.03),
+                (HEAD_Z + 0.12, s.ear_top - 0.03),
             )
         )
     return pieces
@@ -338,7 +415,7 @@ def body_pieces(s: Shape) -> list[Piece]:
             "tail_1",
             s.coat,
             (-s.tail_r, s.tail_r),
-            (HIP_Y + 0.04, HIP_Y + 0.28),
+            (HIP_Y + 0.04, HIP_Y + 0.06 + s.tail_len * 0.5),
             (HIP_Z - 0.05, HIP_Z + 0.09),
         ),
         box(
@@ -346,7 +423,7 @@ def body_pieces(s: Shape) -> list[Piece]:
             "tail_2",
             s.tail_tip,
             (-s.tail_r + 0.012, s.tail_r - 0.012),
-            (HIP_Y + 0.28, HIP_Y + 0.52),
+            (HIP_Y + 0.04 + s.tail_len * 0.5, HIP_Y + 0.04 + s.tail_len),
             (HIP_Z - 0.12, HIP_Z + 0.04),
         ),
     ]
@@ -636,8 +713,19 @@ def build_quadruped(
     body.matrix_parent_inverse.identity()
     modifier = body.modifiers.new("Armature", "ARMATURE")
     modifier.object = arm
-    key_clips(arm)
     return arm, body, {"used": used, "unmapped": {}, "hair_faces": []}
+
+
+def build_rig_with_clips() -> bpy.types.Object:
+    """The skeleton and its seven clips, with no body — the shared clip library.
+
+    Every shape in `SHAPES` is the same rig moving the same way; keeping one
+    copy of the clips beside the bodies is what makes a second animal cost its
+    geometry alone.
+    """
+    arm = build_armature()
+    key_clips(arm)
+    return arm
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +736,199 @@ def build_quadruped(
 #: they hang on a bone every animal of this rig shares, so one file fits every
 #: shape in `SHAPES`.
 PART_SPECS: dict[str, dict] = {
+    "collar-scarf": {
+        "slot": "collar",
+        "label": "Scarf",
+        "styles": ["animal"],
+        "pieces": lambda: [
+            box(
+                "ScarfWrap",
+                "neck",
+                "primary",
+                (-0.112, 0.112),
+                (SHOULDER_Y - 0.10, SHOULDER_Y),
+                (BACK_Z - 0.07, NECK_TOP_Z + 0.03),
+            ),
+            box(
+                "ScarfTail",
+                "neck",
+                "primary_shade",
+                (0.02, 0.09),
+                (SHOULDER_Y - 0.12, SHOULDER_Y - 0.04),
+                (BACK_Z - 0.24, BACK_Z - 0.05),
+            ),
+        ],
+    },
+    "back-blanket": {
+        "slot": "back",
+        "label": "Blanket",
+        "styles": ["animal"],
+        "pieces": lambda: [
+            box(
+                "Blanket",
+                "chest",
+                "primary",
+                (-0.155, 0.155),
+                (CHEST_Y - 0.14, CHEST_Y + 0.22),
+                (BACK_Z - 0.14, BACK_Z + 0.04),
+            ),
+            box(
+                "BlanketTrim",
+                "chest",
+                "accent",
+                (-0.16, 0.16),
+                (CHEST_Y - 0.16, CHEST_Y - 0.12),
+                (BACK_Z - 0.15, BACK_Z + 0.05),
+            ),
+        ],
+    },
+    "tail_extra-bow": {
+        "slot": "tail_extra",
+        "label": "Bow",
+        "styles": ["animal"],
+        "pieces": lambda: [
+            box(
+                "BowKnot",
+                "tail_2",
+                "accent",
+                (-0.035, 0.035),
+                (HIP_Y + 0.40, HIP_Y + 0.47),
+                (HIP_Z - 0.08, HIP_Z - 0.01),
+            ),
+            box(
+                "BowL",
+                "tail_2",
+                "accent",
+                (0.035, 0.105),
+                (HIP_Y + 0.41, HIP_Y + 0.46),
+                (HIP_Z - 0.10, HIP_Z + 0.01),
+            ),
+            box(
+                "BowR",
+                "tail_2",
+                "accent",
+                (-0.105, -0.035),
+                (HIP_Y + 0.41, HIP_Y + 0.46),
+                (HIP_Z - 0.10, HIP_Z + 0.01),
+            ),
+        ],
+    },
+    "headgear-antlers": {
+        "slot": "headgear",
+        "label": "Antlers",
+        "styles": ["animal"],
+        "pieces": lambda: [
+            box(
+                "AntlerL",
+                "head",
+                "leather",
+                (0.045, 0.075),
+                (HEAD_Y - 0.03, HEAD_Y + 0.01),
+                (HEAD_Z + 0.11, HEAD_Z + 0.34),
+            ),
+            box(
+                "AntlerR",
+                "head",
+                "leather",
+                (-0.075, -0.045),
+                (HEAD_Y - 0.03, HEAD_Y + 0.01),
+                (HEAD_Z + 0.11, HEAD_Z + 0.34),
+            ),
+            box(
+                "TineL",
+                "head",
+                "leather",
+                (0.075, 0.155),
+                (HEAD_Y - 0.03, HEAD_Y + 0.01),
+                (HEAD_Z + 0.26, HEAD_Z + 0.30),
+            ),
+            box(
+                "TineR",
+                "head",
+                "leather",
+                (-0.155, -0.075),
+                (HEAD_Y - 0.03, HEAD_Y + 0.01),
+                (HEAD_Z + 0.26, HEAD_Z + 0.30),
+            ),
+        ],
+    },
+    "collar-bandana": {
+        "slot": "collar",
+        "label": "Bandana",
+        "styles": ["animal"],
+        "pieces": lambda: [
+            box(
+                "BandanaWrap",
+                "neck",
+                "accent",
+                (-0.108, 0.108),
+                (SHOULDER_Y - 0.09, SHOULDER_Y - 0.01),
+                (BACK_Z - 0.06, NECK_TOP_Z + 0.02),
+            ),
+            box(
+                "BandanaKnot",
+                "neck",
+                "accent",
+                (-0.05, 0.05),
+                (SHOULDER_Y - 0.13, SHOULDER_Y - 0.07),
+                (BACK_Z - 0.13, BACK_Z - 0.03),
+            ),
+        ],
+    },
+    "back-saddlebag": {
+        "slot": "back",
+        "label": "Saddle bag",
+        "styles": ["animal"],
+        "pieces": lambda: [
+            box(
+                "BagL",
+                "chest",
+                "leather",
+                (0.10, 0.20),
+                (CHEST_Y - 0.10, CHEST_Y + 0.14),
+                (BACK_Z - 0.22, BACK_Z - 0.02),
+            ),
+            box(
+                "BagR",
+                "chest",
+                "leather",
+                (-0.20, -0.10),
+                (CHEST_Y - 0.10, CHEST_Y + 0.14),
+                (BACK_Z - 0.22, BACK_Z - 0.02),
+            ),
+            box(
+                "BagStrap",
+                "chest",
+                "secondary_shade",
+                (-0.15, 0.15),
+                (CHEST_Y - 0.07, CHEST_Y + 0.11),
+                (BACK_Z - 0.01, BACK_Z + 0.05),
+            ),
+        ],
+    },
+    "headgear-pet-cap": {
+        "slot": "headgear",
+        "label": "Cap",
+        "styles": ["animal"],
+        "pieces": lambda: [
+            box(
+                "PetCapCrown",
+                "head",
+                "primary",
+                (-0.105, 0.105),
+                (HEAD_Y - 0.16, HEAD_Y + 0.05),
+                (HEAD_Z + 0.09, HEAD_Z + 0.17),
+            ),
+            box(
+                "PetCapPeak",
+                "head",
+                "primary_shade",
+                (-0.075, 0.075),
+                (HEAD_Y - 0.29, HEAD_Y - 0.15),
+                (HEAD_Z + 0.09, HEAD_Z + 0.115),
+            ),
+        ],
+    },
     "collar-band": {
         "slot": "collar",
         "label": "Collar",

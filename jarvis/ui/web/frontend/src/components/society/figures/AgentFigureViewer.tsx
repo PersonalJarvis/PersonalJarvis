@@ -28,6 +28,7 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { assembleFigure, playClip, type AssembledFigure } from "./assembleFigure";
+import { frameDistance } from "./figureFraming";
 import { recipeKey, resolvePalette, type FigureRecipe } from "./figureRecipe";
 import { figureAssetFor } from "./figureRegistry";
 import { LobbyStage } from "./LobbyStage";
@@ -198,6 +199,7 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
   const gltf = assets.base;
   const camera = useThree((s) => s.camera);
   const invalidate = useThree((s) => s.invalidate);
+  const size = useThree((s) => s.size);
   const groupRef = useRef<THREE.Group>(null);
   const figureRef = useRef<AssembledFigure | null>(null);
   // What the camera frames: the body plus whatever it wears. A wizard hat
@@ -215,6 +217,7 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
       palette,
       heightM,
       assets.parts.map((p) => p.gltf),
+      assets.clips,
     );
     figureRef.current = figure;
     setFramedHeightM(figure?.renderedHeightM ?? heightM);
@@ -257,15 +260,25 @@ function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbi
     const group = groupRef.current;
     const o = orbit.current;
     if (group) group.rotation.y = o.yaw;
-    // 2.4 heights of distance: larger than the 2.6 it opened with (maintainer:
-    // "about a fifth"), with the crown and the hem still inside the frame.
+    // Stand back far enough for the figure to fit the box BOTH ways. A fixed
+    // multiple of its height only works while the column is tall: the look
+    // editor grew, the column became wide and short, and a fixed distance cut
+    // the legs off. Solving the frustum for the span in each axis does not
+    // care what shape the box is.
     const mid = framedHeightM * 0.5;
-    const distance = (framedSpanM * 2.5) / o.zoom;
+    // The stage always mounts a perspective camera; the store types it loosely.
+    const lens = camera as THREE.PerspectiveCamera;
+    const distance = frameDistance({
+      spanM: framedSpanM,
+      fovDeg: lens.fov,
+      aspect: lens.aspect,
+      zoom: o.zoom,
+    });
     camera.position.set(0, mid + Math.sin(o.pitch) * distance, Math.cos(o.pitch) * distance);
     camera.lookAt(0, mid, 0);
     camera.updateProjectionMatrix();
     invalidate();
-  }, [orbitTick, framedHeightM, framedSpanM, camera, invalidate, orbit]);
+  }, [orbitTick, framedHeightM, framedSpanM, camera, invalidate, orbit, size]);
 
   useFrame((_, dt) => {
     if (paused) return;

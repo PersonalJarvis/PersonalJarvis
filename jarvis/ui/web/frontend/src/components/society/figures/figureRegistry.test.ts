@@ -23,10 +23,13 @@ import {
   type CatalogPart,
 } from "./figureRegistry";
 
-/** Styles that are a lane, not a look: `custom` is the person's own import. */
-const IMPORT_ONLY = new Set(["custom"]);
+/**
+ * Styles that are a lane or a reservation, not a look a person picks:
+ * `custom` is their own import, `spirit` is Jarvis and there is one of him.
+ */
+const NOT_PICKABLE = new Set(["custom", "spirit"]);
 
-const pickableStyles = Object.keys(CATALOG.styles).filter((s) => !IMPORT_ONLY.has(s));
+const pickableStyles = Object.keys(CATALOG.styles).filter((s) => !NOT_PICKABLE.has(s));
 
 describe("the catalog covers every style the creator shows", () => {
   it.each(pickableStyles)("%s has at least one base", (style) => {
@@ -74,27 +77,80 @@ describe("a part is only ever offered where it fits", () => {
     }
   });
 
-  it("marks the flat capes two-sided and nothing solid", () => {
-    const twoSided = CATALOG.parts.filter((p) => p.two_sided).map((p) => p.id);
-    expect(twoSided.sort()).toEqual(
-      CATALOG.parts.filter((p) => p.slot === "back" && p.id.endsWith("-cape")).map((p) => p.id).sort(),
-    );
+  /**
+   * The point of the wardrobe: a person opening a style finds real choices,
+   * not one body and one hat. The floor is deliberately low — it catches a
+   * style emptied by a bad rebuild, not a style that is merely small.
+   */
+  it.each(pickableStyles)("%s offers more than one build", (style) => {
+    expect(basesForStyle(style).length).toBeGreaterThan(1);
+  });
+
+  it.each(pickableStyles)("%s fills at least three slots for every body it has", (style) => {
+    for (const base of basesForStyle(style)) {
+      const slots = slotsWithParts(base.archetype, style, base.family ?? null);
+      expect(slots.length, `${base.label} (${style})`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it("never offers a skull-fitted part on a body of another family", () => {
+    for (const part of CATALOG.parts.filter((p) => p.fits_family)) {
+      for (const style of part.styles) {
+        for (const base of basesForStyle(style, part.archetype)) {
+          const offered = partsForSlot(part.slot, part.archetype, style, base.family ?? null);
+          const listed = offered.some((p) => p.id === part.id);
+          expect(listed, `${part.id} on ${base.label}`).toBe(part.fits_family === base.family);
+        }
+      }
+    }
+  });
+
+  it("renders every hanging cloth from both sides, and nothing solid", () => {
+    // A cape or a cloak is one open sheet with no inside; front-side-only it
+    // vanishes when the wearer turns. Nothing with a volume needs the cost.
+    const cloth = CATALOG.parts.filter((p) => /-(cape|cloak)$/.test(p.id));
+    expect(cloth.length).toBeGreaterThan(0);
+    for (const part of cloth) {
+      expect(part.two_sided, part.id).toBe(true);
+      expect(part.slot, part.id).toBe("back");
+    }
+    for (const part of CATALOG.parts.filter((p) => p.two_sided)) {
+      expect(part.slot, part.id).toBe("back");
+    }
   });
 });
 
 describe("switching style or base never leaves a stranded part", () => {
-  const capeOf = (style: string): CatalogPart | undefined =>
-    CATALOG.parts.find((p) => p.slot === "back" && p.styles.includes(style));
+  /** A back piece that belongs to `style` and to nothing else — the clean case. */
+  const exclusiveBack = (style: string): CatalogPart | undefined =>
+    CATALOG.parts.find(
+      (p) => p.slot === "back" && p.archetype === "biped" && p.styles.join() === style,
+    );
 
   it("keeps a part the new style still offers", () => {
-    const cape = capeOf("fantasy");
+    const cape = exclusiveBack("fantasy");
     expect(cape).toBeDefined();
     const kept = keepablePartsFor({ back: cape!.id }, "biped", "fantasy");
     expect(kept).toEqual({ back: cape!.id });
   });
 
+  it("drops a hat the new body cannot wear, even inside one style", () => {
+    // Fantasy holds two skull families; a hat cut for one must not survive a
+    // move to the other, which the style tag alone would let through.
+    const hat = CATALOG.parts.find((p) => p.slot === "headgear" && p.fits_family);
+    expect(hat).toBeDefined();
+    const other = CATALOG.bases.find(
+      (b) => b.archetype === hat!.archetype && b.family !== hat!.fits_family,
+    );
+    expect(other).toBeDefined();
+    expect(keepablePartsFor({ headgear: hat!.id }, hat!.archetype, null, other!.family ?? null)).toEqual({});
+    expect(keepablePartsFor({ headgear: hat!.id }, hat!.archetype, null, hat!.fits_family!)).toEqual({
+      headgear: hat!.id,
+    });
+  });
+
   it("drops a part the new style does not offer", () => {
-    const cape = capeOf("fantasy")!;
+    const cape = exclusiveBack("fantasy")!;
     expect(cape.styles).not.toContain("scifi");
     expect(keepablePartsFor({ back: cape.id }, "biped", "scifi")).toEqual({});
   });

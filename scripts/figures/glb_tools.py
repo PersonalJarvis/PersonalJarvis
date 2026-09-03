@@ -627,5 +627,15 @@ def figure_extras(doc: dict) -> dict | None:
     return (doc.get("asset", {}).get("extras") or {}).get("jarvis_figure")
 
 
+def clips_extras(doc: dict) -> dict | None:
+    """A clip library: an archetype's skeleton and its clips, with no body.
+
+    Nine clips of a 23-bone rig are 200 KB — five times the geometry of a
+    procedural body. Shipping them once and letting every body of that rig
+    borrow them is what makes a new look cost 40 KB instead of 240 KB.
+    """
+    return (doc.get("asset", {}).get("extras") or {}).get("jarvis_clips")
+
+
 def part_extras(doc: dict) -> dict | None:
     return (doc.get("asset", {}).get("extras") or {}).get("jarvis_part")
