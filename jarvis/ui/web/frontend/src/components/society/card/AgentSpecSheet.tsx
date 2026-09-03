@@ -41,10 +41,13 @@ import { cn } from "@/lib/utils";
 import { RetireButton } from "./RetireButton";
 import { CapabilityChip } from "../CapabilityChip";
 import { useAgentActivity, useAgentRoutines, useAgentSkills, type AgentActivity } from "../cardData";
+import { PERMISSION_CEILINGS } from "@/lib/societyApi";
+
 import {
   useSetAgentPaused,
   useSocietyCapabilities,
   useUpdateAgentDescription,
+  useUpdateAgentLimits,
   type AgentRunState,
   type Capability,
   type PermissionCeiling,
@@ -342,42 +345,18 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
             </section>
           ) : null}
 
-          <section className="flex flex-col gap-2">
-            <StepMeter
-              label={t("society.card.permission")}
-              steps={3}
-              filled={CEILING_STEP[agent.permissionCeiling] ?? 0}
-              value={t(`society.ceiling.${agent.permissionCeiling}`)}
-            />
-            <StepMeter
-              label={t("society.card.meter_reach")}
-              steps={REACH_STEPS}
-              filled={reachFilled}
-              value={reachValue}
-            />
-            <div className="ac-meter">
-              <span className="ac-meter-label">{t("society.card.meter_today")}</span>
-              <span
-                className="ac-meter-bar"
-                data-spent={exhausted ? "1" : "0"}
-                role="img"
-                aria-label={`${t("society.card.meter_today")}: $${spentToday.toFixed(2)}`}
-              >
-                <span className="ac-meter-fill" style={{ width: `${Math.round(spentShare * 100)}%` }} />
-              </span>
-              <span className="ac-meter-value">
-                {capped
-                  ? t("society.card.spent_of")
-                      .replace("{0}", spentToday.toFixed(2))
-                      .replace("{1}", agent.dailyBudgetUsd.toFixed(2))
-                  : t("society.card.no_cap")}
-              </span>
-            </div>
-          </section>
+          <LimitsSection
+            agent={agent}
+            reachFilled={reachFilled}
+            reachValue={reachValue}
+            spentToday={spentToday}
+            spentShare={spentShare}
+            capped={capped}
+            exhausted={exhausted}
+          />
 
-          <section className="grid grid-cols-3 gap-2">
+          <section className="grid grid-cols-2 gap-2">
             <Plate label={t("society.card.place")} value={t(`society.checkpoint.${agent.checkpoint}`)} />
-            <Plate label={t("society.card.jobs_at_once")} value={String(agent.maxConcurrentRuns)} />
             <Plate label={t("society.card.created")} value={formatDate(agent.createdMs, "—")} />
           </section>
 
@@ -500,6 +479,201 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
         <RetireButton agent={agent} onRetired={onRetired} />
       </div>
     </div>
+  );
+}
+
+/**
+ * The three knobs a person may turn after the agent exists, plus the reach
+ * they cannot (that one follows the grant mode).
+ *
+ * All three are enforced somewhere — the budget stops a dispatch, the ceiling
+ * decides what runs without asking, the concurrency caps runs in flight — and
+ * until now they could be set only once, at creation, behind the Advanced
+ * disclosure, and never again (maintainer, 2026-09-03). Read mode is the
+ * meters as before; Edit turns the same rows into controls and PATCHes the
+ * three together.
+ */
+function LimitsSection({
+  agent,
+  reachFilled,
+  reachValue,
+  spentToday,
+  spentShare,
+  capped,
+  exhausted,
+}: {
+  agent: SocietyAgent;
+  reachFilled: number;
+  reachValue: string;
+  spentToday: number;
+  spentShare: number;
+  capped: boolean;
+  exhausted: boolean;
+}) {
+  const t = useT();
+  const update = useUpdateAgentLimits();
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [ceiling, setCeiling] = useState<PermissionCeiling>(agent.permissionCeiling);
+  const [budget, setBudget] = useState(String(agent.dailyBudgetUsd));
+  const [jobs, setJobs] = useState(String(agent.maxConcurrentRuns));
+
+  const begin = () => {
+    setCeiling(agent.permissionCeiling);
+    setBudget(String(agent.dailyBudgetUsd));
+    setJobs(String(agent.maxConcurrentRuns));
+    setError("");
+    setEditing(true);
+  };
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      await update(agent, {
+        permissionCeiling: ceiling,
+        dailyBudgetUsd: Number.parseFloat(budget) || 0,
+        maxConcurrentRuns: Number.parseInt(jobs, 10) || 1,
+      });
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="mb-0.5 flex items-center justify-between gap-2">
+        <h3 className="ac-head">{t("society.card.limits")}</h3>
+        {editing ? null : (
+          <button
+            type="button"
+            onClick={begin}
+            data-testid="agent-limits-edit"
+            className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+          >
+            {t("society.card.edit")}
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="ac-prose flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">{t("society.card.permission")}</span>
+            <div className="flex flex-wrap gap-1">
+              {PERMISSION_CEILINGS.map((step) => (
+                <button
+                  key={step}
+                  type="button"
+                  disabled={saving}
+                  onClick={() => setCeiling(step)}
+                  aria-pressed={ceiling === step}
+                  className={cn(
+                    "rounded-md border px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
+                    ceiling === step
+                      ? "border-border-strong bg-secondary text-foreground"
+                      : "border-border text-muted-foreground hover:bg-secondary",
+                  )}
+                >
+                  {t(`society.ceiling.${step}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-4">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">{t("society.create.budget")}</span>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                inputMode="decimal"
+                disabled={saving}
+                value={budget}
+                onChange={(e) => setBudget(e.target.value)}
+                data-testid="agent-budget-input"
+                className="w-28 rounded-md border border-border bg-background px-2 py-1 font-mono text-sm text-foreground outline-none focus:border-primary disabled:opacity-50"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">{t("society.card.jobs_at_once")}</span>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                disabled={saving}
+                value={jobs}
+                onChange={(e) => setJobs(e.target.value)}
+                className="w-20 rounded-md border border-border bg-background px-2 py-1 font-mono text-sm text-foreground outline-none focus:border-primary disabled:opacity-50"
+              />
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground">{t("society.card.budget_hint")}</p>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void save()}
+              className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {saving ? t("society.card.saving") : t("society.card.save")}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => setEditing(false)}
+              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              {t("society.card.cancel")}
+            </button>
+            {error ? <span className="text-xs text-destructive">{error}</span> : null}
+          </div>
+        </div>
+      ) : (
+        <>
+          <StepMeter
+            label={t("society.card.permission")}
+            steps={3}
+            filled={CEILING_STEP[agent.permissionCeiling] ?? 0}
+            value={t(`society.ceiling.${agent.permissionCeiling}`)}
+          />
+          <StepMeter
+            label={t("society.card.meter_reach")}
+            steps={REACH_STEPS}
+            filled={reachFilled}
+            value={reachValue}
+          />
+          <div className="ac-meter">
+            <span className="ac-meter-label">{t("society.card.meter_today")}</span>
+            <span
+              className="ac-meter-bar"
+              data-spent={exhausted ? "1" : "0"}
+              role="img"
+              aria-label={`${t("society.card.meter_today")}: $${spentToday.toFixed(2)}`}
+            >
+              <span className="ac-meter-fill" style={{ width: `${Math.round(spentShare * 100)}%` }} />
+            </span>
+            <span className="ac-meter-value">
+              {capped
+                ? t("society.card.spent_of")
+                    .replace("{0}", spentToday.toFixed(2))
+                    .replace("{1}", agent.dailyBudgetUsd.toFixed(2))
+                : t("society.card.no_cap")}
+            </span>
+          </div>
+          <div className="ac-meter">
+            <span className="ac-meter-label">{t("society.card.jobs_at_once")}</span>
+            <span className="ac-meter-value">{agent.maxConcurrentRuns}</span>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

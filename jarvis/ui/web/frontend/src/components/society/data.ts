@@ -467,6 +467,55 @@ export function useUpdateAgentDescription() {
   );
 }
 
+/** The knobs the card lets a person turn after the agent exists. */
+export interface AgentLimits {
+  /** 0 means no cap — the scheduler skips the budget gate entirely. */
+  dailyBudgetUsd: number;
+  permissionCeiling: PermissionCeiling;
+  maxConcurrentRuns: number;
+}
+
+/**
+ * Change what the agent is allowed to spend, decide and run at once.
+ *
+ * All three are enforced — the budget by `society/scheduler`, the ceiling by
+ * `society/approvals.decide`, the concurrency by the scheduler's run count —
+ * and all three were settable only at creation, behind the Advanced
+ * disclosure, and never afterwards (maintainer, 2026-09-03). `PATCH` has
+ * always accepted them; nothing was calling it with them.
+ *
+ * The description is deliberately NOT sent along: the route re-derives focus
+ * whenever a title or description arrives, so a budget edit must not carry
+ * prose with it.
+ */
+export function useUpdateAgentLimits() {
+  const client = useQueryClient();
+  return useCallback(
+    async (agent: SocietyAgent, limits: AgentLimits): Promise<void> => {
+      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const body = {
+        daily_budget_usd: Math.max(0, limits.dailyBudgetUsd),
+        permission_ceiling: limits.permissionCeiling,
+        max_concurrent_runs: Math.max(1, Math.round(limits.maxConcurrentRuns)),
+      };
+      if (!sample) {
+        const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(`limits ${res.status}`);
+      } else {
+        agent.dailyBudgetUsd = body.daily_budget_usd;
+        agent.permissionCeiling = body.permission_ceiling;
+        agent.maxConcurrentRuns = body.max_concurrent_runs;
+      }
+      await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+    },
+    [client],
+  );
+}
+
 /** Pause or resume an agent (`PATCH /api/society/agents/{id}`); sample rows flip locally. */
 export function useSetAgentPaused() {
   const client = useQueryClient();
