@@ -1,29 +1,37 @@
 /**
  * The model card's spec column — a champion card of the island.
  *
- * It used to be a stack of grey headings and sentences, and the sentence that
- * mattered most read "No focus tools" above an empty list: `GRANTED TOOLS`
- * only ever filled for an allow-list agent, and almost every agent runs
- * `grant_mode = all`. So the card said nothing about the one thing that makes
- * a Gmail agent a Gmail agent.
+ * It used to be a stack of grey headings whose most important line read "No
+ * focus tools" above an empty list: `GRANTED TOOLS` only ever filled for an
+ * allow-list agent, and almost every agent runs `grant_mode = all`. So the
+ * card said nothing about the one thing that makes a Gmail agent a Gmail
+ * agent.
  *
  * It now leads with HANDS — what this agent reaches for first, as tiles
  * carrying the services' real marks — and says in one quiet line that
  * everything else stays in reach, because it does (agent-definition §3.2).
- * Below that: the ceiling and the reach as meters, the brain, the standing
- * orders, routines, and the lifetime record.
  *
- * The skin is the world's, not the app's (maintainer, 2026-09-03): the card
- * wears the island's daylight the way the 3D column beside it does. How that
- * works without any component writing a literal colour is explained at the
- * top of `agentCard.css`. Jarvis keeps its two special sections — its brain
- * is the app's chat brain and its orders are the user's own instructions
- * file — and inherits the skin through the same token scope.
+ * TWO RULES this file exists to keep (maintainer, 2026-09-03):
+ *
+ * 1. Nothing on the card is decoration. Every value shown is one a part of
+ *    the system actually reads: the ceiling decides approvals
+ *    (`society/approvals.decide`), the daily budget stops a dispatch
+ *    (`society/scheduler`, which is why today's spend is drawn against it
+ *    rather than the lifetime total), `max_concurrent_runs` caps runs in
+ *    flight, focus orders the tool list. The one control that did nothing —
+ *    "Assign task", disabled since it shipped — is gone rather than greyed.
+ * 2. Nothing is empty because nobody asked. Routines, learned skills and the
+ *    activity log come from routes that existed all along and that no
+ *    frontend file was calling (`../cardData.ts`).
+ *
+ * The skin is in `agentCard.css`: the island's shape, the app's colours.
+ * Jarvis keeps its two special sections — its brain is the app's chat brain
+ * and its orders are the user's own instructions file.
  *
  * Every string goes through the locale files.
  */
 import { useMemo, useState } from "react";
-import { MessageSquare, Pause, Play, Send } from "lucide-react";
+import { MessageSquare, Pause, Play } from "lucide-react";
 
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -31,10 +39,10 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { CapabilityChip } from "../CapabilityChip";
+import { useAgentActivity, useAgentRoutines, useAgentSkills, type AgentActivity } from "../cardData";
 import {
   useSetAgentPaused,
   useSocietyCapabilities,
-  useUpdateAgentDescription,
   type AgentRunState,
   type Capability,
   type PermissionCeiling,
@@ -57,105 +65,43 @@ const STATE_FILL: Record<AgentRunState, string> = {
 };
 
 const REACH_STEPS = 6;
-
-/**
- * The agent's standing instructions, editable in place. The chat is the main
- * way rules arrive (the agent proposes, the person confirms), but a person may
- * also write them directly; the PATCH keeps the focus and approval rules the
- * agent earned.
- */
-function DescriptionEditor({ agent }: { agent: SocietyAgent }) {
-  const t = useT();
-  const update = useUpdateAgentDescription();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(agent.description);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const begin = () => {
-    setDraft(agent.description);
-    setError("");
-    setEditing(true);
-  };
-  const save = async () => {
-    setSaving(true);
-    setError("");
-    try {
-      await update(agent, draft.trim());
-      setEditing(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="ac-head">{t("society.card.description")}</h3>
-        {editing ? null : (
-          <button
-            type="button"
-            onClick={begin}
-            className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
-          >
-            {t("society.card.edit")}
-          </button>
-        )}
-      </div>
-      {editing ? (
-        <div className="flex flex-col gap-2">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            rows={Math.min(14, Math.max(4, draft.split("\n").length + 1))}
-            disabled={saving}
-            className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-sm leading-relaxed text-foreground outline-none focus:border-primary"
-          />
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => void save()}
-              className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {saving ? t("society.card.saving") : t("society.card.save")}
-            </button>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => setEditing(false)}
-              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
-            >
-              {t("society.card.cancel")}
-            </button>
-            {error ? <span className="text-xs text-destructive">{error}</span> : null}
-          </div>
-        </div>
-      ) : agent.description ? (
-        <p className="whitespace-pre-line text-sm leading-relaxed">{agent.description}</p>
-      ) : (
-        <p className="text-xs text-muted-foreground">{t("society.card.no_description")}</p>
-      )}
-    </>
-  );
-}
+/** More rows than this and the log stops being a glance. */
+const LOG_ROWS = 6;
 
 function formatDate(ms: number | null, fallback: string): string {
   if (ms === null) return fallback;
   return new Date(ms).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 }
 
-/** "in 3 h", "in 2 d", "now" — from an ISO time; the schedule text stays beside it. */
-export function relativeUntil(iso: string | null, t: (key: string) => string): string | null {
-  if (!iso) return null;
-  const ms = Date.parse(iso) - Date.now();
-  if (Number.isNaN(ms)) return null;
-  if (ms <= 60_000) return t("society.card.due_now");
-  const minutes = Math.round(ms / 60_000);
+/** "in 3 h", "in 2 d", "now" — from an epoch in ms. */
+function untilLabel(ms: number, t: (key: string) => string): string {
+  const delta = ms - Date.now();
+  if (delta <= 60_000) return t("society.card.due_now");
+  const minutes = Math.round(delta / 60_000);
   if (minutes < 60) return t("society.card.due_in").replace("{0}", `${minutes} min`);
   const hours = Math.round(minutes / 60);
   if (hours < 48) return t("society.card.due_in").replace("{0}", `${hours} h`);
   return t("society.card.due_in").replace("{0}", `${Math.round(hours / 24)} d`);
+}
+
+export function relativeUntil(iso: string | null, t: (key: string) => string): string | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? null : untilLabel(ms, t);
+}
+
+/** "2 min ago", "3 h ago" — the past half of the same ladder. */
+function agoLabel(ms: number, t: (key: string) => string): string {
+  const delta = Date.now() - ms;
+  if (delta < 60_000) return t("society.card.just_now");
+  const minutes = Math.round(delta / 60_000);
+  const unit =
+    minutes < 60
+      ? `${minutes} min`
+      : minutes < 2880
+        ? `${Math.round(minutes / 60)} h`
+        : `${Math.round(minutes / 1440)} d`;
+  return t("society.card.ago").replace("{0}", unit);
 }
 
 export interface AgentSpecSheetProps {
@@ -171,6 +117,9 @@ export interface AgentSpecSheetProps {
 export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
   const t = useT();
   const capabilities = useSocietyCapabilities();
+  const activity = useAgentActivity(agent.agentId);
+  const skills = useAgentSkills(agent.agentId);
+  const routines = useAgentRoutines(agent.agentId);
   const setPaused = useSetAgentPaused();
   const [busy, setBusy] = useState(false);
   const byId = useMemo(() => {
@@ -198,6 +147,19 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
         .replace("{1}", String(catalogSize))
     : t("society.card.reach_all");
 
+  // The budget is a real gate, so it is drawn as one: today's spend against
+  // the cap the scheduler refuses at. A cap of 0 means "no cap" there, so it
+  // means "no cap" here too rather than a bar that is always full.
+  const capped = agent.dailyBudgetUsd > 0;
+  const spentToday = agent.stats.spentTodayUsd;
+  const spentShare = capped ? Math.min(1, spentToday / agent.dailyBudgetUsd) : 0;
+  const exhausted = capped && spentToday >= agent.dailyBudgetUsd;
+
+  const log = (activity.data?.events ?? []).slice(0, LOG_ROWS);
+  const activeRuns = activity.data?.activeRuns ?? 0;
+  const learned = skills.data ?? [];
+  const schedule = routines.data ?? [];
+
   const togglePause = async () => {
     setBusy(true);
     try {
@@ -212,7 +174,7 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
       <header className="ac-band" data-tier={agent.tier}>
         <span className="min-w-0 flex-1">
           <span className="ac-band-name block truncate">{agent.name}</span>
-          {/* Jarvis' title IS "Lead", so the tier would read twice. */}
+          {/* Jarvis' title IS "Lead", so the tier would otherwise read twice. */}
           <span className="ac-band-title block truncate">
             {[t(`society.tier.${agent.tier}`), agent.title]
               .filter((part, i, all) => part && all.indexOf(part) === i)
@@ -220,7 +182,11 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
           </span>
         </span>
         <span className={cn("ac-dot", STATE_FILL[agent.state])} data-state={agent.state} aria-hidden />
-        <span className="shrink-0 text-xs text-muted-foreground">{t(`society.state.${agent.state}`)}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {activeRuns > 0
+            ? t("society.card.active_runs").replace("{0}", String(activeRuns))
+            : t(`society.state.${agent.state}`)}
+        </span>
       </header>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -263,6 +229,30 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
             ) : null}
           </section>
 
+          {learned.length > 0 ? (
+            <section>
+              <h3 className="ac-head mb-2.5">{t("society.card.learned")}</h3>
+              <ul className="flex flex-wrap gap-3">
+                {learned.map((skill) => (
+                  <CapabilityTile
+                    key={skill.slug}
+                    id={`skill:${skill.slug}`}
+                    capability={{
+                      id: `skill:${skill.slug}`,
+                      kind: "skill",
+                      label: skill.name,
+                      one_liner: skill.whenToUse || skill.description,
+                      risk_tier: "safe",
+                      connected: true,
+                      tool_name: "",
+                    }}
+                    palette={agent.palette}
+                  />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
           <section className="flex flex-col gap-2">
             <StepMeter
               label={t("society.card.permission")}
@@ -276,12 +266,30 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
               filled={reachFilled}
               value={reachValue}
             />
+            <div className="ac-meter">
+              <span className="ac-meter-label">{t("society.card.meter_today")}</span>
+              <span
+                className="ac-meter-bar"
+                data-spent={exhausted ? "1" : "0"}
+                role="img"
+                aria-label={`${t("society.card.meter_today")}: $${spentToday.toFixed(2)}`}
+              >
+                <span className="ac-meter-fill" style={{ width: `${Math.round(spentShare * 100)}%` }} />
+              </span>
+              <span className="ac-meter-value">
+                {capped
+                  ? t("society.card.spent_of")
+                      .replace("{0}", spentToday.toFixed(2))
+                      .replace("{1}", agent.dailyBudgetUsd.toFixed(2))
+                  : t("society.card.no_cap")}
+              </span>
+            </div>
           </section>
 
           <section className="grid grid-cols-3 gap-2">
-            <Plate label={t("society.card.budget")} value={`$${agent.dailyBudgetUsd.toFixed(2)}`} />
-            <Plate label={t("society.card.focus")} value={String(agent.focus.length)} />
             <Plate label={t("society.card.place")} value={t(`society.checkpoint.${agent.checkpoint}`)} />
+            <Plate label={t("society.card.jobs_at_once")} value={String(agent.maxConcurrentRuns)} />
+            <Plate label={t("society.card.created")} value={formatDate(agent.createdMs, "—")} />
           </section>
 
           <section>
@@ -312,7 +320,14 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
             {agent.tier === "lead" ? (
               <LeadInstructions />
             ) : (
-              <DescriptionEditor agent={agent} />
+              <>
+                <h3 className="ac-head mb-2">{t("society.card.description")}</h3>
+                {agent.description ? (
+                  <p className="whitespace-pre-line text-sm leading-relaxed">{agent.description}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{t("society.card.no_description")}</p>
+                )}
+              </>
             )}
           </section>
 
@@ -330,23 +345,33 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
 
           <section>
             <h3 className="ac-head mb-2">{t("society.card.routines")}</h3>
-            {agent.routines.length === 0 ? (
+            {schedule.length === 0 ? (
               <p className="ac-prose text-xs text-muted-foreground">{t("society.card.no_routines")}</p>
             ) : (
               <ul className="ac-prose flex flex-col gap-1.5">
-                {agent.routines.map((routine) => {
-                  const due = relativeUntil(routine.nextFire, t);
-                  return (
-                    <li key={routine.id} className="flex items-baseline justify-between gap-3 text-sm">
-                      <span className="truncate">{routine.label}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {routine.schedule}
-                        {due ? ` · ${due}` : ""}
-                      </span>
-                    </li>
-                  );
-                })}
+                {schedule.map((routine) => (
+                  <li key={routine.id} className="flex items-baseline justify-between gap-3 text-sm">
+                    <span className="truncate">{routine.title}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {routine.schedule}
+                      {routine.dueMs ? ` · ${untilLabel(routine.dueMs, t)}` : ""}
+                    </span>
+                  </li>
+                ))}
               </ul>
+            )}
+          </section>
+
+          <section>
+            <h3 className="ac-head mb-2">{t("society.card.recent")}</h3>
+            {log.length === 0 ? (
+              <p className="ac-prose text-xs text-muted-foreground">{t("society.card.no_recent")}</p>
+            ) : (
+              <div className="ac-log">
+                {log.map((row) => (
+                  <LogRow key={row.id} row={row} agentId={agent.agentId} t={t} />
+                ))}
+              </div>
             )}
           </section>
 
@@ -361,6 +386,20 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
               />
             </div>
           </section>
+
+          {agent.workspaceDir || agent.wikiNamespace ? (
+            <section>
+              <h3 className="ac-head mb-2">{t("society.card.where")}</h3>
+              <div className="grid grid-cols-2 gap-2">
+                {agent.workspaceDir ? (
+                  <Plate label={t("society.card.workspace")} value={agent.workspaceDir} mono />
+                ) : null}
+                {agent.wikiNamespace ? (
+                  <Plate label={t("society.card.wiki")} value={agent.wikiNamespace} mono />
+                ) : null}
+              </div>
+            </section>
+          ) : null}
         </div>
       </ScrollArea>
 
@@ -368,7 +407,6 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
         <button
           type="button"
           className="ac-btn"
-          data-accent="1"
           disabled={!onOpenChat}
           title={onOpenChat ? undefined : t("society.card.chat_soon")}
           onClick={onOpenChat}
@@ -376,16 +414,7 @@ export function AgentSpecSheet({ agent, onOpenChat }: AgentSpecSheetProps) {
           <MessageSquare className="h-3.5 w-3.5" aria-hidden />
           {t("society.card.action_chat")}
         </button>
-        <button type="button" className="ac-btn" disabled title={t("society.card.assign_soon")}>
-          <Send className="h-3.5 w-3.5" aria-hidden />
-          {t("society.card.action_assign")}
-        </button>
-        <button
-          type="button"
-          className="ac-btn ml-auto"
-          disabled={busy}
-          onClick={() => void togglePause()}
-        >
+        <button type="button" className="ac-btn ml-auto" disabled={busy} onClick={() => void togglePause()}>
           {paused ? <Play className="h-3.5 w-3.5" aria-hidden /> : <Pause className="h-3.5 w-3.5" aria-hidden />}
           {paused ? t("society.card.action_resume") : t("society.card.action_pause")}
         </button>
@@ -423,14 +452,43 @@ function StepMeter({
   );
 }
 
-function Plate({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Plate({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="ac-plate">
+    <div className="ac-plate" title={value}>
       <div className="ac-plate-label truncate">{label}</div>
-      <div className="ac-plate-value truncate">
-        {value}
-        {hint ? <span className="ac-plate-label"> {hint}</span> : null}
-      </div>
+      <div className={cn("ac-plate-value truncate", mono && "ac-prose font-mono text-xs")}>{value}</div>
+    </div>
+  );
+}
+
+/**
+ * One line of the agent's own traffic. `events_for_agent` also carries the
+ * board's broadcasts, so `cardData` filters those out first — a row here is
+ * always something this agent sent or was sent.
+ */
+function LogRow({
+  row,
+  agentId,
+  t,
+}: {
+  row: AgentActivity;
+  agentId: string;
+  t: (key: string) => string;
+}) {
+  const outgoing = row.fromAgent === agentId;
+  const what = outgoing
+    ? row.toAgent
+      ? t("society.card.log_to").replace("{0}", row.toAgent)
+      : t("society.card.log_board")
+    : t("society.card.log_from").replace("{0}", row.fromAgent ?? "?");
+  return (
+    <div className="ac-log-row">
+      <span className="ac-log-type">{row.type.toLowerCase()}</span>
+      <span className="ac-log-what truncate">
+        {what}
+        {row.costUsd > 0 ? ` · $${row.costUsd.toFixed(2)}` : ""}
+      </span>
+      <span className="ac-log-when">{row.tsMs ? agoLabel(row.tsMs, t) : ""}</span>
     </div>
   );
 }

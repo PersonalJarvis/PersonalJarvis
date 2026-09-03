@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,19 @@ import aiosqlite
 
 from .bus import SocietyBus
 from .events import MsgType, SocietyEnvelope, now_ms
+
+
+def day_start_ms(at_ms: int) -> int:
+    """Midnight UTC of the day ``at_ms`` falls in.
+
+    The one definition of "today" in the society: the scheduler's daily-budget
+    gate and the card's spend-today figure both read it, so a card can never
+    show an agent under its cap while the gate is refusing its work.
+    """
+    day = datetime.fromtimestamp(at_ms / 1000, tz=UTC).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return int(day.timestamp() * 1000)
 
 log = logging.getLogger(__name__)
 
@@ -317,7 +331,15 @@ class SocietyStore:
         return float(row[0]) if row else 0.0
 
     async def agent_stats(self, agent_id: str) -> dict[str, Any]:
-        """Derived lifetime numbers: runs (RESULTs sent), cost, last activity."""
+        """Derived numbers: runs (RESULTs sent), lifetime cost, last activity.
+
+        ``spent_today_usd`` rides along because the daily budget is a real
+        gate — the scheduler refuses a dispatch once an agent has spent its
+        ``daily_budget_usd`` since the start of the UTC day — and a budget
+        shown without today's spend beside it looks like a decoration rather
+        than the limit it is. Same ``day_start_ms`` both places, so the card
+        and the gate can never disagree.
+        """
         cur = await self.conn.execute(
             "SELECT "
             "  SUM(CASE WHEN msg_type = 'RESULT' THEN 1 ELSE 0 END), "
@@ -328,9 +350,11 @@ class SocietyStore:
         row = await cur.fetchone()
         await cur.close()
         runs, cost, last = row or (0, 0.0, None)
+        today = await self.cost_since(agent_id, day_start_ms(now_ms()))
         return {
             "runs": int(runs or 0),
             "total_cost_usd": float(cost or 0.0),
+            "spent_today_usd": today,
             "last_active_ms": int(last) if last is not None else None,
         }
 

@@ -1,73 +1,23 @@
 /*
- * The agent card's own skin — the island's, not the app's.
+ * The agent card's furniture — a champion card of the island, in the app's
+ * own light.
  *
- * MASTERPLAN §4.3 used to put the model card's spec sheet on the app-chrome
- * side of the line. The maintainer moved it (2026-09-03): the card is a
- * champion card of the world, so it wears the world's daylight the way the
- * viewport beside it does. Same in light and dark mode by design; the rail,
- * the header and the options column around it stay app-themed.
+ * It first shipped in the island's daylight: parchment ground, ink text, the
+ * same in both themes. The maintainer sent it back on 2026-09-03 — a bright
+ * panel inside a near-black app reads as a foreign object, not as a card. So
+ * the SHAPE stays (nameplate band, 56px hands, notched meters, the island's
+ * display face) and the COLOUR goes back to the theme tokens, which is also
+ * what makes it right in light mode without a second palette to maintain.
  *
- * HOW, and why this is not "a component writing literal colours":
- *
- * `.ac-card` REDECLARES the theme tokens for the region it encloses, exactly
- * the way `.dark` does in index.css. Everything inside it — Badge, Button,
- * ScrollArea, ProviderLogo's masked marks, CapabilityChip, the Lead's own
- * sections — then renders in the card's palette without knowing anything
- * about it. The literal values are the world palette (world/world.css,
- * world/worldPalette.ts), converted to the same `H S% L%` triplets the token
- * system uses. `board/ShareCard.tsx` is the existing precedent for a surface
- * that deliberately carries its own colours.
- *
- * The vocabulary, one line each: parchment ground #fffcf5, ink #1f2a3a, gold
- * #ffd166, cornsilk highlight #fff8dc, a hard `0 2px 0` ink shadow instead of
- * a soft one, 4-6px radii. Nothing here is new — it is what the island's
- * nameplates, chips and HUD have carried since M3.
+ * The one hue that survives is the island's gold, on the meters: the world's
+ * own signal, the same mark the HUD's pressed chips wear. It is declared per
+ * theme below rather than as one literal that only works on one ground.
+ * Everything else is `hsl(var(--token))`, so this file adds no colour
+ * decisions to the system.
  */
 
 .ac-card {
-  /* --- the surface ladder, in the world's daylight ---------------------- */
-  --background: 40 100% 98%; /* #FFFCF5 — parchment, the card's room */
-  --sidebar: 40 100% 98%;
-  --card: 40 100% 98%;
-  --card-foreground: 216 30% 17%;
-  --popover: 48 100% 93%; /* #FFF8DC — cornsilk, the floating layer */
-  --popover-foreground: 216 30% 17%;
-  --secondary: 42 46% 91%; /* the LIFT: hover, tile, selected */
-  --secondary-foreground: 216 30% 17%;
-  --muted: 42 46% 91%;
-  --input: 42 46% 91%;
-  --surface-raised: 42 40% 86%;
-  --user-bubble: 42 46% 91%;
-  --user-bubble-foreground: 216 30% 17%;
-  --border: 40 28% 84%; /* the hairline, warm rather than grey */
-  --border-strong: 216 22% 55%;
-
-  /* --- ink, four steps, same jobs --------------------------------------- */
-  --foreground-strong: 216 32% 13%;
-  --foreground: 216 30% 17%; /* #1F2A3A — the world's ink */
-  --foreground-secondary: 216 20% 30%;
-  --muted-foreground: 217 17% 37%; /* #4A5568 — the HUD's note colour */
-  --faint-foreground: 216 12% 52%;
-  --foreground-faint: 216 12% 52%;
-
-  /* --- fill and signal --------------------------------------------------- */
-  --primary: 216 30% 17%;
-  --primary-foreground: 40 100% 98%;
-  --accent: 42 100% 55%; /* gold — the island's own signal */
-  --accent-foreground: 216 30% 17%;
-  --accent-rgb: 255 209 102;
-  --ring: 216 24% 40%;
-
-  /* Status keeps its meanings; these are the light-ground values, because
-     the card is a light ground in both app themes. */
-  --success: 142 72% 29%;
-  --warning: 32 95% 34%;
-  --destructive: 0 72% 45%;
-  --destructive-foreground: 0 0% 100%;
-
-  --sheen-rgb: 255 255 255;
-  --scrim-rgb: 31 42 58;
-  --radius: 0.5rem;
+  --ac-gold: 42 88% 40%; /* the island's gold, darkened for a white ground */
 
   display: flex;
   flex-direction: column;
@@ -77,8 +27,11 @@
   color: hsl(var(--foreground));
   font-family: "Pixelify Sans", "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
+.dark .ac-card {
+  --ac-gold: 42 100% 70%; /* #FFD166 — as the HUD wears it on the island */
+}
 
-/* Running text stays in the interface family — Pixelify is a display face and
+/* Running text stays in the interface family: Pixelify is a display face, and
    a paragraph of standing instructions set in it is a wall of pixels. The
    card's own furniture (headings, nameplate, meters, plates) keeps it. */
 .ac-prose {
@@ -92,19 +45,19 @@
   align-items: center;
   gap: 10px;
   padding: 12px 16px 13px;
-  background: hsl(var(--popover));
-  border-bottom: 2px solid hsl(var(--foreground) / 0.16);
-  box-shadow: 0 2px 0 hsl(var(--foreground) / 0.06);
+  background: hsl(var(--secondary));
+  box-shadow: inset 0 -2px 0 hsl(var(--border));
 }
+/* The lead is the only one the town has; its plate carries the gold. */
 .ac-band[data-tier="lead"] {
-  background: linear-gradient(hsl(48 100% 93%), hsl(44 92% 86%));
-  border-bottom-color: hsl(42 70% 45%);
+  box-shadow: inset 0 -2px 0 hsl(var(--ac-gold));
 }
 .ac-band-name {
   font-size: 18px;
   font-weight: 600;
   line-height: 1.1;
   letter-spacing: 0.01em;
+  color: hsl(var(--foreground-strong));
 }
 .ac-band-title {
   font-size: 12px;
@@ -119,7 +72,6 @@
   height: 9px;
   flex: none;
   border-radius: 2px;
-  border: 1px solid hsl(var(--foreground) / 0.4);
 }
 .ac-dot[data-state="working"] {
   animation: ac-pulse 1.2s ease-in-out infinite;
@@ -168,10 +120,9 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 6px;
-  border: 1px solid hsl(var(--foreground) / 0.22);
-  background: hsl(var(--popover));
-  box-shadow: 0 2px 0 hsl(var(--foreground) / 0.25);
+  border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--secondary));
 }
 .ac-tile-mark img {
   width: 34px;
@@ -198,10 +149,10 @@
   position: absolute;
   right: 3px;
   bottom: 3px;
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 2px;
-  border: 1px solid hsl(var(--foreground) / 0.35);
+  border: 1px solid hsl(var(--background));
 }
 .ac-tile-risk[data-risk="safe"] {
   background: hsl(var(--success));
@@ -229,19 +180,49 @@
 }
 .ac-meter-track {
   display: flex;
+  flex: none;
   gap: 3px;
 }
 .ac-meter-seg {
   width: 16px;
   height: 10px;
   border-radius: 2px;
-  border: 1px solid hsl(var(--foreground) / 0.3);
-  background: hsl(var(--foreground) / 0.08);
+  background: hsl(var(--secondary));
+  box-shadow: inset 0 0 0 1px hsl(var(--border));
 }
 .ac-meter-seg[data-on="1"] {
-  background: hsl(var(--accent));
+  background: hsl(var(--ac-gold));
+  box-shadow: none;
+}
+/* Spent against a cap: a continuous bar, because money does not come in
+   steps. It turns to the fault hue at the line the scheduler refuses at. */
+.ac-meter-bar {
+  position: relative;
+  height: 10px;
+  /* The same span as the six notches beside it, so the three meters read as
+     one column rather than one bar stretching past the others. */
+  width: 111px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 3px;
+  background: hsl(var(--secondary));
+  box-shadow: inset 0 0 0 1px hsl(var(--border));
+}
+.ac-meter-fill {
+  height: 100%;
+  background: hsl(var(--ac-gold));
+  transition: width 400ms ease;
+}
+.ac-meter-bar[data-spent="1"] .ac-meter-fill {
+  background: hsl(var(--destructive));
+}
+@media (prefers-reduced-motion: reduce) {
+  .ac-meter-fill {
+    transition: none;
+  }
 }
 .ac-meter-value {
+  flex: none;
   font-weight: 600;
 }
 
@@ -250,9 +231,9 @@
 .ac-plate {
   min-width: 0;
   padding: 7px 9px 8px;
-  border-radius: 5px;
-  border: 1px solid hsl(var(--foreground) / 0.16);
-  background: hsl(var(--popover) / 0.7);
+  border-radius: 6px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--secondary));
 }
 .ac-plate-label {
   font-size: 11px;
@@ -263,6 +244,41 @@
   font-size: 13px;
   font-weight: 600;
   line-height: 1.3;
+  color: hsl(var(--foreground));
+}
+
+/* --- the activity log --------------------------------------------------- */
+
+.ac-log {
+  display: flex;
+  flex-direction: column;
+}
+.ac-log-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+.ac-log-row:last-child {
+  border-bottom: 0;
+}
+.ac-log-type {
+  width: 78px;
+  flex: none;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+.ac-log-what {
+  min-width: 0;
+  flex: 1;
+  color: hsl(var(--muted-foreground));
+}
+.ac-log-when {
+  flex: none;
+  color: hsl(var(--muted-foreground));
+  font-variant-numeric: tabular-nums;
 }
 
 /* --- the action bar ----------------------------------------------------- */
@@ -272,8 +288,8 @@
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  border-top: 2px solid hsl(var(--foreground) / 0.16);
-  background: hsl(var(--popover) / 0.6);
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--sidebar));
 }
 .ac-btn {
   display: inline-flex;
@@ -284,26 +300,25 @@
   font-size: 13px;
   line-height: 1;
   color: hsl(var(--foreground));
-  background: hsl(var(--background));
-  border: 1px solid hsl(var(--foreground) / 0.25);
+  background: hsl(var(--secondary));
+  border: 1px solid hsl(var(--border));
   border-radius: 6px;
-  box-shadow: 0 2px 0 hsl(var(--foreground) / 0.25);
   cursor: pointer;
   transition: transform 80ms ease, background-color 120ms ease;
 }
 .ac-btn:hover:not(:disabled) {
-  background: hsl(var(--popover));
+  background: hsl(var(--surface-raised));
 }
 .ac-btn:active:not(:disabled) {
   transform: translateY(1px);
-  box-shadow: 0 1px 0 hsl(var(--foreground) / 0.25);
 }
 .ac-btn:disabled {
   opacity: 0.45;
   cursor: default;
 }
-.ac-btn[data-accent="1"]:hover:not(:disabled) {
-  background: hsl(var(--accent));
+.ac-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(var(--ring));
 }
 @media (prefers-reduced-motion: reduce) {
   .ac-btn {

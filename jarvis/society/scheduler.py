@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import Any, Final
 
 from .events import SCHEDULER_ACTOR as _SCHEDULER
@@ -38,7 +37,7 @@ from .events import USER_ACTOR as _USER
 from .events import MsgType, SocietyEnvelope, Tier
 from .failure_reasons import FailureReason, classify_error, retry_action
 from .roster import AgentRecord, AgentState, Roster
-from .store import SocietyStore
+from .store import SocietyStore, day_start_ms
 
 log = logging.getLogger(__name__)
 
@@ -72,13 +71,6 @@ def validate_result(payload: dict[str, Any]) -> str | None:
     if status not in ("done", "partial", "blocked"):
         return "RESULT.status must be done | partial | blocked"
     return None
-
-
-def _day_start_ms(now_ms: int) -> int:
-    day = datetime.fromtimestamp(now_ms / 1000, tz=UTC).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    return int(day.timestamp() * 1000)
 
 
 class SocietyScheduler:
@@ -235,7 +227,7 @@ class SocietyScheduler:
                 await self._veto(env, FailureReason.BUDGET_EXHAUSTED, str(exc))
                 return
         if target.daily_budget_usd > 0:
-            spent = await self._store.cost_since(target.agent_id, _day_start_ms(env.ts_ms))
+            spent = await self._store.cost_since(target.agent_id, day_start_ms(env.ts_ms))
             if spent >= target.daily_budget_usd:
                 await self._veto(
                     env,

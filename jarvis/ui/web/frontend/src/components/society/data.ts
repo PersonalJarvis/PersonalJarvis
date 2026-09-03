@@ -66,6 +66,12 @@ export interface AgentRoutine {
 export interface AgentStats {
   runs: number;
   totalCostUsd: number;
+  /**
+   * Spent since midnight UTC. The daily budget is a real gate — the scheduler
+   * refuses a dispatch once this reaches `dailyBudgetUsd` — so the card shows
+   * the two together rather than a cap with nothing beside it.
+   */
+  spentTodayUsd: number;
   /** Epoch ms of the last completed run; null for a fresh agent. */
   lastActiveMs: number | null;
 }
@@ -109,6 +115,12 @@ export interface SocietyAgent {
   /** The durable lifecycle state behind `state` ("active" | "paused" | "archived"). */
   lifecycle: "active" | "paused" | "archived";
   createdMs: number;
+  /** How many runs may be in flight under this identity at once (the scheduler enforces it). */
+  maxConcurrentRuns: number;
+  /** Where its files live, relative to the data dir — its own sandbox. */
+  workspaceDir: string;
+  /** Where its notes land in the shared wiki. */
+  wikiNamespace: string;
   /** The canonical agent_chat session bound to this agent; null on sample rows. */
   chatSessionId: string | null;
   routines: AgentRoutine[];
@@ -221,11 +233,15 @@ export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
     state: runState,
     lifecycle: row.state,
     createdMs: row.created_ms,
+    maxConcurrentRuns: row.max_concurrent_runs ?? 1,
+    workspaceDir: row.workspace_dir ?? "",
+    wikiNamespace: row.wiki_namespace ?? "",
     chatSessionId: row.session_id || null,
     routines: [],
     stats: {
       runs: row.stats?.runs ?? 0,
       totalCostUsd: row.stats?.total_cost_usd ?? 0,
+      spentTodayUsd: row.stats?.spent_today_usd ?? 0,
       lastActiveMs: row.stats?.last_active_ms ?? null,
     },
   };
@@ -364,8 +380,9 @@ export function useCreateAgent() {
         // Network failure: fall through to the sample row.
       }
       const taken = new Set((data?.agents ?? []).map((a) => a.agentId));
+      const newId = slugifyAgentName(input.name, taken);
       const agent: SocietyAgent = {
-        agentId: slugifyAgentName(input.name, taken),
+        agentId: newId,
         name: input.name.trim(),
         title: input.title.trim(),
         description: input.description.trim(),
@@ -387,9 +404,12 @@ export function useCreateAgent() {
         state: "idle",
         lifecycle: "active",
         createdMs: Date.now(),
+        maxConcurrentRuns: 1,
+        workspaceDir: `society/${newId}/workspace`,
+        wikiNamespace: `society/${newId}/`,
         chatSessionId: null,
         routines: [],
-        stats: { runs: 0, totalCostUsd: 0, lastActiveMs: null },
+        stats: { runs: 0, totalCostUsd: 0, spentTodayUsd: 0, lastActiveMs: null },
       };
       LOCAL_ROSTER.push(agent);
       announceSpawn(agent.agentId);

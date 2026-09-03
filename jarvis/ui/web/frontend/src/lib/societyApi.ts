@@ -163,7 +163,13 @@ export interface SocietyAgentRow {
   session_id: string;
   created_ms: number;
   updated_ms: number;
-  stats: { runs: number; total_cost_usd: number; last_active_ms: number | null };
+  stats: {
+    runs: number;
+    total_cost_usd: number;
+    /** Since midnight UTC — the window the scheduler's daily-budget gate uses. */
+    spent_today_usd?: number;
+    last_active_ms: number | null;
+  };
   run_state?: RunState;
 }
 
