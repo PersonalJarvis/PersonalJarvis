@@ -23,6 +23,10 @@
 .sw-stage:active {
   cursor: grabbing;
 }
+/* A right-button drag turns the island instead of sliding it. */
+.sw-stage[data-orbiting] {
+  cursor: all-scroll;
+}
 .sw-stage canvas {
   display: block;
 }
@@ -479,6 +483,58 @@
   text-align: center;
   font-size: 12px;
   color: #1f2a3a;
+}
+
+/* The compass: a quarter turn each way, and the dial back to the designed view. */
+.sw-compass {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(255, 252, 245, 0.9);
+  border: 1px solid rgba(31, 42, 58, 0.2);
+  border-radius: 6px;
+  box-shadow: 0 2px 0 rgba(31, 42, 58, 0.25);
+}
+.sw-compass[data-turned] {
+  background: #fff8dc;
+  border-color: rgba(31, 42, 58, 0.45);
+}
+.sw-compass-dial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.sw-compass-dial:hover {
+  background: rgba(31, 42, 58, 0.1);
+}
+.sw-compass-dial g {
+  /* Turn about the middle of the viewBox, not about its top-left corner. */
+  transform-box: view-box;
+  transform-origin: center;
+}
+.sw-compass-face {
+  fill: rgba(31, 42, 58, 0.07);
+  stroke: rgba(31, 42, 58, 0.35);
+  stroke-width: 1.5;
+}
+.sw-compass-north {
+  fill: #b4453c;
+}
+.sw-compass-south {
+  fill: rgba(31, 42, 58, 0.55);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sw-compass-dial g {
+    transition: none !important;
+  }
 }
 .sw-minimap {
   width: 168px;

@@ -60,7 +60,7 @@ function asHub(place: PlaceId): KitPlace | null {
   // Not "is it in the house ring" — the foundry crowns the mountain instead.
   return isKitPlace(place) ? place : null;
 }
-import { cameraOffset } from "./worldCamera";
+import { CAMERA_FAR_M, cameraOffset } from "./worldCamera";
 import { SKY } from "./worldPalette";
 import { useWorldSettings } from "./worldSettings";
 
@@ -168,7 +168,7 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent, onSelectPlac
         <Canvas
           key={generation}
           orthographic
-          camera={{ position: CAMERA_START, near: 1, far: 1200, zoom: 1 }}
+          camera={{ position: CAMERA_START, near: 1, far: CAMERA_FAR_M, zoom: 1 }}
           dpr={1}
           flat
           shadows={shadows ? "soft" : false}

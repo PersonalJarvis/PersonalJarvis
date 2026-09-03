@@ -52,8 +52,14 @@ north-east, where the camera looks from), sky-blue ambient from above, green bou
 Emissives (glass, lamps, holograms, the beacon) get a small bloom. Evening mode later shifts the
 sun to orange and turns the lamps on — the same scene, two moods.
 
-**Camera:** unchanged — 50° pitch, 45° yaw, orthographic, three zoom steps. This is the CoC
-camera within a few degrees; it is what makes shadows and rooflines read.
+**Camera:** 50° pitch, 45° yaw, orthographic, five zoom steps — the CoC camera within a few
+degrees, and what makes shadows and rooflines read. Those two angles are the **starting** view,
+not the only one: a right-button drag orbits the island (yaw all the way round, so any building
+can be seen from behind; pitch between 20° and 80°), Q / E step a quarter turn, and the HUD
+compass points at north and clicks back to the designed view. Nothing about the island moves
+with it — the houses keep the headings the layout designed, the sun keeps shining from the
+south-west, and only the picture turns. The view is not persisted; `?world=x,z,zoom,yaw,pitch`
+carries one when it is worth sharing.
 
 **Surface at 1:1:** no visible pixel grain by default. A `grain` setting keeps the V1 look as an
 option (0 = off, 2 = V1, 3 = coarse); the pixel pass then also becomes the cheap-GPU fallback.

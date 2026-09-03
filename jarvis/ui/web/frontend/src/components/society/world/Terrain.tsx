@@ -30,6 +30,7 @@ import {
 
 import { ISLAND_HALF_M, LEVEL_Y, TILE_M, TileKind, buildIsland, type IslandMap } from "./islandLayout";
 import { buildTerrainGeometry } from "./terrainGeometry";
+import { viewAngles } from "./viewAngles";
 import { SKY, WATER } from "./worldPalette";
 import { cameraOffset } from "./worldCamera";
 
@@ -352,7 +353,8 @@ export function Water({ paused }: { paused: boolean }) {
           halfSize: { value: ISLAND_HALF_M },
           reachM: { value: SHORE_REACH_M },
           sunDir: { value: SUN_DIR },
-          viewDir: { value: VIEW_DIR },
+          // Cloned: the frame loop turns this one with the orbit.
+          viewDir: { value: VIEW_DIR.clone() },
           abyss: { value: new Color(WATER.abyss) },
           deep: { value: new Color(WATER.deep) },
           surface: { value: new Color(WATER.surface) },
@@ -395,6 +397,11 @@ export function Water({ paused }: { paused: boolean }) {
   );
 
   useFrame(({ clock }) => {
+    // The sun's glint is a mirror of the view direction, so it has to follow
+    // the orbit even when the water itself is frozen (reduced motion).
+    const { yaw, pitch } = viewAngles();
+    const [vx, vy, vz] = cameraOffset(pitch, yaw);
+    material.uniforms.viewDir.value.set(vx, vy, vz).normalize();
     if (paused) return;
     const t = clock.getElapsedTime();
     material.uniforms.time.value = t;

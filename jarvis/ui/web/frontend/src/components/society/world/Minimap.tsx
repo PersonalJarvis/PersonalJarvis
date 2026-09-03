@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useT } from "@/i18n";
 import { useCameraStore } from "./cameraStore";
 import { ISLAND_HALF_M, PLATEAU_LEVEL, TILE_M, TileKind, buildIsland } from "./islandLayout";
+import { viewAngles } from "./viewAngles";
 import { walkerPins } from "./walkerRegistry";
 import { ZOOM_WIDTHS_M, visibleGroundCorners } from "./worldCamera";
 import { LABEL, WATER, minimapColor, shadeHex } from "./worldPalette";
@@ -71,9 +72,11 @@ export function Minimap({ awake }: { awake: boolean }) {
         ctx.fillStyle = pin.color;
         ctx.fillRect(Math.round(px) - 1, Math.round(pz) - 1, 3, 3);
       }
-      // The viewport as a rotated rectangle.
+      // The viewport as a rotated rectangle. The map itself stays north-up —
+      // the rectangle turning inside it is what shows which way the view faces.
       const { target, zoom, aspect } = useCameraStore.getState();
-      const corners = visibleGroundCorners(target, ZOOM_WIDTHS_M[zoom], aspect);
+      const { yaw, pitch } = viewAngles();
+      const corners = visibleGroundCorners(target, ZOOM_WIDTHS_M[zoom], aspect, pitch, yaw);
       ctx.beginPath();
       corners.forEach(([x, z], i) => {
         const [px, pz] = worldToMap(x, z);

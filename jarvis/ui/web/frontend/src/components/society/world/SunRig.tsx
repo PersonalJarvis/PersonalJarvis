@@ -9,6 +9,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { DirectionalLight, Vector3 } from "three";
 
 import { useCameraStore } from "./cameraStore";
+import { viewAngles } from "./viewAngles";
 import { ZOOM_WIDTHS_M, orthoHalfExtents } from "./worldCamera";
 import { SKY } from "./worldPalette";
 import { useWorldSettings } from "./worldSettings";
@@ -42,7 +43,9 @@ export function SunRig() {
     const aspect = size.width / Math.max(1, size.height);
     const width = ZOOM_WIDTHS_M[zoom] * COVER;
     const { halfW, halfH } = orthoHalfExtents(width, aspect);
-    const reach = Math.max(halfW, halfH / Math.sin((50 * Math.PI) / 180));
+    // A flatter view sees far deeper into the island, so the shadow frustum
+    // has to grow with the tilt or shadows cut off at the top of the screen.
+    const reach = Math.max(halfW, halfH / Math.sin((viewAngles().pitch * Math.PI) / 180));
     l.target.position.set(target[0], 0, target[1]);
     l.target.updateMatrixWorld();
     l.position.set(

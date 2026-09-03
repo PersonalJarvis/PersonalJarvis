@@ -12,6 +12,7 @@ import type { SocietyAgent } from "../data";
 import { useBuildingPoses, useTurnedCount } from "./buildingPoses";
 import { useCameraStore } from "./cameraStore";
 import { Minimap } from "./Minimap";
+import { WorldCompass } from "./WorldCompass";
 import { ZOOM_WIDTHS_M } from "./worldCamera";
 
 interface Props {
@@ -116,6 +117,7 @@ export function WorldHud({
               <Minus size={14} />
             </button>
           </div>
+          <WorldCompass />
           <Minimap awake={awake} />
         </div>
       </div>
