@@ -50,6 +50,21 @@ ARM_Z = 1.1068
 HEAD_TOP = 2.15
 HEAD_W = 0.42
 HEAD_D = 0.40
+
+#: Where the eyes sit, on every body, measured from the crown.
+#:
+#: Same reasoning as `HEAD_TOP` one step down the face: glasses, shades and a
+#: respirator are each ONE file worn by every body of this rig, and they can
+#: only line up with eyes that are always in the same place. Placing the eyes
+#: proportionally from the chin instead moved them 21 cm across the profiles
+#: and left the lenses sitting on people's cheeks.
+#:
+#: Eyes grow around this line, so a big cartoon eye and a small dot share a
+#: centre and one pair of glasses covers both.
+EYE_CENTRE = HEAD_TOP - 0.33
+#: Distance below the eye line to the nose and the mouth.
+NOSE_DROP = 0.10
+MOUTH_DROP = 0.22
 SHOULDER_X = 0.212
 ELBOW_X = 0.4535
 WRIST_X = 0.7132
@@ -171,10 +186,10 @@ PROFILES: dict[str, Profile] = {
     # ---- cartoon ------------------------------------------------------------
     # Kart-racer proportions: the head is nearly half the figure, the eyes are
     # a third of the face, and the body is a stub under it.
-    "chibi": Profile(head_h=1.06, eye_w=0.13, eye_h=0.24, torso_w=0.27, bulk=1.1),
+    "chibi": Profile(head_h=0.94, eye_w=0.13, eye_h=0.24, torso_w=0.27, bulk=1.1),
     # Rubber-hose cartoon: enormous eyes, white gloves, boots too big for it.
     "toon": Profile(
-        head_h=1.14,
+        head_h=0.99,
         eye_w=0.16,
         eye_h=0.30,
         bulk=0.95,
@@ -370,7 +385,7 @@ def head_pieces(p: Profile) -> list[Piece]:
     chin = HEAD_TOP - p.head_h
     w, d = HEAD_W, HEAD_D
     face = -d - 0.005  # a hair's breadth in front of the skull, never inside it
-    eye_z = chin + p.head_h * 0.52
+    eye_z = EYE_CENTRE - p.eye_h / 2
     pieces = [
         box("Head", "head", p.head_cell, (-w, w), (-d, d), (chin, top)),
         # The neck reaches from the collar up to the chin, however far that is:
@@ -394,7 +409,7 @@ def head_pieces(p: Profile) -> list[Piece]:
                 "emissive",
                 (-w * 0.9, w * 0.9),
                 (face - 0.03, -d + 0.02),
-                (eye_z - 0.09, eye_z + 0.09),
+                (EYE_CENTRE - 0.09, EYE_CENTRE + 0.09),
             )
         )
         pieces.append(
@@ -404,7 +419,7 @@ def head_pieces(p: Profile) -> list[Piece]:
                 "accent",
                 (-w * 0.95, w * 0.95),
                 (face - 0.02, -d + 0.02),
-                (eye_z + 0.09, eye_z + 0.13),
+                (EYE_CENTRE + 0.09, EYE_CENTRE + 0.13),
             )
         )
     else:
@@ -440,7 +455,7 @@ def head_pieces(p: Profile) -> list[Piece]:
                 "skin_shade",
                 (-0.045, 0.045),
                 (face - 0.04, -d + 0.02),
-                (eye_z - 0.12, eye_z - 0.02),
+                (EYE_CENTRE - NOSE_DROP - 0.05, EYE_CENTRE - NOSE_DROP + 0.05),
             )
         )
         if not p.beard:
@@ -451,7 +466,7 @@ def head_pieces(p: Profile) -> list[Piece]:
                     "skin_shade",
                     (-0.09, 0.09),
                     (face - 0.02, -d + 0.02),
-                    (eye_z - 0.26, eye_z - 0.21),
+                    (EYE_CENTRE - MOUTH_DROP - 0.03, EYE_CENTRE - MOUTH_DROP + 0.02),
                 )
             )
     if p.beard:
@@ -467,7 +482,7 @@ def head_pieces(p: Profile) -> list[Piece]:
                 "hair",
                 (-w * 0.5, w * 0.5),
                 (face - 0.025, d * 0.2),
-                (chin - 0.13, eye_z - 0.20),
+                (chin - 0.13, EYE_CENTRE - MOUTH_DROP - 0.02),
             )
         )
         pieces.append(
@@ -477,7 +492,7 @@ def head_pieces(p: Profile) -> list[Piece]:
                 "hair",
                 (-w * 0.30, w * 0.30),
                 (face - 0.03, -d + 0.02),
-                (eye_z - 0.22, eye_z - 0.16),
+                (EYE_CENTRE - MOUTH_DROP - 0.02, EYE_CENTRE - MOUTH_DROP + 0.04),
             )
         )
     if p.pointed_ears:
@@ -490,7 +505,7 @@ def head_pieces(p: Profile) -> list[Piece]:
                     p.head_cell,
                     xs,
                     (-d * 0.25, d * 0.3),
-                    (eye_z - 0.21, eye_z - 0.01),
+                    (EYE_CENTRE - 0.21, EYE_CENTRE - 0.04),
                 )
             )
     if p.goggles:
@@ -1190,21 +1205,44 @@ PART_SPECS: dict[str, dict] = {
         "label": "Glasses",
         "styles": ["modern", "scifi", "cartoon", "fantasy"],
         "pieces": lambda: [
-            box(
-                "LensL",
-                "head",
-                "metal",
-                (0.055, 0.215),
-                (-HEAD_D - 0.045, -HEAD_D - 0.015),
-                (HEAD_TOP - 0.52, HEAD_TOP - 0.38),
-            ),
-            box(
-                "LensR",
-                "head",
-                "metal",
-                (-0.215, -0.055),
-                (-HEAD_D - 0.045, -HEAD_D - 0.015),
-                (HEAD_TOP - 0.52, HEAD_TOP - 0.38),
+            *(
+                box(
+                    f"Rim{side}{edge}",
+                    "head",
+                    "metal",
+                    xs,
+                    (-HEAD_D - 0.045, -HEAD_D - 0.015),
+                    zs,
+                )
+                for side, inner, outer in (("L", 0.055, 0.235), ("R", -0.235, -0.055))
+                for edge, xs, zs in (
+                    (
+                        "Top",
+                        (min(inner, outer), max(inner, outer)),
+                        (EYE_CENTRE + 0.078, EYE_CENTRE + 0.10),
+                    ),
+                    (
+                        "Bottom",
+                        (min(inner, outer), max(inner, outer)),
+                        (EYE_CENTRE - 0.10, EYE_CENTRE - 0.078),
+                    ),
+                    (
+                        "In",
+                        (
+                            min(inner, inner + 0.022 * (1 if inner < outer else -1)),
+                            max(inner, inner + 0.022 * (1 if inner < outer else -1)),
+                        ),
+                        (EYE_CENTRE - 0.10, EYE_CENTRE + 0.10),
+                    ),
+                    (
+                        "Out",
+                        (
+                            min(outer, outer - 0.022 * (1 if inner < outer else -1)),
+                            max(outer, outer - 0.022 * (1 if inner < outer else -1)),
+                        ),
+                        (EYE_CENTRE - 0.10, EYE_CENTRE + 0.10),
+                    ),
+                )
             ),
             box(
                 "Bridge",
@@ -1212,23 +1250,23 @@ PART_SPECS: dict[str, dict] = {
                 "metal",
                 (-0.055, 0.055),
                 (-HEAD_D - 0.04, -HEAD_D - 0.02),
-                (HEAD_TOP - 0.47, HEAD_TOP - 0.43),
+                (EYE_CENTRE - 0.02, EYE_CENTRE + 0.02),
             ),
             box(
                 "TempleL",
                 "head",
                 "metal",
-                (HEAD_W - 0.02, HEAD_W + 0.02),
+                (HEAD_W - 0.015, HEAD_W + 0.012),
                 (-HEAD_D - 0.02, 0.0),
-                (HEAD_TOP - 0.47, HEAD_TOP - 0.43),
+                (EYE_CENTRE - 0.02, EYE_CENTRE + 0.02),
             ),
             box(
                 "TempleR",
                 "head",
                 "metal",
-                (-HEAD_W - 0.02, -HEAD_W + 0.02),
+                (-HEAD_W - 0.012, -HEAD_W + 0.015),
                 (-HEAD_D - 0.02, 0.0),
-                (HEAD_TOP - 0.47, HEAD_TOP - 0.43),
+                (EYE_CENTRE - 0.02, EYE_CENTRE + 0.02),
             ),
         ],
     },
@@ -1244,7 +1282,7 @@ PART_SPECS: dict[str, dict] = {
                 "eyes",
                 (-HEAD_W - 0.01, HEAD_W + 0.01),
                 (-HEAD_D - 0.05, -HEAD_D - 0.02),
-                (HEAD_TOP - 0.52, HEAD_TOP - 0.37),
+                (EYE_CENTRE - 0.10, EYE_CENTRE + 0.09),
             ),
             box(
                 "ShadeGlint",
@@ -1252,7 +1290,7 @@ PART_SPECS: dict[str, dict] = {
                 "secondary",
                 (0.10, 0.20),
                 (-HEAD_D - 0.055, -HEAD_D - 0.045),
-                (HEAD_TOP - 0.49, HEAD_TOP - 0.44),
+                (EYE_CENTRE - 0.02, EYE_CENTRE + 0.04),
             ),
         ],
     },
@@ -1268,7 +1306,7 @@ PART_SPECS: dict[str, dict] = {
                 "metal",
                 (-HEAD_W * 0.7, HEAD_W * 0.7),
                 (-HEAD_D - 0.07, -HEAD_D + 0.02),
-                (HEAD_TOP - 0.72, HEAD_TOP - 0.50),
+                (EYE_CENTRE - MOUTH_DROP - 0.11, EYE_CENTRE - 0.03),
             ),
             box(
                 "MaskFilter",
@@ -1276,7 +1314,7 @@ PART_SPECS: dict[str, dict] = {
                 "accent",
                 (-0.07, 0.07),
                 (-HEAD_D - 0.12, -HEAD_D - 0.06),
-                (HEAD_TOP - 0.68, HEAD_TOP - 0.56),
+                (EYE_CENTRE - MOUTH_DROP - 0.08, EYE_CENTRE - MOUTH_DROP + 0.04),
             ),
             box(
                 "MaskStrap",
@@ -1284,7 +1322,7 @@ PART_SPECS: dict[str, dict] = {
                 "leather",
                 (-HEAD_W - 0.02, HEAD_W + 0.02),
                 (-HEAD_D - 0.01, HEAD_D + 0.02),
-                (HEAD_TOP - 0.66, HEAD_TOP - 0.58),
+                (EYE_CENTRE - MOUTH_DROP - 0.06, EYE_CENTRE - MOUTH_DROP + 0.02),
             ),
         ],
     },
