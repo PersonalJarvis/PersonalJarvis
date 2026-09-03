@@ -111,6 +111,26 @@ in the turn's language.
 The figure walks when, and only when, the derived checkpoint changes. A rejected `ASSIGN` (tier,
 budget, kill switch) never moves anyone; the card shows the typed failure reason.
 
+## 5a. Retiring an agent — the one gesture that is final
+
+| Gesture in the world | Event | Guard |
+|---|---|---|
+| card → options rail → "Retire agent" (twice) | `DELETE /api/society/agents/{id}` → the row is archived | the lead is refused by `roster.archive`; the button says so before the call |
+
+Everything else on the island is reversible, so deletion is the one thing the
+world is asked to make you watch. The lead walks up to the condemned figure,
+raises a rifle, fires; the body goes over, two bearers carry it out on a
+stretcher and tip it into the mine. About twenty seconds, entirely client-side
+— the backend sees one archive call and no choreography at all, exactly like
+every other footstep (§1).
+
+The row is archived BEFORE the ceremony plays, so a refusal is an error the
+person sees immediately rather than the punchline of a scene. The roster's
+refetch pauses while the ceremony runs; the figure leaves the island when the
+body lands, not before. If the ceremony cannot play at all — reduced motion, no
+WebGL, the viewer on the Ledger — the agent is retired without it. Pressing
+Retire never depends on a canvas.
+
 ## 6. What the buildings do
 
 Every hub has three faces, and all three are required before a building ships (finish-it-everywhere):

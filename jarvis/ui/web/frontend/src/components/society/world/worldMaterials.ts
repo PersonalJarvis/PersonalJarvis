@@ -24,7 +24,7 @@ import {
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
-import { BUILDING, NATURE } from "./worldPalette";
+import { BUILDING, CEREMONY, NATURE } from "./worldPalette";
 
 /**
  * The four-step light ramp every lit object shares (world-masterplan-v2.md §3.4):
@@ -194,4 +194,4 @@ export function useWorldGeometries(): WorldGeometries {
 }
 
 /** The palette entries most components reach for, re-exported for brevity. */
-export const PAL = { ...BUILDING, ...NATURE };
+export const PAL = { ...BUILDING, ...NATURE, ...CEREMONY };

@@ -139,6 +139,26 @@ export const NATURE = {
   bench: "#a9723a",
 };
 
+/**
+ * The retirement ceremony (`retirement.ts`): the muzzle flash, the stretcher
+ * the bearers carry, and the mark the body leaves on the ground. Its own
+ * block because none of it belongs to a building or to the landscape.
+ */
+export const CEREMONY = {
+  /** The flash at the barrel — hot white with a warm edge. */
+  muzzle: "#ffe9a8",
+  /** The stretcher's poles. */
+  stretcherPole: "#6b4a2a",
+  /** The canvas slung between them. */
+  stretcherCloth: "#c9c0ac",
+  /** The bearers' work clothes. */
+  bearerCloth: "#4a4f5c",
+  bearerTrim: "#2f333c",
+  bearerLamp: "#ffd98a",
+  /** What is left on the ground where the body fell. Dark, not lurid. */
+  stain: "#4a1418",
+};
+
 /** In-world labels (drawn as DOM over the canvas, in the world's own type). */
 export const LABEL = {
   font: '"Pixelify Sans", "Inter Variable", "Inter", ui-sans-serif, sans-serif',

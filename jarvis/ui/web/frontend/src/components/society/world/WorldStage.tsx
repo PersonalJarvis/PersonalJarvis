@@ -36,6 +36,7 @@ import { MemoryDrawer } from "./MemoryDrawer";
 import { PlaceLabels } from "./PlaceLabels";
 import { HubDrawer } from "./HubDrawer";
 import { QuestBoardDrawer } from "./QuestBoardDrawer";
+import { RetirementScene } from "./RetirementScene";
 import { ACTIVE_STATES } from "./questBoard";
 import { useSocietyQuests } from "./questsData";
 import { Shadowed } from "./Shadowed";
@@ -216,6 +217,8 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent, onSelectPlac
               />
               <Trees />
               <Walkers agents={agents} paused={reduced} selectedId={selected} onSelect={select} />
+              {/* A retirement drives the walkers above; it must mount after them. */}
+              <RetirementScene paused={reduced} />
             </Shadowed>
             {shadows && <Clouds paused={reduced} />}
             {ready && <PlaceLabels />}

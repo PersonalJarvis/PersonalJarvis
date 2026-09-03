@@ -151,6 +151,19 @@ function Lighthouse({ kit, paused }: { kit: Kit; paused: boolean }) {
 }
 
 /**
+ * The cliff's south face, in metres along −z from the mine place's origin —
+ * where the rock starts. The retirement ceremony throws a body into the mouth
+ * cut into it (`retirementGeometry.ts`), so the number is shared, not copied.
+ */
+export const MINE_FACE_DZ = -6.8;
+
+/** The tunnel mouth's own z, half a metre into the rock behind the face. */
+export const MINE_PORTAL_DZ = MINE_FACE_DZ - 0.5;
+
+/** Half-way up the tunnel mouth: what a thrown body is aimed at, in metres. */
+export const MINE_PORTAL_Y = 1.6;
+
+/**
  * The mine: a timber portal cut into the cliff north of the quarry's forecourt,
  * lanterns on its posts, rails running out of the dark to a cart of ore, a
  * headframe with its wheel, crates, and the foreman's hut.
@@ -162,7 +175,7 @@ function Mine({ kit, paused }: { kit: Kit; paused: boolean }) {
     if (!wheel.current || paused) return;
     wheel.current.rotation.x = clock.getElapsedTime() * 0.8;
   });
-  const face = -6.8; // the cliff's south face, relative z
+  const face = MINE_FACE_DZ;
   return (
     <group position={[x, y, z]}>
       {/* the tunnel: a dark mouth set into the cliff */}
