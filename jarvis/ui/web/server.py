@@ -3354,6 +3354,7 @@ class WebServer:
             harness_manager=HarnessManager(bus=self.bus),
             agent_brain=agent_brain,
             auto_approver=auto_approver,
+            result_sink=self._society_routine_result,
         )
         scheduler = TaskScheduler(store=store, bus=self.bus, runner=runner)
         scheduler.bind_bus()
@@ -3523,6 +3524,44 @@ class WebServer:
                 logger.info("Friends-Stack live: Telegram-Channel disabled ({})", errs)
             else:
                 logger.info("Friends-Stack live: Telegram-Channel disabled (config off)")
+
+    async def _society_routine_result(self, tags: tuple[str, ...], text: str, status: str) -> None:
+        """A routine tagged ``agent:<id>`` reports its result into that agent's
+        own chat (the ecosystem card promises it). Tasks never import the
+        society; this is the one seam. Every failure is logged, never raised
+        into the task."""
+        from jarvis.society.routines import agent_id_from_tags
+        from jarvis.society.runtime import current_runtime
+
+        agent_id = agent_id_from_tags(tags)
+        if agent_id is None:
+            return
+        try:
+            runtime = current_runtime()
+            if runtime is None:
+                factory = getattr(self.app.state, "society_factory", None)
+                if factory is None:
+                    return
+                runtime = self.app.state.society or factory()
+                self.app.state.society = runtime
+                await runtime.ensure_started()
+            agent = await runtime.roster.get(agent_id)
+            if agent is None:
+                logger.info("routine result for unknown society agent {}", agent_id)
+                return
+            await runtime.post_chat_notice(
+                agent,
+                {
+                    "kind": "society_result",
+                    "status": status,
+                    "text": text[:4000],
+                    "agent_id": agent.agent_id,
+                    "agent_name": agent.name,
+                    "source": "routine",
+                },
+            )
+        except Exception:  # noqa: BLE001 — the task already recorded its result; delivery is best effort
+            logger.warning("society: routine result not delivered to {}", agent_id, exc_info=True)
 
     def _build_society_runtime(self) -> Any:
         """Build the agent-society runtime on first use (see society_routes).
