@@ -433,10 +433,12 @@ export const PLAZA_HALF_TILES = 11;
  * town and run on into the country as the spokes; the north one ends at the
  * hub's forecourt. Two ALLEYS per axis (13..14, 2 wide) continue the frame
  * street's outer edge outward and cut the bands into blocks. A block's FRONT
- * sides are its south and east edges — the sides the camera sees
- * (`CAMERA_FROM`) — where houses and halls stand with their doors on the
- * street; its north and west edges are hedged back gardens. So the viewer
- * sees doors everywhere and never a back.
+ * sides are the two that look AT THE SQUARE — its near edges, which differ per
+ * quadrant — where houses and halls stand with their doors on the street; the
+ * two far edges are hedged back gardens. A CORNER block lies away from the
+ * square on both axes, so neither side looks at it: its buildings turn 45° and
+ * face the square across the diagonal (`cornerRotation`). So the whole town
+ * looks inward at the market square, the way a real town does.
  */
 export const TOWN = {
   frame: { from: 12, to: 14 },
@@ -524,56 +526,125 @@ export function quadrantRect(t: BlockRect, sx: -1 | 1, sz: -1 | 1): BlockRect {
   };
 }
 
-/** A block's front a building stands on: local +z is the door side. */
-export type BlockFront = "south" | "east";
+/** A side of a block a building's door opens on: local +z is the door side. */
+export type BlockFront = "south" | "east" | "north" | "west";
 
-/** Front headings, rotation about y. Both face the camera (`CAMERA_FROM`). */
-export const FRONT_ROTATION: Record<BlockFront, number> = { south: 0, east: Math.PI / 2 };
+/** Front headings, rotation about y (front = local +z). */
+export const FRONT_ROTATION: Record<BlockFront, number> = {
+  south: 0,
+  east: Math.PI / 2,
+  north: Math.PI,
+  west: -Math.PI / 2,
+};
+
+/** Which of a block's two near edges a hall takes: the one on the x axis or the one on the z axis. */
+export type BlockEdge = "x" | "z";
 
 /**
- * Which block each hall takes instead of houses, and which front it stands
- * on. All four stand on the blocks around the square — the docks and the
- * forge north of it flanking the avenue, the relay on the north-east corner
- * block (its door on the alley that continues the frame street), the cantina
- * west of it — so a visitor finds every hall one street from the square, and
- * every hall's door faces the camera.
+ * The side of a block in quadrant (sx, sz) that looks at the square, on the
+ * given axis — its near edge. A block east of the square shows it the west
+ * side; one south of it, the north side. This is the whole rule the town's
+ * headings follow (maintainer, 2026-09-03: the houses "look at the market
+ * square again"), and it replaces the older one that turned every door toward
+ * the camera regardless of where the block stood.
  */
-export const KIT_BLOCKS: Record<Exclude<KitPlace, "foundry">, { template: number; sx: -1 | 1; sz: -1 | 1; front: BlockFront }> = {
-  plugins: { template: 0, sx: -1, sz: -1, front: "south" },
-  skills: { template: 0, sx: 1, sz: -1, front: "south" },
-  mcp: { template: 1, sx: 1, sz: -1, front: "south" },
-  cli: { template: 2, sx: -1, sz: -1, front: "east" },
+export function squareFront(edge: BlockEdge, sx: -1 | 1, sz: -1 | 1): BlockFront {
+  if (edge === "x") return sx > 0 ? "west" : "east";
+  return sz > 0 ? "north" : "south";
+}
+
+/**
+ * The heading a building on a CORNER block rests at: straight at the square
+ * across the diagonal, ±45°. A corner block lies away from the square on both
+ * axes, so neither of its sides looks at it — both front an alley running
+ * past. Its buildings turn to the corner instead (maintainer, 2026-09-03: the
+ * corner buildings "look at the market square through a slanted heading").
+ */
+export function cornerRotation(sx: -1 | 1, sz: -1 | 1): number {
+  return Math.atan2(-sx, -sz);
+}
+
+/**
+ * Whether a template is a corner block: it clears the avenue on BOTH axes, so
+ * it stands diagonally off the square and neither of its sides looks at it.
+ * The inner band's corner block is the only one in the plan today.
+ */
+export function isCornerTemplate(t: BlockRect): boolean {
+  return t.x0 >= TOWN.frame.from && t.z0 >= TOWN.frame.from;
+}
+
+/** A hall's lot: which block it takes, and which of the block's near edges its door opens on. */
+export interface KitLot {
+  template: number;
+  sx: -1 | 1;
+  sz: -1 | 1;
+  /**
+   * The axis of the near edge the hall stands on. Which compass direction that
+   * is follows from the quadrant (`squareFront`); on a corner block it is
+   * ignored, because the hall turns to the diagonal instead.
+   */
+  edge: BlockEdge;
+}
+
+/**
+ * Which block each hall takes instead of houses, and which of its near edges
+ * it stands on. All of them stand on the blocks around the square — the docks
+ * and the forge north of it flanking the avenue, the relay on the north-east
+ * corner block, the cantina west of it — so a visitor finds every hall one
+ * street from the square, and every hall's door looks back at the square.
+ */
+export const KIT_BLOCKS: Record<Exclude<KitPlace, "foundry">, KitLot> = {
+  plugins: { template: 0, sx: -1, sz: -1, edge: "z" },
+  skills: { template: 0, sx: 1, sz: -1, edge: "z" },
+  mcp: { template: 1, sx: 1, sz: -1, edge: "z" },
+  cli: { template: 2, sx: -1, sz: -1, edge: "x" },
   // The town halls take the blocks SOUTH of the square, the half of the town
   // nearest the camera: the Signal Office and the Control Room flank the south
   // avenue, the Gallery and the Town Hall stand on the two blocks east and west
   // of it, the Boiler House takes the north-west corner block (its chimney
   // belongs against the mountain) and the Lookout the south-east one, where the
   // island falls away toward the sea it watches.
-  comms: { template: 0, sx: 1, sz: 1, front: "south" },
-  desktop: { template: 0, sx: -1, sz: 1, front: "south" },
-  gallery: { template: 2, sx: 1, sz: 1, front: "east" },
-  civic: { template: 2, sx: -1, sz: 1, front: "east" },
-  models: { template: 1, sx: -1, sz: -1, front: "south" },
-  web: { template: 1, sx: 1, sz: 1, front: "south" },
+  comms: { template: 0, sx: 1, sz: 1, edge: "z" },
+  desktop: { template: 0, sx: -1, sz: 1, edge: "z" },
+  gallery: { template: 2, sx: 1, sz: 1, edge: "x" },
+  civic: { template: 2, sx: -1, sz: 1, edge: "x" },
+  models: { template: 1, sx: -1, sz: -1, edge: "z" },
+  web: { template: 1, sx: 1, sz: 1, edge: "z" },
 };
 
 export interface TownBlock {
   rect: BlockRect;
   /** The hall standing on this block, or null when houses do. */
   kit: KitPlace | null;
+  /** The quadrant this block was mirrored into — it says which way the square lies. */
+  sx: -1 | 1;
+  sz: -1 | 1;
+  /** True when no side of the block looks at the square: its buildings stand diagonally. */
+  corner: boolean;
 }
 
 /** Every block of the town in plan order: template by template, quadrant by quadrant. */
 export function townBlocks(): TownBlock[] {
   const out: TownBlock[] = [];
-  const halls = Object.entries(KIT_BLOCKS) as Array<[KitPlace, (typeof KIT_BLOCKS)[keyof typeof KIT_BLOCKS]]>;
+  const halls = Object.entries(KIT_BLOCKS) as Array<[KitPlace, KitLot]>;
   BLOCK_TEMPLATES.forEach((t, template) => {
+    const corner = isCornerTemplate(t);
     for (const [sx, sz] of QUADRANTS) {
       const hall = halls.find(([, lot]) => lot.template === template && lot.sx === sx && lot.sz === sz);
-      out.push({ rect: quadrantRect(t, sx, sz), kit: hall ? hall[0] : null });
+      out.push({ rect: quadrantRect(t, sx, sz), kit: hall ? hall[0] : null, sx, sz, corner });
     }
   });
   return out;
+}
+
+/** A block's edges as the square sees them: `near` looks at it, `far` is the back garden. */
+export function blockEdges(b: TownBlock): { nearX: number; farX: number; nearZ: number; farZ: number } {
+  return {
+    nearX: b.sx > 0 ? b.rect.x0 : b.rect.x1,
+    farX: b.sx > 0 ? b.rect.x1 : b.rect.x0,
+    nearZ: b.sz > 0 ? b.rect.z0 : b.rect.z1,
+    farZ: b.sz > 0 ? b.rect.z1 : b.rect.z0,
+  };
 }
 
 /** World-metre extent of a block: tile k covers [2k, 2k + 2) metres. */
@@ -584,13 +655,50 @@ function rectMetres(r: BlockRect): { x0: number; x1: number; z0: number; z1: num
 /** A hall's setback from its street, metres: its wall margin stays on its own lot. */
 const HALL_SETBACK_M = 1;
 
-/** Pose of a hall `depthM` deep standing centred on a block's front, door on the street. */
-function hallPose(r: BlockRect, depthM: number, front: BlockFront): KitPose {
-  const m = rectMetres(r);
-  if (front === "south") {
-    return { x: (m.x0 + m.x1) / 2, z: m.z1 - HALL_SETBACK_M - depthM / 2, rotation: FRONT_ROTATION.south };
+/**
+ * How far a building on a corner block is pushed from the block's middle
+ * toward the square, in metres — enough to read as standing on the corner
+ * rather than parked in the back garden, and capped by `cornerReach` so it
+ * never crosses the block's edge.
+ */
+const CORNER_SETBACK_M = 3;
+
+/**
+ * Half the extent a `w` × `d` footprint covers on EITHER world axis once it is
+ * turned 45°: both of its diagonals project the same way, so the turned
+ * building sits inside a square of this half-size.
+ */
+function cornerReach(w: number, d: number): number {
+  return (w + d) / (2 * Math.SQRT2);
+}
+
+/** How far a `w` × `d` footprint may advance along the diagonal and still stay on the block. */
+function cornerAdvance(m: { x0: number; x1: number; z0: number; z1: number }, w: number, d: number): number {
+  const room = Math.min(m.x1 - m.x0, m.z1 - m.z0) / 2;
+  // Advancing by s along a ±45° diagonal moves the centre s/√2 on each axis.
+  return Math.max(0, Math.min(CORNER_SETBACK_M, (room - cornerReach(w, d)) * Math.SQRT2));
+}
+
+/**
+ * Pose of a hall `w` × `d` metres on its block: centred on the near edge its
+ * lot names, door on the street toward the square — or, on a corner block,
+ * centred on the diagonal and turned to face the square across it.
+ */
+function hallPose(b: TownBlock, lot: KitLot, w: number, d: number): KitPose {
+  const m = rectMetres(b.rect);
+  const cx = (m.x0 + m.x1) / 2;
+  const cz = (m.z0 + m.z1) / 2;
+  if (b.corner) {
+    const rotation = cornerRotation(b.sx, b.sz);
+    const s = cornerAdvance(m, w, d);
+    return { x: cx + Math.sin(rotation) * s, z: cz + Math.cos(rotation) * s, rotation };
   }
-  return { x: m.x1 - HALL_SETBACK_M - depthM / 2, z: (m.z0 + m.z1) / 2, rotation: FRONT_ROTATION.east };
+  const rotation = FRONT_ROTATION[squareFront(lot.edge, b.sx, b.sz)];
+  const inset = HALL_SETBACK_M + d / 2;
+  if (lot.edge === "z") {
+    return { x: cx, z: b.sz > 0 ? m.z0 + inset : m.z1 - inset, rotation };
+  }
+  return { x: b.sx > 0 ? m.x0 + inset : m.x1 - inset, z: cz, rotation };
 }
 
 /**
@@ -675,15 +783,14 @@ export function facesCamera(rotation: number): boolean {
 
 /**
  * The resting heading of a building that stands on a plot of its own, off the
- * town's grid: toward the square — unless that turns its back on the viewer,
- * in which case it faces away from the square instead. A door the camera
- * never sees is a building with its back turned (maintainer, 2026-09-02).
- * Houses and halls on the blocks do not use it: they face their street
- * (`FRONT_ROTATION`), which faces the camera by construction.
+ * town's grid: straight at the square. Nothing in the town turns its back on
+ * the square any more (maintainer, 2026-09-03) — the older rule that spun a
+ * door around whenever the square lay behind the camera's shoulder is gone.
+ * Houses and halls on the blocks do not use it: they face the near edge of
+ * their block (`squareFront`), or the diagonal on a corner block.
  */
 export function houseDefaultRotation(x: number, z: number): number {
-  const toSquare = Math.atan2(-x, -z);
-  return facesCamera(toSquare) ? toSquare : normalizeAngle(toSquare + Math.PI);
+  return normalizeAngle(Math.atan2(-x, -z));
 }
 
 /** Where a kit building stands and which way it turns — the one source. */
@@ -693,8 +800,16 @@ export function kitPose(place: KitPlace): KitPose {
     return { x, z, rotation: KIT_FACING.foundry ?? houseDefaultRotation(x, z) };
   }
   const lot = KIT_BLOCKS[place];
-  const rect = quadrantRect(BLOCK_TEMPLATES[lot.template], lot.sx, lot.sz);
-  return hallPose(rect, KIT_FOOTPRINT_TILES[place].d * TILE_M, lot.front);
+  const template = BLOCK_TEMPLATES[lot.template];
+  const block: TownBlock = {
+    rect: quadrantRect(template, lot.sx, lot.sz),
+    kit: place,
+    sx: lot.sx,
+    sz: lot.sz,
+    corner: isCornerTemplate(template),
+  };
+  const f = KIT_FOOTPRINT_TILES[place];
+  return hallPose(block, lot, f.w * TILE_M, f.d * TILE_M);
 }
 
 /**
@@ -1342,15 +1457,76 @@ function lotOnBlock(x0: number, z0: number, x1: number, z1: number): boolean {
   return true;
 }
 
+/** An axis-aligned box in world metres — what a lot or a turned footprint claims. */
+interface BoxM {
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
+}
+
+/** The four corners of a `w` × `d` metre footprint at (x, z) turned by `rotation`, grown by the wall margin. */
+function turnedCorners(x: number, z: number, w: number, d: number, rotation: number): Array<[number, number]> {
+  const hw = w / 2 + WALL_MARGIN_M;
+  const hd = d / 2 + WALL_MARGIN_M;
+  const fx = Math.sin(rotation); // local +z, the door side
+  const fz = Math.cos(rotation);
+  const tx = fz; // local +x, the width
+  const tz = -fx;
+  const out: Array<[number, number]> = [];
+  for (const sw of [-1, 1]) {
+    for (const sd of [-1, 1]) {
+      out.push([x + tx * hw * sw + fx * hd * sd, z + tz * hw * sw + fz * hd * sd]);
+    }
+  }
+  return out;
+}
+
+/** The box a turned footprint claims, so a lot beside it can tell whether it is free. */
+function turnedBox(x: number, z: number, w: number, d: number, rotation: number): BoxM {
+  const c = turnedCorners(x, z, w, d, rotation);
+  return {
+    x0: Math.min(...c.map((p) => p[0])),
+    x1: Math.max(...c.map((p) => p[0])),
+    z0: Math.min(...c.map((p) => p[1])),
+    z1: Math.max(...c.map((p) => p[1])),
+  };
+}
+
+/** Whether a turned footprint stands entirely on block ground — its real corners, not its bounding box. */
+function turnedOnBlock(x: number, z: number, w: number, d: number, rotation: number): boolean {
+  for (const [cx, cz] of turnedCorners(x, z, w, d, rotation)) {
+    const [tx, tz] = worldToTile(cx, cz);
+    if (townZone(tx - CENTER_TILE, tz - CENTER_TILE) !== "block") return false;
+  }
+  return true;
+}
+
+/** Whether two metre boxes overlap at all. */
+function boxesOverlap(a: BoxM, b: BoxM): boolean {
+  return a.x0 < b.x1 && b.x0 < a.x1 && a.z0 < b.z1 && b.z0 < a.z1;
+}
+
 /**
- * The houses of one block: a row along its south front, east to west, wall
- * to wall, doors on the street south of the block; then a column up its east
- * front, north to south, doors on the street east of it, stopping short of
- * the south row. The block's north row and west column are its hedge. Every
- * door faces south or east — the camera's side.
+ * The houses of one block, always with their doors toward the market square.
+ *
+ * A row runs along the near edge on the z axis, lot by lot outward from the
+ * square, and a column up the near edge on the x axis, stopping short of that
+ * row. Both far edges stay free — they are the block's hedged back gardens.
+ *
+ * A CORNER block instead carries a short row standing ON the diagonal, turned
+ * 45° to look straight down it at the square (`cornerRotation`), shoulder to
+ * shoulder across the block's middle. That is the chamfered corner a real town
+ * builds where two streets meet at an angle, and it is the only way a corner
+ * block shows the square a front instead of a flank. The diagonal row takes
+ * the whole block, so the axis rows find no lot left and drop out on their own.
  */
-function blockHouses(rect: BlockRect, out: HousePlot[]): void {
+function blockHouses(b: TownBlock, out: HousePlot[]): void {
   const variants: HouseVariant[] = ["solar-barrel", "garden-roof", "glass-loft"];
+  const w = HOUSE_W_TILES * TILE_M;
+  const d = HOUSE_D_TILES * TILE_M;
+  /** Boxes already claimed on this block, so nothing is placed on top of the corner house. */
+  const taken: BoxM[] = [];
   const push = (x: number, z: number, rotation: number) => {
     const slot = out.length;
     out.push({
@@ -1364,22 +1540,77 @@ function blockHouses(rect: BlockRect, out: HousePlot[]): void {
       variant: variants[slot % variants.length],
       seed: hash2(slot, 7, ISLAND_SEED),
     });
+    taken.push(turnedBox(x, z, w, d, rotation));
   };
-  let southRow = 0;
-  for (let x1 = rect.x1; x1 - (LOT_W - 1) >= rect.x0 + 1; x1 -= LOT_W) {
-    const x0 = x1 - (LOT_W - 1);
-    const z0 = rect.z1 - (LOT_D - 1);
-    if (!lotOnBlock(x0, z0, x1, rect.z1)) continue;
-    push(x0 + x1 + 1, z0 + rect.z1 + 1, FRONT_ROTATION.south);
-    southRow++;
+  /** A lot spanning two tile ranges: its centre in world metres is the sum of the bounds plus one. */
+  const pushLot = (xa: number, xb: number, za: number, zb: number, rotation: number): boolean => {
+    if (!lotOnBlock(Math.min(xa, xb), Math.min(za, zb), Math.max(xa, xb), Math.max(za, zb))) return false;
+    const x = xa + xb + 1;
+    const z = za + zb + 1;
+    const box = turnedBox(x, z, w, d, rotation);
+    if (taken.some((t) => boxesOverlap(t, box))) return false;
+    push(x, z, rotation);
+    return true;
+  };
+
+  if (b.corner) for (const [x, z, rotation] of cornerRow(b, w, d)) push(x, z, rotation);
+
+  const { nearX, farX, nearZ, farZ } = blockEdges(b);
+  // Inward: from a near edge toward the far one, away from the square.
+  const dx = b.sx > 0 ? 1 : -1;
+  const dz = b.sz > 0 ? 1 : -1;
+  const spanX = Math.abs(farX - nearX);
+  const spanZ = Math.abs(farZ - nearZ);
+  const zFront = FRONT_ROTATION[squareFront("z", b.sx, b.sz)];
+  const xFront = FRONT_ROTATION[squareFront("x", b.sx, b.sz)];
+
+  // The row on the near z edge, running out along x; the last column is hedge.
+  let zRow = 0;
+  for (let off = 0; off + LOT_W - 1 <= spanX - 1; off += LOT_W) {
+    const placed = pushLot(
+      nearX + dx * off,
+      nearX + dx * (off + LOT_W - 1),
+      nearZ,
+      nearZ + dz * (LOT_D - 1),
+      zFront,
+    );
+    if (placed) zRow++;
   }
-  const zStop = rect.z1 - (southRow > 0 ? LOT_D : 0);
-  for (let z0 = rect.z0 + 1; z0 + (LOT_W - 1) <= zStop; z0 += LOT_W) {
-    const z1 = z0 + LOT_W - 1;
-    const x0 = rect.x1 - (LOT_D - 1);
-    if (!lotOnBlock(x0, z0, rect.x1, z1)) continue;
-    push(x0 + rect.x1 + 1, z0 + z1 + 1, FRONT_ROTATION.east);
+  // The column on the near x edge, running out along z, clear of that row.
+  for (let off = zRow > 0 ? LOT_D : 0; off + LOT_W - 1 <= spanZ - 1; off += LOT_W) {
+    pushLot(nearX, nearX + dx * (LOT_D - 1), nearZ + dz * off, nearZ + dz * (off + LOT_W - 1), xFront);
   }
+}
+
+/**
+ * The houses of a corner block's diagonal row, centred on the block's middle
+ * and spaced a lot apart along their own width. Two phases are tried — one
+ * house sitting on the diagonal, or a pair straddling it — and the one that
+ * fits more houses on the block wins, so the row stays centred whatever the
+ * block's size.
+ */
+function cornerRow(b: TownBlock, w: number, d: number): Array<[number, number, number]> {
+  const rotation = cornerRotation(b.sx, b.sz);
+  const m = rectMetres(b.rect);
+  const cx = (m.x0 + m.x1) / 2;
+  const cz = (m.z0 + m.z1) / 2;
+  // Along the house's own width axis (local +x), lot by lot.
+  const tx = Math.cos(rotation);
+  const tz = -Math.sin(rotation);
+  const step = LOT_W * TILE_M;
+  const reach = Math.ceil((Math.max(m.x1 - m.x0, m.z1 - m.z0) * Math.SQRT2) / step);
+  let best: Array<[number, number, number]> = [];
+  for (const phase of [0, 0.5]) {
+    const row: Array<[number, number, number]> = [];
+    for (let k = -reach; k <= reach; k++) {
+      const off = (k + phase) * step;
+      const x = cx + tx * off;
+      const z = cz + tz * off;
+      if (turnedOnBlock(x, z, w, d, rotation)) row.push([x, z, rotation]);
+    }
+    if (row.length > best.length) best = row;
+  }
+  return best;
 }
 
 let houseCache: HousePlot[] | null = null;
@@ -1392,7 +1623,7 @@ let houseCache: HousePlot[] | null = null;
 export function townHouses(): HousePlot[] {
   if (!houseCache) {
     const out: HousePlot[] = [];
-    for (const b of townBlocks()) if (!b.kit) blockHouses(b.rect, out);
+    for (const b of townBlocks()) if (!b.kit) blockHouses(b, out);
     houseCache = out;
   }
   return houseCache.map((h) => ({ ...h }));
@@ -1455,20 +1686,41 @@ function blockPost(map: IslandMap, x: number, z: number): void {
   map.blocked[i] = 1;
 }
 
+/**
+ * The tiles the doors of the town open onto — one step past each house's front
+ * wall. Street furniture keeps off them, so nothing stands in a doorway.
+ */
+function doorstepTiles(): Set<string> {
+  const out = new Set<string>();
+  for (const h of townHouses()) {
+    const ahead = (h.d / 2) * TILE_M + WALL_MARGIN_M;
+    for (const reach of [ahead, ahead + TILE_M]) {
+      const [tx, tz] = worldToTile(h.x + Math.sin(h.rotation) * reach, h.z + Math.cos(h.rotation) * reach);
+      out.add(`${tx},${tz}`);
+    }
+  }
+  return out;
+}
+
 /** Hedges along every block's back sides, and the lamps along the streets and roads. */
 function placeStreetFurniture(map: IslandMap): { hedges: Post[]; lamps: Post[] } {
   const hedges: Post[] = [];
   const lamps: Post[] = [];
+  const doorsteps = doorstepTiles();
   const C = CENTER_TILE;
   const post = (kx: number, kz: number, rotation: number, into: Post[]) => {
     const [x, z] = tileToWorld(C + kx, C + kz);
     into.push({ x, z, y: groundY(map, x, z), rotation });
   };
-  // Hedges: the north row and the west column of each block — its two sides
-  // without doors — one segment per tile, so the block reads as a closed lot.
+  // Hedges: the two FAR sides of each block — the ones turned away from the
+  // square, so the doors always open toward it and the gardens fall behind —
+  // one segment per tile, so the block reads as a closed lot.
   for (const b of townBlocks()) {
-    for (let kx = b.rect.x0; kx <= b.rect.x1; kx++) post(kx, b.rect.z0, 0, hedges);
-    for (let kz = b.rect.z0 + 1; kz <= b.rect.z1; kz++) post(b.rect.x0, kz, Math.PI / 2, hedges);
+    const { farX, farZ } = blockEdges(b);
+    for (let kx = b.rect.x0; kx <= b.rect.x1; kx++) post(kx, farZ, 0, hedges);
+    for (let kz = b.rect.z0; kz <= b.rect.z1; kz++) {
+      if (kz !== farZ) post(farX, kz, Math.PI / 2, hedges);
+    }
   }
   // Lamps on the outer rows of the frame street, the middle street and the
   // boulevard's straight runs, spaced along each side and never in a mouth
@@ -1490,6 +1742,7 @@ function placeStreetFurniture(map: IslandMap): { hedges: Post[]; lamps: Post[] }
         if (!inBounds(map, tx, tz)) continue;
         const i = tileIndex(map, tx, tz);
         if (map.kind[i] !== TileKind.path || map.blocked[i]) continue;
+        if (doorsteps.has(`${tx},${tz}`)) continue; // never in a doorway
         post(kx, kz, 0, lamps);
       }
     }
@@ -1779,10 +2032,29 @@ export const KIT_STAND_AHEAD_M: Record<KitPlace, number> = {
   web: 6.6,
 };
 
+/**
+ * How much further a visitor may walk past a hall's own stand anchor to reach
+ * paving, in metres: a hall on the diagonal of a corner block has its own
+ * forecourt between the door and the street, and the visitor belongs on the
+ * street, not on the lawn.
+ */
+const KIT_FORECOURT_M = 10;
+
 /** A stand point in front of a kit building at `pose`, facing it. */
 function kitPlace(id: KitPlace, pose: KitPose = kitPose(id)): Place {
   const ahead = KIT_STAND_AHEAD_M[id];
-  const tile = worldToTile(pose.x + Math.sin(pose.rotation) * ahead, pose.z + Math.cos(pose.rotation) * ahead);
+  const step = (reach: number): [number, number] =>
+    worldToTile(pose.x + Math.sin(pose.rotation) * reach, pose.z + Math.cos(pose.rotation) * reach);
+  let tile = step(ahead);
+  // Walk on from the anchor until the paving starts; halls already standing on
+  // their street stop on the first try and keep their anchor.
+  for (let reach = ahead; reach <= ahead + KIT_FORECOURT_M; reach += TILE_M / 2) {
+    const t = step(reach);
+    if (isPavedZone(townZone(t[0] - CENTER_TILE, t[1] - CENTER_TILE))) {
+      tile = t;
+      break;
+    }
+  }
   return { id, tile: PLACE_TILES[id], standTile: tile, facing: normalizeAngle(pose.rotation + Math.PI) };
 }
 

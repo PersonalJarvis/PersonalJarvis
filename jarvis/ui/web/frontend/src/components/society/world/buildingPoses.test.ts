@@ -13,6 +13,7 @@ import {
   houseId,
   isWalkable,
   kitId,
+  normalizeAngle,
   resetIslandCache,
   worldToTile,
 } from "./islandLayout";
@@ -55,7 +56,9 @@ describe("buildingPoses", () => {
     const before = island.map.blocked.slice();
     const store = useBuildingPoses.getState();
     store.setYaw(id, rest + Math.PI / 2);
-    expect(house.rotation).toBeCloseTo(rest + Math.PI / 2, 6);
+    // Headings are stored wrapped into (−π, π], so a quarter turn off a
+    // corner house's 135° comes back as the same heading with the other sign.
+    expect(house.rotation).toBeCloseTo(normalizeAngle(rest + Math.PI / 2), 6);
     // The footprint moved with it: the blocked layer changed, the centre stays covered.
     expect(island.map.blocked).not.toEqual(before);
     expect(isWalkable(island.map, ...worldToTile(house.x, house.z))).toBe(false);

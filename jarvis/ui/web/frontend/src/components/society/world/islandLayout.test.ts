@@ -27,7 +27,8 @@ import {
   applyBuildingYaws,
   buildIsland,
   defaultBuildingYaw,
-  facesCamera,
+  blockEdges,
+  cornerRotation,
   findPath,
   groundY,
   hash2,
@@ -40,6 +41,7 @@ import {
   smoothPath,
   tileIndex,
   tileToWorld,
+  squareFront,
   townBlocks,
   townZone,
   worldToTile,
@@ -51,6 +53,47 @@ import {
 /** Tile under a normalised island coordinate. */
 function tileAt(nx: number, nz: number): [number, number] {
   return [Math.floor(CENTER_TILE + nx * CENTER_TILE), Math.floor(CENTER_TILE + nz * CENTER_TILE)];
+}
+
+/** Angles rounded to four places, so the eight grid headings compare exactly. */
+function round4(a: number): number {
+  return Math.round(a * 1e4) / 1e4;
+}
+
+/**
+ * The eight headings the town is designed in: the four compass fronts and the
+ * four diagonals a corner building takes.
+ */
+const HEADING_GRID = [
+  ...Object.values(FRONT_ROTATION),
+  ...([
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1],
+  ] as const).map(([sx, sz]) => cornerRotation(sx, sz)),
+].map(round4);
+
+/** Whether a heading is one of the four diagonals. */
+function isDiagonal(rotation: number): boolean {
+  return !Object.values(FRONT_ROTATION).some((r) => round4(r) === round4(rotation));
+}
+
+/** Whether walking out of a door at (x, z) heading `rotation` gets closer to the square. */
+function looksAtSquare(x: number, z: number, rotation: number): boolean {
+  const ahead = 6;
+  const before = Math.hypot(x, z);
+  const after = Math.hypot(x + Math.sin(rotation) * ahead, z + Math.cos(rotation) * ahead);
+  return after < before - 1e-9;
+}
+
+/** The first paved tile within `limit` metres straight out of a door, or null. */
+function pavingAhead(x: number, z: number, rotation: number, limit: number): [number, number] | null {
+  for (let ahead = 1; ahead <= limit; ahead += 0.5) {
+    const t = worldToTile(x + Math.sin(rotation) * ahead, z + Math.cos(rotation) * ahead);
+    if (isPavedZone(townZone(t[0] - CENTER_TILE, t[1] - CENTER_TILE))) return t;
+  }
+  return null;
 }
 
 describe("islandLayout", () => {
@@ -154,7 +197,7 @@ describe("islandLayout", () => {
     expect(groundY(map, ...tileToWorld(hx, hz))).toBe(LEVEL_Y[PODIUM_LEVEL]);
   });
 
-  it("lays the town out in blocks: every house fronts a street and faces the camera", () => {
+  it("lays the town out in blocks: every house fronts a street and looks at the square", () => {
     const { map, content } = island;
     expect(map.kind[tileIndex(map, CENTER_TILE + 5, CENTER_TILE + 5)]).toBe(TileKind.plaza);
     expect(map.kind[tileIndex(map, CENTER_TILE + PLAZA_HALF_TILES + 2, CENTER_TILE)]).toBe(TileKind.path);
@@ -184,18 +227,22 @@ describe("islandLayout", () => {
     expect(content.houses.length).toBeGreaterThan(0);
     expect(new Set(content.houses.map((h) => h.slot)).size).toBe(content.houses.length);
     for (const h of content.houses) {
-      // A door faces south or east — the camera's side — never north or west.
-      expect([FRONT_ROTATION.south, FRONT_ROTATION.east], `house ${h.slot}`).toContain(h.rotation);
-      expect(facesCamera(h.rotation), `house ${h.slot}`).toBe(true);
+      // A door looks at the market square: walking out of it gets you closer.
+      expect(looksAtSquare(h.x, h.z, h.rotation), `house ${h.slot}`).toBe(true);
+      // It rests on the town's grid — an axis heading, or 45° on a corner block.
+      expect(HEADING_GRID, `house ${h.slot}`).toContain(round4(h.rotation));
       expect(h.rotation).toBe(h.defaultRotation);
       expect(defaultBuildingYaw(houseId(h.slot))).toBe(h.defaultRotation);
       // It stands on a block of the plateau …
       const [tx, tz] = worldToTile(h.x, h.z);
       expect(townZone(tx - CENTER_TILE, tz - CENTER_TILE), `house ${h.slot}`).toBe("block");
       expect(map.level[tileIndex(map, tx, tz)]).toBe(PLATEAU_LEVEL);
-      // … and the ground two metres past its door is a street, an alley or the boulevard.
-      const ahead = h.d + 2;
-      const [fx, fz] = worldToTile(h.x + Math.sin(h.rotation) * ahead, h.z + Math.cos(h.rotation) * ahead);
+      // … and the walk out of its door reaches paving — the street or alley it
+      // fronts, never the square itself. A house on the diagonal of a corner
+      // block crosses its own front garden first, so it is given more room.
+      const paved = pavingAhead(h.x, h.z, h.rotation, isDiagonal(h.rotation) ? 14 : h.d + 2);
+      expect(paved, `house ${h.slot} finds no paving past its door`).not.toBeNull();
+      const [fx, fz] = paved as [number, number];
       const zone = townZone(fx - CENTER_TILE, fz - CENTER_TILE);
       expect(isPavedZone(zone) && zone !== "square", `house ${h.slot} fronts ${zone}`).toBe(true);
       expect(isWalkable(map, fx, fz), `house ${h.slot}`).toBe(true);
@@ -309,8 +356,16 @@ describe("islandLayout", () => {
       }
       expect(level, id).toBe(PLATEAU_LEVEL);
       expect(townZone(bx - CENTER_TILE, bz - CENTER_TILE), id).toBe("block");
-      expect(pose.rotation, id).toBe(FRONT_ROTATION[KIT_BLOCKS[id].front]);
-      expect(facesCamera(pose.rotation), id).toBe(true);
+      const lot = KIT_BLOCKS[id];
+      const block = townBlocks().find((b) => b.kit === id);
+      if (block?.corner) {
+        // A corner block has no side that looks at the square, so its hall
+        // stands on the diagonal and looks down it (maintainer, 2026-09-03).
+        expect(pose.rotation, id).toBe(cornerRotation(lot.sx, lot.sz));
+      } else {
+        expect(pose.rotation, id).toBe(FRONT_ROTATION[squareFront(lot.edge, lot.sx, lot.sz)]);
+      }
+      expect(looksAtSquare(pose.x, pose.z, pose.rotation), id).toBe(true);
       // The visitor stands on the paving in front of the door: the frame
       // street, or the alley that continues it past the corner block.
       expect(["street", "alley"], id).toContain(townZone(sx - CENTER_TILE, sz - CENTER_TILE));
@@ -320,17 +375,22 @@ describe("islandLayout", () => {
     expect(new Set(lots).size).toBe(lots.length);
   });
 
-  it("hedges every block's north and west sides and leaves its fronts open", () => {
+  it("hedges the two sides of every block turned away from the square", () => {
     const { map, content } = island;
     const hedged = new Set(content.hedges.map((h) => worldToTile(h.x, h.z).join(",")));
     const at = (kx: number, kz: number) => hedged.has(`${CENTER_TILE + kx},${CENTER_TILE + kz}`);
     for (const b of townBlocks()) {
       const { x0, x1, z0, z1 } = b.rect;
-      for (let kx = x0; kx <= x1; kx++) expect(at(kx, z0), `north row ${kx},${z0}`).toBe(true);
-      for (let kz = z0; kz <= z1; kz++) expect(at(x0, kz), `west column ${x0},${kz}`).toBe(true);
-      // The south row and the east column belong to the doors.
-      for (let kx = x0 + 1; kx <= x1; kx++) expect(at(kx, z1), `south row ${kx},${z1}`).toBe(false);
-      for (let kz = z0 + 1; kz <= z1; kz++) expect(at(x1, kz), `east column ${x1},${kz}`).toBe(false);
+      const { nearX, farX, nearZ, farZ } = blockEdges(b);
+      for (let kx = x0; kx <= x1; kx++) expect(at(kx, farZ), `far row ${kx},${farZ}`).toBe(true);
+      for (let kz = z0; kz <= z1; kz++) expect(at(farX, kz), `far column ${farX},${kz}`).toBe(true);
+      // The two near sides belong to the doors that look at the square.
+      for (let kx = x0; kx <= x1; kx++) {
+        if (kx !== farX) expect(at(kx, nearZ), `near row ${kx},${nearZ}`).toBe(false);
+      }
+      for (let kz = z0; kz <= z1; kz++) {
+        if (kz !== farZ) expect(at(nearX, kz), `near column ${nearX},${kz}`).toBe(false);
+      }
     }
     expect(content.hedges.length).toBeGreaterThan(200);
     for (const h of content.hedges) expect(isWalkable(map, ...worldToTile(h.x, h.z))).toBe(false);
