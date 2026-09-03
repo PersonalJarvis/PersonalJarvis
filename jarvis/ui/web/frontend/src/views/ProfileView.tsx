@@ -1,29 +1,33 @@
 /**
- * ProfileView — what Jarvis knows about you, and the file it keeps it in.
+ * ProfileView — the file the assistant keeps on you.
  *
- * Two tabs, because the view answers two different questions and mixing them
- * was the old layout's mistake: "what does it know about me" is a ledger of
- * fields, "what does the file say" is a document. They shared one screen as
- * three standing rails, which meant neither got a readable width and both were
- * permanently half-visible.
+ * The section answers one question: *what do you know about me, and how do you
+ * know it?* Everything on the page is either a fact, the receipt for a fact,
+ * or the boundary the assistant will not cross.
  *
  *   ┌──────────────────────────────────────────────────────────────────┐
- *   │ PageHeader — Profile · refresh · [ Knowledge | Source file ]     │
+ *   │ PageHeader — Profile · refresh · [ The file | Source ]           │
  *   ├──────────────────────────────────────────────────────────────────┤
- *   │ Identity card — portrait, address, stage, progress, people       │
+ *   │ Name · language · timezone · since · conversations   6 of 18     │
  *   ├───────────────────────────────────┬──────────────────────────────┤
- *   │ Cluster cards, two columns        │ Rail: the open question,     │
- *   │ every field, editable in place    │ the review queue, the people │
+ *   │ Entries — five sections, known    │ How the assistant describes  │
+ *   │ facts listed, gaps folded into    │ you · your standing rules ·  │
+ *   │ one line, every entry showing     │ what is never stored · the   │
+ *   │ the date it was learned           │ long-form page in the wiki   │
  *   └───────────────────────────────────┴──────────────────────────────┘
  *
- * Below 1280 px the rail becomes a row under the ledger, and below 1024 px
- * everything is one column. The header never scrolls; the body below it does.
+ * Three cards were removed rather than restyled, because no styling makes an
+ * empty pipe full: the review queue (the legacy curator has been disabled
+ * since 2026-05-17, so it could never fill), the people list (it read
+ * `data/workspace/people/`, which is empty — Contacts owns people), and the
+ * "would love to know" prompt (it wrote to no endpoint; the gap expander in
+ * the ledger now fills fields for real).
  *
  * The raw-file query and its live WS subscription are held HERE rather than in
- * the source tab, so a Curator write still refreshes the ledger while the
- * reader is looking at the knowledge tab.
+ * the source tab, because both tabs need it: the source tab renders it, and
+ * the file tab parses its audit trail for provenance.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, RefreshCw, UserCircle2 } from "lucide-react";
 
@@ -33,24 +37,26 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { AskCard } from "@/views/profile/AskCard";
-import { IdentityCard } from "@/views/profile/IdentityCard";
-import { KnowledgeLedger } from "@/views/profile/KnowledgeLedger";
-import { PeopleCard } from "@/views/profile/PeopleCard";
-import { ReviewsCard } from "@/views/profile/ReviewsCard";
+import { DossierHeader } from "@/views/profile/DossierHeader";
+import { EntryLedger } from "@/views/profile/EntryLedger";
+import { NeverStoredCard } from "@/views/profile/NeverStoredCard";
+import { PortraitCard } from "@/views/profile/PortraitCard";
+import { RulesCard } from "@/views/profile/RulesCard";
 import { SourceCard, useSourceDocument } from "@/views/profile/SourceCard";
+import { WikiCard } from "@/views/profile/WikiCard";
 import { fetchJson, statusOf, type ProfileResponse } from "@/views/profile/api";
+import { parseObservations } from "@/views/profile/provenance";
 
-type TabId = "knowledge" | "source";
+type TabId = "file" | "source";
 
-/** The main grid: ledger left, rail right, and one column below 1280 px. */
-const SPLIT = "grid gap-5 xl:grid-cols-[minmax(0,1fr)_336px]";
-/** The rail: a row of cards under the ledger until it can stand beside it. */
-const RAIL = "grid gap-5 content-start sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-1";
+/** Entries left, rail right, and one column below 1280 px. */
+const SPLIT = "grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]";
+/** The rail: a row of cards under the entries until it can stand beside them. */
+const RAIL = "grid gap-5 content-start sm:grid-cols-2 xl:grid-cols-1";
 
 export function ProfileView() {
   const t = useT();
-  const [tab, setTab] = useState<TabId>("knowledge");
+  const [tab, setTab] = useState<TabId>("file");
 
   const { data, isLoading, error, refetch, isRefetching } = useQuery<ProfileResponse, Error>({
     queryKey: ["profile"],
@@ -60,6 +66,8 @@ export function ProfileView() {
 
   // Held at the root on purpose — see the module note.
   const source = useSourceDocument();
+  const raw = source.data?.content ?? null;
+  const observations = useMemo(() => parseObservations(raw), [raw]);
 
   const meta = (data?.user.meta ?? {}) as Record<string, unknown>;
 
@@ -87,7 +95,7 @@ export function ProfileView() {
           tabs={
             <TabBar
               tabs={[
-                { id: "knowledge", label: t("profile_view.section_knowledge") },
+                { id: "file", label: t("profile_view.tab_file") },
                 { id: "source", label: t("profile_view.section_source") },
               ]}
               active={tab}
@@ -102,15 +110,16 @@ export function ProfileView() {
 
         {error && <ProfileErrorState error={error} onRetry={() => refetch()} />}
 
-        {data && tab === "knowledge" && (
+        {data && tab === "file" && (
           <div className="flex flex-col gap-5">
-            <IdentityCard data={data} meta={meta} onOpenSource={() => setTab("source")} />
+            <DossierHeader data={data} meta={meta} />
             <div className={SPLIT}>
-              <KnowledgeLedger meta={meta} />
+              <EntryLedger meta={meta} observations={observations} />
               <aside className={RAIL}>
-                <AskCard meta={meta} />
-                <ReviewsCard reviewsCount={data.reviews_count} />
-                <PeopleCard people={data.people} />
+                <PortraitCard />
+                <RulesCard />
+                <NeverStoredCard raw={raw} />
+                <WikiCard name={data.user.name?.trim() || null} />
               </aside>
             </div>
           </div>
@@ -135,47 +144,38 @@ export function ProfileView() {
 function ProfileSkeleton({ label }: { label: string }) {
   return (
     <div role="status" aria-busy="true" aria-label={label} className="flex flex-col gap-5">
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center gap-5">
-          <div className="h-14 w-14 shrink-0 animate-pulse rounded-full bg-secondary" />
-          <div className="flex min-w-0 flex-1 flex-col gap-2">
-            <div className="h-5 w-56 max-w-full animate-pulse rounded-md bg-secondary" />
-            <div className="h-3 w-32 max-w-full animate-pulse rounded-full bg-secondary" />
-          </div>
-          <div className="hidden w-64 shrink-0 flex-col gap-2 sm:flex">
-            <div className="h-3 w-40 animate-pulse rounded-full bg-secondary" />
-            <div className="h-1.5 w-full animate-pulse rounded-full bg-secondary" />
-          </div>
+      <div className="flex items-center gap-5 border-b border-border pb-5">
+        <div className="h-16 w-16 shrink-0 animate-pulse rounded-full bg-secondary" />
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <div className="h-6 w-56 max-w-full animate-pulse rounded-md bg-secondary" />
+          <div className="h-3 w-72 max-w-full animate-pulse rounded-full bg-secondary" />
         </div>
+        <div className="hidden h-3 w-32 shrink-0 animate-pulse rounded-full bg-secondary sm:block" />
       </div>
 
       <div className={SPLIT}>
-        <div className="grid gap-5 lg:grid-cols-2">
-          {[0, 1, 2, 3].map((i) => (
-            <SkeletonCard key={i} rows={4} />
+        <div className="rounded-lg border border-border bg-card">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="border-b border-border px-5 py-4 last:border-b-0">
+              <div className="h-4 w-32 animate-pulse rounded-md bg-secondary" />
+              <div className="mt-3 flex flex-col gap-2">
+                <div className="h-3 w-full animate-pulse rounded-full bg-secondary" />
+                <div className="h-3 w-2/3 animate-pulse rounded-full bg-secondary" />
+              </div>
+            </div>
           ))}
         </div>
         <div className={RAIL}>
           {[0, 1, 2].map((i) => (
-            <SkeletonCard key={i} rows={3} />
+            <div key={i} className="rounded-lg border border-border bg-card p-5">
+              <div className="h-4 w-28 animate-pulse rounded-md bg-secondary" />
+              <div className="mt-4 flex flex-col gap-2">
+                <div className="h-3 w-full animate-pulse rounded-full bg-secondary" />
+                <div className="h-3 w-4/5 animate-pulse rounded-full bg-secondary" />
+              </div>
+            </div>
           ))}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function SkeletonCard({ rows }: { rows: number }) {
-  return (
-    <div className="rounded-lg border border-border bg-card p-5">
-      <div className="h-4 w-28 animate-pulse rounded-md bg-secondary" />
-      <div className="mt-4 flex flex-col gap-3">
-        {Array.from({ length: rows }, (_, i) => (
-          <div key={i} className="flex items-center justify-between gap-8">
-            <div className="h-3 w-24 animate-pulse rounded-full bg-secondary" />
-            <div className="h-3 w-20 animate-pulse rounded-full bg-secondary" />
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -194,7 +194,7 @@ function ProfileErrorState({ error, onRetry }: { error: Error; onRetry: () => vo
     return (
       <EmptyState
         icon={<UserCircle2 />}
-        title={t("profile_view.hero_name_placeholder")}
+        title={t("profile_view.header_unnamed")}
         description={t("profile_view.no_user_hint")}
         actions={
           <Button size="sm" variant="outline" onClick={onRetry}>

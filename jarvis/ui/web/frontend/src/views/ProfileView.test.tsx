@@ -1,15 +1,14 @@
 /**
- * Component tests for ProfileView's Review-Queue section.
+ * Component tests for the rebuilt Profile section.
  *
- * Regression guard for the "red error badge for an intentionally-disabled
- * Curator" bug: the legacy Curator-Merger is soft-disabled by design
- * (`memory.legacy_curator.enabled = false`, since 2026-05-17), so
- * `GET /api/profile/reviews` returns HTTP 503. The backend contract
- * (`jarvis/ui/web/profile_routes.py` module docstring) requires the UI to
- * render a friendly empty-state for that 503 — NOT a destructive red badge.
+ * What these pin is the contract the redesign was built on: the page states
+ * facts and folds gaps (rather than printing "not known yet" eighteen times),
+ * every known fact can show the sentence it was learned from, and each rail
+ * card has a designed empty state instead of a dead box.
  *
- * The top-level `ErrorState` already honored this; the nested `ReviewsSection`
- * did not. These tests pin the contract for the nested section.
+ * The three cards that were deleted are guarded too — the review queue, the
+ * people list and the "would love to know" prompt were all structurally unable
+ * to fill, and a later change should not quietly bring them back.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -17,25 +16,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { ProfileView } from "@/views/ProfileView";
 
-// RawMarkdownSection subscribes to a WS client in a useEffect; null keeps the
-// effect a deterministic no-op in jsdom.
+// SourceCard subscribes to a WS client in a useEffect; null keeps the effect a
+// deterministic no-op in jsdom.
 vi.mock("@/hooks/useWebSocket", () => ({
   getWSClient: () => null,
 }));
 
-function freshClient(): QueryClient {
-  return new QueryClient({
-    defaultOptions: {
-      queries: { retry: false, gcTime: 0, staleTime: 0 },
-    },
-  });
-}
-
 function renderWithClient(node: React.ReactNode) {
-  const client = freshClient();
-  return render(
-    <QueryClientProvider client={client}>{node}</QueryClientProvider>,
-  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+  });
+  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
 }
 
 interface RouteResult {
@@ -64,185 +55,209 @@ function installFetchMock(routes: Record<string, () => RouteResult>) {
     }
     throw new Error(`unexpected fetch ${url}`);
   });
-  (globalThis as unknown as { fetch: typeof fetch }).fetch =
-    fetchMock as unknown as typeof fetch;
+  (globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
   return fetchMock;
 }
 
+const RAW = `---
+identity:
+  name: Ruben
+---
+
+## Observations over time
+
+<!-- curator:observations:start -->
+- [2026-08-29] identity.primary_language: de — "always answer me in German"
+<!-- curator:observations:end -->
+
+## Do Not Record
+
+- Political or religious beliefs (echo-chamber risk)
+- MBTI type or similar pseudo-scientific labels
+`;
+
 const PROFILE_OK = {
-  user: { name: "Ruben", meta: {}, path: "data/workspace/USER.md" },
+  user: {
+    name: "Ruben",
+    meta: {
+      identity: { name: "Ruben", primary_language: "de", timezone: "Europe/Berlin" },
+      last_updated: "2026-08-29",
+    },
+    path: "data/workspace/USER.md",
+  },
   people: [],
   reviews_count: 0,
+  has_avatar: false,
 };
 
-const RAW_OK = {
-  content: "",
-  path: "data/workspace/USER.md",
-  mtime_ms: null,
-  size_bytes: 0,
+const BASE_ROUTES: Record<string, () => RouteResult> = {
+  "/api/profile/raw": () => ({
+    body: { content: RAW, path: "USER.md", mtime_ms: 1, size_bytes: RAW.length },
+  }),
+  "/api/profile": () => ({ body: PROFILE_OK }),
+  "/api/board/personal/summary": () => ({
+    body: {
+      window_days: 30,
+      totals: { session_count: 491, first_day: "2026-08-03" },
+      window: {},
+      streak_days: 10,
+      longest_streak: 13,
+    },
+  }),
+  "/api/board/bio": () => ({ body: { text: null, generated_at: null } }),
+  "/api/settings/agent-instructions": () => ({
+    body: { content: "", exists: false, filename: "George.md", template: "", char_count: 0 },
+  }),
+  "/api/wiki/page/": () => ({ status: 404, body: { detail: "no such page" } }),
 };
-
-const CURATOR_503_DETAIL =
-  "The curator is not running in this session — possibly a mock brain or a " +
-  "provider without memory integration.";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
-describe("ProfileView — Review-Queue with a disabled Curator (503)", () => {
-  it("renders a friendly disabled-state, not a destructive red badge", async () => {
-    installFetchMock({
-      "/api/profile/reviews": () => ({
-        status: 503,
-        body: { detail: CURATOR_503_DETAIL },
-      }),
-      "/api/profile/raw": () => ({ body: RAW_OK }),
-      "/api/profile": () => ({ body: PROFILE_OK }),
-    });
-
+describe("the file states facts and folds gaps", () => {
+  it("shows the known facts and never repeats 'not known yet' for the rest", async () => {
+    installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
 
-    // The friendly, non-alarming disabled card appears.
-    await waitFor(() => {
-      expect(screen.getByTestId("reviews-disabled")).toBeDefined();
-    });
+    await screen.findByText("Europe/Berlin");
 
-    // The destructive red badge must NOT be rendered for an expected 503.
-    expect(screen.queryByTestId("reviews-error")).toBeNull();
+    // Sixteen empty fields exist, and none of them is on the page yet.
+    expect(screen.queryByText("not known yet")).toBeNull();
+  });
 
-    // The raw backend message is not surfaced verbatim as an error.
-    expect(screen.queryByText(CURATOR_503_DETAIL)).toBeNull();
+  it("counts the entries in the header instead of scoring the reader", async () => {
+    installFetchMock(BASE_ROUTES);
+    renderWithClient(<ProfileView />);
+
+    const count = await screen.findByTestId("dossier-count");
+    expect(count.textContent).toBe("3 of 18 entries");
+    // The old header asked "Who are you?" over a progress bar.
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("puts the reader's name at the top, not a stage name", async () => {
+    installFetchMock(BASE_ROUTES);
+    renderWithClient(<ProfileView />);
+
+    const header = await screen.findByTestId("dossier-header");
+    expect(header.textContent).toContain("Ruben");
+    // The board summary lands a tick later; the line grows rather than
+    // reserving a slot with a zero in it.
+    await waitFor(() => expect(header.textContent).toContain("491 conversations"));
+    expect(header.textContent).toContain("since");
+  });
+
+  it("opens a cluster's gaps on demand", async () => {
+    installFetchMock(BASE_ROUTES);
+    renderWithClient(<ProfileView />);
+
+    const toggle = await screen.findByTestId("gaps-communication");
+    expect(toggle.textContent).toContain("5 open fields");
+    expect(screen.queryByText("Verbosity")).toBeNull();
+
+    fireEvent.click(toggle);
+    await screen.findByText("Verbosity");
   });
 });
 
-describe("ProfileView — Review-Queue with a genuine server error (500)", () => {
-  it("still renders the destructive badge for non-503 failures", async () => {
-    installFetchMock({
-      "/api/profile/reviews": () => ({ status: 500, body: { detail: "boom" } }),
-      "/api/profile/raw": () => ({ body: RAW_OK }),
-      "/api/profile": () => ({ body: PROFILE_OK }),
-    });
-
+describe("provenance", () => {
+  it("shows the date a fact was learned and the sentence behind it", async () => {
+    installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId("reviews-error")).toBeDefined();
+    const source = await screen.findByTestId("entry-source-primary_language");
+    expect(source.textContent).toContain("2026-08-29");
+
+    fireEvent.click(source);
+    await screen.findByText("always answer me in German");
+  });
+
+  it("shows no date for a fact the audit trail never mentions", async () => {
+    installFetchMock(BASE_ROUTES);
+    renderWithClient(<ProfileView />);
+
+    await screen.findByText("Europe/Berlin");
+    expect(screen.queryByTestId("entry-source-timezone")).toBeNull();
+  });
+});
+
+describe("the rail", () => {
+  it("offers to write the portrait when none exists", async () => {
+    installFetchMock(BASE_ROUTES);
+    renderWithClient(<ProfileView />);
+
+    const empty = await screen.findByTestId("portrait-empty");
+    expect(empty.textContent).toContain("has not written a portrait");
+  });
+
+  it("renders the portrait and its feedback when one exists", async () => {
+    installFetchMock({
+      ...BASE_ROUTES,
+      "/api/board/bio": () => ({
+        body: { text: "Builds things at night.", generated_at: "2026-09-01T20:00:00Z" },
+      }),
     });
+    renderWithClient(<ProfileView />);
+
+    const text = await screen.findByTestId("portrait-text");
+    expect(text.textContent).toBe("Builds things at night.");
+    expect(screen.getByRole("button", { name: "Fits" })).toBeTruthy();
+  });
+
+  it("quotes the never-recorded categories out of the file", async () => {
+    installFetchMock(BASE_ROUTES);
+    renderWithClient(<ProfileView />);
+
+    const list = await screen.findByTestId("never-stored");
+    expect(list.textContent).toContain("Political");
+    expect(list.textContent).toContain("MBTI type");
+  });
+
+  it("invites the wiki page rather than reporting a 404", async () => {
+    installFetchMock(BASE_ROUTES);
+    renderWithClient(<ProfileView />);
+
+    const empty = await screen.findByTestId("wiki-empty");
+    expect(empty.textContent).toContain("no page about you yet");
+  });
+});
+
+describe("the dead cards stay deleted", () => {
+  it("renders no review queue, no people list and no ask prompt", async () => {
+    installFetchMock(BASE_ROUTES);
+    renderWithClient(<ProfileView />);
+
+    await screen.findByTestId("dossier-header");
+    await waitFor(() => expect(screen.queryByTestId("never-stored")).not.toBeNull());
+
+    expect(screen.queryByTestId("ask-next")).toBeNull();
     expect(screen.queryByTestId("reviews-disabled")).toBeNull();
+    expect(screen.queryByTestId("reviews-error")).toBeNull();
+    expect(screen.queryByText("Waiting for your OK")).toBeNull();
+    expect(screen.queryByText("No people known yet")).toBeNull();
+  });
+
+  it("never calls the review endpoint", async () => {
+    const fetchMock = installFetchMock(BASE_ROUTES);
+    renderWithClient(<ProfileView />);
+
+    await screen.findByTestId("dossier-header");
+    const called = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(called.some((u) => u.includes("/api/profile/reviews"))).toBe(false);
   });
 });
 
-// Open knowledge matrix: the user found the "classified dossier" treatment
-// (diagonal-hatch redaction bars on unknown fields + a "Confidential" hero)
-// misleading — it read as information being withheld. These tests pin the
-// de-classified contract: empty fields are plainly readable, nothing is
-// concealed, and the secrecy framing is gone. PROFILE_OK has `meta: {}`, so
-// every cluster field is empty — the worst case for the old redaction bars.
-describe("ProfileView — open knowledge matrix (no concealment)", () => {
-  it("renders unknown fields as readable text, never as a redaction bar", async () => {
+describe("a profile the backend is not serving", () => {
+  it("treats 503 as a state, not a failure", async () => {
     installFetchMock({
-      "/api/profile/reviews": () => ({
-        status: 503,
-        body: { detail: CURATOR_503_DETAIL },
-      }),
-      "/api/profile/raw": () => ({ body: RAW_OK }),
-      "/api/profile": () => ({ body: PROFILE_OK }),
+      ...BASE_ROUTES,
+      "/api/profile": () => ({ status: 503, body: { detail: "Profile system not ready." } }),
     });
-
-    const { container } = renderWithClient(<ProfileView />);
-
-    // The knowledge matrix renders unknown fields as the plain "not known yet"
-    // label instead of a black hatch bar.
-    await waitFor(() => {
-      expect(screen.getAllByText("not known yet").length).toBeGreaterThan(0);
-    });
-
-    // Core contract: empty fields must NOT be concealed behind a redaction bar.
-    expect(container.querySelector(".dossier-redact")).toBeNull();
-  });
-
-  it("drops the classified-dossier framing from the hero", async () => {
-    installFetchMock({
-      "/api/profile/reviews": () => ({
-        status: 503,
-        body: { detail: CURATOR_503_DETAIL },
-      }),
-      "/api/profile/raw": () => ({ body: RAW_OK }),
-      "/api/profile": () => ({ body: PROFILE_OK }),
-    });
-
-    const { container } = renderWithClient(<ProfileView />);
-
-    // The hero leads with a conversational, named headline — not a
-    // classification strip.
-    await waitFor(() => {
-      expect(screen.getByText("A fresh page, Ruben.")).toBeDefined();
-    });
-
-    // The secrecy signals are gone.
-    expect(screen.queryByText("Confidential")).toBeNull();
-    expect(container.querySelector(".dossier-hatch")).toBeNull();
-  });
-});
-
-// The "Knows you" treatment: a blank profile must read as an invitation, not
-// as a wall of grey "not known yet" repetitions. These tests pin the pillars:
-// a named acquaintance stage instead of a bare percentage, ONE rotating
-// question card with a speakable prompt, and the knowledge wave.
-describe("ProfileView — the knows-you treatment for a blank profile", () => {
-  function mockBlankProfile() {
-    installFetchMock({
-      "/api/profile/reviews": () => ({
-        status: 503,
-        body: { detail: CURATOR_503_DETAIL },
-      }),
-      "/api/profile/raw": () => ({ body: RAW_OK }),
-      "/api/profile": () => ({ body: PROFILE_OK }),
-    });
-  }
-
-  it("names the acquaintance stage instead of leading with a bare percent", async () => {
-    mockBlankProfile();
     renderWithClient(<ProfileView />);
 
-    await waitFor(() => {
-      expect(screen.getAllByText(/A blank page/).length).toBeGreaterThan(0);
-    });
-  });
-
-  it("shows one open question with a speakable prompt and rotates on Next", async () => {
-    mockBlankProfile();
-    renderWithClient(<ProfileView />);
-
-    // The top-priority open field (name) surfaces as the current question…
-    await waitFor(() => {
-      expect(
-        screen.getByText("What name shall I write on the first page?"),
-      ).toBeDefined();
-    });
-    // …and carries the literal sentence the user can speak to Jarvis.
-    expect(screen.getAllByText(/Just say/).length).toBeGreaterThan(0);
-
-    // Clicking Next advances to the second-priority question.
-    fireEvent.click(screen.getByTestId("ask-next"));
-    await waitFor(() => {
-      expect(
-        screen.getByText("How would you like to be addressed?"),
-      ).toBeDefined();
-    });
-  });
-
-  it("summarizes progress as one quiet text line, not metric tiles", async () => {
-    mockBlankProfile();
-    renderWithClient(<ProfileView />);
-
-    // The open hero carries a single inline summary sentence…
-    await waitFor(() => {
-      expect(screen.getByText("0 of 18 things learned")).toBeDefined();
-    });
-    // …and the decorative waveform is gone for good.
-    expect(screen.queryByTestId("knowledge-wave")).toBeNull();
+    await screen.findByText("No name on file");
+    expect(screen.queryByTestId("dossier-header")).toBeNull();
   });
 });

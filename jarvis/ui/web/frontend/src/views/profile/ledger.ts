@@ -1,11 +1,14 @@
 /**
  * Ledger logic — the pure math and vocabulary behind ProfileView.
  *
- * ProfileView renders Jarvis' knowledge about the user as a kept ledger:
- * named acquaintance stages instead of a bare percentage, a prioritized list
- * of "still unwritten" questions, and a generative sigil whose geometry is
- * derived from which fields are inked. Everything here is side-effect free
- * and unit-tested in ledger.test.ts; the component stays thin.
+ * The vocabulary (which fields exist, and what shape each one is), the
+ * emptiness rules, and the fill counts the sections show. Everything here is
+ * side-effect free and unit-tested in ledger.test.ts; the components stay
+ * thin.
+ *
+ * The acquaintance stages and the prioritised question queue were removed
+ * with the ask card: the page states facts and folds gaps now, so a named
+ * stage ("First impressions") was a score standing where a fact belongs.
  */
 
 export type ClusterId =
@@ -78,36 +81,6 @@ export const TOTAL_FIELDS: number = CLUSTER_ORDER.reduce(
   0,
 );
 
-/** The order in which the butler would ask — most identity-anchoring first. */
-export const ASK_PRIORITY: string[] = [
-  "name",
-  "preferred_address",
-  "primary_language",
-  "directness",
-  "humor_types",
-  "focus_mode",
-  "top_values",
-  "feedback_pref",
-  "formality",
-  "verbosity",
-  "emoji_ok",
-  "languages",
-  "timezone",
-  "planning_horizon",
-  "pet_peeves",
-  "motivations",
-  "pronouns",
-  "devices",
-];
-
-const FIELD_CLUSTER: Record<string, ClusterId> = (() => {
-  const map: Record<string, ClusterId> = {};
-  for (const cid of CLUSTER_ORDER) {
-    for (const key of CLUSTER_FIELD_KEYS[cid]) map[key] = cid;
-  }
-  return map;
-})();
-
 // ----------------------------------------------------------------------
 // Emptiness + fill counting
 // ----------------------------------------------------------------------
@@ -152,57 +125,6 @@ export function clusterFilledCount(
     if (!isEmptyValue(data[key])) filled += 1;
   }
   return filled;
-}
-
-// ----------------------------------------------------------------------
-// Acquaintance stages — relationship depth with a name, not a bare percent
-// ----------------------------------------------------------------------
-
-export interface StageInfo {
-  index: 0 | 1 | 2 | 3 | 4 | 5;
-  /** i18n suffix under profile_view.stages.* */
-  key:
-    | "blank_page"
-    | "first_impressions"
-    | "getting_acquainted"
-    | "well_acquainted"
-    | "trusted_company"
-    | "inner_circle";
-}
-
-export function acquaintanceStage(filled: number, total: number): StageInfo {
-  if (total <= 0 || filled <= 0) return { index: 0, key: "blank_page" };
-  const pct = (filled / total) * 100;
-  if (pct >= 100) return { index: 5, key: "inner_circle" };
-  if (pct >= 75) return { index: 4, key: "trusted_company" };
-  if (pct >= 50) return { index: 3, key: "well_acquainted" };
-  if (pct >= 25) return { index: 2, key: "getting_acquainted" };
-  return { index: 1, key: "first_impressions" };
-}
-
-// ----------------------------------------------------------------------
-// Open questions — what the butler asks next
-// ----------------------------------------------------------------------
-
-export interface OpenQuestion {
-  cluster: ClusterId;
-  field: string;
-}
-
-export function collectOpenQuestions(
-  meta: Record<string, unknown>,
-  limit: number,
-): OpenQuestion[] {
-  const open: OpenQuestion[] = [];
-  for (const field of ASK_PRIORITY) {
-    if (open.length >= limit) break;
-    const cluster = FIELD_CLUSTER[field];
-    if (!cluster) continue;
-    if (isEmptyValue(clusterData(meta, cluster)[field])) {
-      open.push({ cluster, field });
-    }
-  }
-  return open;
 }
 
 // ----------------------------------------------------------------------
