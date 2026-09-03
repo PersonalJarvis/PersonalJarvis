@@ -27,10 +27,8 @@ import { WORLD_HERO_SCALE } from "./WalkerFigure";
 import { useKit } from "./WorldKit";
 import { useBuildingPoses } from "./buildingPoses";
 import {
-  HEAD_Y_M,
   MAX_CONCURRENT,
   MIN_FACE_M,
-  PIP_R_M,
   ROOM_RING_R_M,
   bubbleSeconds,
   classify,
@@ -60,6 +58,26 @@ import { walkerPins, type WalkerPin } from "./walkerRegistry";
 const BUBBLE_LIFT_M = 1.75;
 /** Stacked conversations lift their bubbles by this much each, so none overlap. */
 const BUBBLE_STACK_M = 0.9;
+/**
+ * The listener's "…" rides lower than the speaker's line: above its nameplate,
+ * well under the bubble. Two figures on one stand tile put both anchors at the
+ * same screen point, and at the same height the dots sat on the words.
+ */
+const LISTEN_LIFT_M = 0.62;
+/**
+ * …and it is dropped entirely when the two stand this close, because at 64 m
+ * across the stage four metres is ten pixels: the dots would sit inside the
+ * speaker's own bubble whatever height they were given. Wider than
+ * `MIN_FACE_M`, which only has to be wider than the lateral offset.
+ */
+const LISTEN_HIDE_M = 4;
+/**
+ * A room's sign clears the Town Hall's facade. Anything lower shares its anchor
+ * with the speech bubble over the member standing there, and loses.
+ */
+const ROOM_SIGN_Y_M = 9.5;
+/** The marker ring under a figure that is in a conversation, in metres. */
+const SPEAK_RING_R_M = 1.15;
 /** Head height for a figure whose recipe carries no height. */
 const DEFAULT_HEAD_M = 2.0;
 
@@ -260,13 +278,13 @@ function ConversationView({
     if (pipA.current) {
       pipA.current.visible = true;
       pipA.current.position.set(speaker.pin.x, groundY(map, speaker.pin.x, speaker.pin.z) + 0.03, speaker.pin.z);
-      pipA.current.scale.setScalar(PIP_R_M * scale);
+      pipA.current.scale.set(SPEAK_RING_R_M * scale, SPEAK_RING_R_M * scale, 1.4);
     }
     if (pipB.current) {
       pipB.current.visible = partner !== null;
       if (partner) {
         pipB.current.position.set(partner.pin.x, groundY(map, partner.pin.x, partner.pin.z) + 0.03, partner.pin.z);
-        pipB.current.scale.setScalar(PIP_R_M * scale);
+        pipB.current.scale.set(SPEAK_RING_R_M * scale, SPEAK_RING_R_M * scale, 1.4);
       }
     }
     if (paused) invalidate();
@@ -290,8 +308,22 @@ function ConversationView({
 
   return (
     <group>
-      <mesh ref={pipA} geometry={kit.g.disc} material={kit.m.halo(accent, 0.22)} visible={false} />
-      <mesh ref={pipB} geometry={kit.g.disc} material={kit.m.halo(accent, 0.16)} visible={false} />
+      {/* A ring, not a filled pool: the island is already covered in soft lamp
+          light and a wash under a figure vanished into it. */}
+      <mesh
+        ref={pipA}
+        geometry={kit.g.ring}
+        material={kit.m.halo(accent, 0.75)}
+        rotation={[Math.PI / 2, 0, 0]}
+        visible={false}
+      />
+      <mesh
+        ref={pipB}
+        geometry={kit.g.ring}
+        material={kit.m.halo(accent, 0.45)}
+        rotation={[Math.PI / 2, 0, 0]}
+        visible={false}
+      />
       <group ref={anchorRef}>
         {talk.line && (
           <Html center zIndexRange={[34, 12]} style={{ pointerEvents: "none" }}>
@@ -307,7 +339,12 @@ function ConversationView({
         )}
       </group>
       {talk.partnerId && talk.line && (
-        <ListeningBubble byId={byId} partnerId={talk.partnerId} slot={slot} />
+        <ListeningBubble
+          byId={byId}
+          partnerId={talk.partnerId}
+          speakerId={talk.speakerId}
+          slot={slot}
+        />
       )}
     </group>
   );
@@ -317,10 +354,12 @@ function ConversationView({
 function ListeningBubble({
   byId,
   partnerId,
+  speakerId,
   slot,
 }: {
   byId: Map<string, SocietyAgent>;
   partnerId: string;
+  speakerId: string;
   slot: number;
 }) {
   const t = useT();
@@ -335,10 +374,15 @@ function ListeningBubble({
       node.visible = false;
       return;
     }
-    node.visible = true;
+    const speaker = walkerPins().get(speakerId);
+    // Standing on the same tile the two anchors coincide: the speaker's own
+    // bubble already names both ends, so a second one there is only noise.
+    const together =
+      speaker !== undefined && Math.hypot(speaker.x - pin.x, speaker.z - pin.z) < LISTEN_HIDE_M;
+    node.visible = !together;
     node.position.set(
       pin.x,
-      headHeight(agent) + BUBBLE_LIFT_M + slot * BUBBLE_STACK_M,
+      headHeight(agent) + LISTEN_LIFT_M + slot * BUBBLE_STACK_M,
       pin.z,
     );
   });
@@ -435,7 +479,8 @@ function RoomSign({
 
   useFrame(({ clock }) => {
     if (paused || !ring.current) return;
-    ring.current.scale.setScalar(ROOM_RING_R_M * pipScale(clock.getElapsedTime() * 0.6));
+    const r = ROOM_RING_R_M * pipScale(clock.getElapsedTime() * 0.6);
+    ring.current.scale.set(r, r, 1.6);
   });
 
   const round = fill(t("society.world.room_round"), { count: room.round })
@@ -448,12 +493,13 @@ function RoomSign({
     <group position={[anchor.x, anchor.y, anchor.z]}>
       <mesh
         ref={ring}
-        geometry={kit.g.disc}
-        material={kit.m.halo("#ffd166", room.settled ? 0.1 : 0.18)}
-        scale={ROOM_RING_R_M}
+        geometry={kit.g.ring}
+        material={kit.m.halo("#ffd166", room.settled ? 0.35 : 0.7)}
+        rotation={[Math.PI / 2, 0, 0]}
+        scale={[ROOM_RING_R_M, ROOM_RING_R_M, 1.6]}
       />
       <Html
-        position={[0, HEAD_Y_M + 1.4, 0]}
+        position={[0, ROOM_SIGN_Y_M, 0]}
         center
         zIndexRange={[32, 12]}
         style={{ pointerEvents: "none" }}

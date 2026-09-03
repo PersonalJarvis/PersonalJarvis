@@ -118,5 +118,46 @@ export function useConversationFeed(agents: SocietyAgent[], enabled: boolean): v
     });
   }, [enabled]);
 
+  // A room that opened BEFORE this window was watching would otherwise be
+  // invisible: messages are ephemeral and may be missed, but a room is durable
+  // state, and someone who opens the island mid-round should see the table in
+  // session. One read, once, and only when nothing is showing.
+  useEffect(() => {
+    if (!enabled || useConversationStore.getState().room !== null) return;
+    let dropped = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/society/rooms");
+        if (!res.ok) return;
+        const body = (await res.json()) as { rooms?: RoomRow[] };
+        const open = (body.rooms ?? []).find((r) => r.state === "running");
+        if (!open || dropped) return;
+        if (useConversationStore.getState().room !== null) return;
+        useConversationStore.getState().noteRoom({
+          roomId: open.room_id,
+          phase: "open",
+          members: open.members ?? [],
+          topic: open.topic ?? "",
+          reason: "",
+          maxRounds: open.max_rounds ?? 0,
+        });
+      } catch {
+        // The island simply shows no room; the next ROOM_OPEN push fixes it.
+      }
+    })();
+    return () => {
+      dropped = true;
+    };
+  }, [enabled]);
+
   useEffect(() => () => useConversationStore.getState().reset(), []);
+}
+
+/** The shape `GET /api/society/rooms` returns (jarvis/society/rooms.py). */
+interface RoomRow {
+  room_id: string;
+  state: string;
+  members?: string[];
+  topic?: string;
+  max_rounds?: number;
 }
