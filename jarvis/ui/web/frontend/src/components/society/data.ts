@@ -299,6 +299,8 @@ export interface Capability {
   risk_tier: string;
   connected: boolean;
   tool_name: string;
+  /** Extra words the @-picker may match (server name, aliases). */
+  aliases?: string[];
 }
 
 async function fetchCapabilities(): Promise<Capability[]> {

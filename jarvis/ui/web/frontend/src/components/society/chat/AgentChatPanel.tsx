@@ -5,9 +5,9 @@
  *
  * For Jarvis the column speaks to the SAME store the front page and the
  * voice stage use (`useAgentChatStore`, the "jarvis" surface): one history,
- * whatever a person said or typed anywhere. A "@Name" in the message hands
- * the task to that agent — Jarvis delegates through its router tool and
- * reports back here. The reasoning trail stays readable: a centred
+ * whatever a person said or typed anywhere. "@Name" hands the task to that
+ * agent; "@gmail" (and the other catalog tags) pins that plugin, MCP server
+ * or tool for the turn. The reasoning trail stays readable: a centred
  * "Thought for 4s" pill above the answer, never a second wall of text.
  *
  * Jarvis' card alone also has a `Voice | Chat` switch (maintainer,
@@ -48,6 +48,14 @@ import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
 import { useResolveProposal, useSocietyCapabilities, type SocietyAgent } from "../data";
+import { MentionPicker } from "./MentionPicker";
+import {
+  buildMentionCatalog,
+  filterMentions,
+  mentionToken,
+  mentionsInText,
+  type MentionItem,
+} from "./mentionItems";
 
 /** A gap this long between messages earns a fresh time stamp. */
 const STAMP_GAP_MS = 30 * 60_000;
@@ -1051,7 +1059,9 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
   const [plusOpen, setPlusOpen] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const attachments = useChatAttachments({ sessionId, cwd, provider, surface }, (message) => setProblem(message));
   const dictation = useComposerDictation(value, setValue);
@@ -1064,56 +1074,55 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
   }, []);
   useEffect(resize, [value, resize]);
 
-  // On the society surface "@" also completes CAPABILITIES — the connected
-  // plugins, CLIs and MCP tools, by their capability id. Naming one pins it
-  // for the turn (see `submit`), which is how a person points the agent at a
-  // tool without editing its focus.
+  // "@" completes teammates AND the capability catalog — plugins, MCP
+  // servers, CLIs, skills, Jarvis tools — on every agent card, including
+  // Jarvis'. Naming one pins it for the turn (see `submit`).
   const capabilities = useSocietyCapabilities();
-  const capabilityRows = useMemo(
-    () => (surface === "society" ? (capabilities.data ?? []) : []),
-    [surface, capabilities.data],
+  const catalog = useMemo(
+    () => buildMentionCatalog(mentionable, capabilities.data ?? []),
+    [mentionable, capabilities.data],
   );
+  const matches = useMemo(
+    () => (mention ? filterMentions(catalog, mention.query) : []),
+    [mention, catalog],
+  );
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [mention?.query, mention?.start]);
+  useEffect(() => {
+    if (activeIndex >= matches.length) setActiveIndex(Math.max(0, matches.length - 1));
+  }, [matches.length, activeIndex]);
 
   const onChange = (next: string, caret: number) => {
     setValue(next);
-    const before = next.slice(0, caret);
-    const m = /(?:^|\s)@([^\s@]*)$/.exec(before);
-    const offers = mentionable.length > 0 || capabilityRows.length > 0;
-    setMention(m && offers ? { query: m[1].toLowerCase(), start: caret - m[1].length - 1 } : null);
+    setMention(mentionToken(next, caret));
   };
 
-  const matches = useMemo(() => {
-    if (!mention) return [] as { key: string; value: string; label: string; agent?: SocietyAgent }[];
-    const q = mention.query;
-    const agents = mentionable
-      .filter((a) => a.name.toLowerCase().startsWith(q))
-      .map((a) => ({ key: a.agentId, value: a.name, label: a.name, agent: a }));
-    const caps = capabilityRows
-      .filter((c) => c.id.toLowerCase().includes(q) || c.label.toLowerCase().startsWith(q))
-      .slice(0, 6)
-      .map((c) => ({ key: c.id, value: c.id, label: c.label, agent: undefined }));
-    return [...agents, ...caps].slice(0, 8);
-  }, [mention, mentionable, capabilityRows]);
-
-  const insertMention = (name: string) => {
+  const insertMention = (item: MentionItem) => {
     if (!mention) return;
     const el = textarea.current;
     const caret = el?.selectionStart ?? value.length;
-    const next = `${value.slice(0, mention.start)}@${name} ${value.slice(caret)}`;
+    const inserted = `@${item.value} `;
+    const next = `${value.slice(0, mention.start)}${inserted}${value.slice(caret)}`;
     setValue(next);
     setMention(null);
-    requestAnimationFrame(() => el?.focus());
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      const at = mention.start + inserted.length;
+      el.setSelectionRange(at, at);
+    });
   };
 
   const submit = async () => {
     const text = value.trim();
     if (!text || busy) return;
-    const named = mentionable.filter((a) => text.includes(`@${a.name}`));
-    const lines = named.map(
+    const named = mentionsInText(text, catalog);
+    const lines = named.agents.map(
       (a) => `${DELEGATE_MARK} ${t("society.chat.delegate_line").replace("{0}", a.name).replace("{1}", a.agentId)}`,
     );
-    const pinned = capabilityRows.filter((c) => text.includes(`@${c.id}`)).map((c) => c.id);
-    if (pinned.length > 0) lines.push(`${TOOL_PIN_MARK} ${pinned.join(", ")}]`);
+    if (named.pinIds.length > 0) lines.push(`${TOOL_PIN_MARK} ${named.pinIds.join(", ")}]`);
     const hint = lines.join("\n");
     setValue("");
     setMention(null);
@@ -1126,32 +1135,26 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
     }
   };
 
+  const pickerOpen = Boolean(mention) && (matches.length > 0 || (mention?.query.length ?? 0) > 0 || capabilities.isLoading);
+
   return (
     <div className="shrink-0 border-t border-border px-3 pb-3 pt-2">
       {problem ? <p className="mb-1 px-1 text-xs text-destructive">{problem}</p> : null}
       <div className={CHAT_MEASURE}>
         <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
       </div>
-      {matches.length > 0 ? (
-        <ul className={cn(CHAT_MEASURE, "mb-1 flex flex-wrap gap-1 px-1")} role="listbox" aria-label={t("society.chat.mention_hint")}>
-          {matches.map((m) => (
-            <li key={m.key}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={false}
-                onClick={() => insertMention(m.value)}
-                className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs text-foreground hover:bg-secondary"
-              >
-                {m.agent ? <AgentSwatch agent={m.agent} size={16} /> : null}
-                {m.label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
       <DictationStatus onStop={dictation.stop} className={cn(CHAT_MEASURE, "mb-1.5")} />
+      <MentionPicker
+        anchorRef={composerRef}
+        open={pickerOpen}
+        items={matches}
+        loading={capabilities.isLoading}
+        activeIndex={activeIndex}
+        onHover={setActiveIndex}
+        onPick={insertMention}
+      />
       <div
+        ref={composerRef}
         className={cn(
           CHAT_MEASURE,
           "relative flex items-end gap-1 rounded-[22px] border border-border bg-background px-1.5 py-1",
@@ -1218,12 +1221,36 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
           onChange={(e) => onChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
           onPaste={attachments.onPaste}
           onKeyDown={(e) => {
+            if (pickerOpen) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                if (matches.length) setActiveIndex((i) => (i + 1) % matches.length);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                if (matches.length) setActiveIndex((i) => (i - 1 + matches.length) % matches.length);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setMention(null);
+                return;
+              }
+              if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                const item = matches[activeIndex] ?? matches[0];
+                if (item) {
+                  e.preventDefault();
+                  insertMention(item);
+                  return;
+                }
+                if (e.key === "Tab") return;
+              }
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              if (matches.length > 0 && mention) insertMention(matches[0].value);
-              else void submit();
+              void submit();
             }
-            if (e.key === "Escape" && mention) setMention(null);
           }}
           className="max-h-[180px] min-h-[32px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none"
         />
