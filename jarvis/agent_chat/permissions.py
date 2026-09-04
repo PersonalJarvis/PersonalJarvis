@@ -128,8 +128,10 @@ _AGY: Final[tuple[PermissionMode, ...]] = (
     PermissionMode(
         "accept-edits",
         "Auto-accept edits",
-        "Edits run on their own; commands that need a permission are declined "
-        "and reported to the model.",
+        "Edits run on their own. In this chat the CLI cannot ask back — a "
+        "command that still wanted a confirmation used to abort the whole "
+        "turn — so commands run too (`--dangerously-skip-permissions`). "
+        "Plan is the read-only stance.",
     ),
     PermissionMode(
         "plan",

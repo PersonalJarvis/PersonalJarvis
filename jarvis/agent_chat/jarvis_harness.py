@@ -179,6 +179,59 @@ def codex_config_args(session_id: str | None = None) -> list[str]:
         return []
 
 
+#: Workspace plugin agy discovers under ``.agents/plugins/``. agy has no
+#: ``--mcp-config`` flag; Claude-shaped JSON on argv is ignored.
+_AGY_PLUGIN_DIRNAME: Final[str] = "jarvis-hands"
+
+
+def agy_mcp_server_entry(session_id: str | None = None) -> dict[str, Any] | None:
+    """The Antigravity ``mcpServers`` row for this app's tool server.
+
+    agy speaks ``serverUrl`` + ``headers`` (not Claude's ``type``/``url``).
+    ``None`` when the app cannot offer the tools — same contract as
+    :func:`mcp_config_json`.
+    """
+    try:
+        url = endpoint()
+        key = control_key()
+        if not url or not key:
+            return None
+        headers: dict[str, str] = {"Authorization": f"Bearer {key}"}
+        if session_id:
+            headers[HEADER_NAME] = session_id
+        return {"serverUrl": url, "headers": headers}
+    except Exception:  # noqa: BLE001 — see mcp_config_json
+        log.warning("agent chat: could not build the Jarvis agy MCP entry", exc_info=True)
+        return None
+
+
+def install_agy_jarvis_plugin(cwd: Path, session_id: str | None = None) -> Path | None:
+    """Drop a workspace plugin so print-mode agy mounts Jarvis' tools.
+
+    agy discovers MCP from ``.agents/plugins/<name>/mcp_config.json`` in the
+    workspace (and from the global ``mcp_config.json``, which this does not
+    touch). Additive: a failure here never fails the turn.
+    """
+    entry = agy_mcp_server_entry(session_id)
+    if entry is None:
+        return None
+    try:
+        plugin_dir = Path(cwd) / ".agents" / "plugins" / _AGY_PLUGIN_DIRNAME
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+        (plugin_dir / "plugin.json").write_text(
+            json.dumps({"name": "jarvis-hands"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        payload = {"mcpServers": {_SERVER_NAME: entry}}
+        (plugin_dir / "mcp_config.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+        return plugin_dir
+    except Exception:  # noqa: BLE001 — see mcp_config_json
+        log.warning("agent chat: could not install the Jarvis agy plugin", exc_info=True)
+        return None
+
+
 def apply_env(env: dict[str, str]) -> dict[str, str]:
     """Put the control key into a child environment, if there is one to give."""
     key = control_key()
@@ -373,6 +426,7 @@ __all__ = [
     "SYSTEM_PREAMBLE",
     "TRANSCRIPT_MAX_CHARS",
     "Identity",
+    "agy_mcp_server_entry",
     "apply_env",
     "build_identity",
     "codex_config_args",
@@ -381,6 +435,7 @@ __all__ = [
     "endpoint",
     "identity_dir",
     "identity_prompt",
+    "install_agy_jarvis_plugin",
     "mcp_config_json",
     "remove_identity_file",
     "render_transcript",

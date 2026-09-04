@@ -82,13 +82,18 @@ def test_a_tool_result_becomes_text_the_model_can_read():
 def test_the_config_is_withheld_until_the_app_can_actually_serve_it(monkeypatch):
     """Half a config is worse than none: the CLI would fail to connect mid-turn."""
     monkeypatch.setattr(jarvis_harness, "control_key", lambda: "k")
+    monkeypatch.setattr(jarvis_harness, "endpoint", lambda: None)
     assert jarvis_harness.mcp_config_json() is None  # no base URL yet
     assert jarvis_harness.codex_config_args() == []
+    assert jarvis_harness.agy_mcp_server_entry() is None
 
-    runtime_refs.set_api_base_url("http://127.0.0.1:47821")
+    monkeypatch.setattr(
+        jarvis_harness, "endpoint", lambda: "http://127.0.0.1:47821/api/control/mcp/"
+    )
     monkeypatch.setattr(jarvis_harness, "control_key", lambda: None)
     assert jarvis_harness.mcp_config_json() is None  # no key
     assert jarvis_harness.codex_config_args() == []
+    assert jarvis_harness.agy_mcp_server_entry() is None
 
 
 def test_the_key_travels_in_the_environment_never_in_argv(monkeypatch):
@@ -113,6 +118,16 @@ def test_both_cli_shapes_point_at_the_same_endpoint(monkeypatch):
     url = "http://127.0.0.1:47921/api/control/mcp"
     assert url in (jarvis_harness.mcp_config_json() or "")
     assert any(url in arg for arg in jarvis_harness.codex_config_args())
+    agy = jarvis_harness.agy_mcp_server_entry("sess-9")
+    assert agy is not None
+    assert url in agy["serverUrl"]
+    assert agy["headers"][jarvis_harness.HEADER_NAME] == "sess-9"
+
+
+def test_agy_plugin_is_skipped_when_the_app_is_not_ready(tmp_path, monkeypatch):
+    monkeypatch.setattr(jarvis_harness, "control_key", lambda: None)
+    assert jarvis_harness.install_agy_jarvis_plugin(tmp_path, "sess") is None
+    assert not (tmp_path / ".agents").exists()
 
 
 def test_the_preamble_names_the_prefix_the_tools_actually_get():

@@ -39,9 +39,13 @@ Every CLI that keeps a conversation resumes it natively (``claude --resume``,
 in ``vendor_session`` and a later turn continues the same conversation — the
 tools, skills, MCP servers and permissions are the CLI's own, exactly as in
 a terminal. The person's permission mode maps onto the closest stance each
-CLI offers; a print-mode CLI cannot ask back, so ``ask`` means "edits yes,
-anything riskier is declined by the CLI and reported to the model", and
-``auto`` bypasses.
+CLI offers. A print-mode CLI cannot ask back: Claude answers permission
+prompts over stdin; Codex has ``--approve-for-me``. agy 1.1.26 instead
+soft-denies the tool and **exits**, so the chat shows ``run_command - failed``
+and goes idle with no answer — ``accept-edits`` therefore also passes
+``--dangerously-skip-permissions`` (the same flag the mission worker has
+used since 2026-06). Jarvis tools reached over MCP still go through
+:class:`~jarvis.core.protocols.SupervisorToolGateway`.
 
 Spawning follows the mission workers: shell-free argv, the prompt on stdin
 where the binary accepts it, ``NO_WINDOW_CREATIONFLAGS``, UTF-8 decoding,
@@ -605,6 +609,19 @@ def _nearest_lower(effort: str, ladder: list[str]) -> str:
     return lower[-1] if lower else ladder[0]
 
 
+def _resolved_cwd(raw: Path | str | None) -> Path:
+    """Absolute working folder for a CLI spawn.
+
+    agy refuses a relative ``--add-dir`` (``path is not absolute``) and a
+    society session used to store ``data\\society\\<id>\\workspace`` relative
+    to the app cwd. Resolve here so every planner sees the same folder.
+    """
+    path = Path(raw or Path.home()).expanduser()
+    if not path.is_absolute():
+        path = path.resolve()
+    return path
+
+
 def plan_agy(
     *,
     prompt: str,
@@ -619,26 +636,35 @@ def plan_agy(
     # agy has no system-prompt flag: the identity rides in front of the prompt
     # on stdin, on a fresh conversation (a resumed one already knows).
     prompt = _with_identity(prompt, identity, resume)
+    work = _resolved_cwd(cwd)
+    if identity is not None:
+        # agy has no --mcp-config; a workspace plugin is how print-mode
+        # actually sees Jarvis' tools (gmail, linear, the rest of the gateway).
+        jarvis_harness.install_agy_jarvis_plugin(work, identity.session_id)
     argv = [
         *agy_argv_prefix(),
         "--output-format",
         "stream-json",
         "--add-dir",
-        str(cwd),
+        str(work),
         # agy's own print timeout is 5 min; ours is the long one.
         "--print-timeout",
         f"{int(_TURN_TIMEOUT_S // 60)}m",
     ]
-    if mode == "skip-permissions":
-        argv += ["--dangerously-skip-permissions"]
-    elif mode == "plan":
+    if mode == "plan":
         argv += ["--mode", "plan"]
     else:
-        argv += ["--mode", "accept-edits"]
+        # Print-mode agy 1.1.26: a tool that still wants a confirmation is
+        # soft-denied and the process exits. ``accept-edits`` still asks for
+        # RunCommand, so without this flag the turn dies after the first
+        # shell call (live 2026-09-04, society:test / society:gamil-agent).
+        argv += ["--dangerously-skip-permissions"]
+        if mode == "accept-edits":
+            argv += ["--mode", "accept-edits"]
     argv += agy_model_args(model, effort, _agy_catalog_cached())
     if resume:
         argv += ["--conversation", resume]
-    env = dict(os.environ)
+    env = jarvis_harness.apply_env(_account_env("antigravity"))
     env.setdefault("AGY_CLI_HIDE_LOGO", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
     # Prompt on stdin: no argv length limit, and no ``-p`` that could swallow
@@ -2379,7 +2405,7 @@ async def _run_cli_once(
 ) -> _Outcome:
     session = handle.session
     chat_ref = approval_ref(session.session_id)
-    cwd = Path(session.cwd or Path.home())
+    cwd = _resolved_cwd(session.cwd or Path.home())
     effort = normalize_effort(session.provider, session.effort)
     planner = _PLANNERS[runner]
     status = "done"

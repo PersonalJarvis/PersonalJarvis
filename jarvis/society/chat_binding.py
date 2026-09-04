@@ -68,6 +68,10 @@ def _workspace(cfg: Any, agent: AgentRecord) -> str:
         folder.mkdir(parents=True, exist_ok=True)
     except OSError:
         log.warning("society: workspace %s could not be created", folder, exc_info=True)
+    try:
+        folder = folder.resolve()
+    except OSError:
+        pass
     return str(folder)
 
 

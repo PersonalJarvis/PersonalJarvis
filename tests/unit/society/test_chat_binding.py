@@ -56,6 +56,7 @@ async def test_ensure_session_is_deterministic_and_reseats(world):
     assert first.permission_mode == "accept-edits"
     assert first.title == "Scout"
     assert Path(first.cwd).name == "workspace" and os.path.isdir(first.cwd)  # noqa: ASYNC240
+    assert Path(first.cwd).is_absolute()
 
     again = ensure_session(svc, cfg, scout)
     assert again.session_id == first.session_id

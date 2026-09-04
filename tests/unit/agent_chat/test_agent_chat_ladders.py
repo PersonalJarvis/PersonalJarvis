@@ -183,6 +183,9 @@ def test_agy_planner_speaks_agy(monkeypatch, tmp_path: Path):
     assert plan.shape == "agy"
     assert plan.stdin_text == "do it" and "-p" not in argv and "--print" not in argv
     assert argv[argv.index("--mode") + 1] == "accept-edits"
+    # Print-mode agy exits after a soft-denied RunCommand; accept-edits
+    # therefore also skips confirmations so the turn can finish.
+    assert "--dangerously-skip-permissions" in argv
     assert argv[argv.index("--add-dir") + 1] == str(tmp_path)
     assert "--print-timeout" in argv
     # Pro knows only low/high: medium snaps to low, and the pair is sent.
@@ -201,10 +204,30 @@ def test_agy_planner_speaks_agy(monkeypatch, tmp_path: Path):
     assert (
         "--dangerously-skip-permissions" in skip and skip[skip.index("--conversation") + 1] == "c1"
     )
+    assert "--mode" not in skip
     planned = plan_agy(
         prompt="x", cwd=tmp_path, model="", effort="", permission_mode="plan", resume=None
     ).argv
     assert planned[planned.index("--mode") + 1] == "plan"
+    assert "--dangerously-skip-permissions" not in planned
+
+
+def test_agy_planner_resolves_a_relative_cwd(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(runner_cli, "agy_argv_prefix", lambda: ["agy"])
+    monkeypatch.setattr(runner_cli, "_agy_catalog_cached", lambda: None)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data" / "society" / "test" / "workspace").mkdir(parents=True)
+    plan = plan_agy(
+        prompt="x",
+        cwd=Path("data") / "society" / "test" / "workspace",
+        model="",
+        effort="",
+        permission_mode="accept-edits",
+        resume=None,
+    )
+    added = Path(plan.argv[plan.argv.index("--add-dir") + 1])
+    assert added.is_absolute()
+    assert added.name == "workspace"
 
 
 def test_agy_model_args_respects_the_strict_pairing():

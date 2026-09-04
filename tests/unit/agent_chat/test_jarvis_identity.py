@@ -7,6 +7,7 @@ tool server's approval surface for a request that names a chat.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -203,6 +204,28 @@ def test_agy_takes_the_identity_on_stdin(monkeypatch, tmp_path: Path):
         identity=_identity(tmp_path),
     )
     assert plan.stdin_text and plan.stdin_text.startswith("<jarvis_identity>\nFULL IDENTITY")
+
+
+def test_agy_with_identity_drops_a_workspace_plugin(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(runner_cli, "agy_argv_prefix", lambda: ["agy"])
+    monkeypatch.setattr(runner_cli, "_agy_catalog_cached", lambda: None)
+    monkeypatch.setattr(runner_cli.jarvis_harness, "control_key", lambda: "k")
+    runtime_refs.set_api_base_url("http://127.0.0.1:47821")
+    runner_cli.plan_agy(
+        prompt="hi",
+        cwd=tmp_path,
+        model="",
+        effort="",
+        permission_mode="accept-edits",
+        resume=None,
+        identity=_identity(tmp_path),
+    )
+    plugin = tmp_path / ".agents" / "plugins" / "jarvis-hands" / "mcp_config.json"
+    payload = json.loads(plugin.read_text(encoding="utf-8"))
+    server = payload["mcpServers"]["jarvis"]
+    assert server["serverUrl"].endswith("/api/control/mcp/")
+    assert server["headers"]["Authorization"] == "Bearer k"
+    assert server["headers"][jarvis_harness.HEADER_NAME] == "sess-1"
 
 
 # ------------------------------------------------------- the session header
