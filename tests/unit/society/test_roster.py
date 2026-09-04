@@ -105,6 +105,11 @@ async def test_update_validates_and_sorts_grants(roster: Roster):
     assert updated.daily_budget_usd == 1.5
     assert updated.skills is None
 
+    uncapped = await roster.update(scout.agent_id, {"daily_budget_usd": 0})
+    assert uncapped.daily_budget_usd == 0.0
+    with pytest.raises(RosterError):
+        await roster.update(scout.agent_id, {"daily_budget_usd": -1})
+
     with pytest.raises(RosterError):
         await roster.update(scout.agent_id, {"grants": "plugin:gmail"})
     with pytest.raises(RosterError):

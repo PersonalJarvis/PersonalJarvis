@@ -35,6 +35,7 @@ import { MessageSquare, Pause, Play } from "lucide-react";
 
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -517,11 +518,15 @@ function LimitsSection({
   const [error, setError] = useState("");
   const [ceiling, setCeiling] = useState<PermissionCeiling>(agent.permissionCeiling);
   const [budget, setBudget] = useState(String(agent.dailyBudgetUsd));
+  // The stored 0 IS 'no cap' (the scheduler skips the gate), so the switch
+  // reads it back rather than asking the person to know that.
+  const [budgetOn, setBudgetOn] = useState(agent.dailyBudgetUsd > 0);
   const [jobs, setJobs] = useState(String(agent.maxConcurrentRuns));
 
   const begin = () => {
     setCeiling(agent.permissionCeiling);
-    setBudget(String(agent.dailyBudgetUsd));
+    setBudget(String(agent.dailyBudgetUsd || 2));
+    setBudgetOn(agent.dailyBudgetUsd > 0);
     setJobs(String(agent.maxConcurrentRuns));
     setError("");
     setEditing(true);
@@ -532,7 +537,7 @@ function LimitsSection({
     try {
       await update(agent, {
         permissionCeiling: ceiling,
-        dailyBudgetUsd: Number.parseFloat(budget) || 0,
+        dailyBudgetUsd: budgetOn ? Math.max(0, Number.parseFloat(budget) || 0) : 0,
         maxConcurrentRuns: Number.parseInt(jobs, 10) || 1,
       });
       setEditing(false);
@@ -585,20 +590,33 @@ function LimitsSection({
           </div>
 
           <div className="flex flex-wrap items-end gap-4">
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted-foreground">{t("society.create.budget")}</span>
-              <input
-                type="number"
-                min={0}
-                step={0.5}
-                inputMode="decimal"
-                disabled={saving}
-                value={budget}
-                onChange={(e) => setBudget(e.target.value)}
-                data-testid="agent-budget-input"
-                className="w-28 rounded-md border border-border bg-background px-2 py-1 font-mono text-sm text-foreground outline-none focus:border-primary disabled:opacity-50"
-              />
-            </label>
+            <div className="flex flex-col gap-1">
+              <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Switch
+                  checked={budgetOn}
+                  onCheckedChange={setBudgetOn}
+                  disabled={saving}
+                  aria-label={t("society.card.budget_cap")}
+                  data-testid="agent-budget-switch"
+                />
+                {t("society.card.budget_cap")}
+              </span>
+              {budgetOn ? (
+                <input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  inputMode="decimal"
+                  disabled={saving}
+                  value={budget}
+                  onChange={(e) => setBudget(e.target.value)}
+                  data-testid="agent-budget-input"
+                  className="w-28 rounded-md border border-border bg-background px-2 py-1 font-mono text-sm text-foreground outline-none focus:border-primary disabled:opacity-50"
+                />
+              ) : (
+                <span className="py-1 text-sm text-muted-foreground">{t("society.card.no_cap")}</span>
+              )}
+            </div>
             <label className="flex flex-col gap-1">
               <span className="text-xs text-muted-foreground">{t("society.card.jobs_at_once")}</span>
               <input
@@ -613,7 +631,9 @@ function LimitsSection({
               />
             </label>
           </div>
-          <p className="text-xs text-muted-foreground">{t("society.card.budget_hint")}</p>
+          <p className="text-xs text-muted-foreground">
+            {budgetOn ? t("society.card.budget_hint") : t("society.card.budget_off_hint")}
+          </p>
 
           <div className="flex items-center gap-2">
             <button

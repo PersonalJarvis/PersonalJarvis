@@ -174,6 +174,17 @@ async def test_agent_daily_budget_vetoes(world):
     assert await _vetoes(store, "t1") == [str(FailureReason.BUDGET_EXHAUSTED)]
 
 
+async def test_zero_daily_budget_skips_the_gate(world):
+    """0 is the stored form of 'no cap': spend does not veto a dispatch."""
+    store, roster, _, dispatcher, _ = world
+    await roster.update("scout", {"daily_budget_usd": 0})
+    await store.append_and_publish(
+        SocietyEnvelope(msg_type=MsgType.DIGEST, from_agent="scout", trace_id="old", cost_usd=99.0)
+    )
+    await store.append_and_publish(_assign("jarvis", "scout"))
+    assert dispatcher.calls == [("scout", "t1")]
+
+
 async def test_concurrency_cap_and_result_release(world):
     store, _, scheduler, dispatcher, _ = world
     await store.append_and_publish(_assign("jarvis", "scout", trace="a"))

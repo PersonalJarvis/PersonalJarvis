@@ -48,13 +48,13 @@ const AGENT: SocietyAgent = {
   stats: { runs: 0, totalCostUsd: 0, spentTodayUsd: 0, lastActiveMs: null },
 };
 
-function renderCard() {
+function renderCard(over: Partial<SocietyAgent> = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <AgentSpecSheet agent={AGENT} />
+      <AgentSpecSheet agent={{ ...AGENT, ...over }} />
     </QueryClientProvider>,
   );
 }
@@ -112,6 +112,38 @@ describe("the card's limits", () => {
     await waitFor(() => {
       const patch = fetchMock.mock.calls.find((c) => c[1]?.method === "PATCH");
       expect(JSON.parse(String(patch?.[1]?.body)).daily_budget_usd).toBe(0);
+    });
+  });
+
+  test("switching the cap off sends 0, which is the scheduler's no-cap", async () => {
+    renderCard();
+    fireEvent.click(await screen.findByTestId("agent-limits-edit"));
+    fireEvent.click(screen.getByTestId("agent-budget-switch"));
+    expect(screen.queryByTestId("agent-budget-input")).toBeNull();
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find((c) => c[1]?.method === "PATCH");
+      expect(JSON.parse(String(patch?.[1]?.body)).daily_budget_usd).toBe(0);
+    });
+  });
+
+  test("a stored 0 reads as the cap switched off, and turning it on restores a number", async () => {
+    renderCard({ dailyBudgetUsd: 0 });
+    await waitFor(() => expect(screen.getByTestId("agent-limits-edit")).toBeTruthy());
+    expect(screen.getByTestId("agent-card-sheet").textContent).toContain("no cap");
+
+    fireEvent.click(screen.getByTestId("agent-limits-edit"));
+    expect(screen.getByTestId("agent-budget-switch").getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByTestId("agent-budget-input")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("agent-budget-switch"));
+    expect(screen.getByTestId("agent-budget-input")).toBeTruthy();
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find((c) => c[1]?.method === "PATCH");
+      expect(JSON.parse(String(patch?.[1]?.body)).daily_budget_usd).toBe(2);
     });
   });
 });

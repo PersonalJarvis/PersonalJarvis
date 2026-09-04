@@ -9,7 +9,8 @@
  * plan, not per token), then saved API keys, then local models, with the
  * login to use when a CLI has more than one, the model (a keyed row's live
  * list, Ollama's installed models) and the effort; and a "More" disclosure
- * for the permission ceiling and the daily budget. A provider that is not
+ * for the permission ceiling and the daily budget (a switch: off stores 0,
+ * which the scheduler reads as no cap). A provider that is not
  * connected is not listed — a local row counts as connected only when it
  * answers with models — and one sentence says where to connect it. No tool
  * picking here: every agent has everything Jarvis has connected, and what it
@@ -32,6 +33,7 @@ import { effortLabel } from "@/components/agentchat/AgentComposer";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Combobox, isComboboxPanelEvent, type ComboboxGroup } from "@/components/ui/combobox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
@@ -125,6 +127,10 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [accountId, setAccountId] = useState("");
   const [ceiling, setCeiling] = useState<PermissionCeiling>("monitor");
   const [budget, setBudget] = useState("2");
+  // A cap is the default because an agent that can spend without one is the
+  // surprising case, not the ordinary one. Off sends 0, which is exactly what
+  // the scheduler reads as 'skip the budget gate'.
+  const [budgetOn, setBudgetOn] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const [importProblems, setImportProblems] = useState<string[] | null>(null);
@@ -362,7 +368,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         toolGrants: [],
         focus: [],
         permissionCeiling: ceiling,
-        dailyBudgetUsd: Math.max(0, Number.parseFloat(budget) || 0),
+        dailyBudgetUsd: budgetOn ? Math.max(0, Number.parseFloat(budget) || 0) : 0,
       });
       onCreated(agent.agentId);
     } catch (err) {
@@ -372,7 +378,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   };
 
   const fieldClass =
-    "w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong";
+    "w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:italic placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong";
   const labelClass = "mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground";
 
   return (
@@ -582,19 +588,38 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                       />
                     </div>
                     <div>
-                      <label htmlFor="society-create-budget" className={labelClass}>
-                        {t("society.create.budget")}
-                      </label>
-                      <input
-                        id="society-create-budget"
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        inputMode="decimal"
-                        className={cn(fieldClass, "w-32 font-mono")}
-                        value={budget}
-                        onChange={(e) => setBudget(e.target.value)}
-                      />
+                      <div className="mb-2 flex items-center gap-2">
+                        <Switch
+                          id="society-create-budget-on"
+                          checked={budgetOn}
+                          onCheckedChange={setBudgetOn}
+                          data-testid="society-create-budget-on"
+                        />
+                        <label htmlFor="society-create-budget-on" className="text-sm text-foreground">
+                          {t("society.card.budget_cap")}
+                        </label>
+                      </div>
+                      {budgetOn ? (
+                        <>
+                          <input
+                            id="society-create-budget"
+                            type="number"
+                            min={0}
+                            step={0.5}
+                            inputMode="decimal"
+                            aria-label={t("society.create.budget")}
+                            data-testid="society-create-budget"
+                            className={cn(fieldClass, "w-32 font-mono")}
+                            value={budget}
+                            onChange={(e) => setBudget(e.target.value)}
+                          />
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t("society.card.budget_hint")}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">{t("society.card.budget_off_hint")}</p>
+                      )}
                     </div>
                   </Collapsible.Content>
                 </Collapsible.Root>
