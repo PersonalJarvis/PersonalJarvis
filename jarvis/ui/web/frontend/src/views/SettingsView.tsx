@@ -116,7 +116,7 @@ export function SettingsView() {
         />
       </div>
       {/* Two columns (v4): a sticky section nav on the left, the groups as
-          cards in a bounded column on the right. Each group is fault-isolated:
+          cards stretching across the remaining width on the right. Each group is fault-isolated:
           one panel throwing costs that one panel, never the whole page. */}
       <div
         data-testid="settings-scroll"
@@ -125,7 +125,7 @@ export function SettingsView() {
       >
         <div className="flex gap-10 px-8 pb-12 pt-4">
           <SettingsSectionNav sections={SECTIONS} active={activeSection} onPick={jumpTo} />
-          <div className="min-w-0 max-w-[880px] flex-1 space-y-10">
+          <div className="min-w-0 flex-1 space-y-10">
             {SECTIONS.map((section) => (
               <section
                 key={section.id}
@@ -177,7 +177,7 @@ function SettingsSectionNav({
     <nav
       aria-label={t("settings_view.title")}
       data-testid="settings-section-nav"
-      className="sticky top-0 hidden w-52 shrink-0 self-start lg:block"
+      className="sticky top-0 hidden w-60 shrink-0 self-start lg:block"
     >
       <ul className="space-y-0.5">
         {sections.map((s) => {
