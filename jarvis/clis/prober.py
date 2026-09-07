@@ -16,9 +16,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
-from asyncio.subprocess import PIPE
+from asyncio.subprocess import DEVNULL, PIPE
 from typing import Literal
 
 from jarvis.clis.spec import CliSpec, CliStatus, StatusParseStrategy
@@ -156,8 +157,10 @@ class CliStatusProber:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *check_argv,
+                stdin=DEVNULL,
                 stdout=PIPE,
                 stderr=PIPE,
+                env={**os.environ, "CI": "true"},
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
             try:
@@ -199,10 +202,15 @@ class CliStatusProber:
             *spec.auth.status_command[1:],
         )
         try:
+            # Status checks must never start an interactive login. In particular,
+            # Neon opens a browser from `me` when credentials are missing unless
+            # CI is set. Keep this child-local so explicit OAuth login still works.
             proc = await asyncio.create_subprocess_exec(
                 *status_argv,
+                stdin=DEVNULL,
                 stdout=PIPE,
                 stderr=PIPE,
+                env={**os.environ, "CI": "true"},
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
             try:
