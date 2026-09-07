@@ -126,6 +126,12 @@ interface ConvoState {
 interface ConvoActions {
   noteMessage: (m: IncomingMessage, known: ReadonlySet<string>) => void;
   noteRoom: (r: IncomingRoom) => void;
+  /**
+   * The scene measured the distance between the two figures and decided. Taken
+   * ONCE per conversation: a wandering figure must not flip a running exchange
+   * from a quiet word into a phone call halfway through a sentence.
+   */
+  setKind: (key: string, kind: ConvoKind) => void;
   /** The line on screen finished: promote the queue, or close the conversation. */
   advance: (key: string) => void;
   closeTalk: (key: string) => void;
@@ -275,6 +281,12 @@ export const useConversationStore = create<ConvoState & ConvoActions>((set, get)
     if (!room || room.roomId !== r.roomId) return;
     disarm("room");
     set({ room: { ...room, settled: true, reason: r.reason, touchedMs: now } });
+  },
+
+  setKind: (key, kind) => {
+    const live = get().talks[key];
+    if (!live || live.kind !== null) return;
+    set({ talks: { ...get().talks, [key]: { ...live, kind } } });
   },
 
   advance: (key) => {

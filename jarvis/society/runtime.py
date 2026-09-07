@@ -22,6 +22,7 @@ import logging
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .approvals import Approvals
 from .bridge import MissionBridge
@@ -153,35 +154,65 @@ class SocietyRuntime:
             creator_factory=default_creator_factory(self._get_cfg),
             notify=self._notify_chat,
         )
+        self._start_lock = asyncio.Lock()
+        self._delivery_task: asyncio.Task[None] | None = None
+        self._delivery_unsubscribe: Callable[[], None] | None = None
         self._started = False
 
     # ------------------------------------------------------------ lifecycle
 
     async def ensure_started(self) -> SocietyRuntime:
-        if self._started:
+        async with self._start_lock:
+            if self._started:
+                return self
+            await self.store.open()
+            self.scheduler._budget = self._get_budget()  # noqa: SLF001 — the runtime owns its scheduler
+            self.scheduler.attach()
+            self._delivery_unsubscribe = self.store.bus.subscribe_all(self._delivery_failed)
+            bus = self._get_mission_bus()
+            if bus is not None:
+                self.bridge.attach(bus)
+            self.checkpoints.attach()
+            self.quests.attach()
+            self.world_feed.attach()
+            await self.seed_lead()
+            if self._seed_starter_team:
+                created = await seed_first_run(self.roster, self.store)
+                if created:
+                    log.info("society: starter team seeded: %s", ", ".join(created))
+            # Warm the roster snapshot so the lead card (lead_card.py) — a
+            # synchronous reader on the brain's prompt build — sees the team from
+            # the first turn, not from the first REST listing.
+            await self.roster.refresh()
+            self._started = True
+            self._delivery_task = asyncio.create_task(self._deliver_pending())
+            set_current_runtime(self)
+            log.info("society runtime started (%s)", self.store.path)
             return self
-        await self.store.open()
-        self.scheduler._budget = self._get_budget()  # noqa: SLF001 — the runtime owns its scheduler
-        self.scheduler.attach()
-        bus = self._get_mission_bus()
-        if bus is not None:
-            self.bridge.attach(bus)
-        self.checkpoints.attach()
-        self.quests.attach()
-        self.world_feed.attach()
-        await self.seed_lead()
-        if self._seed_starter_team:
-            created = await seed_first_run(self.roster, self.store)
-            if created:
-                log.info("society: starter team seeded: %s", ", ".join(created))
-        # Warm the roster snapshot so the lead card (lead_card.py) — a
-        # synchronous reader on the brain's prompt build — sees the team from
-        # the first turn, not from the first REST listing.
-        await self.roster.refresh()
-        self._started = True
-        set_current_runtime(self)
-        log.info("society runtime started (%s)", self.store.path)
-        return self
+
+    async def _delivery_failed(self, env: SocietyEnvelope) -> None:
+        """Project a terminal scheduler veto onto an already-visible chat receipt."""
+        if env.msg_type is not MsgType.VETO or not env.parent_event_id:
+            return
+        svc = self._get_chat()
+        if svc is None:
+            return
+        for original in await self.store.events_for_trace(env.trace_id):
+            if original.event_id != env.parent_event_id or not original.to_agent:
+                continue
+            session_id = f"society:{original.to_agent}"
+            if svc.store.incoming_message(session_id, original.event_id) is not None:
+                await svc.message_status(session_id, original.event_id, "failed", error=env.text)
+            break
+
+    async def _deliver_pending(self) -> None:
+        """Recover committed messages and retry busy chats without opening sockets."""
+        while True:
+            try:
+                await self.scheduler.drain_deliveries()
+            except Exception:  # noqa: BLE001 — one failed pass must not lose the queue
+                log.warning("society: delivery recovery failed", exc_info=True)
+            await asyncio.sleep(1.0)
 
     @property
     def data_dir(self) -> Path:
@@ -196,6 +227,13 @@ class SocietyRuntime:
         return self._get_cfg()
 
     async def close(self) -> None:
+        if self._delivery_task is not None:
+            self._delivery_task.cancel()
+            await asyncio.gather(self._delivery_task, return_exceptions=True)
+            self._delivery_task = None
+        if self._delivery_unsubscribe is not None:
+            self._delivery_unsubscribe()
+            self._delivery_unsubscribe = None
         await self.browser.close()
         for task in list(self._watchers):
             task.cancel()
@@ -597,6 +635,7 @@ class SocietyRuntime:
         trace_id: str | None = None,
         msg_type: MsgType = MsgType.SAY,
         payload: dict[str, Any] | None = None,
+        parent_event_id: str | None = None,
     ) -> SocietyEnvelope:
         """Append one envelope on behalf of ``from_agent`` (REST, user, tests)."""
         body = dict(payload or {})
@@ -606,8 +645,9 @@ class SocietyRuntime:
                 msg_type=msg_type,
                 from_agent=from_agent,
                 to_agent=to_agent,
-                trace_id=trace_id or f"chat:{from_agent}:{to_agent}",
+                trace_id=trace_id or f"chat:{uuid4().hex}",
                 payload=body,
+                parent_event_id=parent_event_id,
             )
         )
 

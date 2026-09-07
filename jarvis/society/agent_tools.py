@@ -27,6 +27,7 @@ from typing import Any, Final
 
 from jarvis.core.protocols import ToolResult
 
+from .delivery import incoming_context
 from .events import MsgType
 from .failure_reasons import FailureReason, retry_action
 from .memory import MemoryRefused
@@ -74,7 +75,7 @@ class MessageAgentTool:
     """Send one message to ONE teammate. Fire-and-forget."""
 
     name: str = MESSAGE_TOOL_NAME
-    risk_tier: str = "monitor"
+    risk_tier: str = "safe"
     description: str = (
         "Send a message to ONE teammate in your agent society. Compose the message "
         "yourself — never forward another message verbatim — and address the one "
@@ -118,6 +119,16 @@ class MessageAgentTool:
         caller = await rt.roster.get(self._agent_id)
         if caller is None or caller.state is not AgentState.ACTIVE:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "caller is not an active agent")
+        if any(
+            name in caller.denies
+            for name in (
+                MESSAGE_TOOL_NAME,
+                "message_agent",
+                "core:message_agent",
+                "core:society_message_agent",
+            )
+        ):
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "internal messaging is disabled")
         target_key = str(args.get("target", "")).strip()
         text = str(args.get("text", "")).strip()[:_MAX_TEXT]
         if not target_key or not text:
@@ -137,7 +148,8 @@ class MessageAgentTool:
         payload: dict[str, Any] = {}
         if isinstance(refs, list) and refs:
             payload["refs"] = [str(r) for r in refs][:20]
-        trace_id = f"chat:{caller.agent_id}:{target.agent_id}"
+        incoming = incoming_context.get()
+        trace_id = incoming.trace_id if incoming is not None else None
         env = await rt.say(
             from_agent=caller.agent_id,
             to_agent=target.agent_id,
@@ -145,10 +157,15 @@ class MessageAgentTool:
             trace_id=trace_id,
             msg_type=msg_type,
             payload=payload,
+            parent_event_id=incoming.message_id if incoming is not None else None,
         )
+        status = await rt.store.delivery_status(env.event_id)
         return ToolResult(
-            success=True,
+            success=status != "failed",
+            error="Internal message delivery failed" if status == "failed" else None,
             output={
+                "status": status,
+                "message_id": env.event_id,
                 "delivered_to": target.name,
                 "kind": kind,
                 "seq": env.seq,

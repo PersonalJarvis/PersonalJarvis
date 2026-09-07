@@ -30,7 +30,6 @@ import {
 
 import { ISLAND_HALF_M, LEVEL_Y, TILE_M, TileKind, buildIsland, type IslandMap } from "./islandLayout";
 import { buildTerrainGeometry } from "./terrainGeometry";
-import { viewAngles } from "./viewAngles";
 import { SKY, WATER } from "./worldPalette";
 import { cameraOffset } from "./worldCamera";
 
@@ -234,7 +233,7 @@ const WATER_FRAGMENT = /* glsl */ `
   uniform float time;
   uniform float reachM;
   uniform vec3 sunDir;
-  uniform vec3 viewDir;
+  uniform vec3 viewFrom;
   uniform vec3 abyss;
   uniform vec3 deep;
   uniform vec3 surface;
@@ -261,8 +260,18 @@ const WATER_FRAGMENT = /* glsl */ `
     float ndl = max(dot(n, sunDir), 0.0);
     col *= 0.72 + 0.4 * ndl;
     // The glint: the sun's reflection toward the camera on the steep faces.
+    //
+    // The direction is taken PER PIXEL, from the water to the camera's stand
+    // point, even though the camera is orthographic and every pixel really
+    // shares one direction. With that one shared direction the mirror test is
+    // a switch for the entire sea at once: turn the view into the sun's
+    // reflection (pitch 50, yaw 127 with this sun) and every wave in the world
+    // lights up together. Fanning it out from a stand point turns that switch
+    // back into what it should be — a sun path lying across the water, bright
+    // where the reflection actually points at the viewer.
+    vec3 v = normalize(viewFrom - vWorld);
     vec3 r = reflect(-sunDir, n);
-    float spec = pow(max(dot(r, viewDir), 0.0), 90.0);
+    float spec = pow(max(dot(r, v), 0.0), 90.0);
     col += glintColor * spec * 0.55;
 
     // Caustic shimmer where the bottom is close.
@@ -332,10 +341,8 @@ const WASH_FRAGMENT = /* glsl */ `
 `;
 
 const SUN_DIR = new Vector3(SKY.sunFrom[0], SKY.sunFrom[1], SKY.sunFrom[2]).normalize();
-const VIEW_DIR = (() => {
-  const [x, y, z] = cameraOffset();
-  return new Vector3(x, y, z).normalize();
-})();
+/** Where the camera stands at the designed view — the first frame's glint. */
+const CAMERA_STAND = new Vector3(...cameraOffset());
 
 export function Water({ paused }: { paused: boolean }) {
   const geometry = useMemo(() => new PlaneGeometry(SEA_SIZE_M, SEA_SIZE_M, SEA_SEGMENTS, SEA_SEGMENTS), []);
@@ -353,8 +360,8 @@ export function Water({ paused }: { paused: boolean }) {
           halfSize: { value: ISLAND_HALF_M },
           reachM: { value: SHORE_REACH_M },
           sunDir: { value: SUN_DIR },
-          // Cloned: the frame loop turns this one with the orbit.
-          viewDir: { value: VIEW_DIR.clone() },
+          // Where the camera stands; the frame loop keeps it on the orbit.
+          viewFrom: { value: CAMERA_STAND.clone() },
           abyss: { value: new Color(WATER.abyss) },
           deep: { value: new Color(WATER.deep) },
           surface: { value: new Color(WATER.surface) },
@@ -396,12 +403,10 @@ export function Water({ paused }: { paused: boolean }) {
     [geometry, washGeometry, material, washMaterial, shore, wash],
   );
 
-  useFrame(({ clock }) => {
-    // The sun's glint is a mirror of the view direction, so it has to follow
-    // the orbit even when the water itself is frozen (reduced motion).
-    const { yaw, pitch } = viewAngles();
-    const [vx, vy, vz] = cameraOffset(pitch, yaw);
-    material.uniforms.viewDir.value.set(vx, vy, vz).normalize();
+  useFrame(({ clock, camera }) => {
+    // The glint hangs off where the camera stands, so it follows the orbit
+    // even when the water itself is frozen (reduced motion).
+    material.uniforms.viewFrom.value.copy(camera.position);
     if (paused) return;
     const t = clock.getElapsedTime();
     material.uniforms.time.value = t;

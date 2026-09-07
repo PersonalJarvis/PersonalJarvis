@@ -1324,3 +1324,36 @@ and the last board events without a model call.
 - `tests/unit/plugins/tool/test_delegate_to_agent.py` (ack, unknown agent,
   veto read-back, status answers, not-ready path)
 - `tests/unit/society/test_scheduler.py` (the wall the tool relies on)
+
+
+## Amendment 2026-09-07 — Internal agent messages (RUB-14)
+
+`message-agent` joins `ROUTER_TOOLS` as `message_agent`. It is an internal
+communication action with risk `safe`, executed through `ToolExecutor`.
+It shares `MessageAgentTool` and the scheduler's durable delivery queue with
+`society_message_agent`; it never invokes an external mail connector or starts
+a worker directly. `delegate_to_agent` remains the assignment path.
+
+The lead tool binds its sender to the runtime's lead. Society tools bind their
+sender to their owning session. Neither schema accepts an author. Both respect
+explicit tool denial, inactive roster rows and the master kill switch.
+Delivery does not authorize the recipient's subsequent external actions.
+
+The board atomically queues new envelopes using an SQLite insertion trigger.
+The scheduler serializes draining, preserves FIFO per recipient and retries busy
+chats. Existing board history is not replayed by this migration. Chat receipts
+use `agent_message` and `agent_message_status`, preserving sender identity and
+queued/delivered/failed status through storage, API, WebSocket and both chat UIs.
+A persisted delivery receipt prevents another turn when the same event is
+replayed. Delivery means accepted by the chat, not successful task completion.
+
+Receiving turns inherit conversation provenance through task-local context;
+new conversations receive fresh traces. Replies retain the trace and parent
+event, so the scheduler's conversation cap remains effective. Lead replies go
+to the front-page Jarvis chat. Legacy `user_message` events are not relabeled.
+
+Guards: `tests/contract/test_internal_messages.py`, the router membership test,
+`tests/unit/realtime/test_internal_message_regression.py`, and the shared
+`InternalMessageBubble` tests. Voice confirmation retries share one result;
+a real microphone response captured after playback is not discarded solely
+because its transcript resembles the confirmation question.

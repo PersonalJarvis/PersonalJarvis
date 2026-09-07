@@ -28,10 +28,12 @@ the mission machinery is imported only when it is actually used.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Final
 
+from .delivery import DeliveryBusy
 from .events import SCHEDULER_ACTOR as _SCHEDULER
 from .events import USER_ACTOR as _USER
 from .events import MsgType, SocietyEnvelope, Tier
@@ -90,6 +92,7 @@ class SocietyScheduler:
         self._deliver = deliver
         self._budget = budget_tracker
         self._trace_cap = trace_message_cap
+        self._delivery_lock = asyncio.Lock()
         #: run_id → agent_id of work the scheduler started and has not seen end.
         self._running: dict[str, str] = {}
         self._unsubscribe: Callable[[], None] | None = None
@@ -137,7 +140,7 @@ class SocietyScheduler:
         elif env.msg_type in _DELIVERED and env.to_agent and env.to_agent != _USER:
             # Envelopes for the person (HOLD/RELEASE on approvals) are read by
             # the UI, the bar and voice — never delivered to a roster row.
-            await self._on_deliver(env)
+            await self.drain_deliveries()
 
     async def _veto(self, env: SocietyEnvelope, reason: FailureReason, detail: str) -> None:
         log.info(
@@ -282,23 +285,51 @@ class SocietyScheduler:
             if isinstance(target, AgentRecord):
                 await self._deliver(target, env)
 
-    async def _on_deliver(self, env: SocietyEnvelope) -> None:
+    async def drain_deliveries(self) -> None:
+        """FIFO per recipient. Busy recipients never block other conversations."""
+        if self._delivery_lock.locked():
+            return
+        async with self._delivery_lock:
+            busy: set[str | None] = set()
+            for env in await self._store.pending_deliveries():
+                if env.to_agent in busy:
+                    receive = getattr(self._deliver, "receive", None)
+                    target = await self._resolve_target(env)
+                    if receive is not None and isinstance(target, AgentRecord):
+                        try:
+                            await receive(target, env)
+                        except DeliveryBusy:
+                            pass  # No chat service yet; the durable queue will retry.
+                        except Exception:
+                            log.warning("society: queued receipt projection failed", exc_info=True)
+                    continue
+                if not await self._on_deliver(env):
+                    busy.add(env.to_agent)
+
+    async def _on_deliver(self, env: SocietyEnvelope) -> bool:
+        if await self._store.delivery_status(env.event_id) != "queued":
+            return True
+        reason = None
         if await self._store.kill_switch():
-            await self._veto(env, FailureReason.KILL_SWITCH, "the society is halted")
-            return
-        if await self._store.count_in_trace(env.trace_id) > self._trace_cap:
-            await self._veto(
-                env, FailureReason.MESSAGE_CAP, f"trace exceeded {self._trace_cap} messages"
-            )
-            return
+            reason = FailureReason.KILL_SWITCH
+        elif await self._store.count_in_trace(env.trace_id) > self._trace_cap:
+            reason = FailureReason.MESSAGE_CAP
         target = await self._resolve_target(env)
         if isinstance(target, FailureReason):
-            await self._veto(env, target, f"target {env.to_agent!r} cannot receive")
-            return
+            reason = reason or target
+        if reason is not None:
+            await self._store.mark_delivery(env.event_id, "failed", str(reason))
+            await self._veto(env, reason, f"message could not reach {env.to_agent}")
+            return True
         if self._deliver is None:
-            log.debug("society scheduler: no deliverer wired; %s stays in the inbox", env.msg_type)
-            return
+            return False
         try:
             await self._deliver(target, env)
-        except Exception as exc:  # noqa: BLE001 — delivery failure is a typed veto
+        except DeliveryBusy:
+            return False
+        except Exception as exc:  # noqa: BLE001 — persist the failure and report it
+            await self._store.mark_delivery(env.event_id, "failed", str(exc))
             await self._veto(env, classify_error(exc), f"delivery failed: {exc}")
+            return True
+        await self._store.mark_delivery(env.event_id, "delivered")
+        return True

@@ -346,6 +346,56 @@
   font-size: 12px;
   color: hsl(var(--destructive));
 }
+/* Options-rail screen: the Grok-shaped preview, in theme tokens. */
+.or-screen {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--border));
+  background:
+    radial-gradient(120% 90% at 50% 0%, hsl(var(--secondary)) 0%, hsl(var(--background)) 62%);
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.04);
+}
+.or-screen-mark {
+  color: hsl(var(--foreground));
+  opacity: 0.92;
+}
+.or-screen[data-busy] .or-screen-mark {
+  animation: or-breathe 1.8s ease-in-out infinite;
+}
+.or-screen-bar {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  left: 16px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: hsl(var(--foreground) / 0.08);
+}
+.or-screen-bar > span {
+  display: block;
+  height: 100%;
+  background: hsl(var(--foreground) / 0.45);
+}
+@keyframes or-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .or-screen[data-busy] .or-screen-mark {
+    animation: none;
+  }
+}
+
 .ac-retire-error + .ac-btn {
   margin-left: 8px;
 }

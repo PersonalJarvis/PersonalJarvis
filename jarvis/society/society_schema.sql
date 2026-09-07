@@ -153,3 +153,17 @@ CREATE TABLE IF NOT EXISTS society_meta (
     key                 TEXT PRIMARY KEY,
     value               TEXT NOT NULL
 );
+
+-- Only newly appended internal messages enter the durable delivery queue.
+-- The trigger closes the crash window between event insertion and publication.
+CREATE TABLE IF NOT EXISTS society_deliveries (
+    event_id TEXT PRIMARY KEY REFERENCES society_events(event_id),
+    status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'delivered', 'failed')),
+    error TEXT NOT NULL DEFAULT ''
+);
+CREATE TRIGGER IF NOT EXISTS society_queue_message AFTER INSERT ON society_events
+WHEN NEW.msg_type IN ('SAY', 'QUERY', 'ANSWER', 'PROPOSE', 'HOLD', 'RELEASE')
+    AND NEW.to_agent IS NOT NULL AND NEW.to_agent != 'user' AND NEW.from_agent != 'scheduler'
+BEGIN
+    INSERT OR IGNORE INTO society_deliveries (event_id) VALUES (NEW.event_id);
+END;

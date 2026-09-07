@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "2.0.0"
+version = "2.1.0"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
@@ -751,6 +751,7 @@ awareness-recall = "jarvis.plugins.tool.awareness_recall:AwarenessRecallTool"
 # only (ADR-0011 amendment); never in a worker set (AP-5/AP-14).
 delegate-to-agent = "jarvis.plugins.tool.delegate_to_agent:DelegateToAgentTool"
 society-status = "jarvis.plugins.tool.delegate_to_agent:SocietyStatusTool"
+message-agent = "jarvis.plugins.tool.message_agent:LeadMessageAgentTool"
 # Skills-Brain-Integration — Brain-callable executor for installed user skills.
 run-skill = "jarvis.plugins.tool.run_skill:RunSkillTool"
 # Phase B5 — long-term wiki recall (router-tier, read-only).

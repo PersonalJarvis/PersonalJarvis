@@ -1,3 +1,4 @@
+import { InternalMessageBubble } from "./InternalMessageBubble";
 import {
   memo,
   useEffect,
@@ -100,6 +101,9 @@ export function AgentTimeline({
   return (
     <>
       {items.map((item) => {
+        if (item.type === "internal") {
+          return <InternalMessageBubble key={item.id} item={item} />;
+        }
         if (item.type === "user") {
           return (
             <div

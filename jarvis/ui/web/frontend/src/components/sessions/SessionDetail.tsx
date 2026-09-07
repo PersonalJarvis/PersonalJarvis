@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   ChevronDown,
   Code2,
   Copy,
@@ -51,6 +52,11 @@ interface Props {
   detail: SessionDetailModel | undefined;
   loading: boolean;
   error: Error | null;
+  /**
+   * Set only when the view is stacked (narrow): the detail then owns the whole
+   * width and the session rail is off screen, so it has to offer the way back.
+   */
+  onBack?: () => void;
 }
 
 /**
@@ -58,10 +64,11 @@ interface Props {
  *
  * The header is a title row (name, mode badge, when) with one muted line of
  * facts and a single Export menu — nine icon buttons in a column were a
- * toolbar nobody asked for. The turns below are a chat timeline capped at
- * the reading measure: no card around each turn, no box around each line.
+ * toolbar nobody asked for. The turns below are a left-aligned transcript
+ * capped at the reading measure: no card around each turn, no box around each
+ * line.
  */
-export function SessionDetail({ detail, loading, error }: Props) {
+export function SessionDetail({ detail, loading, error, onBack }: Props) {
   const t = useT();
   const uiLanguage = useUiLanguage();
   const locale =
@@ -232,21 +239,41 @@ export function SessionDetail({ detail, loading, error }: Props) {
     return actions;
   }, [t, copyAs, downloadAsFormat, openInEditor]);
 
+  // The way back to the rail, on every state the stacked layout can land in —
+  // a session that is still loading or failed to load must not be a dead end.
+  const backButton = onBack ? (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onBack}
+      className="-ml-2 text-muted-foreground"
+    >
+      <ArrowLeft />
+      {t("session_detail.back_to_sessions")}
+    </Button>
+  ) : null;
+
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center gap-2 text-base text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        {t("session_detail.loading")}
+      <div className="flex h-full min-h-0 flex-col">
+        {backButton && <div className="shrink-0 px-8 pt-5">{backButton}</div>}
+        <div className="flex flex-1 items-center justify-center gap-2 text-base text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          {t("session_detail.loading")}
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="max-w-md rounded-lg border border-destructive/20 bg-destructive/[0.08] p-4 text-base">
-          <div className="font-medium text-destructive">{t("session_detail.load_error")}</div>
-          <div className="mt-1 text-muted-foreground">{error.message}</div>
+      <div className="flex h-full min-h-0 flex-col">
+        {backButton && <div className="shrink-0 px-8 pt-5">{backButton}</div>}
+        <div className="flex flex-1 items-center justify-center p-6">
+          <div className="max-w-md rounded-lg border border-destructive/20 bg-destructive/[0.08] p-4 text-base">
+            <div className="font-medium text-destructive">{t("session_detail.load_error")}</div>
+            <div className="mt-1 text-muted-foreground">{error.message}</div>
+          </div>
         </div>
       </div>
     );
@@ -254,8 +281,11 @@ export function SessionDetail({ detail, loading, error }: Props) {
 
   if (!detail) {
     return (
-      <div className="flex h-full items-center justify-center p-6">
-        <EmptyState icon={<MessagesSquare />} title={t("sessions.select_one")} />
+      <div className="flex h-full min-h-0 flex-col">
+        {backButton && <div className="shrink-0 px-8 pt-5">{backButton}</div>}
+        <div className="flex flex-1 items-center justify-center p-6">
+          <EmptyState icon={<MessagesSquare />} title={t("sessions.select_one")} />
+        </div>
       </div>
     );
   }
@@ -277,7 +307,8 @@ export function SessionDetail({ detail, loading, error }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-border px-8 pb-4 pt-5">
-        <div className="flex items-start justify-between gap-4">
+        {backButton && <div className="mb-2">{backButton}</div>}
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-3">
               <h2 className="text-xl font-semibold text-foreground-strong">

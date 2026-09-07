@@ -39,9 +39,10 @@ import { Switch } from "@/components/ui/switch";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
+import { AgentRoutinesList } from "./AgentRoutinesList";
 import { RetireButton } from "./RetireButton";
 import { CapabilityChip } from "../CapabilityChip";
-import { useAgentActivity, useAgentRoutines, useAgentSkills, type AgentActivity } from "../cardData";
+import { useAgentActivity, useAgentSkills, type AgentActivity } from "../cardData";
 import { PERMISSION_CEILINGS } from "@/lib/societyApi";
 
 import {
@@ -212,7 +213,6 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
   const capabilities = useSocietyCapabilities();
   const activity = useAgentActivity(agent.agentId);
   const skills = useAgentSkills(agent.agentId);
-  const routines = useAgentRoutines(agent.agentId);
   const setPaused = useSetAgentPaused();
   const [busy, setBusy] = useState(false);
   const byId = useMemo(() => {
@@ -251,7 +251,6 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
   const log = (activity.data?.events ?? []).slice(0, LOG_ROWS);
   const activeRuns = activity.data?.activeRuns ?? 0;
   const learned = skills.data ?? [];
-  const schedule = routines.data ?? [];
 
   const togglePause = async () => {
     setBusy(true);
@@ -401,24 +400,11 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
             </section>
           ) : null}
 
-          <section>
-            <h3 className="ac-head mb-2">{t("society.card.routines")}</h3>
-            {schedule.length === 0 ? (
-              <p className="ac-prose text-xs text-muted-foreground">{t("society.card.no_routines")}</p>
-            ) : (
-              <ul className="ac-prose flex flex-col gap-1.5">
-                {schedule.map((routine) => (
-                  <li key={routine.id} className="flex items-baseline justify-between gap-3 text-sm">
-                    <span className="truncate">{routine.title}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {routine.schedule}
-                      {routine.dueMs ? ` · ${untilLabel(routine.dueMs, t)}` : ""}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          <AgentRoutinesList
+            agentId={agent.agentId}
+            sampleRoutines={agent.routines}
+            variant="sheet"
+          />
 
           <section>
             <h3 className="ac-head mb-2">{t("society.card.recent")}</h3>

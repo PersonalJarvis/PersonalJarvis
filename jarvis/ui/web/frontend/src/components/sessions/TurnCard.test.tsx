@@ -172,6 +172,26 @@ describe("TurnCard spoken track", () => {
     }
   });
 
+  it("reads as one left-aligned column, not a two-sided chat", () => {
+    // The maintainer's complaint: the user's own words sat in a right-aligned
+    // bubble, so the transcript had two reading edges instead of one. User and
+    // assistant now start at the same left edge and use the same measure.
+    render(
+      <TurnCard
+        turn={turn({ user_text: "Wie spät ist es?", jarvis_text: "Drei Uhr." })} // i18n-allow: German voice fixture
+      />,
+    );
+
+    const userBlock = screen.getByText("Wie spät ist es?");
+    const assistantBlock = screen.getByText("Drei Uhr.");
+    for (const block of [userBlock, assistantBlock]) {
+      expect(block.className).toContain("w-full");
+      expect(block.className).not.toContain("max-w-[85%]");
+      expect(block.parentElement?.className).toContain("items-start");
+      expect(block.parentElement?.className).not.toContain("items-end");
+    }
+  });
+
   it("does NOT surface the technical detail in the transcript", () => {
     // The technical diagnostic (exit code + raw harness reason) is still recorded
     // on the SpeechSpoken event so the Run Inspector can show it, but it must NOT
@@ -229,14 +249,14 @@ describe("TurnCard spoken track", () => {
     // Attributed label, not the generic "Background result" — branded with the
     // configured assistant name.
     expect(screen.getByText("Athena-Agent / Output")).toBeTruthy();
-    // The line block is tinted violet (agent) — visibly distinct from the sky
-    // tint used by every other spoken kind.
+    // The line block carries the agent tone — visibly distinct from the neutral
+    // tone every other spoken kind uses.
     const line = container.querySelector('[data-spoken-kind="subagent"]');
     expect(line).not.toBeNull();
     expect(line?.getAttribute("data-spoken-tone")).toBe("agent");
   });
 
-  it("keeps a generic completion readback on the sky-tinted track", () => {
+  it("keeps a generic completion readback on the neutral status track", () => {
     const { container } = render(
       <TurnCard
         turn={turn()}

@@ -1,20 +1,21 @@
 import type { LucideIcon } from "lucide-react";
 import { Bot, Monitor, Sparkles, Terminal } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { agentBrand } from "@/lib/agentBrand";
+import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 
 /**
  * "Which agents / tools / CLIs ran" — Computer-Use, the agent system and Skill
- * are called out by name and by glyph; everything else (CLI/tool names) gets a
- * monospace chip.
+ * are called out by name and by glyph; everything else (CLI/tool names) keeps
+ * its monospace spelling because it IS an identifier.
  *
- * These used to be painted sky / violet / fuchsia, which spent hue on three
- * things that are neither a status nor an identity — and made a run that
- * happened to touch a skill louder than one that failed. The glyph is what
- * distinguishes them now; the surface is the same neutral lift every chip in
- * the product rests on. The sub_agent label is still resolved per render: it
- * carries the wake-word-derived assistant name ("Ruben" -> "Ruben-Agent").
+ * These are neither a status nor an identity, so they carry no hue: the glyph
+ * is what distinguishes them and the surface is the one neutral badge every
+ * label in the product rests on. The sub_agent label is still resolved per
+ * render — it carries the wake-word-derived assistant name ("Ruben" ->
+ * "Ruben-Agent").
  */
 const AGENT_META: Record<string, { label: string | null; Icon: LucideIcon }> = {
   computer_use: { label: "Computer-Use", Icon: Monitor },
@@ -36,38 +37,28 @@ export function FeatureBadges({
   if (!tags.length) return null;
   const shown = max ? tags.slice(0, max) : tags;
   const rest = tags.length - shown.length;
-  // 11px is the type floor, so the two sizes differ in padding only.
-  const pad = size === "xs" ? "px-1.5 py-px" : "px-2 py-0.5";
-  const icon = size === "xs" ? "h-3 w-3" : "h-3.5 w-3.5";
+  // 12 px is the type floor, so the two sizes differ in height and padding.
+  const compact = size === "xs" ? "h-5 px-1.5" : undefined;
   return (
     <div className="flex flex-wrap items-center gap-1" data-testid="feature-badges">
-      {shown.map((t) => {
-        const m = AGENT_META[t];
-        if (m) {
-          const { Icon } = m;
-          return (
-            <span
-              key={t}
-              data-feature={t}
-              className={`inline-flex items-center gap-1 rounded-full bg-secondary text-micro font-medium text-foreground ${pad}`}
-            >
-              <Icon className={icon} strokeWidth={2.25} />
-              {m.label ?? agentBrand(assistantName)}
-            </span>
-          );
-        }
+      {shown.map((tag) => {
+        const meta = AGENT_META[tag];
+        const Icon = meta ? meta.Icon : Terminal;
         return (
-          <span
-            key={t}
-            data-feature={t}
-            className={`inline-flex items-center gap-1 rounded-full bg-secondary font-mono text-micro text-muted-foreground ${pad}`}
+          <Badge
+            key={tag}
+            variant="secondary"
+            data-feature={tag}
+            className={cn(meta ? "text-foreground" : "font-mono", compact)}
           >
-            <Terminal className={icon} strokeWidth={2} />
-            {t}
-          </span>
+            <Icon aria-hidden />
+            {meta ? (meta.label ?? agentBrand(assistantName)) : tag}
+          </Badge>
         );
       })}
-      {rest > 0 && <span className="text-micro text-muted-foreground">+{rest}</span>}
+      {rest > 0 && (
+        <span className="text-xs tabular-nums text-muted-foreground">+{rest}</span>
+      )}
     </div>
   );
 }

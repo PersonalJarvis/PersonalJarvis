@@ -24,6 +24,8 @@ from typing import Any
 
 from jarvis.core.protocols import ReasoningEffort, Tool
 
+from .loop_control import LoopControl
+
 
 @dataclass(slots=True)
 class TurnReceipt:
@@ -105,6 +107,10 @@ class TurnOverride:
         manager's own ``_system_prompt_extra``. Empty leaves the prompt
         byte-identical; a surface with its own briefing sets it for its
         turns only.
+    ``loop_control``
+        Steering, phase reports and the verification pass for this turn
+        (``jarvis/brain/loop_control.py``). ``None`` leaves the tool-use loop
+        exactly as it was, which is what voice, tasks and missions get.
     """
 
     provider: str
@@ -117,6 +123,7 @@ class TurnOverride:
     max_turns: int | None = None
     allow_force_spawn: bool = False
     system_extra: str = ""
+    loop_control: LoopControl | None = None
     receipt: TurnReceipt = field(default_factory=TurnReceipt)
 
 

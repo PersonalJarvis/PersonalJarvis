@@ -11,6 +11,73 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [2.1.0] — 2026-09-07
+
+The Society becomes a living world: agents walk an
+island, talk to each other, learn skills, run routines, and propose changes the
+person confirms. The Agentic IDE gains a chat view for every coding session, the
+local-model surface wires Ollama end-to-end, and the UI settles into its neutral
+design-token system.
+
+### Added
+
+- **Chat tool picker.** Search and select tools, skills, plugins and connectors
+  for each message, with capability filters and provider logos.
+- **Agent Studio.** Edit agent instructions, models, appearance, permissions
+  and routines from the agent card.
+- **Internal agent messages.** Preserve sender identity and delivery status
+  when agents communicate through their chats.
+- **Agent Society island.** A 3D world where agents live, walk between
+  buildings, talk to each other, and carry out quests. Sixteen biomes at ten
+  heights, graded roads, shore-driven water, clouds, and a toon-shaded M3a
+  look.
+- **Agent card and foundry.** A model card shows each agent's profile, tools,
+  approval rules, focus, and routines. The Agent Foundry crowns the mountain —
+  creating an agent walks it out of the forge.
+- **Agent chat and tool calls.** Each agent gets its own chat surface, a
+  contained shell, file hands, and its own browser driven by browser-use out of
+  process.
+- **Agent capabilities.** Agents learn active skills from finished tasks, run
+  routines whose results arrive in chat, propose self-changes the person
+  confirms, and obey per-agent approval rules.
+- **Quest Board.** A posted job routes to one agent, forges a new one when
+  nobody fits, and reads back off the board monument in the market square.
+- **World Kit buildings.** Plugin Docks, Skill Forge, Relay Tower, Terminal
+  Cantina, and the Memory House — each built by script in Blender and wired
+  into the island with their own drawers.
+- **Shared memory.** One memory for every agent, visible on the island as the
+  Memory House building.
+- **Society composer completions.** The composer completes teammates,
+  capabilities, skills, plugins, MCP servers and tools with `@`.
+- **Agent MCP surface.** Drive the whole agent ecosystem from any MCP client.
+- **Per-client MCP credentials, quests and portable ecosystems.**
+- **Dictation on-device pass.** The final recognition pass runs on-device, out
+  of process, in front of the cloud chain.
+- **Profile rebuild.** Profile becomes the file the assistant keeps on you,
+  with a two-tab layout.
+- **Recording strip in every composer.** One visible microphone across all
+  input surfaces.
+
+### Changed
+
+- **Neutral design tokens.** The UI drops brand hue for an ink-on-paper system
+  with Inter type scale, shell redesign, visible rims, and brighter ink.
+- **App icon.** Redrawn as paper Gigi on an ink squircle.
+- **Settings cards span full width.** No more capped containers.
+- **Orbit camera.** The island can be looked at from any side, with
+  deep-linkable camera parameters.
+- **Agent subscriptions.** Agents run on CLI seats with pinned accounts and
+  model switching.
+
+### Fixed
+
+- **Socket pool exhaustion on wake (BUG-215, AP-33).** Reconnects are jittered
+  and pay a shared connect budget so N panes × M windows cannot empty the OS
+  ephemeral-port pool.
+- **Agent-chat shell calls dying on the first call.**
+- **Boot-budget guard was blind, not passing.**
+- **Agent card description editor wiping focus and approval rules.**
+
 ## [2.0.0] — 2026-08-29
 
 The release that stops being one voice channel with a settings screen behind it.

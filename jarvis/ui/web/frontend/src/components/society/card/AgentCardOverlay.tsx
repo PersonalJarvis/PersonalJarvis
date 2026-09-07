@@ -13,8 +13,8 @@
  * which made the thing you actually talk to the smallest pane on screen. Now
  * the chat owns the middle six eighths, the roster rail from the island moves
  * in on the left so you can switch agents without closing the card, and the
- * right eighth holds the agent's own controls. The first of them is Retire:
- * it archives the row AND has the island play the execution
+ * right rail holds the agent's screen, its routines, and a tucked-away Retire
+ * (⋯). Retire archives the row AND has the island play the execution
  * (`world/retirement.ts`), which is why the card closes on its way out.
  *
  * Clicking the agent's identity in the header (or "Profile") turns the card
@@ -30,13 +30,13 @@
  * session (M2). A sample row carries none, and the column says so instead
  * of inventing a transcript.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { MessageSquare, User, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useT } from "@/i18n";
+import { useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { AgentSwatch } from "../AgentSwatch";
@@ -44,8 +44,9 @@ import type { SocietyAgent } from "../data";
 import { AgentChatPanel } from "../chat/AgentChatPanel";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
 import { RosterRail } from "../roster/RosterRail";
-import { AgentSpecSheet } from "./AgentSpecSheet";
-import { RetireButton } from "./RetireButton";
+import { AgentStudio } from "./AgentStudio";
+import type { FigureRecipe } from "../figures/figureRecipe";
+import { OptionsRail } from "./OptionsRail";
 
 /** Which face of the card is showing. */
 type CardFace = "chat" | "profile";
@@ -75,18 +76,33 @@ export function AgentCardOverlay({
   onClose,
 }: AgentCardOverlayProps) {
   const t = useT();
+  useLocaleChunk("society");
   const open = agent !== null;
   const [face, setFace] = useState<CardFace>("chat");
+  const [preview, setPreview] = useState<FigureRecipe | null>(null);
+  const [editGuard, setEditGuard] = useState({ dirty: false, busy: false });
+  const updateGuard = useCallback((dirty: boolean, busy: boolean) => setEditGuard({ dirty, busy }), []);
+  const leaveEditor = (action: () => void) => {
+    if (editGuard.busy) return;
+    if (editGuard.dirty && !window.confirm(t("society.studio.leave"))) return;
+    setEditGuard({ dirty: false, busy: false });
+    setPreview(null);
+    action();
+  };
 
   // Every opening starts on the chat. The face survives a switch between
   // agents inside the card — comparing two profiles is a real thing to do —
   // but never leaks from one opening of the card to the next.
   useEffect(() => {
-    if (!open) setFace("chat");
+    if (!open) {
+      setFace("chat");
+      setPreview(null);
+      setEditGuard({ dirty: false, busy: false });
+    }
   }, [open]);
 
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
+    <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : leaveEditor(onClose))}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none" />
         <Dialog.Content
@@ -126,7 +142,7 @@ export function AgentCardOverlay({
                   size="sm"
                   variant={face === "profile" ? "secondary" : "outline"}
                   className="gap-1.5"
-                  onClick={() => setFace(face === "chat" ? "profile" : "chat")}
+                  onClick={() => leaveEditor(() => setFace(face === "chat" ? "profile" : "chat"))}
                   data-testid="agent-card-face-toggle"
                 >
                   {face === "chat" ? (
@@ -146,10 +162,10 @@ export function AgentCardOverlay({
               </header>
               <div
                 className={cn(
-                  "grid min-h-0 flex-1",
+                    "agent-card-layout grid min-h-0 flex-1",
                   face === "chat"
-                    ? "grid-cols-[minmax(220px,1fr)_minmax(0,6fr)_minmax(190px,1fr)]"
-                    : "grid-cols-[minmax(220px,1fr)_minmax(300px,3fr)_minmax(320px,4fr)]",
+                    ? "grid-cols-[minmax(220px,1fr)_minmax(0,5fr)_minmax(300px,320px)]"
+                    : "grid-cols-[minmax(180px,1fr)_minmax(440px,3.5fr)_minmax(260px,3.5fr)]",
                 )}
               >
                 <RosterRail
@@ -157,8 +173,8 @@ export function AgentCardOverlay({
                   loading={rosterLoading}
                   sample={sample}
                   activeAgentId={agent.agentId}
-                  onOpen={(id) => onSelectAgent?.(id)}
-                  onCreate={() => onCreate?.()}
+                  onOpen={(id) => { if (id !== agent.agentId) leaveEditor(() => onSelectAgent?.(id)); }}
+                  onCreate={() => leaveEditor(() => onCreate?.())}
                   side="left"
                   className="w-full"
                 />
@@ -171,7 +187,7 @@ export function AgentCardOverlay({
                     >
                       <AgentChatPanel agent={agent} roster={roster} />
                     </section>
-                    <OptionsRail agent={agent} onRetired={onClose} />
+                    <OptionsRail agent={agent} onRetired={onClose} sample={sample} />
                   </>
                 ) : (
                   <>
@@ -183,14 +199,16 @@ export function AgentCardOverlay({
                       aria-label={t("society.card.specs")}
                       data-testid="agent-card-specs"
                     >
-                      <AgentSpecSheet agent={agent} onOpenChat={() => setFace("chat")} onRetired={onClose} />
+                      <AgentStudio key={agent.agentId} agent={agent} sample={sample}
+                        onOpenChat={() => leaveEditor(() => setFace("chat"))} onRetired={onClose}
+                        onPreview={setPreview} onGuardChange={updateGuard} />
                     </section>
                     <section
                       className="society-figure-column relative min-h-0"
                       aria-label={t("society.card.figure")}
                       data-testid="agent-card-figure"
                     >
-                      <AgentFigureViewer recipe={agent.figure} />
+                      <AgentFigureViewer recipe={preview ?? agent.figure} />
                     </section>
                   </>
                 )}
@@ -200,33 +218,5 @@ export function AgentCardOverlay({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-/**
- * The right eighth: what you can DO to this agent, as opposed to what you can
- * say to it. Retirement is the only entry so far, and it sits at the bottom
- * away from everything else — it is not a control anyone should reach for by
- * accident. The same button is in the profile face's action bar; both go
- * through `RetireButton`.
- */
-function OptionsRail({ agent, onRetired }: { agent: SocietyAgent; onRetired: () => void }) {
-  const t = useT();
-  return (
-    <aside
-      className="flex h-full min-h-0 flex-col border-l border-border bg-sidebar"
-      aria-label={t("society.card.options")}
-      data-testid="agent-card-options"
-    >
-      <div className="px-3 pt-3">
-        <h2 className="font-display text-sm font-semibold tracking-tight text-foreground">
-          {t("society.card.options")}
-        </h2>
-      </div>
-      <p className="px-3 pt-2 text-xs text-muted-foreground">{t("society.card.options_hint")}</p>
-      <div className="mt-auto p-3">
-        <RetireButton agent={agent} onRetired={onRetired} variant="rail" />
-      </div>
-    </aside>
   );
 }

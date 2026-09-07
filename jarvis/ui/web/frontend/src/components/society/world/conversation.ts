@@ -212,9 +212,19 @@ export function tangentFacing(placeFacing: number, side: -1 | 1): number {
 export const HEAD_Y_M = 2.7;
 
 /** How many beads make the signal. */
-export const ARC_BEADS = 16;
-/** Radius of one bead, in metres. */
+export const ARC_BEADS = 22;
+/** Radius of one bead at the closest zoom step, in metres. */
 export const ARC_BEAD_R_M = 0.16;
+
+/**
+ * How big a bead has to be to stay visible, given how much island the frame
+ * shows. A call is the one thing on the island drawn ACROSS the map, so it is
+ * usually watched zoomed out — and at 256 m across, a 0.16 m bead is a pixel
+ * and a half. This keeps every bead about five pixels wherever the camera is.
+ */
+export function beadRadiusFor(visibleWidthM: number): number {
+  return Math.min(3.4, Math.max(0.45, visibleWidthM * 0.013));
+}
 
 /**
  * How high the arc rises over the straight line, in metres.
@@ -317,6 +327,13 @@ export const QUEUE_MAX = 3;
 export const PIN_GRACE_MS = 1_500;
 /** A conversation nothing has advanced in this long is closed. */
 export const TALK_TIMEOUT_MS = 20_000;
+/**
+ * A call stays on screen at least this long, whatever the sentence does.
+ * A one-word answer would otherwise put a signal across the whole island and
+ * take it away again inside a second — the viewer would see a flicker and not
+ * know what it was.
+ */
+export const CALL_MIN_S = 3.2;
 /** A room nobody has spoken in for this long is closed. */
 export const ROOM_IDLE_MS = 45_000;
 /** Radius of the ring drawn under a room at the Town Hall, in metres. */

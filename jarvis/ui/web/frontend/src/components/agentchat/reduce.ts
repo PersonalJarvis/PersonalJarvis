@@ -1,4 +1,4 @@
-import type { AgentChatEvent } from "@/lib/agentChatApi";
+import type { AgentChatEvent, InternalMessage } from "@/lib/agentChatApi";
 import { readToolChoices, type ToolChoice } from "./toolChoices";
 
 /**
@@ -141,7 +141,14 @@ export interface NoticeItem {
   resolved: string;
 }
 
-export type TimelineItem = UserItem | TurnItem | ErrorItem | NoticeItem;
+export interface InternalMessageItem {
+  type: "internal";
+  id: string;
+  message: InternalMessage;
+  tsMs: number;
+}
+
+export type TimelineItem = UserItem | TurnItem | ErrorItem | NoticeItem | InternalMessageItem;
 
 export interface PendingApproval {
   approvalId: string;
@@ -211,11 +218,7 @@ function replaceAt<T>(arr: T[], index: number, value: T): T[] {
   return next;
 }
 
-function updateTurn(
-  tl: Timeline,
-  turnId: string,
-  fn: (turn: TurnItem) => TurnItem,
-): Timeline {
+function updateTurn(tl: Timeline, turnId: string, fn: (turn: TurnItem) => TurnItem): Timeline {
   const idx = findTurn(tl.items, turnId);
   if (idx < 0) return tl;
   const turn = tl.items[idx] as TurnItem;
@@ -261,6 +264,30 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
   const turnId = str(p.turn_id);
 
   switch (ev.kind) {
+    case "agent_message": {
+      const id = str(p.message_id);
+      if (!id || base.items.some((item) => item.type === "internal" && item.id === id)) return base;
+      return { ...base, items: [...base.items, {
+        type: "internal", id, tsMs: ev.ts_ms,
+        message: {
+          message_id: id, sender_id: str(p.sender_id), sender_name: str(p.sender_name),
+          sender_kind: p.sender_kind === "jarvis" ? "jarvis" : p.sender_kind === "user" ? "user" : "agent",
+          text: str(p.text), prompt: str(p.prompt), trace_id: str(p.trace_id),
+          status: p.status === "delivered" || p.status === "failed" ? p.status : "queued",
+          turn_id: str(p.turn_id), error: str(p.error),
+        },
+      }] };
+    }
+    case "agent_message_status":
+      return { ...base, items: base.items.map((item) =>
+        item.type === "internal" && item.id === str(p.message_id)
+          ? { ...item, message: { ...item.message,
+              status: p.status === "delivered" || p.status === "failed" ? p.status : "queued",
+              turn_id: str(p.turn_id), error: str(p.error),
+            } }
+          : item,
+      ) };
+
     case "user_message":
       return {
         ...base,
@@ -474,7 +501,10 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
         if (n !== null) counts[k] = n;
       }
       if (Object.keys(counts).length === 0) return base;
-      return updateTurn(base, turnId, (turn) => ({ ...turn, liveUsage: counts }));
+      return updateTurn(base, turnId, (turn) => ({
+        ...turn,
+        liveUsage: counts,
+      }));
     }
 
     case "approval_required": {
@@ -545,7 +575,11 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
         // A turn that ended mid-stream closes its live reasoning block.
         blocks: turn.blocks.map((b) =>
           b.kind === "reasoning" && b.live
-            ? { ...b, live: false, durationMs: b.durationMs ?? Math.max(0, ev.ts_ms - b.startedMs) }
+            ? {
+                ...b,
+                live: false,
+                durationMs: b.durationMs ?? Math.max(0, ev.ts_ms - b.startedMs),
+              }
             : b,
         ),
         durationMs: num(p.duration_ms) ?? Math.max(0, ev.ts_ms - turn.startedMs),

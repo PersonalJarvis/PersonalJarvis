@@ -192,6 +192,16 @@
   border-radius: 4px;
 }
 
+/* The far end of a call: who is on the line. Compact, because the arc itself
+   is already saying that something is happening. */
+.sw-bubble[data-calling] {
+  padding: 4px 8px 5px;
+  background: rgba(255, 252, 245, 0.9);
+}
+.sw-bubble[data-calling] .sw-bubble-kind {
+  margin-bottom: 0;
+}
+
 /* The listener's end: three dots, the cheapest possible "is being spoken to". */
 .sw-bubble[data-listening] {
   max-width: none;

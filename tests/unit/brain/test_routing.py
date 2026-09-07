@@ -2001,6 +2001,7 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # "Agent society voice tools".
             "delegate-to-agent",
             "society-status",
+            "message-agent",
         }
     )
     assert ROUTER_TOOLS == expected, (
@@ -3862,3 +3863,11 @@ def test_live_tool_names_reads_both_surfaces_fresh() -> None:
     assert "spawn_worker" not in manager._live_tool_names(), (
         "_live_tool_names must never serve a cached snapshot"
     )
+
+
+def test_internal_message_tool_is_router_only():
+    from jarvis.brain.factory import ROUTER_TOOLS
+    from jarvis.society.capabilities import NEVER_GRANTED
+
+    assert "message-agent" in ROUTER_TOOLS
+    assert "message_agent" in NEVER_GRANTED

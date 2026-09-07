@@ -116,6 +116,7 @@ ROUTER_TOOLS = frozenset({
     # "Agent society voice tools".
     "delegate-to-agent",
     "society-status",
+    "message-agent",
     # Skills-Brain-Integration: Brain-callable executor for installed user
     # skills. D9-recursion-protection is structural — SkillRunner is constructed
     # without a tool_registry that would re-expose run-skill recursively.
@@ -483,7 +484,7 @@ def _load_tools_for_tier(
                     kontrollierer_resolver=_resolve_kontrollierer,
                     announcer=build_spawn_announcer(config),
                 )
-            elif ep.name in ("delegate-to-agent", "society-status"):
+            elif ep.name in ("delegate-to-agent", "society-status", "message-agent"):
                 # Agent society (2026-09-02): same lazy-resolver pattern as
                 # spawn-worker - the society runtime is built by the server
                 # on first use, after the brain exists.

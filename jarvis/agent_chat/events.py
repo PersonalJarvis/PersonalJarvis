@@ -8,6 +8,8 @@ it did while it ran (``src/components/agentchat/reduce.ts``).
 
 Kinds (``payload`` keys in brackets):
 
+``agent_message``      [IncomingMessage fields] — trusted internal sender, initially queued
+``agent_message_status`` [message_id, status, turn_id, error] — durable delivery receipt
 ``user_message``       [text]                          — the person's turn
 ``turn_started``       [turn_id, provider, model, effort, runner]
 ``text_delta``         [turn_id, message_id, text]     — live only, never stored

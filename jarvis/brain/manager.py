@@ -3578,6 +3578,7 @@ class BrainManager:
         reasoning_effort: ReasoningEffort | None = None,
         delegated_voice: bool = False,
         tool_context: dict[str, Any] | None = None,
+        loop_control: Any = None,
     ) -> BrainDispatcher:
         """Builds the dispatcher with an optional tool override.
 
@@ -3639,6 +3640,7 @@ class BrainManager:
             deadline_s=deadline_s,
             reasoning_effort=reasoning_effort,
             tool_context=tool_context,
+            loop_control=loop_control,
             **kwargs,
         )
 
@@ -3664,6 +3666,8 @@ class BrainManager:
             kwargs["tool_context"] = dict(override.tool_context)
         if override.max_turns is not None:
             kwargs["max_turns"] = override.max_turns
+        if override.loop_control is not None:
+            kwargs["loop_control"] = override.loop_control
         return kwargs
 
     async def render_surface_prompt(self, *, user_text: str) -> tuple[str, str]:

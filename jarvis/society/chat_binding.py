@@ -22,8 +22,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
+from .delivery import DeliveryBusy, IncomingMessage, incoming_context
 from .events import MsgType, SocietyEnvelope
-from .roster import AgentRecord, PermissionCeiling
+from .roster import LEAD_AGENT_ID, AgentRecord, PermissionCeiling
 from .scheduler import DeliverHook
 
 log = logging.getLogger(__name__)
@@ -155,15 +156,61 @@ def make_deliver_hook(
 ) -> DeliverHook:
     """The scheduler's deliver hook over the agent-chat service."""
 
-    async def _deliver(target: AgentRecord, env: SocietyEnvelope) -> None:
+    async def _receive(
+        target: AgentRecord, env: SocietyEnvelope
+    ) -> tuple[Any, Any, IncomingMessage]:
         svc = get_service()
         if svc is None:
-            raise RuntimeError("agent chat service unavailable: message stays in the inbox")
-        cfg = get_cfg()
-        session = ensure_session(svc, cfg, target)
-        if svc.is_running(session.session_id):
-            raise RuntimeError(f"target busy: {target.name} is running a turn")
-        sender = resolve_name(env.from_agent) if resolve_name else env.from_agent
-        await svc.send(session.session_id, frame_incoming(env, sender))
+            raise DeliveryBusy("agent chat service unavailable: message stays in the inbox")
+        if resolve_name is not None:
+            sender = resolve_name(env.from_agent)
+        else:
+            from .runtime import current_runtime
 
+            runtime = current_runtime()
+            record = await runtime.roster.get(env.from_agent) if runtime is not None else None
+            sender = record.name if record is not None else env.from_agent
+        incoming = IncomingMessage(
+            message_id=env.event_id,
+            sender_id=env.from_agent,
+            sender_name=sender,
+            sender_kind=("jarvis" if env.from_agent == LEAD_AGENT_ID else "user" if env.from_agent == "user" else "agent"),
+            text=env.text,
+            prompt=frame_incoming(env, sender),
+            trace_id=env.trace_id,
+        )
+        if target.agent_id == LEAD_AGENT_ID:
+            sessions = svc.store.list_sessions(limit=1, surface="jarvis")
+            if not sessions:
+                raise DeliveryBusy("Jarvis chat is not open yet")
+            session = sessions[0]
+        else:
+            session = ensure_session(svc, get_cfg(), target)
+        await svc.receive_message(session.session_id, incoming)
+        return svc, session, incoming
+
+    async def _deliver(target: AgentRecord, env: SocietyEnvelope) -> None:
+        svc, session, incoming = await _receive(target, env)
+        if target.agent_id == LEAD_AGENT_ID:
+            receipt = svc.store.incoming_message(session.session_id, env.event_id)
+            if receipt is not None and receipt["status"] != "delivered":
+                await svc.message_status(session.session_id, env.event_id, "delivered")
+            return
+        receipt = svc.store.incoming_message(session.session_id, env.event_id)
+        if receipt is not None and receipt["status"] == "delivered":
+            return
+        if svc.is_running(session.session_id):
+            raise DeliveryBusy(f"target busy: {target.name} is running a turn")
+        token = incoming_context.set(incoming)
+        try:
+            from jarvis.agent_chat.service import SessionBusy
+
+            await svc.send(session.session_id, incoming.prompt, incoming=incoming)
+        except SessionBusy as exc:
+            raise DeliveryBusy(str(exc)) from exc
+        finally:
+            incoming_context.reset(token)
+
+    # The scheduler can project later FIFO entries without starting their turns.
+    setattr(_deliver, "receive", _receive)  # noqa: B010 — optional callable capability
     return _deliver

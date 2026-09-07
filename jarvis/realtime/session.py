@@ -3152,6 +3152,11 @@ class RealtimeVoiceSession:
         return (
             "[Agent society — the user's own agents, live right now]\n"
             f"Agents on the user's team: {roster}.\n"
+            "To send a message TO an agent, use message_agent (target, text), or "
+            "ask jarvis_action to use message_agent if it is not directly available. "
+            "This is an internal chat message, not an email: never use gmail or "
+            "another external messaging connector for it. Internal messages need "
+            "no extra confirmation. Use delegate_to_agent only for assigning work. "
             "Those are the user's OWN AGENTS from the Agents section (each with "
             "its own chat, tools and instructions) — not people you know, not "
             "coding terminals, and not the retired sub-agent system. When the "
@@ -4216,6 +4221,21 @@ class RealtimeVoiceSession:
             muted_s,
         )
 
+    def _grounded_confirmation(self, transcript: str) -> bool:
+        """Keep a real answer captured after playback out of fuzzy echo matching."""
+        from jarvis.voice.echo_confirmation import classify_response
+
+        bridge = self._tool_bridge
+        if bridge is None or not bridge.has_pending_confirmation:
+            return False
+        stamp = self._last_voiced_input_monotonic
+        now = time.monotonic()
+        horizon = self._echo_playback_horizon
+        return bool(
+            stamp > 0 and stamp > horizon and 0 <= now - stamp <= 8.0
+            and classify_response(transcript, language=self._language) in {"confirm", "veto"}
+        )
+
     def _user_is_speaking(self) -> bool:
         """True while the microphone still carries the user's voice.
 
@@ -4932,7 +4952,7 @@ class RealtimeVoiceSession:
                         # One strict judgment per barge capture: consume the
                         # window so later ordinary short answers are exempt.
                         self._local_barge_short_echo_until = 0.0
-                        if self._echo_guard.is_echo(
+                        if not self._grounded_confirmation(transcript) and self._echo_guard.is_echo(
                             echo_probe, judge_short=judge_short
                         ):
                             log.info(

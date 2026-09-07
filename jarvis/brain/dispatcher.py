@@ -27,6 +27,7 @@ from jarvis.core.protocols import (
 from jarvis.safety.tool_executor import ToolExecutor
 
 from .iteration_budget import IterationBudget
+from .loop_control import LoopControl
 from .streaming import StreamingAggregate, aggregate_with_consumer, tee_text
 from .tool_use_loop import ToolUseLoop
 
@@ -47,6 +48,7 @@ class BrainDispatcher:
         deadline_s: float | None = None,
         reasoning_effort: ReasoningEffort | None = None,
         tool_context: dict[str, Any] | None = None,
+        loop_control: LoopControl | None = None,
     ) -> None:
         self._brain = brain
         self._tools = tools or {}
@@ -71,6 +73,8 @@ class BrainDispatcher:
         # BrainRequest this dispatcher issues (see ToolUseLoop.reasoning_effort
         # and BrainRequest.reasoning_effort). ``None`` = provider default.
         self._reasoning_effort = reasoning_effort
+        # Steering / phases / verification for this turn's loop, or None.
+        self._loop_control = loop_control
 
     @property
     def brain(self) -> Brain:
@@ -89,6 +93,7 @@ class BrainDispatcher:
             deadline_s=self._deadline_s,
             reasoning_effort=self._reasoning_effort,
             tool_context=self._tool_context,
+            loop_control=self._loop_control,
         )
 
     def set_tools(self, tools: dict[str, Tool]) -> None:
@@ -157,6 +162,7 @@ class BrainDispatcher:
                 deadline_s=self._deadline_s,
                 reasoning_effort=self._reasoning_effort,
                 tool_context=self._tool_context,
+                loop_control=self._loop_control,
             )
             return await loop.run(
                 messages,

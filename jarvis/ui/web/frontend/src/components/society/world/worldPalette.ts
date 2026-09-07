@@ -159,6 +159,23 @@ export const CEREMONY = {
   stain: "#4a1418",
 };
 
+/**
+ * The signal arcing between two agents who are too far apart to talk.
+ *
+ * Deliberately NOT the sender's accent: half the roster's accents are greens
+ * and blues, and the island is a green field beside a blue sea, so a call in
+ * an agent's own colour is invisible exactly when it matters. Identity is
+ * carried by the bubbles at both ends; the arc only has to READ.
+ */
+export const SIGNAL = {
+  /** The beads: warm and near-white, the one hue nothing on the island wears. */
+  bead: "#fff1b8",
+  /** The ping at each end, a shade deeper so the two do not merge. */
+  ping: "#ffb703",
+  /** A dark backing behind each bead, so the warm core has an edge anywhere. */
+  rim: "#2a2118",
+};
+
 /** In-world labels (drawn as DOM over the canvas, in the world's own type). */
 export const LABEL = {
   font: '"Pixelify Sans", "Inter Variable", "Inter", ui-sans-serif, sans-serif',

@@ -46,11 +46,16 @@ interface Props {
 const PROSE = "min-w-0 whitespace-pre-wrap break-words text-base leading-7 [overflow-wrap:anywhere]";
 
 /**
- * One turn of a voice session, drawn like a chat: a quiet turn line (number,
- * time, latency, copy), the user's words as a bubble on the lift surface, the
- * assistant's reply on the card surface, and the facts of the exchange —
- * brain, tokens, cost, tools, how long it thought and spoke — as ONE muted
- * line underneath. No box inside a box.
+ * One turn of a voice session, drawn as a left-aligned document rather than a
+ * two-sided chat: a quiet turn line (number, time, latency, copy), the user's
+ * words in a block on the lift surface, the assistant's reply below it on the
+ * card surface, and the facts of the exchange — brain, tokens, cost, tools,
+ * how long it thought and spoke — as ONE muted line underneath.
+ *
+ * Everything sits in the SAME column and starts at the same left edge, so the
+ * transcript reads top to bottom like a page. Right-aligned user bubbles were
+ * the old shape; they broke the reading line and wasted the measure. No box
+ * inside a box.
  */
 export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
   const t = useT();
@@ -161,12 +166,15 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
       </div>
 
       <div className="space-y-3">
-        {/* The user: a bubble on the lift surface, right-aligned like a chat. */}
+        {/* The person speaking: a block on the lift surface, left-aligned and
+            full measure — the same column the reply below it uses. */}
         {turn.user_text && (
-          <div className="flex flex-col items-end gap-1">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="flex flex-col items-start gap-1">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               <Mic aria-hidden className="h-3.5 w-3.5" />
-              <span>User</span>
+              <span className="font-medium text-foreground">
+                {t("session_detail.you")}
+              </span>
               <span className="text-foreground-faint">{turn.user_lang}</span>
               {polished && (
                 <Badge variant="secondary" data-testid="turn-polished-badge">
@@ -174,7 +182,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
                 </Badge>
               )}
             </div>
-            <div className={cn(PROSE, "max-w-[85%] rounded-lg bg-secondary px-4 py-3 text-foreground")}>
+            <div className={cn(PROSE, "w-full rounded-lg bg-secondary px-4 py-3 text-foreground")}>
               {polished ?? turn.user_text}
             </div>
             {polished && (
@@ -191,7 +199,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
             )}
             {polished && showRaw && (
               <div
-                className={cn(PROSE, "max-w-[85%] rounded-lg border border-dashed border-border px-4 py-3 text-muted-foreground")}
+                className={cn(PROSE, "w-full rounded-lg border border-dashed border-border px-4 py-3 text-muted-foreground")}
                 data-testid="turn-raw-text"
               >
                 {turn.user_text}

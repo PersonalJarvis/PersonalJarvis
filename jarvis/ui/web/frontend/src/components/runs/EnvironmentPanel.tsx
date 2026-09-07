@@ -11,17 +11,6 @@ import { useT } from "@/i18n";
 
 import type { RunEnvironment } from "./types";
 
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex min-w-0 items-baseline gap-2">
-      <span className="w-24 shrink-0 text-meta text-muted-foreground">{label}</span>
-      <span className="min-w-0 flex-1 break-words font-mono text-meta text-foreground [overflow-wrap:anywhere]">
-        {value}
-      </span>
-    </div>
-  );
-}
-
 export function EnvironmentPanel({ env }: { env: RunEnvironment }) {
   const t = useT();
   const rows: Array<[string, string]> = [];
@@ -32,9 +21,10 @@ export function EnvironmentPanel({ env }: { env: RunEnvironment }) {
 
   push(t("run_inspector.env.mode"), env.voice_mode);
   push(t("run_inspector.env.surface"), env.surface);
-  push(t("run_inspector.env.started_by"), env.wake_keyword
-    ? `${env.wake_source} · "${env.wake_keyword}"`
-    : env.wake_source);
+  push(
+    t("run_inspector.env.started_by"),
+    env.wake_keyword ? `${env.wake_source} · "${env.wake_keyword}"` : env.wake_source,
+  );
   push(t("run_inspector.env.ended_by"), env.hangup_reason);
   push(t("run_inspector.env.language"), env.language);
   push(t("run_inspector.env.providers"), env.providers.join(", "));
@@ -42,23 +32,34 @@ export function EnvironmentPanel({ env }: { env: RunEnvironment }) {
   push(t("run_inspector.env.tiers"), env.tiers.join(", "));
   push(t("run_inspector.env.voices"), env.voices.join(", "));
   if (env.input_sample_rate || env.output_sample_rate) {
-    push(t("run_inspector.env.audio"),
-      `${env.input_sample_rate ?? "?"} Hz in · ${env.output_sample_rate ?? "?"} Hz out`);
+    push(
+      t("run_inspector.env.audio"),
+      `${env.input_sample_rate ?? "?"} Hz in · ${env.output_sample_rate ?? "?"} Hz out`,
+    );
   }
 
   if (rows.length === 0) {
     return (
-      <span className="text-body text-muted-foreground">
-        {t("run_inspector.env.empty")}
-      </span>
+      <p className="text-base text-muted-foreground">{t("run_inspector.env.empty")}</p>
     );
   }
 
   return (
-    <div className="grid gap-stack sm:grid-cols-2" data-testid="environment-panel">
+    // Label/value pairs, not a table: every value is a short recorded fact, so
+    // the label sits in its own fixed column and the value keeps the monospace
+    // spelling it was written with.
+    <dl
+      className="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)] gap-x-4 gap-y-2.5"
+      data-testid="environment-panel"
+    >
       {rows.map(([label, value]) => (
-        <Row key={label} label={label} value={value} />
+        <div key={label} className="contents">
+          <dt className="truncate text-sm text-muted-foreground">{label}</dt>
+          <dd className="min-w-0 break-words font-mono text-sm text-foreground [overflow-wrap:anywhere]">
+            {value}
+          </dd>
+        </div>
       ))}
-    </div>
+    </dl>
   );
 }

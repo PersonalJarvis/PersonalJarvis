@@ -19,21 +19,35 @@
 import { memo, useEffect, useMemo, useRef } from "react";
 import { Html } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
-import type { Group, Mesh } from "three";
+import { Object3D, type Group, type InstancedMesh, type Mesh } from "three";
 
 import { fill, useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
 import { WORLD_HERO_SCALE } from "./WalkerFigure";
 import { useKit } from "./WorldKit";
+import { useCameraStore } from "./cameraStore";
+import { ZOOM_WIDTHS_M } from "./worldCamera";
 import { useBuildingPoses } from "./buildingPoses";
 import {
+  ARC_BEADS,
+  CALL_MIN_S,
+  CALL_SECONDS,
   MAX_CONCURRENT,
   MIN_FACE_M,
   ROOM_RING_R_M,
+  arcApexFor,
+  arcPoint,
+  beadAlive,
+  beadRadiusFor,
+  beadScale,
   bubbleSeconds,
   classify,
+  clamp01,
   driftedApart,
   facingBetween,
+  hangupSweep,
+  pingFade,
+  pingScale,
   pipScale,
   tangentFacing,
   type ConvoKind,
@@ -47,6 +61,7 @@ import {
   type Conversation,
 } from "./conversationStore";
 import { buildIsland, groundY, tileToWorld } from "./islandLayout";
+import { SIGNAL } from "./worldPalette";
 import { walkerPins, type WalkerPin } from "./walkerRegistry";
 
 /**
@@ -78,6 +93,10 @@ const LISTEN_HIDE_M = 4;
 const ROOM_SIGN_Y_M = 9.5;
 /** The marker ring under a figure that is in a conversation, in metres. */
 const SPEAK_RING_R_M = 1.15;
+/** How wide a ping ring grows at a caller's head, in metres. */
+const PING_R_M = 1.9;
+/** Reused for every instance matrix; three.js wants an Object3D, not a matrix. */
+const DUMMY = new Object3D();
 /** Head height for a figure whose recipe carries no height. */
 const DEFAULT_HEAD_M = 2.0;
 
@@ -140,6 +159,7 @@ function stage(
     // Decided once and cached on the row: a wandering figure must not flip a
     // running conversation from a talk into a call mid-sentence.
     const kind: ConvoKind = talk.kind ?? (other ? classify(distanceM) : "talk");
+    if (talk.kind === null && other) useConversationStore.getState().setKind(talk.key, kind);
     out.push({ talk, speaker: anchor, partner: other, kind, distanceM, slot });
   });
   return out;
@@ -338,14 +358,165 @@ function ConversationView({
           </Html>
         )}
       </group>
+      {talk.kind === "call" && talk.partnerId && (
+        <CallLink talk={talk} byId={byId} paused={paused} />
+      )}
       {talk.partnerId && talk.line && (
         <ListeningBubble
           byId={byId}
           partnerId={talk.partnerId}
           speakerId={talk.speakerId}
+          calling={talk.kind === "call" ? speakerName : ""}
           slot={slot}
         />
       )}
+    </group>
+  );
+}
+
+/**
+ * The signal between two figures the island cannot show side by side: a chain
+ * of beads on a quadratic arc from head to head, with a wave of light running
+ * from the sender to the receiver, and a ping ring at each end while it
+ * connects.
+ *
+ * One shared `<instancedMesh>` and one shared material for the whole link. The
+ * wave is animated by SCALE, never by opacity — `worldMaterials.halo()` caches
+ * a material per colour and opacity, so a per-frame opacity would grow that
+ * cache without bound.
+ */
+function CallLink({
+  talk,
+  byId,
+  paused,
+}: {
+  talk: Conversation;
+  byId: Map<string, SocietyAgent>;
+  paused: boolean;
+}) {
+  const kit = useKit();
+  const beads = useRef<InstancedMesh>(null);
+  const pingA = useRef<Mesh>(null);
+  const pingB = useRef<Mesh>(null);
+  /** When the last line ENDED, so the hang-up sweep has something to run from. */
+  const quietSince = useRef(0);
+  /** When this call first went out — its floor, so it cannot flicker. */
+  const openedAt = useRef(0);
+  const dark = useRef<InstancedMesh>(null);
+
+  useFrame(() => {
+    const mesh = beads.current;
+    if (!mesh) return;
+    const [next] = stage([talk], byId, walkerPins());
+    const partner = next?.partner ?? null;
+    if (!next || !partner) {
+      mesh.visible = false;
+      if (pingA.current) pingA.current.visible = false;
+      if (pingB.current) pingB.current.visible = false;
+      return;
+    }
+
+    // The clock is the STORE's, not a local ref: `lineStartedMs` survives a
+    // remount and is the same number in every open window, so two people
+    // watching the same call see the same signal in the same place.
+    const now = Date.now();
+    if (openedAt.current === 0) openedAt.current = now;
+    // A call holds the island for a moment even when the sentence is short.
+    const young = (now - openedAt.current) / 1000 < CALL_MIN_S;
+    const speaking = talk.line !== null || young;
+    if (speaking) quietSince.current = 0;
+    else if (quietSince.current === 0) quietSince.current = now;
+
+    const age = paused
+      ? CALL_SECONDS.dial + CALL_SECONDS.arc
+      : (now - (speaking ? talk.lineStartedMs || openedAt.current : quietSince.current)) / 1000;
+
+    // The head of the wave reaches across over `dial` + `arc`, the whole line
+    // stays lit while the sentence is up, and it runs off on hang-up.
+    const reach = CALL_SECONDS.dial + CALL_SECONDS.arc;
+    const front = speaking ? clamp01(age / reach) : 1;
+    const sweep = speaking ? 0 : hangupSweep(age);
+
+    // The sender is whoever spoke last, so an answer sends the wave back.
+    const from = next.speaker;
+    const to = partner;
+    const { map } = buildIsland();
+    const head = {
+      x: from.pin.x,
+      y: groundY(map, from.pin.x, from.pin.z) + from.headY,
+      z: from.pin.z,
+    };
+    const tail = {
+      x: to.pin.x,
+      y: groundY(map, to.pin.x, to.pin.z) + to.headY,
+      z: to.pin.z,
+    };
+    const apex = arcApexFor(next.distanceM);
+    const beadR = beadRadiusFor(ZOOM_WIDTHS_M[useCameraStore.getState().zoom]);
+
+    mesh.visible = sweep < 1;
+    let drawn = 0;
+    for (let i = 0; i < ARC_BEADS; i++) {
+      const scale = beadAlive(i, ARC_BEADS, sweep) ? beadScale(i, ARC_BEADS, front) : 0;
+      const at = arcPoint(head, tail, i / (ARC_BEADS - 1), apex);
+      DUMMY.position.set(at.x, at.y, at.z);
+      DUMMY.scale.setScalar(Math.max(0.0001, scale * beadR * 2));
+      DUMMY.updateMatrix();
+      mesh.setMatrixAt(i, DUMMY.matrix);
+      if (scale > 0) drawn += 1;
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (drawn === 0) mesh.visible = false;
+    // The backing: the same beads, a shade bigger and dark, so the warm core
+    // has an edge on grass, on sand, on a roof and on the sea alike.
+    const back = dark.current;
+    if (back) {
+      back.visible = mesh.visible;
+      for (let i = 0; i < ARC_BEADS; i++) {
+        const scale = beadAlive(i, ARC_BEADS, sweep) ? beadScale(i, ARC_BEADS, front) : 0;
+        const at = arcPoint(head, tail, i / (ARC_BEADS - 1), apex);
+        DUMMY.position.set(at.x, at.y, at.z);
+        DUMMY.scale.setScalar(Math.max(0.0001, scale * beadR * 2.9));
+        DUMMY.updateMatrix();
+        back.setMatrixAt(i, DUMMY.matrix);
+      }
+      back.instanceMatrix.needsUpdate = true;
+    }
+
+    // The two pings: one when the call goes out, one when it lands.
+    const ring = (node: Mesh | null, local: number, at: { x: number; y: number; z: number }) => {
+      if (!node) return;
+      const alive = local >= 0 && local <= CALL_SECONDS.dial;
+      node.visible = alive && speaking;
+      if (!alive) return;
+      node.position.set(at.x, at.y, at.z);
+      const r = Math.max(PING_R_M, beadR * 5) * (0.4 + pingScale(local));
+      node.scale.set(r, r, 0.5 + pingFade(local));
+    };
+    ring(pingA.current, age, head);
+    ring(pingB.current, age - CALL_SECONDS.dial - CALL_SECONDS.arc * 0.7, tail);
+  });
+
+  return (
+    <group>
+      {/* Solid and unlit, not additive. An additive bead is light ADDED to
+          what is behind it, and the island is a bright green field under a
+          flat, un-tonemapped pipeline — the same reason bloom is off by
+          default. Over the grass the whole arc simply vanished. */}
+      <instancedMesh
+        ref={dark}
+        args={[kit.g.sphere, kit.m.glow(SIGNAL.rim), ARC_BEADS]}
+        frustumCulled={false}
+        renderOrder={1}
+      />
+      <instancedMesh
+        ref={beads}
+        args={[kit.g.sphere, kit.m.glow(SIGNAL.bead), ARC_BEADS]}
+        frustumCulled={false}
+        renderOrder={2}
+      />
+      <mesh ref={pingA} geometry={kit.g.ring} material={kit.m.glow(SIGNAL.ping)} visible={false} />
+      <mesh ref={pingB} geometry={kit.g.ring} material={kit.m.glow(SIGNAL.ping)} visible={false} />
     </group>
   );
 }
@@ -355,11 +526,14 @@ function ListeningBubble({
   byId,
   partnerId,
   speakerId,
+  calling,
   slot,
 }: {
   byId: Map<string, SocietyAgent>;
   partnerId: string;
   speakerId: string;
+  /** The caller's name when this is a call; "" for a conversation in earshot. */
+  calling: string;
   slot: number;
 }) {
   const t = useT();
@@ -379,7 +553,9 @@ function ListeningBubble({
     // bubble already names both ends, so a second one there is only noise.
     const together =
       speaker !== undefined && Math.hypot(speaker.x - pin.x, speaker.z - pin.z) < LISTEN_HIDE_M;
-    node.visible = !together;
+    // A call is never "together" by definition, and its badge says who is on
+    // the other end — that is the whole point of drawing it.
+    node.visible = calling !== "" || !together;
     node.position.set(
       pin.x,
       headHeight(agent) + LISTEN_LIFT_M + slot * BUBBLE_STACK_M,
@@ -391,13 +567,22 @@ function ListeningBubble({
   return (
     <group ref={group} visible={false}>
       <Html center zIndexRange={[33, 12]} style={{ pointerEvents: "none" }}>
-        <div className="sw-bubble" data-listening aria-label={t("society.world.talk_listening")}>
-          <span className="sw-bubble-dots" aria-hidden>
-            <i />
-            <i />
-            <i />
-          </span>
-        </div>
+        {calling ? (
+          <div className="sw-bubble" data-calling>
+            <span className="sw-bubble-kind">
+              <i className="sw-bubble-dot" style={{ background: agent.palette.accent }} />
+              {fill(t("society.world.talk_calling"), { name: calling }).replace("{0}", calling)}
+            </span>
+          </div>
+        ) : (
+          <div className="sw-bubble" data-listening aria-label={t("society.world.talk_listening")}>
+            <span className="sw-bubble-dots" aria-hidden>
+              <i />
+              <i />
+              <i />
+            </span>
+          </div>
+        )}
       </Html>
     </group>
   );

@@ -12,6 +12,7 @@ Flow:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -43,6 +44,15 @@ from jarvis.core.turn_language import resolve_output_language, resolve_turn_lang
 from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL, ToolExecutor
 
 from .iteration_budget import IterationBudget
+from .loop_control import (
+    PHASE_ACT,
+    PHASE_GATHER,
+    PHASE_VERIFY,
+    LoopControl,
+    ToolRecord,
+    VerifyOutcome,
+    VerifyRequest,
+)
 from .streaming import StreamingAggregate, aggregate, aggregate_with_consumer
 from .tool_call_recovery import extract_leaked_tool_calls
 
@@ -80,6 +90,21 @@ _BUDGET_FINAL_DIRECTIVE = (
     "not call any more tools."
 )
 
+# What a message the person sent DURING the turn looks like when it reaches the
+# model. It is folded into the running job rather than starting a new one, so
+# the model must be told that this is a correction in flight, not a new task.
+_STEER_PREFIX = (
+    "[the person added this while you were working - fold it into the job you "
+    "are on, do not start over]\n"
+)
+
+# What a failed verification tells the model. Unlike the directives above this
+# one keeps the tools: a revision usually needs to LOOK again, not just rewrite.
+_VERIFY_DIRECTIVE = (
+    "[verification] Your answer was checked against what you actually did. "
+    "Fix this, then answer the person again in full:\n"
+)
+
 # A provider can repeat the exact same text-serialized call after receiving its
 # result. The action must remain exactly-once, but the turn must not end on an
 # empty ``tool_use`` round. Force one tool-less synthesis pass instead.
@@ -100,6 +125,22 @@ def _cap_tool_result_json(serialized: str) -> str:
         f"{kept}… [truncated: tool output was {len(serialized)} chars, "
         f"capped at {_MAX_TOOL_RESULT_CHARS}]"
     )
+
+
+def _last_user_text(messages: list[BrainMessage]) -> str:
+    """The ask a verifier judges against, when the caller passed none.
+
+    A steer line is skipped: the person's original request is what the answer
+    has to satisfy, not the correction that refined it.
+    """
+    for message in reversed(messages):
+        if message.role != "user" or not isinstance(message.content, str):
+            continue
+        text = message.content
+        if text.startswith(_STEER_PREFIX) or text.startswith("["):
+            continue
+        return text
+    return ""
 
 
 def _tool_call_signature(call: dict[str, Any]) -> tuple[str, str]:
@@ -597,6 +638,7 @@ class ToolUseLoop:
         deadline_s: float | None = None,
         reasoning_effort: ReasoningEffort | None = None,
         tool_context: dict[str, Any] | None = None,
+        loop_control: LoopControl | None = None,
     ) -> None:
         self._brain = brain
         self._tools = tools
@@ -639,6 +681,10 @@ class ToolUseLoop:
         # (jarvis/cu/brain_call.py); providers without a reasoning knob ignore
         # the hint (capability hint, never a provider pin — AP-21).
         self._reasoning_effort = reasoning_effort
+        # Steering, phases and verification (jarvis/brain/loop_control.py).
+        # ``None`` on every path but the chat: those turns are unchanged.
+        self._control = loop_control
+        self._last_phase: tuple[str, str] | None = None
 
     def _resolve_tool(self, requested: str) -> tuple[Tool | None, str]:
         """Look up a model-requested tool name, tolerating separator/case drift.
@@ -764,6 +810,88 @@ class ToolUseLoop:
             for tool in self._tools.values()
         ]
 
+    async def _phase(self, phase: str, detail: str = "") -> None:
+        """Report what the turn is doing — once per change, never per token."""
+        control = self._control
+        if control is None or control.on_phase is None:
+            return
+        if self._last_phase == (phase, detail):
+            return
+        self._last_phase = (phase, detail)
+        try:
+            await control.on_phase(phase, detail)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a phase listener never breaks the turn
+            log.debug("on_phase callback raised (ignored)", exc_info=True)
+
+    def _drain_steer(self) -> list[str]:
+        """What the person typed while this turn was running."""
+        control = self._control
+        if control is None or control.drain_steer is None:
+            return []
+        try:
+            return [str(t).strip() for t in control.drain_steer() if str(t).strip()]
+        except Exception:  # noqa: BLE001 — a broken inbox costs the steer, not the turn
+            log.warning("drain_steer raised (ignored)", exc_info=True)
+            return []
+
+    @staticmethod
+    def _append_steer(messages: list[BrainMessage], texts: list[str]) -> None:
+        for text in texts:
+            messages.append(BrainMessage(role="user", content=_STEER_PREFIX + text))
+
+    async def _ask_once(self, system: str, user: str) -> str:
+        """One tool-less question on THIS turn's brain — how a verifier runs
+        without a provider, a key or a model id of its own (AP-6/AP-21)."""
+        req = BrainRequest(
+            messages=(BrainMessage(role="user", content=user),),
+            tools=(),
+            system=system,
+            max_tokens=2_000,
+            stream=True,
+        )
+        agg = await aggregate(self._brain.complete(req))
+        return agg.text
+
+    async def _run_verify(
+        self,
+        user_utterance: str,
+        answer: str,
+        tool_log: tuple[ToolRecord, ...],
+        *,
+        attempt: int,
+        blocked: bool,
+    ) -> VerifyOutcome | None:
+        """The check that runs where the loop would otherwise finish.
+
+        ``None`` means no verification happened: no hook, a forced final round
+        (the turn is already out of budget or time), or the revision cap is
+        reached. A verifier that raises is logged and the turn is accepted —
+        a broken check never costs the person their answer.
+        """
+        control = self._control
+        if control is None or control.verify is None or blocked:
+            return None
+        if attempt >= max(0, control.max_verify):
+            return None
+        await self._phase(PHASE_VERIFY, "checking the answer")
+        try:
+            return await control.verify(
+                VerifyRequest(
+                    user_text=user_utterance,
+                    answer=answer,
+                    tool_log=tool_log,
+                    attempt=attempt,
+                ),
+                self._ask_once,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — fail open: an unchecked answer beats none
+            log.warning("verify hook raised — accepting the turn", exc_info=True)
+            return None
+
     async def run(
         self,
         messages: list[BrainMessage],
@@ -822,6 +950,9 @@ class ToolUseLoop:
         loop_started = time.monotonic()
         deadline_forced = False
         seen_call_ids: set[str] = set()
+        tool_log: list[ToolRecord] = []
+        verify_rounds = 0
+        round_no = 0
 
         def _progress() -> None:
             # Stall-timeout heartbeat (see ``on_progress`` in the docstring).
@@ -836,6 +967,16 @@ class ToolUseLoop:
             _progress()
 
         while True:
+            # A message the person sent while this turn was running joins the
+            # NEXT round as their own words. It must not touch tools_payload or
+            # deadline_forced: steering continues the job, it does not end it.
+            pending = self._drain_steer()
+            if pending:
+                self._append_steer(current_messages, pending)
+                log.info("tool_use_loop: %d steer message(s) folded in", len(pending))
+            round_no += 1
+            await self._phase(PHASE_GATHER, f"round {round_no}")
+
             req = BrainRequest(
                 messages=tuple(current_messages),
                 tools=tuple(tools_payload),
@@ -931,8 +1072,40 @@ class ToolUseLoop:
                 )
                 continue
 
-            # No tool calls → done
+            # No tool calls → the answer is written. Before it stands: did
+            # the person say something else while we worked, and does the
+            # answer hold against what actually ran?
             if not agg.tool_calls:
+                late = self._drain_steer()
+                if late:
+                    self._append_steer(current_messages, late)
+                    continue
+                outcome = await self._run_verify(
+                    user_utterance or _last_user_text(current_messages),
+                    final_agg.text,
+                    tuple(tool_log),
+                    attempt=verify_rounds,
+                    blocked=deadline_forced,
+                )
+                if outcome is not None and not outcome.accepted and outcome.instruction:
+                    verify_rounds += 1
+                    log.info(
+                        "tool_use_loop: verification asked for a revision (%d/%d)",
+                        verify_rounds,
+                        self._control.max_verify if self._control else 0,
+                    )
+                    current_messages.append(
+                        BrainMessage(role="assistant", content=agg.text)
+                    )
+                    current_messages.append(
+                        BrainMessage(
+                            role="user", content=_VERIFY_DIRECTIVE + outcome.instruction
+                        )
+                    )
+                    # The revision IS the answer: the draft was already closed
+                    # into its own block by the verify phase hook.
+                    final_agg.text = ""
+                    continue
                 break
 
             # The deadline-forced round is the LAST round, period. With
@@ -988,6 +1161,11 @@ class ToolUseLoop:
                     await ack_emitter(first_name, first_input)
                 except Exception as exc:  # noqa: BLE001 — emitter must never block tool execution
                     log.warning("ack_emitter failed: %s", exc)
+
+            await self._phase(
+                PHASE_ACT,
+                ", ".join(str(tc.get("name") or "") for tc in agg.tool_calls[:3]),
+            )
 
             # Add assistant turn with tool-calls to the message history
             # (for providers that expect role=assistant with tool_calls)
@@ -1423,6 +1601,17 @@ class ToolUseLoop:
                     tool_call_id=call_id,
                     name=tool_name,
                 ))
+                if self._control is not None:
+                    # The verifier's only evidence that something happened.
+                    body = tool_result_payload.get("output")
+                    if body in (None, ""):
+                        body = tool_result_payload.get("error") or ""
+                    tool_log.append(ToolRecord(
+                        name=tool_name,
+                        ok=bool(tool_result_payload.get("success")),
+                        blocked=bool(tool_result_payload.get("blocked")),
+                        preview=str(body)[:200],
+                    ))
                 # A tool just finished — another active-work boundary. Reset the
                 # no-progress deadline so a slow tool (a vision capture, an MCP
                 # round-trip) does not count as a stall.

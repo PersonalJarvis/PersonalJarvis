@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -527,6 +528,10 @@ class RealtimeToolBridge:
         self._wire_to_name: dict[str, str] = {}
         self._declarations: tuple[dict[str, Any], ...] = self._build_declarations()
         self._pending: _PendingConfirmation | None = None
+        self._execution_lock = asyncio.Lock()
+        self._confirmed_receipt: tuple[str, dict[str, Any]] | None = None
+        self._confirmed_user_text = ""
+        self._confirmed_arguments: dict[str, Any] = {}
         self._vetoed_tool = ""
         self._last_user_text = ""
 
@@ -767,7 +772,18 @@ class RealtimeToolBridge:
         self._declarations = self._build_declarations()
         return self._declarations != previous_declarations
 
+    @property
+    def has_pending_confirmation(self) -> bool:
+        return self._pending is not None
+
     async def handle_user_transcript(self, text: str) -> None:
+        # Duplicate final transcripts and repeated affirmations still refer to
+        # the same approved action. A new request releases the receipt.
+        if (
+            text != self._last_user_text
+            and classify_response(text, language=self._language) != "confirm"
+        ):
+            self._confirmed_receipt = None
         self._last_user_text = text
         self._vetoed_tool = ""
         pending = self._pending
@@ -782,6 +798,25 @@ class RealtimeToolBridge:
             self._pending = None
 
     async def execute(
+        self, *, wire_name: str, arguments: dict[str, Any], trace_id: UUID | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        # Provider retries can overlap a slow execute_confirmed. Serialize the
+        # check and execution so a second call cannot create another approval.
+        async with self._execution_lock:
+            name = self._declared_name_for_wire(wire_name)
+            receipt = self._confirmed_receipt
+            if receipt is not None and receipt[0] == name:
+                if (
+                    self._last_user_text == self._confirmed_user_text
+                    or arguments == self._confirmed_arguments
+                ):
+                    return name, dict(receipt[1])
+                self._confirmed_receipt = None
+            return await self._execute_once(
+                wire_name=wire_name, arguments=arguments, trace_id=trace_id
+            )
+
+    async def _execute_once(
         self,
         *,
         wire_name: str,
@@ -790,6 +825,18 @@ class RealtimeToolBridge:
     ) -> tuple[str, dict[str, Any]]:
         name = self._declared_name_for_wire(wire_name)
         name, arguments = self._maybe_reroute_music(name, arguments)
+        if name == "gmail":
+            from jarvis.society.lead_card import society_agent_names
+            from jarvis.society.message_routing import is_internal_message_request
+
+            if is_internal_message_request(self._last_user_text, society_agent_names()):
+                return name, {
+                    "success": False, "blocked": True,
+                    "error": "This request addresses an internal agent. Use message_agent "
+                    "with the teammate's name and message; do not send email or ask for "
+                    "email approval.",
+                }
+
         descriptor = self._descriptors.get(name)
         if descriptor is None:
             await self._publish_denied(wire_name, "unknown realtime tool")
@@ -834,11 +881,15 @@ class RealtimeToolBridge:
                 }
             result = await self._execute_confirmed(pending.trace_id)
             self._pending = None
-            return name, _bounded_result(
+            response = _bounded_result(
                 bool(getattr(result, "success", False)),
                 getattr(result, "output", None),
                 getattr(result, "error", None),
             )
+            self._confirmed_receipt = (name, response)
+            self._confirmed_user_text = self._last_user_text
+            self._confirmed_arguments = dict(arguments)
+            return name, response
 
         trace_id = trace_id or uuid4()
         result = await self._execute_tool(name, arguments, trace_id)

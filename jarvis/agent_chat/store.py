@@ -322,7 +322,7 @@ class AgentChatStore:
                 "VALUES (?, ?, ?, ?, ?)",
                 (session_id, seq, ts_ms, kind, json.dumps(payload, ensure_ascii=False)),
             )
-            if kind == "user_message":
+            if kind in {"user_message", "agent_message"}:
                 text = str(payload.get("text") or "")
                 self._conn.execute(
                     "UPDATE agent_chat_sessions SET message_count = message_count + 1, "
@@ -349,6 +349,19 @@ class AgentChatStore:
         out["seq"] = seq
         out["ts_ms"] = ts_ms
         return out
+
+    def incoming_message(self, session_id: str, message_id: str) -> dict[str, Any] | None:
+        """Fold a receipt and its status updates; old user messages stay untouched."""
+        receipt = None
+        for event in self.list_events(session_id):
+            payload = event["payload"]
+            if payload.get("message_id") != message_id:
+                continue
+            if event["kind"] == "agent_message":
+                receipt = dict(payload)
+            elif event["kind"] == "agent_message_status" and receipt is not None:
+                receipt.update(payload)
+        return receipt
 
     def list_events(self, session_id: str, *, after_seq: int = 0) -> list[dict[str, Any]]:
         with self._lock:

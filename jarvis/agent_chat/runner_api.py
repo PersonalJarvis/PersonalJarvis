@@ -180,9 +180,19 @@ def messages_from_events(events: list[dict[str, Any]]) -> list[BrainMessage]:
             out.append(BrainMessage(role="assistant", content=list(pending_blocks)))
         pending_blocks = []
 
+    internal: dict[str, dict[str, Any]] = {}
     for ev in events[-_HISTORY_MAX_EVENTS:]:
         kind = ev.get("kind")
         payload = ev.get("payload") or {}
+        if kind == "agent_message":
+            internal[str(payload.get("message_id"))] = payload
+            continue
+        if kind == "agent_message_status":
+            original = internal.pop(str(payload.get("message_id")), None)
+            if payload.get("status") == "delivered" and original is not None:
+                flush()
+                out.append(BrainMessage(role="user", content=str(original["prompt"])))
+            continue
         if kind == "user_message":
             flush()
             text = str(payload.get("text") or "")

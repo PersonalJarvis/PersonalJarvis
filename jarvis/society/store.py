@@ -38,6 +38,7 @@ def day_start_ms(at_ms: int) -> int:
     )
     return int(day.timestamp() * 1000)
 
+
 log = logging.getLogger(__name__)
 
 __all__ = ["SocietyStore", "SCHEMA_VERSION"]
@@ -259,6 +260,29 @@ class SocietyStore:
         stored = envelope.model_copy(update={"seq": int(row[0])})
         await self._bus.publish(stored)
         return stored
+
+    async def delivery_status(self, event_id: str) -> str:
+        async with self.conn.execute(
+            "SELECT status FROM society_deliveries WHERE event_id = ?", (event_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return str(row[0]) if row else "queued"
+
+    async def mark_delivery(self, event_id: str, status: str, error: str = "") -> None:
+        await self.conn.execute(
+            "UPDATE society_deliveries SET status = ?, error = ? WHERE event_id = ?",
+            (status, error, event_id),
+        )
+
+    async def pending_deliveries(self) -> list[SocietyEnvelope]:
+        async with self.conn.execute(
+            "SELECT e.seq, e.event_id, e.msg_type, e.from_agent, e.to_agent, e.trace_id, "
+            "e.parent_event_id, e.ts_ms, e.cost_usd, e.payload_json "
+            "FROM society_events e JOIN society_deliveries d ON d.event_id = e.event_id "
+            "WHERE d.status = 'queued' ORDER BY e.seq"
+        ) as cur:
+            rows = await cur.fetchall()
+        return [_row_to_envelope(row) for row in rows]
 
     async def events_since(self, after_seq: int = 0, *, limit: int = 1000) -> list[SocietyEnvelope]:
         cur = await self.conn.execute(

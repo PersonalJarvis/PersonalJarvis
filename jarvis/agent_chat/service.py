@@ -43,6 +43,7 @@ from jarvis.agent_chat.store import (
     AgentChatStore,
 )
 from jarvis.agent_chat.surface_kits import kit_for
+from jarvis.society.delivery import IncomingMessage
 
 log = logging.getLogger(__name__)
 
@@ -293,6 +294,23 @@ class AgentChatService:
 
     # ---------------------------------------------------------------- turns
 
+    async def receive_message(self, session_id: str, incoming: IncomingMessage) -> dict[str, Any]:
+        """Persist a trusted internal message even while its receiving chat is busy."""
+        if self.store.get_session(session_id) is None:
+            raise NoSuchSession(session_id)
+        existing = self.store.incoming_message(session_id, incoming.message_id)
+        if existing is not None:
+            return existing
+        await self._emit(session_id, make_event("agent_message", incoming.model_dump()))
+        return incoming.model_dump()
+
+    async def message_status(
+        self, session_id: str, message_id: str, status: str, *, turn_id: str = "", error: str = ""
+    ) -> None:
+        await self._emit(session_id, make_event("agent_message_status", {
+            "message_id": message_id, "status": status, "turn_id": turn_id, "error": error,
+        }))
+
     async def send(
         self,
         session_id: str,
@@ -300,6 +318,7 @@ class AgentChatService:
         attachments: list[dict[str, Any]] | None = None,
         *,
         tool_choices: list[str] | None = None,
+        incoming: IncomingMessage | None = None,
     ) -> str:
         """Persist the person's message and start the turn. Returns turn_id.
 
@@ -316,6 +335,12 @@ class AgentChatService:
         session = self.store.get_session(session_id)
         if session is None:
             raise NoSuchSession(session_id)
+        if incoming is not None:
+            receipt = await self.receive_message(session_id, incoming)
+            if receipt["status"] == "delivered":
+                return str(receipt.get("turn_id") or "")
+            if receipt["status"] == "failed":
+                raise ValueError("This internal message already failed")
         if self.is_running(session_id):
             raise SessionBusy(session_id)
         kit = kit_for(session.surface)
@@ -347,42 +372,47 @@ class AgentChatService:
         self._running[session_id] = run
 
         history = self.store.list_events(session_id)
-        await self._emit(
-            session_id,
-            make_event(
-                "user_message",
-                {
-                    # The full prompt: this is what was actually sent, and the
-                    # API runner rebuilds the conversation from these events —
-                    # storing only the sentence would lose the picture on the
-                    # NEXT turn (runner_api.messages_from_events).
-                    "text": prompt,
-                    **(
-                        {"tool_choices": [row.model_dump(mode="json") for row in selected]}
-                        if selected
-                        else {}
-                    ),
-                    # What the person typed, when it differs from the prompt.
-                    # Absent on an ordinary message, so nothing changes there.
-                    **({"typed": text} if attached else {}),
-                    **(
-                        {
-                            "attachments": [
-                                {
-                                    "name": item.name,
-                                    "kind": item.kind,
-                                    "described_by": item.described_by,
-                                    "note": item.note,
-                                }
-                                for item in attached
-                            ]
-                        }
-                        if attached
-                        else {}
-                    ),
-                },
-            ),
-        )
+        if incoming is not None:
+            await self.message_status(
+                session_id, incoming.message_id, "delivered", turn_id=turn_id
+            )
+        else:
+            await self._emit(
+                session_id,
+                make_event(
+                    "user_message",
+                    {
+                        # The full prompt: this is what was actually sent, and the
+                        # API runner rebuilds the conversation from these events —
+                        # storing only the sentence would lose the picture on the
+                        # NEXT turn (runner_api.messages_from_events).
+                        "text": prompt,
+                        **(
+                            {"tool_choices": [row.model_dump(mode="json") for row in selected]}
+                            if selected
+                            else {}
+                        ),
+                        # What the person typed, when it differs from the prompt.
+                        # Absent on an ordinary message, so nothing changes there.
+                        **({"typed": text} if attached else {}),
+                        **(
+                            {
+                                "attachments": [
+                                    {
+                                        "name": item.name,
+                                        "kind": item.kind,
+                                        "described_by": item.described_by,
+                                        "note": item.note,
+                                    }
+                                    for item in attached
+                                ]
+                            }
+                            if attached
+                            else {}
+                        ),
+                    },
+                ),
+            )
         runner = resolve_runner(session.provider, surface=session.surface)
         await self._emit(
             session_id,

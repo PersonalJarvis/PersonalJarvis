@@ -102,6 +102,20 @@ export interface AgentChatSession {
   pending_approvals?: string[];
 }
 
+export const INTERNAL_DELIVERY_STATUSES = ["queued", "delivered", "failed"] as const;
+export interface InternalMessage {
+  message_id: string;
+  sender_id: string;
+  sender_name: string;
+  sender_kind: "jarvis" | "agent" | "user";
+  text: string;
+  prompt: string;
+  trace_id: string;
+  status: (typeof INTERNAL_DELIVERY_STATUSES)[number];
+  turn_id: string;
+  error: string;
+}
+
 export interface AgentChatEvent {
   seq: number;
   ts_ms: number;
@@ -339,7 +353,11 @@ export async function sendAgentChatMessage(
     await fetch(`/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, attachments, ...(toolChoices.length ? { tool_choices: toolChoices } : {}) }),
+      body: JSON.stringify({
+        text,
+        attachments,
+        ...(toolChoices.length ? { tool_choices: toolChoices } : {}),
+      }),
     }),
     "send-failed",
   );

@@ -322,3 +322,20 @@ search. Existing native-tool OS limitations remain unchanged.
 TypeScript contract, read-only plan filtering and isolated one-key fake-provider
 turns. Tests run locally on Windows; physical macOS/Linux and live-provider fresh
 install verification are not claimed. See [the inventory and design](chat-tool-picker.md).
+
+
+## Internal agent messaging — RUB-14 (2026-09-07)
+
+The message tool, durable SQLite queue, task-local sender provenance, and chat
+receipts use the same Python/React implementation on Windows, macOS and Linux.
+There are no native imports, GPU requirements, or provider-name gates. The
+capability boundary is an available society runtime and receiving chat service;
+unavailable services retain queued messages, while an unavailable agent model
+reports delivery failure. Initialization remains lazy and serialized.
+
+`tests/contract/test_internal_messages.py` covers receipt replay, busy-recipient
+FIFO, restart recovery, sender identity, failure projection and SQL/Python/TS
+status parity. Realtime confirmation/echo cases use fakes with no microphone
+or provider account. Native macOS execution and a fresh single-key live-provider
+run remain release validation requirements; running this portable contract on
+one operating system does not establish those results.

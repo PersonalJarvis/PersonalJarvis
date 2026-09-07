@@ -10,20 +10,21 @@
  * stays a compact row.
  */
 import { useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { Check, ChevronDown, ChevronRight } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 
 import type { ToolCall } from "./types";
 
 /**
  * The risk ladder, read left to right: two quiet tiers, then the two that want
- * a human. `ask` is degraded (someone has to answer), `block` is a fault. The
- * old table painted `monitor` sky and `ask` in near-white, which made the
- * second-quietest tier the loudest thing in the row.
+ * a human. `ask` is degraded (someone has to answer), `block` is a fault — and
+ * the two quiet ones stay ink, because "safe" is not a status worth a colour.
  */
-const RISK_STYLE: Record<string, string> = {
-  safe: "text-faint-foreground",
+const RISK_INK: Record<string, string> = {
+  safe: "text-foreground-faint",
   monitor: "text-muted-foreground",
   ask: "text-warning",
   block: "text-destructive",
@@ -34,9 +35,7 @@ export function ToolTable({ tools }: { tools: ToolCall[] }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
   if (tools.length === 0) {
     return (
-      <span className="text-body text-muted-foreground">
-        {t("run_inspector.tools.empty")}
-      </span>
+      <p className="text-base text-muted-foreground">{t("run_inspector.tools.empty")}</p>
     );
   }
   const toggle = (i: number) =>
@@ -48,49 +47,48 @@ export function ToolTable({ tools }: { tools: ToolCall[] }) {
     });
 
   return (
-    <ul className="space-y-1" data-testid="tool-table">
+    <ul className="space-y-0.5" data-testid="tool-table">
       {tools.map((tool, i) => {
         const detail = tool.command || tool.output || tool.error_line;
         const isOpen = open.has(i);
+        const Chevron = isOpen ? ChevronDown : ChevronRight;
         return (
-          <li
-            key={`${tool.name}-${i}`}
-            data-tool={tool.name}
-            data-success={tool.success}
-            className="overflow-hidden rounded-md"
-          >
+          <li key={`${tool.name}-${i}`} data-tool={tool.name} data-success={tool.success}>
             <button
               type="button"
               onClick={() => detail && toggle(i)}
-              className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-micro transition-colors ${
-                detail ? "hover:bg-secondary" : "cursor-default"
-              }`}
+              aria-expanded={detail ? isOpen : undefined}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                detail ? "hover:bg-secondary" : "cursor-default",
+              )}
             >
-              <span className="w-3 shrink-0 text-muted-foreground">
-                {detail ? (
-                  isOpen ? (
-                    <ChevronDown className="h-3 w-3" />
-                  ) : (
-                    <ChevronRight className="h-3 w-3" />
-                  )
-                ) : null}
+              <span className="w-4 shrink-0 text-muted-foreground">
+                {detail && <Chevron aria-hidden className="h-4 w-4" />}
               </span>
               <span className="min-w-0 flex-1 truncate font-mono text-foreground">
                 {tool.name}
               </span>
               {tool.caller && (
-                <span className="shrink-0 text-muted-foreground">{tool.caller}</span>
+                <span className="shrink-0 truncate text-muted-foreground">
+                  {tool.caller}
+                </span>
               )}
               {tool.risk_tier && (
                 <span
-                  className={`shrink-0 ${RISK_STYLE[tool.risk_tier] ?? "text-muted-foreground"}`}
+                  className={cn(
+                    "shrink-0",
+                    RISK_INK[tool.risk_tier] ?? "text-muted-foreground",
+                  )}
                 >
                   {tool.risk_tier}
                 </span>
               )}
               {tool.approved_by && (
-                <span className="shrink-0 text-muted-foreground">
-                  ✓ {tool.approved_by}
+                <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
+                  <Check aria-hidden className="h-3.5 w-3.5" />
+                  {tool.approved_by}
                 </span>
               )}
               {tool.duration_ms != null && (
@@ -98,20 +96,18 @@ export function ToolTable({ tools }: { tools: ToolCall[] }) {
                   {tool.duration_ms}ms
                 </span>
               )}
-              <span
-                className={`shrink-0 font-mono tabular-nums ${
-                  tool.success ? "text-success" : "text-destructive"
-                }`}
-              >
-                {tool.exit_code != null
-                  ? `exit ${tool.exit_code}`
-                  : tool.success
-                    ? "ok"
-                    : "fail"}
-              </span>
+              <Badge variant={tool.success ? "success" : "destructive"} className="shrink-0">
+                <span className="font-mono tabular-nums">
+                  {tool.exit_code != null
+                    ? `exit ${tool.exit_code}`
+                    : tool.success
+                      ? "ok"
+                      : "fail"}
+                </span>
+              </Badge>
             </button>
             {isOpen && detail && (
-              <div className="space-y-stack px-3 pb-2 pt-1.5">
+              <div className="space-y-2 py-2 pl-8 pr-2">
                 {tool.command && (
                   <Field label={t("run_inspector.tools.command")} value={tool.command} />
                 )}
@@ -145,11 +141,12 @@ function Field({
 }) {
   return (
     <div>
-      <div className="mb-1 text-micro text-muted-foreground">{label}</div>
+      <div className="mb-1 text-xs text-muted-foreground">{label}</div>
       <pre
-        className={`overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-secondary px-2 py-1.5 font-mono text-micro [overflow-wrap:anywhere] ${
-          tone === "error" ? "text-destructive" : "text-foreground"
-        }`}
+        className={cn(
+          "max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-secondary px-3 py-2 font-mono text-sm [overflow-wrap:anywhere]",
+          tone === "error" ? "text-destructive" : "text-foreground",
+        )}
       >
         {value}
       </pre>

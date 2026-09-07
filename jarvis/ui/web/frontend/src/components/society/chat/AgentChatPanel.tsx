@@ -1,3 +1,4 @@
+import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBubble";
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
  * 2026-09-02): bubbles, a time stamp, one pill-shaped composer with a "+"
@@ -544,13 +545,15 @@ function Transcript({
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
       <div className={cn(CHAT_MEASURE, "flex flex-col gap-2")}>
         {items.map((item) => {
-          const ts = item.type === "user" ? item.tsMs : item.type === "turn" ? item.startedMs : 0;
+          const ts = item.type === "user" || item.type === "internal" ? item.tsMs : item.type === "turn" ? item.startedMs : 0;
           const stamp = ts && ts - lastStamp > STAMP_GAP_MS ? ts : 0;
           if (stamp) lastStamp = ts;
           return (
             <div key={item.id} className="flex flex-col gap-2">
               {stamp ? <TimeStamp ms={stamp} /> : null}
-              {item.type === "user" ? (
+              {item.type === "internal" ? (
+                <InternalMessageBubble item={item} />
+              ) : item.type === "user" ? (
                 <UserBubble item={item} />
               ) : item.type === "turn" ? (
                 <TurnBubble item={item} onDecide={onDecide} />

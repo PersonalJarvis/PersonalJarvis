@@ -10,25 +10,27 @@
  *
  * Completeness only becomes readable through the lane split (speech / brain /
  * tool / vision / …) plus a text filter, so a 500-event Computer-Use turn is
- * still navigable.
+ * still navigable — and the rows scroll inside their OWN box, so a long stream
+ * never turns the whole view into one endless page.
  */
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Copy, Search } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { robustCopy } from "@/lib/clipboard";
+import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
 import type { RawEvent } from "./types";
 
 /**
- * Nine lanes used to mean nine hues — slate, violet, fuchsia, sky, cyan, rose
- * and near-white — which spent the product's entire colour budget on a filter
- * strip and left the one lane that matters (`error`) no louder than the rest.
- *
- * The lane NAME is printed in the chip and the event `kind` is printed in the
- * row, so the words already carry the distinction. Only `error` keeps a hue,
- * because only `error` is a status.
+ * Nine lanes used to mean nine hues, which spent the product's entire colour
+ * budget on a filter strip and left the one lane that matters (`error`) no
+ * louder than the rest. The lane NAME is printed in the chip and the event
+ * `kind` is printed in the row, so the words already carry the distinction.
+ * Only `error` keeps a hue, because only `error` is a status.
  */
 function isFaultLane(category: string): boolean {
   return category === "error";
@@ -73,9 +75,9 @@ export function EventStream({
 
   if (events.length === 0) {
     return (
-      <span className="text-body text-muted-foreground">
+      <p className="text-base text-muted-foreground">
         {t("run_inspector.stream.empty")}
-      </span>
+      </p>
     );
   }
 
@@ -110,7 +112,7 @@ export function EventStream({
   };
 
   return (
-    <div className="space-y-stack" data-testid="event-stream">
+    <div className="space-y-3" data-testid="event-stream">
       {/* Lane filters + search */}
       <div className="flex flex-wrap items-center gap-1.5">
         {Object.entries(counts)
@@ -118,94 +120,107 @@ export function EventStream({
           .map(([cat, n]) => {
             // With no explicit selection every lane is on; a lane switched off
             // recedes rather than disappears, so the strip keeps its shape.
-            const active = lanes.size === 0 || lanes.has(cat);
+            const on = lanes.size === 0 || lanes.has(cat);
+            const picked = lanes.has(cat);
             return (
               <button
                 key={cat}
                 type="button"
+                aria-pressed={picked}
                 data-testid={`lane-${cat}`}
-                data-active={lanes.has(cat)}
+                data-active={picked}
                 onClick={() => toggleLane(cat)}
-                className={`inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-micro font-medium transition-opacity ${
-                  isFaultLane(cat) ? "text-destructive" : "text-foreground"
-                } ${active ? "" : "opacity-40"}`}
+                className={cn(
+                  "inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-xs font-medium transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  picked
+                    ? "border-accent/20 bg-accent-soft text-accent"
+                    : on
+                      ? "border-border bg-secondary text-muted-foreground hover:text-foreground"
+                      : "border-border bg-transparent text-foreground-faint hover:text-muted-foreground",
+                  isFaultLane(cat) && on && !picked && "text-destructive",
+                )}
               >
                 {cat}
-                <span className="tabular-nums text-muted-foreground">{n}</span>
+                <span className="tabular-nums opacity-70">{n}</span>
               </button>
             );
           })}
         <div className="ml-auto flex items-center gap-1.5">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-            <input
-              type="text"
+            <Search
+              aria-hidden
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
               value={needle}
               onChange={(e) => setNeedle(e.target.value)}
               placeholder={t("run_inspector.stream.filter")}
+              aria-label={t("run_inspector.stream.filter")}
               data-testid="event-filter"
-              className="h-7 w-40 rounded-md bg-input pl-6 pr-2 text-micro text-foreground outline-none placeholder:text-faint-foreground focus:ring-2 focus:ring-border-strong"
+              className="h-8 w-44 pl-8 text-sm"
             />
           </div>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={copyStream}
             title={t("run_inspector.stream.copy")}
-            className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-micro text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
-            <Copy className="h-3 w-3" />
+            <Copy aria-hidden />
             JSONL
-          </button>
+          </Button>
         </div>
       </div>
 
       {truncated && (
-        <div className="rounded-md bg-secondary px-2 py-1 text-micro text-warning">
+        <p className="rounded-md border border-warning/20 bg-warning/[0.12] px-3 py-2 text-sm text-warning">
           {t("run_inspector.stream.truncated")}
-        </div>
+        </p>
       )}
 
-      {/* Rows. Fill on hover is the separation device — no rules between them. */}
-      <ol>
+      {/* Rows. Their own scroll box: a 500-event turn must not push the run
+          detail into a page-long scroll. Fill on hover is the separation
+          device — no rules between them. */}
+      <ol className="max-h-[26rem] overflow-y-auto scrollbar-jarvis">
         {visible.map((e) => {
           const isOpen = open.has(e.seq);
           const hasPayload = Object.keys(e.payload ?? {}).length > 0;
+          const Chevron = isOpen ? ChevronDown : ChevronRight;
           return (
             <li key={`${e.seq}-${e.ts_ms}`} data-kind={e.kind} data-category={e.category}>
               <button
                 type="button"
                 onClick={() => hasPayload && toggleRow(e.seq)}
-                className={`flex w-full items-start gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-secondary ${
-                  hasPayload ? "" : "cursor-default"
-                }`}
+                aria-expanded={hasPayload ? isOpen : undefined}
+                className={cn(
+                  "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-secondary",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  !hasPayload && "cursor-default",
+                )}
               >
-                <span className="mt-[3px] w-4 shrink-0 text-muted-foreground">
-                  {hasPayload ? (
-                    isOpen ? (
-                      <ChevronDown className="h-3 w-3" />
-                    ) : (
-                      <ChevronRight className="h-3 w-3" />
-                    )
-                  ) : null}
+                <span className="mt-0.5 w-4 shrink-0 text-muted-foreground">
+                  {hasPayload && <Chevron aria-hidden className="h-3.5 w-3.5" />}
                 </span>
-                <span className="w-16 shrink-0 text-right font-mono text-micro tabular-nums text-muted-foreground">
+                <span className="w-16 shrink-0 text-right font-mono text-sm tabular-nums text-muted-foreground">
                   {fmtOffset(e.offset_ms)}
                 </span>
                 <span
-                  className={`w-48 shrink-0 font-mono text-micro ${
-                    isFaultLane(e.category) ? "text-destructive" : "text-foreground"
-                  }`}
+                  className={cn(
+                    "w-48 shrink-0 font-mono text-sm",
+                    isFaultLane(e.category) ? "text-destructive" : "text-foreground",
+                  )}
                 >
                   {e.kind}
                 </span>
                 {/* No truncation: the summary IS the information. Long lines
                     wrap instead of being cut at the container edge. */}
-                <span className="min-w-0 flex-1 break-words text-micro text-muted-foreground [overflow-wrap:anywhere]">
+                <span className="min-w-0 flex-1 break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">
                   {e.summary}
                 </span>
               </button>
               {isOpen && (
-                <pre className="overflow-x-auto rounded-md bg-secondary px-3 py-2 font-mono text-micro text-muted-foreground">
+                <pre className="mx-2 mb-1 overflow-x-auto rounded-md bg-secondary px-3 py-2 font-mono text-sm text-muted-foreground">
                   {JSON.stringify(e.payload, null, 2)}
                 </pre>
               )}
@@ -214,11 +229,11 @@ export function EventStream({
         })}
       </ol>
 
-      <div className="text-micro tabular-nums text-muted-foreground">
+      <p className="text-xs tabular-nums text-muted-foreground">
         {visible.length === events.length
           ? `${events.length} ${t("run_inspector.stream.events")}`
           : `${visible.length} / ${events.length} ${t("run_inspector.stream.events")}`}
-      </div>
+      </p>
     </div>
   );
 }

@@ -34,13 +34,25 @@ export const CAMERA_DISTANCE_M = 640;
 export const CAMERA_FAR_M = 1500;
 
 /**
- * How far the view may be tilted. Flatter than `MIN` and the island hides
- * behind its own hills while a pointer drag pans absurdly far (the pan
- * stretches by 1 / sin(pitch)); steeper than `MAX` and the houses lose their
- * fronts and the world reads as a flat map.
+ * How far the view may be tilted: the whole quarter circle, on the
+ * maintainer's call (2026-09-03) — 0° stands on the horizon and looks along
+ * the sea, 90° is the flat map straight down. Both ends are legitimate views,
+ * not accidents, so nothing is clamped away from the viewer.
+ *
+ * Two places do have to hold at the ends, and they do it here rather than
+ * pretending the range is smaller:
+ *  - the vertical pan stretches by 1 / sin(pitch), which diverges at 0°, so
+ *    `PITCH_SIN_FLOOR` caps that stretch (`groundStretch`);
+ *  - `lookAt` has no defined roll when the camera is exactly overhead, so the
+ *    rig keeps a hair of tilt (`LOOK_LIMIT_DEG`); at 1/20 of a degree it is
+ *    the same picture, and the camera does not snap to a random heading.
  */
-export const MIN_PITCH_DEG = 20;
-export const MAX_PITCH_DEG = 80;
+export const MIN_PITCH_DEG = 0;
+export const MAX_PITCH_DEG = 90;
+/** sin(4°): the flattest view still pans at a usable speed instead of diverging. */
+export const PITCH_SIN_FLOOR = 0.0698;
+/** The steepest tilt the camera itself is built at, so `lookAt` stays defined. */
+export const LOOK_LIMIT_DEG = 89.95;
 
 /** Yaw the compass and the keyboard step in — a quarter turn per press. */
 export const YAW_STEP_DEG = 45;
@@ -87,6 +99,15 @@ export function cameraOffset(
     round(distance * Math.sin(p)),
     round(distance * Math.cos(p) * Math.cos(y)),
   ];
+}
+
+/**
+ * How much further one screen metre reaches across the ground than across the
+ * screen, at this tilt: 1 at straight down, growing as the view flattens.
+ * Capped at `PITCH_SIN_FLOOR` so the horizon view still pans and frames.
+ */
+export function groundStretch(pitchDeg = CAMERA_PITCH_DEG): number {
+  return 1 / Math.max(PITCH_SIN_FLOOR, Math.sin(pitchDeg * DEG));
 }
 
 /** Half extents of the orthographic frustum for a visible ground width. */

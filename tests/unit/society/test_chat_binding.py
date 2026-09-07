@@ -17,6 +17,14 @@ from jarvis.society.runtime import SocietyRuntime
 
 
 class FakeService:
+    from jarvis.agent_chat.service import AgentChatService
+
+    receive_message = AgentChatService.receive_message
+    message_status = AgentChatService.message_status
+
+    async def _emit(self, session_id, event):
+        self.store.append_event(session_id, event)
+
     def __init__(self, store: AgentChatStore) -> None:
         self.store = store
         self.sent: list[tuple[str, str]] = []
@@ -25,7 +33,7 @@ class FakeService:
     def is_running(self, session_id: str) -> bool:
         return session_id in self.busy
 
-    async def send(self, session_id: str, text: str, attachments=None) -> str:
+    async def send(self, session_id: str, text: str, attachments=None, *, incoming=None) -> str:
         self.sent.append((session_id, text))
         return "turn-1"
 
@@ -152,7 +160,7 @@ async def test_scheduler_delivers_through_the_hook(world):
     rt.set_deliver(make_deliver_hook(lambda: svc, lambda: cfg))
     await rt.say(from_agent="scout", to_agent="archivist", text="ping")
     assert [s[0] for s in svc.sent] == ["society:archivist"]
-    assert svc.sent[0][1].startswith("[say from scout]")
+    assert svc.sent[0][1].startswith("[say from Scout]")
 
 
 def test_unfiltered_session_list_hides_society_sessions(tmp_path: Path):
@@ -190,7 +198,7 @@ class FakeTurnService(FakeService):
     def unsubscribe(self, session_id: str, q) -> None:
         self.queues.get(session_id, []).remove(q)
 
-    async def send(self, session_id: str, text: str, attachments=None) -> str:
+    async def send(self, session_id: str, text: str, attachments=None, *, incoming=None) -> str:
         self.sent.append((session_id, text))
         return "turn-1"
 
