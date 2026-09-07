@@ -57,6 +57,7 @@ class _ReviewBrain:
         self.calls = 0
         self.requests: list[BrainRequest] = []
         self.judge_requests: list[BrainRequest] = []
+        self.alias_requests: list[BrainRequest] = []
 
     async def complete(self, request: BrainRequest) -> AsyncIterator[BrainDelta]:
         self.calls += 1
@@ -70,7 +71,10 @@ class _ReviewBrain:
                 ),
             )
         )
-        if "completeness sweep" in text:
+        if "You generate SEARCH ALIASES" in text:
+            self.alias_requests.append(request)
+            payload = "[]"
+        elif "completeness sweep" in text:
             payload = "[]"
         elif "Evidence user turn [" in text:
             self.judge_requests.append(request)
@@ -422,7 +426,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 session_id="call-4",
             )
         )
-        await _wait_for_idle(brain, journal, calls=12)
+        await _wait_for_idle(brain, journal, calls=15)
         await _speak_and_hang_up(
             _turn(
                 turn_id="assistant-guess-turn",
@@ -432,7 +436,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 session_id="call-5",
             )
         )
-        await _wait_for_idle(brain, journal, calls=15)
+        await _wait_for_idle(brain, journal, calls=18)
     finally:
         bridge.stop()
         journal.close()
@@ -464,6 +468,8 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     assert "Evidence user turn [assistant-guess-turn]" in final_judge_prompt
     assert "What do you think I own?" in final_judge_prompt
     assert "Perhaps you own a demo glider." not in final_judge_prompt
-    # 5 deferred turn extractions + 5 judge rounds + 5 session sweeps.
-    assert brain.calls == 15
+    # 5 deferred turn extractions + 5 judge rounds + 5 session sweeps,
+    # plus one separate alias lookup for each page that was written.
+    assert len(brain.alias_requests) == 3
+    assert brain.calls == 15 + len(brain.alias_requests)
     assert journal.backlog_count() == 0
