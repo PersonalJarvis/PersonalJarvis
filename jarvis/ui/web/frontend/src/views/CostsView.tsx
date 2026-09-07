@@ -14,6 +14,7 @@
  * separate ledger that could disagree with them.
  */
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   AudioLines,
@@ -53,7 +54,7 @@ import {
   TableHead,
   TableRow,
 } from "@/components/extensions/primitives";
-import { CostTrendChart, type TrendMetric } from "@/components/costs/CostTrendChart";
+import { CostTrendPanel } from "@/components/costs/CostTrendPanel";
 import {
   dayBoundsMs,
   formatBucketFull,
@@ -103,9 +104,9 @@ const ENTRY_PAGE = 50;
 
 export function CostsView() {
   const t = useT();
+  const queryClient = useQueryClient();
   const [filters, setFilters] = useState<CostFilters>(EMPTY_FILTERS);
   const [currency, setCurrency] = useState<Currency>("usd");
-  const [metric, setMetric] = useState<TrendMetric>("cost");
   const [dimension, setDimension] = useState<Dimension>("provider");
   const [searchOpen, setSearchOpen] = useState(false);
   const [ratesOpen, setRatesOpen] = useState(false);
@@ -247,7 +248,7 @@ export function CostsView() {
               <IconButton
                 label={t("costs_view.refresh")}
                 busy={summary.isFetching}
-                onClick={() => void summary.refetch()}
+                onClick={() => void queryClient.refetchQueries({ queryKey: ["costs", "summary"], type: "active" })}
               >
                 <RefreshCw className="h-4 w-4" />
               </IconButton>
@@ -440,40 +441,22 @@ export function CostsView() {
         </div>
 
         {/* Trend ------------------------------------------------------- */}
-        <Panel className="p-4">
-          <PanelHeader
-            title={t("costs_view.trend_title")}
-            subtitle={
-              data
-                ? fill(t("costs_view.trend_subtitle"), {
-                    from: formatBucketFull(data.series[0]?.key ?? "", data.bucket),
-                    to: formatBucketFull(data.series[data.series.length - 1]?.key ?? "", data.bucket),
-                  })
-                : ""
-            }
-            actions={
-              <SegmentedFilter<TrendMetric>
-                label={t("costs_view.metric_label")}
-                value={metric}
-                onChange={setMetric}
-                options={[
-                  { id: "cost", label: t("costs_view.metric_cost") },
-                  { id: "tokens", label: t("costs_view.metric_tokens") },
-                ]}
-              />
-            }
-          />
-          <div className="mt-3 h-[220px]">
-            <CostTrendChart
-              series={data?.series ?? []}
-              bucket={data?.bucket ?? "day"}
-              metric={metric}
-              currency={currency}
-              eurPerUsd={eurPerUsd}
-              loading={summary.isLoading}
-            />
-          </div>
-        </Panel>
+        <CostTrendPanel
+          filters={filters}
+          summary={data}
+          loading={summary.isLoading}
+          title={t("costs_view.trend_title")}
+          subtitle={
+            data
+              ? fill(t("costs_view.trend_subtitle"), {
+                  from: formatBucketFull(data.series[0]?.key ?? "", data.bucket),
+                  to: formatBucketFull(data.series[data.series.length - 1]?.key ?? "", data.bucket),
+                })
+              : ""
+          }
+          currency={currency}
+          eurPerUsd={eurPerUsd}
+        />
 
         {/* Breakdown --------------------------------------------------- */}
         <Panel>
@@ -1520,7 +1503,7 @@ function DayReport({
   onBack: () => void;
 }) {
   const t = useT();
-  const [metric, setMetric] = useState<TrendMetric>("cost");
+  const queryClient = useQueryClient();
   const [sort, setSort] = useState<EntrySort>("cost");
   const [visible, setVisible] = useState(ENTRY_PAGE);
 
@@ -1574,7 +1557,7 @@ function DayReport({
             <IconButton
               label={t("costs_view.refresh")}
               busy={summary.isFetching}
-              onClick={() => void summary.refetch()}
+              onClick={() => void queryClient.refetchQueries({ queryKey: ["costs", "summary"], type: "active" })}
             >
               <RefreshCw className="h-4 w-4" />
             </IconButton>
@@ -1633,33 +1616,16 @@ function DayReport({
         </div>
 
         {/* Hour by hour ------------------------------------------------- */}
-        <Panel className="p-4">
-          <PanelHeader
-            title={t("costs_view.day_hours_title")}
-            subtitle={t("costs_view.day_hours_subtitle")}
-            actions={
-              <SegmentedFilter<TrendMetric>
-                label={t("costs_view.metric_label")}
-                value={metric}
-                onChange={setMetric}
-                options={[
-                  { id: "cost", label: t("costs_view.metric_cost") },
-                  { id: "tokens", label: t("costs_view.metric_tokens") },
-                ]}
-              />
-            }
-          />
-          <div className="mt-3 h-[220px]">
-            <CostTrendChart
-              series={data?.series ?? []}
-              bucket="hour"
-              metric={metric}
-              currency={currency}
-              eurPerUsd={eurPerUsd}
-              loading={summary.isLoading}
-            />
-          </div>
-        </Panel>
+        <CostTrendPanel
+          filters={dayFilters}
+          summary={data}
+          loading={summary.isLoading}
+          title={t("costs_view.day_hours_title")}
+          subtitle={t("costs_view.day_hours_subtitle")}
+          currency={currency}
+          eurPerUsd={eurPerUsd}
+          bucket="hour"
+        />
 
         {/* Which models ------------------------------------------------ */}
         <Panel>

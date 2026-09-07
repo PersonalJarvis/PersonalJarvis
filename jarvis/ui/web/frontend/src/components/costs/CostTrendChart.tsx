@@ -85,7 +85,11 @@ export function CostTrendChart({
   // entry in Recharts, and a legend full of zeroes reads as missing data.
   const roles = useMemo(() => {
     const present = new Set<string>();
-    for (const b of series) for (const k of Object.keys(b.breakdown ?? {})) present.add(k);
+    for (const b of series) {
+      for (const [role, cost] of Object.entries(b.breakdown ?? {})) {
+        if (cost > 0) present.add(role);
+      }
+    }
     return ROLE_ORDER.filter((r) => present.has(r));
   }, [series]);
 
@@ -248,7 +252,10 @@ function TrendTooltip(props: {
 }) {
   const { active, payload, label, bucket, metric, currency, eurPerUsd, stacks, t } = props;
   if (!active || !payload || payload.length === 0) return null;
-  const total = payload.reduce((sum, p) => sum + (p.value ?? 0), 0);
+  const total = stacks.reduce(
+    (sum, stack) => sum + (payload.find((p) => p.dataKey === stack.dataKey)?.value ?? 0),
+    0,
+  );
   const fmt = (v: number) =>
     metric === "cost" ? formatMoney(v, eurPerUsd, currency) : formatTokens(v);
 

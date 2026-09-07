@@ -4901,6 +4901,7 @@
     "stat_gap_none": "Jeder Token ist bepreist",
     "trend_title": "Zeitlicher Verlauf",
     "trend_subtitle": "{from} → {to}",
+    "chart_include_ide": "Agentic IDE einbeziehen",
     "metric_label": "Kennzahl",
     "metric_cost": "Kosten",
     "metric_tokens": "Tokens",

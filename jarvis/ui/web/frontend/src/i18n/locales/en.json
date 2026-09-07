@@ -4934,6 +4934,7 @@
     "stat_gap_none": "Every token is priced",
     "trend_title": "Over time",
     "trend_subtitle": "{from} → {to}",
+    "chart_include_ide": "Include Agentic IDE",
     "metric_label": "Metric",
     "metric_cost": "Cost",
     "metric_tokens": "Tokens",

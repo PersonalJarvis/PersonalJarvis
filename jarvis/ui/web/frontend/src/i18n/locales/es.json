@@ -4901,6 +4901,7 @@
     "stat_gap_none": "Todos los tokens tienen precio",
     "trend_title": "Evolución",
     "trend_subtitle": "{from} → {to}",
+    "chart_include_ide": "Incluir Agentic IDE",
     "metric_label": "Métrica",
     "metric_cost": "Coste",
     "metric_tokens": "Tokens",
