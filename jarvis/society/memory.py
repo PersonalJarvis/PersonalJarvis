@@ -3,8 +3,8 @@
 ``docs/agent-society/memory-house.md`` §3. The Obsidian vault is the memory;
 this service is the only code path an agent's memory goes through:
 
-* ``head``            the ambient section of the briefing (memory page head + shared titles)
-* ``recall``          a ranked, bounded, labelled lookup: own > shared > user > others' unreviewed
+* ``head``            the agent's own memory in the briefing
+* ``recall``          a ranked, bounded lookup in the agent's own notes only
 * ``remember``        append a durable fact to the agent's ``memory.md`` (own, free)
 * ``note``            a dated work note under ``society/<agent>/`` (own, free)
 * ``propose_shared``  a note plus an approval item "promote to shared knowledge"
@@ -17,9 +17,9 @@ board and reports activity to the checkpoint engine, so the ledger and the
 island both see "Scout remembered X". Agents never write outside their own
 folder; ``shared/`` is written by ``promote`` only, which the approvals route
 calls. Secrets are refused at the door (AP-2/AP-12). Rankings are
-deterministic and dependency-free; the user's own vault pages ride along
-through ``VaultSearch`` when its FTS index exists and are skipped quietly when
-it does not.
+deterministic and dependency-free. Existing shared pages and their management
+operations remain available to the user, but are not injected or retrieved by
+ordinary agents. Deliberate user-wiki access uses the separately granted wiki tools.
 """
 
 from __future__ import annotations
@@ -382,17 +382,10 @@ class SocietyMemory:
                 lines.append(clipped)
         if len(lines) == 1:
             lines.append("Nothing remembered yet.")
-        shared = self._shared_titles(vault)
-        if shared:
-            lines.append(
-                "Shared team knowledge (search it with society_memory_recall): "
-                + "; ".join(shared[:12])
-                + "."
-            )
         lines.append(
-            "Look things up with society_memory_recall before asking; keep durable facts with "
-            "society_wiki_note (kind memory), findings as kind note, and propose team knowledge "
-            "with kind shared — the user reviews it."
+            "Recall your own notes with society_memory_recall; keep personal durable facts with "
+            "society_wiki_note (kind memory) and your findings as kind note. "
+            "Other agents' notes and shared knowledge are not part of your memory."
         )
         return "\n".join(lines)
 
@@ -405,7 +398,7 @@ class SocietyMemory:
         vault = self.root(root)
         qtokens = _tokens(query)
         hits: list[MemoryHit] = []
-        for page in self._pages(vault):
+        for page in self._pages(vault, agent_id=agent.agent_id):
             scope = self._scope_of(page, agent.agent_id)
             title = page.fm.get("title") or page.path.stem
             ptokens = _tokens(title + "\n" + page.body)
@@ -429,7 +422,6 @@ class SocietyMemory:
                     updated_ms=page.updated_ms,
                 )
             )
-        hits.extend(self._user_hits(vault, query, k))
         hits.sort(key=lambda h: (-h.score, -h.updated_ms, h.path))
         picked = hits[: max(1, int(k))]
         await self._touch(
@@ -550,8 +542,8 @@ class SocietyMemory:
             except Exception:  # noqa: BLE001 — the world is a projection; it never breaks memory
                 log.debug("society memory: activity hook failed", exc_info=True)
 
-    def _pages(self, vault: Path) -> list[_Page]:
-        folder = vault / "society"
+    def _pages(self, vault: Path, *, agent_id: str | None = None) -> list[_Page]:
+        folder = vault / "society" if agent_id is None else self.namespace(vault, agent_id)
         if not folder.is_dir():
             return []
         pages: list[_Page] = []

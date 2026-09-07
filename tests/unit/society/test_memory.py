@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -48,10 +49,12 @@ async def test_pages_are_schema_valid_and_scoped(rt: SocietyRuntime, tmp_path: P
     assert page.page_type == "society"
 
 
-async def test_recall_ranks_own_then_shared_then_others_with_labels(
-    rt: SocietyRuntime, tmp_path: Path
+@pytest.mark.parametrize("knowledge_scope", ["own", "shared"])
+async def test_recall_only_reads_own_notes_and_preserves_existing_vault(
+    rt: SocietyRuntime, tmp_path: Path, knowledge_scope: str
 ):
     vault = tmp_path / "vault"
+    await rt.roster.update("scout", {"knowledge_scope": knowledge_scope})
     scout = await rt.roster.get("scout")
     archivist = await rt.roster.get("archivist")
     await rt.memory.note(scout, "Hetzner notes", "Hetzner hosting is cheap.", root=vault)
@@ -63,16 +66,18 @@ async def test_recall_ranks_own_then_shared_then_others_with_labels(
     )
     await rt.memory.promote(got["knowledge_id"], root=vault)
     hits = await rt.memory.recall(scout, "Hetzner hosting", k=5, root=vault)
-    scopes = [h.scope for h in hits]
-    assert scopes[0] == "own"
-    assert scopes.index("shared") < scopes.index("other")
-    other = next(h for h in hits if h.scope == "other" and h.origin == "web")
-    assert other.label() == "unreviewed · web · archivist" and other.reviewed is False
-    shared = next(h for h in hits if h.scope == "shared")
-    assert shared.path.startswith("society/shared/") and shared.reviewed is True
+    assert len(hits) == 1 and hits[0].scope == "own"
+    assert hits[0].path.startswith("society/scout/")
+    before = {p: p.read_bytes() for p in vault.rglob("*.md")}
+    assert any("society/shared/" in p.as_posix() for p in before)
+    # An unreadable foreign page proves recall does not even scan the other namespace.
+    foreign = vault / "society" / "archivist" / "unreadable.md"
+    foreign.write_bytes(b"\xff")
+    assert len(await rt.memory.recall(scout, "Hetzner hosting", root=vault)) == 1
+    assert all(p.read_bytes() == content for p, content in before.items())
 
 
-async def test_head_shows_own_memory_and_shared_titles_never_unreviewed(
+async def test_head_shows_only_own_memory_without_shared_prompts(
     rt: SocietyRuntime, tmp_path: Path
 ):
     vault = tmp_path / "vault"
@@ -87,10 +92,43 @@ async def test_head_shows_own_memory_and_shared_titles_never_unreviewed(
     assert "Web claim" not in head and "Team rule" not in head  # not reviewed yet
     await rt.memory.promote(got["knowledge_id"], root=vault)
     head = rt.memory.head(scout, root=vault)
-    assert "Team rule" in head and "Web claim" not in head
+    assert "Team rule" not in head and "Web claim" not in head
+    assert "kind shared" not in head
     # And the briefing carries it as its own section.
     briefing = build_briefing(scout, [], [scout], memory=head)
     assert "## Your memory" in briefing and "Prefers short answers." in briefing
+
+
+async def test_user_wiki_stays_available_only_through_explicit_wiki_lookup(
+    rt: SocietyRuntime, tmp_path: Path
+):
+    from jarvis.memory.wiki.fts_index import ensure_schema, index_vault
+    from jarvis.memory.wiki.search import VaultSearch
+    from jarvis.plugins.tool.wiki_recall import WikiRecallTool
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    page = vault / "hosting.md"
+    page.write_text(
+        "---\ntype: note\n---\n# Hosting\nHetzner hosts the project.\n", encoding="utf-8"
+    )
+    original = page.read_bytes()
+    data_dir = tmp_path / "wiki-data"
+    data_dir.mkdir()
+    conn = sqlite3.connect(data_dir / "jarvis.db")
+    try:
+        ensure_schema(conn)
+        index_vault(vault, conn)
+        conn.commit()
+        rt._get_cfg = lambda: SimpleNamespace(memory=SimpleNamespace(data_dir=str(data_dir)))
+        scout = await rt.roster.get("scout")
+        assert await rt.memory.recall(scout, "Hetzner", root=vault) == []
+        explicit = WikiRecallTool(search=VaultSearch(vault, conn=conn))
+        result = await explicit.execute({"query": "Hetzner"}, CTX)
+        assert result.success and "hosting.md" in result.output
+        assert page.read_bytes() == original
+    finally:
+        conn.close()
 
 
 async def test_share_is_gated_by_the_approvals_queue(rt: SocietyRuntime, tmp_path: Path):
@@ -149,19 +187,30 @@ async def test_every_operation_is_a_memory_digest_on_the_board(rt: SocietyRuntim
     assert events[1].payload["hits"] == 1
 
 
-async def test_tools_share_and_recall(rt: SocietyRuntime, tmp_path: Path):
+async def test_tools_reject_shared_writes_and_ignore_spoofed_recall_actor(
+    rt: SocietyRuntime, tmp_path: Path
+):
     vault = tmp_path / "vault"
     note = WikiNoteTool(rt, "scout", vault_root=vault)
     res = await note.execute(
         {"kind": "shared", "title": "Naming", "text": "Slugs are kebab-case."}, CTX
     )
-    assert res.success and res.output["approval_id"]
+    assert not res.success and res.output["reason"] == "blocked_by_policy"
+    assert await rt.approvals.pending() == []
+    assert not (vault / "society").exists()
+    res = await note.execute(
+        {"kind": "note", "title": "Naming", "text": "Slugs are kebab-case."}, CTX
+    )
+    assert res.success
     bad = await note.execute({"kind": "wat", "text": "x"}, CTX)
     assert bad.success is False
     recall = MemoryRecallTool(rt, "archivist", vault_root=vault)
-    out = await recall.execute({"query": "kebab-case slugs"}, CTX)
-    assert out.success and out.output["hits"][0]["label"].startswith("unreviewed")
-    assert "[unreviewed · agent · scout]" in out.output["text"]
+    out = await recall.execute({"query": "kebab-case slugs", "agent_id": "scout"}, CTX)
+    assert out.success and out.output["hits"] == []
+    own = await MemoryRecallTool(rt, "scout", vault_root=vault).execute(
+        {"query": "kebab-case slugs"}, CTX
+    )
+    assert own.success and own.output["hits"][0]["scope"] == "own"
     empty = await recall.execute({"query": "zzz-nothing"}, CTX)
     assert empty.output["text"] == "No memory matches."
 

@@ -320,7 +320,7 @@ def memory_client(tmp_path: Path):
 def test_memory_overview_recall_and_promotion_through_approvals(memory_client):
     c, vault = memory_client
     c.post("/api/society/agents", json={"name": "Scout"})
-    # An agent proposes team knowledge: staged in its own folder, parked for the person.
+    # A legacy shared proposal remains manageable by the person after agent sharing stops.
     import asyncio
 
     runtime: SocietyRuntime = c.app.state.society
@@ -335,9 +335,14 @@ def test_memory_overview_recall_and_promotion_through_approvals(memory_client):
     assert next(a for a in view["agents"] if a["agent_id"] == "scout")["notes"] == 1
     # The proposal waits for the person: the figure stands at the gate (rule 2 beats rule 4).
     assert c.get("/api/society/agents/scout").json()["agent"]["checkpoint"] == "gate"
-    # Recall as Jarvis sees it: another agent's unreviewed page, labelled.
+    # Ordinary recall cannot expose another agent's notes, even to the society lead.
     hits = c.post("/api/society/memory/recall", json={"query": "Hetzner hosting"}).json()["hits"]
-    assert hits and hits[0]["label"] == "unreviewed · agent · scout"
+    assert hits == []
+    own = c.post(
+        "/api/society/memory/recall",
+        json={"query": "Hetzner hosting", "agent_id": "scout"},
+    ).json()["hits"]
+    assert own and all(hit["scope"] == "own" for hit in own)
     # Approving the share item promotes the page.
     approvals = c.get("/api/society/approvals").json()["approvals"]
     assert approvals[0]["capability"] == "core:memory:share"
@@ -348,7 +353,7 @@ def test_memory_overview_recall_and_promotion_through_approvals(memory_client):
     view = c.get("/api/society/memory").json()
     assert view["shared"][0]["title"] == "Hosting" and view["unreviewed"] == []
     hits = c.post("/api/society/memory/recall", json={"query": "Hetzner"}).json()["hits"]
-    assert hits[0]["scope"] == "shared"
+    assert hits == []
     # Direct promote/dismiss on unknown rows answer 404.
     assert c.post("/api/society/memory/999/promote").status_code == 404
     assert c.post("/api/society/memory/999/dismiss").status_code == 404
