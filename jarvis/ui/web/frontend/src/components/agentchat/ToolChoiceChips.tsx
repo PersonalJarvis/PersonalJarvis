@@ -1,43 +1,35 @@
-import { Brain, Globe, Paperclip, Plug, Sparkles, Terminal, Wrench, X } from "lucide-react";
-import { McpLogo } from "@/components/extensions/McpLogo";
+import { useState, type CSSProperties } from "react";
+import { X } from "lucide-react";
 import { useT } from "@/i18n";
 import type { ToolChoice } from "./toolChoices";
+import { toolIdentity, toolIdentityStyle } from "./toolIdentity";
+import "./toolIdentity.css";
 
-// Reuse the original offline brand marks and their existing provenance ledger.
-const logos = import.meta.glob("../../assets/brands/*.svg", {
-  eager: true,
-  query: "?url",
-  import: "default",
-}) as Record<string, string>;
-
-export function ToolChoiceIcon({ row }: { row: ToolChoice }) {
-  const brand = row.brand || (row.category === "mcp" ? row.group.replace(/[-_]mcp$/, "") : "");
-  const logo = logos[`../../assets/brands/${brand}.svg`];
-  if (logo)
-    return (
-      <img
-        src={logo}
-        alt=""
-        className="h-6 w-6 shrink-0 rounded bg-foreground/80 p-1 object-contain dark:bg-secondary"
-      />
-    );
-  const Icon =
-    row.category === "mcp"
-      ? McpLogo
-      : row.category === "memory"
-        ? Brain
-        : row.category === "skills"
-          ? Sparkles
-          : row.category === "plugins"
-            ? Plug
-            : row.category === "web"
-              ? Globe
-              : row.category === "files"
-                ? Paperclip
-                : row.category === "cli"
-                  ? Terminal
-                  : Wrench;
-  return <Icon aria-hidden className="h-5 w-5 shrink-0 text-muted-foreground" />;
+export function ToolChoiceIcon({ row, size = 20 }: { row: ToolChoice; size?: number }) {
+  const { logo, mark, Glyph } = toolIdentity(row);
+  const [failedLogo, setFailedLogo] = useState<string | null>(null);
+  return (
+    <span
+      className="tool-choice-icon"
+      data-plate={mark === "plate"}
+      style={{ width: size, height: size }}
+      aria-hidden
+    >
+      {logo && failedLogo !== logo ? (
+        mark === "mono" ? (
+          <span
+            data-logo={logo}
+            className="tool-choice-mask"
+            style={{ "--tool-logo": `url("${logo}")` } as CSSProperties}
+          />
+        ) : (
+          <img src={logo} alt="" onError={() => setFailedLogo(logo)} />
+        )
+      ) : (
+        <Glyph width={size} height={size} strokeWidth={1.65} />
+      )}
+    </span>
+  );
 }
 
 export function ToolChoiceChips({
@@ -50,22 +42,31 @@ export function ToolChoiceChips({
   const t = useT();
   if (!items.length) return null;
   return (
-    <div className="flex flex-wrap gap-1.5" data-testid="tool-choice-chips">
+    <div
+      className="tool-choice-list"
+      data-editable={Boolean(onRemove)}
+      data-testid="tool-choice-chips"
+    >
       {items.map((row) => (
         <span
           key={row.id}
-          className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border-strong bg-secondary px-2 py-1 text-xs text-foreground"
+          className="tool-identity tool-choice-chip"
+          style={toolIdentityStyle(row)}
+          data-brand={toolIdentity(row).key ?? row.category}
+          data-tool-id={row.id}
+          data-editable={Boolean(onRemove)}
+          title={row.description || row.label}
         >
-          <ToolChoiceIcon row={row} />
+          <ToolChoiceIcon row={row} size={16} />
           <span className="truncate">{row.label}</span>
           {onRemove && (
             <button
               type="button"
               onClick={() => onRemove(row.id)}
               aria-label={`${t("chat_tools.remove")} ${row.label}`}
-              className="rounded p-0.5 hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
+              className="ml-0.5 inline-flex h-5 w-5 items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-3 w-3" aria-hidden />
             </button>
           )}
         </span>

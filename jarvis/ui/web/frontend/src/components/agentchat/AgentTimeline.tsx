@@ -113,8 +113,8 @@ export function AgentTimeline({
               data-message-id={item.id}
             >
               <div className="jarvis-user-bubble max-w-[85%] rounded-lg px-4 py-3 text-reading">
-                <ToolChoiceChips items={item.toolChoices ?? []} />
                 {item.text && <div className="whitespace-pre-wrap">{item.text}</div>}
+                <ToolChoiceChips items={item.toolChoices ?? []} />
                 {item.attachments.length > 0 && (
                   <div
                     data-testid="agent-message-attachments"

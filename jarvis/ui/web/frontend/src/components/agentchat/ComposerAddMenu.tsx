@@ -5,6 +5,7 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { BrandedSelect } from "@/components/ui/select";
 import { ToolChoiceIcon } from "./ToolChoiceChips";
+import { CATEGORY_ICONS, toolIdentityStyle } from "./toolIdentity";
 import {
   searchTools,
   TOOL_CATEGORIES,
@@ -148,7 +149,7 @@ export function ComposerAddMenu({
         aria-haspopup="dialog"
         aria-label={t("chat_tools.add")}
         onClick={() => setOpen(!open)}
-        className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+        className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         <Plus className="h-4 w-4" />
         {t("chat_tools.add")}
@@ -210,7 +211,7 @@ export function ComposerAddMenu({
               }
             }}
           >
-            <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+            <div className="mx-3 mb-1 mt-3 flex items-center gap-2 rounded-xl border border-border bg-background/50 px-3 py-2 focus-within:border-border-strong">
               <Search className="h-4 w-4 text-muted-foreground" />
               <input
                 ref={input}
@@ -219,7 +220,7 @@ export function ComposerAddMenu({
                 maxLength={200}
                 aria-label={t("chat_tools.search")}
                 placeholder={t("chat_tools.search")}
-                className="min-w-0 flex-1 bg-transparent py-1 text-sm outline-none"
+                className="min-w-0 flex-1 bg-transparent py-0.5 text-sm outline-none placeholder:text-muted-foreground"
               />
               <button
                 type="button"
@@ -237,13 +238,21 @@ export function ComposerAddMenu({
                 onValueChange={setCategory}
                 options={[
                   { value: "", label: t("chat_tools.all") },
-                  ...TOOL_CATEGORIES.map((c) => ({ value: c, label: t(`chat_tools.${c}`) })),
+                  ...TOOL_CATEGORIES.map((c) => {
+                    const Icon = CATEGORY_ICONS[c];
+                    return {
+                      value: c,
+                      label: t(`chat_tools.${c}`),
+                      icon: <Icon className="h-3.5 w-3.5" aria-hidden />,
+                    };
+                  }),
                 ]}
                 className="w-auto min-w-0 max-w-[60%] shrink-0 rounded-lg border border-border-strong bg-popover px-2 py-1 text-xs"
               />
               <span
                 className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground"
                 role="status"
+                title={result ? t(`chat_tools.${result.mode}`) : undefined}
               >
                 {loading ? (
                   <Loader2
@@ -297,7 +306,7 @@ export function ComposerAddMenu({
               )}
               {[...groups].map(([key, rows]) => (
                 <div key={key}>
-                  <div className="px-3 pb-1 pt-3 text-xs font-medium text-muted-foreground">
+                  <div className="px-3 pb-1 pt-3 text-xs font-medium tracking-wide text-muted-foreground">
                     {t(`chat_tools.${rows[0].category}`)}
                     {operationGroups.has(key) ? ` · ${rows[0].group}` : ""}
                   </div>
@@ -309,6 +318,7 @@ export function ComposerAddMenu({
                         type="button"
                         data-tool-row
                         aria-pressed={picked}
+                        style={toolIdentityStyle(row)}
                         disabled={row.available && !picked && selected.length >= 24}
                         onClick={() => {
                           if (!row.available) {
@@ -321,14 +331,15 @@ export function ComposerAddMenu({
                           );
                         }}
                         className={cn(
-                          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-secondary focus-visible:bg-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:opacity-50",
-                          picked && "bg-secondary",
-                          !row.available && "text-muted-foreground",
+                          "tool-identity tool-picker-row flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current disabled:opacity-50",
+                          !row.available && "opacity-60",
                         )}
                       >
-                        <ToolChoiceIcon row={row} />
+                        <ToolChoiceIcon row={row} size={22} />
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">{row.label}</span>
+                          <span className="tool-picker-name block truncate text-sm font-medium">
+                            {row.label}
+                          </span>
                           <span
                             className="block truncate text-xs text-muted-foreground"
                             title={row.description}
@@ -337,7 +348,7 @@ export function ComposerAddMenu({
                           </span>
                         </span>
                         {picked ? (
-                          <Check className="h-4 w-4 shrink-0 text-primary" />
+                          <Check className="h-4 w-4 shrink-0" />
                         ) : !row.available ? (
                           <span className="shrink-0 text-xs">{t("chat_tools.connect")}</span>
                         ) : (
