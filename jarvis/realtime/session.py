@@ -57,6 +57,7 @@ from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
 from jarvis.core.tool_budget import VOICE_TOOL_BUDGET_S
 from jarvis.core.turn_language import (
+    detect_language_request,
     is_substantive_turn,
     normalize_language_tag,
     resolve_output_language,
@@ -2991,8 +2992,7 @@ class RealtimeVoiceSession:
         established = bool(getattr(self, "_conversation_established", False))
         # The resolver's stickiness input must be an ESTABLISHED conversation
         # language, never the session's own opening default wearing that hat
-        # (the input lied; the resolver itself is correct and stays untouched
-        # — §1 doctrine).
+        # rather than treating the opening default as evidence from the user.
         if established:
             conversation = getattr(self, "_language", "")
         else:
@@ -3001,6 +3001,7 @@ class RealtimeVoiceSession:
             text
             and not established
             and 0 < voiced_ms < _CONVERSATION_LANGUAGE_MIN_VOICED_MS
+            and not detect_language_request(text)
         ):
             # Duration gate, never spelling (AP-27 class): a sub-half-second
             # first fragment carries too little audio to trust its words for
@@ -5126,11 +5127,14 @@ class RealtimeVoiceSession:
                             text=transcript, voiced_ms=voiced_ms
                         )
                         if not self._conversation_established and (
-                            is_substantive_turn(transcript)
-                            and (
-                                voiced_ms == 0
-                                or voiced_ms
-                                >= _CONVERSATION_LANGUAGE_MIN_VOICED_MS
+                            detect_language_request(transcript)
+                            or (
+                                is_substantive_turn(transcript)
+                                and (
+                                    voiced_ms == 0
+                                    or voiced_ms
+                                    >= _CONVERSATION_LANGUAGE_MIN_VOICED_MS
+                                )
                             )
                         ):
                             # From here on the call language sticks; a later

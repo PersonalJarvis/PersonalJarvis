@@ -9,6 +9,8 @@ a substantive turn switches it. An explicit reply_language pin still wins.
 """
 from __future__ import annotations
 
+import pytest
+
 from jarvis.brain.manager import BrainManager
 
 
@@ -59,3 +61,32 @@ def test_ambiguous_first_turn_keeps_soft_mirror_and_no_conversation() -> None:
 def test_conversation_language_property_defaults_empty() -> None:
     m = _mgr()
     assert m.conversation_language == ""
+
+
+@pytest.mark.parametrize(
+    ("previous", "correction", "expected"),
+    [
+        ("es", "auf Deutsch", "de"),  # i18n-allow: incident correction
+        ("en", "sprich Deutsch", "de"),  # i18n-allow
+        ("de", "in English", "en"),
+        ("en", "en español", "es"),
+        ("es", "in English", "en"),
+    ],
+)
+def test_correction_updates_brain_directive_and_following_turn(
+    previous: str, correction: str, expected: str,
+) -> None:
+    manager = _mgr(conv=previous)
+    manager._update_turn_language(correction)
+    assert manager.conversation_language == expected
+    assert manager._turn_detected_lang == expected
+    manager._update_turn_language("Okay")
+    assert manager.conversation_language == expected
+    assert manager._turn_detected_lang == expected
+
+
+def test_weak_accented_name_does_not_switch_brain_conversation() -> None:
+    manager = _mgr(conv="de")
+    manager._update_turn_language("Álvaro García Madrid")
+    assert manager.conversation_language == "de"
+    assert manager._turn_detected_lang == "de"

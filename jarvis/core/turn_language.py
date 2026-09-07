@@ -36,6 +36,7 @@ from typing import Literal
 __all__ = [
     "DEFAULT_LOCALE",
     "OutputLanguageValidation",
+    "detect_language_request",
     "detect_text_language",
     "is_substantive_turn",
     "normalize_language_tag",
@@ -59,12 +60,38 @@ _REPLY_PINS: frozenset[str] = frozenset({"de", "en", "es"})
 #: A turn with at most this many word tokens is a "thin" turn — a one- or
 #: two-word interjection ("Now", "Stop now", "jetzt", a lone loanword). A thin
 #: turn must NOT redefine an established conversation's language; it is spoken in
-#: the conversation language instead. Only a longer (substantive) turn may switch
-#: the conversation. Natural-flow forensic 2026-06-18: a single English "Now" in
+#: the conversation language instead. Explicit corrections are substantive even
+#: when short. Natural-flow forensic 2026-06-18: a single English "Now" in
 #: a German voice chat flipped the whole turn to English.
 _THIN_TURN_MAX_TOKENS = 2
 
 _TOKEN_RE = re.compile(r"\b[\w']+\b", re.UNICODE)
+
+# Match complete language instructions, never a language name embedded in a
+# translation, quotation, negation, or task. The vocabulary is speech input.
+_LANGUAGE_REQUEST_RE = re.compile(
+    r"(?:jarvis[\s,]+)?"
+    r"(?:(?:please|bitte|por favor)[\s,]+)?"  # i18n-allow
+    r"(?:(?:can|could|would) you\s+|(?:kannst|könntest) du\s+|puedes\s+)?"  # i18n-allow
+    r"(?:(?:please|bitte|por favor)\s+)?"  # i18n-allow
+    r"(?:(?:speak|reply|respond|answer|continue|switch)(?:\s+to me)?\s+"
+    r"|(?:sprich|spreche|antworte|antworten|rede|wechsel|wechsle)\s+"  # i18n-allow
+    r"|(?:sollst|du sollst)\s+"  # i18n-allow
+    r"|(?:habla|háblame|responde|contesta|cambia)\s+)?"
+    r"(?:(?:please|bitte|por favor)\s+)?"  # i18n-allow
+    r"(?:(?:in|auf|en|to|zu|a)\s+)?"  # i18n-allow
+    r"(?P<language>deutsch|german|alemán|aleman|english|englisch|inglés|ingles"  # i18n-allow
+    r"|español|espanol|spanish|spanisch)"  # i18n-allow
+    r"(?:\s+(?:antworten|sprechen))?"  # i18n-allow
+    r"(?:[\s,]+(?:please|bitte|por favor|now|jetzt|ahora))?"  # i18n-allow
+    r"[\s.!?]*",
+    re.IGNORECASE,
+)
+_REQUEST_LANGUAGE_CODES = {
+    "deutsch": "de", "german": "de", "alemán": "de", "aleman": "de",  # i18n-allow
+    "english": "en", "englisch": "en", "inglés": "en", "ingles": "en",  # i18n-allow
+    "español": "es", "espanol": "es", "spanish": "es", "spanisch": "es",  # i18n-allow
+}
 
 # Output validation deliberately ignores code and links. They frequently carry
 # English keywords or non-Latin identifiers regardless of the language of the
@@ -362,15 +389,46 @@ def resolve_transcript_language(reported: object, text: str) -> str:
 
 
 def is_substantive_turn(text: str) -> bool:
-    """True if *text* is long enough to (re)define the conversation language.
+    """True if *text* is substantial or explicitly requests a reply language.
 
     A one- or two-word interjection ("Now", "Stop now", "jetzt", a lone
     loanword) is NOT substantive — it inherits the running conversation language
     rather than switching it. Used by the conversation-stickiness logic so a
-    stray English word never flips an established German chat (forensic
-    2026-06-18).
+    stray English word never flips an established German chat. A short explicit
+    language correction provides intent without needing a longer utterance.
     """
-    return len(_TOKEN_RE.findall(text or "")) > _THIN_TURN_MAX_TOKENS
+    return (
+        bool(detect_language_request(text))
+        or len(_TOKEN_RE.findall(text or "")) > _THIN_TURN_MAX_TOKENS
+    )
+
+
+def detect_language_request(text: str) -> str:
+    """Return the requested reply language of a complete instruction, else "".
+
+    Full matching deliberately excludes quoted/reported speech, translation
+    content, and negative commands. A bare language name alone is ambiguous;
+    it needs a command, preposition, or politeness marker to establish intent.
+    """
+    value = unicodedata.normalize("NFC", text or "").strip()
+    match = _LANGUAGE_REQUEST_RE.fullmatch(value)
+    if match is None or len(_TOKEN_RE.findall(value)) < 2:
+        return ""
+    return _REQUEST_LANGUAGE_CODES[match.group("language").lower()]
+
+
+def _has_language_switch_evidence(text: str, detected: str) -> bool:
+    """Require independent vocabulary evidence before replacing sticky state.
+
+    A lone accented name, repeated loanword, or provider language tag is too
+    weak to redefine a conversation. Existing text detection still handles a
+    first turn, for which there is no established language to protect.
+    """
+    tokens = {token.lower() for token in _TOKEN_RE.findall(text or "")}
+    scores = {code: len(tokens & vocabulary) for code, vocabulary in _SETS}
+    score = scores.get(detected, 0)
+    runner_up = max(value for code, value in scores.items() if code != detected)
+    return score >= 2 and score - runner_up >= 2
 
 
 def resolve_output_language(
@@ -394,14 +452,16 @@ def resolve_output_language(
 
     1. an explicit ``brain.reply_language`` pin (``de``/``en``/``es``) — the
        user-selected language wins over everything, including what STT heard;
-    2. else, in auto mode, conversation stickiness: a "thin" turn (a one- or
+    2. else an explicit language instruction, even a two-word correction;
+    3. else, in auto mode, conversation stickiness: a "thin" turn (a one- or
        two-word interjection like "Now"/"Stop"/"jetzt", or a lone loanword) is
        spoken in ``conversation_language`` — it must NOT flip an established
-       conversation. Only a substantive turn may switch the language;
-    3. else the detected input language of the turn (``resolve_turn_language``:
+       conversation. A switch needs independent text evidence; STT tags alone
+       cannot replace an established language;
+    4. else the detected input language of the turn (``resolve_turn_language``:
        text heuristic first, STT tag breaks ties), an ambiguous substantive turn
        inheriting ``conversation_language`` when one is set;
-    4. else the configured ``default`` locale (``DEFAULT_LOCALE``).
+    5. else the configured ``default`` locale (``DEFAULT_LOCALE``).
 
     ``reply_language`` is tolerant: case/whitespace-insensitive, and any value
     that is not a pin (``"auto"``, ``""``, ``None``, a typo) means "no pin —
@@ -411,8 +471,16 @@ def resolve_output_language(
     pin = str(reply_language or "").strip().lower()
     if pin in _REPLY_PINS:
         return pin
+    requested = detect_language_request(text)
+    if requested:
+        return requested
     conv = str(conversation_language or "").strip().lower()
     conv = conv if conv in _REPLY_PINS else ""
     if conv and len(_TOKEN_RE.findall(text or "")) <= _THIN_TURN_MAX_TOKENS:
         return conv
+    if conv:
+        detected = detect_text_language(text)
+        if detected == conv or not _has_language_switch_evidence(text, detected):
+            return conv
+        return detected
     return resolve_turn_language(stt_language, text, default=(conv or default))

@@ -79,7 +79,6 @@ from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
     detect_text_language,
-    is_substantive_turn,
     resolve_output_language,
     resolve_turn_language,
 )
@@ -3888,9 +3887,8 @@ class BrainManager:
         """Resolve this turn's language and maintain the sticky conversation
         language, applied at the top of ``generate()``.
 
-        Stickiness: a thin interjection ("Now", "Stop") inherits the running
-        ``conversation_language`` rather than flipping it; only a substantive
-        turn with a clear signal (re)defines the conversation. An explicit pin
+        Stickiness and explicit corrections use the same central resolver as
+        realtime and speech output, including evidence for a switch. A pin
         leaves ``_turn_detected_lang`` empty so ``_reply_language_directive``
         uses the pin; genuinely ambiguous text stays ``"unknown"`` so the
         directive keeps its soft "mirror the user" form.
@@ -3898,10 +3896,13 @@ class BrainManager:
         if self._reply_language in _REPLY_LANG_NAMES:
             self._turn_detected_lang = ""
             return
-        if self._conversation_language and not is_substantive_turn(user_text):
-            self._turn_detected_lang = self._conversation_language
-            return
-        detected = detect_text_language(user_text)
+        detected = resolve_output_language(
+            self._reply_language,
+            None,
+            user_text,
+            default="unknown",
+            conversation_language=self._conversation_language,
+        )
         self._turn_detected_lang = detected
         if detected in _REPLY_LANG_NAMES:
             self._conversation_language = detected

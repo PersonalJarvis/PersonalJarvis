@@ -19,6 +19,7 @@ import pytest
 
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
+    detect_language_request,
     detect_text_language,
     normalize_language_tag,
     resolve_output_language,
@@ -216,6 +217,66 @@ def test_conversation_language_used_as_default_for_ambiguous_substantive() -> No
     assert resolve_output_language(
         "auto", None, "Spotify Netflix Berlin", conversation_language="de"
     ) == "de"
+
+
+@pytest.mark.parametrize("previous", ["de", "en", "es"])
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("auf Deutsch", "de"),  # i18n-allow: spoken correction
+        ("sprich Deutsch", "de"),  # i18n-allow: spoken correction
+        ("Sprich bitte Deutsch", "de"),  # i18n-allow: medial politeness
+        ("Antworte bitte auf Englisch", "en"),  # i18n-allow: medial politeness
+        ("Sollst auf deutsch antworten.", "de"),  # i18n-allow: incident final turn
+        ("Jarvis, bitte auf Deutsch!", "de"),  # i18n-allow: spoken correction
+        ("Could you please reply in German?", "de"),
+        ("in English", "en"),
+        ("Please speak English.", "en"),
+        ("Kannst du bitte auf Englisch antworten?", "en"),  # i18n-allow
+        ("en español", "es"),
+        ("Por favor, habla en español.", "es"),
+        ("Habla por favor en inglés", "en"),
+        ("Cambia a inglés", "en"),
+        ("Please switch to Spanish", "es"),
+    ],
+)
+def test_explicit_correction_overrides_stickiness_and_wrong_stt(
+    previous: str, text: str, expected: str,
+) -> None:
+    wrong_tag = "es" if expected != "es" else "de"
+    assert resolve_output_language(
+        "auto", wrong_tag, text, conversation_language=previous,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Do not speak Spanish", "Don't reply in German", "No hables en inglés",
+        "Sprich nicht Deutsch",  # i18n-allow: negative instruction
+        'Translate "in English" into Spanish', 'He said "auf Deutsch".',  # i18n-allow
+        '"in English"', "`en español`", "What does speak English mean?",
+        "Write a poem in Spanish", "English", "German shepherd",
+        "Please explain how to speak German",
+    ],
+)
+def test_language_mentions_are_not_explicit_corrections(text: str) -> None:
+    assert detect_language_request(text) == ""
+
+
+@pytest.mark.parametrize("language", ["de", "en", "es"])
+@pytest.mark.parametrize("text", ["Spotify Netflix Berlin", "Álvaro García Madrid", "now now now"])
+def test_weak_evidence_cannot_flip_established_language(language: str, text: str) -> None:
+    for tag in ("de", "en", "es"):
+        assert resolve_output_language(
+            "auto", tag, text, conversation_language=language,
+        ) == language
+
+
+def test_language_correction_respects_explicit_ui_pin() -> None:
+    assert resolve_output_language(
+        "en", "es", "auf Deutsch", conversation_language="es",  # i18n-allow
+    ) == "en"
 
 
 # ---------------------------------------------------------------------------
