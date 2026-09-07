@@ -42,9 +42,15 @@ describe("tool visual identities", () => {
   it("has a local mark for every shipped marketplace connector", () => {
     for (const plugin of seedCatalog.plugins) {
       const identity = toolIdentity(
-        row({ id: `plugin:${plugin.id}`, brand: plugin.id, label: plugin.display_name }),
+        row({
+          id: `plugin:${plugin.id}`,
+          brand: plugin.id,
+          label: plugin.display_name,
+          group: plugin.display_name,
+        }),
       );
       expect(identity.logo, plugin.id).toBeTruthy();
+      expect(identity.key, plugin.id).toBe(plugin.id);
       expect(identity.logo).not.toMatch(/^https?:/);
     }
   });
