@@ -31,6 +31,9 @@ import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahea
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { DictationStatus } from "@/components/agentchat/DictationStatus";
+import { ComposerAddMenu } from "@/components/agentchat/ComposerAddMenu";
+import { ToolChoiceChips } from "@/components/agentchat/ToolChoiceChips";
+import type { ToolChoice } from "@/components/agentchat/toolChoices";
 import { GigiMark } from "@/components/GigiMark";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { fill, useT } from "@/i18n";
@@ -102,6 +105,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const health = useAgentChat((s) => s.health);
   const draft = useAgentChat((s) => s.draft);
   const activeSessionId = useAgentChat((s) => s.activeSessionId);
+  const [selectedTools, setSelectedTools] = useState<ToolChoice[]>([]);
+  useEffect(() => {
+    setSelectedTools([]);
+  }, [activeSessionId, surface]);
   const timeline = useAgentChat((s) => s.timeline);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
@@ -128,10 +135,11 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   );
   const provider = providers.find((p) => p.id === draft.provider) ?? null;
 
-  const { dictating, stop: stopDictation, toggle: toggleDictation } = useComposerDictation(
-    value,
-    setValue,
-  );
+  const {
+    dictating,
+    stop: stopDictation,
+    toggle: toggleDictation,
+  } = useComposerDictation(value, setValue);
 
   // Files going in with this message. Held here rather than in the store: they
   // belong to the sentence being typed, and a chat opened elsewhere must not
@@ -170,6 +178,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const running = runningTurn(timeline) !== null;
 
   async function onSend() {
+    const sessionAtSend = activeSessionId;
     const content = value.trim();
     // A message may be files alone: dropping a screenshot and pressing Enter
     // is a complete gesture, and refusing it would be the composer insisting
@@ -181,7 +190,21 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     setAttachError("");
     const attached = files.attachments;
     files.clear();
-    await send(content, attached);
+    const selected = selectedTools;
+    if (selected.length)
+      await send(
+        content,
+        attached,
+        selected.map((row) => row.id),
+      );
+    else await send(content, attached);
+    if (sessionAtSend && store.getState().activeSessionId !== sessionAtSend) return;
+    if (store.getState().lastError) {
+      setSelectedTools(selected);
+      setValueState((current) => current || content);
+    } else {
+      setSelectedTools([]);
+    }
   }
 
   function onKeyDown(ev: KeyboardEvent<HTMLTextAreaElement>) {
@@ -307,7 +330,12 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     const groups: ComboboxGroup[] = [];
     for (const kind of PROVIDER_KINDS) {
       const rows = shown.filter((p) => providerKind(p) === kind);
-      if (rows.length) groups.push({ id: kind, label: labels[kind], options: rows.map(toOption) });
+      if (rows.length)
+        groups.push({
+          id: kind,
+          label: labels[kind],
+          options: rows.map(toOption),
+        });
     }
     return groups;
   }, [providers, health, t]);
@@ -361,7 +389,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     () => [
       {
         id: "effort",
-        options: effortLevels.map((lvl) => ({ value: lvl, label: effortLabel(lvl, t) })),
+        options: effortLevels.map((lvl) => ({
+          value: lvl,
+          label: effortLabel(lvl, t),
+        })),
       },
     ],
     [effortLevels, t],
@@ -439,6 +470,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       {/* The blue variant of this strip lived here; a running microphone is a
           live state, not the accent, so it now shares the one green strip. */}
       <DictationStatus onStop={stopDictation} />
+      <ToolChoiceChips
+        items={selectedTools}
+        onRemove={(id) => setSelectedTools((rows) => rows.filter((row) => row.id !== id))}
+      />
       <ChatAttachmentStrip
         attachments={files.attachments}
         analyzing={files.analyzing}
@@ -479,6 +514,26 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         className="max-h-[50vh] w-full resize-none bg-transparent px-1 py-1 text-reading text-foreground scrollbar-jarvis placeholder:text-muted-foreground focus-visible:outline-none disabled:opacity-50"
       />
       <div className="flex flex-wrap items-center gap-1">
+        {surface === "jarvis" && (
+          <ComposerAddMenu
+            key={activeSessionId ?? "new"}
+            anchorRef={cardRef}
+            provider={draft.provider}
+            model={draft.model}
+            cwd={draft.cwd}
+            stance={draft.permissionMode}
+            selected={selectedTools}
+            onChange={setSelectedTools}
+            onAttach={() => fileInputRef.current?.click()}
+            onFolder={() => void onPickFolder()}
+            onConnect={(row) =>
+              setActiveSection(
+                row.category === "mcp" ? "mcps" : row.category === "skills" ? "skills" : "plugins",
+              )
+            }
+            disabled={!connected || busy}
+          />
+        )}
         {/*
           Who you are talking to, before what they run on. The two chats wear
           the same face, so without this the front page and the IDE's chat are

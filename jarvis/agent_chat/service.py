@@ -298,6 +298,8 @@ class AgentChatService:
         session_id: str,
         text: str,
         attachments: list[dict[str, Any]] | None = None,
+        *,
+        tool_choices: list[str] | None = None,
     ) -> str:
         """Persist the person's message and start the turn. Returns turn_id.
 
@@ -324,6 +326,20 @@ class AgentChatService:
         # What the turn receives; ``text`` stays what the person typed so the
         # timeline shows their sentence rather than a page of extracted PDF.
         prompt = chat_attachments.compose(text, attached)
+        selected = []
+        if tool_choices:
+            if session.surface != "jarvis":
+                raise ValueError("Tool selections are supported by the Jarvis chat")
+            from jarvis.agent_chat.runner_brain import brain_manager
+            from jarvis.agent_chat.tool_catalog import live_catalog, resolve_choices
+
+            inventory = await asyncio.to_thread(
+                live_catalog, brain_manager(), cwd=session.cwd, stance=session.permission_mode
+            )
+            selected = resolve_choices(tool_choices, inventory)
+            # Discovery yields; another send may have acquired this session.
+            if self.is_running(session_id):
+                raise SessionBusy(session_id)
 
         turn_id = uuid.uuid4().hex
         cancel = asyncio.Event()
@@ -341,6 +357,11 @@ class AgentChatService:
                     # storing only the sentence would lose the picture on the
                     # NEXT turn (runner_api.messages_from_events).
                     "text": prompt,
+                    **(
+                        {"tool_choices": [row.model_dump(mode="json") for row in selected]}
+                        if selected
+                        else {}
+                    ),
                     # What the person typed, when it differs from the prompt.
                     # Absent on an ordinary message, so nothing changes there.
                     **({"typed": text} if attached else {}),
@@ -405,9 +426,10 @@ class AgentChatService:
                     async with self._brain_lock:
                         await run_brain_turn(
                             handle,
-                            text,
+                            prompt,
                             bridge=self._bridge_for(bus),
                             always_allowed=self.always_allowed(session_id),
+                            **({"tool_choices": selected} if selected else {}),
                         )
                 elif supports_cli_runner(runner):
                     # A CLI runs AS Jarvis — its own tools over MCP, its calls

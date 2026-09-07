@@ -333,12 +333,13 @@ export async function sendAgentChatMessage(
   sessionId: string,
   text: string,
   attachments: ChatAttachment[] = [],
+  toolChoices: string[] = [],
 ): Promise<{ turn_id: string }> {
   return json(
     await fetch(`/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, attachments }),
+      body: JSON.stringify({ text, attachments, ...(toolChoices.length ? { tool_choices: toolChoices } : {}) }),
     }),
     "send-failed",
   );

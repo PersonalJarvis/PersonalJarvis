@@ -1,4 +1,5 @@
 import type { AgentChatEvent } from "@/lib/agentChatApi";
+import { readToolChoices, type ToolChoice } from "./toolChoices";
 
 /**
  * Fold the agent-chat event log into the timeline the column renders.
@@ -73,6 +74,7 @@ export interface UserItem {
   text: string;
   /** Files that went in with this message; empty on an ordinary one. */
   attachments: UserAttachment[];
+  toolChoices?: ToolChoice[];
   tsMs: number;
 }
 
@@ -271,6 +273,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
             // is the person's own sentence; `text` is the composed prompt.
             text: str(p.typed) || str(p.text),
             attachments: userAttachments(p.attachments),
+            toolChoices: readToolChoices(p.tool_choices),
             tsMs: ev.ts_ms,
           },
         ],

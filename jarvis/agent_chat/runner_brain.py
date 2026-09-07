@@ -39,6 +39,7 @@ from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.folder_tools import PLAN_STANCE, folder_tools, plan_filter
 from jarvis.agent_chat.runner_api import messages_from_events
 from jarvis.agent_chat.surface_kits import kit_for
+from jarvis.agent_chat.tool_catalog import ToolChoice
 from jarvis.agent_chat.tools import summarize_call
 from jarvis.brain.turn_override import TurnOverride
 from jarvis.core.protocols import BrainMessage, ReasoningEffort, Tool
@@ -393,6 +394,7 @@ async def run_brain_turn(
     *,
     bridge: ChatApprovalBridge | None,
     always_allowed: set[str],
+    tool_choices: list[ToolChoice] | None = None,
 ) -> None:
     """Run one typed turn on Jarvis' brain, streaming it into the timeline."""
     started = time.monotonic()
@@ -428,6 +430,26 @@ async def run_brain_turn(
     cwd = Path(session.cwd or Path.home())
     stance = handle.stance or "ask"
     kit_tools, system_extra = await kit_payload(session, brain)
+    if tool_choices:
+        from jarvis.agent_chat.tool_catalog import (
+            live_catalog,
+            resolve_choices,
+            selection_briefing,
+            selection_tools,
+        )
+
+        try:
+            current = await asyncio.to_thread(live_catalog, brain, cwd=str(cwd), stance=stance)
+            choices = resolve_choices([row.id for row in tool_choices], current)
+            base = dict(getattr(brain, "_tools", {}) or {})
+            extra = dict(kit_tools) if kit_tools is not None else folder_tools(cwd, stance=stance)
+            base.update(extra)
+            extra.update(selection_tools(choices, base))
+            kit_tools = extra
+            system_extra += selection_briefing(choices)
+        except ValueError as exc:
+            await finish("error", {}, str(exc))
+            return
     override = build_override(
         session,
         brain,

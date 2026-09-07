@@ -308,3 +308,17 @@ shortcuts it never created. Covered by
 - Re-audit cadence: rerun the five-area sweep after any release that touches
   platform seams (`jarvis/platform/`, `jarvis/cu/actuate/`, `jarvis/vision/`,
   `jarvis/audio/`, `jarvis/missions/isolation/`).
+
+## Chat Add menu and per-message tool selections (2026-09)
+
+Windows, macOS and Linux share the same lazy Python catalog and React picker.
+The capability probe is the live tool registry, active skill registry and
+connector availability. Headless servers expose the same REST endpoints;
+clients render bundled logos without external image requests. Missing tools
+are unavailable, and a missing search model explicitly falls back to text
+search. Existing native-tool OS limitations remain unchanged.
+
+`tests/contract/test_chat_tool_choices.py` verifies the message/SQLite/Pydantic/
+TypeScript contract, read-only plan filtering and isolated one-key fake-provider
+turns. Tests run locally on Windows; physical macOS/Linux and live-provider fresh
+install verification are not claimed. See [the inventory and design](chat-tool-picker.md).

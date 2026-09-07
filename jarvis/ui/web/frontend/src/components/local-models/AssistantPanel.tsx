@@ -480,6 +480,7 @@ export function AssistantPanel({
                 </p>
               );
             }
+            if (item.type !== "turn") return null;
             const answer = stripProposalBlocks(turnText(item));
             const live = item.status === "running";
             return (

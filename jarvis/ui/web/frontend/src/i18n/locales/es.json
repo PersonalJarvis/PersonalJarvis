@@ -5421,5 +5421,35 @@
       "name_required": "Primero dale un nombre al agente.",
       "error": "No se pudo crear el agente."
     }
+  },
+  "chat_tools": {
+    "add": "Añadir",
+    "search": "Busca herramientas o describe lo que quieres hacer…",
+    "remove": "Quitar",
+    "close": "Cerrar",
+    "filter": "Filtrar herramientas",
+    "all": "Todas las herramientas",
+    "plugins": "Plugins",
+    "skills": "Habilidades",
+    "mcp": "Servidores MCP",
+    "memory": "Memoria y conocimiento",
+    "web": "Web e investigación",
+    "files": "Archivos",
+    "automation": "Automatizaciones",
+    "system": "Sistema y herramientas",
+    "cli": "CLI",
+    "browse": "Todas las funciones",
+    "semantic": "Búsqueda semántica",
+    "text": "Búsqueda de texto (búsqueda semántica no disponible)",
+    "loading": "Buscando…",
+    "attach": "Añadir archivos",
+    "folder": "Elegir carpeta de trabajo",
+    "error": "La búsqueda no está disponible.",
+    "retry": "Reintentar",
+    "empty": "No hay herramientas coincidentes. Prueba otra descripción o categoría.",
+    "connect": "Configurar",
+    "next_message": "Seleccionadas para el próximo mensaje",
+    "hint": "Elige herramientas para el próximo mensaje. Se siguen aplicando los permisos.",
+    "done": "Listo"
   }
 }

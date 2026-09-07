@@ -5454,5 +5454,35 @@
       "name_required": "Give the agent a name first.",
       "error": "The agent could not be created."
     }
+  },
+  "chat_tools": {
+    "add": "Add",
+    "search": "Search tools or describe what you want to do…",
+    "remove": "Remove",
+    "close": "Close",
+    "filter": "Filter tools",
+    "all": "All tools",
+    "plugins": "Plugins",
+    "skills": "Skills",
+    "mcp": "MCP servers",
+    "memory": "Memory & knowledge",
+    "web": "Web & research",
+    "files": "Files",
+    "automation": "Automations",
+    "system": "System & tools",
+    "cli": "CLIs",
+    "browse": "All capabilities",
+    "semantic": "Semantic search",
+    "text": "Text search (semantic search unavailable)",
+    "loading": "Searching…",
+    "attach": "Add files",
+    "folder": "Choose working folder",
+    "error": "Tool search is unavailable.",
+    "retry": "Try again",
+    "empty": "No matching tools. Try another description or category.",
+    "connect": "Set up",
+    "next_message": "Selected for the next message",
+    "hint": "Pick tools for your next message. Permissions still apply.",
+    "done": "Done"
   }
 }

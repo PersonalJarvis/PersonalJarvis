@@ -153,7 +153,7 @@ export interface AgentChatStore {
   openSession: (sessionId: string) => void;
   removeSession: (sessionId: string) => Promise<void>;
   /** Send the sentence, with whatever files the composer is holding for it. */
-  send: (text: string, attachments?: ChatAttachment[]) => Promise<void>;
+  send: (text: string, attachments?: ChatAttachment[], toolChoices?: string[]) => Promise<void>;
   cancel: () => Promise<void>;
   decide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
   /** Tests and the socket: fold one event into the active timeline. */
@@ -596,7 +596,7 @@ export function createAgentChatStore(surface: AgentChatSurface) {
         void get().loadSessions();
       },
 
-      send: async (text, attachments = []) => {
+      send: async (text, attachments = [], toolChoices = []) => {
         const content = text.trim();
         // A message may be files alone — dropping a screenshot and pressing
         // Enter is a complete gesture — but never nothing at all.
@@ -624,7 +624,7 @@ export function createAgentChatStore(surface: AgentChatSurface) {
             });
             connect(sid, 0);
           }
-          await sendAgentChatMessage(sid, content, attachments);
+          await sendAgentChatMessage(sid, content, attachments, toolChoices);
           void get().loadSessions();
         } catch (err) {
           set({ lastError: errorText(err) });

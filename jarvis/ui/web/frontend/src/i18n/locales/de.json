@@ -5421,5 +5421,35 @@
       "name_required": "Gib dem Agenten zuerst einen Namen.",
       "error": "Der Agent konnte nicht erstellt werden."
     }
+  },
+  "chat_tools": {
+    "add": "Hinzufügen",
+    "search": "Tools suchen oder beschreiben, was du tun möchtest…",
+    "remove": "Entfernen",
+    "close": "Schließen",
+    "filter": "Tools filtern",
+    "all": "Alle Tools",
+    "plugins": "Plugins",
+    "skills": "Skills",
+    "mcp": "MCP-Server",
+    "memory": "Gedächtnis & Wissen",
+    "web": "Web & Recherche",
+    "files": "Dateien",
+    "automation": "Automationen",
+    "system": "System & Werkzeuge",
+    "cli": "CLIs",
+    "browse": "Alle Funktionen",
+    "semantic": "Semantische Suche",
+    "text": "Textsuche (semantische Suche nicht verfügbar)",
+    "loading": "Suche läuft…",
+    "attach": "Dateien hinzufügen",
+    "folder": "Arbeitsordner auswählen",
+    "error": "Die Toolsuche ist nicht verfügbar.",
+    "retry": "Erneut versuchen",
+    "empty": "Keine passenden Tools. Versuche eine andere Beschreibung oder Kategorie.",
+    "connect": "Einrichten",
+    "next_message": "Für die nächste Nachricht ausgewählt",
+    "hint": "Wähle Tools für die nächste Nachricht. Berechtigungen gelten weiterhin.",
+    "done": "Fertig"
   }
 }

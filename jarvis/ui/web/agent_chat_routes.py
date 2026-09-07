@@ -124,6 +124,7 @@ class MessageBody(BaseModel):
     #: What ``POST /attachments`` returned for the files going in with this
     #: message; the wire shape of ``drop_analysis.DropAnalysis``.
     attachments: list[dict[str, Any]] = Field(default_factory=list)
+    tool_choices: list[str] = Field(default_factory=list, max_length=24)
 
 
 class ApprovalBody(BaseModel):
@@ -257,6 +258,45 @@ async def get_catalog(request: Request, surface: SurfaceName = "agent") -> dict[
 
 
 # ----------------------------------------------------------- typeahead
+
+
+@router.get("/tools", openapi_extra={"x-jarvis-readonly": True})
+async def get_composer_tools(
+    request: Request,
+    provider: str = "",
+    model: str = "",
+    q: str = Query("", max_length=200),
+    category: str = "",
+    cwd: str | None = None,
+    stance: str = "ask",
+) -> dict[str, Any]:
+    """Discover tools for the Jarvis chat without executing any capability."""
+    from jarvis.agent_chat.tool_catalog import discover
+
+    svc = _service(request)
+    if provider and not any(row.id == provider for row in rows_for("jarvis")):
+        raise HTTPException(status_code=400, detail="Unknown chat provider")
+    pending = asyncio.create_task(
+        discover(
+            provider=provider,
+            model=model,
+            query=q,
+            category=category,
+            cwd=_validate_cwd(cwd) or svc.default_cwd("jarvis"),
+            stance=stance,
+        )
+    )
+    try:
+        while not pending.done():
+            await asyncio.wait({pending}, timeout=0.1)
+            if await request.is_disconnected():
+                pending.cancel()
+                raise HTTPException(status_code=499, detail="Search cancelled")
+        return await pending
+    finally:
+        if not pending.done():
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
 
 
 @router.get("/typeahead", openapi_extra={"x-jarvis-readonly": True})
@@ -663,7 +703,9 @@ async def delete_session(session_id: str, request: Request) -> dict[str, Any]:
 async def post_message(session_id: str, body: MessageBody, request: Request) -> dict[str, Any]:
     svc = _service(request)
     try:
-        turn_id = await svc.send(session_id, body.text, body.attachments)
+        turn_id = await svc.send(
+            session_id, body.text, body.attachments, tool_choices=body.tool_choices
+        )
     except NoSuchSession as exc:
         raise HTTPException(status_code=404, detail="session not found") from exc
     except SessionBusy as exc:
