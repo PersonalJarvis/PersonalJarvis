@@ -16,6 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar } from "@/components/layout/TopBar";
 import { useEventStore } from "@/store/events";
 
+vi.mock("@/lib/bootStagger", () => ({ bootSettled: () => Promise.resolve() }));
+
 const OFFER = {
   managed: true,
   kind: "managed",

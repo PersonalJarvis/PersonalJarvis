@@ -135,7 +135,7 @@ describe("worldCamera", () => {
     expect(focusFromSearch("?world=0,0,2,-45")?.yaw).toBe(315);
     expect(focusFromSearch("?world=0,0,2,225,70")?.pitch).toBe(70);
     // Past the limits the view is clamped, not refused.
-    expect(focusFromSearch("?world=0,0,2,0,5")?.pitch).toBe(MIN_PITCH_DEG);
+    expect(focusFromSearch("?world=0,0,2,0,-5")?.pitch).toBe(MIN_PITCH_DEG);
     expect(focusFromSearch("?world=0,0,2,0,120")?.pitch).toBe(MAX_PITCH_DEG);
     expect(focusFromSearch("?world=0,0,2,abc")?.yaw).toBe(CAMERA_YAW_DEG);
   });

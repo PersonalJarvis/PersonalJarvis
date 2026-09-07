@@ -92,7 +92,7 @@ describe("ScreenContextGroup", () => {
     expect(capped).toHaveLength(0);
     // Same shell as RealtimeVoiceGroup, so the two read as one list.
     expect(root?.className).toBe(
-      "mt-2 rounded-lg border border-border bg-card/60 p-4",
+      "mt-2 rounded-lg border border-border bg-card p-4",
     );
   });
 

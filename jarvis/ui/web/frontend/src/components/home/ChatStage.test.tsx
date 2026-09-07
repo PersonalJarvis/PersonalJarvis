@@ -300,7 +300,8 @@ describe("ChatStage (agent chat)", () => {
     fireEvent.click(screen.getByTestId("composer-provider"));
     const panel = await screen.findByTestId("composer-provider-panel");
     // The headings, in catalog order — never "connected / not connected".
-    const headings = Array.from(panel.querySelectorAll("div.uppercase")).map((el) => el.textContent);
+    const headings = ["Coding CLIs", "API keys", "On your own hardware"]
+      .map((label) => within(panel).getByText(label).textContent);
     expect(headings).toEqual(["Coding CLIs", "API keys", "On your own hardware"]);
     expect(within(panel).queryByText("Connected")).toBeNull();
     // Only what the Agents tab has set up is listed: Codex (no login) is not

@@ -61,6 +61,7 @@ describe("AuthGate", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/config", {
       cache: "no-store",
       credentials: "same-origin",
+      signal: expect.any(AbortSignal),
     });
   });
 

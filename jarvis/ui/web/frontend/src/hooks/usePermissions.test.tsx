@@ -2,6 +2,8 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { usePermissions, type PermissionSnapshot } from "./usePermissions";
 
+vi.mock("@/lib/bootStagger", () => ({ bootSettled: () => Promise.resolve() }));
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();

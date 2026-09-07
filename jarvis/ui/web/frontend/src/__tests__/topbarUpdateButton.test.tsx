@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar } from "@/components/layout/TopBar";
 import { useEventStore } from "@/store/events";
 
+vi.mock("@/lib/bootStagger", () => ({ bootSettled: () => Promise.resolve() }));
+
 function mockUpdateStatus(body: Record<string, unknown>): void {
   vi.stubGlobal(
     "fetch",
