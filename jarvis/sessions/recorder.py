@@ -1261,6 +1261,9 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "task_id",            # TaskCancelled
     }
     payload: dict[str, Any] = {}
+    if isinstance(event, VoiceSessionEnded):
+        # Provenance matters when several independent paths can end a call.
+        payload["source_layer"] = event.source_layer
     for k in fields_whitelist:
         if not hasattr(event, k):
             continue

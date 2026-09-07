@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import enum
 import hashlib
+import json
 import logging
 import os
 import random
@@ -136,6 +137,8 @@ from jarvis.speech.hangup import (
     HANGUP_RE,
     contains_end_signal,
     is_legacy_farewell,
+    matched_hangup_pattern,
+    supports_semantic_hangup,
 )
 from jarvis.speech.pending_buffer import PendingPromptBuffer
 from jarvis.speech.persona import PhrasePicker, iter_all_start_ack
@@ -1413,6 +1416,9 @@ class _SessionInputBuffer:
         self._chunks: deque[tuple[int, AudioChunk]] = deque()
         self._max_buffer_bytes = max(1, int(max_buffer_bytes))
         self._retained_bytes = 0
+        # Latest timestamp among evicted frames. None means at least one frame
+        # had no trustworthy capture timestamp, so skipping a gap is unsafe.
+        self._evicted_through_ns: int | None = 0
         self._next_seq = 0
         self._updated = asyncio.Event()
         self._pump_task: asyncio.Task[None] | None = None
@@ -1447,6 +1453,11 @@ class _SessionInputBuffer:
         ):
             _seq, dropped = self._chunks.popleft()
             self._retained_bytes = max(0, self._retained_bytes - len(dropped.pcm))
+            timestamp = int(dropped.timestamp_ns or 0)
+            if timestamp <= 0 or self._evicted_through_ns is None:
+                self._evicted_through_ns = None
+            else:
+                self._evicted_through_ns = max(self._evicted_through_ns, timestamp)
         self._chunks.append((self._next_seq, chunk))
         self._retained_bytes += chunk_bytes
         self._next_seq += 1
@@ -1472,7 +1483,9 @@ class _SessionInputBuffer:
         self._source_done = True
         self._updated.set()
 
-    async def stream(self) -> AsyncIterator[AudioChunk]:
+    async def stream(
+        self, *, discard_before_ns: Callable[[], int] | None = None
+    ) -> AsyncIterator[AudioChunk]:
         self._active_consumers += 1
         cursor = 0
         try:
@@ -1480,10 +1493,26 @@ class _SessionInputBuffer:
                 if self._chunks:
                     earliest = self._chunks[0][0]
                     if cursor < earliest:
-                        raise RuntimeError(
-                            "Voice input exceeded the 30-second replay window; "
-                            "refusing to drop the command prefix."
+                        discard_before = discard_before_ns() if discard_before_ns else 0
+                        can_skip_suppressed = (
+                            cursor > 0
+                            and self._evicted_through_ns is not None
+                            and 0 < self._evicted_through_ns < discard_before
                         )
+                        if not can_skip_suppressed:
+                            raise RuntimeError(
+                                "Voice input exceeded the 30-second replay window; "
+                                "refusing to drop the command prefix."
+                            )
+                        # An inline reply pauses VAD while capture keeps running.
+                        # Its post-TTS echo guard already rejects these frames;
+                        # apply that SAME cutoff before enforcing replay bounds.
+                        # New user audio and first-consumer startup are protected.
+                        log.debug(
+                            "Skipped %d expired voice-input frames after assistant playback.",
+                            earliest - cursor,
+                        )
+                        cursor = earliest
                     offset = cursor - earliest
                     if 0 <= offset < len(self._chunks):
                         _seq, chunk = self._chunks[offset]
@@ -2855,6 +2884,11 @@ class SpeechPipeline:
         # utterance expired 6 s later). The idle-expiry branch grants ONE fresh
         # window while within this grace (== one idle window).
         self._last_answer_floor_monotonic: float | None = None
+        self._assistant_work_count = 0
+        self._termination_producer = ""
+        self._termination_detail: dict[str, Any] = {}
+        self._idle_deadline_monotonic: float | None = None
+        self._previous_turn_state: str | None = None
         self._post_tts_listen_suppression_s = post_tts_listen_suppression_s
         self._input_suppressed_until_ns: int = 0
         self._continue_listening_after_response = continue_listening_after_response
@@ -3759,6 +3793,7 @@ class SpeechPipeline:
         if only_from is not None and previous != only_from:
             return
         if previous != new_state:
+            self._previous_turn_state = previous.value
             log.info("turn-state: %s -> %s", previous.value, new_state.value)
         # Jarvis just STOPPED speaking → the floor goes back to the user. Stamp it
         # so the idle loop can grant a fresh listening window even when the turn
@@ -3795,6 +3830,39 @@ class SpeechPipeline:
         idle window and normal idle-timeout resumes."""
         last = self._last_answer_floor_monotonic
         return last is not None and (time.monotonic() - last) < self._idle_timeout_s
+
+    def _assistant_work_in_flight(self) -> bool:
+        """Owned off-loop work keeps idle expiry from closing a busy session."""
+        return bool(getattr(self, "_assistant_work_count", 0))
+
+    def _termination_snapshot(self, reason: str) -> dict[str, Any]:
+        """Bounded diagnostics, without user text, collected before teardown."""
+        from jarvis.harness.computer_use_context import cu_mission_active
+
+        continuing = getattr(self, "_continue_listening_after_response", None)
+        state = getattr(self, "_turn_state", None)
+        detail = dict(getattr(self, "_termination_detail", {}))
+        detail.update({
+            "hangup_reason": reason,
+            "producer": getattr(self, "_termination_producer", "")
+            or "speech.pipeline._state_loop.finalize",
+            "continue_listening_after_response": continuing,
+            "single_turn_mode": None if continuing is None else not continuing,
+            "idle_timeout_s": (
+                getattr(self, "_idle_timeout_s", None)
+                if getattr(self, "_idle_hangup_enabled", True) else 0
+            ),
+            "idle_deadline_monotonic": getattr(self, "_idle_deadline_monotonic", None),
+            "last_activity_monotonic": getattr(self, "_last_user_activity_monotonic", None),
+            "last_answer_floor_monotonic": getattr(self, "_last_answer_floor_monotonic", None),
+            "turn_state": getattr(state, "value", None),
+            "previous_turn_state": getattr(self, "_previous_turn_state", None),
+            "assistant_work_active": self._assistant_work_in_flight(),
+            "tool_active": None,
+            "screen_active": None,
+            "computer_use_active": cu_mission_active(),
+        })
+        return detail
 
     @staticmethod
     def _supervisor_state_for_turn(state: TurnTakingState) -> str:
@@ -5137,6 +5205,7 @@ class SpeechPipeline:
         animate = is_readback and self._supervisor is not None
         if animate:
             await self._transition("SPEAKING")
+        self._assistant_work_count = getattr(self, "_assistant_work_count", 0) + 1
         try:
             # Drive the TTS pin from the SAME resolved language as the scrub,
             # not from event.language again — a None/auto tag here used to send
@@ -5180,6 +5249,8 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001
             log.warning("Announcement-Speak fehlgeschlagen: %s", exc)
         finally:
+            self._assistant_work_count -= 1
+            self._last_announcement_spoken_monotonic = time.monotonic()
             if animate:
                 hungup = hangup is not None and hangup.is_set()
                 await self._transition("IDLE" if hungup else "LISTENING")
@@ -5781,6 +5852,7 @@ class SpeechPipeline:
         hangup = getattr(self, "_hangup_event", None)
         if animate:
             await self._transition("SPEAKING")
+        self._assistant_work_count = getattr(self, "_assistant_work_count", 0) + 1
         try:
             self._register_assistant_speech(cleaned)
             try:
@@ -5794,6 +5866,8 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001
             log.warning("Background-completed Voice-Ansage failed: %s", exc)
         finally:
+            self._assistant_work_count -= 1
+            self._last_announcement_spoken_monotonic = time.monotonic()
             if animate:
                 hungup = hangup is not None and hangup.is_set()
                 await self._transition("IDLE" if hungup else "LISTENING")
@@ -7253,6 +7327,8 @@ class SpeechPipeline:
         ``stop_player=False`` is used when the brain itself emitted the
         farewell ("Goodbye, Ruben.") — we let that final utterance play.
         """
+        if not getattr(self, "_termination_producer", ""):
+            self._termination_producer = "speech.pipeline._trigger_voice_hangup"
         if stop_player:
             try:
                 self._player.stop()
@@ -8427,6 +8503,13 @@ class SpeechPipeline:
             # spoken cue. (The spoken-cue path is for mid-conversation use.)
             self._session_has_assistant_spoken = False
             session_id = str(uuid4())
+            self._termination_producer = ""
+            self._termination_detail = {}
+            self._idle_deadline_monotonic = None
+            self._last_user_activity_monotonic = None
+            self._last_answer_floor_monotonic = None
+            self._last_announcement_spoken_monotonic = None
+            self._previous_turn_state = None
             self._current_voice_session_id = session_id
             self._active_voice_mode = self._configured_voice_mode()
             self._active_realtime_provider = ""
@@ -8463,6 +8546,7 @@ class SpeechPipeline:
                         or self._external_hangup_pending.is_set()
                     ):
                         hangup_reason = HANGUP_HOTKEY
+                        self._termination_producer = "speech.pipeline._state_loop.startup_hangup"
                         log.info("Voice session cancelled during startup.")
                     else:
                         log.info(
@@ -8478,9 +8562,15 @@ class SpeechPipeline:
                         hangup_reason = await self._active_session(
                             input_buffer=input_buffer
                         )
+            except asyncio.CancelledError:
+                hangup_reason = HANGUP_SHUTDOWN
+                self._termination_producer = "speech.pipeline._state_loop.cancelled"
+                raise
             except Exception as exc:  # noqa: BLE001
+                self._termination_producer = "speech.pipeline._state_loop.error"
                 log.exception("Voice session failed: %s", exc)
             finally:
+                termination = self._termination_snapshot(hangup_reason)
                 reopen_after_engine_change = bool(
                     getattr(self, "_reopen_after_engine_change", False)
                 )
@@ -8536,10 +8626,11 @@ class SpeechPipeline:
                     spend.flush()
                 await self._publish_event(
                     VoiceSessionEnded(
-                        source_layer="speech.pipeline",
+                        source_layer=termination["producer"],
                         session_id=session_id,
                         hangup_reason=hangup_reason,
                         duration_s=max(0.0, time.time() - session_started_at),
+                        detail=json.dumps(termination, ensure_ascii=True),
                     )
                 )
                 self._state = PipelineState.IDLE
@@ -8625,11 +8716,17 @@ class SpeechPipeline:
 
     @asynccontextmanager
     async def _session_input_source(
-        self, input_buffer: _SessionInputBuffer | None
+        self,
+        input_buffer: _SessionInputBuffer | None,
+        *,
+        discard_suppressed: bool = False,
     ) -> AsyncIterator[AsyncIterator[AudioChunk]]:
         """Yield a pre-opened session stream or own a fallback capture."""
         if input_buffer is not None:
-            yield input_buffer.stream()
+            discard_before = (
+                lambda: int(getattr(self, "_input_suppressed_until_ns", 0))
+            ) if discard_suppressed else None
+            yield input_buffer.stream(discard_before_ns=discard_before)
             return
         async with MicrophoneCapture(
             device=self._input_device,
@@ -8701,7 +8798,9 @@ class SpeechPipeline:
         self._active_realtime_provider = ""
         self._active_realtime_model = ""
         self._voice_engine_transitioning = False
-        async with self._session_input_source(input_buffer) as input_chunks:
+        async with self._session_input_source(
+            input_buffer, discard_suppressed=True
+        ) as input_chunks:
             vad_iter = self._vad.utterances(
                 self._session_input_stream(input_chunks)
             ).__aiter__()
@@ -8717,11 +8816,16 @@ class SpeechPipeline:
             next_task: asyncio.Task[bytes] | None = None
             try:
                 while not self._hangup_event.is_set():
-                    await self._set_turn_state(TurnTakingState.LISTENING)
-                    await self._publish_event(ListeningStarted(source_layer="speech"))
+                    if not self._assistant_work_in_flight():
+                        await self._set_turn_state(TurnTakingState.LISTENING)
+                        await self._publish_event(ListeningStarted(source_layer="speech"))
                     if next_task is None:
                         next_task = asyncio.create_task(vad_iter.__anext__())
                     hangup_task = asyncio.create_task(self._hangup_event.wait())
+                    self._idle_deadline_monotonic = (
+                        time.monotonic() + self._idle_timeout_s
+                        if getattr(self, "_idle_hangup_enabled", True) else None
+                    )
                     try:
                         done, _pending = await asyncio.wait(
                             {next_task, hangup_task},
@@ -8748,8 +8852,17 @@ class SpeechPipeline:
                         hangup_task.cancel()
                     if hangup_task in done:
                         next_task.cancel()
+                        if not getattr(self, "_termination_producer", ""):
+                            self._termination_producer = (
+                                "speech.pipeline._active_session.hangup_event"
+                            )
                         return HANGUP_HOTKEY
                     if next_task not in done:
+                        if self._assistant_work_in_flight():
+                            log.debug(
+                                "Idle window expired during assistant work; keeping session open."
+                            )
+                            continue
                         # Idle timeout — the VAD is still waiting for speech.
                         # ``_live_spawn_watchdogs`` prunes fired/cancelled
                         # watchdogs (the watchdog self-removes after its single
@@ -8805,6 +8918,7 @@ class SpeechPipeline:
                             continue
                         log.info("⏲ Idle-Timeout — lege auf.")
                         next_task.cancel()
+                        self._termination_producer = "speech.pipeline._active_session.idle_timeout"
                         return HANGUP_IDLE_TIMEOUT
                     # The VAD yielded (or raised) — consume it, then recreate the
                     # task on the next loop iteration.
@@ -8812,11 +8926,23 @@ class SpeechPipeline:
                         utterance_pcm: bytes = next_task.result()
                     except StopAsyncIteration:
                         next_task = None
+                        self._termination_producer = (
+                            "speech.pipeline._active_session.input_exhausted"
+                        )
                         return HANGUP_SHUTDOWN
                     except Exception as exc:  # noqa: BLE001
                         log.exception("VAD failed: %s", exc)
                         next_task = None
-                        continue
+                        # An exception closes the async generator. Reading it
+                        # again can only produce StopAsyncIteration, disguising
+                        # this capture failure as an application shutdown.
+                        self._termination_producer = "speech.pipeline._active_session.vad_error"
+                        self._termination_detail = {
+                            **getattr(self, "_termination_detail", {}),
+                            "input_error_type": type(exc).__name__,
+                            "input_replay_overrun": "replay window" in str(exc),
+                        }
+                        return HANGUP_ERROR
                     next_task = None
                     await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
                     await self._publish_utterance_captured(utterance_pcm)
@@ -13980,6 +14106,7 @@ class SpeechPipeline:
             await self._set_turn_state(TurnTakingState.LISTENING)
             return True
         self._session_end_reason = HANGUP_TURN_COMPLETE
+        self._termination_producer = "speech.pipeline._finish_after_response.single_turn"
         await self._set_turn_state(TurnTakingState.IDLE)
         return False
 
@@ -14460,7 +14587,16 @@ class SpeechPipeline:
         # Hangup muss vor dem STT-Halluzinationsfilter laufen: kurze
         # "Auflegen"-Turns werden von Whisper gelegentlich als "Vielen Dank"
         # transkribiert, was sonst als Halluzination verworfen wuerde.
-        if HANGUP_RE.search(text):
+        hangup_match = HANGUP_RE.search(text)
+        self._last_user_activity_monotonic = time.monotonic()
+        self._termination_detail = {
+            "hangup_pattern_matched": hangup_match is not None,
+            "hangup_pattern": matched_hangup_pattern(text) if hangup_match else None,
+            "end_call_signal": None,
+            "legacy_farewell_matched": None,
+        }
+        if hangup_match:
+            self._termination_producer = "speech.pipeline._handle_utterance_turn.explicit_hangup"
             log.info("Voice-Hangup via Regex (%r) - lege auf.", text)
             self._trigger_voice_hangup()
             return False
@@ -14768,8 +14904,21 @@ class SpeechPipeline:
             # `response` is the RAW streamed full text (still carries the
             # sentinel); the spoken sentences were already scrubbed inside
             # _brain_streaming. Legacy exact farewells stay supported.
-            is_hangup = contains_end_signal(response) or is_legacy_farewell(normalized)
+            requested_hangup = contains_end_signal(response) or is_legacy_farewell(normalized)
+            self._termination_detail.update({
+                "end_call_signal": contains_end_signal(response),
+                "legacy_farewell_matched": is_legacy_farewell(normalized),
+            })
+            is_hangup = requested_hangup and supports_semantic_hangup(text)
+            if requested_hangup and not is_hangup:
+                log.warning(
+                    "Ignored streamed brain hangup signal: the user did not "
+                    "express conversation-closing intent."
+                )
             if is_hangup:
+                self._termination_producer = (
+                    "speech.pipeline._handle_utterance_turn.streamed_end_signal"
+                )
                 log.info("🔚 Voice-Hangup via Brain-Signal (streamed) — lege auf.")
                 self._trigger_voice_hangup(stop_player=False)
                 return False
@@ -14838,7 +14987,17 @@ class SpeechPipeline:
         # Hang-up intent must be read from the RAW brain response, BEFORE
         # scrub_for_voice strips the [[END_CALL]] sentinel below.
         _normalized_raw = response.strip().rstrip("!.").strip().lower()
-        is_hangup = contains_end_signal(response) or is_legacy_farewell(_normalized_raw)
+        requested_hangup = contains_end_signal(response) or is_legacy_farewell(_normalized_raw)
+        self._termination_detail.update({
+            "end_call_signal": contains_end_signal(response),
+            "legacy_farewell_matched": is_legacy_farewell(_normalized_raw),
+        })
+        is_hangup = requested_hangup and supports_semantic_hangup(text)
+        if requested_hangup and not is_hangup:
+            log.warning(
+                "Ignored brain hangup signal: the user did not express "
+                "conversation-closing intent."
+            )
 
         # Phase-1-Output-Filter (Persona-Mandat): Tool-JSON, Stacktraces,
         # Engineering-Jargon, Self-Reference, Echo-/Filler-Opener vor TTS
@@ -14879,6 +15038,7 @@ class SpeechPipeline:
         await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
         barged = await self._speak(response, language=lang)
         if is_hangup:
+            self._termination_producer = "speech.pipeline._handle_utterance_turn.end_signal"
             log.info("🔚 Voice-Hangup via Brain-Signal — lege auf.")
             self._trigger_voice_hangup(stop_player=False)
             return False
@@ -15592,6 +15752,7 @@ class SpeechPipeline:
         """
         if not text:
             return
+        self._assistant_work_count = getattr(self, "_assistant_work_count", 0) + 1
         try:
             await self._set_turn_state(TurnTakingState.PROCESSING)
             log.info("→ Brain (from completion buffer)…")
@@ -15614,10 +15775,13 @@ class SpeechPipeline:
                     generate_call = self._brain.generate(text)
                 reply = await generate_call
                 if reply:
+                    await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
                     await self._speak(reply, language=lang, kind=SPOKEN_KIND_COMPLETION)
         except Exception as exc:  # noqa: BLE001 — AD-OE6: never crash the turn
             log.exception("Buffered-completion dispatch failed: %s", exc)
         finally:
+            self._assistant_work_count -= 1
+            self._last_answer_floor_monotonic = time.monotonic()
             try:
                 await self._set_turn_state(TurnTakingState.LISTENING)
             except Exception:  # noqa: BLE001, S110

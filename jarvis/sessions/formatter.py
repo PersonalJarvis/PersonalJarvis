@@ -1,23 +1,9 @@
-"""Markdown- und Plain-Text-Renderer fuer Voice-Sessions.
+"""Markdown and plain-text renderers for recorded voice sessions.
 
-Zwei Output-Formate:
-
-- ``markdown`` — strukturiert mit Headings/Listen, fuer Copy in Chat-
-  Apps, Issues, Notion/Obsidian. Nutzt Emojis als visuelle Anker
-  (🎤 User, 🧠 Jarvis, 🔧 Tool, ⏱ Latenz) — sind Single-Codepoints,
-  kompatibel mit allen UTF-8-Targets.
-
-- ``plain`` — die *schlichte* Gespraechs-Transkription, die ein Mensch
-  zum Weitergeben kopiert. Reiner Dialog mit ``Du:`` / ``Jarvis:`` als
-  Sprecher, eine schlanke Kopfzeile (Datum + Dauer). Keine Emojis, keine
-  Markdown-Marker und keine Pro-Turn-Telemetrie (Tier/Provider/Tokens/
-  Kosten/Latenz) — diese Maschinen-Details leben im ``json``-Export.
-  Beim Einfuegen in Chat, Notiz oder E-Mail entsteht so kein "AI-Slop".
-
-Beide Renderer arbeiten auf den gleichen ``VoiceSessionRow`` +
-``VoiceTurnRow``-Inputs aus ``store.py``. Die rohen ``VoiceEventRow``
-sind nicht im Output — das ist Detail-Replay-Daten und nicht fuer
-Copy-Paste-Konsum gedacht.
+Both formats preserve the audible dialogue and the final termination reason.
+Markdown adds per-turn metadata; plain text keeps those details out of the
+conversation. When recorded, termination diagnostics follow as an explicitly
+unspoken appendix. Raw event payloads remain available in the JSON export.
 """
 from __future__ import annotations
 
@@ -26,6 +12,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from .constants import SPOKEN_KIND_WITHHELD
+from .diagnostics import diagnostic_value, session_termination_diagnostics
 from .models import VoiceEventRow, VoiceSessionRow, VoiceTurnRow
 
 
@@ -147,9 +134,11 @@ def format_session_markdown(
     turns: Iterable[VoiceTurnRow],
     events: Iterable[VoiceEventRow] | None = None,
 ) -> str:
-    """Markdown-Version fuer reichen Copy-Paste-Konsum."""
+    """Render a structured transcript for rich copy-and-paste targets."""
     turns_list = list(turns)
-    events_map = _events_by_turn(events)
+    events_list = list(events or [])
+    events_map = _events_by_turn(events_list)
+    termination = session_termination_diagnostics(session, events_list)
     lines: list[str] = []
 
     # --- Header ---
@@ -165,6 +154,9 @@ def format_session_markdown(
         lines.append(f"- **Wake-Word:** {session.wake_keyword}")
     if session.hangup_reason:
         lines.append(f"- **Beendet durch:** {_pretty_hangup(session.hangup_reason)}")
+    if session.ended_ms is not None:
+        lines.append(f"- **Termination reason:** {diagnostic_value(termination['hangup_reason'])}")
+        lines.append(f"- **Termination producer:** {diagnostic_value(termination['producer'])}")
     if session.total_cost_usd > 0:
         lines.append(f"- **Kosten:** ${session.total_cost_usd:.4f}")
     if session.total_tokens_in or session.total_tokens_out:
@@ -180,6 +172,7 @@ def format_session_markdown(
     # --- Turns ---
     if not turns_list:
         lines.append("_(keine Turns aufgezeichnet)_")
+        lines.extend(_termination_details(termination))
         return "\n".join(lines)
 
     for display_index, t in enumerate(turns_list, start=1):
@@ -192,7 +185,7 @@ def format_session_markdown(
             lines.append(f"> {t.user_text}")
             lines.append("")
 
-        # Brain-Meta-Zeile, nur wenn was substantielles da ist
+        # Only include brain metadata when a recorded value exists.
         meta_parts: list[str] = []
         if t.tier:
             meta_parts.append(f"Tier: `{t.tier}`")
@@ -262,6 +255,7 @@ def format_session_markdown(
         lines.append("---")
         lines.append("")
 
+    lines.extend(_termination_details(termination))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -270,24 +264,19 @@ def format_session_plain(
     turns: Iterable[VoiceTurnRow],
     events: Iterable[VoiceEventRow] | None = None,
 ) -> str:
-    """Schlichte Gespraechs-Transkription — reiner Dialog, kein Slop.
+    """Render dialogue plus the session's final termination evidence.
 
-    Aufbau: eine Kopfzeile (``Voice-Session · Datum · Dauer``), dann jede
-    Aeusserung mit ``Du:`` bzw. ``Jarvis:`` als Sprecher, durch Leerzeilen
-    getrennt. Bewusst *weggelassen*: Emojis, Markdown, sowie jede
-    Pro-Turn-Telemetrie (Tier/Provider/Model/Tokens/Kosten/Latenz/Tools).
-    Wer diese Maschinen-Details braucht, nutzt den ``json``-Export.
-
-    Every VOICED non-reply phrase (timeout / clarify / announcement text from
-    the SpeechSpoken events) also appears here as a ``Jarvis:`` line — without
-    a kind tag, to keep the dialogue clean. That way even the plain export
-    documents everything the user heard.
+    The body uses speaker labels, without Markdown, emojis, or per-turn
+    cost/model telemetry. Supplemental audible phrases remain dialogue;
+    termination diagnostics are labelled as not spoken after the dialogue.
     """
     turns_list = list(turns)
-    events_map = _events_by_turn(events)
+    events_list = list(events or [])
+    events_map = _events_by_turn(events_list)
+    termination = session_termination_diagnostics(session, events_list)
     lines: list[str] = []
 
-    # --- Schlanke Kopfzeile: "Voice-Session · 07.06.2026, 19:24 · 1 min 42 s"
+    # Keep the date, mode and duration together in one compact header.
     header_bits = [
         _fmt_dt_human(session.started_ms),
         f"Modus: {_pretty_voice_mode(session.voice_mode)}",
@@ -296,15 +285,19 @@ def format_session_plain(
     if duration:
         header_bits.append(duration)
     lines.append("Voice-Session · " + " · ".join(header_bits))
+    if session.ended_ms is not None:
+        lines.append(
+            f"Ended by: {diagnostic_value(termination['hangup_reason'])}"
+            f" · Producer: {diagnostic_value(termination['producer'])}"
+        )
     lines.append("")
 
     if not turns_list:
         lines.append("(keine Turns aufgezeichnet)")
+        lines.extend(_termination_details(termination))
         return "\n".join(lines).rstrip() + "\n"
 
-    # Reiner Dialog: pro Turn die vorhandenen Aeusserungen, durch Leer-
-    # zeilen getrennt. Turns ohne Antwort (z.B. "auflegen") erzeugen keine
-    # leere "Jarvis:"-Zeile.
+    # An unanswered turn must not produce an empty assistant speaker label.
     blocks: list[str] = []
     for t in turns_list:
         if t.user_text:
@@ -317,14 +310,29 @@ def format_session_plain(
     if blocks:
         lines.append("\n\n".join(blocks))
 
+    lines.extend(_termination_details(termination))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _termination_details(termination: dict[str, object]) -> list[str]:
+    if not termination["snapshot_recorded"]:
+        return []
+    lines = [
+        "", "Session termination diagnostics (not spoken):",
+        "Times ending in _ms are recorded event times in epoch milliseconds;",
+        "times ending in _monotonic are process-local seconds.",
+    ]
+    for key, value in termination.items():
+        if key not in {"snapshot_recorded", "hangup_reason", "producer"}:
+            lines.append(f"{key}: {diagnostic_value(value)}")
+    return lines
 
 
 # --- Helpers ----------------------------------------------------------
 
 
 def _local_dt(ts_ms: int) -> datetime:
-    """Wall-clock-ms -> lokale ``datetime`` (eine Stelle fuer die TZ-Logik)."""
+    """Convert epoch milliseconds using the local timezone in one place."""
     return datetime.fromtimestamp(ts_ms / 1000.0, tz=UTC).astimezone()
 
 
@@ -336,7 +344,7 @@ def _fmt_dt(ts_ms: int, *, time_only: bool = False) -> str:
 
 
 def _fmt_dt_human(ts_ms: int) -> str:
-    """Schlankes deutsches Datum fuer die Kopfzeile: ``07.06.2026, 19:24``."""
+    """Compact day-first date for the transcript header."""
     return _local_dt(ts_ms).strftime("%d.%m.%Y, %H:%M")
 
 

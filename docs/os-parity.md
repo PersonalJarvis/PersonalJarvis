@@ -24,6 +24,17 @@ host's Tk bootstrap root cannot steal them.
 Windows (OLE/WebView2) and macOS (AppKit/WKWebView) sources. P-15 records the
 remaining GTK source gap; reveal/open actions remain available on Linux.
 
+**Voice termination diagnostics (2026-09-07).** The existing
+`VoiceSessionEnded` event accepts optional JSON text in `detail`; omitted
+metadata remains supported for realtime and older publishers. The recorder
+persists the producer and detail in its existing event payload, and plain-text
+and Markdown exports expose the final reason. Pipeline snapshots add control
+and timing evidence without recording raw model output. This uses the same
+stdlib/SQLite path on Windows, macOS and Linux, including headless installs;
+it needs no native capability probe. Contract tests cover serialization,
+persistence and export with and without diagnostics. Live audio and fresh
+single-key install verification are separate from these automated checks.
+
 **Fix pass 2026-07-31:** P-28 fixed and removed. Codex subscription voice now
 uses a parent-lifeline process-group supervisor on macOS and Linux, while
 Windows retains kernel Job Object containment.

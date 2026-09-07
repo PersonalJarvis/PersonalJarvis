@@ -115,6 +115,14 @@ _HANGUP_PATTERNS: Final[tuple[str, ...]] = (
 
 HANGUP_RE: Final[re.Pattern[str]] = re.compile("|".join(_HANGUP_PATTERNS), re.IGNORECASE)
 
+
+def matched_hangup_pattern(text: str) -> str | None:
+    """Identify the static matching branch for diagnostics without user text."""
+    return next(
+        (pattern for pattern in _HANGUP_PATTERNS if re.search(pattern, text, re.IGNORECASE)),
+        None,
+    )
+
 # --- Brain control sentinel (post-brain, semantic) ------------------------
 END_CALL_SIGNAL: Final[str] = "[[END_CALL]]"
 
@@ -122,6 +130,42 @@ END_CALL_SIGNAL: Final[str] = "[[END_CALL]]"
 def contains_end_signal(text: str | None) -> bool:
     """True if the brain response carries the hang-up sentinel."""
     return bool(text) and END_CALL_SIGNAL in text
+
+
+# Semantic closure needs evidence in the USER's turn as well as the model's
+# sentinel. Match the complete speech act: an informational request that quotes
+# a farewell or describes a finished task must never become session control.
+# Gratitude alone is not closing intent, and neither is the assistant saying
+# that it has completed the requested work.
+_SEMANTIC_CLOSING_RE = re.compile(
+    r"\s*(?:(?:okay|ok|thanks|thank you|danke|gracias)[\s,.!]+)*"  # i18n-allow
+    r"(?:(?:i think|i guess|ich glaube|ich denke|creo que)[\s,]+)?"  # i18n-allow
+    r"(?:"
+    r"(?:we are|we're|i am|i'm) (?:done|finished)(?: (?:here|for now|for today))?"
+    r"|(?:that is|that's|that was) all(?: (?:for now|for today|i needed))?"
+    r"|that will be all|nothing else(?: for now)?|no more questions"
+    r"|i (?:have|need) to go|let's stop here|you can go now"
+    r"|wir sind (?:durch|fertig)(?: für heute)?"  # i18n-allow
+    r"|ich bin (?:durch|fertig)(?: für heute)?"  # i18n-allow
+    r"|das war'?s(?: für heute)?|das ist alles|mehr brauche ich nicht"  # i18n-allow
+    r"|keine weiteren fragen|ich muss (?:los|gehen)|du kannst gehen"  # i18n-allow
+    r"|eso es todo(?: por (?:ahora|hoy))?|hemos terminado|ya terminamos"
+    r"|no necesito nada más|no tengo más preguntas|me tengo que ir"
+    r")"
+    r"(?:[\s,.!]+(?:thanks|thank you|danke|gracias|jarvis))*[\s.!]*",  # i18n-allow
+    re.IGNORECASE,
+)
+
+
+def supports_semantic_hangup(user_text: str | None) -> bool:
+    """Whether the user independently expressed conversation-closing intent.
+
+    This never hangs up by itself. A model sentinel or legacy farewell must
+    agree with it; ambiguous speech stays open and explicit commands continue
+    to use the immediate pre-brain matcher.
+    """
+    text = (user_text or "").replace("’", "'")
+    return _SEMANTIC_CLOSING_RE.fullmatch(text) is not None
 
 
 def strip_end_signal(text: str | None) -> str:
@@ -164,5 +208,7 @@ __all__ = [
     "LEGACY_FAREWELL_PHRASES",
     "contains_end_signal",
     "is_legacy_farewell",
+    "matched_hangup_pattern",
     "strip_end_signal",
+    "supports_semantic_hangup",
 ]

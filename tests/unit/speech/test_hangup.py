@@ -10,6 +10,7 @@ from jarvis.speech.hangup import (
     contains_end_signal,
     is_legacy_farewell,
     strip_end_signal,
+    supports_semantic_hangup,
 )
 
 
@@ -149,3 +150,24 @@ def test_is_legacy_farewell_rejects_other_text() -> None:
     assert is_legacy_farewell("auf wiedersehen ruben war mir ein vergnügen") is False  # i18n-allow
     assert is_legacy_farewell("hallo ruben") is False
     assert is_legacy_farewell("") is False
+
+
+@pytest.mark.parametrize("text", [
+    "Ich glaube wir sind durch", "Danke, das war's für heute.",  # i18n-allow
+    "I think we're done here, thanks.", "That is all for now.",
+    "I need to go", "No more questions", "Eso es todo por hoy, gracias.",
+    "Creo que hemos terminado", "No necesito nada más",
+])
+def test_semantic_closure_requires_positive_user_evidence(text: str) -> None:
+    assert supports_semantic_hangup(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Explain the selected text on my screen", "Translate that please",
+    "The task is complete", "The build is done", "Thanks", "Vielen Dank",  # i18n-allow
+    "We are not done", "We're done with step one, now continue with step two",
+    'Translate "we are done" into German', "We're done?", "No hemos terminado",
+    "Ich glaube wir sind nicht fertig", "Das war's mit dem Fehler, mach weiter",  # i18n-allow
+])
+def test_task_completion_and_quoted_closings_are_not_session_closure(text: str) -> None:
+    assert not supports_semantic_hangup(text)

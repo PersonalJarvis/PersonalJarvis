@@ -1770,6 +1770,9 @@ class VoiceSessionEnded(Event):
     hangup_reason: str = ""
     turn_count: int = 0
     duration_s: float = 0.0
+    # Optional JSON diagnostic snapshot captured by the terminating path.
+    # Empty on older publishers; never contains raw model output or secrets.
+    detail: str = ""
 
 
 @dataclass(frozen=True, slots=True)
