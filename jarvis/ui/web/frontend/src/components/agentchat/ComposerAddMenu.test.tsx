@@ -27,10 +27,11 @@ const disconnected = {
   available: false,
 };
 
-function setup(items = [gmail, disconnected]) {
+function setup(items = [gmail, disconnected], onInsert?: (row: ToolChoice) => void) {
   const connect = vi.fn(),
     attach = vi.fn(),
-    folder = vi.fn();
+    folder = vi.fn(),
+    insert = vi.fn(onInsert);
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response(JSON.stringify({ items, mode: "browse", total: items.length }))),
@@ -52,6 +53,7 @@ function setup(items = [gmail, disconnected]) {
           stance="ask"
           selected={selected}
           onChange={setSelected}
+          onInsert={onInsert ? insert : undefined}
           onAttach={attach}
           onFolder={folder}
           onConnect={connect}
@@ -62,7 +64,7 @@ function setup(items = [gmail, disconnected]) {
   }
   render(<Harness />);
   fireEvent.click(screen.getByTestId("composer-add"));
-  return { connect, attach, folder };
+  return { connect, attach, folder, insert };
 }
 
 afterEach(() => {
@@ -139,6 +141,13 @@ describe("Add menu", () => {
       },
       { timeout: 500 },
     );
+  });
+
+  it("closes after inserting a plugin so typing continues in the sentence", async () => {
+    const { insert } = setup([gmail, disconnected], () => {});
+    fireEvent.click(await screen.findByRole("button", { name: /Gmail Read your inbox/ }));
+    expect(insert).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("keeps file and folder actions functional", async () => {

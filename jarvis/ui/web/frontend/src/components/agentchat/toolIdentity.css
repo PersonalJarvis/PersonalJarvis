@@ -48,6 +48,7 @@
 .tool-choice-chip[data-inline="true"] {
   display: inline-flex;
   vertical-align: middle;
+  user-select: none;
   margin: 0 0.12em;
   padding: 1px 8px 1px 6px;
   border-radius: 999px;

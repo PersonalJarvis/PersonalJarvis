@@ -333,6 +333,7 @@ export function ComposerAddMenu({
                           if (onInsert) {
                             onInsert(row);
                             if (!picked) onChange([...selected, row]);
+                            setOpen(false);
                             return;
                           }
                           onChange(

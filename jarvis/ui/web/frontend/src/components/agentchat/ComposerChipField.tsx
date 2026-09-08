@@ -120,24 +120,31 @@ function serialize(root: HTMLElement): ComposerDraft {
   return { text, choices, caret };
 }
 
-function caretRange(root: HTMLElement): Range {
-  const sel = root.ownerDocument.getSelection();
-  if (sel && sel.rangeCount && root.contains(sel.anchorNode)) {
-    return sel.getRangeAt(0);
-  }
+function rangeAtEnd(root: HTMLElement): Range {
   const range = root.ownerDocument.createRange();
   range.selectNodeContents(root);
   range.collapse(false);
   return range;
 }
 
-function placeAfter(node: Node) {
-  const range = node.ownerDocument!.createRange();
-  range.setStartAfter(node);
+function liveRange(root: HTMLElement): Range | null {
+  const sel = root.ownerDocument.getSelection();
+  if (sel && sel.rangeCount && sel.anchorNode && root.contains(sel.anchorNode)) {
+    return sel.getRangeAt(0);
+  }
+  return null;
+}
+
+/** Park inside a text node. After a non-editable chip, setStartAfter jumps to the start. */
+function caretInText(node: Text, offset: number) {
+  const pos = Math.max(0, Math.min(offset, node.data.length));
+  const range = node.ownerDocument.createRange();
+  range.setStart(node, pos);
   range.collapse(true);
-  const sel = node.ownerDocument!.getSelection();
+  const sel = node.ownerDocument.getSelection();
   sel?.removeAllRanges();
   sel?.addRange(range);
+  return range;
 }
 
 function hydrateRoot(root: HTMLElement, text: string, choices: ToolChoice[] = []) {
@@ -171,6 +178,20 @@ export const ComposerChipField = forwardRef<
   ref,
 ) {
   const elRef = useRef<HTMLDivElement>(null);
+  const savedRange = useRef<Range | null>(null);
+
+  const rememberRange = (root: HTMLElement) => {
+    const range = liveRange(root);
+    if (range) savedRange.current = range.cloneRange();
+  };
+
+  const rangeForInsert = (root: HTMLElement): Range => {
+    const live = liveRange(root);
+    if (live) return live;
+    const saved = savedRange.current;
+    if (saved && root.contains(saved.startContainer)) return saved.cloneRange();
+    return rangeAtEnd(root);
+  };
 
   const emit = () => {
     const root = elRef.current;
@@ -181,16 +202,21 @@ export const ComposerChipField = forwardRef<
   const insertNode = (node: Node, afterSpace = true) => {
     const root = elRef.current;
     if (!root) return;
+    const range = rangeForInsert(root);
     root.focus();
-    const range = caretRange(root);
     range.deleteContents();
     range.insertNode(node);
     if (afterSpace) {
       const space = root.ownerDocument.createTextNode(" ");
       node.parentNode?.insertBefore(space, node.nextSibling);
-      placeAfter(space);
+      savedRange.current = caretInText(space, space.data.length).cloneRange();
+    } else if (node.nodeType === Node.TEXT_NODE) {
+      const text = node as Text;
+      savedRange.current = caretInText(text, text.data.length).cloneRange();
     } else {
-      placeAfter(node);
+      const tail = root.ownerDocument.createTextNode("");
+      node.parentNode?.insertBefore(tail, node.nextSibling);
+      savedRange.current = caretInText(tail, 0).cloneRange();
     }
     emit();
   };
@@ -206,8 +232,12 @@ export const ComposerChipField = forwardRef<
       const root = elRef.current;
       if (!root) return;
       hydrateRoot(root, text, choices);
-      emit();
       root.focus();
+      savedRange.current = rangeAtEnd(root).cloneRange();
+      const sel = root.ownerDocument.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(savedRange.current);
+      emit();
     },
     getDraft() {
       return elRef.current ? serialize(elRef.current) : { text: "", choices: [], caret: 0 };
@@ -216,15 +246,25 @@ export const ComposerChipField = forwardRef<
       const root = elRef.current;
       if (!root) return;
       root.innerHTML = "";
+      savedRange.current = null;
       emit();
     },
     focus() {
-      elRef.current?.focus();
+      const root = elRef.current;
+      if (!root) return;
+      root.focus();
+      const range = savedRange.current;
+      if (range && root.contains(range.startContainer)) {
+        const sel = root.ownerDocument.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
     },
     setText(text) {
       const root = elRef.current;
       if (!root) return;
       root.textContent = text;
+      savedRange.current = rangeAtEnd(root).cloneRange();
       emit();
     },
   }));
@@ -237,6 +277,7 @@ export const ComposerChipField = forwardRef<
     const root = elRef.current;
     if (!root) return;
     const onSel = () => {
+      rememberRange(root);
       const sel = root.ownerDocument.getSelection();
       if (sel?.anchorNode && root.contains(sel.anchorNode)) emit();
     };
@@ -281,6 +322,10 @@ export const ComposerChipField = forwardRef<
       onInput={onInput}
       onKeyDown={onKeyDown}
       onPaste={onPaste}
+      onBlur={() => {
+        const root = elRef.current;
+        if (root) rememberRange(root);
+      }}
       className={cn(
         "composer-chip-field min-h-[32px] flex-1 bg-transparent px-1 py-1.5 text-sm leading-relaxed text-foreground outline-none",
         className,
