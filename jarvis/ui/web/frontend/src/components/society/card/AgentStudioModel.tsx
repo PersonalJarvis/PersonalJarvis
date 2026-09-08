@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Save } from "lucide-react";
 import { useT } from "@/i18n";
+import { BrandedSelect } from "@/components/ui/select";
 import { fetchAgentChatCatalog, fetchAgentConnections, fetchProviderModels, type CuratedModel } from "@/lib/agentChatApi";
 import { fetchSocietyProviders, type SocietyAgentRow } from "@/lib/societyApi";
 import { joinProviderOptions } from "@/store/agentChat";
@@ -87,6 +88,7 @@ export function AgentStudioModel({ agent, sample, onGuardChange }: {
   };
   const loading = catalog.isLoading || current.isLoading;
   const failed = catalog.isError || current.isError || live.isError;
+  const fieldsOff = busy || loading || sample || !initial;
   return <div className="as-stack">
     <p className="as-note">{t("society.studio.model_hint")}</p>
     {sample ? <p className="as-note">{t("society.studio.sample")}</p> : null}
@@ -96,16 +98,22 @@ export function AgentStudioModel({ agent, sample, onGuardChange }: {
     </div> : null}
     <fieldset disabled={busy || loading || sample || !initial} className="as-stack">
       <label className="as-field"><span>{t("society.studio.provider")}</span>
-        <select value={selection.provider} onChange={(event) => {
-          const next = seats.find((entry) => entry.provider.id === event.target.value);
-          if (!next) return;
-          const model = next.provider.default_model;
-          const ladder = effortsFor(next, model);
-          change({ provider: next.provider.id, model, effort: ladder.includes(next.provider.default_effort) ? next.provider.default_effort : ladder[0] ?? "", account_id: "" });
-        }}>
-          {!seat ? <option value={selection.provider}>{selection.provider || t("society.card.default_brain")}</option> : null}
-          {seats.map((entry) => <option value={entry.provider.id} key={entry.provider.id}>{entry.provider.label}</option>)}
-        </select>
+        <BrandedSelect
+          ariaLabel={t("society.studio.provider")}
+          value={selection.provider}
+          disabled={fieldsOff}
+          onValueChange={(value) => {
+            const next = seats.find((entry) => entry.provider.id === value);
+            if (!next) return;
+            const model = next.provider.default_model;
+            const ladder = effortsFor(next, model);
+            change({ provider: next.provider.id, model, effort: ladder.includes(next.provider.default_effort) ? next.provider.default_effort : ladder[0] ?? "", account_id: "" });
+          }}
+          options={[
+            ...(!seat ? [{ value: selection.provider, label: selection.provider || t("society.card.default_brain") }] : []),
+            ...seats.map((entry) => ({ value: entry.provider.id, label: entry.provider.label })),
+          ]}
+        />
       </label>
       <label className="as-field"><span>{t("society.chat.model")}</span>
         <input list={`studio-models-${agent.agentId}`} value={selection.model} onChange={(event) => {
@@ -115,18 +123,32 @@ export function AgentStudioModel({ agent, sample, onGuardChange }: {
         <datalist id={`studio-models-${agent.agentId}`}>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist>
       </label>
       <label className="as-field"><span>{t("society.chat.effort")}</span>
-        <select value={selection.effort} onChange={(event) => change({ ...selection, effort: event.target.value })}>
-          <option value="">{t("society.chat.effort_default")}</option>
-          {selection.effort && !efforts.includes(selection.effort) ? <option value={selection.effort}>{selection.effort}</option> : null}
-          {efforts.filter(Boolean).map((effort) => <option key={effort} value={effort}>{effort}</option>)}
-        </select>
+        <BrandedSelect
+          ariaLabel={t("society.chat.effort")}
+          value={selection.effort}
+          disabled={fieldsOff}
+          onValueChange={(value) => change({ ...selection, effort: value })}
+          options={[
+            { value: "", label: t("society.chat.effort_default") },
+            ...(selection.effort && !efforts.includes(selection.effort) ? [{ value: selection.effort, label: selection.effort }] : []),
+            ...efforts.filter(Boolean).map((effort) => ({ value: effort, label: effort })),
+          ]}
+        />
       </label>
       {seat?.kind === "subscription" ? <label className="as-field"><span>{t("society.studio.account")}</span>
-        <select value={selection.account_id} onChange={(event) => change({ ...selection, account_id: event.target.value })}>
-          <option value="">{t("society.studio.active_account")}</option>
-          {selection.account_id && !seat.accounts.some((account) => account.id === selection.account_id) ? <option value={selection.account_id}>{t("society.studio.saved_account")}</option> : null}
-          {seat.accounts.map((account) => <option key={account.id} value={account.id}>{account.label}</option>)}
-        </select>
+        <BrandedSelect
+          ariaLabel={t("society.studio.account")}
+          value={selection.account_id}
+          disabled={fieldsOff}
+          onValueChange={(value) => change({ ...selection, account_id: value })}
+          options={[
+            { value: "", label: t("society.studio.active_account") },
+            ...(selection.account_id && !seat.accounts.some((account) => account.id === selection.account_id)
+              ? [{ value: selection.account_id, label: t("society.studio.saved_account") }]
+              : []),
+            ...seat.accounts.map((account) => ({ value: account.id, label: account.label })),
+          ]}
+        />
       </label> : null}
     </fieldset>
     {!loading && !failed && !sample && !seat ? <p className="as-note">{t("society.studio.connect_hint")}</p> : null}
