@@ -4226,7 +4226,9 @@ class RealtimeVoiceSession:
         from jarvis.voice.echo_confirmation import classify_response
 
         bridge = self._tool_bridge
-        if bridge is None or not bridge.has_pending_confirmation:
+        if bridge is None or not getattr(
+            bridge, "has_pending_confirmation", False
+        ):
             return False
         stamp = self._last_voiced_input_monotonic
         now = time.monotonic()

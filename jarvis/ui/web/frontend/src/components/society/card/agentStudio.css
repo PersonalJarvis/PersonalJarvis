@@ -23,6 +23,7 @@
 .as-field > span { display:flex; justify-content:space-between; gap:10px; }
 .as-field small,.as-note { color:hsl(var(--muted-foreground)); font-size:12px; font-weight:400; line-height:1.6; }
 .as-field input:not([type=range]),.as-field select,.as-field textarea { width:100%; min-width:0; min-height:44px; padding:10px 12px; border:1px solid hsl(var(--border)); border-radius:7px; background:hsl(var(--card)); color:hsl(var(--foreground)); font-size:13px; line-height:1.5; }
+.as-field [role="combobox"] { width:100%; min-width:0; min-height:44px; }
 .as-field textarea { resize:vertical; min-height:150px; }
 .as-field input[type=range] { width:100%; min-height:32px; accent-color:hsl(var(--primary)); }
 .as-note { display:flex; align-items:flex-start; gap:10px; }
@@ -79,6 +80,6 @@
   [data-face=profile] [data-testid=agent-card-figure] { flex-shrink:0; height:320px; }
   .as-header,.as-panel { padding:18px 16px; }
   .as-grid { grid-template-columns:minmax(0,1fr); }
-  .as-field input:not([type=range]),.as-field select,.as-field textarea { font-size:16px; }
+  .as-field input:not([type=range]),.as-field select,.as-field textarea,.as-field [role="combobox"] { font-size:16px; }
   .as-save-status { flex-basis:100%; }
 }

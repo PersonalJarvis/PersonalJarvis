@@ -1,5 +1,6 @@
 import { RotateCcw, Shuffle } from "lucide-react";
 import { useT } from "@/i18n";
+import { BrandedSelect } from "@/components/ui/select";
 import { EDITABLE_CELLS, PALETTE_PRESETS, resolvePalette, shufflePalette, type FigureRecipe } from "../figures/figureRecipe";
 import { CATALOG, catalogBaseFor, isReservedStyle, keepablePartsFor, partsForSlot, slotsWithParts } from "../figures/figureRegistry";
 
@@ -17,16 +18,24 @@ export function AgentStudioAppearance({ recipe, onChange, lead }: {
       <div className="as-note">{t("society.studio.preview_hint")}</div>
       {!lead ? <label className="as-field">
         <span>{t("society.studio.character")}</span>
-        <select value={recipe.model ? "imported" : base?.id ?? `${recipe.archetype}/${recipe.base}`} onChange={(event) => {
-          const next = CATALOG.bases.find((entry) => entry.id === event.target.value);
-          if (!next) return;
-          onChange({ contract: 1, archetype: next.archetype, base: next.base, style: next.styles[0],
-            heightM: next.heightM, palette: { ...next.palette },
-            parts: keepablePartsFor(recipe.parts, next.archetype, next.styles[0], next.family ?? null, next.fitSize) });
-        }}>
-          {recipe.model ? <option value="imported">{t("society.studio.imported")}</option> : null}
-          {CATALOG.bases.filter((entry) => !entry.styles.some(isReservedStyle)).map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
-        </select>
+        <BrandedSelect
+          ariaLabel={t("society.studio.character")}
+          value={recipe.model ? "imported" : base?.id ?? `${recipe.archetype}/${recipe.base}`}
+          onValueChange={(value) => {
+            const next = CATALOG.bases.find((entry) => entry.id === value);
+            if (!next) return;
+            onChange({ contract: 1, archetype: next.archetype, base: next.base, style: next.styles[0],
+              heightM: next.heightM, palette: { ...next.palette },
+              parts: keepablePartsFor(recipe.parts, next.archetype, next.styles[0], next.family ?? null, next.fitSize) });
+          }}
+          options={[
+            ...(recipe.model ? [{ value: "imported", label: t("society.studio.imported") }] : []),
+            ...CATALOG.bases.filter((entry) => !entry.styles.some(isReservedStyle)).map((entry) => ({
+              value: entry.id,
+              label: entry.label,
+            })),
+          ]}
+        />
       </label> : null}
       <div className="as-section-title"><h3>{t("society.studio.palette")}</h3>
         <button type="button" className="as-text-button" onClick={() => onChange({ ...recipe, palette: shufflePalette() })}>
@@ -58,11 +67,16 @@ export function AgentStudioAppearance({ recipe, onChange, lead }: {
       <div className="as-grid">
         {slots.map((slot) => <label className="as-field" key={slot}>
           <span>{t(`society.slot.${slot}`)}</span>
-          <select value={recipe.parts[slot] ?? ""} onChange={(event) => onChange({ ...recipe, parts: { ...recipe.parts, [slot]: event.target.value } })}>
-            <option value="">{t("society.studio.none")}</option>
-            {partsForSlot(slot, recipe.archetype, recipe.style ?? null, base?.family ?? null, base?.fitSize ?? null)
-              .map((part) => <option key={part.id} value={part.id}>{part.label}</option>)}
-          </select>
+          <BrandedSelect
+            ariaLabel={t(`society.slot.${slot}`)}
+            value={recipe.parts[slot] ?? ""}
+            onValueChange={(value) => onChange({ ...recipe, parts: { ...recipe.parts, [slot]: value } })}
+            options={[
+              { value: "", label: t("society.studio.none") },
+              ...partsForSlot(slot, recipe.archetype, recipe.style ?? null, base?.family ?? null, base?.fitSize ?? null)
+                .map((part) => ({ value: part.id, label: part.label })),
+            ]}
+          />
         </label>)}
       </div>
       <label className="as-field"><span>{t("society.create.height")} <output>{(recipe.heightM ?? base?.heightM ?? 1.75).toFixed(2)} m</output></span>
