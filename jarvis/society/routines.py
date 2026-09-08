@@ -165,3 +165,39 @@ async def count_routines(task_store: Any, agent_id: str) -> int:
 
 
 MAX_ROUTINES_PER_AGENT: Final[int] = _MAX_ROUTINES
+
+
+async def manage_routine(
+    agent: AgentRecord, payload: dict[str, Any], task_store: Any, scheduler: Any
+) -> str:
+    """Modify an owned routine through the existing scheduler, preserving its id."""
+    tid = str(payload["task_id"])
+    row = await task_store.get(tid)
+    if row is None or not is_agent_routine(row, agent.agent_id):
+        raise ValueError("No routine with that id belongs to this agent")
+    if scheduler is None:
+        raise RuntimeError("The task scheduler is unavailable")
+    operation = payload["operation"]
+    if operation == "update":
+        old = await task_store.get_spec(tid)
+        spec = build_task_spec(
+            agent,
+            title=payload["title"],
+            prompt=payload["prompt"],
+            schedule=payload["schedule"],
+            plugin_grants=[g.model_dump() for g in old.action.plugin_grants],
+            announce_on_success=payload.get("announce_on_success"),
+        )
+        await scheduler.update_task(tid, spec.model_copy(update={"id": old.id}))
+    elif operation == "pause":
+        await scheduler.pause(tid)
+    elif operation == "resume":
+        await scheduler.resume(tid)
+    elif operation == "delete":
+        if row.get("state") == "running":
+            raise ValueError("Pause or cancel the running routine before deleting it")
+        await scheduler.cancel_task(tid)
+        await task_store.delete(tid)
+    else:
+        raise ValueError("Unknown routine operation")
+    return f"Routine {tid}: {operation} applied"

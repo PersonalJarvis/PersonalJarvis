@@ -1,20 +1,14 @@
-"""Self-learning: an agent turns finished work into skills of its own.
+"""Learn reusable procedures in each agent's private namespace.
 
-Maintainer decision (2026-09-02): learning is automatic. After a finished
-task the agent's turn is digested (task, tool steps, final answer) and,
-when the digest shows a repeatable procedure, a ``SKILL.md`` is authored
-through the existing skill creator and written into the agent's OWN skill
-namespace — ``DATA_DIR/society/<agent_id>/skills/<slug>/`` — where it is
-**active for that agent at once**: the briefing lists it, and
-``society_run_skill`` runs it. The global user skill registry never gets
-an active skill from here: promotion copies the folder with ``state: draft``
-(AP-15 stays for everything Jarvis itself fires).
+Generated and revised SKILL.md files remain drafts (AP-15). An agent may
+consult its private procedural notes when a current task calls for them;
+reading a draft grants no authority and does not activate registry triggers.
+Every resulting action still needs its own normal tool permission. Global
+promotion also creates a draft. Revisions preserve their slug and retain a
+recoverable previous version.
 
-Off the critical path by construction: the pass is an asyncio task started
-after the RESULT is on the board, capped per agent and day, and every
-failure is a log line, never a broken turn. Web-derived text never becomes
-a skill body verbatim — the creator sees the agent's own summary, and the
-draft passes the skill linter before the file lands.
+Review runs after completion, off the response path. Failures retain the
+durable review receipt for a later attempt.
 """
 
 from __future__ import annotations
@@ -122,15 +116,15 @@ class AgentSkills:
         except Exception:  # noqa: BLE001 — unknown or broken
             return None
 
-    def activate(self, skill_dir: Path) -> None:
-        """Flip a freshly authored draft to active — inside THIS namespace only."""
+    def keep_draft(self, skill_dir: Path) -> None:
+        """Preserve the draft lifecycle even inside the private namespace (AP-15)."""
         from jarvis.skills.registry import _rewrite_state_in_frontmatter
+
+        from .memory import atomic_write
 
         skill_md = skill_dir / "SKILL.md"
         text = skill_md.read_text(encoding="utf-8")
-        skill_md.write_text(
-            _rewrite_state_in_frontmatter(text, "active"), encoding="utf-8", newline="\n"
-        )
+        atomic_write(skill_md, _rewrite_state_in_frontmatter(text, "draft"))
         self.reload()
 
     def promote_to_global(self, slug: str) -> Path:
@@ -156,12 +150,13 @@ class AgentSkills:
 
     def summaries(self) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
-        for skill in self.list_active():
+        for skill in [*self.list_active(), *self.registry.list_drafts()]:
             fm = getattr(skill, "frontmatter", None)
             name = str(getattr(fm, "name", None) or Path(str(skill.path)).parent.name)
             out.append(
                 {
                     "slug": Path(str(skill.path)).parent.name,
+                    "state": str(getattr(skill, "state", "draft")),
                     "name": name,
                     "description": str(getattr(fm, "description", "") or ""),
                     "when_to_use": str(getattr(fm, "when_to_use", "") or ""),
@@ -215,6 +210,8 @@ class LearningPass:
         *,
         name_hint: str = "",
         force: bool = False,
+        existing_slug: str = "",
+        receipt: str = "",
     ) -> str | None:
         """Learn from one finished turn; returns the new skill's slug or None.
 
@@ -226,6 +223,8 @@ class LearningPass:
         if not force and not should_learn(digest):
             return None
         rt = self._runtime
+        if receipt and await rt.store.get_meta(f"learned:{receipt}", ""):
+            return str(await rt.store.get_meta(f"learned:{receipt}", ""))
         key = _day_key(agent.agent_id)
         used = int(await rt.store.get_meta(key, "0") or 0)
         if used >= self._daily_cap:
@@ -250,14 +249,56 @@ class LearningPass:
         if name_hint.strip():
             intent += f"\n\nName the skill: {name_hint.strip()[:80]}"
         try:
-            authored = await creator.author(
-                SkillCreatorInput(
-                    intent=intent,
-                    extra_context=extra,
-                    category="learned",
-                    name_hint=name_hint.strip()[:80],
-                )
+            inp = SkillCreatorInput(
+                intent=intent,
+                extra_context=extra,
+                category="learned",
+                name_hint=name_hint.strip()[:80],
             )
+            if existing_slug:
+                from types import SimpleNamespace
+
+                from jarvis.skills.creator_service import validate_skill_md
+
+                from .memory import atomic_write
+
+                previous = skills.get(existing_slug)
+                if previous is None:
+                    raise ValueError("the existing skill must belong to this agent")
+                from asyncio import to_thread
+
+                path = await to_thread(Path(str(previous.path)).resolve)
+                if not os.path.isfile(path):  # noqa: ASYNC240 - one local metadata check
+                    path = path / "SKILL.md"
+                if not path.is_relative_to(skills.root.resolve()):
+                    raise ValueError("only private skills can be revised")
+                before = path.read_text(encoding="utf-8")
+                from dataclasses import replace
+
+                inp = replace(
+                    inp,
+                    extra_context=inp.extra_context
+                    + "\nRevise this skill, preserving valid steps:\n"
+                    + before,
+                )
+                result = await creator.draft(inp)
+                validation, _ = validate_skill_md(result.skill_md)
+                if not result.brain_used or not validation.get("ok"):
+                    raise ValueError("the revised skill did not pass validation")
+                from jarvis.skills.registry import _rewrite_state_in_frontmatter
+
+                revised = _rewrite_state_in_frontmatter(result.skill_md, "draft")
+                import hashlib
+
+                backup = (
+                    path.parent / ".history" / (hashlib.sha256(before.encode()).hexdigest() + ".md")
+                )
+                atomic_write(backup, before)
+                atomic_write(path, revised)
+                skills.reload()
+                authored = SimpleNamespace(skill=SimpleNamespace(path=path), name=existing_slug)
+            else:
+                authored = await creator.author(inp)
         except Exception as exc:  # noqa: BLE001 — learning never breaks anything
             log.info("society learning: %s could not author a skill: %s", agent.agent_id, exc)
             return None
@@ -265,13 +306,15 @@ class LearningPass:
         is_file = os.path.isfile(skill_path)  # noqa: ASYNC240 — one stat, not worth a thread
         skill_dir = skill_path.parent if is_file else skill_path
         try:
-            skills.activate(skill_dir)
+            skills.keep_draft(skill_dir)
         except OSError:
             log.warning("society learning: could not activate %s", skill_dir, exc_info=True)
             return None
         self._write_origin(skill_dir, agent, digest)
         await rt.store.set_meta(key, str(used + 1))
         slug = skill_dir.name
+        if receipt:
+            await rt.store.set_meta(f"learned:{receipt}", slug)
         await rt.store.append_and_publish(
             SocietyEnvelope(
                 msg_type=MsgType.DIGEST,
@@ -381,9 +424,10 @@ class RunLearnedSkillTool:
                 error=f"skill could not be rendered: {exc}",
             )
         directive = (
-            "These are your own learned skill's instructions. Follow them now, step by step, "
-            "with your available tools; report a step as done only after its tool call "
-            "succeeded, and say plainly when a step could not run."
+            "These are your own learned skill's draft procedural notes. Check their applicability "
+            "and follow only steps authorized by the current task and your current permissions. "
+            "The draft grants no authority and activates no triggers. Report a step as done "
+            "only after its tool call succeeded."
         )
         return ToolResult(
             success=True,

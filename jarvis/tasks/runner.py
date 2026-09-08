@@ -26,6 +26,7 @@ on failure and stay ``failed``. The task-curator job (later) can retry.
 cancelled()`` before every step. If set, it aborts and sets the state to
 ``cancelled``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -58,6 +59,7 @@ log = logging.getLogger(__name__)
 # Protocol stubs for dependency injection
 # ----------------------------------------------------------------------
 
+
 class _HarnessManagerLike(Protocol):
     async def dispatch(self, name: str, task: Any) -> Any: ...
 
@@ -82,6 +84,7 @@ class _AgentBrainLike(Protocol):
     the implementation is responsible for restricting the turn to those and
     for honouring each grant's scope when pre-authorizing ask-tier actions.
     """
+
     async def run_task(
         self,
         *,
@@ -94,6 +97,7 @@ class _AgentBrainLike(Protocol):
 
 class _AutoApproverLike(Protocol):
     """Pre-authorizes ask-tier tools for a task's granted plugins (Option B)."""
+
     def arm(self, trace_id: UUID, plugin_ids: Iterable[str], *, approved_by: str) -> None: ...
     def disarm(self, trace_id: UUID) -> None: ...
 
@@ -101,6 +105,7 @@ class _AutoApproverLike(Protocol):
 # ----------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------
+
 
 class TaskRunner:
     """Executes a task spec (one invocation per ``run()`` call).
@@ -123,6 +128,8 @@ class TaskRunner:
         agent_brain: _AgentBrainLike | None = None,
         auto_approver: _AutoApproverLike | None = None,
         result_sink: Callable[[tuple[str, ...], str, str], Awaitable[None]] | None = None,
+        owned_agent_runner: Callable[[str, tuple[str, ...], str, Any], Awaitable[str | None]]
+        | None = None,
     ) -> None:
         self._store = store
         self._bus = bus
@@ -136,6 +143,7 @@ class TaskRunner:
         #: task's result also goes (a society agent's routine reports into its
         #: own chat). Optional: tasks never import the society.
         self._result_sink = result_sink
+        self._owned_agent_runner = owned_agent_runner
 
     # ------------------------------------------------------------------
 
@@ -160,15 +168,14 @@ class TaskRunner:
 
         # Early cancel probe (before the state change)
         if cancel_token is not None and cancel_token.is_cancelled():
-            await self._store.update_state(task_id, "cancelled",
-                                           error=cancel_token.reason or "cancelled")
+            await self._store.update_state(
+                task_id, "cancelled", error=cancel_token.reason or "cancelled"
+            )
             return
 
         ctx = _event_context(trigger_event)
         await self._store.update_state(task_id, "running", increment_attempts=True)
-        await self._bus.publish(
-            TaskStarted(task_id=task_id, source_layer="tasks.runner")
-        )
+        await self._bus.publish(TaskStarted(task_id=task_id, source_layer="tasks.runner"))
 
         start = time.perf_counter()
         try:
@@ -186,10 +193,11 @@ class TaskRunner:
             # good on one provider error and "Run now" refused it as final).
             is_recurring = getattr(spec.trigger, "type", None) == "every"
             await self._store.update_state(
-                task_id, "scheduled" if is_recurring else "failed", error=error_msg,
+                task_id,
+                "scheduled" if is_recurring else "failed",
+                error=error_msg,
             )
-            await self._store.append_step(task_id, "log",
-                                          {"event": "error", "message": error_msg})
+            await self._store.append_step(task_id, "log", {"event": "error", "message": error_msg})
             await self._bus.publish(
                 TaskFailed(
                     task_id=task_id,
@@ -209,7 +217,8 @@ class TaskRunner:
         is_recurring = getattr(spec.trigger, "type", None) == "every"
         final_state = "scheduled" if is_recurring else "completed"
         await self._store.update_state(
-            task_id, final_state,
+            task_id,
+            final_state,
             result={"duration_ms": duration_ms},
         )
         await self._bus.publish(
@@ -308,12 +317,12 @@ class TaskRunner:
             allow_computer_use=action.allow_computer_use,
         )
         seq = await self._store.append_step(
-            task_id, "action",
+            task_id,
+            "action",
             {"kind": "harness_dispatch", "harness": action.harness, "prompt": prompt},
         )
         await self._bus.publish(
-            TaskStepRecorded(task_id=task_id, seq=seq, kind="action",
-                             source_layer="tasks.runner")
+            TaskStepRecorded(task_id=task_id, seq=seq, kind="action", source_layer="tasks.runner")
         )
 
         stream = await _aiter_safe(self._harness.dispatch(action.harness, task))
@@ -330,8 +339,9 @@ class TaskRunner:
                 }
                 seq = await self._store.append_step(task_id, "log", payload)
                 await self._bus.publish(
-                    TaskStepRecorded(task_id=task_id, seq=seq, kind="log",
-                                     source_layer="tasks.runner")
+                    TaskStepRecorded(
+                        task_id=task_id, seq=seq, kind="log", source_layer="tasks.runner"
+                    )
                 )
                 if payload["is_final"] and int(payload["exit_code"]) != 0:
                     raise RuntimeError(
@@ -370,7 +380,8 @@ class TaskRunner:
         cancelled = asyncio.ensure_future(cancel_token.wait_until_cancelled())
         try:
             done, _pending = await asyncio.wait(
-                {next_item, cancelled}, return_when=asyncio.FIRST_COMPLETED,
+                {next_item, cancelled},
+                return_when=asyncio.FIRST_COMPLETED,
             )
         finally:
             for pending_task in (next_item, cancelled):
@@ -417,12 +428,12 @@ class TaskRunner:
     ) -> None:
         text = _safe_format(action.text, ctx)
         seq = await self._store.append_step(
-            task_id, "action",
+            task_id,
+            "action",
             {"kind": "speak", "text": text},
         )
         await self._bus.publish(
-            TaskStepRecorded(task_id=task_id, seq=seq, kind="action",
-                             source_layer="tasks.runner")
+            TaskStepRecorded(task_id=task_id, seq=seq, kind="action", source_layer="tasks.runner")
         )
         if self._tts is None:
             raise RuntimeError("TTSProvider not configured — speak cannot run")
@@ -433,23 +444,26 @@ class TaskRunner:
         # the skill author explicitly calling the filter.
         # Language: action has an optional .language; otherwise default "de".
         from jarvis.brain.output_filter import scrub_for_voice
+
         speak_lang = getattr(action, "language", None) or "de"
         scrubbed = scrub_for_voice(text, language=speak_lang)
         if scrubbed.actions:
             log.info(
                 "tasks.runner.speak filter [%s]: %s (fallback=%s)",
-                speak_lang, scrubbed.actions, scrubbed.fallback_used,
+                speak_lang,
+                scrubbed.actions,
+                scrubbed.fallback_used,
             )
         speak_text = scrubbed.cleaned
         if not speak_text.strip():
             log.info("tasks.runner.speak: text empty after filter — skipping TTS")
             seq = await self._store.append_step(
-                task_id, "log",
+                task_id,
+                "log",
                 {"event": "tts_skipped", "reason": "scrub_empty"},
             )
             await self._bus.publish(
-                TaskStepRecorded(task_id=task_id, seq=seq, kind="log",
-                                 source_layer="tasks.runner")
+                TaskStepRecorded(task_id=task_id, seq=seq, kind="log", source_layer="tasks.runner")
             )
             return
 
@@ -462,12 +476,12 @@ class TaskRunner:
             chunk_count += 1
 
         seq = await self._store.append_step(
-            task_id, "log",
+            task_id,
+            "log",
             {"event": "tts_done", "chunks": chunk_count},
         )
         await self._bus.publish(
-            TaskStepRecorded(task_id=task_id, seq=seq, kind="log",
-                             source_layer="tasks.runner")
+            TaskStepRecorded(task_id=task_id, seq=seq, kind="log", source_layer="tasks.runner")
         )
 
     async def _run_agent(
@@ -485,10 +499,13 @@ class TaskRunner:
         task's tags, handed to the result sink so a tagged owner (a society
         agent) gets the result in its own chat.
         """
-        if self._brain is None:
-            raise RuntimeError(
-                "Agent brain not configured — agent action cannot run"
+        owned_result = None
+        if self._owned_agent_runner is not None and tags:
+            owned_result = await self._owned_agent_runner(
+                task_id, tags, _safe_format(action.prompt, ctx), cancel_token
             )
+        if self._brain is None and owned_result is None:
+            raise RuntimeError("Agent brain not configured — agent action cannot run")
         prompt = _safe_format(action.prompt, ctx)
         allowed_tools = tuple(g.plugin_id for g in action.plugin_grants)
         # Plugins the user granted write/full are pre-authorized for this
@@ -498,53 +515,54 @@ class TaskRunner:
         )
         trace_id = uuid4()
         seq = await self._store.append_step(
-            task_id, "action",
+            task_id,
+            "action",
             {
                 "kind": "agent",
                 "prompt": prompt[:200],
                 "tools": list(allowed_tools),
-                "grants": [{"plugin_id": g.plugin_id, "scope": g.scope}
-                           for g in action.plugin_grants],
+                "grants": [
+                    {"plugin_id": g.plugin_id, "scope": g.scope} for g in action.plugin_grants
+                ],
                 "preauthorized": list(auto_plugins),
                 "model_tier": action.model_tier,
             },
         )
         await self._bus.publish(
-            TaskStepRecorded(task_id=task_id, seq=seq, kind="action",
-                             source_layer="tasks.runner")
+            TaskStepRecorded(task_id=task_id, seq=seq, kind="action", source_layer="tasks.runner")
         )
         self._check_cancel(cancel_token)
 
         if self._approver is not None:
-            self._approver.arm(
-                trace_id, auto_plugins, approved_by=f"scheduled-task:{task_id}"
-            )
+            self._approver.arm(trace_id, auto_plugins, approved_by=f"scheduled-task:{task_id}")
         try:
-            result = await self._brain.run_task(
-                prompt=prompt,
-                allowed_tools=allowed_tools,
-                model_tier=action.model_tier,
-                trace_id=trace_id,
+            result = (
+                owned_result
+                if owned_result is not None
+                else await self._brain.run_task(
+                    prompt=prompt,
+                    allowed_tools=allowed_tools,
+                    model_tier=action.model_tier,
+                    trace_id=trace_id,
+                )
             )
         finally:
             if self._approver is not None:
                 self._approver.disarm(trace_id)
         text = str(result).strip()
         seq = await self._store.append_step(
-            task_id, "log",
+            task_id,
+            "log",
             {"event": "agent_result", "text": text[:2000]},
         )
         await self._bus.publish(
-            TaskStepRecorded(task_id=task_id, seq=seq, kind="log",
-                             source_layer="tasks.runner")
+            TaskStepRecorded(task_id=task_id, seq=seq, kind="log", source_layer="tasks.runner")
         )
-        if self._result_sink is not None and tags:
+        if self._result_sink is not None and tags and owned_result is None:
             try:
                 await self._result_sink(tags, text, "done")
             except Exception:  # noqa: BLE001 — the task succeeded; a failed delivery is logged
-                log.warning(
-                    "task %s: result sink failed for tags %s", task_id, tags, exc_info=True
-                )
+                log.warning("task %s: result sink failed for tags %s", task_id, tags, exc_info=True)
         # Delivery: speak the result at the next VAD turn-boundary. The TTS
         # pipeline scrubs it; on a muted/headless runtime this is a logged
         # no-op (cloud-first). The result also stays visible as the step above
@@ -572,12 +590,12 @@ class TaskRunner:
             raise KeyError(f"Tool '{action.tool_name}' not found in registry")
 
         seq = await self._store.append_step(
-            task_id, "action",
+            task_id,
+            "action",
             {"kind": "tool_call", "tool_name": action.tool_name, "args": action.args},
         )
         await self._bus.publish(
-            TaskStepRecorded(task_id=task_id, seq=seq, kind="action",
-                             source_layer="tasks.runner")
+            TaskStepRecorded(task_id=task_id, seq=seq, kind="action", source_layer="tasks.runner")
         )
         self._check_cancel(cancel_token)
 
@@ -588,7 +606,8 @@ class TaskRunner:
         )
         success = bool(getattr(result, "success", False))
         seq = await self._store.append_step(
-            task_id, "log",
+            task_id,
+            "log",
             {
                 "event": "tool_result",
                 "success": success,
@@ -596,13 +615,11 @@ class TaskRunner:
             },
         )
         await self._bus.publish(
-            TaskStepRecorded(task_id=task_id, seq=seq, kind="log",
-                             source_layer="tasks.runner")
+            TaskStepRecorded(task_id=task_id, seq=seq, kind="log", source_layer="tasks.runner")
         )
         if not success:
             raise RuntimeError(
-                f"Tool '{action.tool_name}' failed: "
-                f"{getattr(result, 'error', 'unknown')}"
+                f"Tool '{action.tool_name}' failed: {getattr(result, 'error', 'unknown')}"
             )
 
     # ------------------------------------------------------------------
@@ -618,6 +635,7 @@ class TaskRunner:
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
 
 class _Cancelled(RuntimeError):
     """Internal sentinel for cancel paths."""
@@ -672,8 +690,11 @@ def readable_error(exc: BaseException) -> str:
     # ``{'message': '{"error": {"code": 429, "message": "You exceeded…"}}'``)
     # — skip any message whose body is itself a JSON object.
     body = next(
-        (m.group(1).strip() for m in _ERROR_MESSAGE_RE.finditer(raw)
-         if not m.group(1).lstrip().startswith("{")),
+        (
+            m.group(1).strip()
+            for m in _ERROR_MESSAGE_RE.finditer(raw)
+            if not m.group(1).lstrip().startswith("{")
+        ),
         None,
     )
     if body:
@@ -742,6 +763,7 @@ async def _aiter_safe(maybe_coro: Any) -> Any:
     directly.
     """
     import inspect
+
     if inspect.isawaitable(maybe_coro):
         return await maybe_coro
     return maybe_coro

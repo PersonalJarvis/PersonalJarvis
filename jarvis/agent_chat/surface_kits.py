@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from jarvis.core.protocols import Tool
+from jarvis.core.protocols import ChatCompletion, Tool
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +105,8 @@ class SurfaceKit:
     session_tool_filter: SessionFilterBuilder | None = None
     #: How the card's "Always allow" is remembered here (see the alias above).
     session_always_allow: SessionAlwaysAllow | None = None
+    turn_completed: Callable[[Any, ChatCompletion], Awaitable[None]] | None = None
+    history_start: Callable[[Any], int] | None = None
 
 
 def _chat_workspace() -> Path:
@@ -161,6 +163,24 @@ async def _society_always_allow(session: Any, tool_name: str, args: dict[str, An
     from jarvis.society.surface import remember_always_allow
 
     return await remember_always_allow(session, tool_name, args)
+
+
+async def _society_completed(session: Any, completion: ChatCompletion) -> None:
+    from jarvis.society.runtime import current_runtime
+
+    runtime = current_runtime()
+    if runtime is not None:
+        await runtime.turn_completed(session, completion)
+
+
+def _society_history_start(session: Any) -> int:
+    from jarvis.agent_chat.service import resolve_runner
+    from jarvis.society.runtime import current_runtime
+
+    if resolve_runner(session.provider, surface=session.surface) != "brain":
+        return 0  # Subscription seats retain their vendor's history/compaction contract.
+    runtime = current_runtime()
+    return runtime.conversations.checkpoint(session.session_id)[0] if runtime is not None else 0
 
 
 def _only_local_models(tools: dict[str, Tool]) -> dict[str, Tool]:
@@ -240,6 +260,8 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         session_system_extra=_society_extra,
         session_tool_filter=_society_filter,
         session_always_allow=_society_always_allow,
+        turn_completed=_society_completed,
+        history_start=_society_history_start,
         workspace_dir=_chat_workspace,
     ),
 }

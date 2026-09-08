@@ -16,6 +16,7 @@ Everything runs on the main async loop — that is deliberate (ADR-0005).
 The scheduler uses a ``CancelToken`` as its top-level abort condition
 (ADR-0004). Running tasks get their own runner task, derived from this token.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -50,9 +51,7 @@ class TaskStateConflict(RuntimeError):
 
 
 class _Dispatchable(Protocol):
-    async def run(
-        self, task_id: str, *, trigger_event: dict[str, Any] | None = None
-    ) -> None: ...
+    async def run(self, task_id: str, *, trigger_event: dict[str, Any] | None = None) -> None: ...
 
 
 def parse_iso_timestamp_to_ns(iso: str) -> int:
@@ -187,7 +186,9 @@ class TaskScheduler:
         task_obj.add_done_callback(self._runner_tasks.discard)
 
     async def _run_now_and_settle(
-        self, task_id: str, restore_state: str | None,
+        self,
+        task_id: str,
+        restore_state: str | None,
     ) -> None:
         await self._safe_run(task_id, None)
         if restore_state is None:
@@ -199,8 +200,7 @@ class TaskScheduler:
             if task is not None and task["state"] not in ("running", "cancelled"):
                 await self._store.update_state(task_id, restore_state)  # type: ignore[arg-type]
         except Exception:  # noqa: BLE001
-            log.exception("run_now: could not restore state=%s for task=%s",
-                          restore_state, task_id)
+            log.exception("run_now: could not restore state=%s for task=%s", restore_state, task_id)
 
     async def pause(self, task_id: str) -> None:
         """Switch a recurring/``on_event`` task off: it leaves the heap and
@@ -227,6 +227,22 @@ class TaskScheduler:
         await self._store.update_state(task_id, "paused")
         await self._store.append_step(task_id, "log", {"event": "paused"})
         self._wakeup.set()
+
+    async def update_task(self, task_id: str, spec: TaskSpec) -> None:
+        """Replace a recurring schedule while keeping its identity and pause state."""
+        current = await self._store.get(task_id)
+        if current is None:
+            raise TaskNotFound(task_id)
+        if spec.trigger.type not in PAUSABLE_TRIGGER_TYPES:
+            raise TaskStateConflict("Routine updates require a recurring trigger")
+        was_paused = current["state"] == "paused"
+        await self.pause(task_id)
+        try:
+            await self._store.replace_spec(task_id, spec)
+        finally:
+            if not was_paused:
+                await self.resume(task_id)
+        await self._store.append_step(task_id, "log", {"event": "updated"})
 
     async def resume(self, task_id: str, *, now_ns: int | None = None) -> int | None:
         """Switch a paused task back on and re-register it for its NEXT
@@ -290,6 +306,7 @@ class TaskScheduler:
         await self._store.append_step(task_id, "log", {"event": "cancelled", "reason": reason})
         # Event on the bus
         from jarvis.core.events import TaskCancelled
+
         await self._bus.publish(
             TaskCancelled(task_id=task_id, reason=reason, source_layer="tasks.scheduler")
         )
@@ -364,8 +381,7 @@ class TaskScheduler:
                 try:
                     await self._store.update_state(tid, "completed")
                 except Exception:  # noqa: BLE001
-                    log.exception("max_firings cleanup: update_state failed "
-                                  "for task_id=%s", tid)
+                    log.exception("max_firings cleanup: update_state failed for task_id=%s", tid)
 
     # ------------------------------------------------------------------
     # Hydration
@@ -400,25 +416,34 @@ class TaskScheduler:
                 # down is missed, not caught up at boot. Skip to the next
                 # occurrence on the task's own grid.
                 stored_due = await self._skip_missed_every(
-                    row["id"], spec, int(stored_due), now_ns,
+                    row["id"],
+                    spec,
+                    int(stored_due),
+                    now_ns,
                 )
-            self._register_in_memory(spec, row["id"],
-                                      stored_due_at_ns=stored_due)
+            self._register_in_memory(spec, row["id"], stored_due_at_ns=stored_due)
         self._hydrated = True
 
     async def _skip_missed_every(
-        self, task_id: str, spec: TaskSpec, due_ns: int, now_ns: int,
+        self,
+        task_id: str,
+        spec: TaskSpec,
+        due_ns: int,
+        now_ns: int,
     ) -> int:
         """Record a missed recurring slot and return the next due time."""
         next_due = next_every_due_ns(spec, now_ns)
         late_s = late_by_s(due_ns, now_ns)
         log.warning(
             "Task %r missed its slot (%.0f min late) — skipped to the next "
-            "occurrence, not caught up", spec.title, late_s / 60,
+            "occurrence, not caught up",
+            spec.title,
+            late_s / 60,
         )
         try:
             await self._store.append_step(
-                task_id, "log",
+                task_id,
+                "log",
                 {
                     "event": "missed",
                     "due_at_ns": due_ns,
@@ -448,14 +473,18 @@ class TaskScheduler:
             return
         trig = spec.trigger
         if trig.type == "after_delay":
-            due = (stored_due_at_ns
-                   if stored_due_at_ns is not None
-                   else time.time_ns() + int(trig.delay_seconds * 1e9))
+            due = (
+                stored_due_at_ns
+                if stored_due_at_ns is not None
+                else time.time_ns() + int(trig.delay_seconds * 1e9)
+            )
             heapq.heappush(self._heap, (due, task_id))
         elif trig.type == "at_time":
-            due = (stored_due_at_ns
-                   if stored_due_at_ns is not None
-                   else parse_iso_timestamp_to_ns(trig.iso_timestamp))
+            due = (
+                stored_due_at_ns
+                if stored_due_at_ns is not None
+                else parse_iso_timestamp_to_ns(trig.iso_timestamp)
+            )
             heapq.heappush(self._heap, (due, task_id))
         elif trig.type == "every":
             if stored_due_at_ns is not None:
@@ -467,7 +496,7 @@ class TaskScheduler:
             heapq.heappush(self._heap, (due, task_id))
         elif trig.type == "on_event":
             self._on_event_index.setdefault(trig.event_name, set()).add(task_id)
-            self._firings_left[task_id] = trig.max_firings   # None = unlimited
+            self._firings_left[task_id] = trig.max_firings  # None = unlimited
         self._known.add(task_id)
 
     def _due_at_ns_for(self, spec: TaskSpec) -> int | None:
@@ -588,9 +617,7 @@ class TaskScheduler:
         self._runner_tasks.add(task)
         task.add_done_callback(self._runner_tasks.discard)
 
-    async def _safe_run(
-        self, task_id: str, trigger_event: dict[str, Any] | None = None
-    ) -> None:
+    async def _safe_run(self, task_id: str, trigger_event: dict[str, Any] | None = None) -> None:
         # Per-run cancel token (deep-dive 2026-07-15, H-03): production runs
         # used to pass NO token, so the runner's cancel probes were no-ops and
         # a running harness action was unstoppable except via the global kill
@@ -601,7 +628,9 @@ class TaskScheduler:
         self._running_tokens[task_id] = token
         try:
             await self._runner.run(  # type: ignore[union-attr]
-                task_id, token, trigger_event=trigger_event,
+                task_id,
+                token,
+                trigger_event=trigger_event,
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("TaskRunner crashed task=%s: %s", task_id, exc)
@@ -623,6 +652,7 @@ class TaskScheduler:
 # ----------------------------------------------------------------------
 # Recurring schedule arithmetic
 # ----------------------------------------------------------------------
+
 
 def next_every_due_ns(spec: TaskSpec, now_ns: int) -> int:
     """Next due time of an ``every`` trigger strictly after ``now_ns``.
@@ -683,6 +713,7 @@ def _dedup_key(task_id: str, event: Event) -> tuple[str, str] | None:
 # Filter expression — safe evaluation
 # ----------------------------------------------------------------------
 
+
 def _match_filter(event: Event, filter_expr: str | None) -> bool:
     """Evaluates a filter expression against an event.
 
@@ -699,8 +730,18 @@ def _match_filter(event: Event, filter_expr: str | None) -> bool:
     import ast
 
     allowed_nodes: tuple[type, ...] = (
-        ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.Not,
-        ast.Compare, ast.Eq, ast.NotEq, ast.Name, ast.Constant, ast.Load,
+        ast.Expression,
+        ast.BoolOp,
+        ast.And,
+        ast.Or,
+        ast.UnaryOp,
+        ast.Not,
+        ast.Compare,
+        ast.Eq,
+        ast.NotEq,
+        ast.Name,
+        ast.Constant,
+        ast.Load,
     )
 
     try:
@@ -746,4 +787,3 @@ def _eval_ast_node(node: Any, env: dict[str, Any]) -> Any:
             left = right_val
         return True
     return False
-

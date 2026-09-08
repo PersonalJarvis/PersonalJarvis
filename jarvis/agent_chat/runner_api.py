@@ -155,7 +155,9 @@ class TurnHandle:
 # ------------------------------------------------------------ history
 
 
-def messages_from_events(events: list[dict[str, Any]]) -> list[BrainMessage]:
+def messages_from_events(
+    events: list[dict[str, Any]], *, max_events: int | None = _HISTORY_MAX_EVENTS
+) -> list[BrainMessage]:
     """Rebuild the provider conversation from the persisted event log.
 
     ``user_message`` -> user; inside a turn, ``assistant_text`` and
@@ -181,7 +183,7 @@ def messages_from_events(events: list[dict[str, Any]]) -> list[BrainMessage]:
         pending_blocks = []
 
     internal: dict[str, dict[str, Any]] = {}
-    for ev in events[-_HISTORY_MAX_EVENTS:]:
+    for ev in events[-max_events:] if max_events else events:
         kind = ev.get("kind")
         payload = ev.get("payload") or {}
         if kind == "agent_message":

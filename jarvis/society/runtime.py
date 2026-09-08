@@ -29,6 +29,7 @@ from .bridge import MissionBridge
 from .browser.session import BrowserJobs
 from .capabilities import CapabilityRow, build_catalog
 from .checkpoints import CheckpointEngine
+from .conversation import ConversationArchive
 from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier
 from .focus import derive_approval_rules, derive_focus
 from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_factory
@@ -103,6 +104,7 @@ class SocietyRuntime:
         # starter team is offered as seed proposals instead.
         seed_starter_team: bool = False,
         event_publish: Callable[[Any], Any] | None = None,
+        task_services: Callable[[], tuple[Any, Any]] | None = None,
     ) -> None:
         self._data_dir = Path(data_dir)
         self._get_manager = mission_manager or (lambda: None)
@@ -113,6 +115,7 @@ class SocietyRuntime:
         self._deliver = deliver
         self._get_chat = chat_service or (lambda: None)
         self._get_cfg = cfg or (lambda: None)
+        self.task_services = task_services or (lambda: (None, None))
         self._seed_starter_team = seed_starter_team
         self._watchers: set[asyncio.Task[None]] = set()
         self.store = SocietyStore(self._data_dir / _DB_NAME)
@@ -140,6 +143,8 @@ class SocietyRuntime:
         self._publish_event = event_publish
         #: The society's one memory service; every touch moves the figure to the Memory House.
         self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
+        self.conversations = ConversationArchive(self._data_dir / "society-conversations.db")
+        self._review_lock = asyncio.Lock()
         #: The Quest Board: the person's jobs, routed to one taker, read back off the board.
         self.quests = Quests(self)
         #: Speech on the board, projected onto the island: two agents talking
@@ -213,6 +218,7 @@ class SocietyRuntime:
             self._started = True
             self._delivery_task = asyncio.create_task(self._deliver_pending())
             set_current_runtime(self)
+            self.background(self.recover_reviews())
             log.info("society runtime started (%s)", self.store.path)
             return self
 
@@ -267,7 +273,10 @@ class SocietyRuntime:
         await self.browser.close()
         for task in list(self._watchers):
             task.cancel()
+        if self._watchers:
+            await asyncio.gather(*list(self._watchers), return_exceptions=True)
         self._watchers.clear()
+        self.conversations.close()
         self.scheduler.detach()
         self.bridge.detach()
         self.checkpoints.detach()
@@ -285,6 +294,47 @@ class SocietyRuntime:
             skills = AgentSkills(self._data_dir, agent_id)
             self._skills[agent_id] = skills
         return skills
+
+    async def turn_completed(self, session: Any, completion: Any) -> None:
+        import json
+
+        events = json.loads(completion.events_json)
+        self.conversations.ingest(session.session_id, events)
+        terminal = [e for e in events if e.get("kind") == "turn_finished"]
+        if not terminal or terminal[-1].get("payload", {}).get("status") not in {
+            "done",
+            "ok",
+            "completed",
+        }:
+            return
+        names = {
+            str(e.get("payload", {}).get("name") or "")
+            for e in events
+            if e.get("kind") == "tool_call"
+        }
+        if names and names <= {"society_propose_change", "society_wiki_note"}:
+            # These turns already record their requested change (or a pending
+            # proposal). Reviewing them again wastes a model call and can
+            # duplicate a standing instruction as a conflicting memory.
+            return
+        if self.conversations.queue_review(
+            session.session_id,
+            completion.turn.turn_id,
+            events,
+            direct_user=completion.turn.direct_user,
+        ):
+            self.background(self.recover_reviews())
+
+    async def recover_reviews(self) -> None:
+        from .review import review_turn
+
+        async with self._review_lock:
+            for pending in self.conversations.pending_reviews():
+                try:
+                    if await review_turn(self, pending):
+                        self.conversations.finish_review(pending["session"], pending["turn_id"])
+                except Exception:
+                    log.exception("society review remains pending for %s", pending["turn_id"])
 
     def background(self, coro: Any) -> asyncio.Task[Any]:
         """Run a coroutine as a tracked task (cancelled on close, AP-30: its
@@ -397,7 +447,15 @@ class SocietyRuntime:
             raise RuntimeError(f"target busy: {target.name} is running a turn")
         queue = svc.subscribe(session.session_id)
         try:
-            turn_id = await svc.send(session.session_id, frame_assignment(env))
+            turn_id = await svc.send(
+                session.session_id,
+                frame_assignment(env),
+                **(
+                    {"direct_user": False}
+                    if getattr(svc, "supports_turn_completion", False)
+                    else {}
+                ),
+            )
         except Exception:
             svc.unsubscribe(session.session_id, queue)
             raise
@@ -490,9 +548,10 @@ class SocietyRuntime:
             status=status,
             origin="web" if used_browser else "agent",
         )
-        learner = asyncio.create_task(self._learn(target, digest))
-        self._watchers.add(learner)
-        learner.add_done_callback(self._watchers.discard)
+        if not getattr(svc, "supports_turn_completion", False):
+            learner = asyncio.create_task(self._learn(target, digest))
+            self._watchers.add(learner)
+            learner.add_done_callback(self._watchers.discard)
 
     # ------------------------------------------------------------ the lead
 

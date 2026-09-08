@@ -33,7 +33,9 @@ async def test_message_appends_one_typed_envelope(rt: SocietyRuntime):
     tool = MessageAgentTool(rt, "scout")
     res = await tool.execute({"target": "Archivist", "text": "hi", "kind": "query"}, CTX)
     assert res.success, res.error
-    assert res.output["delivered_to"] == "Archivist"
+    assert res.output["target"] == "Archivist"
+    assert res.output["status"] == "queued"
+    assert "delivered_to" not in res.output
     inbox = await rt.store.inbox_for("archivist")
     assert [(e.msg_type, e.from_agent) for e in inbox] == [(MsgType.QUERY, "scout")]
 
@@ -89,7 +91,7 @@ async def test_wiki_note_writes_into_the_namespace_only(rt: SocietyRuntime, tmp_
     m2 = await tool.execute({"kind": "memory", "text": "Budget is 5 EUR/month."}, CTX)
     assert m1.output["path"] == m2.output["path"] == "society/scout/memory.md"
     memory = (vault / "society" / "scout" / "memory.md").read_text(encoding="utf-8")
-    assert "Hetzner" in memory and "5 EUR" in memory and memory.count("## ") == 2
+    assert "Hetzner" in memory and "5 EUR" in memory and memory.count("<!-- memory-entry:") == 2
     assert not any(p.is_file() for p in vault.iterdir() if p.suffix == ".md")
 
 

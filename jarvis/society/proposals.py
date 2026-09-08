@@ -130,9 +130,19 @@ def validate(kind: str, payload: Any, *, catalog: list[CapabilityRow]) -> dict[s
     if not isinstance(payload, dict):
         raise ProposalRefused(FailureReason.BLOCKED_BY_POLICY, "payload must be an object")
     if kind == "rule":
+        operation = str(payload.get("operation") or "add")
+        if operation not in {"add", "replace", "remove"}:
+            raise ProposalRefused(FailureReason.BLOCKED_BY_POLICY, "unknown rule operation")
         text = _text(payload.get("text"), limit=_MAX_RULE)
-        if not text:
+        if not text and operation != "remove":
             raise ProposalRefused(FailureReason.BLOCKED_BY_POLICY, "a rule needs text")
+        if operation != "add":
+            old = _text(payload.get("old_text"), limit=_MAX_RULE)
+            if not old:
+                raise ProposalRefused(
+                    FailureReason.BLOCKED_BY_POLICY, "a correction needs old_text"
+                )
+            return {"text": text, "operation": operation, "old_text": old}
         return {"text": text}
     if kind == "skill":
         name = _text(payload.get("name"), limit=80)
@@ -145,6 +155,14 @@ def validate(kind: str, payload: Any, *, catalog: list[CapabilityRow]) -> dict[s
             )
         return {"name": name, "goal": goal, "steps": steps, "outcome": outcome}
     if kind == "routine":
+        operation = str(payload.get("operation") or "create")
+        if operation not in {"create", "update", "pause", "resume", "delete"}:
+            raise ProposalRefused(FailureReason.BLOCKED_BY_POLICY, "unknown routine operation")
+        task_id = str(payload.get("task_id") or "").strip()
+        if operation != "create" and not task_id:
+            raise ProposalRefused(FailureReason.BLOCKED_BY_POLICY, "task_id is required")
+        if operation in {"pause", "resume", "delete"}:
+            return {"operation": operation, "task_id": task_id}
         title = _text(payload.get("title"), limit=120)
         prompt = _text(payload.get("prompt"), limit=_MAX_TEXT)
         schedule = payload.get("schedule")
@@ -169,6 +187,8 @@ def validate(kind: str, payload: Any, *, catalog: list[CapabilityRow]) -> dict[s
             **{k: v for k, v in schedule.items() if k not in ("kind", "type")},
         }
         out: dict[str, Any] = {"title": title, "prompt": prompt, "schedule": clean}
+        if operation == "update":
+            out.update(operation=operation, task_id=task_id)
         announce = _text(payload.get("announce_on_success"), limit=300)
         if announce:
             out["announce_on_success"] = announce
@@ -201,12 +221,19 @@ def validate(kind: str, payload: Any, *, catalog: list[CapabilityRow]) -> dict[s
 def summarize(kind: str, payload: dict[str, Any]) -> str:
     """One card line for the person (≤200 chars)."""
     if kind == "rule":
-        line = f"Add a standing rule: {payload.get('text', '')}"
+        line = f"{str(payload.get('operation') or 'add').capitalize()} a standing rule: " + str(
+            payload.get("text") or payload.get("old_text") or ""
+        )
     elif kind == "skill":
         line = f"Save the procedure as skill '{payload.get('name', '')}'"
     elif kind == "routine":
         schedule = payload.get("schedule") or {}
-        line = f"Schedule '{payload.get('title', '')}' ({schedule.get('kind', 'every')})"
+        operation = str(payload.get("operation") or "create")
+        line = (
+            f"{operation.capitalize()} routine {payload['task_id']}"
+            if operation in {"pause", "resume", "delete"}
+            else f"Schedule '{payload.get('title', '')}' ({schedule.get('kind', 'every')})"
+        )
     elif kind == "approval_rule":
         parts: list[str] = []
         if payload.get("require_approval"):
@@ -357,9 +384,27 @@ async def apply(
     if not isinstance(payload, dict) or kind not in PROPOSAL_KINDS:
         return {"applied": False, "detail": "malformed proposal", "kind": kind}
     if kind == "rule":
-        text = (agent.description.rstrip() + "\n\n" + str(payload.get("text") or "")).strip()
+        addition = str(payload.get("text") or "")
+        operation = payload.get("operation", "add")
+        if operation == "add":
+            text = (
+                agent.description
+                if addition in agent.description
+                else (agent.description.rstrip() + "\n\n" + addition).strip()
+            )
+        else:
+            old = str(payload.get("old_text") or "")
+            if not old or agent.description.count(old) != 1:
+                return {
+                    "applied": False,
+                    "detail": "old_text must match exactly one standing rule",
+                    "kind": kind,
+                }
+            text = agent.description.replace(
+                old, addition if operation == "replace" else ""
+            ).strip()
         await rt.roster.update(agent.agent_id, {"description": text})
-        return {"applied": True, "detail": "standing rule added to the description", "kind": kind}
+        return {"applied": True, "detail": f"standing rule {operation} applied", "kind": kind}
     if kind == "approval_rule":
         merged = _merge_rules(agent.approval_rules, payload)
         await rt.roster.update(agent.agent_id, {"approval_rules": merged})
@@ -378,6 +423,15 @@ async def apply(
 
         if task_store is None:
             return {"applied": False, "detail": "the task store is not available", "kind": kind}
+        operation = str(payload.get("operation") or "create")
+        if operation != "create":
+            from .routines import manage_routine
+
+            try:
+                detail = await manage_routine(agent, payload, task_store, scheduler)
+            except (ValueError, KeyError, RuntimeError) as exc:
+                return {"applied": False, "detail": str(exc), "kind": kind}
+            return {"applied": True, "detail": detail, "kind": kind}
         if await count_routines(task_store, agent.agent_id) >= MAX_ROUTINES_PER_AGENT:
             return {"applied": False, "detail": "routine cap reached", "kind": kind}
         try:

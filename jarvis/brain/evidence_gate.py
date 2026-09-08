@@ -181,6 +181,20 @@ class EvidenceVerdict:
 
 _PASS = EvidenceVerdict(kind="pass")
 
+# A connector named INSIDE an instruction being authored is not a data lookup.
+# Require both the configuration capability and an explicit metadata request;
+# ordinary mailbox/calendar questions retain the existing evidence gate.
+_CONFIGURATION_REQUEST = re.compile(
+    r"^(?:(?:please|bitte|por favor|can you|could you|kannst du|puedes)\s+)?"
+    r"(?:save|persist|set|change|replace|update|remember|"
+    r"speicher\w*|merk\w*|[äa]nder\w*|ersetze|aktualisier\w*|"  # i18n-allow: input vocabulary
+    r"guarda|recuerda|cambia|sustituye|actualiza|establece)\b"
+    r"[^\n.!?]{0,100}\b(?:role|rule|instruction|routine|requirement|preference|"
+    r"rolle|regel|anweisung|routine|einstellung|pr[äa]ferenz|"  # i18n-allow: input vocabulary
+    r"rol|regla|instrucci[oó]n|rutina|configuraci[oó]n|preferencia)\b",
+    re.IGNORECASE,
+)  # i18n-allow: multilingual input vocabulary, not output-language selection
+
 # Spoken German voice replies (TTS-safe, deterministic).
 _REFUSAL_DE: dict[str, str] = {
     "calendar": "Ich habe aktuell keinen Kalenderzugriff.",  # i18n-allow
@@ -282,6 +296,8 @@ def check_evidence_domain(
     if not t:
         return _PASS
     normalised = _normalize(t)
+    if "society_propose_change" in live_tool_names and _CONFIGURATION_REQUEST.search(t):
+        return _PASS
     if _DEFINITION_RE.search(normalised) and not _OWNERSHIP_RE.search(normalised):
         return _PASS
     if not _LOOKUP_SHAPE_RE.search(normalised):

@@ -15,6 +15,10 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
 
+from .chat_turn import ChatCompletion as ChatCompletion
+from .chat_turn import ChatTurn as ChatTurn
+from .chat_turn import current_chat_turn as current_chat_turn
+
 # ----------------------------------------------------------------------
 # Audio Data-Types
 # ----------------------------------------------------------------------

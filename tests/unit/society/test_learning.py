@@ -95,7 +95,7 @@ async def rt(tmp_path: Path):
         await runtime.close()
 
 
-async def test_learned_skill_is_active_for_the_agent_only(rt: SocietyRuntime, tmp_path: Path):
+async def test_learned_skill_stays_a_private_draft(rt: SocietyRuntime, tmp_path: Path):
     notices: list[dict] = []
     creators: list[FakeCreator] = []
 
@@ -118,7 +118,7 @@ async def test_learned_skill_is_active_for_the_agent_only(rt: SocietyRuntime, tm
     summaries = skills.summaries()
     assert [s["slug"] for s in summaries] == ["thumbnail-style"]
     text = (skills.root / "thumbnail-style" / "SKILL.md").read_text(encoding="utf-8")
-    assert "state: active" in text
+    assert "state: draft" in text
     # Board + chat notice + memory line.
     digest = [e for e in await rt.store.events_since(0) if e.msg_type is MsgType.DIGEST]
     assert [e.payload["kind"] for e in digest if e.payload["kind"] != "memory"][-1] == (

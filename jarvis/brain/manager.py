@@ -5076,9 +5076,12 @@ class BrainManager:
         as well as the brain surface can. The ``getattr`` guards tolerate
         __init__-bypassing tests, like the other readers of ``_tools``.
         """
-        names = set(getattr(self, "_tools", None) or {})
-        names.update(getattr(self, "_local_action_tools", None) or {})
-        return tuple(sorted(names))
+        tools = dict(getattr(self, "_tools", None) or {})
+        tools.update(getattr(self, "_local_action_tools", None) or {})
+        override = _TURN_OVERRIDE.get()
+        if override is not None:
+            tools = self._apply_turn_override_tools(tools, override)
+        return tuple(sorted(tools))
 
     def _render_live_tool_block(self) -> str:
         """Render the attached tool surface for the system prompt (PR-05).

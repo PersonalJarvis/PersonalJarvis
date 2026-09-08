@@ -11,6 +11,7 @@ Two tables:
 Pattern: identical to ``jarvis/memory/recall.py`` (``aiosqlite`` + ``ensure_open``
 lazy-init so the store instance can be constructed synchronously).
 """
+
 from __future__ import annotations
 
 import json
@@ -106,9 +107,7 @@ class TaskStore:
 
     def _require_conn(self) -> aiosqlite.Connection:
         if self._conn is None:
-            raise RuntimeError(
-                "TaskStore not initialized — call init() or use 'async with'."
-            )
+            raise RuntimeError("TaskStore not initialized — call init() or use 'async with'.")
         return self._conn
 
     async def _migrate_trigger_type_check(self) -> None:
@@ -188,9 +187,19 @@ class TaskStore:
         re-arm a recurring (``every``) task for its next interval.
         """
         conn = self._require_conn()
-        await conn.execute(
-            "UPDATE tasks SET due_at_ns = ? WHERE id = ?", (due_at_ns, task_id)
+        await conn.execute("UPDATE tasks SET due_at_ns = ? WHERE id = ?", (due_at_ns, task_id))
+
+    async def replace_spec(self, task_id: str, spec: TaskSpec) -> None:
+        if str(spec.id) != task_id:
+            raise ValueError("A replacement must preserve the task id")
+        kind, due, selector = self._compute_trigger_fields(spec)
+        cursor = await self._require_conn().execute(
+            "UPDATE tasks SET spec_json=?,title=?,trigger_type=?,due_at_ns=?,event_selector=? "
+            "WHERE id=? AND state='paused'",
+            (spec.model_dump_json(), spec.title, kind, due, selector, task_id),
         )
+        if cursor.rowcount != 1:
+            raise ValueError("Only an existing paused task can be updated")
 
     # ------------------------------------------------------------------
     # Helpers
@@ -211,6 +220,7 @@ class TaskStore:
             # Parsing responsibility lives with the scheduler (ISO-8601 + TZ).
             # Here just a fallback: if parsing succeeds, we use it.
             from datetime import datetime
+
             try:
                 dt = datetime.fromisoformat(trig.iso_timestamp.replace("Z", "+00:00"))
                 if dt.tzinfo is None:
@@ -225,6 +235,7 @@ class TaskStore:
             # Recurring: anchor to start_at if given, else now + interval.
             if trig.start_at:
                 from datetime import datetime
+
                 try:
                     dt = datetime.fromisoformat(trig.start_at.replace("Z", "+00:00"))
                     if dt.tzinfo is None:
@@ -263,8 +274,16 @@ class TaskStore:
                                created_at_ns, attempts)
             VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, 0)
             """,
-            (tid, trace, spec_json, trigger_type, due_at_ns, event_selector,
-             spec.title, created_at_ns),
+            (
+                tid,
+                trace,
+                spec_json,
+                trigger_type,
+                due_at_ns,
+                event_selector,
+                spec.title,
+                created_at_ns,
+            ),
         )
         return tid
 
@@ -296,9 +315,7 @@ class TaskStore:
         # ``finished_at_ns`` marks the end of the LAST run, and a successful
         # result clears the error of a previous failed run so the list view's
         # ``last_run_state`` reflects the latest run only.
-        finished = (
-            state in TERMINAL_STATES or result is not None or error is not None
-        )
+        finished = state in TERMINAL_STATES or result is not None or error is not None
         if finished:
             sets.append("finished_at_ns = ?")
             params.append(now_ns)
@@ -410,7 +427,10 @@ class TaskStore:
         return task
 
     async def latest_agent_results(
-        self, task_ids: Sequence[str] | None = None, *, max_chars: int = 400,
+        self,
+        task_ids: Sequence[str] | None = None,
+        *,
+        max_chars: int = 400,
     ) -> dict[str, str]:
         """``{task_id: text}`` of the newest ``agent_result`` log step per
         task, truncated to ``max_chars`` — ONE query for the whole list view,
@@ -448,9 +468,7 @@ class TaskStore:
     async def get_spec(self, task_id: str) -> TaskSpec | None:
         """Deserializes ``spec_json`` back into a TaskSpec."""
         conn = self._require_conn()
-        cur = await conn.execute(
-            "SELECT spec_json FROM tasks WHERE id = ?", (task_id,)
-        )
+        cur = await conn.execute("SELECT spec_json FROM tasks WHERE id = ?", (task_id,))
         row = await cur.fetchone()
         await cur.close()
         if row is None:

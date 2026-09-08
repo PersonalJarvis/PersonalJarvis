@@ -3355,6 +3355,7 @@ class WebServer:
             agent_brain=agent_brain,
             auto_approver=auto_approver,
             result_sink=self._society_routine_result,
+            owned_agent_runner=self._run_society_routine,
         )
         scheduler = TaskScheduler(store=store, bus=self.bus, runner=runner)
         scheduler.bind_bus()
@@ -3563,6 +3564,22 @@ class WebServer:
         except Exception:  # noqa: BLE001 — the task already recorded its result; delivery is best effort
             logger.warning("society: routine result not delivered to {}", agent_id, exc_info=True)
 
+    async def _run_society_routine(
+        self, task_id: str, tags: tuple[str, ...], prompt: str, cancel: Any
+    ) -> str | None:
+        from jarvis.society.routine_runner import run_owned_routine
+        from jarvis.society.routines import agent_id_from_tags
+        from jarvis.society.runtime import current_runtime
+
+        if agent_id_from_tags(tags) is None:
+            return None
+        runtime = current_runtime()
+        if runtime is None:
+            runtime = self._build_society_runtime()
+            self.app.state.society = runtime
+            await runtime.ensure_started()
+        return await run_owned_routine(runtime, task_id, tags, prompt, cancel)
+
     def _build_society_runtime(self) -> Any:
         """Build the agent-society runtime on first use (see society_routes).
 
@@ -3626,6 +3643,9 @@ class WebServer:
             # The island learns of a figure's new place through the app bus the
             # WebSocket forwards (SocietyCheckpointChanged).
             event_publish=self.bus.publish,
+            task_services=lambda: (
+                getattr(state, "task_store", None), getattr(state, "task_scheduler", None)
+            ),
         )
         return state.society
 

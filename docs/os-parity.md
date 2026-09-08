@@ -326,6 +326,34 @@ shortcuts it never created. Covered by
 | P-41 | Low | CLI install / connect terminal | Pressing **Install** or **Connect** in the CLI section opens a REAL terminal window and runs the command there, because an interactive OAuth login belongs in a shell the user can see and type into. That spawn was Windows-only until 2026-08-28 (`wt` -> `pwsh` -> `powershell`), so on macOS and Linux the two buttons reported "No external terminal available" and no CLI could be installed from the app at all. macOS now goes through `osascript` to Terminal.app, Linux through the first of seven emulators that exists (Debian's `x-terminal-emulator` alternative first, so the user's own default wins), and the window is held open afterwards the way `-NoExit` holds it on Windows. One install click now carries all the way to signed in: the terminal runs the install, refreshes PATH in that same shell, and continues into the CLI's login command, stopping at the first step that fails. The chain operator differs per OS on purpose — Windows PowerShell 5.1 is a possible fallback shell and `&&` is a parser error there, so the Windows spelling nests `if ($?)` instead | `jarvis/clis/external_terminal.py` (`_spawn_windows`, `_spawn_macos`, `_spawn_linux`, `chain_commands`, `path_refresh_command`), `jarvis/ui/web/cli_routes.py::spawn_external`, `tests/unit/clis/test_install_path.py` | Windows: verified live (wt path, composed install+login command). macOS/Linux: same code path, the branch itself unverified from this machine. A box with no screen has no window to open, so there the endpoint falls back to the in-app streaming install job and the UI says so instead of claiming a terminal appeared — a headless server can still install a CLI, it just cannot run an interactive login |
 | P-42 | High | Outbound sockets (every lane) | Every connection borrows an ephemeral port from a pool the OS owns, and a closed one keeps that port through TIME_WAIT. The ceiling and the linger differ per OS, and so does what gives out first: **Windows** 16 384 ports / 120 s — the tightest by far, and the port pool is what empties, which stops EVERY process on the machine from connecting (the desktop appears frozen, then heals itself when TIME_WAIT expires); **Linux** 28 232 ports / 60 s, but `RLIMIT_NOFILE` is normally the tighter of the two (1024 on a stock `python:3.11-slim`), so the backend dies of EMFILE while the desktop around it is fine; **macOS** 16 384 ports / 15 s, so it recovers fastest. BUG-215 was the Windows shape: an unjittered wake storm (one socket per pane, per window, per instance, all on one `visibilitychange`) on top of a standing per-call-client burn. The rule that follows is to cap the burst, never to widen a limit — code that fits the Windows budget fits everywhere | `jarvis/ui/web/frontend/src/lib/connectBudget.ts` (`jitteredDelay`, `spreadDelay`, `requestConnect`), `jarvis/core/http_pool.py` (`HttpClientPool`, `SyncHttpClientPool`, `default_limits`), `jarvis/core/socket_budget.py` (`read_platform_limits`, `take_census`, `SocketBudgetWatchdog`), `jarvis/realtime/local_server/supervisor.py::_port_open` (`SO_LINGER`) | Identical on all three: one shared connect budget in the frontend, pooled keep-alive clients in Python, and a watchdog armed by BOTH entry points (desktop shell and `--headless`) that reads the ceiling per platform — `netsh` on Windows (parsed as integers, because it translates its own field names), `/proc/sys/net/ipv4/ip_local_port_range` plus `RLIMIT_NOFILE` on Linux, `sysctl net.inet.ip.portrange.*` on macOS. A host that answers none of them falls back to the documented default and says the number was assumed; a host with no ceiling at all logs one line and throttles nothing, because a watchdog that cannot see must never be what stops the app working. macOS additionally refuses the system-wide socket table to an unprivileged process, so the census there counts this process only and labels the number a floor. Guards: `tests/contract/test_socket_budget.py` (all three hosts faked, plus a German and a Japanese `netsh`), `tests/unit/core/test_socket_budget_watchdog.py`, `jarvis/ui/web/frontend/src/lib/connectBudget.test.ts` |
 
+## Agent conversation continuity and learning (2026-09-07)
+
+Windows, macOS and Linux use the same lazy Society lifecycle. Persistent
+conversation search probes SQLite FTS5; installations without it use bound
+text queries over the same archive. Neither path imports native desktop APIs.
+Memory entries retain stable ids across corrections, and context checkpoints
+are persisted only after a nonempty, completed model response. Original events
+remain available through the agent-scoped recall tool.
+
+Direct chats and scheduled work share the completion hook and durable review
+queue. Explicit current-user configuration requests can apply through the
+existing executor; internal messages and scheduled turns cannot authorize that
+path. Routines resolve the owner's current briefing and permissions at execution.
+
+`tests/contract/test_society_continuity.py` covers archive reopening, isolation,
+text-search fallback, memory corrections, compaction failure, direct-turn
+learning, configuration provenance, routine updates and skill revisions.
+The contract was executed on Windows and headless Linux. Physical macOS
+execution remains an external CI validation requirement; portable source and
+passing tests on another OS are not represented as a native macOS test.
+
+A newly installed package in an isolated Linux container with empty app state
+and one Gemini key passed live role persistence, rule replacement and identity
+recall after reopening. The isolated headless boot measured 896 ms against the
+8,000 ms window budget; audio was unavailable and the voice measurement skipped.
+Generated procedures remain drafts, including private revisions. Reading a
+procedural draft grants no tool permission and activates no registry triggers.
+
 ## Maintenance
 
 - Fixing a gap: remove its row (git history keeps the record).

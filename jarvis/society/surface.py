@@ -35,6 +35,7 @@ from .agent_tools import (
     WikiNoteTool,
 )
 from .capabilities import CapabilityKind, CapabilityRow, capability_id_for_tool, select_tools
+from .conversation_tool import ConversationRecallTool, RoutineListTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
 from .roster import AgentRecord, canonical_session_id
@@ -83,10 +84,13 @@ shared knowledge are not automatically available. Use separately granted wiki to
 when the task explicitly calls for the user's wiki. Never edit the user's own pages.
 - Routines: recurring work runs from the Automations section as tasks tagged with your name; \
 their results arrive in this chat.
-- Configuring yourself: when the user states a lasting preference, a rule, a procedure worth \
-keeping, or recurring work, call society_propose_change (kinds rule, skill, routine, \
-approval_rule, focus). The user confirms it on a card in this chat; nothing changes before \
-that, so never claim a rule or routine exists until the card says it was applied.
+- Earlier conversations: use society_conversation_recall for old decisions and exact messages.
+- Configuring yourself: when the user explicitly requests a rule, procedure or routine,
+call society_propose_change with mode=apply and request_quote copied from this user's current
+request. Read the stored result before claiming success. For inferred suggestions use
+mode=propose. Permission changes always need confirmation. Rules support operation
+add/replace/remove (old_text identifies the old rule); routines support
+create/update/pause/resume/delete (task_id identifies an existing routine).
 - Approvals: actions above your permission ceiling queue for the user (chat card, Jarvis bar, \
 voice). A queued action is not refused — say what you are waiting for and continue with what \
 you can. Secrets are never typed into a chat; credentials come from the keyring.
@@ -145,6 +149,8 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
             ),
             ShellTool.name: cast(Tool, ShellTool(rt, agent_id, workspace=workspace)),
             RunLearnedSkillTool.name: cast(Tool, RunLearnedSkillTool(rt, agent_id)),
+            ConversationRecallTool.name: cast(Tool, ConversationRecallTool(rt, agent_id)),
+            RoutineListTool.name: cast(Tool, RoutineListTool(rt, agent_id)),
             ProposeChangeTool.name: cast(
                 Tool,
                 ProposeChangeTool(

@@ -84,6 +84,8 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         SHELL_TOOL_NAME,
         MEMORY_RECALL_TOOL_NAME,
         PROPOSE_TOOL_NAME,
+        "society_conversation_recall",
+        "society_routines",
         *FOLDER,
     }
     assert "RunCommand" not in own
@@ -101,6 +103,8 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         SHELL_TOOL_NAME,
         MEMORY_RECALL_TOOL_NAME,
         PROPOSE_TOOL_NAME,
+        "society_conversation_recall",
+        "society_routines",
         *FOLDER,
     }
     assert set(picked[: len(own_names)]) == own_names

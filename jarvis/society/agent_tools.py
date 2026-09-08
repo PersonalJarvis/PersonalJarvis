@@ -166,7 +166,8 @@ class MessageAgentTool:
             output={
                 "status": status,
                 "message_id": env.event_id,
-                "delivered_to": target.name,
+                "target": target.name,
+                **({"delivered_to": target.name} if status == "delivered" else {}),
                 "kind": kind,
                 "seq": env.seq,
                 "trace_id": env.trace_id,
@@ -197,6 +198,13 @@ class WikiNoteTool:
         "type": "object",
         "properties": {
             "text": {"type": "string", "description": "Markdown body."},
+            "operation": {"type": "string", "enum": ["add", "replace", "remove"]},
+            "entry_id": {"type": "string", "description": "Stable memory id from your briefing."},
+            "old_text": {
+                "type": "string",
+                "description": "Unique exact old memory to replace/remove.",
+            },
+            "importance": {"type": "integer", "minimum": 0, "maximum": 10},
             "title": {"type": "string", "description": "Short page title (kind note)."},
             "kind": {
                 "type": "string",
@@ -228,7 +236,7 @@ class WikiNoteTool:
         if caller is None or caller.state is not AgentState.ACTIVE:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "caller is not an active agent")
         text = str(args.get("text", "")).strip()[:_MAX_NOTE]
-        if not text:
+        if not text and not (args.get("kind") == "memory" and args.get("operation") == "remove"):
             return _failure(FailureReason.BLOCKED_BY_POLICY, "text is required")
         kind = str(args.get("kind") or "note").strip().lower()
         origin = str(args.get("origin") or "agent")
@@ -237,7 +245,15 @@ class WikiNoteTool:
         try:
             if kind == "memory":
                 rel = await rt.memory.remember(
-                    caller, text, origin=origin, trace=trace, root=self._vault_root
+                    caller,
+                    text,
+                    origin=origin,
+                    trace=trace,
+                    root=self._vault_root,
+                    operation=str(args.get("operation") or "add"),
+                    entry_id=str(args.get("entry_id") or ""),
+                    old_text=str(args.get("old_text") or ""),
+                    importance=int(args.get("importance", 8)),
                 )
                 return ToolResult(
                     success=True, output={"path": rel, "kind": kind, "reviewed": False}
@@ -313,12 +329,16 @@ class ProposeChangeTool:
 
     name: str = PROPOSE_TOOL_NAME
     risk_tier: str = "safe"
+    is_action_tool: bool = True
     description: str = (
-        "Propose ONE change to how you work - the user confirms it on a card in this chat "
-        "before anything changes. kind 'rule' adds a standing instruction to your "
+        "Configure ONE aspect of how you work. Use mode=apply with an exact request_quote "
+        "for an explicitly requested change; otherwise mode=propose asks on a chat card. "
+        "kind 'rule' adds a standing instruction (operation replace/remove uses old_text) to your "
         "description ({text}); 'skill' saves the procedure you just used under a name "
         "({name, goal, steps[], outcome}); 'routine' schedules recurring work "
         "({title, prompt, schedule: {kind: every|at_time|after_delay|on_event, ...}}); "
+        "routine operation update/pause/resume/delete uses task_id from society_routines; "
+        "update also requires title, prompt and schedule. "
         "'approval_rule' changes what needs the user's approval ({require_approval[], "
         "always_allow[]} of capability ids like plugin:gmail:send); 'focus' changes which "
         "tools you reach for first ({focus[]}, the full ordered list). Say why in 'reason'. "
@@ -329,6 +349,15 @@ class ProposeChangeTool:
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["propose", "apply"],
+                "description": "apply for an explicit current user request; otherwise propose.",
+            },
+            "request_quote": {
+                "type": "string",
+                "description": "Exact quote of the current requested change; required for apply.",
+            },
             "kind": {
                 "type": "string",
                 "enum": ["rule", "skill", "routine", "approval_rule", "focus"],
@@ -352,7 +381,9 @@ class ProposeChangeTool:
         self._session_id = session_id
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
-        from .proposals import ProposalRefused, propose
+        from jarvis.core.protocols import current_chat_turn
+
+        from .proposals import ProposalRefused, propose, resolve
 
         rt = self._runtime
         if await rt.store.kill_switch():
@@ -361,6 +392,22 @@ class ProposeChangeTool:
         if caller is None or caller.state is not AgentState.ACTIVE:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "caller is not an active agent")
         kind = str(args.get("kind") or "").strip().lower()
+        apply_now = args.get("mode") == "apply"
+        if apply_now:
+            turn = current_chat_turn.get()
+            quote = str(args.get("request_quote") or "").strip()
+            if (
+                turn is None
+                or not turn.direct_user
+                or turn.session_id != caller.session_id
+                or len(quote) < 4
+                or quote not in turn.user_text
+            ):
+                return _failure(
+                    FailureReason.BLOCKED_BY_POLICY, "apply needs an exact current user request"
+                )
+            if kind == "approval_rule":
+                apply_now = False
         try:
             item = await propose(
                 rt,
@@ -372,6 +419,16 @@ class ProposeChangeTool:
             )
         except ProposalRefused as exc:
             return _failure(exc.reason, exc.detail)
+        if apply_now:
+            task_store, scheduler = rt.task_services()
+            outcome = await resolve(
+                rt, item.id, approve=True, task_store=task_store, scheduler=scheduler
+            )
+            return ToolResult(
+                bool(outcome.get("applied")),
+                outcome,
+                None if outcome.get("applied") else str(outcome.get("detail")),
+            )
         return ToolResult(
             success=True,
             output={
@@ -382,6 +439,9 @@ class ProposeChangeTool:
                 "note": "waiting for the user to confirm on the card in this chat",
             },
         )
+
+    def risk_tier_for_args(self, args: dict[str, Any]) -> str:
+        return "monitor" if args.get("mode") == "apply" else "safe"
 
 
 class ShellTool:

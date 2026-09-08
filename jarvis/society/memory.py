@@ -57,7 +57,7 @@ PAGE_TYPE: Final[str] = "society"
 MEMORY_HOLD_S: Final[float] = 60.0
 
 _MAX_TEXT: Final[int] = 40_000
-_HEAD_CHARS: Final[int] = 1_200
+_HEAD_CHARS: Final[int] = 8_000
 _SNIPPET_CHARS: Final[int] = 200
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.DOTALL)
 _KV_RE = re.compile(r"^([A-Za-z_][\w-]*):\s*(.*)$", re.MULTILINE)
@@ -237,10 +237,14 @@ class SocietyMemory:
         origin: str = "agent",
         trace: str = "",
         root: Path | None = None,
+        operation: str = "add",
+        entry_id: str = "",
+        old_text: str = "",
+        importance: int = 5,
     ) -> str:
         """Append one durable fact to the agent's memory page. Returns the vault-relative path."""
         text = str(text or "").strip()[:_MAX_TEXT]
-        if not text:
+        if not text and operation != "remove":
             raise MemoryRefused("text is required")
         if _contains_secret(text):
             raise MemoryRefused("memory never holds a secret")
@@ -251,8 +255,23 @@ class SocietyMemory:
             existing = (
                 self._frontmatter(f"{agent.name} — memory", agent.agent_id, "agent", trace) + "\n"
             )
-        today = _dt.datetime.now(tz=_dt.UTC).date().isoformat()
-        atomic_write(path, existing.rstrip("\n") + f"\n\n## {today}\n\n{text}\n")
+        from .notebook import change, parse, render
+
+        _, body = _parse(existing)
+        prefix = existing[: len(existing) - len(body)] if body else existing
+        try:
+            entries = change(
+                parse(body),
+                text,
+                operation=operation,
+                entry_id=entry_id,
+                old_text=old_text,
+                importance=max(0, min(10, int(importance))),
+                origin=self._origin(origin),
+            )
+        except (ValueError, KeyError, TypeError) as exc:
+            raise MemoryRefused(str(exc)) from exc
+        atomic_write(path, prefix + "\n" + render(entries))
         rel = path.relative_to(vault).as_posix()
         await self._stage(agent, rel, self._origin(origin), trace, text[:280])
         await self._touch(agent, "remember", {"path": rel, "scope": "own"})
@@ -376,10 +395,9 @@ class SocietyMemory:
             _, body = _parse(page.read_text(encoding="utf-8"))
             body = body.strip()
             if body:
-                clipped = body[:_HEAD_CHARS]
-                if len(body) > _HEAD_CHARS:
-                    clipped = clipped.rsplit("\n", 1)[0] + "\n…"
-                lines.append(clipped)
+                from .notebook import briefing, parse
+
+                lines.append(briefing(parse(body), max_chars=_HEAD_CHARS))
         if len(lines) == 1:
             lines.append("Nothing remembered yet.")
         lines.append(
@@ -388,6 +406,16 @@ class SocietyMemory:
             "Other agents' notes and shared knowledge are not part of your memory."
         )
         return "\n".join(lines)
+
+    def contains(self, agent: AgentRecord, text: str) -> bool:
+        """Check all current entries, including those outside the briefing budget."""
+        from .notebook import parse
+
+        path = self.namespace(self.root(), agent.agent_id) / "memory.md"
+        if not path.is_file():
+            return False
+        _, body = _parse(path.read_text(encoding="utf-8"))
+        return any(entry.text.strip() == text.strip() for entry in parse(body))
 
     async def recall(
         self, agent: AgentRecord, query: str, *, k: int = 5, root: Path | None = None

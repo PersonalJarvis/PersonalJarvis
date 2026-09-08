@@ -20,6 +20,7 @@ instead (``brain``), and a CLI seat runs as Jarvis. The choice is recorded in
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import uuid
@@ -43,6 +44,7 @@ from jarvis.agent_chat.store import (
     AgentChatStore,
 )
 from jarvis.agent_chat.surface_kits import kit_for
+from jarvis.core.protocols import ChatCompletion, ChatTurn, current_chat_turn
 from jarvis.society.delivery import IncomingMessage
 
 log = logging.getLogger(__name__)
@@ -111,6 +113,8 @@ class _Running:
 
 
 class AgentChatService:
+    supports_turn_completion = True
+
     def __init__(
         self,
         store: AgentChatStore,
@@ -307,9 +311,18 @@ class AgentChatService:
     async def message_status(
         self, session_id: str, message_id: str, status: str, *, turn_id: str = "", error: str = ""
     ) -> None:
-        await self._emit(session_id, make_event("agent_message_status", {
-            "message_id": message_id, "status": status, "turn_id": turn_id, "error": error,
-        }))
+        await self._emit(
+            session_id,
+            make_event(
+                "agent_message_status",
+                {
+                    "message_id": message_id,
+                    "status": status,
+                    "turn_id": turn_id,
+                    "error": error,
+                },
+            ),
+        )
 
     async def send(
         self,
@@ -319,6 +332,7 @@ class AgentChatService:
         *,
         tool_choices: list[str] | None = None,
         incoming: IncomingMessage | None = None,
+        direct_user: bool = True,
     ) -> str:
         """Persist the person's message and start the turn. Returns turn_id.
 
@@ -371,11 +385,10 @@ class AgentChatService:
         run = _Running(turn_id, cancel)
         self._running[session_id] = run
 
-        history = self.store.list_events(session_id)
+        history_start = kit.history_start(session) if kit.history_start is not None else 0
+        history = self.store.list_events(session_id, after_seq=history_start)
         if incoming is not None:
-            await self.message_status(
-                session_id, incoming.message_id, "delivered", turn_id=turn_id
-            )
+            await self.message_status(session_id, incoming.message_id, "delivered", turn_id=turn_id)
         else:
             await self._emit(
                 session_id,
@@ -451,6 +464,10 @@ class AgentChatService:
         )
 
         async def _body() -> None:
+            origin = ChatTurn(
+                session_id, turn_id, text, direct_user and incoming is None, str(handle.trace_id)
+            )
+            origin_token = current_chat_turn.set(origin)
             try:
                 if runner == "brain":
                     async with self._brain_lock:
@@ -531,6 +548,18 @@ class AgentChatService:
                 )
             finally:
                 self._running.pop(session_id, None)
+                current_chat_turn.reset(origin_token)
+                if kit.turn_completed is not None:
+                    try:
+                        first_seq = max(
+                            (int(e.get("seq") or 0) for e in history), default=history_start
+                        )
+                        events = self.store.list_events(session_id, after_seq=first_seq)
+                        await kit.turn_completed(
+                            session, ChatCompletion(origin, json.dumps(events))
+                        )
+                    except Exception:
+                        log.exception("chat completion hook failed for %s", turn_id)
                 for aid in self.pending_approvals(session_id):
                     fut = self._approvals.pop(aid, None)
                     self._approval_session.pop(aid, None)

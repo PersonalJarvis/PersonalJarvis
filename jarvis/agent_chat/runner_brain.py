@@ -84,7 +84,9 @@ def brain_manager() -> Any | None:
 # ------------------------------------------------------------------ history
 
 
-def brain_history_from_events(events: list[dict[str, Any]]) -> list[BrainMessage]:
+def brain_history_from_events(
+    events: list[dict[str, Any]], *, max_messages: int | None = _HISTORY_MAX
+) -> list[BrainMessage]:
     """The chat's own log as the turn's history: what was said, in prose.
 
     User and assistant TEXT only. A tool round is folded into the assistant
@@ -94,7 +96,7 @@ def brain_history_from_events(events: list[dict[str, Any]]) -> list[BrainMessage
     validation. Capped to the last ``_HISTORY_MAX`` messages.
     """
     out: list[BrainMessage] = []
-    for message in messages_from_events(events):
+    for message in messages_from_events(events, max_events=None if max_messages is None else 600):
         if message.role == "user":
             text = message.content if isinstance(message.content, str) else ""
             if text.strip():
@@ -110,7 +112,7 @@ def brain_history_from_events(events: list[dict[str, Any]]) -> list[BrainMessage
                 out[-1] = BrainMessage(role="assistant", content=merged)
             else:
                 out.append(BrainMessage(role="assistant", content=text))
-    return out[-_HISTORY_MAX:]
+    return out[-max_messages:] if max_messages else out
 
 
 def _assistant_prose(content: str | list[dict[str, Any]]) -> str:
@@ -556,6 +558,26 @@ async def _generate(
     # The task inherits the credential override through its context copy, so
     # the scoped brain instance resolves the Agents-tab key on first use.
     with override_provider_secrets(overrides):
+        if session.surface == "society":
+            from jarvis.society.conversation import prepare_history
+            from jarvis.society.runtime import current_runtime
+
+            runtime = current_runtime()
+            getter = getattr(brain, "_get_brain", None)
+            if runtime is not None and callable(getter):
+                provider = getter(
+                    session.provider,
+                    session.model or None,
+                    scope=f"society-compaction:{session.session_id}",
+                )
+                kwargs["history_override"] = await prepare_history(
+                    runtime,
+                    session,
+                    handle.history,
+                    text,
+                    provider,
+                    prompt_chars=len(override.system_extra) + 16000,
+                )
         task: asyncio.Task[str] = asyncio.create_task(
             brain.generate(text, **kwargs), name=f"agent-chat-brain-{handle.turn_id[:8]}"
         )
