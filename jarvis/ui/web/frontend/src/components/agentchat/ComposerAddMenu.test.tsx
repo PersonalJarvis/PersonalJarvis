@@ -87,11 +87,37 @@ describe("Add menu", () => {
     expect(document.activeElement).toBe(screen.getByTestId("composer-add"));
   });
 
-  it("opens setup for unavailable plugins without selecting them", async () => {
+  it("opens setup for unavailable plugins once they are searched for", async () => {
     const { connect } = setup();
-    fireEvent.click(await screen.findByRole("button", { name: /Offline Read your inbox/ }));
+    await screen.findByRole("button", { name: /Gmail Read your inbox/ });
+    expect(screen.queryByRole("button", { name: /Offline Read your inbox/ })).toBeNull();
+    fireEvent.change(screen.getByLabelText("chat_tools.search"), {
+      target: { value: "Offline" },
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Offline Read your inbox/ }, { timeout: 2000 }),
+    );
     expect(connect).toHaveBeenCalledOnce();
     expect(screen.queryByTestId("tool-choice-chips")).toBeNull();
+  });
+
+  it("lists the connected plugin, not its commands or bundled skill", async () => {
+    setup([
+      gmail,
+      { ...gmail, id: "tool:gmail/send", label: "send", description: "Send a message" },
+      {
+        ...gmail,
+        id: "skill:plugin-gmail",
+        label: "plugin-gmail",
+        category: "skills",
+        group: "skills",
+        skill: "plugin-gmail",
+        description: "Use Gmail",
+      },
+    ]);
+    expect(await screen.findByRole("button", { name: /Gmail Read your inbox/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /send Send a message/ })).toBeNull();
+    expect(screen.queryByText("plugin-gmail")).toBeNull();
   });
 
   it("forwards category and natural-language query to the server", async () => {
@@ -133,11 +159,13 @@ describe("Add menu", () => {
     const fetcher = vi.fn<typeof fetch>(async () => new Response('{"turn_id":"turn"}'));
     vi.stubGlobal("fetch", fetcher);
     await sendAgentChatMessage("session", "Read it", [], [gmail.id]);
-    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({
-      text: "Read it",
-      attachments: [],
-      tool_choices: ["plugin:gmail"],
-    });
+    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual(
+      expect.objectContaining({
+        text: "Read it",
+        attachments: [],
+        tool_choices: ["plugin:gmail"],
+      }),
+    );
     expect(readToolChoices(undefined)).toEqual([]);
     expect(readToolChoices([gmail, { id: "invalid" }])).toEqual([gmail]);
   });

@@ -17,7 +17,15 @@
  * wins.
  */
 
+import { CLI_VENDOR_LOGOS, cliVendor } from "./cliVendors";
+
 const BUNDLED_BRAND_LOGOS = import.meta.glob("../assets/brands/*.svg", {
+  eager: true,
+  query: "?url",
+  import: "default",
+}) as Record<string, string>;
+
+const BUNDLED_CLI_LOGOS = import.meta.glob("../assets/clis/*.svg", {
   eager: true,
   query: "?url",
   import: "default",
@@ -29,14 +37,18 @@ const BRAND_DISPLAY_NAMES: Record<string, string> = {
   clickup: "ClickUp",
   github: "GitHub",
   gmail: "Gmail",
+  google: "Google",
+  "google-cloud": "Google Cloud",
   google_calendar: "Google Calendar",
   google_drive: "Google Drive",
   home_assistant: "Home Assistant",
+  kubernetes: "Kubernetes",
+  planetscale: "PlanetScale",
   youtube_music: "YouTube Music",
 };
 
 /** Tokens that name a wrapper, not an action — dropped from the label. */
-const NOISE_TOKENS = new Set(["plugin", "tool", "mcp"]);
+const NOISE_TOKENS = new Set(["plugin", "tool", "mcp", "cli"]);
 
 interface Brand {
   id: string;
@@ -64,6 +76,17 @@ const BRANDS: Brand[] = Object.entries(BUNDLED_BRAND_LOGOS)
       logoUrl,
     };
   })
+  .concat(
+    Object.entries(CLI_VENDOR_LOGOS)
+      .filter(([id]) => !BUNDLED_BRAND_LOGOS[`../assets/brands/${id}.svg`])
+      .map(([id, spec]) => ({
+        id,
+        tokens: id.split(/[-_]/),
+        label: BRAND_DISPLAY_NAMES[id] ?? humanise(id.split(/[-_]/)),
+        logoUrl: BUNDLED_CLI_LOGOS[`../assets/clis/${spec.file}`],
+      }))
+      .filter((brand) => Boolean(brand.logoUrl)),
+  )
   .sort(
     (a, b) => b.tokens.length - a.tokens.length || b.id.length - a.id.length,
   );
@@ -139,6 +162,25 @@ export function resolveToolBrand(toolName: string): ToolBrand {
   }
 
   const plain = tokens.filter((w) => !NOISE_TOKENS.has(w));
+  const vendor =
+    cliVendor(plain.join("_")) || cliVendor(plain.join("-")) || (plain[0] ? cliVendor(plain[0]) : null);
+  if (vendor) {
+    const brand = BRANDS.find((entry) => entry.id === vendor);
+    const logoUrl =
+      brand?.logoUrl ||
+      BUNDLED_CLI_LOGOS[`../assets/clis/${CLI_VENDOR_LOGOS[vendor]?.file}`] ||
+      BUNDLED_CLI_LOGOS[`../assets/clis/${vendor}.svg`];
+    const brandLabel = brand?.label ?? BRAND_DISPLAY_NAMES[vendor] ?? humanise(vendor.split(/[-_]/));
+    const rest = cliVendor(plain.join("_")) || cliVendor(plain.join("-")) ? [] : plain.slice(1);
+    const label = rest.length ? `${brandLabel} · ${rest.join(" ")}` : brandLabel;
+    return {
+      label,
+      logoUrl,
+      monogram: monogramFor(brandLabel),
+      brandId: vendor,
+    };
+  }
+
   const label = (plain.length ? plain : tokens).join(" ");
   return { label, monogram: monogramFor(label) };
 }

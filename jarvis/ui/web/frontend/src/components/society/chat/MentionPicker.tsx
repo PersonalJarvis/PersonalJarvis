@@ -140,7 +140,7 @@ export function MentionPicker({
                   onClick={() => onPick(item)}
                   className={cn(
                     !item.agent && "tool-identity",
-                    "flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5",
+                    "flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2",
                     active ? "bg-secondary text-foreground" : "text-foreground",
                     !item.connected && "opacity-50",
                   )}
@@ -148,25 +148,18 @@ export function MentionPicker({
                   <Mark item={item} />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline gap-1.5">
-                      <span className="font-mono text-meta">
-                        <span className="text-muted-foreground">@</span>
-                        {item.value}
+                      <span className="truncate text-sm font-medium text-foreground">{item.label}</span>
+                      <span className="shrink-0 font-mono text-micro text-muted-foreground">
+                        @{item.value}
                       </span>
-                      {item.label.toLowerCase() !== item.value.toLowerCase() ? (
-                        <span className="truncate text-xs text-foreground">{item.label}</span>
-                      ) : null}
                     </span>
                     {item.hint ? (
-                      <span className="block truncate text-xs text-muted-foreground">{item.hint}</span>
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.hint}</span>
                     ) : null}
                   </span>
                   {!item.connected ? (
                     <span className="shrink-0 text-micro text-muted-foreground">
                       {t("society.chat.mention_disconnected")}
-                    </span>
-                  ) : item.kind === "mcp" && !item.detail && item.pinIds.length > 1 ? (
-                    <span className="shrink-0 font-mono text-micro text-muted-foreground">
-                      {item.pinIds.length}
                     </span>
                   ) : null}
                 </div>
@@ -201,7 +194,11 @@ function groupLabel(group: MentionGroup, t: (key: string) => string): string {
 
 function Mark({ item }: { item: MentionItem }) {
   if (item.agent) {
-    return <AgentSwatch agent={item.agent} size={20} className="h-5 w-5" />;
+    return <AgentSwatch agent={item.agent} size={28} className="h-7 w-7 rounded-lg" />;
   }
-  return <ToolChoiceIcon row={mentionChoice(item)} />;
+  return (
+    <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-background">
+      <ToolChoiceIcon row={mentionChoice(item)} size={18} />
+    </span>
+  );
 }

@@ -10,7 +10,10 @@ import {
 } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 
+import { CLI_VENDOR_LOGOS, cliVendor } from "@/lib/cliVendors";
 import { cn } from "@/lib/utils";
+
+export { cliVendor };
 
 /**
  * The vendor mark on a CLI row.
@@ -26,69 +29,6 @@ import { cn } from "@/lib/utils";
  * glyph drawn as a CSS mask over the current text ink, so it follows the theme
  * by itself instead of needing a light and a dark asset.
  */
-type Render = "colour" | "mono";
-
-interface VendorLogo {
-  file: string;
-  render: Render;
-}
-
-const CLI_VENDOR_LOGOS: Record<string, VendorLogo> = {
-  aws: { file: "aws.svg", render: "mono" },
-  azure: { file: "azure.svg", render: "colour" },
-  cloudflare: { file: "cloudflare.svg", render: "mono" },
-  docker: { file: "docker.svg", render: "colour" },
-  firebase: { file: "firebase.svg", render: "colour" },
-  fly: { file: "fly.svg", render: "colour" },
-  github: { file: "github.svg", render: "mono" },
-  gitlab: { file: "gitlab.svg", render: "colour" },
-  google: { file: "google.svg", render: "colour" },
-  "google-cloud": { file: "google-cloud.svg", render: "colour" },
-  heroku: { file: "heroku.svg", render: "colour" },
-  kubernetes: { file: "kubernetes.svg", render: "colour" },
-  neon: { file: "neon.svg", render: "colour" },
-  netlify: { file: "netlify.svg", render: "colour" },
-  planetscale: { file: "planetscale.svg", render: "mono" },
-  railway: { file: "railway.svg", render: "mono" },
-  render: { file: "render.svg", render: "mono" },
-  stripe: { file: "stripe.svg", render: "mono" },
-  supabase: { file: "supabase.svg", render: "colour" },
-  twilio: { file: "twilio.svg", render: "colour" },
-  vercel: { file: "vercel.svg", render: "mono" },
-};
-
-/**
- * Catalog CLI name -> vendor.
- *
- * Exact names, not substrings: `render` the vendor and `render` the binary
- * happen to match, but `gh` and `glab` share no letters with their companies,
- * and a substring rule would make `gws` a Google Cloud tool. Custom CLIs a
- * user registers land on the category glyph, which is the honest answer for a
- * binary this project has never heard of.
- */
-const CLI_VENDORS: Record<string, string> = {
-  aws: "aws",
-  az: "azure",
-  docker: "docker",
-  firebase: "firebase",
-  flyctl: "fly",
-  gcloud: "google-cloud",
-  gh: "github",
-  glab: "gitlab",
-  gws: "google",
-  heroku: "heroku",
-  kubectl: "kubernetes",
-  neonctl: "neon",
-  netlify: "netlify",
-  pscale: "planetscale",
-  railway: "railway",
-  render: "render",
-  stripe: "stripe",
-  supabase: "supabase",
-  twilio: "twilio",
-  vercel: "vercel",
-  wrangler: "cloudflare",
-};
 
 /** The glyph a CLI falls back to: what kind of thing it drives. */
 const CATEGORY_GLYPHS: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
@@ -111,10 +51,6 @@ const BUNDLED = import.meta.glob("../../assets/clis/*.svg", {
   query: "?url",
   import: "default",
 }) as Record<string, string>;
-
-export function cliVendor(cliName: string): string | null {
-  return CLI_VENDORS[cliName.toLowerCase()] ?? null;
-}
 
 export function CategoryGlyph({
   category,

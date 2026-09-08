@@ -65,6 +65,26 @@ def test_inventory_covers_categories_and_connected_state():
     assert len(rows) == len(by_id)
 
 
+def test_plugin_row_hides_operations_and_bundled_skills():
+    tools = {
+        "github/create_issue": tool("github/create_issue", "Open an issue"),
+        "github/list_issues": tool("github/list_issues", "List issues"),
+        "run-skill": tool("run-skill", risk="ask"),
+    }
+    plugin = SimpleNamespace(
+        id="github", display_name="GitHub", description="Repos", native_tool=None
+    )
+    skill = SimpleNamespace(value="plugin-github", label="GitHub skill", hint="Use GitHub")
+    extra = SimpleNamespace(value="daily-brief", label="Daily brief", hint="Summarize")
+    rows = build_catalog(tools, [plugin], [skill, extra], {"github"})
+    by_id = {row.id: row for row in rows}
+    assert by_id["plugin:github"].tool_names == ("github/create_issue", "github/list_issues")
+    assert "tool:github/create_issue" not in by_id
+    assert "mcp:github" not in by_id
+    assert "skill:plugin-github" not in by_id
+    assert "skill:daily-brief" in by_id
+
+
 @pytest.mark.parametrize("ids", [["invented"], ["plugin:offline"], ["plugin:gmail"] * 25])
 def test_invalid_choices_fail_closed(ids):
     with pytest.raises(ValueError):

@@ -1,3 +1,5 @@
+import { isPluginOwnedSkill } from "@/lib/pluginFamilies";
+
 /** Mirrors the composer catalog's Pydantic model; selections send IDs only. */
 export type ToolCategory =
   "plugins" | "skills" | "mcp" | "memory" | "web" | "files" | "automation" | "system" | "cli";
@@ -38,6 +40,20 @@ export async function searchTools(
   const res = await fetch(`/api/agent-chat/tools?${new URLSearchParams(params)}`, { signal });
   if (!res.ok) throw new Error(`tool-search:${res.status}`);
   return res.json();
+}
+
+/**
+ * The Add menu lists connectors, not the skills and commands behind them.
+ * Disconnected plugins stay hidden until someone searches for them.
+ */
+export function browseToolRows(items: ToolChoice[], query = ""): ToolChoice[] {
+  const searching = Boolean(query.trim());
+  return items.filter((row) => {
+    if (row.category === "plugins" && row.id.startsWith("tool:")) return false;
+    if (row.category === "plugins" && !row.available && !searching) return false;
+    if (row.category === "skills" && isPluginOwnedSkill(row.skill || row.label || row.id)) return false;
+    return true;
+  });
 }
 
 /** Old events have no selections. Discard malformed receipts. */

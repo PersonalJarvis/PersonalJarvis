@@ -53,17 +53,34 @@ def category_for(name: str) -> Category:
     return "system"
 
 
+def _plugin_owned_skill(slug: str, plugin_ids: set[str]) -> bool:
+    """True when a skill is the bundled companion of a marketplace plugin."""
+    text = (slug or "").strip().lower().replace("_", "-")
+    if not text:
+        return False
+    if text.startswith("plugin-"):
+        rest = text[7:].replace("-", "_")
+        return rest in plugin_ids or text[7:] in {pid.replace("_", "-") for pid in plugin_ids}
+    return text.replace("-", "_") in plugin_ids
+
+
 def build_catalog(
     tools: Mapping[str, Tool],
     plugins: Iterable[Any] = (),
     skills: Iterable[Any] = (),
     connected_plugins: set[str] | None = None,
 ) -> list[ToolChoice]:
-    """One plugin/server row plus every individual operation, without duplicates."""
+    """One row per connector, leftover MCP server, CLI and standalone skill.
+
+    Selecting a plugin already hands every tool behind it, so individual
+    operations and ``plugin-*`` skills stay off the picker.
+    """
     rows: list[ToolChoice] = []
     owned: set[str] = set()
+    plugin_list = list(plugins)
+    plugin_ids = {spec.id for spec in plugin_list}
     usable = {n: t for n, t in tools.items() if str(getattr(t, "risk_tier", "")) != "block"}
-    for spec in plugins:
+    for spec in plugin_list:
         names = tuple(n for n in usable if n.startswith(spec.id + "/") or n == spec.native_tool)
         available = bool(names) and (
             connected_plugins is None
@@ -82,23 +99,7 @@ def build_catalog(
                 tool_names=names,
             )
         )
-        for name in names:
-            owned.add(name)
-            # A native tool already is the plugin's only operation.
-            if "/" not in name:
-                continue
-            rows.append(
-                ToolChoice(
-                    id=f"tool:{name}",
-                    label=name.split("/", 1)[1],
-                    description=str(usable[name].description),
-                    category="plugins",
-                    group=spec.display_name,
-                    brand=spec.id,
-                    available=available,
-                    tool_names=(name,),
-                )
-            )
+        owned.update(names)
     servers: dict[str, list[str]] = {}
     for name, tool in usable.items():
         if name in owned:
@@ -134,6 +135,9 @@ def build_catalog(
             )
         )
     for skill in skills:
+        slug = str(getattr(skill, "value", "") or "")
+        if _plugin_owned_skill(slug, plugin_ids):
+            continue
         rows.append(
             ToolChoice(
                 id=f"skill:{skill.value}",

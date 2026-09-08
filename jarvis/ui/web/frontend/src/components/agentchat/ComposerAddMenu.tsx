@@ -7,6 +7,7 @@ import { BrandedSelect } from "@/components/ui/select";
 import { ToolChoiceIcon } from "./ToolChoiceChips";
 import { CATEGORY_ICONS, toolIdentityStyle } from "./toolIdentity";
 import {
+  browseToolRows,
   searchTools,
   TOOL_CATEGORIES,
   type ToolChoice,
@@ -126,13 +127,14 @@ export function ComposerAddMenu({
     };
   }, [open, provider, model, cwd, stance, query, category, retry]);
 
+  const visible = browseToolRows(result?.items ?? [], query);
   const groups = new Map<string, ToolChoice[]>();
   const operationGroups = new Set(
-    (result?.items ?? [])
-      .filter((row) => row.id.startsWith("tool:") && ["plugins", "mcp"].includes(row.category))
+    visible
+      .filter((row) => row.id.startsWith("tool:") && row.category === "mcp")
       .map((row) => `${row.category}:${row.group}`),
   );
-  for (const row of result?.items ?? []) {
+  for (const row of visible) {
     const subgroup = `${row.category}:${row.group}`;
     const key = operationGroups.has(subgroup) ? subgroup : row.category;
     groups.set(key, [...(groups.get(key) ?? []), row]);
@@ -260,7 +262,7 @@ export function ComposerAddMenu({
                     className="ml-auto h-4 w-4 animate-spin"
                   />
                 ) : result ? (
-                  `${result.items.length} · ${t(`chat_tools.${result.mode}`)}`
+                  `${visible.length} · ${t(`chat_tools.${result.mode}`)}`
                 ) : (
                   ""
                 )}
@@ -301,7 +303,7 @@ export function ComposerAddMenu({
                   </button>
                 </div>
               )}
-              {!loading && !failed && result?.items.length === 0 && (
+              {!loading && !failed && visible.length === 0 && (
                 <p className="p-3 text-sm text-muted-foreground">{t("chat_tools.empty")}</p>
               )}
               {[...groups].map(([key, rows]) => (
@@ -335,7 +337,9 @@ export function ComposerAddMenu({
                           !row.available && "opacity-60",
                         )}
                       >
-                        <ToolChoiceIcon row={row} size={22} />
+                        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-background">
+                          <ToolChoiceIcon row={row} size={20} />
+                        </span>
                         <span className="min-w-0 flex-1">
                           <span className="tool-picker-name block truncate text-sm font-medium">
                             {row.label}

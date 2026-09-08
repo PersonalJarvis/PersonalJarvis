@@ -27,6 +27,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { McpLogo } from "@/components/extensions/McpLogo";
+import { CLI_VENDOR_LOGOS, cliVendor } from "@/lib/cliVendors";
 import type { ToolCategory, ToolChoice } from "./toolChoices";
 
 type Palette = readonly [string, string];
@@ -66,12 +67,24 @@ const BRANDS: Record<string, Brand> = {
   telegram: { palette: BLUE },
   todoist: { palette: ["#b12d27", "#ff9c92"] },
   vercel: { palette: NEUTRAL, mark: "mono" },
-  youtube_music: { palette: ["#bb2424", "#ff9494"], aliases: ["youtube-music", "ytmusic"] },
+  youtube_music: { palette: ["#bb2424", "#ff9494"], aliases: ["youtube-music", "ytmusic", "youtube"] },
   stripe: { palette: VIOLET, mark: "mono" },
   cloudflare: { palette: ["#a84c14", "#ffb276"], mark: "mono", aliases: ["wrangler"] },
   figma: { palette: ["#9c3a28", "#ffa18e"], mark: "mono" },
-  gitlab: { palette: ["#a8441a", "#ffad83"], mark: "mono" },
-  docker: { palette: BLUE, mark: "mono" },
+  gitlab: { palette: ["#a8441a", "#ffad83"], mark: "mono", aliases: ["glab"] },
+  docker: { palette: BLUE, mark: "colour" },
+  aws: { palette: ["#a15b00", "#f0b429"], mark: "mono" },
+  azure: { palette: BLUE, aliases: ["az"] },
+  firebase: { palette: ["#b45309", "#ffb74d"] },
+  fly: { palette: VIOLET, aliases: ["flyctl"] },
+  heroku: { palette: VIOLET },
+  kubernetes: { palette: BLUE, aliases: ["kubectl"] },
+  neon: { palette: GREEN, aliases: ["neonctl"] },
+  netlify: { palette: GREEN },
+  planetscale: { palette: NEUTRAL, mark: "mono", aliases: ["pscale"] },
+  railway: { palette: VIOLET, mark: "mono" },
+  render: { palette: GREEN, mark: "mono" },
+  twilio: { palette: ["#b3261e", "#ff938a"] },
   n8n: { palette: ["#b43351", "#f69ab1"], mark: "mono" },
   postgresql: { palette: BLUE, aliases: ["postgres"] },
   obsidian: { palette: VIOLET, mark: "mono" },
@@ -100,24 +113,30 @@ const BRANDS: Record<string, Brand> = {
   zai: { palette: NEUTRAL, asset: "/agent-logos/zai.svg", aliases: ["glm", "z.ai"] },
 };
 
-const assets = import.meta.glob("../../assets/{brands,providers,tool-brands}/*.{svg,png}", {
+const assets = import.meta.glob("../../assets/{brands,providers,tool-brands,clis}/*.{svg,png}", {
   eager: true,
   query: "?url",
   import: "default",
 }) as Record<string, string>;
 
-function assetFor(key: string): string | undefined {
+function assetFor(key: string, preferCli = false): string | undefined {
+  const cliFile = CLI_VENDOR_LOGOS[key]?.file ?? `${key}.svg`;
+  const cli = assets[`../../assets/clis/${cliFile}`] || assets[`../../assets/clis/${key}.svg`];
+  if (preferCli && cli) return cli;
   return (
     BRANDS[key]?.asset ||
     assets[`../../assets/brands/${key}.svg`] ||
     assets[`../../assets/tool-brands/${key}.svg`] ||
     assets[`../../assets/providers/${key}.svg`] ||
-    assets[`../../assets/providers/${key}.png`]
+    assets[`../../assets/providers/${key}.png`] ||
+    cli
   );
 }
 
 const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
-const bundledKeys = Object.keys(assets).map((path) => path.split("/").pop()!.replace(/\.(svg|png)$/, ""));
+const bundledKeys = Object.keys(assets)
+  .filter((path) => !path.includes("/clis/"))
+  .map((path) => path.split("/").pop()!.replace(/\.(svg|png)$/, ""));
 const aliases = [...new Set([...Object.keys(BRANDS), ...bundledKeys])]
   .flatMap((key) =>
     [key, ...(BRANDS[key]?.aliases ?? [])].map((alias) => ({ key, alias: alias.replace(/[_. ]/g, "-") })),
@@ -186,9 +205,15 @@ const DETAIL_ICONS = [
 ] as const;
 
 export function toolIdentity(row: ToolChoice) {
+  const cliName = [row.brand, row.label, row.id.replace(/^(cli:|tool:|plugin:)/, "")]
+    .map((value) => cliVendor(value || ""))
+    .find(Boolean);
+  const preferCli = row.category === "cli" || row.id.startsWith("cli:") || Boolean(cliName);
   const key =
+    (preferCli ? cliName : undefined) ||
     (row.brand && brandFor(row.brand)) ||
-    [row.id, row.group, row.skill, row.label].map((s) => brandFor(s || "")).find(Boolean);
+    [row.id, row.group, row.skill, row.label].map((s) => brandFor(s || "")).find(Boolean) ||
+    cliName;
   const brand = key ? BRANDS[key] : undefined;
   const palette = brand?.palette ?? CATEGORY_PALETTES[row.category];
   const words = `${row.id} ${row.skill} ${row.label}`.toLowerCase().replace(/[_:-]/g, " ");
@@ -197,10 +222,11 @@ export function toolIdentity(row: ToolChoice) {
       ? McpLogo
       : (DETAIL_ICONS.find(([pattern]) => pattern.test(words))?.[1] ??
         CATEGORY_ICONS[row.category]);
+  const mark = preferCli && key && CLI_VENDOR_LOGOS[key] ? CLI_VENDOR_LOGOS[key].render : (brand?.mark ?? "colour");
   return {
     key,
-    logo: key ? assetFor(key) : undefined,
-    mark: brand?.mark ?? "colour",
+    logo: key ? assetFor(key, preferCli) : undefined,
+    mark,
     palette,
     Glyph,
   };

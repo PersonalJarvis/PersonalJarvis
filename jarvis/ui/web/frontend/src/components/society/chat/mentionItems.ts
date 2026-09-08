@@ -8,6 +8,8 @@
  * browsing; typing a tool name unfolds the individual tools.
  */
 
+import { marketplacePluginId, pluginFamily } from "@/lib/pluginFamilies";
+
 import type { Capability, SocietyAgent } from "../data";
 
 /** "plugin:gmail" → "gmail"; "mcp:github/create_issue" → "github/create_issue". */
@@ -137,8 +139,8 @@ function capabilityItem(
 
 /**
  * Every taggable row: agents first (they keep their names), then one row per
- * plugin / CLI / skill / core tool, plus a collapsed MCP server and its
- * individual tools.
+ * connected marketplace plugin (skills and commands folded in), remaining MCP
+ * servers, CLIs, standalone skills and Jarvis tools.
  */
 export function buildMentionCatalog(
   agents: readonly SocietyAgent[],
@@ -165,10 +167,23 @@ export function buildMentionCatalog(
     });
   }
 
+  const families = new Map<string, Capability[]>();
   const mcpByServer = new Map<string, Capability[]>();
   const rest: Capability[] = [];
   for (const cap of capabilities) {
-    if (kindOf(cap) === "mcp") {
+    const familyId = marketplacePluginId(cap.id) || marketplacePluginId(cap.tool_name || "");
+    if (familyId) {
+      const bucket = families.get(familyId);
+      if (bucket) bucket.push(cap);
+      else families.set(familyId, [cap]);
+      continue;
+    }
+    const kind = kindOf(cap);
+    if (kind === "plugin") {
+      // Coding commands and other non-connector tools are not plugins.
+      continue;
+    }
+    if (kind === "mcp") {
       const server = mcpServer(cap.id);
       const bucket = mcpByServer.get(server);
       if (bucket) bucket.push(cap);
@@ -176,6 +191,43 @@ export function buildMentionCatalog(
     } else {
       rest.push(cap);
     }
+  }
+
+  for (const [familyId, members] of families) {
+    const family = pluginFamily(familyId);
+    const live = members.filter((cap) => kindOf(cap) !== "skill");
+    const connected = live.some((cap) => cap.connected);
+    const representative =
+      members.find((cap) => kindOf(cap) === "plugin") ?? live[0] ?? members[0];
+    const tag = family?.tag ?? familyId.replace(/_/g, "-");
+    const value = takeValue(tag, `plugin:${familyId}`, taken);
+    const item = capabilityItem(representative, value, {
+      key: `plugin:${familyId}`,
+      detail: false,
+      pinIds: members.map((cap) => cap.id),
+      label: family?.displayName ?? representative.label,
+      hint: family?.description || representative.one_liner,
+      toolName: familyId,
+      connected,
+    });
+    items.push({
+      ...item,
+      kind: "plugin",
+      group: "plugins",
+      searchText: searchBlob([
+        item.searchText,
+        family?.displayName,
+        family?.description,
+        family?.tag,
+        ...members.flatMap((cap) => [
+          cap.id,
+          cap.label,
+          cap.one_liner,
+          cap.tool_name,
+          ...(cap.aliases ?? []),
+        ]),
+      ]),
+    });
   }
 
   for (const cap of rest) {

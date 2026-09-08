@@ -53,6 +53,14 @@ describe("resolveToolBrand", () => {
     expect(resolveToolBrand("").label).toBe("?");
     expect(resolveToolBrand("").monogram).toBe("??");
   });
+
+  it("maps a catalog CLI name to the vendor mark", () => {
+    expect(resolveToolBrand("cli_gh").brandId).toBe("github");
+    expect(resolveToolBrand("kubectl").brandId).toBe("kubernetes");
+    expect(resolveToolBrand("gcloud").brandId).toBe("google-cloud");
+    expect(resolveToolBrand("cli_gh").logoUrl).toMatch(/svg/);
+    expect(resolveToolBrand("kubectl").logoUrl).toMatch(/svg/);
+  });
 });
 
 describe("helpers", () => {

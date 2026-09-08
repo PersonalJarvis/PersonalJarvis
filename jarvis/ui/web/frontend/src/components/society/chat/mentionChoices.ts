@@ -1,5 +1,6 @@
 /** Presentation adapter for the agent cards' existing capability-pin protocol. */
 import type { ToolChoice, ToolCategory } from "@/components/agentchat/toolChoices";
+import { pluginFamily } from "@/lib/pluginFamilies";
 import { resolveToolBrand } from "@/lib/toolBrand";
 import type { MentionItem } from "./mentionItems";
 
@@ -31,8 +32,13 @@ function choice(id: string, name: string, description = ""): ToolChoice {
 }
 
 export function mentionChoice(item: MentionItem): ToolChoice {
+  const family = item.kind === "plugin" ? pluginFamily(item.toolName) ?? pluginFamily(item.key.replace(/^plugin:/, "")) : undefined;
+  const base = choice(item.key, item.toolName || item.value, item.hint);
   return {
-    ...choice(item.key, item.toolName || item.value, item.hint),
+    ...base,
+    label: item.label || base.label,
+    brand: family?.id || base.brand,
+    category: item.kind === "plugin" ? "plugins" : item.kind === "cli" ? "cli" : base.category,
     available: item.connected,
     tool_names: [item.toolName].filter(Boolean),
   };

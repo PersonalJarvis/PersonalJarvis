@@ -29,6 +29,9 @@ describe("tool visual identities", () => {
     ["skill:google-drive:sheets", "skills", "google_drive"],
     ["tool:cli_gh", "cli", "github"],
     ["tool:cli_codex", "cli", "openai"],
+    ["cli:kubectl", "cli", "kubernetes"],
+    ["cli:gcloud", "cli", "google-cloud"],
+    ["cli:az", "cli", "azure"],
     ["skill:figma:design", "skills", "figma"],
     ["mcp:postgres-server", "mcp", "postgresql"],
   ])("resolves %s to the original %s identity", (id, category, brand) => {

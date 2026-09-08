@@ -29,8 +29,8 @@ describe("MentionPicker", () => {
         [],
         [
           cap({ id: "plugin:gmail", label: "gmail", one_liner: "Read and send mail." }),
-          cap({ id: "mcp:github/create_issue" }),
-          cap({ id: "mcp:github/list_issues" }),
+          cap({ id: "mcp:sentry/create_issue" }),
+          cap({ id: "mcp:sentry/list_issues" }),
           cap({ id: "core:search-web", label: "search-web" }),
         ],
       ),
