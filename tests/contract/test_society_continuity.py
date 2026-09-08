@@ -318,7 +318,8 @@ async def test_learned_skill_is_revised_in_place_with_backup(world):
     "utterance",
     [
         "Persist this standing instruction: You are my Gmail assistant. Do not access my inbox.",
-        "Speichere diese Regel: Du bist mein Gmail-Agent und liest meine Mails nur auf Anfrage.",  # i18n-allow: input fixture
+        "Speichere diese Regel: Du bist mein Gmail-Agent "  # i18n-allow: input fixture
+        "und liest meine Mails nur auf Anfrage.",  # i18n-allow: input fixture
         "Guarda esta regla: eres mi agente de correo y no lees mi inbox sin permiso.",
     ],
 )
