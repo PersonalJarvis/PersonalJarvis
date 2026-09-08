@@ -67,7 +67,15 @@ Claude, OpenAI, or OpenRouter, one setting for each. It can rewrite its own conf
 and it runs on a headless server just as well as on a desktop with a microphone.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-voice.webp" alt="The desktop app's home view: every section listed in the sidebar, the greeting in the main pane, and the realtime voice bar waiting for a wake word" width="900" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/agents-2026-09-08.webp" alt="The Agents island: two figures on the market square, a roster of agents on the right, and a switch between the island and the ledger" width="900" />
+</p>
+
+<p align="center">
+  <sub>The Agents island. Every agent is a figure you can watch and click. The rail on the right is the same roster as a list, and Ledger is the table when you want numbers instead of the map.</sub>
+</p>
+
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/home-2026-09-08.webp" alt="The desktop app's home view: every section listed in the sidebar, the greeting in the main pane, and the realtime voice bar waiting for a wake word" width="900" />
 </p>
 
 <p align="center">
@@ -139,7 +147,7 @@ Jarvis, which keeps the first answer of the day from paying the model load time.
 downloads without a click that names the download first.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-local-models.webp" alt="The Local models section: the graphics-memory budget across all four jobs, and a card per job naming the model that fills it" width="900" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/local-models-2026-09-08.webp" alt="The Local models section: the graphics-memory budget across all four jobs, and a card per job naming the model that fills it" width="900" />
 </p>
 
 Two capabilities stay outside this promise, and it would be dishonest to imply otherwise.
@@ -319,7 +327,7 @@ agent is a figure you can watch and click, and a ledger behind it that lists the
 work as a table. The sidebar row is **Agents**.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-agents.webp" alt="The Agents island: two figures on the market square, a roster of agents on the right, and a switch between the island and the ledger" width="900" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/agents-2026-09-08.webp" alt="The Agents island: two figures on the market square, a roster of agents on the right, and a switch between the island and the ledger" width="900" />
 </p>
 
 <p align="center">
@@ -368,7 +376,7 @@ already has a procedure behind it. You can write your own, describe one in plain
 and have Jarvis draft it, or import someone else's from the Marketplace.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-skills.webp" alt="The Skills list: every installed skill with when it was last updated, who wrote it, and a switch to turn it off" width="900" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/skills-2026-09-08.webp" alt="The Skills list: every installed skill with when it was last updated, who wrote it, and a switch to turn it off" width="900" />
 </p>
 
 A matched skill is a takeover, not a suggestion, so what may fire on its own is deliberately
@@ -494,7 +502,7 @@ image. The app opens on a plain colour by default; picking a picture here is wha
 it, and one control puts the plain ground back.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-wallpapers.webp" alt="The wallpaper gallery filtered to one art style, with every style listed above the grid" width="900" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/wallpapers-2026-09-08.webp" alt="The wallpaper gallery filtered to one art style, with every style listed above the grid" width="900" />
 </p>
 
 ## Drive it from the terminal
