@@ -15,7 +15,7 @@
 - **No LLM / no network on the gate path** — pure regex + registry lookups (AP-9/AP-11). The new derivation/merge/suppress helpers are pure data transforms.
 - **Every gate/tool-assembly helper degrades gracefully** — any fault returns the safe default (gate → PASS, derivation → `{}`, suppression → unchanged tools); never raises on the voice path.
 - **Python interpreter for tests:** `"C:/Program Files/Python311/python.exe" -m pytest …` (the Hermes-venv `python` has no pytest).
-- **Commits:** local commits only; never push (project rule — pushing is a separate, user-initiated step via the ship skill).
+- **Commits:** Conventional Commits with an explicit pathspec. Use the standard Git workflow (`AGENTS.md` §4); an ordinary push is not a release.
 
 ---
 

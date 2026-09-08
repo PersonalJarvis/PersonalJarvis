@@ -125,14 +125,18 @@ history for any of them: `docs/BUGS.md`.
 
 ## 4. How work ships
 
-Commit each finished step (Conventional Commits). Pushing is NOT automatic —
-push only when explicitly asked. `git pull --rebase --ff-only` first if
-origin moved. Never `--force`, never `--no-verify`, never push from a linked or
-mission worktree — the parent lands that work. **A push is `git push`:** nothing
-is built, cloned, audited, or reviewed on the way. Review happens when code is
-written, never when it is published. A check that reads the whole tree belongs
-in CI, never in `pre-push`. A release (SemVer + tag + CHANGELOG + published
-GitHub Release) happens ONLY when explicitly asked.
+Commit each finished step (Conventional Commits). Use the coding agent's
+standard Git workflow: do not artificially leave completed work local, and do
+not wait for extra PersonalJarvis permission to commit, branch, push, or open
+a pull request. `git pull --rebase --ff-only` first if origin moved. Never
+`--force`, never `--no-verify`. Isolated mission workers must not run git
+(`add`/`commit`/`branch`/`checkout`/`push`) — the parent runtime captures the
+diff and lands it. Never push from a linked mission worktree. **A push is
+`git push`:** nothing is built, cloned, audited, or reviewed on the way.
+Review happens when code is written, never when it is published. A check that
+reads the whole tree belongs in CI, never in `pre-push`. A release (SemVer +
+tag + CHANGELOG + published GitHub Release) happens ONLY when explicitly
+asked — an ordinary push is not a release.
 
 Every frontend change works in BOTH light and dark mode, and on the terminal
 panes' own appearance — colours come from theme tokens or the per-appearance

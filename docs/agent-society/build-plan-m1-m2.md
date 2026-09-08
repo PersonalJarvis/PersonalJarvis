@@ -42,7 +42,7 @@ Here is the build plan.
 
 All repo paths below are relative to the repository root. (The draft referenced a local Hermes clone at commit `18a76be` as port source; per the revision above nothing is ported from it any more.) The 3D world, society WS, bounded-room *live wiring*, curator, and voice router tool are explicitly **out of scope** (M3/M4).
 
-Ground rules for every wave: commit with explicit pathspecs (`git commit --only -- <paths>`), never `git add -A`; nothing pushes; all committed artifacts English (German/Spanish only inside locale files and `i18n-allow`-marked test quotes); every frontend wave ends with `npm run build` in `jarvis/ui/web/frontend/` (WebView, no F5); every runtime string goes through the `society.*` locale chunk in all three languages; `JarvisAgentsView` stays mounted and green until Wave 8 swaps it.
+Ground rules for every wave: commit with explicit pathspecs (`git commit --only -- <paths>`), never `git add -A`; all committed artifacts English (German/Spanish only inside locale files and `i18n-allow`-marked test quotes); every frontend wave ends with `npm run build` in `jarvis/ui/web/frontend/` (WebView, no F5); every runtime string goes through the `society.*` locale chunk in all three languages; `JarvisAgentsView` stays mounted and green until Wave 8 swaps it.
 
 ---
 

@@ -2,7 +2,12 @@
 
 ## What does it do?
 
-The **primary** path is live: after each completed commit on the shared primary checkout, agents `git push` (see `docs/agent-contract.md` §2 / §9). This script is the **crash-backup**. It mirrors remaining local branches to GitHub every evening and sets a **backup tag** (`safety/eod-<branchname>-<timestamp>`) first, so a session that died between commit and push still lands, and even destructive follow-up actions stay reversible.
+This script is a **crash-backup**, not the normal Git workflow. Coding-agent
+sessions follow `AGENTS.md`: the harness owns ordinary commits, branches, pushes,
+and pull requests. This script only mirrors remaining local branches to GitHub
+every evening and sets a **backup tag** (`safety/eod-<branchname>-<timestamp>`)
+first, so a session that died between commit and push still lands, and even
+destructive follow-up actions stay reversible.
 
 Background: On 2026-05-01 a restore went well only because you instinctively set backup tags. This automation still does both (tag + push) every evening as the backstop, without you having to think about it.
 
@@ -115,8 +120,13 @@ If you still have uncommitted changes, **the script aborts** (log entry `SKIP: W
 
 ## Clarification: who pushes, and when
 
-Coding agents on the **shared primary checkout** push after each completed commit (`git pull --rebase --ff-only` if origin moved, then `git push`). Never `--force`, never `--no-verify`.
+Normal development Git is owned by the coding-agent harness (`AGENTS.md` §4).
+This script does not define that workflow and does not require a push after
+every commit. Never `--force`, never `--no-verify`.
 
-**Linked worktrees do not push** — mission workers and isolated agent worktrees commit locally; the parent on the primary checkout lands that work. The evening script is the backstop for a crash between commit and push, and for any branch the live path did not reach.
+**Linked mission worktrees do not push** — isolated mission workers must not
+run git; the parent runtime captures the diff and lands it. The evening script
+is the backstop for a crash between commit and push, and for any branch the
+live path did not reach.
 
 The Task Scheduler starts this script as a standalone Windows program (`powershell.exe`), not inside a worker harness, so a worker-tool deny on `git push` does not block the backup.

@@ -13,7 +13,7 @@
 - Pipeline tests build the object via `SpeechPipeline.__new__(SpeechPipeline)` and set only the attributes under test (existing pattern, see the `getattr`-default notes throughout `pipeline.py`). New per-turn pipeline state MUST be read with `getattr(self, "...", default)` so bare instances keep working.
 - Artifacts are English (code, comments, docstrings, commit messages) per `CLAUDE.md`.
 - The working tree is SHARED with parallel sessions. Commit **pathspec-scoped** (only the files each task lists) — never `git add -A`.
-- Do not push. Do not restart the app as part of a task; the go-live restart is called out at the end.
+- Do not restart the app as part of a task; the go-live restart is called out at the end. Use the standard Git workflow (`AGENTS.md` §4); an ordinary push is not a release.
 
 ---
 
