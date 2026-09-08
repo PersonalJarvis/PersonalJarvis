@@ -7,7 +7,7 @@
 <h2 align="center">Your personal AI ecosystem, controlled entirely by voice.</h2>
 
 <p align="center">
-  It drives coding agents, runs shell commands, operates your computer, connects anything that speaks MCP, dictates into any app, and remembers everything.<br>
+  It runs Jarvis Agents, drives coding CLIs in a live IDE, operates your computer, connects anything that speaks MCP, dictates into any app, and remembers everything.<br>
   Open source, and it can run fully on your own hardware, with no cloud account anywhere in the chain.
 </p>
 
@@ -49,14 +49,16 @@ walks you through language, wake word, and keys once. [Full install notes below]
 A typical voice assistant talks back. Personal Jarvis does the thing. At the center of
 every voice conversation sits a tool model: it decides how much a request actually needs,
 runs shell commands, takes the mouse and keyboard, and reaches any service that speaks
-MCP. The short stuff it handles itself. Anything heavier goes to a coding-agent worker
-running on whichever CLI or key you already have: Claude Code, Codex, the Gemini CLI,
-Grok Build, or an in-process worker on a plain API key. That worker runs in isolation,
-gets checked by a critic, and reports back in the language you spoke.
+MCP. The short stuff it handles itself. Anything heavier goes to a Jarvis Agent: a
+worker in its own isolated copy of the workspace, reviewed by a critic, running on
+whichever CLI or key you already have: Claude Code, Codex, the Gemini CLI, Grok Build,
+or an in-process worker on a plain API key. That worker reports back in the language
+you spoke. In the app those agents live on an island, under **Agents** in the sidebar.
 
 You do not have to talk to it, either. The home screen has a typed chat that goes through
 the same brain on the same keys, and the Agentic IDE has a second one where the seat is a
-coding CLI instead of an API provider. Both take files you drop, paste, or pick.
+coding CLI instead of an API provider: a grid of real terminals you address by call
+sign. Both take files you drop, paste, or pick.
 
 Every tier has a keyless local option, so the whole assistant can run on your own hardware
 with no cloud account anywhere in the chain. **Runs on your own hardware**, below, has the
@@ -69,14 +71,14 @@ and it runs on a headless server just as well as on a desktop with a microphone.
 </p>
 
 <p align="center">
-  <sub>The home view, waiting. Every section is one click away in the sidebar, and the bar across the bottom is the live voice channel. The assistant answers to whatever wake word you pick; this install answers to George.</sub>
+  <sub>The home view, waiting. Every section is one click away in the sidebar, and the bar in the middle of the pane is the live voice channel. The assistant answers to whatever wake word you pick; this install answers to George.</sub>
 </p>
 
 ## What you can say
 
 | You say | What happens |
 |---|---|
-| *"Research vector databases."* | An isolated agent does the research. The finished report lands in **Artifacts** as a file you can download. |
+| *"Research vector databases."* | A Jarvis Agent does the research in isolation. The finished report lands in **Artifacts** as a file you can download. |
 | *"Call the clinic and book the next open appointment."* | A real outbound phone call goes out over the optional Twilio line. |
 | *"Remember: Alex prefers Signal over email."* | Written to the Knowledge Wiki, and still known in every later session. |
 | *"Switch the voice over to Cartesia."* | The speech provider changes while you talk, and Jarvis reads the change back to you, old then new. |
@@ -98,8 +100,8 @@ a second, built for talking, not for thinking hard. The moment a request needs a
 tool, that turn hands off to a **second model**, slower and noticeably smarter, the one
 that reads your wiki, changes a setting, places the call, or takes the screen. It answers
 in the same voice, so from where you're sitting it never stopped being one conversation.
-Real work, the kind that takes minutes, goes to a **third**: a coding agent running in its
-own isolated copy of the workspace, reviewed by a critic, that comes back with a file
+Real work, the kind that takes minutes, goes to a **third**: a Jarvis Agent running in
+its own isolated copy of the workspace, reviewed by a critic, that comes back with a file
 instead of just an answer.
 
 In the app this lives on one screen: API Keys has one tab per tier, each with its own
@@ -141,9 +143,9 @@ downloads without a click that names the download first.
 </p>
 
 Two capabilities stay outside this promise, and it would be dishonest to imply otherwise.
-The outbound phone call goes over Twilio, which is a hosted service by definition, and the
-coding-agent workers run on whichever agent CLI or API key you point them at. Everything in
-the table above is genuinely local.
+The outbound phone call goes over Twilio, which is a hosted service by definition, and
+Jarvis Agents run on whichever agent CLI or API key you point them at. Everything in the
+table above is genuinely local.
 
 ## Demo
 
@@ -155,8 +157,8 @@ where one voice command takes the screen and changes a Windows setting live, or 
 
 The router itself stays small. It works out what you said, picks a tool or a worker, and
 gets out of the way; there is no single giant prompt trying to be everything. Anything
-non-trivial runs as a mission in an isolated worktree and gets a critic's review before you
-ever hear the result. You are not left listening to silence while that happens, either: the
+non-trivial runs as a Jarvis Agent in an isolated worktree and gets a critic's review
+before you ever hear the result. You are not left listening to silence while that happens, either: the
 moment the router picks an action, Jarvis says one line about that specific action, not a
 generic "working on it".
 
@@ -304,51 +306,25 @@ VPS, terminate TLS with an HTTPS reverse proxy such as Caddy or Nginx. Plain
 
 ## What's inside
 
-### Missions
+### Jarvis Agents
 
-Anything non-trivial, say "research X and write me a report", spawns a worker in an
-isolated `git worktree`: a private sandbox copy of the workspace, with crash containment. A
-critic reviews the result, for up to three rounds, before you ever hear it, and
-deliverables land in **Artifacts** as downloadable files.
+Ask for something that takes more than a turn, say "research X and write me a report",
+and a Jarvis Agent starts. It works in an isolated `git worktree`: a private sandbox
+copy of the workspace, with crash containment. A critic reviews the result, for up to
+three rounds, before you ever hear it, and the files it produces land in **Artifacts**.
 
-### Automations
-
-Work that repeats without being asked for: a morning brief, a weekly review, a digest of
-the unread mail, a watch on the topics you follow. Ten ready-made ones sit in a catalogue,
-where you add one and adjust its schedule. Or describe your own in plain language and it
-becomes a job with a schedule, a run history, and an honest error when a run fails instead of silent
-nothing. One-off moments ("do this on Friday at nine") live in the same place.
+The short stuff never goes here. A Jarvis Agent starts when you ask for one. You can
+keep talking while it works. In the app this is its own section: an island where every
+agent is a figure you can watch and click, and a ledger behind it that lists the same
+work as a table. The sidebar row is **Agents**.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-automations.webp" alt="The automations catalogue: ready-made recurring jobs grouped by news, productivity, finance, research and developer" width="900" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-agents.webp" alt="The Agents island: two figures on the market square, a roster of agents on the right, and a switch between the island and the ledger" width="900" />
 </p>
-
-### Skills
-
-A skill is a written-down procedure Jarvis can follow. It is one Markdown file, `SKILL.md`,
-with a short YAML header and a body of steps, sitting in a folder on your disk. There is no
-`pip install` and no restart: save the file and it is loaded. Changing what a skill does
-means editing the steps, which is the point of keeping them in Markdown rather than in code.
-
-A skill fires from a spoken phrase, a hotkey, or a cron schedule. Thirty-one ship with the
-app, mostly one per connected service, so "put that in Notion" or "start a deep work block"
-already has a procedure behind it. You can write your own, describe one in plain language
-and have Jarvis draft it, or import someone else's from the Marketplace.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-skills.webp" alt="The Skills list: every installed skill with when it was last updated, who wrote it, and a switch to turn it off" width="900" />
+  <sub>Two agents on the market square, the roster on the right. Click a figure for its card, or switch to Ledger for the table of every run.</sub>
 </p>
-
-A matched skill is a takeover, not a suggestion, so what may fire on its own is deliberately
-narrow. A skill that only gives the assistant instructions can match and run. One that
-reaches an integration keeps the model free to refuse. One that starts a process or a worker
-never fires from a guess: you name it, or the model asks for it explicitly. A skill Jarvis
-writes for you lands as a draft, and a draft is never switched on for you.
-
-The decision about whether a skill matches what you just said, and every check that can veto
-it, lives in one module that the assistant, the in-app match tester and an offline evaluation
-all call. So the panel showing you why a skill did or did not fire cannot disagree with what
-actually happened; it is running the same code.
 
 ### Agentic IDE
 
@@ -378,6 +354,33 @@ click away and one click back, and the pane keeps running either way.
 <p align="center">
   <sub>A prompt lands in terminal 1, carrying the task, the key files and how that part of the code works today. The counter underneath shows how long that agent has been thinking &middot; <a href="https://youtu.be/wFBdmdOn6EU">watch the full Agentic IDE demo on YouTube</a></sub>
 </p>
+
+### Skills
+
+A skill is a written-down procedure Jarvis can follow. It is one Markdown file, `SKILL.md`,
+with a short YAML header and a body of steps, sitting in a folder on your disk. There is no
+`pip install` and no restart: save the file and it is loaded. Changing what a skill does
+means editing the steps, which is the point of keeping them in Markdown rather than in code.
+
+A skill fires from a spoken phrase, a hotkey, or a cron schedule. Thirty-one ship with the
+app, mostly one per connected service, so "put that in Notion" or "start a deep work block"
+already has a procedure behind it. You can write your own, describe one in plain language
+and have Jarvis draft it, or import someone else's from the Marketplace.
+
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-skills.webp" alt="The Skills list: every installed skill with when it was last updated, who wrote it, and a switch to turn it off" width="900" />
+</p>
+
+A matched skill is a takeover, not a suggestion, so what may fire on its own is deliberately
+narrow. A skill that only gives the assistant instructions can match and run. One that
+reaches an integration keeps the model free to refuse. One that starts a process or a worker
+never fires from a guess: you name it, or the model asks for it explicitly. A skill Jarvis
+writes for you lands as a draft, and a draft is never switched on for you.
+
+The decision about whether a skill matches what you just said, and every check that can veto
+it, lives in one module that the assistant, the in-app match tester and an offline evaluation
+all call. So the panel showing you why a skill did or did not fire cannot disagree with what
+actually happened; it is running the same code.
 
 ### Knowledge Wiki
 

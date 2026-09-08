@@ -9,6 +9,13 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **README: Jarvis Agents instead of Automations, screenshots from the current UI.**
+  The home view, Local models, Skills and the wallpaper gallery were re-shot on
+  the current sidebar. Automations is gone; Jarvis Agents takes that slot with
+  the island. Agentic IDE sits next to it.
+
 ---
 
 ## [2.1.0] — 2026-09-07
