@@ -46,7 +46,7 @@ class _Engine(LocalPreviewTranscriber):
         self.calls = 0
         self._model = object()  # pretend the load already completed
 
-    def _transcribe_sync(self, pcm, language):
+    def _transcribe_sync(self, pcm, language, **kwargs):
         self.calls += 1
         if self.error is not None:
             raise self.error
@@ -260,7 +260,7 @@ async def test_a_wedged_native_preview_rotates_to_a_fresh_model_and_guard():
     release = threading.Event()
     engine = _Engine()
 
-    def _wedge(_pcm, _language):
+    def _wedge(_pcm, _language, **kwargs):
         engine.calls += 1
         release.wait(timeout=5.0)
         return "", "", 0.0

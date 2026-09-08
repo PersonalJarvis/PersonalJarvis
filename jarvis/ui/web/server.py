@@ -670,7 +670,7 @@ class WebServer:
         async def _track_voice_ready(event: VoiceBootStatus) -> None:
             # A bus subscriber must never raise (AP-18); setting a plain
             # instance bool cannot fail, and the warm-up below only schedules.
-            self._voice_ready = bool(event.ready)
+            self._voice_ready = event.voice_usable
             if event.ready:
                 self._schedule_anyio_pool_warm()
 
@@ -719,7 +719,7 @@ class WebServer:
         asyncio.create_task(_warm(), name="anyio-pool-warm")
 
     async def _voice_ready_watchdog(self, deadline_s: float = 45.0) -> None:
-        """Guarantee the UI never hangs on "starting up" forever.
+        """Release boot waiters after a failed warm-up without promising speech.
 
         The startup banner + "STARTING…" status flip to listening ONLY when a
         ``VoiceBootStatus(ready=True)`` arrives (mirrored by /api/voice/status).
@@ -728,7 +728,7 @@ class WebServer:
         published and the banner sticks forever even though the user can already
         type (permanent "Getting ready to listen"). This backstop fires once,
         well past a healthy cold boot (voice-usable budget ≤ 20 s, AP-26), and
-        force-releases the UI. A genuine ready flips ``_voice_ready`` first, in
+        releases boot waiters. A genuine ready flips ``_voice_ready`` first, in
         which case this is a silent no-op. ``detail="watchdog_timeout"`` marks the
         signal as a degraded release (voice may be offline until restart), not a
         real "you can speak now".
@@ -742,13 +742,13 @@ class WebServer:
         logger.warning(
             "Voice-ready watchdog fired after {:.0f}s — the speech pipeline never "
             "signalled ready (a construction crash or a wedged warm-up load). "
-            "Force-releasing the UI from 'starting up'; voice may be offline until "
-            "restart.",
+            "Releasing boot waiters; voice remains unavailable until the pipeline "
+            "confirms listening.",
             deadline_s,
         )
         # Set the endpoint mirror first so /api/voice/status is correct even if
         # the bus publish below fails; the WS event then updates live tabs.
-        self._voice_ready = True
+        self._voice_ready = False
         try:
             await self.bus.publish(VoiceBootStatus(ready=True, detail="watchdog_timeout"))
         except Exception as exc:  # noqa: BLE001 — mirror already set; never crash

@@ -14,6 +14,7 @@ LLM — AP-11 safe) against the fingerprint stamped at the last tool load, and
 triggers one ``refresh_tools()`` on drift. Whatever upstream event went
 missing, the tool surface converges at the next turn.
 """
+
 from __future__ import annotations
 
 import logging
@@ -64,9 +65,7 @@ def live_tool_surface_fingerprint() -> frozenset[str] | None:
             readable = True
             for server_name, client in mcp_registry.active_clients().items():
                 for tool_def in getattr(client, "_tools_cache", None) or []:
-                    tool_name = (
-                        tool_def.get("name") if isinstance(tool_def, dict) else None
-                    )
+                    tool_name = tool_def.get("name") if isinstance(tool_def, dict) else None
                     if tool_name:
                         names.add(f"mcp:{server_name}:{tool_name}")
     except Exception:  # noqa: BLE001
@@ -116,6 +115,21 @@ def maybe_reconcile_tool_surface(manager) -> None:
         manager.refresh_tools()
     except Exception:  # noqa: BLE001 — reconcile must never break a turn
         log.debug("tool-surface reconcile failed", exc_info=True)
+
+
+async def reconcile_tool_surface_async(manager) -> None:
+    """Refresh a missed registry change before a turn, keeping disk IO off-loop."""
+    try:
+        fingerprint = live_tool_surface_fingerprint()
+        if fingerprint is None:
+            return
+        previous = getattr(manager, "_tool_surface_fp", None)
+        if previous is None:
+            manager._tool_surface_fp = fingerprint
+        elif fingerprint != previous:
+            await manager.refresh_tools_async()
+    except Exception:  # noqa: BLE001 — a failed reconcile must not break a turn
+        log.debug("async tool-surface reconcile failed", exc_info=True)
 
 
 __all__ = [

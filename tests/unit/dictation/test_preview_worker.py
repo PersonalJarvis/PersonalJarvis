@@ -8,6 +8,7 @@ process. These tests run the protocol in-memory — no subprocess, no model.
 from __future__ import annotations
 
 import io
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -63,7 +64,7 @@ def test_serve_answers_ready_then_transcribes(monkeypatch: pytest.MonkeyPatch) -
     assert serve(stdin, stdout, "base") == 0
 
     ready, first, second = _messages_from(stdout.getvalue())
-    assert ready == {"ready": True, "device": "cpu", "compute": "int8"}
+    assert ready == {"ready": True, "device": "cpu", "compute": "int8", "timings": {}}
     assert first == {
         "text": "heard 200 bytes",
         "language": "de",
@@ -155,11 +156,10 @@ def test_dropping_a_worker_engine_kills_the_process() -> None:
     assert engine._model is None  # noqa: SLF001
 
 
-def test_worker_preferring_load_falls_back_to_the_cpu_floor(
+def test_worker_failure_never_loads_native_code_in_the_parent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No worker on this host: the in-process build must pin CPU — never the
-    CUDA ladder whose DLL load holds the loader lock."""
+    """A failed decorative preview must not import inference into the parent."""
     from jarvis.plugins.stt import fwhisper
 
     built: list[tuple[str, str]] = []
@@ -178,8 +178,9 @@ def test_worker_preferring_load_falls_back_to_the_cpu_floor(
 
     engine._load_model()  # noqa: SLF001
 
-    assert built == [("cpu", "int8")]
-    assert engine.ready
+    assert built == []
+    assert not engine.ready
+    assert not engine.available
 
 
 def test_the_factory_defaults_to_the_worker_hosting(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -192,3 +193,19 @@ def test_the_factory_defaults_to_the_worker_hosting(monkeypatch: pytest.MonkeyPa
         assert engine._prefer_worker is True  # noqa: SLF001
     finally:
         local_preview_mod.reset_local_preview_for_tests()
+
+
+def test_worker_recovery_advances_to_another_compute_mode(monkeypatch):
+    attempts = []
+
+    def spawn(name, *, compute=None):
+        attempts.append(compute)
+        return SimpleNamespace(device="cuda", compute=compute or "float16", close=lambda: None)
+
+    monkeypatch.setattr(local_preview_mod, "_spawn_worker_model", spawn)
+    engine = LocalPreviewTranscriber(prefer_worker=True)
+    for _ in range(3):
+        engine._load_model()
+        for _ in range(3):
+            engine._note_failure("timed out")
+    assert attempts == [None, "int8_float16", "cpu"]

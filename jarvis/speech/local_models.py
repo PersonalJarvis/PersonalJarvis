@@ -33,8 +33,10 @@ Design contract, mirroring ``jarvis.setup.model_report``:
 - **Capability, never hardware or provider names** (AP-21). Nothing here asks
   what GPU is installed or which vendor a provider belongs to.
 """
+
 from __future__ import annotations
 
+import ast
 import importlib.util
 import logging
 import os
@@ -237,12 +239,40 @@ def whisper_model_cached(name: str) -> bool:
     if not name.strip():
         return False
     try:
-        from faster_whisper.utils import (  # type: ignore[import-not-found,import-untyped]
-            download_model,
-        )
+        directory = Path(name)
+        if not directory.is_dir():
+            # Importing even faster_whisper.utils executes the package initializer
+            # and loads CTranslate2/Transformers. Read its literal alias table as
+            # data instead, so status polls never initialize inference (RUB-37).
+            repo_id = name
+            if "/" not in name:
+                spec = importlib.util.find_spec("faster_whisper")
+                if spec is None or spec.origin is None:
+                    return False
+                source = Path(spec.origin).with_name("utils.py").read_text(encoding="utf-8")
+                aliases = {}
+                for node in ast.parse(source).body:
+                    if isinstance(node, ast.Assign) and any(
+                        isinstance(target, ast.Name) and target.id == "_MODELS"
+                        for target in node.targets
+                    ):
+                        aliases = ast.literal_eval(node.value)
+                        break
+                repo_id = aliases.get(name, "")
+                if not isinstance(repo_id, str) or not repo_id:
+                    return False
+            from huggingface_hub import snapshot_download
 
-        download_model(name, local_files_only=True)
-        return True
+            directory = Path(snapshot_download(repo_id, local_files_only=True))
+        # A snapshot directory alone can be a partial download. The tokenizer
+        # must also be local, otherwise the recognizer fetches one during boot.
+        required = ("config.json", "model.bin", "tokenizer.json")
+        return all(
+            (directory / file).is_file() and (directory / file).stat().st_size > 0
+            for file in required
+        ) and any(
+            file.is_file() and file.stat().st_size > 0 for file in directory.glob("vocabulary.*")
+        )
     except Exception as exc:  # noqa: BLE001 — an uncertain cache is not ready
         log.debug("Whisper checkpoint %r is not cached locally: %s", name, exc)
         return False
@@ -336,9 +366,7 @@ def bundle_present(model_id: str, *, data_dir: str | None = None) -> bool:
     bundle = SHERPA_BUNDLES.get(model_id)
     if bundle is None:
         return False
-    return sherpa_model_present(
-        model_id, data_dir=data_dir, required_files=bundle.required_files
-    )
+    return sherpa_model_present(model_id, data_dir=data_dir, required_files=bundle.required_files)
 
 
 def sherpa_status(
@@ -480,9 +508,7 @@ SHERPA_ONNX_PACKAGE = "sherpa-onnx>=1.13.3"
 #: machine with no GPU), and 560 ms (the middle of the offered 80–1120 ms
 #: chunk sizes: low enough to feel live, long enough that accuracy holds).
 NEMOTRON_MODEL_ID = "nemotron-3.5-asr-streaming-0.6b-560ms-int8"
-NEMOTRON_HF_REPO = (
-    "csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11"
-)
+NEMOTRON_HF_REPO = "csukuangfj2/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11"
 
 #: Where the sherpa-onnx project publishes its converted TTS voices.
 _PIPER_RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"

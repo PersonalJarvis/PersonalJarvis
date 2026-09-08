@@ -126,11 +126,13 @@ class LocalFinalSTT:
         *,
         min_free_gb: float = DEFAULT_MIN_FREE_GB,
         compute: str = FINAL_COMPUTE,
+        allow_cpu: bool = False,
         beam_size: int = FINAL_BEAM_SIZE,
     ) -> None:
         self._model_name = str(model_name or DEFAULT_FINAL_MODEL).strip()
         self._min_free_gb = max(0.0, float(min_free_gb))
         self._compute = compute
+        self._allow_cpu = allow_cpu
         self._beam_size = max(1, int(beam_size))
         self._worker: Any = None
         self._device = ""
@@ -233,15 +235,41 @@ class LocalFinalSTT:
                 f"the dictation worker takes 16 kHz audio, not {sample_rate} Hz"
             )
         if not self._call_lock.acquire(blocking=False):
-            self.recover()
+            await asyncio.to_thread(self.recover)
             raise LocalEngineUnavailable(
                 "a previous call is still waiting on the dictation worker; "
                 "it was replaced — this call goes to the next provider"
             )
+        # The blocking reader owns the guard, including after cancellation of
+        # its asyncio waiter. Releasing it on timeout lets the next request
+        # consume the previous request's response from the same pipe (AP-24).
+        guard = self._call_lock
+
+        def read() -> Transcript:
+            try:
+                return self._transcribe_blocking(pcm_bytes, language)
+            finally:
+                guard.release()
+
+        work = asyncio.create_task(asyncio.to_thread(read))
         try:
-            return await asyncio.to_thread(self._transcribe_blocking, pcm_bytes, language)
-        finally:
-            self._call_lock.release()
+            return await asyncio.shield(work)
+        except asyncio.CancelledError:
+            # Keep a cold build single-flight. An active decoder, however,
+            # must be killed so its blocked pipe reader can finish.
+            if self._worker is not None:
+                await asyncio.to_thread(self.recover)
+
+            def consume(done: asyncio.Task) -> None:
+                try:
+                    done.result()
+                except asyncio.CancelledError:
+                    pass  # Loop shutdown cancels this detached observer.
+                except Exception:
+                    log.debug("Abandoned dictation reader finished", exc_info=True)
+
+            work.add_done_callback(consume)
+            raise
 
     def _transcribe_blocking(self, pcm_bytes: bytes, language: str | None) -> Transcript:
         worker = self._ensure_worker(blocking=False)
@@ -257,16 +285,20 @@ class LocalFinalSTT:
                 samples, language=asked_for, beam_size=self._beam_size
             )
         except Exception as exc:  # noqa: BLE001 — classified as crossable below
+            failure = f"{type(exc).__name__}: {exc}"
             with self._spawn_lock:
-                self._drop_worker_locked()
-                self._next_attempt_at = time.monotonic() + _RETRY_AFTER_S
-                self._last_refusal = f"{type(exc).__name__}: {exc}"
+                # A late failure from a replaced worker must not retire the
+                # replacement or overwrite its healthy readiness state.
+                if self._worker is worker:
+                    self._drop_worker_locked()
+                    self._next_attempt_at = time.monotonic() + _RETRY_AFTER_S
+                    self._last_refusal = failure
             log.warning(
                 "Local dictation worker failed (%s) — replaced; this call crosses "
                 "to the next provider.",
-                self._last_refusal,
+                failure,
             )
-            raise LocalEngineUnavailable(self._last_refusal) from exc
+            raise LocalEngineUnavailable(failure) from exc
         # Whisper segment texts carry their own leading space, so a bare join
         # reproduces the decoder's spacing (a " " join would double it).
         text = "".join(str(getattr(seg, "text", "") or "") for seg in segments).strip()
@@ -318,8 +350,7 @@ class LocalFinalSTT:
             return self._worker  # set once, never mutated in place
         if not self._spawn_lock.acquire(blocking=blocking):
             raise LocalEngineUnavailable(
-                "the local dictation engine is still starting; this call goes "
-                "to the next provider"
+                "the local dictation engine is still starting; this call goes to the next provider"
             )
         try:
             return self._spawn_worker_locked()
@@ -351,7 +382,7 @@ class LocalFinalSTT:
             self._last_refusal = "the dictation worker did not come up"
             return None
         device = str(getattr(worker, "device", "") or "")
-        if device == "cpu":
+        if device == "cpu" and not self._allow_cpu:
             # A beam-search turbo decode of a 25 s window on a CPU takes
             # longer than the cloud round-trip it would replace; the
             # preview keeps its own CPU floor, the final pass does not.
@@ -387,7 +418,7 @@ class LocalFinalSTT:
                 return "the local speech engine (faster-whisper) is not installed here"
         except Exception as exc:  # noqa: BLE001 — a broken probe reads as "absent"
             return f"the local engine probe failed ({type(exc).__name__}: {exc})"
-        if self._min_free_gb <= 0.0:
+        if self._allow_cpu or self._min_free_gb <= 0.0:
             return ""
         try:
             from jarvis.hardware.detection import free_accelerator_gb
