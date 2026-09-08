@@ -1,5 +1,10 @@
 # World Art Direction — the island
 
+> Art-production workflow amendment (2026-09-08): follow
+> [Game-art production standard](game-art-pipeline.md) for future asset/design work.
+> It governs reference-scene approval and rollout; this document's current runtime
+> contracts remain intact. Its historical art choices are not approval of a new redesign.
+
 Status: **binding for M3 (world), decided with the maintainer on 2026-09-01/02.**
 Subordinate to [`MASTERPLAN.md`](MASTERPLAN.md) §4.1/§4.3; this is the art-direction pass the
 master plan requires before environment assets are built. Figures are governed by

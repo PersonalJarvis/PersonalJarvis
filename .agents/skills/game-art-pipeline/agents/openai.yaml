@@ -1,0 +1,4 @@
+interface:
+  display_name: "Game Art Pipeline"
+  short_description: "Author and review world art before asset rollout"
+  default_prompt: "Use $game-art-pipeline to prepare a reviewed game-art reference and a reproducible asset workflow."

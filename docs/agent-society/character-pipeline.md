@@ -1,5 +1,10 @@
 # Character Pipeline — the 3D figure standard
 
+> Art-production workflow amendment (2026-09-08): follow
+> [Game-art production standard](game-art-pipeline.md) for future asset/design work.
+> It governs reference-scene approval and rollout; this document's current runtime
+> contracts remain intact. Its historical art choices are not approval of a new redesign.
+
 Status: **binding since 2026-09-02 — the maintainer took the three §12 decisions as recommended,
 and the first figure (`biped-medium.glb`, KayKit Rogue base) ships through the gate.** Amended
 the same day with what the build taught (§4.3 bone set, §4.4 budgets, §4.6 cells, §5 rules).
@@ -32,7 +37,8 @@ runtime — and any character that passes the gate walks correctly, whoever or w
 | Image generation route | xAI `grok-imagine` via keyring `grok_api_key` (project memory, works as of 2026-08) | AI-generated detail sheets over the UV template (§8, route D). |
 | Tripo MCP | registered user-scope, needs `TRIPO_API_KEY` | image-to-3D + stylize (voxel/low-poly) + auto-rig (v1.0 biped, v2.5 quadruped/avian/…) + 90+ preset animations, GLB out — the exact-likeness route (§8, route C). |
 
-Nothing else exists: **no GLB asset, no rig, no clip, no validator** is in the tree today.
+The table above is a historical baseline. The repository now contains shipped GLBs,
+rigs, clips and the figure validator; inspect the current catalog and builders before work.
 
 ---
 

@@ -125,6 +125,12 @@ history for any of them: `docs/BUGS.md`.
 
 ## 4. How work ships
 
+**World and character art:** follow `docs/agent-society/game-art-pipeline.md`
+and the `game-art-pipeline` skill before creating/redesigning game assets.
+Author a small reference in Blender, verify it in the actual runtime, and obtain
+user approval of that reference before rolling its style out across asset families.
+Pipeline setup alone approves no visual redesign. Existing runtime contracts stay binding.
+
 Commit each finished step (Conventional Commits). Use the coding agent's
 standard Git workflow: do not artificially leave completed work local, and do
 not wait for extra PersonalJarvis permission to commit, branch, push, or open

@@ -1,5 +1,10 @@
 # Agent Society — Master Plan
 
+> Art-production workflow amendment (2026-09-08): follow
+> [Game-art production standard](game-art-pipeline.md) for future asset/design work.
+> It governs reference-scene approval and rollout; this document's current runtime
+> contracts remain intact. Its historical art choices are not approval of a new redesign.
+
 Status: **building.** Wave landings use the standard Git workflow; a product
 release stays explicit and separate. Working
 codename: `society`; the section keeps the name "Jarvis Agents" (§10).

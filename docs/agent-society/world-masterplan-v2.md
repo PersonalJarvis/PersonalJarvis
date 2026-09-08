@@ -1,5 +1,10 @@
 # World Master Plan v2 — from the first island to a professional game world
 
+> Art-production workflow amendment (2026-09-08): follow
+> [Game-art production standard](game-art-pipeline.md) for future asset/design work.
+> It governs reference-scene approval and rollout; this document's current runtime
+> contracts remain intact. Its historical art choices are not approval of a new redesign.
+
 Status: **binding since 2026-09-02** — the maintainer took the four recommended decisions of §9
 (grain off by default, one house per agent, the 15 hubs, the scripted Blender World Kit); this
 document succeeds [`world-art-direction.md`](world-art-direction.md) for everything it covers. Subordinate to
