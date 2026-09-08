@@ -431,7 +431,9 @@ def main(argv: list[str]) -> None:
         if stale is not None:
             k.select_tree(stale)
             bpy.ops.object.delete(use_global=False)
-    root = HUB_BUILDERS[args.target](k)
+    from pixel_kit import build
+
+    root = build(args.target, k)
     path = k.export_glb(root, Path(args.out))
     print(f"exported {path} ({path.stat().st_size} bytes)")
     if args.keep_scene:

@@ -1,3 +1,4 @@
+import { HouseMesh } from "./HouseMesh";
 /**
  * The market district: the solarpunk houses in a ring around the open square,
  * the lead agent's hub on its podium at the head, the Quest Board monument with
@@ -37,7 +38,7 @@ const HOUSE_RING_R = 4.6;
  * the square side is the camera's blind side) unless the viewer turned it.
  * A click selects the house and shows its rotate handle.
  */
-function House({ kit, plot }: { kit: Kit; plot: HousePlot }) {
+function House({ plot }: { plot: HousePlot }) {
   const { map } = buildIsland();
   const id = houseId(plot.slot);
   const rotation = useBuildingYaw(id);
@@ -45,10 +46,7 @@ function House({ kit, plot }: { kit: Kit; plot: HousePlot }) {
   const gl = useThree((s) => s.gl);
   const [hover, setHover] = useState(false);
   const y = groundY(map, plot.x, plot.z);
-  const w = plot.w * 2; // footprint in metres
-  const d = plot.d * 2;
-  const h = plot.variant === "glass-loft" ? 3.0 : 3.4;
-  const shade = plot.seed > 0.5 ? PAL.wall : PAL.wallShade;
+
 
   useEffect(() => {
     if (!hover) return;
@@ -83,49 +81,7 @@ function House({ kit, plot }: { kit: Kit; plot: HousePlot }) {
         </mesh>
       )}
       {selected && <RotateHandle id={id} x={plot.x} y={y} z={plot.z} radius={HOUSE_RING_R} />}
-      {/* body */}
-      <Block kit={kit} at={[0, h / 2, 0]} size={[w, h, d]} color={shade} />
-      {/* plinth */}
-      <Block kit={kit} at={[0, 0.15, 0]} size={[w + 0.4, 0.3, d + 0.4]} color={PAL.trim} />
-      {/* door and two windows on the front */}
-      <Block kit={kit} at={[0, 1.05, d / 2 + 0.05]} size={[1.1, 2.1, 0.12]} color={PAL.door} />
-      <Block kit={kit} at={[-w / 2 + 1.2, 1.9, d / 2 + 0.05]} size={[1.2, 1.1, 0.12]} color={PAL.glass} glow />
-      <Block kit={kit} at={[w / 2 - 1.2, 1.9, d / 2 + 0.05]} size={[1.2, 1.1, 0.12]} color={PAL.glass} glow />
-      {/* side windows */}
-      <Block kit={kit} at={[w / 2 + 0.05, 1.9, 0]} size={[0.12, 1.1, 1.6]} color={PAL.glass} glow />
-      <Block kit={kit} at={[-w / 2 - 0.05, 1.9, 0]} size={[0.12, 1.1, 1.6]} color={PAL.glass} glow />
-      {/* wooden awning over the door */}
-      <Block kit={kit} at={[0, 2.35, d / 2 + 0.5]} size={[2.2, 0.14, 1.0]} color={PAL.wood} />
-      {plot.variant === "solar-barrel" && (
-        <>
-          {/* barrel roof: a half cylinder laid along the house's width */}
-          <mesh
-            geometry={kit.g.halfCylinder}
-            material={kit.m.lit(PAL.solar)}
-            position={[0, h, 0]}
-            rotation={[0, 0, Math.PI / 2]}
-            scale={[d + 0.6, w + 0.4, d + 0.6]}
-          />
-          <Block kit={kit} at={[0, h + d / 2 + 0.25, 0]} size={[w + 0.5, 0.1, 0.5]} color={PAL.solarLine} />
-        </>
-      )}
-      {plot.variant === "garden-roof" && (
-        <>
-          <Block kit={kit} at={[0, h + 0.2, 0]} size={[w + 0.5, 0.4, d + 0.5]} color={PAL.trim} />
-          <Block kit={kit} at={[0, h + 0.5, 0]} size={[w, 0.25, d]} color={PAL.gardenRoof} />
-          <mesh geometry={kit.g.blob} material={kit.m.lit(PAL.gardenRoofBush)} position={[-w / 4, h + 0.95, 0]} scale={1.1} />
-          <mesh geometry={kit.g.blob} material={kit.m.lit(PAL.gardenRoofBush)} position={[w / 4, h + 0.9, -d / 5]} scale={0.9} />
-          <mesh geometry={kit.g.blob} material={kit.m.lit(PAL.flower)} position={[w / 5, h + 0.8, d / 4]} scale={0.5} />
-        </>
-      )}
-      {plot.variant === "glass-loft" && (
-        <>
-          <Block kit={kit} at={[0, h + 0.1, 0]} size={[w + 0.3, 0.2, d + 0.3]} color={PAL.trim} />
-          <Block kit={kit} at={[0, h + 1.0, 0]} size={[w - 1.6, 1.6, d - 1.0]} color={PAL.glass} glow />
-          <Block kit={kit} at={[0, h + 1.9, 0]} size={[w - 1.2, 0.2, d - 0.6]} color={PAL.wall} />
-          <Block kit={kit} at={[0, h + 2.05, 0]} size={[w - 1.6, 0.1, d - 1.2]} color={PAL.solar} />
-        </>
-      )}
+      <HouseMesh plot={plot} />
     </group>
   );
 }
@@ -416,7 +372,7 @@ export function Village({
   return (
     <group>
       {content.houses.map((plot) => (
-        <House key={plot.slot} kit={kit} plot={plot} />
+        <House key={plot.slot} plot={plot} />
       ))}
       <Hub kit={kit} paused={paused} />
       <SquareCentre kit={kit} paused={paused} onQuestClick={onQuestClick} questOpen={questOpen} />

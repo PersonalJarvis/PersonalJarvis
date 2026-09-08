@@ -24,6 +24,7 @@ import {
   hash2,
   inBounds,
   tileIndex,
+  surfaceCornerY,
   type IslandMap,
 } from "./islandLayout";
 import { TILE_COLORS } from "./worldPalette";
@@ -138,11 +139,11 @@ export function buildTerrainGeometry(map: IslandMap): BufferGeometry {
       const z0 = tz * TILE_M - half;
       const z1 = z0 + TILE_M;
       const shades = TILE_COLORS[kind];
-      const shade = hash2(tx, tz, 91) < 0.5 ? 0 : 1;
+      const shade = hash2(Math.floor(tx / 4), Math.floor(tz / 4), 91) < 0.18 ? 1 : 0;
       // Garden beds: the second shade is the flower colour, sprinkled sparsely.
       // Farmland: the two shades alternate by row — soil and crop, ploughed lines.
       const topIdx =
-        kind === TileKind.garden ? (hash2(tx, tz, 92) < 0.3 ? 1 : 0) : kind === TileKind.farm ? tz % 2 : shade;
+        kind === TileKind.garden ? (hash2(tx, tz, 92) < 0.025 ? 1 : 0) : kind === TileKind.farm ? tz % 2 : shade;
       // Analytic ambient occlusion (world-masterplan-v2.md §3.3): ground next
       // to a higher step or a building darkens a little, the way every corner
       // of a stylised village is shaded.
@@ -153,20 +154,22 @@ export function buildTerrainGeometry(map: IslandMap): BufferGeometry {
       if (kind === TileKind.sand && touchesWater(map, tx, tz)) factor *= WET_SAND;
       const base = color(shades.top[topIdx]);
       const top = Math.abs(factor - 1) > 0.001 ? base.clone().multiplyScalar(factor) : base;
-      b.quad([x0, y, z0], [x0, y, z1], [x1, y, z1], [x1, y, z0], UP, top);
+      const nw = surfaceCornerY(map, tx, tz, y), ne = surfaceCornerY(map, tx + 1, tz, y);
+      const sw = surfaceCornerY(map, tx, tz + 1, y), se = surfaceCornerY(map, tx + 1, tz + 1, y);
+      b.quad([x0, nw, z0], [x0, sw, z1], [x1, se, z1], [x1, ne, z0], UP, top);
 
       // Dock planks stand on posts, not on a wall: no side faces, they float.
       if (kind === TileKind.dock) continue;
 
       const side = color(shades.side);
       const south = topY(map, tx, tz + 1);
-      if (south < y) b.quad([x0, south, z1], [x1, south, z1], [x1, y, z1], [x0, y, z1], SOUTH, side);
+      if (south < y) b.quad([x0, south, z1], [x1, south, z1], [x1, se, z1], [x0, sw, z1], SOUTH, side);
       const north = topY(map, tx, tz - 1);
-      if (north < y) b.quad([x1, north, z0], [x0, north, z0], [x0, y, z0], [x1, y, z0], NORTH, side);
+      if (north < y) b.quad([x1, north, z0], [x0, north, z0], [x0, nw, z0], [x1, ne, z0], NORTH, side);
       const east = topY(map, tx + 1, tz);
-      if (east < y) b.quad([x1, east, z1], [x1, east, z0], [x1, y, z0], [x1, y, z1], EAST, side);
+      if (east < y) b.quad([x1, east, z1], [x1, east, z0], [x1, ne, z0], [x1, se, z1], EAST, side);
       const west = topY(map, tx - 1, tz);
-      if (west < y) b.quad([x0, west, z0], [x0, west, z1], [x0, y, z1], [x0, y, z0], WEST, side);
+      if (west < y) b.quad([x0, west, z0], [x0, west, z1], [x0, sw, z1], [x0, nw, z0], WEST, side);
     }
   }
   return b.build();

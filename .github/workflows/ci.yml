@@ -737,6 +737,10 @@ jobs:
       # command (`python scripts/ci/check_boot_budget.py`) that AP-26 asks you
       # to run by hand after touching the startup path. Do not read this step as
       # covering the Python side.
+      - name: Validate diorama assets and collision metadata
+        working-directory: .
+        run: python scripts/ci/check_world_kit.py
+
       - name: Check startup bundle budget
         working-directory: ${{ github.workspace }}
         run: python3 scripts/ci/check_frontend_bundle_budget.py

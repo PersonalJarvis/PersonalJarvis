@@ -606,7 +606,6 @@
     "delivery_queued": "En cola",
     "delivery_delivered": "Entregado",
     "delivery_failed": "Error",
-
     "placeholder": "Pregunta lo que quieras…",
     "empty_subtitle": "{name} con teclado: el mismo asistente que atiende el micrófono. El modelo que elijas es sobre lo que corre {name} en este chat.",
     "empty_subtitle_agent": "Un agente de código trabaja en los archivos de esta carpeta, no en tu memoria, tu wiki ni tu calendario. Elige un modelo. Luego pregunta.",
@@ -5124,7 +5123,7 @@
       "hud_active": "{0} activos",
       "sample_badge": "Datos de ejemplo",
       "reduced_motion_note": "Movimiento reducido: la isla se queda quieta.",
-      "controls_hint": "Arrastra para desplazar · Botón derecho para girar la vista · Rueda para acercar · Flechas para mover · Clic en un edificio para girarlo",
+      "controls_hint": "Arrastrar: desplazar · Q/E o arrastrar con botón derecho: cuarto de vuelta · Rueda: zoom · Clic: seleccionar edificio",
       "rotate_hint": "Arrastra el mando alrededor del edificio para girarlo. Con Mayús se ajusta en pasos de 15°.",
       "rotate_reset": "Volver a la orientación de diseño",
       "rotate_reset_short": "Restablecer",

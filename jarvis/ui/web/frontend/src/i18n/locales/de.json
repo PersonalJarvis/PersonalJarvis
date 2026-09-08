@@ -606,7 +606,6 @@
     "delivery_queued": "Eingereiht",
     "delivery_delivered": "Zugestellt",
     "delivery_failed": "Fehlgeschlagen",
-
     "placeholder": "Frag mich alles …",
     "empty_subtitle": "{name} mit Tastatur — derselbe Assistent, den das Mikrofon erreicht. Das gewählte Modell ist das, worauf {name} in diesem Chat läuft.",
     "empty_subtitle_agent": "Ein Coding-Agent arbeitet an den Dateien in diesem Ordner — nicht an deinem Gedächtnis, deinem Wiki oder deinem Kalender. Modell wählen. Dann fragen.",
@@ -5124,7 +5123,7 @@
       "hud_active": "{0} aktiv",
       "sample_badge": "Beispieldaten",
       "reduced_motion_note": "Reduzierte Bewegung: Die Insel hält still.",
-      "controls_hint": "Ziehen zum Verschieben · Rechte Maustaste zum Drehen · Scrollen zum Zoomen · Pfeiltasten zum Bewegen · Gebäude anklicken zum Drehen",
+      "controls_hint": "Ziehen: verschieben · Q/E oder Rechtsziehen: Vierteldrehung · Scrollen: Zoom · Gebäude anklicken: auswählen",
       "rotate_hint": "Den Knopf um das Gebäude ziehen, um es zu drehen. Mit Shift rastet es in 15°-Schritten ein.",
       "rotate_reset": "Zurück zur Standard-Ausrichtung",
       "rotate_reset_short": "Zurücksetzen",

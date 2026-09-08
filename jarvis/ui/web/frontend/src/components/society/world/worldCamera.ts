@@ -55,7 +55,7 @@ export const PITCH_SIN_FLOOR = 0.0698;
 export const LOOK_LIMIT_DEG = 89.95;
 
 /** Yaw the compass and the keyboard step in — a quarter turn per press. */
-export const YAW_STEP_DEG = 45;
+export const YAW_STEP_DEG = 90;
 
 /**
  * Orbit speed: dragging across the full stage width turns a whole revolution,
@@ -195,13 +195,12 @@ export function dragToOrbit(
  * (within a degree) it moves a full step; off one it lands on the next stop,
  * so a stepped turn always ends on the grid the island was designed for.
  */
+export function snapViewYaw(yawDeg: number): number {
+  return normalizeYaw(45 + Math.round((normalizeYaw(yawDeg) - 45) / 90) * 90);
+}
+
 export function stepYaw(yawDeg: number, direction: 1 | -1): number {
-  const cur = normalizeYaw(yawDeg) / YAW_STEP_DEG;
-  // Half a degree of slack: an angle that close to a stop counts as being on
-  // it, so a press there moves on instead of snapping back to where it is.
-  const eps = 0.5 / YAW_STEP_DEG;
-  const next = direction > 0 ? Math.floor(cur + eps) + 1 : Math.ceil(cur - eps) - 1;
-  return normalizeYaw(next * YAW_STEP_DEG);
+  return normalizeYaw(snapViewYaw(yawDeg) + direction * YAW_STEP_DEG);
 }
 
 /**

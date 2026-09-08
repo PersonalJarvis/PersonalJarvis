@@ -47,6 +47,7 @@ interface Props {
   selected: boolean;
   /** The agent's character; null keeps the box stand-in. */
   recipe?: FigureRecipe | null;
+  onRadius?: (radius: number) => void;
 }
 
 /**
@@ -144,7 +145,7 @@ function Rifle({ anim, heightM }: { anim: { current: WalkerAnim }; heightM: numb
   );
 }
 
-function RiggedWalkerFigure({ palette, anim, paused, selected, recipe }: Props & { recipe: FigureRecipe }) {
+function RiggedWalkerFigure({ palette, anim, paused, selected, recipe, onRadius }: Props & { recipe: FigureRecipe }) {
   const kit = useKit();
   const ring = useRef<Group>(null);
   const drive = useRef<FigureDrive>({ mode: "idle", speed: 0 });
@@ -159,7 +160,7 @@ function RiggedWalkerFigure({ palette, anim, paused, selected, recipe }: Props &
     }
   });
 
-  const height = (recipe.heightM ?? 1.75) * WORLD_HERO_SCALE;
+  const height = (recipe.heightM ?? figureAssetFor(recipe)?.defaultHeightM ?? 1.75) * WORLD_HERO_SCALE;
 
   return (
     <group>
@@ -168,7 +169,7 @@ function RiggedWalkerFigure({ palette, anim, paused, selected, recipe }: Props &
           <mesh geometry={kit.g.ring} material={kit.m.glow(palette.accent)} rotation={[Math.PI / 2, 0, 0]} scale={[1.9, 1.9, 1.2]} />
         </group>
       )}
-      <FigureRig recipe={recipe} drive={drive} paused={paused} heightM={height} />
+      <FigureRig recipe={recipe} drive={drive} paused={paused} heightM={height} onReady={figure => onRadius?.(figure.renderedRadiusM * 1.1)} />
       <Rifle anim={anim} heightM={height} />
     </group>
   );

@@ -14,7 +14,7 @@ import { useEffect, type RefObject } from "react";
 
 import { useCameraStore } from "./cameraStore";
 import { viewAngles } from "./viewAngles";
-import { ZOOM_WIDTHS_M, dragToOrbit, dragToPan } from "./worldCamera";
+import { ZOOM_WIDTHS_M, dragToPan } from "./worldCamera";
 
 /** Pointer travel below this is a click, not a drag. */
 const DRAG_THRESHOLD_PX = 4;
@@ -35,6 +35,7 @@ export function useWorldControls(hostRef: RefObject<HTMLElement | null>, enabled
     let lastX = 0;
     let lastY = 0;
     let travelled = 0;
+    let orbitTravel = 0;
     let lastWheel = 0;
 
     /*
@@ -65,6 +66,7 @@ export function useWorldControls(hostRef: RefObject<HTMLElement | null>, enabled
       lastX = e.clientX;
       lastY = e.clientY;
       travelled = 0;
+      orbitTravel = 0;
       document.addEventListener("selectstart", blockSelectStart);
       host.focus({ preventScroll: true });
     };
@@ -92,8 +94,7 @@ export function useWorldControls(hostRef: RefObject<HTMLElement | null>, enabled
         }
       }
       if (mode === "orbit") {
-        const [dYaw, dPitch] = dragToOrbit(dx, dy, host.clientWidth || 1, host.clientHeight || 1);
-        store.getState().orbitBy(dYaw, dPitch);
+        orbitTravel += dx;
         return;
       }
       // Pan along the ground axes of the picture on screen, not the designed ones.
@@ -106,6 +107,7 @@ export function useWorldControls(hostRef: RefObject<HTMLElement | null>, enabled
     const endDrag = (e: PointerEvent) => {
       if (pointerId !== e.pointerId) return;
       pointerId = null;
+      if (mode === "orbit" && Math.abs(orbitTravel) >= 24) store.getState().turnYaw(orbitTravel > 0 ? 1 : -1);
       allowSelectStart();
       delete host.dataset.orbiting;
       if (store.getState().orbiting) store.getState().setOrbiting(false);

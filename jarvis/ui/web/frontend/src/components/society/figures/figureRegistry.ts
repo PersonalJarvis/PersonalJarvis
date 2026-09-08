@@ -12,6 +12,8 @@ import catalogJson from "./catalog.json";
 import type { FigureArchetype, FigureRecipe, Palette } from "./figureRecipe";
 
 export interface CatalogBase {
+  /** Ground-plane envelope measured by the asset build. */
+  motionRadiusM?: number;
   /** "biped/rogue" */
   id: string;
   file: string;

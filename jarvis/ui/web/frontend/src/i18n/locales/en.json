@@ -606,7 +606,6 @@
     "delivery_queued": "Queued",
     "delivery_delivered": "Delivered",
     "delivery_failed": "Failed",
-
     "placeholder": "Ask anything…",
     "empty_subtitle": "{name} with a keyboard — the same assistant the microphone reaches. The model you pick is what {name} runs on for this chat.",
     "empty_subtitle_agent": "A coding agent works on the files in this folder — not on your memory, your wiki or your calendar. Pick a model. Then ask.",
@@ -5157,7 +5156,7 @@
       "hud_active": "{0} active",
       "sample_badge": "Sample data",
       "reduced_motion_note": "Motion reduced: the island holds still.",
-      "controls_hint": "Drag to pan · Right-drag to turn the view · Scroll to zoom · Arrow keys to move · Click a building to turn it",
+      "controls_hint": "Drag to pan · Q/E or right-drag: quarter turn · Scroll: zoom · Click a building to select",
       "rotate_hint": "Drag the knob around the building to turn it. Shift snaps to 15° steps.",
       "rotate_reset": "Back to the designed heading",
       "rotate_reset_short": "Reset",

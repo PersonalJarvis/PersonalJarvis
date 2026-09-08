@@ -1,3 +1,4 @@
+import { BUILDING_ASSETS } from "./worldManifest";
 /**
  * The island as numbers — the pure model behind `components/society/world/`.
  *
@@ -375,7 +376,28 @@ export function groundY(map: IslandMap, x: number, z: number): number {
   if (!inBounds(map, tx, tz)) return LEVEL_Y[0];
   const i = tileIndex(map, tx, tz);
   if (map.kind[i] === TileKind.dock) return DOCK_Y;
-  return LEVEL_Y[map.level[i]];
+  const fx = x / TILE_M + CENTER_TILE - tx, fz = z / TILE_M + CENTER_TILE - tz;
+  const fallback = LEVEL_Y[map.level[i]];
+  const nw = surfaceCornerY(map, tx, tz, fallback), ne = surfaceCornerY(map, tx + 1, tz, fallback);
+  const sw = surfaceCornerY(map, tx, tz + 1, fallback), se = surfaceCornerY(map, tx + 1, tz + 1, fallback);
+  // Match the two triangles used by terrainGeometry exactly (NW/SW/SE,
+  // NW/SE/NE). Bilinear interpolation would float above a twisted quad.
+  return fz >= fx ? nw + (sw - nw) * fz + (se - sw) * fx : nw + (ne - nw) * fx + (se - ne) * fz;
+}
+
+/** Shared road-ramp vertices: renderer and foot placement sample one surface. */
+export function surfaceCornerY(map: IslandMap, cx: number, cz: number, fallback: number): number {
+  const levels: number[] = [];
+  let road = false;
+  for (let dz = -1; dz <= 0; dz++) for (let dx = -1; dx <= 0; dx++) {
+    if (!inBounds(map, cx + dx, cz + dz)) return fallback;
+    const i = tileIndex(map, cx + dx, cz + dz), kind = map.kind[i];
+    if (kind === TileKind.water || kind === TileKind.dock || kind === TileKind.pool) return fallback;
+    road ||= kind === TileKind.path || kind === TileKind.plaza;
+    levels.push(map.level[i]);
+  }
+  if (!road || Math.max(...levels) - Math.min(...levels) > 1) return fallback;
+  return levels.reduce((sum, level) => sum + LEVEL_Y[level], 0) / levels.length;
 }
 
 export function isWalkable(map: IslandMap, tx: number, tz: number): boolean {
@@ -707,19 +729,10 @@ function hallPose(b: TownBlock, lot: KitLot, w: number, d: number): KitPose {
  * house; the foundry's conveyor ramp stays walkable on purpose — a figure
  * leaving the portal walks down it.
  */
-export const KIT_FOOTPRINT_TILES: Record<KitPlace, { w: number; d: number }> = {
-  plugins: { w: 8, d: 5 },
-  foundry: { w: 10, d: 7 },
-  skills: { w: 7, d: 5 },
-  mcp: { w: 5, d: 5 },
-  cli: { w: 7, d: 5 },
-  comms: { w: 7, d: 5 },
-  desktop: { w: 7, d: 5 },
-  gallery: { w: 7, d: 5 },
-  civic: { w: 7, d: 5 },
-  models: { w: 5, d: 5 },
-  web: { w: 5, d: 5 },
-};
+export const KIT_FOOTPRINT_TILES = Object.fromEntries(
+  Object.entries(BUILDING_ASSETS).filter(([id]) => id !== "archive").map(([id, asset]) =>
+    [id, { w: asset.sizeM[0] / TILE_M, d: asset.sizeM[1] / TILE_M }]),
+) as Record<KitPlace, { w: number; d: number }>;
 
 /**
  * The halls on the blocks face their street (`KIT_BLOCKS`). The Agent Foundry
@@ -2017,20 +2030,9 @@ function placeBoulders(map: IslandMap): Boulder[] {
  * of the docks' bays, at the foot of the foundry's conveyor ramp, at the
  * others' doors.
  */
-export const KIT_STAND_AHEAD_M: Record<KitPlace, number> = {
-  plugins: 7.5,
-  foundry: 13.5,
-  skills: 7.5,
-  mcp: 7.0,
-  cli: 7.5,
-  // The town halls' own `stand` anchors, out of their GLB extras.
-  comms: 7.2,
-  desktop: 7.2,
-  gallery: 7.6,
-  models: 7.2,
-  civic: 8.0,
-  web: 6.6,
-};
+export const KIT_STAND_AHEAD_M = Object.fromEntries(
+  Object.entries(BUILDING_ASSETS).filter(([id]) => id !== "archive").map(([id, asset]) => [id, asset.stand[1]]),
+) as Record<KitPlace, number>;
 
 /**
  * How much further a visitor may walk past a hall's own stand anchor to reach
@@ -2180,6 +2182,7 @@ export function buildIsland(): Island {
     civic: kitPose("civic"),
     web: kitPose("web"),
   };
+  const staticTerrain = map.blocked.slice();
   // Houses, kit halls and the foundry's belt block walking at their resting
   // headings for now, so trees and furniture keep clear of them; the final
   // headings are stamped again by `applyBuildingYaws` below.
@@ -2200,6 +2203,11 @@ export function buildIsland(): Island {
   // Everything that never turns: the turnable buildings lifted out again.
   map.blockedStatic = map.blocked.slice();
   stampTurnables(map, map.blockedStatic, houses, kitPoses, 0);
+  for (let i = 0; i < staticTerrain.length; i++) map.blockedStatic[i] |= staticTerrain[i];
+  blockSquareFurniture({ ...map, blocked: map.blockedStatic });
+  blockLandmarkFurniture({ ...map, blocked: map.blockedStatic });
+  for (const h of hedges) stampFootprint(map.blockedStatic, map, h.x, h.z, HEDGE_SEGMENT_M[0], HEDGE_SEGMENT_M[1], h.rotation, 0.3, 1);
+  for (const l of lamps) blockPost({ ...map, blocked: map.blockedStatic }, l.x, l.z);
   cached = {
     map,
     content: {
@@ -2267,21 +2275,7 @@ function stampTurnables(
     const f = KIT_FOOTPRINT_TILES[id];
     stampFootprint(layer, map, p.x, p.z, f.w * TILE_M, f.d * TILE_M, p.rotation, WALL_MARGIN_M, value);
   }
-  // The foundry's conveyor deck is furniture, not floor: it keeps trees off
-  // and keeps strollers beside it. A newborn rides it on fixed waypoints, so
-  // the block costs the entrance nothing.
-  const belt = kitPoses.foundry;
-  stampFootprint(
-    layer,
-    map,
-    belt.x + Math.sin(belt.rotation) * FOUNDRY_RAMP_MID_M,
-    belt.z + Math.cos(belt.rotation) * FOUNDRY_RAMP_MID_M,
-    3 * TILE_M,
-    3 * TILE_M,
-    belt.rotation,
-    WALL_MARGIN_M,
-    value,
-  );
+
 }
 
 /**
@@ -2302,10 +2296,11 @@ export function applyBuildingYaws(island: Island, yaws: Readonly<Partial<Record<
   }
   map.blocked.set(map.blockedStatic);
   stampTurnables(map, map.blocked, content.houses, content.kitPoses, 1);
-  // A stand tile stays reachable whatever turned over it — a place nobody can reach is a bug.
+  // Relocate blocked stands; never punch holes in a building.
   for (const p of Object.values(content.places)) {
     const [tx, tz] = p.standTile;
-    if (inBounds(map, tx, tz)) map.blocked[tileIndex(map, tx, tz)] = 0;
+    const free = nearestWalkable(map, tx, tz);
+    if (free) p.standTile = free;
   }
 }
 
@@ -2470,6 +2465,8 @@ function lineIsWalkable(map: IslandMap, a: [number, number], b: [number, number]
     const tz = Math.floor(a[1] + 0.5 + (b[1] - a[1]) * t);
     if (!isWalkable(map, tx, tz)) return false;
     const i = tileIndex(map, tx, tz);
+    const lx = last % map.size, lz = Math.floor(last / map.size);
+    if (tx !== lx && tz !== lz && (!canStep(map, last, tx, lz) || !canStep(map, last, lx, tz))) return false;
     if (Math.abs(map.level[i] - map.level[last]) > 1) return false;
     last = i;
   }

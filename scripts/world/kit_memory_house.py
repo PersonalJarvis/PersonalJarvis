@@ -85,8 +85,12 @@ def _glass(k, key: str, alpha: float, emissive: float = 0.0) -> bpy.types.Materi
 def _torus(k, name, major, minor, at, mat_key, parent, rot=(0, 0, 0), emissive=0.0, segments=32):
     """A ring in the XY plane before `rot` (own helper: the base module's is optional)."""
     bpy.ops.mesh.primitive_torus_add(
-        location=at, rotation=rot, major_radius=major, minor_radius=minor,
-        major_segments=segments, minor_segments=8,
+        location=at,
+        rotation=rot,
+        major_radius=major,
+        minor_radius=minor,
+        major_segments=segments,
+        minor_segments=8,
     )
     obj = bpy.context.active_object
     obj.name = name
@@ -133,7 +137,17 @@ def build_memory_house(k) -> bpy.types.Object:
     # --- plinth: a dark slate slab with a lit reflecting ring cut into it
     k.box("plinth", (W + 0.6, D + 0.6, PLINTH_Z), (0, 0, PLINTH_Z / 2), "slate", root, bevel=0.12)
     k.box("plinth_band", (W + 0.9, D + 0.9, 0.12), (0, 0, 0.06), "obsidian", root, bevel=0.0)
-    pool = _torus(k, "pool_ring", 6.1, 0.14, (0, 0.4, PLINTH_Z + 0.02), "mem_pool", root, emissive=2.2, segments=36)
+    pool = _torus(
+        k,
+        "pool_ring",
+        6.1,
+        0.14,
+        (0, 0.4, PLINTH_Z + 0.02),
+        "mem_pool",
+        root,
+        emissive=2.2,
+        segments=36,
+    )
     pool.scale = (1.0, 0.8, 1.0)
     bpy.context.view_layer.objects.active = pool
     bpy.ops.object.transform_apply(scale=True)
@@ -151,7 +165,14 @@ def build_memory_house(k) -> bpy.types.Object:
     # --- the monolith: a translucent glass block on four light frame columns
     z0 = PLINTH_Z
     glass = _glass(k, "mem_glass", 0.32, emissive=0.25)
-    mono = k.box("monolith", (MONO_W, MONO_D, MONO_H), (0, 0.4, z0 + MONO_H / 2), "mem_glass", root, bevel=0.22)
+    mono = k.box(
+        "monolith",
+        (MONO_W, MONO_D, MONO_H),
+        (0, 0.4, z0 + MONO_H / 2),
+        "mem_glass",
+        root,
+        bevel=0.22,
+    )
     _set_material(mono, glass)
     for sx in (-1, 1):
         for sy in (-1, 1):
@@ -179,8 +200,26 @@ def build_memory_house(k) -> bpy.types.Object:
     core_mat = k.material("mem_core_hot", 4.0)
     _icosphere(k, "core_orb", 2.0, (0, 0.4, z0 + 6.4), core_mat, root, subdivisions=2)
     inner_mat = k.material("mem_core", 2.4)
-    _icosphere(k, "core_halo", 2.6, (0, 0.4, z0 + 6.4), _glass(k, "mem_core", 0.28, 1.2), root, subdivisions=1)
-    k.cylinder("core_spine", 0.22, MONO_H - 0.8, (0, 0.4, z0 + MONO_H / 2), "mem_frame", root, verts=10, bevel=0.0, emissive=0.6)
+    _icosphere(
+        k,
+        "core_halo",
+        2.6,
+        (0, 0.4, z0 + 6.4),
+        _glass(k, "mem_core", 0.28, 1.2),
+        root,
+        subdivisions=1,
+    )
+    k.cylinder(
+        "core_spine",
+        0.22,
+        MONO_H - 0.8,
+        (0, 0.4, z0 + MONO_H / 2),
+        "mem_frame",
+        root,
+        verts=10,
+        bevel=0.0,
+        emissive=0.6,
+    )
     shard_specs = [
         (-2.6, -1.4, 2.4, 0.35, 1.3, 0.28),
         (2.4, 1.2, 3.6, -0.5, 1.5, -0.22),
@@ -203,25 +242,97 @@ def build_memory_house(k) -> bpy.types.Object:
         )
     # light strips on the floor inside the glass (data lanes)
     for i, x in enumerate((-3.2, -1.6, 0, 1.6, 3.2)):
-        k.box(f"lane_{i}", (0.12, MONO_D - 1.0, 0.04), (x, 0.4, z0 + 0.06), "mem_core", root, bevel=0.0, emissive=1.6)
+        k.box(
+            f"lane_{i}",
+            (0.12, MONO_D - 1.0, 0.04),
+            (x, 0.4, z0 + 0.06),
+            "mem_core",
+            root,
+            bevel=0.0,
+            emissive=1.6,
+        )
     del inner_mat
 
     # --- the door: a dark portal in the front glass with a light frame
-    k.box("door_frame", (3.4, 0.5, 4.4), (0, y_front + 2.5 + 0.4 - 0.0, z0 + 2.2), "mem_frame", root, bevel=0.06)
-    k.box("door_frame_glow", (3.0, 0.2, 4.0), (0, y_front + 2.5 + 0.4 - 0.2, z0 + 2.0), "mem_core", root, bevel=0.0, emissive=2.0)
-    k.box("door", (2.4, 0.3, 3.5), (0, y_front + 2.5 + 0.4 - 0.3, z0 + 1.75), "obsidian", root, bevel=0.03)
+    k.box(
+        "door_frame",
+        (3.4, 0.5, 4.4),
+        (0, y_front + 2.5 + 0.4 - 0.0, z0 + 2.2),
+        "mem_frame",
+        root,
+        bevel=0.06,
+    )
+    k.box(
+        "door_frame_glow",
+        (3.0, 0.2, 4.0),
+        (0, y_front + 2.5 + 0.4 - 0.2, z0 + 2.0),
+        "mem_core",
+        root,
+        bevel=0.0,
+        emissive=2.0,
+    )
+    k.box(
+        "door",
+        (2.4, 0.3, 3.5),
+        (0, y_front + 2.5 + 0.4 - 0.3, z0 + 1.75),
+        "obsidian",
+        root,
+        bevel=0.03,
+    )
 
     # --- the roof: a cantilevered dark slab floating above the glass, lit edge
     roof_z = z0 + MONO_H + 0.8
-    k.box("roof_slab", (MONO_W + 2.6, MONO_D + 2.0, 0.36), (0, 0.4 - 0.5, roof_z), "slate", root, bevel=0.1)
-    k.box("roof_edge", (MONO_W + 2.8, MONO_D + 2.2, 0.08), (0, 0.4 - 0.5, roof_z - 0.22), "mem_core", root, bevel=0.0, emissive=1.7)
-    k.box("roof_fin", (0.8, MONO_D + 0.4, 1.0), (MONO_W / 2 + 0.9, 0.4, roof_z + 0.65), "obsidian", root, bevel=0.06)
+    k.box(
+        "roof_slab",
+        (MONO_W + 2.6, MONO_D + 2.0, 0.36),
+        (0, 0.4 - 0.5, roof_z),
+        "slate",
+        root,
+        bevel=0.1,
+    )
+    k.box(
+        "roof_edge",
+        (MONO_W + 2.8, MONO_D + 2.2, 0.08),
+        (0, 0.4 - 0.5, roof_z - 0.22),
+        "mem_core",
+        root,
+        bevel=0.0,
+        emissive=1.7,
+    )
+    k.box(
+        "roof_fin",
+        (0.8, MONO_D + 0.4, 1.0),
+        (MONO_W / 2 + 0.9, 0.4, roof_z + 0.65),
+        "obsidian",
+        root,
+        bevel=0.06,
+    )
     for sx in (-1, 1):
-        k.cylinder(f"roof_post_{'l' if sx < 0 else 'r'}", 0.16, 0.9, (sx * 3.2, 0.4, z0 + MONO_H + 0.45), "mem_frame", root, verts=8, bevel=0.0)
+        k.cylinder(
+            f"roof_post_{'l' if sx < 0 else 'r'}",
+            0.16,
+            0.9,
+            (sx * 3.2, 0.4, z0 + MONO_H + 0.45),
+            "mem_frame",
+            root,
+            verts=8,
+            bevel=0.0,
+        )
 
     # --- the halo: a tilted ring of light nodes orbiting above the roof
     halo_z = z0 + 9.4
-    halo = _torus(k, "halo", 6.2, 0.11, (0, 0.4, halo_z), "mem_frame", root, rot=(math.radians(14), 0, 0), emissive=0.9, segments=28)
+    halo = _torus(
+        k,
+        "halo",
+        6.2,
+        0.11,
+        (0, 0.4, halo_z),
+        "mem_frame",
+        root,
+        rot=(math.radians(14), 0, 0),
+        emissive=0.9,
+        segments=28,
+    )
     node_mat = k.material("mem_gold", 3.2)
     for i in range(8):
         a = i / 8 * math.pi * 2
@@ -230,7 +341,9 @@ def build_memory_house(k) -> bpy.types.Object:
         # tilt the node ring with the halo (rotation about X by 14 deg)
         yy = y * math.cos(math.radians(14))
         zz = y * math.sin(math.radians(14))
-        n = _icosphere(k, f"halo_node_{i}", 0.3, (x, 0.4 + yy, halo_z + zz), node_mat, root, subdivisions=1)
+        n = _icosphere(
+            k, f"halo_node_{i}", 0.3, (x, 0.4 + yy, halo_z + zz), node_mat, root, subdivisions=1
+        )
         n.parent = halo
         n.matrix_parent_inverse = halo.matrix_world.inverted()
 
@@ -239,17 +352,60 @@ def build_memory_house(k) -> bpy.types.Object:
         px = sx * 5.6
         py = y_front - 0.6
         k.box(f"pylon_{tag}", (0.9, 0.9, 6.2), (px, py, z0 + 3.1), "obsidian", root, bevel=0.06)
-        k.box(f"pylon_light_{tag}", (0.18, 0.95, 5.4), (px, py, z0 + 3.1), "mem_core", root, bevel=0.0, emissive=2.6)
-        k.box(f"pylon_cap_{tag}", (1.1, 1.1, 0.25), (px, py, z0 + 6.35), "mem_frame", root, bevel=0.04)
+        k.box(
+            f"pylon_light_{tag}",
+            (0.18, 0.95, 5.4),
+            (px, py, z0 + 3.1),
+            "mem_core",
+            root,
+            bevel=0.0,
+            emissive=2.6,
+        )
+        k.box(
+            f"pylon_cap_{tag}", (1.1, 1.1, 0.25), (px, py, z0 + 6.35), "mem_frame", root, bevel=0.04
+        )
 
     # --- the sign: floating letters above the door with a thin light rail
-    k.box("sign_rail", (7.6, 0.14, 0.14), (0, y_front + 0.9, z0 + 5.4), "mem_frame", root, bevel=0.0, emissive=0.5)
-    k.text_mesh("sign_text", "MEMORY", 1.25, 0.22, (0, y_front + 1.05, z0 + 6.25), "mem_core_hot", root, emissive=3.2)
+    k.box(
+        "sign_rail",
+        (7.6, 0.14, 0.14),
+        (0, y_front + 0.9, z0 + 5.4),
+        "mem_frame",
+        root,
+        bevel=0.0,
+        emissive=0.5,
+    )
+    k.text_mesh(
+        "sign_text",
+        "MEMORY",
+        1.25,
+        0.22,
+        (0, y_front + 1.05, z0 + 6.25),
+        "mem_core_hot",
+        root,
+        emissive=3.2,
+    )
 
     # --- garden edges: two low planters with light-blue shrubs
     for sx in (-1, 1):
-        k.box(f"planter_{'l' if sx < 0 else 'r'}", (2.4, 1.2, 0.6), (sx * (W / 2 - 1.6), 0.4 + D / 2 - 1.0, z0 + 0.3), "slate", root, bevel=0.05)
-        k.cylinder(f"shrub_{'l' if sx < 0 else 'r'}", 0.7, 0.9, (sx * (W / 2 - 1.6), 0.4 + D / 2 - 1.0, z0 + 1.0), "mem_pool", root, verts=10, bevel=0.25)
+        k.box(
+            f"planter_{'l' if sx < 0 else 'r'}",
+            (2.4, 1.2, 0.6),
+            (sx * (W / 2 - 1.6), 0.4 + D / 2 - 1.0, z0 + 0.3),
+            "slate",
+            root,
+            bevel=0.05,
+        )
+        k.cylinder(
+            f"shrub_{'l' if sx < 0 else 'r'}",
+            0.7,
+            0.9,
+            (sx * (W / 2 - 1.6), 0.4 + D / 2 - 1.0, z0 + 1.0),
+            "mem_pool",
+            root,
+            verts=10,
+            bevel=0.25,
+        )
     return root
 
 
@@ -271,9 +427,13 @@ def main(argv: list[str]) -> None:
         if stale is not None:
             k.select_tree(stale)
             bpy.ops.object.delete(use_global=False)
-    root = build_memory_house(k)
+    from pixel_kit import build
+
+    root = build("memory-house", k)
     tris = sum(
-        len(o.data.loop_triangles) if o.type == "MESH" and (o.data.calc_loop_triangles() or True) else 0
+        len(o.data.loop_triangles)
+        if o.type == "MESH" and (o.data.calc_loop_triangles() or True)
+        else 0
         for o in root.children_recursive
     )
     print(f"memory-house: {len(root.children_recursive)} objects, {tris} triangles")
