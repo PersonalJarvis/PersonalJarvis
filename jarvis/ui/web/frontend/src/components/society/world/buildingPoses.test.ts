@@ -84,14 +84,13 @@ describe("buildingPoses", () => {
 
   it("persists per viewer and comes back through sync", () => {
     const id = houseId(7);
-    const yaw = normalizeAngle(defaultBuildingYaw(id) + Math.PI);
-    useBuildingPoses.getState().setYaw(id, yaw);
-    expect(JSON.parse(localStorage.getItem(KEY) ?? "{}")).toEqual({ yaw: { [id]: yaw } });
+    useBuildingPoses.getState().setYaw(id, 1.0);
+    expect(JSON.parse(localStorage.getItem(KEY) ?? "{}")).toEqual({ yaw: { [id]: 1.0 } });
     resetIslandCache();
     const fresh = buildIsland();
     const house = fresh.content.houses.find((h) => h.slot === 7)!;
     expect(house.rotation).toBe(house.defaultRotation);
     syncBuildingPoses();
-    expect(house.rotation).toBeCloseTo(yaw, 9);
+    expect(house.rotation).toBeCloseTo(1.0, 9);
   });
 });

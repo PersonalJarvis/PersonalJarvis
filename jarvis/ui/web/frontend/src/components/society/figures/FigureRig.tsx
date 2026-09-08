@@ -86,8 +86,7 @@ function LoadedRig({ recipe, drive, paused, heightM, onReady }: FigureRigProps) 
     const d = drive.current;
     let clip: string = d.mode;
     let timeScale = 1;
-    if (d.mode === "walk" && d.speed <= 0.05) clip = "idle";
-    else if (d.mode === "walk") {
+    if (d.mode === "walk") {
       const walk = figure.extras.clips.walk;
       const run = figure.extras.clips.run;
       const nominal = (walk?.stride_m ?? 0) > 0 ? ((walk.stride_m ?? 0) * figure.scale) / walk.duration : 0;
@@ -97,7 +96,7 @@ function LoadedRig({ recipe, drive, paused, heightM, onReady }: FigureRigProps) 
         clip = "run";
         timeScale = clamp(d.speed / runNominal, TIME_SCALE_MIN, TIME_SCALE_MAX);
       } else {
-        timeScale = Math.max(0, Math.min(TIME_SCALE_MAX, walkScale));
+        timeScale = clamp(walkScale, TIME_SCALE_MIN, TIME_SCALE_MAX);
       }
       if (d.speed <= 0.05) clip = "idle";
     }

@@ -95,10 +95,6 @@ export function restyle(root: Object3D, ramp: ReturnType<typeof createToonRamp>)
     } else {
       o.material = new MeshToonMaterial({
         color: src.color.clone(),
-        map: src.map,
-        vertexColors: !!o.geometry.getAttribute("color"),
-        side: src.side,
-        alphaTest: src.alphaTest,
         gradientMap: ramp,
         emissive: emissiveStrength > 0 ? src.emissive.clone() : new Color(0, 0, 0),
         emissiveIntensity: emissiveStrength > 0 ? Math.min(0.6, src.emissiveIntensity) : 0,

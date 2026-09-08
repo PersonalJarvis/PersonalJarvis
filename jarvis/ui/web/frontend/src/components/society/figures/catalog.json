@@ -45,7 +45,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Android",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `android`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 388,
+      "triangles": 324,
       "clips": [
         "celebrate",
         "idle",
@@ -57,8 +57,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.39,
-      "motionRadiusM": 0.9987
+      "height_m": 2.39
     },
     {
       "id": "biped/athlete",
@@ -95,7 +94,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Athlete",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `athlete`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 424,
+      "triangles": 360,
       "clips": [
         "celebrate",
         "idle",
@@ -107,8 +106,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.18,
-      "motionRadiusM": 1.0031
+      "height_m": 2.18
     },
     {
       "id": "biped/barbarian",
@@ -155,8 +153,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.1863,
-      "motionRadiusM": 1.1046
+      "height_m": 2.1863
     },
     {
       "id": "biped/blockhead",
@@ -193,7 +190,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Blockhead",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `blockhead`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 388,
+      "triangles": 324,
       "clips": [
         "celebrate",
         "idle",
@@ -205,8 +202,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.15,
-      "motionRadiusM": 1.0031
+      "height_m": 2.15
     },
     {
       "id": "biped/casual",
@@ -243,7 +239,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Casual",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `casual`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 460,
+      "triangles": 396,
       "clips": [
         "celebrate",
         "idle",
@@ -255,8 +251,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.18,
-      "motionRadiusM": 1.0287
+      "height_m": 2.18
     },
     {
       "id": "biped/chibi",
@@ -293,7 +288,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Chibi",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `chibi`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 412,
+      "triangles": 348,
       "clips": [
         "celebrate",
         "idle",
@@ -305,8 +300,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.18,
-      "motionRadiusM": 1.0031
+      "height_m": 2.18
     },
     {
       "id": "biped/dwarf",
@@ -343,7 +337,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Dwarf",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `dwarf`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 424,
+      "triangles": 360,
       "clips": [
         "celebrate",
         "idle",
@@ -355,8 +349,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.18,
-      "motionRadiusM": 1.0031
+      "height_m": 2.18
     },
     {
       "id": "biped/elf",
@@ -393,7 +386,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Elf",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `elf`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 460,
+      "triangles": 396,
       "clips": [
         "celebrate",
         "idle",
@@ -405,8 +398,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.18,
-      "motionRadiusM": 1.0031
+      "height_m": 2.18
     },
     {
       "id": "biped/knight",
@@ -453,8 +445,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.3145,
-      "motionRadiusM": 1.1073
+      "height_m": 2.3145
     },
     {
       "id": "biped/mage",
@@ -501,8 +492,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.2027,
-      "motionRadiusM": 1.226
+      "height_m": 2.2027
     },
     {
       "id": "biped/medic",
@@ -539,7 +529,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Medic",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `medic`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 460,
+      "triangles": 396,
       "clips": [
         "celebrate",
         "idle",
@@ -551,8 +541,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.18,
-      "motionRadiusM": 1.0031
+      "height_m": 2.18
     },
     {
       "id": "biped/monk",
@@ -589,7 +578,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Monk",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `monk`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 400,
+      "triangles": 336,
       "clips": [
         "celebrate",
         "idle",
@@ -601,8 +590,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.15,
-      "motionRadiusM": 1.0287
+      "height_m": 2.15
     },
     {
       "id": "biped/office",
@@ -639,7 +627,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Office",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `office`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 436,
+      "triangles": 372,
       "clips": [
         "celebrate",
         "idle",
@@ -651,8 +639,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.18,
-      "motionRadiusM": 1.0031
+      "height_m": 2.18
     },
     {
       "id": "biped/pilot",
@@ -689,7 +676,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Pilot",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `pilot`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 352,
+      "triangles": 288,
       "clips": [
         "celebrate",
         "idle",
@@ -701,8 +688,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.15,
-      "motionRadiusM": 0.9987
+      "height_m": 2.15
     },
     {
       "id": "biped/rogue",
@@ -749,8 +735,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.187,
-      "motionRadiusM": 1.1013
+      "height_m": 2.187
     },
     {
       "id": "biped/scientist",
@@ -787,7 +772,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Scientist",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `scientist`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 484,
+      "triangles": 420,
       "clips": [
         "celebrate",
         "idle",
@@ -799,8 +784,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.18,
-      "motionRadiusM": 1.0053
+      "height_m": 2.18
     },
     {
       "id": "biped/toon",
@@ -837,7 +821,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Toon",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `toon`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 412,
+      "triangles": 348,
       "clips": [
         "celebrate",
         "idle",
@@ -849,8 +833,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.18,
-      "motionRadiusM": 1.0031
+      "height_m": 2.18
     },
     {
       "id": "biped/trooper",
@@ -887,7 +870,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Trooper",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `trooper`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 352,
+      "triangles": 288,
       "clips": [
         "celebrate",
         "idle",
@@ -899,8 +882,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.15,
-      "motionRadiusM": 0.9987
+      "height_m": 2.15
     },
     {
       "id": "biped/worker",
@@ -937,7 +919,7 @@
       "source": "Personal Jarvis humanoids (first-party meshes on the KayKit CC0 rig) / Worker",
       "license": "first-party",
       "note": "body modelled by humanoid_builder.py (profile `worker`); rig and clips from KayKit Character Pack: Adventurers 1.0 (CC0-1.0) / Rogue, every donor mesh deleted",
-      "triangles": 460,
+      "triangles": 396,
       "clips": [
         "celebrate",
         "idle",
@@ -949,8 +931,7 @@
         "wave",
         "work"
       ],
-      "height_m": 2.18,
-      "motionRadiusM": 1.0031
+      "height_m": 2.18
     },
     {
       "id": "quadruped/bear",
@@ -997,8 +978,7 @@
         "talk",
         "walk"
       ],
-      "height_m": 0.76,
-      "motionRadiusM": 0.6853
+      "height_m": 0.76
     },
     {
       "id": "quadruped/cat",
@@ -1045,8 +1025,7 @@
         "talk",
         "walk"
       ],
-      "height_m": 0.8,
-      "motionRadiusM": 0.9129
+      "height_m": 0.8
     },
     {
       "id": "quadruped/dog",
@@ -1093,8 +1072,7 @@
         "talk",
         "walk"
       ],
-      "height_m": 0.78,
-      "motionRadiusM": 0.7966
+      "height_m": 0.78
     },
     {
       "id": "quadruped/fox",
@@ -1141,8 +1119,7 @@
         "talk",
         "walk"
       ],
-      "height_m": 0.88,
-      "motionRadiusM": 0.8744
+      "height_m": 0.88
     },
     {
       "id": "quadruped/rabbit",
@@ -1189,8 +1166,7 @@
         "talk",
         "walk"
       ],
-      "height_m": 1.06,
-      "motionRadiusM": 0.6604
+      "height_m": 1.06
     },
     {
       "id": "quadruped/wolf",
@@ -1237,8 +1213,7 @@
         "talk",
         "walk"
       ],
-      "height_m": 0.86,
-      "motionRadiusM": 0.8559
+      "height_m": 0.86
     },
     {
       "id": "spirit/gigi",
@@ -1282,8 +1257,7 @@
         "walk",
         "wave"
       ],
-      "height_m": 1.8967,
-      "motionRadiusM": 1.0012
+      "height_m": 1.8967
     }
   ],
   "parts": [

@@ -366,17 +366,6 @@ def _mesh_from_box(piece: Piece) -> bpy.types.Object:
     centre = Vector(tuple((hi + lo) / 2 for hi, lo in zip(piece.hi, piece.lo, strict=True)))
     bmesh.ops.scale(bm, vec=size, verts=bm.verts)
     bmesh.ops.translate(bm, vec=centre, verts=bm.verts)
-    # A chamfered silhouette catches one deliberate pixel plane. Keep small
-    # facial features and attachment bounds unchanged.
-    if min(size) > 0.13 and piece.name in {"Head", "Torso", "Chest", "Hips"}:
-        bmesh.ops.bevel(
-            bm,
-            geom=list(bm.edges),
-            offset=min(size) * 0.055,
-            segments=1,
-            affect="EDGES",
-            clamp_overlap=True,
-        )
     mesh = bpy.data.meshes.new(piece.name)
     bm.to_mesh(mesh)
     bm.free()

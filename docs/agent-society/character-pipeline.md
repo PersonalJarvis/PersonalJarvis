@@ -1,7 +1,5 @@
 # Character Pipeline — the 3D figure standard
 
-> Pixel-diorama amendment: recipe/skeleton contract v1 stays compatible; owned meshes now carry validated `COLOR_0` shading. World movement, fitted-body clearance and camera/render settings follow [Pixel Diorama](pixel-diorama.md).
-
 Status: **binding since 2026-09-02 — the maintainer took the three §12 decisions as recommended,
 and the first figure (`biped-medium.glb`, KayKit Rogue base) ships through the gate.** Amended
 the same day with what the build taught (§4.3 bone set, §4.4 budgets, §4.6 cells, §5 rules).

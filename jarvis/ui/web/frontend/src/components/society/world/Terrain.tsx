@@ -54,7 +54,7 @@ const SEA_SIZE_M = 1400;
 /** The plane's rest height: below the water line, so a raised wave stays under the beach. */
 const SEA_REST_Y = -0.1;
 /** Vertices per side: 5 m cells, fine enough for 9 m breakers. */
-const SEA_SEGMENTS = 112;
+const SEA_SEGMENTS = 280;
 /** How many tiles out from the coast the shore texture measures distance. */
 export const SHORE_REACH_TILES = 16;
 /** The same reach in metres — the shader's distance scale. */

@@ -45,10 +45,6 @@ const STABLE_MS = 60_000;
 /** How long to keep looking for the renderer's canvas after a mount. */
 const MAX_ATTACH_FRAMES = 60;
 
-// StrictMode replays effects on the same live canvas. The last attachment
-// owns it; a previous effect may release only a canvas nobody has reclaimed.
-const canvasOwners = new WeakMap<HTMLCanvasElement, object>();
-
 export interface WebglSurface {
   /**
    * Remount key for the renderer. It only ever changes when a context was
@@ -93,7 +89,6 @@ export function useWebglSurface(
     let frame = 0;
     let attempts = 0;
     let rebuildTimer = 0;
-    const owner = {};
 
     const rebuild = () => {
       if (released || rebuilt) return;
@@ -133,7 +128,6 @@ export function useWebglSurface(
       }
       canvas.addEventListener("webglcontextlost", onLost);
       canvas.addEventListener("webglcontextrestored", onRestored);
-      canvasOwners.set(canvas, owner);
     };
     attach();
 
@@ -153,12 +147,7 @@ export function useWebglSurface(
       // graph ref here would reach the NEXT scene, because React commits a
       // rebuilt child BEFORE it runs this cleanup — that mistake left the
       // rebuilt map paused and black (2026-08-21).
-      const retiring = canvas;
-      queueMicrotask(() => {
-        if (canvasOwners.get(retiring) !== owner) return;
-        canvasOwners.delete(retiring);
-        releaseWebglContext(retiring);
-      });
+      releaseWebglContext(canvas);
     };
   }, [generation, hostRef]);
 

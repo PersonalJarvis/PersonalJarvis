@@ -10,7 +10,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
-import { StrictMode, useRef } from "react";
+import { useRef } from "react";
 
 import { MAX_CONTEXT_RECOVERIES, useWebglSurface } from "@/hooks/useWebglSurface";
 import { isWebglLost, reportWebglLost } from "@/lib/graphDimension";
@@ -69,16 +69,7 @@ describe("useWebglSurface", () => {
 
     view.unmount();
 
-    await waitFor(() => expect(loseContext).toHaveBeenCalledTimes(1));
-  });
-
-  it("does not release a live canvas during StrictMode effect replay", async () => {
-    const { canvas, loseContext } = fakeCanvas();
-    const view = render(<StrictMode><Surface canvas={canvas} /></StrictMode>);
-    await act(async () => { await Promise.resolve(); });
-    expect(loseContext).not.toHaveBeenCalled();
-    view.unmount();
-    await waitFor(() => expect(loseContext).toHaveBeenCalledTimes(1));
+    expect(loseContext).toHaveBeenCalledTimes(1);
   });
 
   it("survives a lost context: prevents the default and rebuilds the scene", async () => {

@@ -1,4 +1,3 @@
-import { ContactShadows } from "./ContactShadows";
 /**
  * The island, mounted — the world view of the Jarvis Agents section
  * (MASTERPLAN §4.1); look and behaviour per world-masterplan-v2.md.
@@ -188,7 +187,6 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent, onSelectPlac
           <WorldKitProvider>
             <Terrain />
             <Water paused={reduced} />
-            <ContactShadows />
             <Shadowed>
               <Village
                 paused={reduced}

@@ -113,7 +113,7 @@ def _finish(
     if bevel > 0:
         mod = obj.modifiers.new("Bevel", "BEVEL")
         mod.width = bevel
-        mod.segments = 1
+        mod.segments = 2
         mod.limit_method = "ANGLE"
         mod.angle_limit = math.radians(40)
         bpy.context.view_layer.objects.active = obj
@@ -224,7 +224,6 @@ def text_mesh(
     obj.name = name
     obj.data.body = body
     obj.data.size = size
-    obj.data.resolution_u = 2
     obj.data.extrude = extrude
     obj.data.align_x = "CENTER"
     obj.data.align_y = "CENTER"
@@ -960,13 +959,11 @@ def export_glb(root: bpy.types.Object, out_dir: Path) -> Path:
         filepath=str(path),
         export_format="GLB",
         use_selection=True,
-        use_active_scene=True,
         export_apply=True,
         export_yup=True,
         export_animations=False,
         export_extras=True,
-        export_texcoords=True,
-        export_vertex_color="MATERIAL",
+        export_texcoords=False,
         export_normals=True,
         export_materials="EXPORT",
     )
@@ -1038,9 +1035,7 @@ def main(argv: list[str]) -> None:
     args = parser.parse_args(argv)
     if not args.keep_scene:
         clear_scene()
-    from pixel_kit import build
-
-    root = build(args.target, sys.modules[__name__])
+    root = BUILDERS[args.target]()
     path = export_glb(root, Path(args.out))
     print(f"exported {path} ({path.stat().st_size} bytes)")
     if args.preview:

@@ -21,6 +21,7 @@ import {
   TorusGeometry,
   type BufferGeometry,
 } from "three";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 import { BUILDING, CEREMONY, NATURE } from "./worldPalette";
@@ -113,7 +114,7 @@ export function useWorldMaterials(): WorldMaterials {
 /** Unit geometries, scaled per use. Shared by every house, tree and lamp. */
 export interface WorldGeometries {
   /** A unit box with a small bevel — every edge catches the light (§2 shape language). */
-  box: BoxGeometry;
+  box: RoundedBoxGeometry;
   /** The sharp unit box, for thin slabs where a bevel would smear. */
   slab: BoxGeometry;
   cylinder: CylinderGeometry;
@@ -156,7 +157,7 @@ function makePalmCrown(): BufferGeometry {
 }
 
 export function createWorldGeometries(): WorldGeometries {
-  const box = new BoxGeometry(1, 1, 1);
+  const box = new RoundedBoxGeometry(1, 1, 1, 2, 0.05);
   const slab = new BoxGeometry(1, 1, 1);
   const cylinder = new CylinderGeometry(0.5, 0.5, 1, 10);
   const halfCylinder = new CylinderGeometry(0.5, 0.5, 1, 10, 1, false, 0, Math.PI);

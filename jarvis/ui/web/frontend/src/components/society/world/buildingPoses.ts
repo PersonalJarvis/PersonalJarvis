@@ -1,5 +1,3 @@
-import { validBuildingTurn, invalidateNavigation } from "./navigation";
-import { getMotionWorld } from "./locomotion";
 /**
  * The headings a viewer has given the island's buildings — the one store the
  * rotate handle writes and every turned building reads.
@@ -39,7 +37,6 @@ export interface BuildingPoseState {
   selected: BuildingId | null;
   /** True while a handle is being dragged — figure clicks and camera drags stand down. */
   rotating: boolean;
-  rejected: BuildingId | null;
   setYaw: (id: BuildingId, yaw: number, snapStep?: boolean) => void;
   resetYaw: (id: BuildingId) => void;
   resetAll: () => void;
@@ -97,21 +94,22 @@ export const useBuildingPoses = create<BuildingPoseState>((set, get) => ({
   generation: 0,
   selected: null,
   rotating: false,
-  rejected: null,
   setYaw: (id, raw, snapStep = false) => {
     const yaw = settleYaw(id, raw, snapStep);
-    if (!validBuildingTurn(buildIsland(), id, yaw, getMotionWorld()?.actors.values() ?? [])) { set({ rejected: id }); return; }
-    set({ rejected: null });
     const next = { ...get().yaw };
     if (yaw === defaultBuildingYaw(id)) delete next[id];
     else next[id] = yaw;
     commit(next, set, get);
   },
   resetYaw: (id) => {
-    if (id in get().yaw) get().setYaw(id, defaultBuildingYaw(id));
+    if (!(id in get().yaw)) return;
+    const next = { ...get().yaw };
+    delete next[id];
+    commit(next, set, get);
   },
   resetAll: () => {
-    for (const id of Object.keys(get().yaw) as BuildingId[]) get().resetYaw(id);
+    if (Object.keys(get().yaw).length === 0) return;
+    commit({}, set, get);
   },
   select: (selected) => set({ selected }),
   setRotating: (rotating) => set({ rotating }),
@@ -123,23 +121,13 @@ function commit(
   get: () => BuildingPoseState,
 ): void {
   applyBuildingYaws(buildIsland(), yaw);
-  invalidateNavigation();
   set({ yaw, generation: get().generation + 1 });
   write(yaw);
 }
 
 /** Push the stored overrides into the island once it exists — the stage calls this on mount. */
 export function syncBuildingPoses(): void {
-  const stored = useBuildingPoses.getState().yaw;
-  const safe: YawOverrides = {};
-  for (const [id, yaw] of Object.entries(stored)) {
-    if (yaw !== undefined && validBuildingTurn(buildIsland(), id as BuildingId, yaw, [])) {
-      safe[id as BuildingId] = yaw;
-      applyBuildingYaws(buildIsland(), safe);
-    }
-  }
-  useBuildingPoses.setState({ yaw: safe });
-  invalidateNavigation();
+  applyBuildingYaws(buildIsland(), useBuildingPoses.getState().yaw);
 }
 
 /** The heading a building shows right now: the viewer's, else the designed one. */

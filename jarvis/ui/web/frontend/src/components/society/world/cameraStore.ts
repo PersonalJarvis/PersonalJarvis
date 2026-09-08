@@ -12,8 +12,9 @@ import {
   CAMERA_YAW_DEG,
   DEFAULT_ZOOM,
   MAX_ZOOM,
-  snapViewYaw,
+  clampPitch,
   clampTarget,
+  normalizeYaw,
   stepYaw,
   stepZoom,
   type ZoomLevel,
@@ -72,8 +73,8 @@ export function focusFromSearch(
     parts.length > 2 && Number.isInteger(parts[2]) && parts[2] >= 0 && parts[2] <= MAX_ZOOM
       ? (parts[2] as ZoomLevel)
       : DEFAULT_ZOOM;
-  const yaw = parts.length > 3 ? snapViewYaw(parts[3]) : CAMERA_YAW_DEG;
-  const pitch = CAMERA_PITCH_DEG;
+  const yaw = parts.length > 3 ? normalizeYaw(parts[3]) : CAMERA_YAW_DEG;
+  const pitch = parts.length > 4 ? clampPitch(parts[4]) : CAMERA_PITCH_DEG;
   return { target, zoom: z, yaw, pitch };
 }
 
@@ -96,8 +97,8 @@ export const useCameraStore = create<CameraState>((set, get) => ({
   jumpTo: (x, z) => set({ target: clampTarget(x, z) }),
   focusOn: (x, z, zoom) => set({ target: clampTarget(x, z), zoom }),
   zoomStep: (direction) => set((s) => ({ zoom: stepZoom(s.zoom, direction) })),
-  orbitBy: (dYaw) =>
-    set((s) => ({ yaw: snapViewYaw(s.yaw + dYaw), pitch: CAMERA_PITCH_DEG })),
+  orbitBy: (dYaw, dPitch) =>
+    set((s) => ({ yaw: normalizeYaw(s.yaw + dYaw), pitch: clampPitch(s.pitch + dPitch) })),
   turnYaw: (direction) => set((s) => ({ yaw: stepYaw(s.yaw, direction) })),
   resetView: () => set({ yaw: CAMERA_YAW_DEG, pitch: CAMERA_PITCH_DEG }),
   setDragging: (dragging) => set({ dragging }),

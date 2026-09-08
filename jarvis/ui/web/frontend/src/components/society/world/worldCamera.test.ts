@@ -133,10 +133,10 @@ describe("worldCamera", () => {
   it("deep-links the orbit too, clamped and wrapped", () => {
     expect(focusFromSearch("?world=0,0,2,225")?.yaw).toBe(225);
     expect(focusFromSearch("?world=0,0,2,-45")?.yaw).toBe(315);
-    expect(focusFromSearch("?world=0,0,2,225,70")?.pitch).toBe(CAMERA_PITCH_DEG);
+    expect(focusFromSearch("?world=0,0,2,225,70")?.pitch).toBe(70);
     // Past the limits the view is clamped, not refused.
-    expect(focusFromSearch("?world=0,0,2,0,-5")?.pitch).toBe(CAMERA_PITCH_DEG);
-    expect(focusFromSearch("?world=0,0,2,0,120")?.pitch).toBe(CAMERA_PITCH_DEG);
+    expect(focusFromSearch("?world=0,0,2,0,-5")?.pitch).toBe(MIN_PITCH_DEG);
+    expect(focusFromSearch("?world=0,0,2,0,120")?.pitch).toBe(MAX_PITCH_DEG);
     expect(focusFromSearch("?world=0,0,2,abc")?.yaw).toBe(CAMERA_YAW_DEG);
   });
 });
@@ -179,16 +179,16 @@ describe("the orbit", () => {
   });
 
   it("steps the yaw onto the quarter-turn grid", () => {
-    expect(stepYaw(CAMERA_YAW_DEG, 1)).toBe(135);
-    expect(stepYaw(CAMERA_YAW_DEG, -1)).toBe(315);
+    expect(stepYaw(CAMERA_YAW_DEG, 1)).toBe(90);
+    expect(stepYaw(CAMERA_YAW_DEG, -1)).toBe(0);
     // Off the grid a step lands on the next stop, not 45° further on.
-    expect(stepYaw(50, 1)).toBe(135);
-    expect(stepYaw(50, -1)).toBe(315);
+    expect(stepYaw(50, 1)).toBe(90);
+    expect(stepYaw(50, -1)).toBe(45);
     // Four steps from the designed view come back to it.
     let yaw = CAMERA_YAW_DEG;
     for (let i = 0; i < 360 / YAW_STEP_DEG; i++) yaw = stepYaw(yaw, 1);
     expect(yaw).toBe(CAMERA_YAW_DEG);
-    expect(stepYaw(0, -1)).toBe(315);
+    expect(stepYaw(0, -1)).toBe(360 - YAW_STEP_DEG);
   });
 
   it("eases a turn the short way round", () => {

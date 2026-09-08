@@ -67,8 +67,6 @@ function restyle(root: Object3D, ramp: ReturnType<typeof createToonRamp>): Rig {
       const color = translucent ? src.color.clone().lerp(new Color("#ffffff"), 0.45) : src.color.clone();
       o.material = new MeshToonMaterial({
         color,
-        map: src.map,
-        vertexColors: !!o.geometry.getAttribute("color"),
         gradientMap: ramp,
         emissive: emissiveStrength > 0 && !translucent ? src.emissive.clone() : new Color(0, 0, 0),
         emissiveIntensity: emissiveStrength > 0 && !translucent ? Math.min(0.6, src.emissiveIntensity) : 0,

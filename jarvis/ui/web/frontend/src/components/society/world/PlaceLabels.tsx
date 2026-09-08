@@ -1,5 +1,3 @@
-import { useCameraStore } from "./cameraStore";
-import { BUILDING_ASSETS, buildingHeight } from "./worldManifest";
 /**
  * In-world signs over the places, drawn as DOM so they stay legible through
  * the pixel pass. Text comes from the `society` locale chunk; the look from
@@ -36,15 +34,14 @@ const LABEL_Y: Record<PlaceId, number> = {
 
 export function PlaceLabels() {
   const t = useT();
-  const zoom = useCameraStore(s => s.zoom);
   const { map, content } = buildIsland();
   return (
     <group>
-      {(Object.keys(content.places) as PlaceId[]).filter(id => zoom < 3 || ["market", "foundry", "archive", "harbor", "lighthouse", "mine"].includes(id)).map((id) => {
+      {(Object.keys(content.places) as PlaceId[]).map((id) => {
         const pose = id in content.kitPoses ? content.kitPoses[id as keyof typeof content.kitPoses] : null;
         const [tx, tz] = content.places[id].tile;
         const [x, z] = pose ? [pose.x, pose.z] : tileToWorld(tx, tz);
-        const y = groundY(map, x, z) + (id in BUILDING_ASSETS ? buildingHeight(id as keyof typeof BUILDING_ASSETS) + 1 : LABEL_Y[id]);
+        const y = groundY(map, x, z) + LABEL_Y[id];
         return (
           <Html key={id} position={[x, y, z]} center zIndexRange={[20, 5]} style={{ pointerEvents: "none" }}>
             <div className="sw-placelabel">{t(`society.world.place_${id}`)}</div>

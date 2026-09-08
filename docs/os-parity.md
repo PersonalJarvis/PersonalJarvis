@@ -393,19 +393,3 @@ status parity. Realtime confirmation/echo cases use fakes with no microphone
 or provider account. Native macOS execution and a fresh single-key live-provider
 run remain release validation requirements; running this portable contract on
 one operating system does not establish those results.
-
-
-## Pixel diorama (2026-09)
-
-The diorama uses the same WebGL capability probe on Windows, macOS and Linux.
-WebGL absence/loss retains the ledger fallback; no Blender, GPU package or native
-API is imported by application startup. Modelling runs in optional Blender 5,
-including headless builds on all three platforms. The shared navigation worker
-uses browser capabilities, never OS/provider names. Owned GLBs and saved recipe
-IDs are portable; the asset gate is Python stdlib only.
-
-`tests/contract/test_pixel_diorama.py` covers the complete inventory, metadata,
-headless validation and recipe families in the existing platform test matrix.
-Windows browser verification and Linux container validation are performed
-locally. Native macOS rendering requires the macOS CI/device leg; it is not
-represented as a locally executed check.

@@ -32,7 +32,6 @@ import argparse
 import hashlib
 import importlib.util
 import json
-import math
 import re
 import sys
 import urllib.request
@@ -380,40 +379,16 @@ def add_forward_marker(arm: bpy.types.Object) -> bpy.types.Object:
 
 
 def export_glb(path: Path, selection: list[bpy.types.Object], animations: bool) -> None:
-    # Every base and accessory receives the same baked four-value shading.
-    # Palette UVs and bone weights remain intact, including recolourable cells.
-    for obj in selection:
-        if obj.type != "MESH":
-            continue
-        colors = obj.data.color_attributes.get("DioramaColor") or obj.data.color_attributes.new(
-            name="DioramaColor", type="FLOAT_COLOR", domain="CORNER"
-        )
-        obj.data.color_attributes.active_color = colors
-        for poly in obj.data.polygons:
-            normal = poly.normal
-            value = (
-                1.0
-                if normal.z > 0.6
-                else 0.94
-                if normal.y < -0.3
-                else 0.80
-                if normal.x > 0.3
-                else 0.58
-            )
-            for li in poly.loop_indices:
-                colors.data[li].color = (value, value, value, 1.0)
     select_only(selection, selection[0])
     bpy.ops.export_scene.gltf(
         filepath=str(path),
         export_format="GLB",
         use_selection=True,
-        use_active_scene=True,
         export_apply=True,
         export_yup=True,
         export_extras=True,
         export_texcoords=True,
         export_normals=True,
-        export_vertex_color="ACTIVE",
         export_tangents=False,
         export_materials="EXPORT",
         export_image_format="AUTO",
@@ -458,7 +433,6 @@ def skin_part_to_bone(part: bpy.types.Object, arm: bpy.types.Object, bone: str) 
 
 def finish_common(glb: gt.Glb, two_sided: bool = False) -> gt.Glb:
     doc = glb.doc
-    doc.setdefault("asset", {}).setdefault("extras", {})["diorama_style"] = 2
     for sampler in doc.get("samplers", []):
         sampler["magFilter"] = 9728
         sampler["minFilter"] = 9728
@@ -557,13 +531,7 @@ def finish_base(
         f"finished {glb_path.name}: {glb_path.stat().st_size // 1024} KB, "
         f"{tris} tris, clips {sorted(clips)}"
     )
-    radius = math.hypot(max(abs(lo[0]), abs(hi[0])), max(abs(lo[2]), abs(hi[2])))
-    return {
-        "triangles": tris,
-        "clips": sorted(clips),
-        "height_m": extras["height_m"],
-        "motionRadiusM": round(radius, 4),
-    }
+    return {"triangles": tris, "clips": sorted(clips), "height_m": extras["height_m"]}
 
 
 def finish_part(glb_path: Path, spec: dict, target: dict, source: dict, attach: str) -> dict:
@@ -924,7 +892,6 @@ def build_clip_library(source: dict, archetype: dict, out_dir: Path, make_rig) -
         "jarvis_clips": {
             "contract": CONTRACT["contract"],
             "archetype": source["clip_archetype"],
-            "diorama_style": 2,
             "clips": clips,
             "source": clip_source_credit(source),
         }
@@ -948,11 +915,7 @@ def ensure_clip_library(source: dict, archetype: dict, out_dir: Path, make_rig) 
     path = clip_library_path(source, out_dir)
     if path.exists():
         facts = gt.clips_extras(gt.read_glb(path).doc)
-        if (
-            facts
-            and facts.get("contract") == CONTRACT["contract"]
-            and facts.get("diorama_style") == 2
-        ):
+        if facts and facts.get("contract") == CONTRACT["contract"]:
             return {"file": path.name, "clips": facts["clips"]}
     return build_clip_library(source, archetype, out_dir, make_rig)
 

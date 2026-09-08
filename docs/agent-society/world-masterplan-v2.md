@@ -1,7 +1,5 @@
 # World Master Plan v2 — from the first island to a professional game world
 
-> Rendering, camera, owned assets and locomotion are superseded by [Pixel Diorama](pixel-diorama.md), accepted 2026-09-07.
-
 Status: **binding since 2026-09-02** — the maintainer took the four recommended decisions of §9
 (grain off by default, one house per agent, the 15 hubs, the scripted Blender World Kit); this
 document succeeds [`world-art-direction.md`](world-art-direction.md) for everything it covers. Subordinate to

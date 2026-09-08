@@ -36,7 +36,7 @@ FORBIDDEN_EXTENSIONS = {
     "EXT_meshopt_compression",
     "KHR_texture_basisu",
 }
-ALLOWED_ATTRIBUTES = {"POSITION", "NORMAL", "TEXCOORD_0", "JOINTS_0", "WEIGHTS_0", "COLOR_0"}
+ALLOWED_ATTRIBUTES = {"POSITION", "NORMAL", "TEXCOORD_0", "JOINTS_0", "WEIGHTS_0"}
 EXIT_SKIPPED = 78
 
 
@@ -94,7 +94,9 @@ def check_file(
     library = gt.clips_extras(doc)
     extras = figure or part or library
     if extras is None:
-        return ["no asset.extras.jarvis_figure / jarvis_part / jarvis_clips block (contract §4.2)"]
+        return [
+            "no asset.extras.jarvis_figure / jarvis_part / jarvis_clips block (contract §4.2)"
+        ]
     if extras.get("contract") != contract["contract"]:
         problems.append(f"contract version {extras.get('contract')!r} != {contract['contract']}")
     archetype_name = extras.get("archetype")
@@ -185,18 +187,6 @@ def check_file(
                     f"mesh {mesh.get('name')!r} carries attributes "
                     f"{sorted(attrs - ALLOWED_ATTRIBUTES)}"
                 )
-            if "COLOR_0" in prim["attributes"]:
-                color_index = prim["attributes"]["COLOR_0"]
-                color = doc["accessors"][color_index]
-                if (
-                    color["type"] not in {"VEC3", "VEC4"}
-                    or color["count"] != doc["accessors"][prim["attributes"]["POSITION"]]["count"]
-                ):
-                    problems.append("vertex colours must match position count and be RGB/RGBA")
-                for values in gt.accessor_values(glb, color_index):
-                    if any(not math.isfinite(v) or v < 0 or v > 1 for v in values):
-                        problems.append("vertex colours must contain finite unit values")
-                        break
             if "JOINTS_1" in prim["attributes"]:
                 problems.append(
                     f"mesh {mesh.get('name')!r} uses more than "

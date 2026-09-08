@@ -1,7 +1,5 @@
 # World Art Direction — the island
 
-> Rendering, camera, owned assets and locomotion are superseded by [Pixel Diorama](pixel-diorama.md), accepted 2026-09-07.
-
 Status: **binding for M3 (world), decided with the maintainer on 2026-09-01/02.**
 Subordinate to [`MASTERPLAN.md`](MASTERPLAN.md) §4.1/§4.3; this is the art-direction pass the
 master plan requires before environment assets are built. Figures are governed by

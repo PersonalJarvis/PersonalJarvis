@@ -23,11 +23,13 @@ import {
   followAlpha,
   groundBasis,
   orthoHalfExtents,
+  shortestYawDelta,
 } from "./worldCamera";
 
 /** How quickly the camera settles on a new target / zoom, per second. */
 const FOLLOW_RATE = 7;
 /** A stepped quarter turn should read as a swing, so the angles ease slower. */
+const TURN_RATE = 5;
 
 export function WorldCameraRig() {
   const camera = useThree((s) => s.camera) as OrthographicCamera;
@@ -84,10 +86,23 @@ export function WorldCameraRig() {
       cur.x += (tx - cur.x) * a;
       cur.z += (tz - cur.z) * a;
     }
-    // Fixed zoom and view directions never animate through fractional pixel scales.
-    cur.width = targetWidth;
-    cur.yaw = state.yaw;
-    cur.pitch = state.pitch;
+    cur.width += (targetWidth - cur.width) * a;
+    if (Math.abs(targetWidth - cur.width) < 0.01) cur.width = targetWidth;
+
+    // The orbit: while the pointer turns the island it must stick to it, so
+    // only a stepped turn (keyboard, compass) is eased. Yaw takes the short
+    // way round, or a turn past north would swing all the way back.
+    const turn = followAlpha(step, TURN_RATE);
+    const dYaw = shortestYawDelta(cur.yaw, state.yaw);
+    if (state.orbiting) {
+      cur.yaw = state.yaw;
+      cur.pitch = state.pitch;
+    } else {
+      cur.yaw += dYaw * turn;
+      cur.pitch += (state.pitch - cur.pitch) * turn;
+      if (Math.abs(shortestYawDelta(cur.yaw, state.yaw)) < 0.01) cur.yaw = state.yaw;
+      if (Math.abs(state.pitch - cur.pitch) < 0.01) cur.pitch = state.pitch;
+    }
 
     setViewAngles(cur.yaw, cur.pitch);
 
@@ -100,19 +115,8 @@ export function WorldCameraRig() {
     camera.bottom = -halfH;
     camera.near = 1;
     camera.far = CAMERA_FAR_M;
-    // Snap the camera target in the two projected ground axes. Simulation
-    // coordinates remain continuous; only presentation uses the pixel grid.
-    const basis = groundBasis(cur.yaw);
-    const unit = cur.width / Math.max(1, Math.floor(size.width / 2));
-    const right = cur.x * basis.right[0] + cur.z * basis.right[1];
-    const forward = cur.x * basis.forward[0] + cur.z * basis.forward[1];
-    const r = Math.round(right / unit) * unit;
-    const fUnit = unit / Math.sin(cur.pitch * Math.PI / 180);
-    const f = Math.round(forward / fUnit) * fUnit;
-    const sx = r * basis.right[0] + f * basis.forward[0];
-    const sz = r * basis.right[1] + f * basis.forward[1];
-    camera.position.set(sx + offset[0], offset[1], sz + offset[2]);
-    camera.lookAt(sx, 0, sz);
+    camera.position.set(cur.x + offset[0], offset[1], cur.z + offset[2]);
+    camera.lookAt(cur.x, 0, cur.z);
     camera.updateProjectionMatrix();
 
     // Keep the loop alive until every ease has settled.

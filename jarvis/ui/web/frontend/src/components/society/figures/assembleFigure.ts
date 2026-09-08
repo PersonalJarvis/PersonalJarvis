@@ -1,4 +1,3 @@
-import { createToonRamp } from "../world/worldMaterials";
 /**
  * From one loaded base GLB to one agent's figure: a real skinned clone, the
  * recipe's palette painted into the sheet's strip, a Lambert material over
@@ -120,8 +119,6 @@ export interface AssembledFigure {
    * nose and tail.
    */
   renderedSpanM: number;
-  /** Conservative XZ body/accessory envelope in rendered metres. */
-  renderedRadiusM: number;
   dispose(): void;
 }
 
@@ -166,8 +163,6 @@ export function assembleFigure(
   root.add(body);
 
   const owned: Array<{ dispose(): void }> = [];
-  const ramp = createToonRamp();
-  owned.push(ramp);
   let painted: THREE.CanvasTexture | null = null;
   const skinned: THREE.SkinnedMesh[] = [];
   const bodyMeshes: THREE.Mesh[] = [];
@@ -181,7 +176,7 @@ export function assembleFigure(
     // reads white on the dark body under any light, like the mascot in 2D.
     const material = materialSlotOf(original.name) === "marks"
       ? new THREE.MeshBasicMaterial({ map: painted ?? map, color: 0xffffff })
-      : new THREE.MeshToonMaterial({ map: painted ?? map, color: 0xffffff, gradientMap: ramp, vertexColors: !!node.geometry.getAttribute("color") });
+      : new THREE.MeshLambertMaterial({ map: painted ?? map, color: 0xffffff });
     material.name = original.name;
     copySurface(original, material, false);
     node.material = material;
@@ -213,7 +208,7 @@ export function assembleFigure(
       // body carries no palette strip to paint, and a part without a map is
       // a flat white silhouette.
       const map = painted ?? (source as THREE.MeshStandardMaterial).map ?? undefined;
-      const material = new THREE.MeshToonMaterial({ map, color: 0xffffff, gradientMap: ramp, vertexColors: !!node.geometry.getAttribute("color") });
+      const material = new THREE.MeshLambertMaterial({ map, color: 0xffffff });
       material.name = `part-${partExtras.slot}`;
       copySurface(source, material, partExtras.two_sided === true);
       const mesh = new THREE.SkinnedMesh(node.geometry, material);
@@ -270,10 +265,6 @@ export function assembleFigure(
     scale,
     renderedHeightM,
     renderedSpanM,
-    renderedRadiusM: bounds.isEmpty() ? heightM * .5 : Math.hypot(
-      Math.max(Math.abs(bounds.min.x), Math.abs(bounds.max.x)),
-      Math.max(Math.abs(bounds.min.z), Math.abs(bounds.max.z)),
-    ) * scale,
     dispose() {
       mixer.stopAllAction();
       mixer.uncacheRoot(body);

@@ -52,7 +52,6 @@ export function RotateHandle({
   const gl = useThree((s) => s.gl);
   const yaw = useBuildingYaw(id);
   const turned = useIsTurned(id);
-  const rejected = useBuildingPoses(s => s.rejected === id);
   const [hover, setHover] = useState(false);
   const dragging = useRef(false);
 
@@ -134,7 +133,6 @@ export function RotateHandle({
           <span className="sw-rotate-deg" title={t("society.world.rotate_hint")}>
             {degrees}°
           </span>
-          {rejected && <span role="status">{t("society.world.rotate_blocked")}</span>}
           {turned && (
             <button
               type="button"

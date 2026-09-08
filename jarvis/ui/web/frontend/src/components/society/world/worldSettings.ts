@@ -24,7 +24,7 @@ export interface WorldSettings {
   setShadows: (on: boolean) => void;
 }
 
-const KEY = "jarvis.world.look.v2";
+const KEY = "jarvis.world.look.v1";
 
 interface Stored {
   grain?: number;
@@ -35,7 +35,7 @@ interface Stored {
 
 function read(): Stored {
   try {
-    const raw = localStorage.getItem(KEY) ?? localStorage.getItem("jarvis.world.look.v1");
+    const raw = localStorage.getItem(KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Stored;
     return typeof parsed === "object" && parsed !== null ? parsed : {};
@@ -53,7 +53,7 @@ function write(s: Stored): void {
 }
 
 export function normalizeGrain(v: unknown): Grain {
-  return v === 3 ? 3 : 2;
+  return v === 2 || v === 3 ? v : 0;
 }
 
 export function normalizeScale(v: unknown): number {

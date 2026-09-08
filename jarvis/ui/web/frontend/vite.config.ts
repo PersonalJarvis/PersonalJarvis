@@ -67,7 +67,6 @@ function materialIconAssets(): Plugin {
 }
 
 export default defineConfig({
-  cacheDir: ".tmp/vite-cache",
   plugins: [react(), materialIconAssets(), missingNameGate(__dirname)],
   // The society's figures are binary glTF; Vite serves them as fingerprinted
   // assets (docs/agent-society/character-pipeline.md §4.2).
