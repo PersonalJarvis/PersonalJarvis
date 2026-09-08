@@ -120,7 +120,7 @@ describe("Add menu", () => {
     expect(screen.queryByText("plugin-gmail")).toBeNull();
   });
 
-  it("forwards category and natural-language query to the server", async () => {
+  it("forwards category and name query to the server", async () => {
     setup();
     await screen.findByRole("button", { name: /Gmail Read your inbox/ });
     fireEvent.click(screen.getByLabelText("chat_tools.filter"));
@@ -128,16 +128,16 @@ describe("Add menu", () => {
     fireEvent.pointerDown(memoryOption);
     fireEvent.click(memoryOption);
     fireEvent.change(screen.getByLabelText("chat_tools.search"), {
-      target: { value: "what did I decide" },
+      target: { value: "g" },
     });
     await waitFor(
       () => {
         const calls = vi.mocked(fetch).mock.calls;
         const url = String(calls[calls.length - 1][0]);
         expect(url).toContain("category=memory");
-        expect(url).toContain("q=what+did+I+decide");
+        expect(url).toContain("q=g");
       },
-      { timeout: 1500 },
+      { timeout: 500 },
     );
   });
 

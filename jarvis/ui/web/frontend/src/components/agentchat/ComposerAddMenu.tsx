@@ -121,7 +121,7 @@ export function ComposerAddMenu({
             if (!controller.signal.aborted) setLoading(false);
           });
       },
-      query ? 600 : 0,
+      query ? 80 : 0,
     );
     return () => {
       clearTimeout(timer);

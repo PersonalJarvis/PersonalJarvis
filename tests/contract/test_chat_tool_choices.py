@@ -21,6 +21,7 @@ from jarvis.agent_chat.tool_catalog import (
     Category,
     ToolChoice,
     build_catalog,
+    keyword_rank,
     resolve_choices,
     search_catalog,
 )
@@ -212,27 +213,66 @@ def test_wire_category_and_fields_match_typescript():
         assert set(get_args(Category)) <= data["chat_tools"].keys()
 
 
-async def test_discovery_uses_chat_default_model_and_own_client_scope(monkeypatch):
-    ranker = Ranker('{"plugin:gmail": 0.95}')
+def _choice(**kwargs: object) -> ToolChoice:
+    row = dict(
+        id="plugin:gmail",
+        label="Gmail",
+        description="Email",
+        category="plugins",
+        group="Gmail",
+        brand="gmail",
+    )
+    row.update(kwargs)
+    return ToolChoice(**row)
+
+
+async def test_keyword_search_lists_prefix_hits_alphabetically():
+    rows = [
+        _choice(id="plugin:telegram", label="Telegram", group="Telegram", brand="telegram"),
+        _choice(id="plugin:gmail", label="Gmail", group="Gmail", brand="gmail"),
+        _choice(id="plugin:github", label="GitHub", group="GitHub", brand="github"),
+        _choice(
+            id="tool:grep",
+            label="grep",
+            description="Search files",
+            category="files",
+            group="files",
+            brand="",
+        ),
+        _choice(
+            id="skill:daily-brief",
+            label="Daily brief",
+            category="skills",
+            group="skills",
+            brand="",
+        ),
+    ]
+    found, mode = await search_catalog(rows, "g")
+    assert mode == "text"
+    assert [row.id for row in found] == ["plugin:github", "plugin:gmail", "tool:grep"]
+    assert keyword_rank("g", rows[0]) is None
+    mail, mail_mode = await search_catalog(rows, "mail")
+    assert mail_mode == "text"
+    assert [row.id for row in mail] == ["plugin:gmail"]
+
+
+async def test_discovery_is_keyword_search_without_a_model(monkeypatch):
     calls = []
 
-    def get_brain(provider, model, *, scope):
-        calls.append((provider, model, scope))
-        return ranker
+    def get_brain(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("Add search must not open a brain")
 
     fake = SimpleNamespace(_get_brain=get_brain, _fast_model=lambda _provider: "chosen-model")
     monkeypatch.setattr(runner_brain, "brain_manager", lambda: fake)
     monkeypatch.setattr(tool_catalog, "live_catalog", lambda *_a, **_k: inventory()[1])
-    from jarvis.core import config
-
-    monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda _provider: None)
     result = await tool_catalog.discover(
-        provider="openai", model="", query="Inbox", category="plugins", cwd="", stance="ask"
+        provider="openai", model="", query="g", category="plugins", cwd="", stance="ask"
     )
-    assert result["mode"] == "semantic"
-    assert calls == [("openai", "chosen-model", "composer-search")]
+    assert result["mode"] == "text"
+    assert calls == []
+    assert [row["id"] for row in result["items"]] == ["plugin:gmail"]
     assert all(r["category"] == "plugins" for r in result["items"])
-    assert not tool_catalog._ranking_busy
 
 
 def test_discovery_route_serves_catalog_and_openapi_metadata(tmp_path, monkeypatch):

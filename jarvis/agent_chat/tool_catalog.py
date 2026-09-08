@@ -1,7 +1,10 @@
-"""Read-only composer inventory and tool-free semantic discovery.
+"""Read-only composer inventory and keyword discovery for the Add menu.
 
 Selections name existing runtime tools; they never grant permissions or install
 anything. Catalog descriptions and search queries are data, never instructions.
+The Add picker matches names, not meaning: a letter like ``g`` lists Gmail
+ahead of later alphabet hits. Semantic ranking stays available for callers that
+pass a ranker; the Add route never does.
 """
 
 from __future__ import annotations
@@ -18,7 +21,6 @@ from pydantic import BaseModel, ConfigDict
 from jarvis.core.protocols import BrainMessage, BrainRequest, Tool
 
 log = logging.getLogger(__name__)
-_ranking_busy: set[tuple[str, str]] = set()
 Category = Literal[
     "plugins", "skills", "mcp", "memory", "web", "files", "automation", "system", "cli"
 ]
@@ -210,31 +212,14 @@ def live_catalog(brain: Any, *, cwd: str = "", stance: str = "ask") -> list[Tool
 async def discover(
     *, provider: str, model: str, query: str, category: str, cwd: str, stance: str
 ) -> dict[str, Any]:
-    from jarvis.agent_chat.runner_brain import _default_model, brain_manager
-    from jarvis.core.config import get_jarvis_agent_secret, override_provider_secrets
+    from jarvis.agent_chat.runner_brain import brain_manager
 
+    del provider, model  # Add search is keyword-only; the model is not consulted.
     manager = brain_manager()
-    if not model and manager is not None:
-        model = _default_model(manager, provider) or ""
     rows = await asyncio.to_thread(live_catalog, manager, cwd=cwd, stance=stance)
     if category:
         rows = [row for row in rows if row.category == category]
-    ranker = None
-    rank_key = (provider, model)
-    if query.strip() and manager is not None and provider and rank_key not in _ranking_busy:
-        _ranking_busy.add(rank_key)
-        try:
-            secret = get_jarvis_agent_secret(provider)
-            with override_provider_secrets({provider: secret} if secret else {}):
-                ranker = manager._get_brain(provider, model or None, scope="composer-search")
-                found, mode = await search_catalog(rows, query, ranker)
-        except Exception:  # noqa: BLE001 — missing provider still allows ordinary search
-            log.warning("Composer search provider unavailable", exc_info=True)
-            found, mode = await search_catalog(rows, query)
-        finally:
-            _ranking_busy.discard(rank_key)
-    else:
-        found, mode = await search_catalog(rows, query)
+    found, mode = await search_catalog(rows, query)
     return {"items": [r.model_dump(mode="json") for r in found], "mode": mode, "total": len(rows)}
 
 
@@ -284,18 +269,38 @@ def lexical_score(query: str, row: ToolChoice) -> float:
     return (3.0 if q in name else 0.0) + sum(w in text for w in words) / max(1, len(words))
 
 
+def keyword_rank(query: str, row: ToolChoice) -> tuple[int, str, str] | None:
+    """Prefix of a name first, then other name hits, then A–Z.
+
+    Category buckets like ``skills`` are not search keys. A single letter only
+    matches the start of a name, so ``g`` lists Gmail and GitHub, not Telegram.
+    """
+    q = query.casefold().strip()
+    if not q:
+        return None
+    label = row.label.casefold()
+    brand = (row.brand or "").casefold()
+    tokens = re.findall(r"[a-z0-9]+", f"{label} {brand}")
+    if label.startswith(q) or brand.startswith(q) or any(token.startswith(q) for token in tokens):
+        return (0, label, row.id)
+    if len(q) >= 2 and (q in label or q in brand):
+        return (1, label, row.id)
+    return None
+
+
 async def search_catalog(
     rows: list[ToolChoice], query: str, ranker: Any = None
 ) -> tuple[list[ToolChoice], str]:
-    """Rank every candidate by meaning, including queries without lexical overlap.
+    """Name search for Add. Optional ranker keeps meaning-based ranking for tests.
 
-    A provider sees metadata only through Brain.complete with NO tools/history.
-    Invalid output and timeouts return explicitly labelled text search.
+    Add never passes a ranker. A provider that does sees metadata only through
+    Brain.complete with NO tools/history. Invalid output and timeouts return
+    explicitly labelled text search.
     """
     if not query.strip():
         return rows, "browse"
-    lexical = {r.id: lexical_score(query, r) for r in rows}
     if ranker is not None and rows:
+        lexical = {r.id: lexical_score(query, r) for r in rows}
         try:
             scores: dict[str, float] = {}
             # Bound individual requests, not inventory coverage. A timeout falls
@@ -361,6 +366,7 @@ async def search_catalog(
             return found, "semantic"
         except Exception:  # noqa: BLE001 — no model is required to browse or select tools
             log.warning("Composer semantic search unavailable; using text search", exc_info=True)
-    found = [r for r in rows if lexical[r.id] > 0]
-    found.sort(key=lambda r: (-lexical[r.id], r.label.casefold()))
-    return found, "text"
+    ranked = [(keyword_rank(query, r), r) for r in rows]
+    hits = [(rank, row) for rank, row in ranked if rank is not None]
+    hits.sort(key=lambda item: item[0])
+    return [row for _, row in hits], "text"
