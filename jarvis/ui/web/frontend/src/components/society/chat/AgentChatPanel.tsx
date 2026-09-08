@@ -27,6 +27,7 @@ import remarkGfm from "remark-gfm";
 
 import { AgentChatStoreProvider, useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
+import { ToolChoiceChips } from "@/components/agentchat/ToolChoiceChips";
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { DictationStatus } from "@/components/agentchat/DictationStatus";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
@@ -51,6 +52,7 @@ import { AgentSwatch } from "../AgentSwatch";
 import { useResolveProposal, useSocietyCapabilities, type SocietyAgent } from "../data";
 import { MentionPicker } from "./MentionPicker";
 import { AgentModelPicker } from "./AgentModelPicker";
+import { mentionChoice, messageChoices, withoutChoiceTokens } from "./mentionChoices";
 import {
   buildMentionCatalog,
   filterMentions,
@@ -774,11 +776,14 @@ function visibleUserText(text: string): string {
     .trimEnd();
 }
 
-function UserBubble({ item }: { item: UserItem }) {
+export function UserBubble({ item }: { item: UserItem }) {
+  const choices = messageChoices(item);
+  const text = withoutChoiceTokens(visibleUserText(item.text), choices);
   return (
     <div className="flex max-w-[85%] flex-col items-end gap-1 self-end">
       <div className="whitespace-pre-wrap rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-sm leading-relaxed text-foreground">
-        {visibleUserText(item.text)}
+        {text}
+        <ToolChoiceChips items={choices} />
       </div>
       {item.attachments.length > 0 ? (
         <div className="flex flex-wrap justify-end gap-1">
@@ -1057,7 +1062,7 @@ interface ComposerProps {
   onCancel: () => Promise<void>;
 }
 
-function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onSend, onCancel }: ComposerProps) {
+export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onSend, onCancel }: ComposerProps) {
   const t = useT();
   const [modelSaving, setModelSaving] = useState(false);
   const [value, setValue] = useState("");
@@ -1065,6 +1070,8 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
   const [problem, setProblem] = useState<string | null>(null);
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [selectedTools, setSelectedTools] = useState<MentionItem[]>([]);
+  useEffect(() => { setSelectedTools([]); }, [sessionId, agent.agentId]);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -1108,7 +1115,8 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
     if (!mention) return;
     const el = textarea.current;
     const caret = el?.selectionStart ?? value.length;
-    const inserted = `@${item.value} `;
+    const inserted = item.agent ? `@${item.value} ` : "";
+    if (!item.agent) setSelectedTools((items) => items.some((row) => row.key === item.key) ? items : [...items, item]);
     const next = `${value.slice(0, mention.start)}${inserted}${value.slice(caret)}`;
     setValue(next);
     setMention(null);
@@ -1121,7 +1129,9 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
   };
 
   const submit = async () => {
-    const text = value.trim();
+    const draftText = value.trim();
+    const selected = selectedTools;
+    const text = [draftText, ...selected.map((row) => `@${row.value}`)].filter(Boolean).join(" ");
     if (!text || busy || modelSaving) return;
     const named = mentionsInText(text, catalog);
     const lines = named.agents.map(
@@ -1134,8 +1144,11 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
     setProblem(null);
     try {
       await onSend(hint ? `${text}\n\n${hint}` : text, attachments.attachments);
+      setSelectedTools([]);
       attachments.clear();
     } catch (err) {
+      setValue(draftText);
+      setSelectedTools(selected);
       setProblem(err instanceof Error ? err.message : String(err));
     }
   };
@@ -1146,6 +1159,10 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
     <div className="shrink-0 border-t border-border px-3 pb-3 pt-2">
       {problem ? <p className="mb-1 px-1 text-xs text-destructive">{problem}</p> : null}
       <div className={CHAT_MEASURE}>
+        <div className="mb-1.5">
+          <ToolChoiceChips items={selectedTools.map(mentionChoice)}
+            onRemove={(id) => setSelectedTools((items) => items.filter((row) => row.key !== id))} />
+        </div>
         <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
       </div>
       <DictationStatus onStop={dictation.stop} className={cn(CHAT_MEASURE, "mb-1.5")} />
@@ -1182,6 +1199,17 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
           </button>
           {plusOpen ? (
             <div className="absolute bottom-full left-0 z-20 mb-1 w-52 overflow-hidden rounded-lg border border-border bg-popover py-1 shadow-float">
+              <button type="button" onClick={() => {
+                setPlusOpen(false);
+                const caret = textarea.current?.selectionStart ?? value.length;
+                const prefix = value.slice(0, caret);
+                const token = `${prefix && !/\s$/.test(prefix) ? " " : ""}@`;
+                const next = prefix + token + value.slice(caret);
+                onChange(next, caret + token.length);
+                requestAnimationFrame(() => { textarea.current?.focus(); textarea.current?.setSelectionRange(caret + token.length, caret + token.length); });
+              }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground hover:bg-secondary">
+                <Plus className="h-3.5 w-3.5" aria-hidden />{t("chat_tools.all")}
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -1286,7 +1314,7 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={modelSaving || !value.trim()}
+            disabled={modelSaving || (!value.trim() && selectedTools.length === 0)}
             aria-label={t("society.chat.send")}
             className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"
           >

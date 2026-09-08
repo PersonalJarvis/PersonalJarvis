@@ -11,7 +11,9 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } f
 import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
-import { resolveToolBrand } from "@/lib/toolBrand";
+import { ToolChoiceIcon } from "@/components/agentchat/ToolChoiceChips";
+import { toolIdentityStyle } from "@/components/agentchat/toolIdentity";
+import { mentionChoice } from "./mentionChoices";
 import { useT } from "@/i18n";
 
 import { AgentSwatch } from "../AgentSwatch";
@@ -133,9 +135,11 @@ export function MentionPicker({
                   data-index={index}
                   data-kind={item.kind}
                   data-testid="mention-picker-item"
+                  style={item.agent ? undefined : toolIdentityStyle(mentionChoice(item))}
                   onMouseEnter={() => onHover(index)}
                   onClick={() => onPick(item)}
                   className={cn(
+                    !item.agent && "tool-identity",
                     "flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5",
                     active ? "bg-secondary text-foreground" : "text-foreground",
                     !item.connected && "opacity-50",
@@ -199,19 +203,5 @@ function Mark({ item }: { item: MentionItem }) {
   if (item.agent) {
     return <AgentSwatch agent={item.agent} size={20} className="h-5 w-5" />;
   }
-  const brand = resolveToolBrand(item.toolName || item.value);
-  return (
-    <span
-      aria-hidden
-      className="inline-flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-[5px] bg-secondary"
-    >
-      {brand.logoUrl ? (
-        <img src={brand.logoUrl} alt="" className="h-full w-full object-contain p-[2px]" draggable={false} />
-      ) : (
-        <span className="font-mono text-[10px] font-semibold uppercase text-muted-foreground">
-          {brand.monogram}
-        </span>
-      )}
-    </span>
-  );
+  return <ToolChoiceIcon row={mentionChoice(item)} />;
 }
