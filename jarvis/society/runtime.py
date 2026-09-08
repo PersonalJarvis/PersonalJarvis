@@ -158,8 +158,34 @@ class SocietyRuntime:
         self._delivery_task: asyncio.Task[None] | None = None
         self._delivery_unsubscribe: Callable[[], None] | None = None
         self._started = False
+        self._context_start_task: asyncio.Task[bool] | None = None
 
     # ------------------------------------------------------------ lifecycle
+
+    async def prepare_context(self, *, timeout_s: float = 0.3) -> bool:
+        """Bound first-turn team hydration without canceling partial startup.
+
+        Voice/chat may continue while storage is slow. One owned task does the
+        work; close cancels and reaps it before dismantling runtime components.
+        """
+        if self._started:
+            return True
+        task = self._context_start_task
+        if task is None or task.done():
+            task = asyncio.create_task(self._start_for_context(), name="society-context")
+            self._context_start_task = task
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_s)
+        except TimeoutError:
+            return False
+
+    async def _start_for_context(self) -> bool:
+        try:
+            await self.ensure_started()
+        except Exception:  # noqa: BLE001 - optional team must not prevent conversation
+            log.warning("society context startup failed", exc_info=True)
+            return False
+        return True
 
     async def ensure_started(self) -> SocietyRuntime:
         async with self._start_lock:
@@ -227,6 +253,10 @@ class SocietyRuntime:
         return self._get_cfg()
 
     async def close(self) -> None:
+        if self._context_start_task is not None:
+            self._context_start_task.cancel()
+            await asyncio.gather(self._context_start_task, return_exceptions=True)
+            self._context_start_task = None
         if self._delivery_task is not None:
             self._delivery_task.cancel()
             await asyncio.gather(self._delivery_task, return_exceptions=True)

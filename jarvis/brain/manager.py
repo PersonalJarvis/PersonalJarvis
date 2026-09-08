@@ -7170,6 +7170,42 @@ class BrainManager:
         except Exception:  # noqa: BLE001 - optional surface, never fatal
             return False
 
+    async def _run_society_inventory_fast_path(
+        self, user_text: str, *, trace_id: UUID | None = None,
+    ) -> str | None:
+        """Answer a plain roster question from the actual read-only tool.
+
+        This happens before generic routing, acknowledgements and worker
+        selection. Never let a missing runtime turn a roster read into work.
+        """
+        from jarvis.society.intent import is_inventory_question
+
+        if not is_inventory_question(user_text):
+            return None
+        out_lang = resolve_output_language(
+            self._reply_language, self._turn_detected_lang, user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
+        unavailable = {
+            "de": "Ich kann die Agentenliste gerade nicht abrufen.",  # i18n-allow
+            "en": "I cannot retrieve the agent roster right now.",
+            "es": "No puedo consultar la lista de agentes ahora.",
+        }.get(out_lang, "I cannot retrieve the agent roster right now.")
+        tool = self._tools.get("society_status")
+        if tool is None or self._tool_executor is None:
+            return unavailable
+        try:
+            result = await self._tool_executor.execute(
+                tool, {}, user_utterance=user_text,
+                config_snapshot={"output_language": out_lang},
+                trace_id=trace_id or uuid4(),
+            )
+        except Exception:  # noqa: BLE001 - preserve a truthful answer on storage failure
+            log.warning("society inventory lookup failed", exc_info=True)
+            return unavailable
+        return str(result.output or unavailable)
+
     async def _run_agentic_ide_fast_path(
         self,
         user_text: str,
@@ -8371,6 +8407,10 @@ class BrainManager:
             return False
         t = (user_text or "").strip()
         if not t:
+            return False
+        from jarvis.society.lead_card import society_owns_task
+
+        if society_owns_task(t):
             return False
         if "spawn_worker" not in self._tools or self._tool_executor is None:
             return False
@@ -10761,6 +10801,12 @@ class BrainManager:
         # refresh_tools() when they diverge. Never raises.
         maybe_reconcile_tool_surface(self)
 
+        # Conversation use, never app boot: load the persistent team before
+        # planning or building the first prompt, even if Agents was never opened.
+        from jarvis.brain.factory import prepare_society_context
+
+        await prepare_society_context()
+
         # auto mode: resolve this turn's language so _reply_language_directive()
         # hard-pins it (a soft "mirror" drifts to German on tool-synthesis
         # turns — live bug 2026-06-14: an English weather turn answered in
@@ -10835,6 +10881,16 @@ class BrainManager:
                 trace_id=turn_trace_id,
             )
             return confirmation
+
+        society_reply = await self._run_society_inventory_fast_path(
+            user_text, trace_id=turn_trace_id,
+        )
+        if society_reply is not None:
+            await self._record_response_side_effects(
+                user_text=user_text, response_text=society_reply,
+                use_history=use_history, trace_id=turn_trace_id,
+            )
+            return society_reply
 
         # An addressed Agentic-IDE pane outranks every self-configuration gate
         # below — the same precedence the desktop gate already honours further

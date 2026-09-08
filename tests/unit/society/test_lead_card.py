@@ -186,7 +186,7 @@ async def test_society_agent_names_feed_the_realtime_path(rt: SocietyRuntime):
     await rt.roster.create(name="Scout", focus=["core:search-web"])
     await rt.roster.create(name="Sleeper", focus=[])
     await rt.roster.update("sleeper", {"state": "paused"})
-    assert society_agent_names() == ("Gmail agent", "Scout")
+    assert society_agent_names() == ("Gmail agent", "Scout", "Sleeper")
 
 
 def test_without_a_runtime_everything_is_quiet():

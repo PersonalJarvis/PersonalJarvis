@@ -3575,6 +3575,9 @@ class WebServer:
         data_dir = Path(getattr(getattr(self.cfg, "memory", None), "data_dir", None) or "data")
         state = self.app.state
 
+        if getattr(state, "society", None) is not None:
+            return state.society
+
         def _manager() -> Any | None:
             return getattr(state, "mission_manager", None)
 
@@ -3610,7 +3613,7 @@ class WebServer:
             lambda: _service_from_state(state),
             lambda: self.cfg,
         )
-        return SocietyRuntime(
+        state.society = SocietyRuntime(
             data_dir,
             mission_manager=_manager,
             mission_bus=_mission_bus,
@@ -3624,6 +3627,7 @@ class WebServer:
             # WebSocket forwards (SocietyCheckpointChanged).
             event_publish=self.bus.publish,
         )
+        return state.society
 
     def _build_agent_chat_service(self) -> Any:
         """Build the agent-chat service on first use (see agent_chat_routes)."""

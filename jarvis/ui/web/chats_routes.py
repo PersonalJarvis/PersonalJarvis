@@ -31,6 +31,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from jarvis.sessions.formatter import _jarvis_outputs_for_turn
 from jarvis.state.chat_store import ChatStore
 from jarvis.state.conversation_constants import (
     CONVERSATION_KIND_TEXT,
@@ -209,13 +210,24 @@ def _normalized_messages(
                 out.append(
                     ChatTurn(role="user", text=turn.user_text, ts_ms=int(turn.started_ms))
                 )
-            if getattr(turn, "jarvis_text", ""):
+            turn_id = str(getattr(turn, "id", "") or "")
+            turn_events = [
+                event for event in events
+                if turn_id and getattr(event, "turn_id", None) == turn_id
+            ]
+            # Use the export's audible-track projection: preambles and progress
+            # can be all the user heard before hanging up. They remain spoken
+            # history even when no final brain reply or tool call exists.
+            for output in _jarvis_outputs_for_turn(turn, turn_events):
                 out.append(
                     ChatTurn(
                         role="assistant",
-                        text=turn.jarvis_text,
-                        ts_ms=int(turn.ended_ms or turn.started_ms),
-                        trace=_voice_turn_trace(turn, events),
+                        text=output.text,
+                        ts_ms=output.ts_ms,
+                        trace=(
+                            _voice_turn_trace(turn, events)
+                            if output.is_reply else None
+                        ),
                     )
                 )
         return out

@@ -1,5 +1,20 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+**Society voice orchestration, 2026-09-07:** Persistent-team inventory,
+contextual assignments, assignment tracking and measured activity reuse the
+existing society roster, board and scheduler. Voice creation and profile/model
+updates use Command Registry tools mapped to the existing Agents REST routes.
+These paths share the same pure Python/SQLite/ASGI implementation on Windows,
+macOS and Linux, including headless installs; no native API, microphone, GPU or
+provider key is needed for roster management. An unavailable runtime/server
+returns an explicit failure. Execution of an assignment still depends on the
+agent's existing configured runner and scheduler policy; no provider is selected
+or changed globally. Contract coverage is in
+`tests/contract/test_society_voice_management.py`, with assignment/readback
+regressions in `tests/unit/plugins/tool/test_delegate_to_agent.py`. These are
+headless tests on the available host, not evidence of native macOS/Linux or
+paid-provider voice execution.
+
 **Binding rule:** [`CLAUDE.md`](../CLAUDE.md) §3 *"OS feature parity — macOS
 and Linux are first-class"*. Every feature ships working on Windows, macOS,
 and Linux (desktop AND headless) in the same change. A Windows-only

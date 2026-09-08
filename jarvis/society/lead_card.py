@@ -62,15 +62,24 @@ def _rule_block(lead_name: str) -> str:
         "specialist is not email: never call gmail for this. Internal messages need no extra "
         "confirmation. Report the actual queued/delivered/failed receipt.\n"
         "- Hand work to an agent with delegate_to_agent (the agent's name and the task in "
-        "full). The agent works in the background; you acknowledge now and its result "
-        "comes back to this conversation.\n"
+        "full, relevant conversation context, completion_criteria and refs). Report "
+        "the actual assignment receipt, keep its assignment and trace identifiers, "
+        "and use society_status to follow results.\n"
         "- Answer \"which agents do you have\", \"who is on the team\", \"what is X "
-        "doing\", \"is X done\" from this card or with society_status — never from the "
-        "retired sub-agent or mission-worker system.\n"
+        "doing\", \"is X done\" with society_status — never from the "
+        "retired sub-agent or mission-worker system. These are read-only questions: "
+        "never assign work or announce a spawn for them. Use details=true for actual "
+        "roles, capabilities and measured event history; never invent performance scores.\n"
         "- A task that fits an agent's hands (mail to a mail agent, research to a "
-        "research agent) goes to that agent when the user asks for the team or names it; "
+        "research agent) goes to that agent for suitable background work, even when "
+        "the user does not name it. Honor requests to handle work directly; "
         "when no agent fits, do it yourself. spawn_worker is only for heavy background "
         "work the user explicitly asked to run in the background that no agent covers.\n"
+        "- Create or reconfigure an agent only when requested: use society-create-agent, "
+        "society-update-agent or society-switch-agent-model through the app commands. "
+        "Inspect society-capability-catalog for capabilities and society-agent-catalog "
+        "for models. These commands share the "
+        "Agents section's validation. Verify the returned state before claiming success.\n"
         "- Coding terminals in the Agentic IDE (Claude Code, Codex and the like) are NOT "
         "agents of this society; they are reached through the workspace tools."
     )
@@ -189,10 +198,32 @@ def society_agent_names() -> tuple[str, ...]:
         return ()
     return tuple(
         sorted(
-            (a.name for a in agents if a.agent_id != rt.lead_id and str(a.state) == "active"),
+            (a.name for a in agents if a.agent_id != rt.lead_id and str(a.state) != "archived"),
             key=str.casefold,
         )
     )
+
+
+def society_owns_task(text: str) -> bool:
+    """Keep matching tasks with the team before generic mission heuristics.
+
+    This only defers tool selection to the orchestrator; it never assigns
+    work. The same catalog/roster fit rule powers delegate_to_agent.
+    """
+    from .intent import blocks_background_spawn, explicitly_requests_worker
+
+    if blocks_background_spawn(text, society_agent_names()):
+        return True
+    if explicitly_requests_worker(text):
+        return False
+    runtime = current_runtime()
+    if runtime is None:
+        return False
+    try:
+        return runtime.pick_agent(text) is not None
+    except Exception:  # noqa: BLE001 - optional fit hint must not break routing
+        log.debug("society task fit unavailable", exc_info=True)
+        return False
 
 
 def lead_card_section(*, lead_name: str = "Jarvis") -> str:

@@ -93,15 +93,22 @@ class SocietyStore:
             return
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(self._db_path, isolation_level=None)
-        await conn.execute("PRAGMA journal_mode=WAL")
-        await conn.execute("PRAGMA synchronous=NORMAL")
-        await conn.execute("PRAGMA busy_timeout=5000")
-        await conn.execute("PRAGMA foreign_keys=ON")
-        await conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
-        self._conn = conn
-        await self._apply_migrations()
-        await self._ensure_fts()
-        await self.set_meta(_KEY_SCHEMA_VERSION, str(SCHEMA_VERSION))
+        try:
+            await conn.execute("PRAGMA journal_mode=WAL")
+            await conn.execute("PRAGMA synchronous=NORMAL")
+            await conn.execute("PRAGMA busy_timeout=5000")
+            await conn.execute("PRAGMA foreign_keys=ON")
+            await conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+            self._conn = conn
+            await self._apply_migrations()
+            await self._ensure_fts()
+            await self.set_meta(_KEY_SCHEMA_VERSION, str(SCHEMA_VERSION))
+        except BaseException:
+            # Includes cancellation of first-turn initialization on shutdown.
+            # The provisional connection is owned here until open completes.
+            self._conn = None
+            await conn.close()
+            raise
 
     async def _apply_migrations(self) -> None:
         """Idempotent column migrations for databases created by older builds."""
@@ -293,6 +300,30 @@ class SocietyStore:
         rows = await cur.fetchall()
         await cur.close()
         return [_row_to_envelope(r) for r in rows]
+
+    async def get_event(self, event_id: str) -> SocietyEnvelope | None:
+        """Read a durable event by its exact id, independently of recent-history limits."""
+        cur = await self.conn.execute(
+            f"SELECT {_EVENT_COLUMNS} FROM society_events WHERE event_id = ?",  # noqa: S608 — fixed identifiers, bound values
+            (event_id,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        return _row_to_envelope(row) if row is not None else None
+
+    async def latest_assignment_for_agent(
+        self, agent_id: str, *, from_agent: str
+    ) -> SocietyEnvelope | None:
+        """Newest assignment from one sender to one agent, across the complete board."""
+        cur = await self.conn.execute(
+            f"SELECT {_EVENT_COLUMNS} FROM society_events "  # noqa: S608 — fixed identifiers, bound values
+            "WHERE msg_type = 'ASSIGN' AND to_agent = ? AND from_agent = ? "
+            "ORDER BY seq DESC LIMIT 1",
+            (agent_id, from_agent),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        return _row_to_envelope(row) if row is not None else None
 
     async def events_for_trace(self, trace_id: str) -> list[SocietyEnvelope]:
         cur = await self.conn.execute(

@@ -152,6 +152,70 @@ async def test_get_voice_conversation_flattens_turns() -> None:
     ]
 
 
+async def test_voice_history_keeps_preambles_when_hangup_precedes_reply() -> None:
+    app, _ = await _make_app(with_session=True, with_brain=True)
+    turn = app.state.session_store.get_turns("v1")[0]
+    turn.id = "v1-auto-1"
+    turn.jarvis_text = ""
+    events = [
+        SimpleNamespace(
+            turn_id=turn.id,
+            kind="SpeechSpoken",
+            ts_ms=timestamp,
+            seq=index,
+            payload={"text": text, "spoken_kind": "preamble"},
+        )
+        for index, (timestamp, text) in enumerate(
+            [(1_200, "I am checking the team."), (1_400, "Still working on it.")]
+        )
+    ]
+    app.state.session_store.get_events = lambda cid: events
+
+    async with _client(app) as client:
+        detail = (await client.get("/api/chats/voice/v1")).json()
+        resumed = await client.post("/api/chats/voice/v1/resume")
+
+    assert [(m["role"], m["text"], m["ts_ms"]) for m in detail["messages"]] == [
+        ("user", "how is the weather", 1_000),
+        ("assistant", "I am checking the team.", 1_200),
+        ("assistant", "Still working on it.", 1_400),
+    ]
+    assert all(m["trace"] is None for m in detail["messages"])
+    assert resumed.status_code == 200
+    assert app.state.brain.seeded[-1] == ("assistant", "Still working on it.")
+
+
+async def test_voice_history_prefers_heard_reply_and_keeps_spoken_fallback() -> None:
+    app, _ = await _make_app(with_session=True)
+    turn = app.state.session_store.get_turns("v1")[0]
+    turn.id = "v1-turn-1"
+    turn.jarvis_text = "Unspoken original reply."
+    events = [
+        SimpleNamespace(
+            turn_id=turn_id,
+            kind=kind,
+            ts_ms=1_100 + index * 50,
+            seq=index,
+            payload={"text": text, "spoken_kind": spoken_kind},
+        )
+        for index, (turn_id, kind, spoken_kind, text) in enumerate([
+            (turn.id, "ResponseGenerated", "", "Unspoken original reply."),
+            (turn.id, "SpeechSpoken", "preamble", "Checking now."),
+            (turn.id, "SpeechSpoken", "withheld", "I could not finish that answer."),
+            (turn.id, "SpeechSpoken", "reply", "The reply actually heard."),
+            ("another-turn", "SpeechSpoken", "reply", "Someone else's reply."),
+        ])
+    ]
+    app.state.session_store.get_events = lambda cid: events
+
+    async with _client(app) as client:
+        detail = (await client.get("/api/chats/voice/v1")).json()
+
+    assert [m["text"] for m in detail["messages"] if m["role"] == "assistant"] == [
+        "Checking now.", "I could not finish that answer.", "The reply actually heard.",
+    ]
+
+
 async def test_get_unknown_conversation_404() -> None:
     app, _ = await _make_app()
     async with _client(app) as c:

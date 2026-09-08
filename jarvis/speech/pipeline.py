@@ -5347,10 +5347,13 @@ class SpeechPipeline:
             return
         try:
             from jarvis.brain.ack_generator import is_voice_control_utterance
+            from jarvis.society.lead_card import society_agent_names, society_owns_task
 
             if is_voice_control_utterance(text):
                 return
-            plan = plan_instant_ack(plan_turn(text), text)
+            if society_owns_task(text):
+                return
+            plan = plan_instant_ack(plan_turn(text, agent_names=society_agent_names()), text)
         except Exception:  # noqa: BLE001 — planning must never break the turn
             log.debug("Instant ack: planning failed", exc_info=True)
             return
@@ -14829,7 +14832,11 @@ class SpeechPipeline:
         # ``SpeechPipeline.__new__(SpeechPipeline)`` (see e.g.
         # tests/unit/speech/test_turn_taking.py:65) and don't always
         # set every attribute. Treat a missing _ack_brain as disabled.
-        if getattr(self, "_ack_brain", None) is not None:
+        from jarvis.brain.factory import prepare_society_context
+        from jarvis.society.intent import is_inventory_question
+
+        await prepare_society_context()
+        if getattr(self, "_ack_brain", None) is not None and not is_inventory_question(text):
             asyncio.create_task(  # noqa: RUF006 — intentional fire-and-forget
                 self._spawn_flash_brain_ack(text, lang),
                 name="flash-brain-ack",

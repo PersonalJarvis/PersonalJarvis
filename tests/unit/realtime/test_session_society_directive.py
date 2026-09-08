@@ -48,9 +48,10 @@ def test_the_directive_routes_the_team_to_the_action_function(society: Any) -> N
     assert "do not know who" in directive
 
 
-def test_no_society_no_directive(society: Any) -> None:
+def test_empty_snapshot_requires_verified_lookup(society: Any) -> None:
     society(())
-    assert _directive() == ""
+    assert "use society_status to verify" in _directive()
+    assert "read-only lookup" in _directive()
 
 
 def test_the_instructions_carry_the_directive_in_both_profiles() -> None:

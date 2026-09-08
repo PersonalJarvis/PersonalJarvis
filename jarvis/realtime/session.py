@@ -3147,12 +3147,18 @@ class RealtimeVoiceSession:
         the orchestrator, which owns delegate_to_agent and society_status.
         """
         names = self._society_agent_names()
-        if not names:
-            return ""
-        roster = ", ".join(names)
+        roster = ", ".join(names) if names else "not loaded; use society_status to verify"
         return (
             "[Agent society — the user's own agents, live right now]\n"
             f"Agents on the user's team: {roster}.\n"
+            "For an agent-list or status QUESTION call society_status via your action "
+            "function. This is a read-only lookup: do not assign work, spawn a worker, "
+            "or announce that any agent is starting. An empty name snapshot does not "
+            "prove the user has no agents. Creation and reconfiguration use the "
+            "society-create-agent, society-update-agent and society-switch-agent-model "
+            "app commands; inspect society-capability-catalog for valid capabilities "
+            "and society-agent-catalog for models. "
+            "Report management changes only after a successful tool result. "
             "To send a message TO an agent, use message_agent (target, text), or "
             "ask jarvis_action to use message_agent if it is not directly available. "
             "This is an internal chat message, not an email: never use gmail or "
@@ -3766,6 +3772,9 @@ class RealtimeVoiceSession:
         return status, self._has_viable_alternate(provider)
 
     async def _open(self) -> None:
+        from jarvis.brain.factory import prepare_society_context
+
+        await prepare_society_context()
         loop = asyncio.get_running_loop()
         # A provider may DECLARE a larger handshake need (a capability, never
         # a provider-name check — AP-21): the Codex subscription transport
@@ -5319,7 +5328,10 @@ class RealtimeVoiceSession:
                         )
                         planner_forces_delegate = bool(
                             turn_plan.requires_orchestrator
-                            and (not hybrid_turn or screen_context_turn)
+                            and (
+                                not hybrid_turn or screen_context_turn
+                                or "society_status" in turn_plan.required_capabilities
+                            )
                         )
                         if (
                             self._last_user_text
@@ -5329,6 +5341,7 @@ class RealtimeVoiceSession:
                                 self._delegate_enabled
                                 or screen_context_turn
                                 or grounding_turn
+                                or "society_status" in turn_plan.required_capabilities
                             )
                         ):
                             self._delegate_required_for_turn = (

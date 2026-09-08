@@ -634,6 +634,12 @@ def llm_spawn_allowed(user_text: str) -> bool:
     text = (user_text or "").strip()
     if not text:
         return False
+    from jarvis.society.lead_card import society_owns_task
+
+    if society_owns_task(text):
+        OFFER_WINDOW.disarm()
+        log.info("spawn gate: persistent team owns this turn")
+        return False
     if _is_decline_or_feature_talk(text):
         log.info("spawn gate: decline / feature talk — spawn blocked")
         return False

@@ -11,6 +11,56 @@ Every command below is available on four surfaces backed by the SAME endpoint an
 
 Commands marked **requires confirmation** never run on a bare voice request — Jarvis asks first (two-turn confirm); the CLI needs `--yes`.
 
+## `society-create-agent` — Create a persistent team agent
+
+Create an agent in the user's existing Agents team, only when requested. This creates a roster profile and starts no work. Responsibilities derive capabilities through the same service as the Agents UI. Read the returned agent and created flag: an existing name is adopted, never duplicated. Use society-switch-agent-model only if a specific provider is requested.
+
+- **Endpoint:** `POST /api/society/agents`
+- **Arguments:** `name` (string; required); `title` (string; optional); `description` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "create an agent for researching suppliers"
+
+## `society-update-agent` — Update a persistent team agent
+
+Change an existing agent's responsibilities, skills, focus, budget or paused/active state as requested by the user. Resolve its real id with society_status first. Only send requested fields. Existing learned focus and approval rules survive prose edits. Report the returned stored agent.
+
+- **Endpoint:** `PATCH /api/society/agents/{agent_id}`
+- **Arguments:** `agent_id` (string; required); `title` (string; optional); `description` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional); `state` (one of: active, paused; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "update Scout's responsibilities"
+
+## `society-capability-catalog` — Read the team's capability catalog
+
+Read the live capability ids, descriptions and connection state available to the persistent Agents team. Use these ids when setting agent focus; unconnected capabilities are not available hands. This reads no model catalog.
+
+- **Endpoint:** `GET /api/society/capabilities`
+- **Arguments:** none
+- **Requires confirmation:** no
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "which capabilities can my agents use"
+
+## `society-agent-catalog` — Read available agent models
+
+Read the live provider and model catalog for persistent society agents before a requested model change.
+
+- **Endpoint:** `GET /api/agent-chat/catalog`
+- **Arguments:** `surface` (one of: society; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "which models are available for my agents"
+
+## `society-switch-agent-model` — Change one team agent's model
+
+Change one persistent agent's provider/model/effort only on user request. Use society-agent-catalog to select a supported model. Reuses the Agents UI model-switch endpoint and preserves the canonical chat. Report the returned stored state and whether reseated is confirmed.
+
+- **Endpoint:** `POST /api/society/agents/{agent_id}/model`
+- **Arguments:** `agent_id` (string; required); `provider` (string; required); `model` (string; optional); `effort` (string; optional); `account_id` (string; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "change Scout's model"
+
 ## `brain-switch` — Switch brain provider
 
 Switch the ACTIVE main brain (LLM) provider, e.g. from openai to claude-api. Reversible; validated against the provider catalog and stored credentials.

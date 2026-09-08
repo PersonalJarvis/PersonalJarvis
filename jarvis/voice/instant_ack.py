@@ -107,6 +107,10 @@ def plan_instant_ack(turn_plan: TurnPlan | None, utterance: str = "") -> Instant
     if turn_plan is None or not turn_plan.requires_orchestrator:
         return None
     reasons = set(turn_plan.reasons)
+    if TurnReason.SOCIETY in reasons:
+        # The team tools return their own factual receipts quickly. A planner
+        # reason is not evidence that an agent was assigned or a worker started.
+        return None
     if TurnReason.MISSION in reasons:
         return InstantAckPlan(WorkClass.MISSION, IMMEDIATE_DELAY_S, False)
     if TurnReason.SCREEN_CONTEXT in reasons:

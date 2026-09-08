@@ -114,6 +114,38 @@ async def test_survives_a_crash_between_persist_and_publish(store: SocietyStore,
     assert len(await store.events_since(0)) == 1
 
 
+async def test_cancelled_open_closes_provisional_connection(tmp_path, monkeypatch):
+    import asyncio
+
+    from jarvis.society import store as store_module
+
+    entered = asyncio.Event()
+
+    class Connection:
+        closed = False
+
+        async def execute(self, _statement):
+            entered.set()
+            await asyncio.Event().wait()
+
+        async def close(self):
+            self.closed = True
+
+    connection = Connection()
+
+    async def connect(*args, **kwargs):
+        return connection
+
+    monkeypatch.setattr(store_module.aiosqlite, "connect", connect)
+    store = store_module.SocietyStore(tmp_path / "cancel.db")
+    opening = asyncio.create_task(store.open())
+    await entered.wait()
+    opening.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await opening
+    assert connection.closed and store._conn is None
+
+
 async def test_open_is_idempotent(tmp_path: Path):
     s = SocietyStore(tmp_path / "society.db")
     await s.open()

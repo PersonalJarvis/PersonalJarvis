@@ -690,6 +690,10 @@ def _is_society_turn(text: str, agent_names: Sequence[str]) -> bool:
     raw = str(text or "")
     if not raw.strip():
         return False
+    from jarvis.society.intent import is_inventory_question, is_team_management_request
+
+    if is_inventory_question(raw) or is_team_management_request(raw):
+        return True
     folded = _normalize(raw)
     for name in agent_names:
         needle = _normalize(str(name or "")).strip()
@@ -883,6 +887,16 @@ def plan_turn(
     normalized = _normalize(text).strip()
     if not normalized:
         return TurnPlan(path=TurnPath.NATIVE_REALTIME)
+
+    from jarvis.society.intent import is_inventory_question
+
+    if is_inventory_question(text):
+        return TurnPlan(
+            path=TurnPath.ORCHESTRATOR,
+            reasons=frozenset({TurnReason.SOCIETY}),
+            required_capabilities=("society_status",),
+            requires_evidence=True,
+        )
 
     reasons: set[TurnReason] = set()
     # Same standing as a named pane, for the same reason: "what is the Gmail

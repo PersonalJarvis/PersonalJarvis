@@ -158,10 +158,134 @@ def _provider_switch_params(
     }
 
 
+def _society_profile_properties() -> dict[str, Any]:
+    """Voice-editable profile fields; execution uses the existing roster REST route."""
+    return {
+        "title": _str_param("The agent's responsibility or role.", max_length=120),
+        "description": _str_param("Detailed responsibilities and instructions.", max_length=20_000),
+        "tier": _str_param("Team role.", enum=["specialist", "orchestrator"]),
+        "focus": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Capability ids; omit to derive from responsibilities.",
+        },
+        "skills": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Skill ids explicitly requested by the user.",
+        },
+        "daily_budget_usd": {
+            "type": "number", "minimum": 0,
+            "description": "Daily spending limit requested by the user.",
+        },
+        "max_concurrent_runs": {
+            "type": "integer", "minimum": 1,
+            "description": "Maximum simultaneous assignments.",
+        },
+    }
+
+
 def _build_registry() -> tuple[AppCommand, ...]:
     """Assemble the curated v1 command set (high-value commands first —
     the long tail stays reachable through the dynamic CLI ``api`` layer)."""
     return (
+        AppCommand(
+            id="society-create-agent",
+            title="Create a persistent team agent",
+            description=(
+                "Create an agent in the user's existing Agents team, only when requested. "
+                "This creates a roster profile and starts no work. Responsibilities derive "
+                "capabilities through the same service as the Agents UI. Read the returned "
+                "agent and created flag: an existing name is adopted, never duplicated. "
+                "Use society-switch-agent-model only if a specific provider is requested."
+            ),
+            method="POST", path="/api/society/agents", ui_section="agents",
+            params={"type": "object", "properties": {
+                "name": _str_param("Requested unique agent name.", min_length=1, max_length=40),
+                **_society_profile_properties(),
+            }, "required": ["name"]},
+            voice_aliases={
+                "de": ("erstelle einen rechercheagenten",),  # i18n-allow: input vocab
+                "en": ("create an agent for researching suppliers",),
+                "es": ("crea un agente para investigar proveedores",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="society-update-agent",
+            title="Update a persistent team agent",
+            description=(
+                "Change an existing agent's responsibilities, skills, focus, budget or "
+                "paused/active state as requested by the user. Resolve its real id with "
+                "society_status first. Only send requested fields. Existing learned focus "
+                "and approval rules survive prose edits. Report the returned stored agent."
+            ),
+            method="PATCH", path="/api/society/agents/{agent_id}",
+            path_params=("agent_id",), ui_section="agents",
+            params={"type": "object", "properties": {
+                "agent_id": _str_param("Real agent id from society_status.", min_length=1),
+                **_society_profile_properties(),
+                "state": _str_param("Requested state.", enum=["active", "paused"]),
+            }, "required": ["agent_id"]},
+            voice_aliases={
+                "de": ("ändere Scouts aufgaben",),  # i18n-allow: input vocab
+                "en": ("update Scout's responsibilities",),
+                "es": ("cambia las responsabilidades de Scout",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="society-capability-catalog",
+            title="Read the team's capability catalog",
+            description=(
+                "Read the live capability ids, descriptions and connection state available "
+                "to the persistent Agents team. Use these ids when setting agent focus; "
+                "unconnected capabilities are not available hands. This reads no model catalog."
+            ),
+            method="GET", path="/api/society/capabilities", ui_section="agents",
+            voice_aliases={
+                "de": ("welche werkzeuge können meine agenten nutzen",),  # i18n-allow: input vocab
+                "en": ("which capabilities can my agents use",),
+                "es": ("qué capacidades pueden usar mis agentes",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="society-agent-catalog",
+            title="Read available agent models",
+            description=(
+                "Read the live provider and model catalog for persistent society agents "
+                "before a requested model change."
+            ),
+            method="GET", path="/api/agent-chat/catalog", ui_section="agents",
+            params={"type": "object", "properties": {
+                "surface": {"type": "string", "enum": ["society"], "default": "society"},
+            }},
+            voice_aliases={
+                "de": ("welche modelle gibt es für meine agenten",),  # i18n-allow: input vocab
+                "en": ("which models are available for my agents",),
+                "es": ("qué modelos pueden usar mis agentes",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="society-switch-agent-model",
+            title="Change one team agent's model",
+            description=(
+                "Change one persistent agent's provider/model/effort only on user request. "
+                "Use society-agent-catalog to select a supported model. Reuses the Agents "
+                "UI model-switch endpoint and preserves the canonical chat. Report the "
+                "returned stored state and whether reseated is confirmed."
+            ),
+            method="POST", path="/api/society/agents/{agent_id}/model",
+            path_params=("agent_id",), ui_section="agents",
+            params={"type": "object", "properties": {
+                "agent_id": _str_param("Real agent id from society_status.", min_length=1),
+                "provider": _str_param("Provider id from the live society catalog.", min_length=1),
+                "model": _str_param("Model id offered for that provider."),
+                "effort": _str_param("Supported reasoning effort."),
+                "account_id": _str_param("Explicitly requested existing subscription account id."),
+            }, "required": ["agent_id", "provider"]},
+            voice_aliases={
+                "de": ("wechsle das modell von Scout",),  # i18n-allow: input vocab
+                "en": ("change Scout's model",),
+                "es": ("cambia el modelo de Scout",),  # i18n-allow: input vocab
+            },
+        ),
         # ------------------------------------------------------ providers
         AppCommand(
             id="brain-switch",

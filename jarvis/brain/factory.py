@@ -736,6 +736,21 @@ def _resolve_society_runtime() -> Any:
     return _SOCIETY_FACTORY_REF[0]()
 
 
+async def prepare_society_context() -> None:
+    """Warm the existing team on first conversation use, outside app boot.
+
+    The server factory returns its one instance even while initialization is
+    in flight. The runtime's lock serializes concurrent voice/chat first turns.
+    Unavailable storage must never prevent an ordinary conversation.
+    """
+    try:
+        runtime = _resolve_society_runtime()
+        if runtime is not None:
+            await runtime.prepare_context()
+    except Exception:  # noqa: BLE001 - optional team cannot prevent conversation
+        log.warning("society context initialization failed", exc_info=True)
+
+
 def _resolve_mission_manager() -> Any:
     """Resolve the MissionManager for the ``spawn_worker`` tool.
 
