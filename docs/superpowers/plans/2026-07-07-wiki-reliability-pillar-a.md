@@ -33,7 +33,8 @@ fakes in `tests/fakes/` — never `unittest.mock`).
   boot headless on `python:3.11-slim` (Obsidian features degrade to quiet
   no-ops).
 - Git: commit after each task, staging ONLY the files you touched by explicit
-  path (`git add <paths>`), Conventional-Commit messages, never push.
+  path (`git add <paths>`), Conventional-Commit messages. Use the standard
+  Git workflow (`AGENTS.md` §4); an ordinary push is not a release.
 - Working tree is shared with other sessions: never `git add -A`/`git add .`.
 - New worktree? Run `pwsh scripts/preflight.ps1` first (AP-8). Live-app code
   changes take effect only after `POST /api/settings/restart-app`.

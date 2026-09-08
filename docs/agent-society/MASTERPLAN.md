@@ -1,6 +1,7 @@
 # Agent Society — Master Plan
 
-Status: **building. Nothing ships or gets pushed until the maintainer says so.** Working
+Status: **building.** Wave landings use the standard Git workflow; a product
+release stays explicit and separate. Working
 codename: `society`; the section keeps the name "Jarvis Agents" (§10).
 
 Progress (2026-09-01/02): **M1 done** — `jarvis/society/` substrate, `/api/society`, the
@@ -330,7 +331,7 @@ add the four controls it lacked: authenticated writes (chokepoint), bounded non-
   World visual identity: see §4.3 — the world carries its own bright game branding and is exempt
   from both Ink & Paper and the Cursor-derived design doc.
 
-## 8. Milestones (~1 month, sequential waves; nothing pushes until the maintainer says so)
+## 8. Milestones (~1 month, sequential waves)
 
 - **M1 — Substrate (T3).** `society.db` (roster/events/knowledge/approvals), typed protocol enums
   (five-layer + parity tests), scheduler with tier wall + budgets + kill switch, mission-event

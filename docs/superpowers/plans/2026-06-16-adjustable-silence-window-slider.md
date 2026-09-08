@@ -969,5 +969,5 @@ git commit -m "test(silence-window): e2e verification (chrome-checkup + voice lo
 
 - Use `"/c/Program Files/Python311/python.exe"` for pytest (the Hermes venv `python` has no pytest), per the project memory.
 - The working tree is SHARED across parallel sessions. Stage only this feature's files per commit (the exact `git add` lines above), never `git add -A` except in Task 9 Step 6 where it is scoped to verification artifacts you created.
-- Do NOT commit/push to any remote unless the maintainer asks — these are local commits only.
+- Use the standard Git workflow (`AGENTS.md` §4). An ordinary push is not a release.
 - `_patch_table`, `DEFAULT_CONFIG_FILE`, and `resolve_config_path` already exist in their modules (used by every sibling setter); no new imports beyond what each snippet shows.
