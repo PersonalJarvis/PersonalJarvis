@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Microsoft Store package manifest for Personal Jarvis.
+
+  build-msix.ps1 fills the {{...}} placeholders and copies this file to the
+  root of the staged package before makeappx packs it. Nothing else here is
+  generated, so what the Store certifies is what is in git.
+
+  Identity/Name and Identity/Publisher are assigned by Partner Center when the
+  app name is reserved (Product management > Product identity). They come in
+  as MSSTORE_IDENTITY_NAME and MSSTORE_PUBLISHER; the Store rejects a package
+  whose identity does not match the reservation, so placeholders only ever
+  produce a package for testing the packaging itself.
+
+  runFullTrust: the app is a classic Win32 program (a PyInstaller bundle). It
+  runs with the user's rights, outside the UWP sandbox, which is what lets it
+  drive other windows, read the screen and talk to the microphone the way the
+  downloaded installer's copy does. The Store shows this capability on the
+  listing; it is not a special permission the user grants.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="{{IdentityName}}"
+    Publisher="{{Publisher}}"
+    Version="{{Version}}"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Personal Jarvis</DisplayName>
+    <PublisherDisplayName>{{PublisherDisplayName}}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Open-source, bring-your-own-key desktop AI with voice, screen awareness and coding agents, running on your own machine.</Description>
+  </Properties>
+
+  <Dependencies>
+    <!-- 10.0.17763 is Windows 10 1809, the floor for MSIX itself. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22631.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="PersonalJarvis" Executable="{{Executable}}" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Personal Jarvis"
+        Description="Open-source, bring-your-own-key desktop AI with voice, screen awareness and coding agents, running on your own machine."
+        BackgroundColor="#0A0A0A"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <rescap:Capability Name="runFullTrust" />
+    <DeviceCapability Name="microphone" />
+  </Capabilities>
+</Package>
