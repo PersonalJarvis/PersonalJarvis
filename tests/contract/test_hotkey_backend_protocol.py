@@ -51,3 +51,13 @@ def test_a_backend_that_is_not_listening_answers_unknown_never_up(factory):
 def test_an_empty_combo_is_unknown_not_down(factory):
     backend = factory()
     assert backend.chord_is_down("") is None
+
+
+@pytest.mark.parametrize("factory", _backend_factories())
+def test_held_tokens_is_unknown_before_the_backend_listens(factory):
+    """The recorder snapshot must not invent a held modifier on a host that
+    is not listening yet — same three-way contract as ``chord_is_down``."""
+    backend = factory()
+    probe = getattr(backend, "held_tokens", None)
+    assert callable(probe)
+    assert probe() is None

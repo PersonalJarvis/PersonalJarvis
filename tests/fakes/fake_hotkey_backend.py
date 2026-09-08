@@ -39,6 +39,9 @@ class FakeHotkeyBackend:
         self.key_state: dict[str, bool | None] = {}
         self.key_state_default: bool | None = None
         self.key_state_queries: list[str] = []
+        # Test knob for ``held_tokens``: ``None`` (default) = cannot see the
+        # keyboard; a set is the live held-set while started.
+        self.held: frozenset[str] | None = None
 
     # ------------------------------------------------------------------
     # HotkeyBackend protocol surface
@@ -70,6 +73,11 @@ class FakeHotkeyBackend:
         key = _norm(combo)
         self.key_state_queries.append(key)
         return self.key_state.get(key, self.key_state_default)
+
+    def held_tokens(self) -> frozenset[str] | None:
+        if not self._started:
+            return None
+        return self.held
 
     # ------------------------------------------------------------------
     # Test helpers (not part of the protocol)

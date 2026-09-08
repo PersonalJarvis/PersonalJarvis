@@ -279,6 +279,82 @@ describe("KeybindsPanel", () => {
     );
   });
 
+  it("commits when a letter's keyup says the modifier is already up", async () => {
+    // GitHub #98: WKWebView often delivers Control's keydown and then never
+    // the matching keyup. The letter's keyup still carries ctrlKey=false, so
+    // the recorder must not wait for a mouse move (or hang forever).
+    const calls = stubFetch();
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+
+    fireEvent.keyDown(window, {
+      code: "ControlLeft",
+      key: "Control",
+      ctrlKey: true,
+    });
+    fireEvent.keyDown(window, { code: "KeyJ", key: "j", ctrlKey: true });
+    fireEvent.keyUp(window, { code: "KeyJ", key: "j", ctrlKey: false });
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.method === "PUT" &&
+            (c.body as { hotkey: string }).hotkey === "ctrl+j",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("records a lone Command from the OS snapshot when the WebView is silent", async () => {
+    const calls: RecordedCall[] = [];
+    let held: string[] = ["cmd"];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, init?: { method?: string; body?: unknown }) => {
+        const href = String(url);
+        calls.push({
+          url: href,
+          method: init?.method ?? "GET",
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        if (href.includes("/keybinds/held")) {
+          return {
+            ok: true,
+            json: async () => ({ available: true, tokens: held, reason: "" }),
+          };
+        }
+        return { ok: true, json: async () => FULL };
+      }),
+    );
+    render(<KeybindsPanel />);
+
+    await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
+    fireEvent.click(screen.getByTestId("combo-field-call"));
+
+    await waitFor(() => {
+      const text = comboText("call");
+      // jsdom reports a PC keyboard, so Command folds onto Win; a Mac host
+      // emits the ⌘ chip. Either spelling is the same physical key.
+      expect(text === "⌘" || text === "Win").toBe(true);
+    });
+    held = [];
+
+    await waitFor(
+      () =>
+        expect(
+          calls.some((c) => {
+            if (c.method !== "PUT") return false;
+            const hotkey = (c.body as { hotkey: string }).hotkey;
+            return hotkey === "cmd" || hotkey === "win";
+          }),
+        ).toBe(true),
+      { timeout: 4000 },
+    );
+  });
+
   it("recovers from a swallowed modifier keyup on the next mouse move", async () => {
     // A mouse event carries the TRUE modifier state, so it is a free, continuous
     // repair for a phantom held modifier — the one state no timer may resolve.

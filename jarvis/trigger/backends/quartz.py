@@ -204,6 +204,12 @@ class QuartzHotkeyBackend:
             return None
         return tokens.issubset(self._held)
 
+    def held_tokens(self) -> frozenset[str] | None:
+        """Copy of the tap's held-set. ``None`` while the tap is not running."""
+        if not self._started or self._tap is None:
+            return None
+        return frozenset(self._held)
+
     def _permitted(self) -> bool:
         """The grant verdict, re-probed at most every ``_PERMISSION_TTL_S``.
 

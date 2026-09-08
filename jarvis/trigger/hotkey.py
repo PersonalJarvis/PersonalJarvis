@@ -43,6 +43,7 @@ permanently now live inside ``GlobalHotkeysBackend`` (relocated verbatim):
 ``validate_hotkey`` and ``_normalize_combo`` stay importable from this module
 for backwards compatibility (the wizard / settings UI import them here).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -105,7 +106,7 @@ SELF_INPUT_SUPPRESSED_EVENTS: frozenset[str] = frozenset(
     {
         "ptt_press",
         "dictate_press",
-        "dictate",          # legacy [dictation].mode = "toggle"
+        "dictate",  # legacy [dictation].mode = "toggle"
         "dictate_toggle",
         "paste_last",
     }
@@ -115,9 +116,17 @@ SELF_INPUT_SUPPRESSED_EVENTS: frozenset[str] = frozenset(
 # is not a usable trigger; a usable combo needs at least one real key.
 _MODIFIER_TOKENS = frozenset(
     {
-        "ctrl", "control", "right_ctrl", "right_control",
-        "alt", "right_alt", "left_alt", "altgr",
-        "shift", "win", "window",
+        "ctrl",
+        "control",
+        "right_ctrl",
+        "right_control",
+        "alt",
+        "right_alt",
+        "left_alt",
+        "altgr",
+        "shift",
+        "win",
+        "window",
         # macOS Command. The Quartz backend has always decoded it
         # (``_FLAG_MASK_TO_TOKEN`` maps ``kCGEventFlagMaskCommand`` -> ``cmd``),
         # but it was missing here, so the validator treated Command as an
@@ -125,7 +134,10 @@ _MODIFIER_TOKENS = frozenset(
         # ``cmd+q``, ``cmd+w``, ``cmd+c``, ``cmd+space`` were all accepted while
         # their Windows equivalents were refused, and a user could bind "quit
         # the focused app" as their dictation key.
-        "cmd", "command", "meta", "super",
+        "cmd",
+        "command",
+        "meta",
+        "super",
     }
 )
 
@@ -136,9 +148,16 @@ _MODIFIER_TOKENS = frozenset(
 # keystroke of normal typing and would make the assistant trigger constantly.
 _SOLO_SAFE_KEYS = frozenset({f"f{i}" for i in range(1, 25)}) | frozenset(
     {
-        "up", "down", "left", "right",
-        "home", "end", "page_up", "page_down",
-        "insert", "delete",
+        "up",
+        "down",
+        "left",
+        "right",
+        "home",
+        "end",
+        "page_up",
+        "page_down",
+        "insert",
+        "delete",
     }
 )
 
@@ -299,8 +318,7 @@ def validate_hotkey(combo: str, *, platform: str | None = None) -> HotkeyVerdict
         cautions.append(
             _os_shortcut_caution(
                 f"Command+{non_modifiers[0].upper()}",
-                "is a system shortcut on macOS (copy, quit, close, Spotlight "
-                "and friends)",
+                "is a system shortcut on macOS (copy, quit, close, Spotlight and friends)",
             )
         )
 
@@ -354,9 +372,7 @@ def normalized_combo_tokens(combo: str) -> frozenset[str]:
     all fold onto ``window``. Any comparison of two shortcuts has to happen on
     THIS set — comparing the raw tokens accepts two combos the OS sees as one.
     """
-    return frozenset(
-        p.strip() for p in _normalize_combo(combo).split("+") if p.strip()
-    )
+    return frozenset(p.strip() for p in _normalize_combo(combo).split("+") if p.strip())
 
 
 def combos_collide(a: str, b: str) -> bool:
@@ -453,6 +469,179 @@ def _module_present(name: str) -> bool:
         return False
 
 
+# Virtual-key codes for the three named modifiers. The two Win keys already
+# live next to GetAsyncKeyState in the Windows backend; these three are the
+# rest of the chord the in-app recorder has to see even when the WebView
+# swallowed the DOM keyup (GitHub #98).
+_VK_SHIFT = 0x10
+_VK_CONTROL = 0x11
+_VK_MENU = 0x12  # Alt / Option
+
+# pynput / Quartz held-set spellings -> the four snapshot tokens the recorder
+# understands (ctrl, alt, shift, and win-or-cmd). Side-specific names fold
+# because the snapshot cannot tell left from right on every OS.
+_HELD_MODIFIER_TO_SNAPSHOT: dict[str, str] = {
+    "ctrl": "ctrl",
+    "ctrl_l": "ctrl",
+    "ctrl_r": "ctrl",
+    "control": "ctrl",
+    "right_control": "ctrl",
+    "alt": "alt",
+    "alt_l": "alt",
+    "alt_r": "alt",
+    "alt_gr": "alt",
+    "right_alt": "alt",
+    "left_alt": "alt",
+    "shift": "shift",
+    "shift_l": "shift",
+    "shift_r": "shift",
+    "cmd": "win",
+    "cmd_l": "win",
+    "cmd_r": "win",
+    "command": "win",
+    "win": "win",
+    "window": "win",
+    "super": "win",
+    "meta": "win",
+}
+
+
+def modifier_snapshot(
+    platform: str | None = None,
+    *,
+    backend_held: frozenset[str] | set[str] | None = None,
+) -> tuple[frozenset[str] | None, str]:
+    """Currently held modifier keys, or ``(None, reason)`` if this host cannot tell.
+
+    A capability probe, never a platform-name test at the call site (AP-21).
+    The in-app keybind recorder uses this when the WebView's DOM events lie:
+    macOS WKWebView often delivers a modifier ``keydown`` and then never the
+    matching ``keyup`` (the OS sent ``flagsChanged``, which is not a DOM
+    event), so a recorder that only trusts keyup hangs with Option/Command
+    still marked as held. Asking the OS is the one answer that cannot go
+    stale. Empty ``frozenset`` means "we can tell, and nothing is down".
+
+    Tokens are the recorder vocabulary: ``ctrl``, ``alt``, ``shift``, plus
+    ``cmd`` on macOS and ``win`` everywhere else.
+
+    * Windows — ``GetAsyncKeyState`` for Shift/Ctrl/Alt/Win (same primitive
+      the hotkey poller already uses).
+    * macOS — ``CGEventSourceFlagsState`` (no event tap, no Accessibility
+      grant). Needs pyobjc Quartz.
+    * Linux/X11 — no cheap OS-wide read in the base install. When the live
+      pynput listener is running its held-set is accepted as a fallback;
+      Wayland and a not-yet-started listener return ``None`` with an English
+      reason. The on-screen picker still works there.
+    """
+    host = platform if platform is not None else _detect_platform()
+    if host == "win32":
+        snap = _win32_modifier_snapshot()
+        if snap is not None:
+            return snap, ""
+        return None, (
+            "This Windows session cannot read the modifier keys right now. "
+            "Click the keys on the on-screen keyboard, or type a letter with "
+            "the modifiers held."
+        )
+    if host == "darwin":
+        snap = _darwin_modifier_snapshot()
+        if snap is not None:
+            return snap, ""
+        return None, (
+            "Reading the modifier keys needs the pyobjc Quartz package, which "
+            "is not installed — install the [full] profile. Click the keys on "
+            "the on-screen keyboard in the meantime."
+        )
+    if host == "linux":
+        if backend_held is not None:
+            return _snapshot_from_held(backend_held, meta_spelling="win"), ""
+        try:
+            from jarvis.platform.probes import is_wayland
+
+            wayland = is_wayland()
+        except Exception:  # noqa: BLE001 — a probe failure must never hard-fail
+            wayland = False
+        if wayland:
+            return None, (
+                "Wayland does not let an application read the modifier keys "
+                "globally. Click the keys on the on-screen keyboard, or bind "
+                "a compositor shortcut to the Jarvis CLI."
+            )
+        return None, (
+            "This Linux session cannot read the modifier keys until global "
+            "hotkeys are running. Click the keys on the on-screen keyboard, "
+            "or type a letter with the modifiers held."
+        )
+    return None, (
+        "This system has no way to read the modifier keys globally — click "
+        "the keys on the on-screen keyboard instead."
+    )
+
+
+def _snapshot_from_held(held: frozenset[str] | set[str], *, meta_spelling: str) -> frozenset[str]:
+    """Fold a backend held-set down to the four snapshot tokens."""
+    out: set[str] = set()
+    for token in held:
+        folded = _HELD_MODIFIER_TO_SNAPSHOT.get(token)
+        if folded is None:
+            continue
+        out.add(meta_spelling if folded == "win" else folded)
+    return frozenset(out)
+
+
+def _win32_modifier_snapshot() -> frozenset[str] | None:
+    """Shift/Ctrl/Alt/Win via GetAsyncKeyState. ``None`` if the probe cannot run."""
+    from jarvis.trigger.backends.global_hotkeys import (
+        _VK_LWIN,
+        _VK_RWIN,
+        _async_key_is_down,
+    )
+
+    tokens: set[str] = set()
+    for vk, name in (
+        (_VK_SHIFT, "shift"),
+        (_VK_CONTROL, "ctrl"),
+        (_VK_MENU, "alt"),
+    ):
+        down = _async_key_is_down(vk)
+        if down is None:
+            return None
+        if down:
+            tokens.add(name)
+    left = _async_key_is_down(_VK_LWIN)
+    right = _async_key_is_down(_VK_RWIN)
+    if left is None or right is None:
+        return None
+    if left or right:
+        tokens.add("win")
+    return frozenset(tokens)
+
+
+def _darwin_modifier_snapshot() -> frozenset[str] | None:
+    """Shift/Ctrl/Option/Command via CGEventSourceFlagsState. ``None`` if Quartz is missing."""
+    try:
+        import Quartz  # type: ignore[import-not-found,import-untyped]  # lazy (HN-7)
+    except Exception:  # noqa: BLE001 — optional [desktop-macos] extra
+        return None
+    try:
+        state = Quartz.kCGEventSourceStateCombinedSessionState
+        flags = int(Quartz.CGEventSourceFlagsState(state))
+    except Exception:  # noqa: BLE001 — a failed probe is "unknown", never a crash
+        log.debug("CGEventSourceFlagsState failed", exc_info=True)
+        return None
+    tokens: set[str] = set()
+    # Same masks as QuartzHotkeyBackend._FLAG_MASK_TO_TOKEN.
+    if flags & (1 << 17):
+        tokens.add("shift")
+    if flags & (1 << 18):
+        tokens.add("ctrl")
+    if flags & (1 << 19):
+        tokens.add("alt")
+    if flags & (1 << 20):
+        tokens.add("cmd")
+    return frozenset(tokens)
+
+
 class HotkeyTrigger:
     """Manages several named hotkey bindings at once.
 
@@ -537,6 +726,7 @@ class HotkeyTrigger:
                 log.debug("Hotkey %r dropped: the event loop is closing.", event_name)
             except Exception:  # noqa: BLE001 — a dead poller is worse than any lost edge
                 log.exception("Hotkey %r handler failed (edge dropped).", event_name)
+
         return _on_press
 
     def chord_is_down(self, event_name: str) -> bool | None:
@@ -568,6 +758,31 @@ class HotkeyTrigger:
             if answer is False:
                 answered = True
         return False if answered else None
+
+    def held_tokens(self) -> frozenset[str] | None:
+        """Every token the live backend currently has in its held-set.
+
+        ``None`` when there is no backend or it cannot see the keyboard (not
+        started, Noop, Windows poller which has no held-set). The in-app
+        recorder uses this as a Linux fallback for :func:`modifier_snapshot`.
+        """
+        backend = self._backend
+        if backend is None:
+            return None
+        probe = getattr(backend, "held_tokens", None)
+        if callable(probe):
+            try:
+                answer = probe()
+            except Exception:  # noqa: BLE001 — a failed probe is "unknown"
+                log.debug("held_tokens() failed", exc_info=True)
+                return None
+            if answer is None:
+                return None
+            return frozenset(answer)
+        held = getattr(backend, "_held", None)
+        if isinstance(held, set):
+            return frozenset(held)
+        return None
 
     def _push_nowait(self, event_name: str) -> None:
         try:
@@ -650,8 +865,9 @@ class HotkeyTrigger:
         log.info(
             "Hotkey-Trigger armed (%s): %s",
             type(backend).__name__,
-            ", ".join(f"{name}=[{', '.join(combos)}]"
-                      for name, combos in self._bindings_cfg.items()),
+            ", ".join(
+                f"{name}=[{', '.join(combos)}]" for name, combos in self._bindings_cfg.items()
+            ),
         )
         return self
 
@@ -715,8 +931,7 @@ class HotkeyTrigger:
             log.info(
                 "🔁 Hotkey-Live-Reload — re-armed: %s",
                 ", ".join(
-                    f"{name}=[{', '.join(combos)}]"
-                    for name, combos in self._bindings_cfg.items()
+                    f"{name}=[{', '.join(combos)}]" for name, combos in self._bindings_cfg.items()
                 ),
             )
         except Exception:  # noqa: BLE001 — never crash voice on a re-arm hiccup
@@ -739,6 +954,7 @@ __all__ = [
     "HotkeyTrigger",
     "HotkeyVerdict",
     "combos_collide",
+    "modifier_snapshot",
     "mouse_hotkeys_available",
     "normalized_combo_tokens",
     "validate_hotkey",

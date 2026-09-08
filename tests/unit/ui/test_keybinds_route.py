@@ -614,3 +614,36 @@ def test_get_reflects_cleared_keybind() -> None:
     )
     body = client.get("/api/settings/keybinds").json()
     assert body["keybinds"]["call"] == ""
+
+
+def test_held_route_serves_the_capability_probe(monkeypatch) -> None:
+    """The recorder polls this; a missing ``available`` field would hang a
+    Mac user whose WebView swallowed the modifier keyup (GitHub #98)."""
+    from jarvis.trigger import hotkey as hotkey_mod
+
+    monkeypatch.setattr(
+        hotkey_mod,
+        "modifier_snapshot",
+        lambda **k: (frozenset({"alt", "cmd"}), ""),
+    )
+    body = _client().get("/api/settings/keybinds/held").json()
+    assert body["available"] is True
+    assert body["tokens"] == ["alt", "cmd"]
+    assert body["reason"] == ""
+
+
+def test_held_route_is_honest_when_the_host_cannot_tell(monkeypatch) -> None:
+    from jarvis.trigger import hotkey as hotkey_mod
+
+    monkeypatch.setattr(
+        hotkey_mod,
+        "modifier_snapshot",
+        lambda **k: (
+            None,
+            "Wayland does not let an application read the modifier keys globally.",
+        ),
+    )
+    body = _client().get("/api/settings/keybinds/held").json()
+    assert body["available"] is False
+    assert body["tokens"] == []
+    assert "Wayland" in body["reason"]

@@ -217,6 +217,12 @@ class PynputBackend:
             return None
         return _combo_is_down(tokens, self._held)
 
+    def held_tokens(self) -> frozenset[str] | None:
+        """Copy of the listener's held-set. ``None`` while it is not running."""
+        if not self._started or self._listener is None:
+            return None
+        return frozenset(self._held)
+
     def _token_for(self, key) -> str | None:
         """Map a pynput key event to our canonical token, or ``None``."""
         # ``KeyCode`` for character keys exposes ``.char``; ``Key`` enum members

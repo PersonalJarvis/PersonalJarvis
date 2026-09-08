@@ -11,6 +11,8 @@ Endpoints:
                                          instant_phrases, local_whisper_available}
     PUT /api/settings/wake-word       → persist to jarvis.toml [trigger.wake_word]
                                          (+ resolved-plan preview); restart required
+    GET /api/settings/keybinds/held   → live modifier keys currently held
+                                         ({available, tokens, reason})
 
 Why a dedicated route (not localStorage): the reply language has to reach the
 BrainManager so ``_build_system_prompt`` can emit the language directive — the
@@ -1814,6 +1816,37 @@ def get_keybinds(request: Request) -> dict[str, object]:
         "suggestions": _available_suggestions(current),
         "mouse_buttons": {"supported": mouse_ok, "reason": mouse_reason},
         "restart_required": restart_required,
+    }
+
+
+@router.get("/keybinds/held")
+def get_keybind_held(request: Request) -> dict[str, object]:
+    """Live modifier keys currently held, for the in-app recorder.
+
+    ``available`` is the capability probe: False on hosts that cannot read
+    modifier state (Wayland, headless, missing Quartz). The recorder then
+    keeps using DOM events and the on-screen picker instead of hanging.
+    """
+    from jarvis.trigger.hotkey import modifier_snapshot
+
+    backend_held: set[str] | None = None
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    trigger = getattr(pipeline, "_hotkey_trigger", None) if pipeline is not None else None
+    probe = getattr(trigger, "held_tokens", None) if trigger is not None else None
+    if callable(probe):
+        try:
+            raw = probe()
+        except Exception:  # noqa: BLE001 — a failed probe is "unknown"
+            log.debug("held_tokens() failed", exc_info=True)
+            raw = None
+        if raw is not None:
+            backend_held = set(raw)
+
+    tokens, reason = modifier_snapshot(backend_held=backend_held)
+    return {
+        "available": tokens is not None,
+        "tokens": sorted(tokens) if tokens is not None else [],
+        "reason": reason,
     }
 
 

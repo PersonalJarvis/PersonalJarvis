@@ -132,5 +132,9 @@ class NoopBackend:
         """No listener, no keyboard state to report — honestly unknown."""
         return None
 
+    def held_tokens(self) -> frozenset[str] | None:
+        """No listener, no held-set — honestly unknown."""
+        return None
+
 
 __all__ = ["NoopBackend", "_reset_noop_log_flag_for_tests", "explain_unavailable"]

@@ -533,6 +533,10 @@ class GlobalHotkeysBackend:
                 return False
         return True
 
+    def held_tokens(self) -> frozenset[str] | None:
+        """Windows has no edge-fed held-set; the recorder reads GetAsyncKeyState instead."""
+        return None
+
 
 # Virtual-key codes for the two Win keys (``VK_LWIN`` / ``VK_RWIN``), spelled
 # out so the probe below needs no ``win32con`` import to name them.
