@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentChatSession } from "@/lib/agentChatApi";
 import { providerKind } from "@/components/agentchat/AgentComposer";
+import { EMPTY_TIMELINE, type Timeline, type UserItem } from "@/components/agentchat/reduce";
 import { createAgentChatStore, draftKey } from "@/store/agentChat";
 
 /**
@@ -272,5 +273,48 @@ describe("agent-chat store surfaces", () => {
     // A fresh store of each surface reads back its own, not the other's.
     expect(createAgentChatStore("jarvis").getState().draft.cwd).toBe("C:\\front");
     expect(createAgentChatStore("agent").getState().draft.cwd).toBe("C:\\ide");
+  });
+});
+
+function timelineWith(text: string): Timeline {
+  const item: UserItem = { type: "user", id: text, tsMs: 1, text, attachments: [] };
+  return { ...EMPTY_TIMELINE, items: [item], lastSeq: 1 };
+}
+
+describe("agent-chat store session switch", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.stubGlobal("WebSocket", FakeSocket);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("drops the previous transcript the moment another session opens", () => {
+    const store = createAgentChatStore("society");
+    store.setState({
+      activeSessionId: "society:visual-qa",
+      timeline: timelineWith("visual-qa-flowchart"),
+      sessions: [session("society:visual-qa", "society"), session("society:gmail", "society")],
+    });
+    store.getState().openSession("society:gmail");
+    expect(store.getState().activeSessionId).toBe("society:gmail");
+    expect(store.getState().timeline.items).toEqual([]);
+    expect(store.getState().busy).toBe(false);
+  });
+
+  it("restores a visited session's transcript immediately on switch-back", () => {
+    const store = createAgentChatStore("society");
+    store.setState({
+      activeSessionId: "society:visual-qa",
+      timeline: timelineWith("visual-qa-flowchart"),
+      sessions: [session("society:visual-qa", "society"), session("society:gmail", "society")],
+    });
+    store.getState().openSession("society:gmail");
+    store.setState({ timeline: timelineWith("gmail-inbox") });
+    store.getState().openSession("society:visual-qa");
+    expect(store.getState().timeline.items[0]).toMatchObject({ text: "visual-qa-flowchart" });
+    store.getState().openSession("society:gmail");
+    expect(store.getState().timeline.items[0]).toMatchObject({ text: "gmail-inbox" });
   });
 });

@@ -93,7 +93,21 @@ export interface AgentChatPanelProps {
  * The brain is the roster's choice, so the column shows it instead of the
  * front page's pickers.
  */
-const useSocietyChatStore = createAgentChatStore("society");
+export const useSocietyChatStore = createAgentChatStore("society");
+
+/**
+ * The transcript a specialist column may paint. One store serves every
+ * specialist, so the chrome (name, rail, composer) can already show the
+ * agent you clicked while the socket is still on the previous session —
+ * those items must not appear under the new name.
+ */
+export function itemsForOpenSession(
+  sessionId: string | null,
+  activeSessionId: string | null,
+  items: TimelineItem[],
+): TimelineItem[] {
+  return sessionId !== null && sessionId === activeSessionId ? items : [];
+}
 
 export function AgentChatPanel({ agent, roster }: AgentChatPanelProps) {
   if (agent.tier === "lead") {
@@ -140,53 +154,70 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
   const decide = useAgentChat((s) => s.decide);
   const [bindError, setBindError] = useState<string | null>(null);
   const sessionId = agent.chatSessionId;
+  const sessionReady = Boolean(sessionId) && activeSessionId === sessionId;
+  const visibleItems = itemsForOpenSession(sessionId, activeSessionId, items);
 
-  // Bind first (idempotent, no spend), then open: the socket needs the row to exist.
-  useEffect(() => {
+  // Open the agent's own session before the browser paints. Waiting on bind /
+  // catalog / sessions left the previous specialist's transcript on screen
+  // under the new name.
+  useLayoutEffect(() => {
     if (!sessionId) return;
+    openSession(sessionId);
+  }, [sessionId, openSession]);
+
+  useEffect(() => {
+    void loadCatalog();
+    void loadSessions();
+  }, [loadCatalog, loadSessions]);
+
+  // Bind is idempotent and the session id is already on the roster row; a
+  // failure must not replace a chat that is already open.
+  useEffect(() => {
     let alive = true;
     setBindError(null);
-    void (async () => {
-      try {
-        await bindAgentChat(agent.agentId);
-        await loadCatalog();
-        await loadSessions();
-        if (alive) openSession(sessionId);
-      } catch (err) {
-        if (alive) setBindError(err instanceof Error ? err.message : String(err));
-      }
-    })();
+    void bindAgentChat(agent.agentId).catch((err) => {
+      if (alive) setBindError(err instanceof Error ? err.message : String(err));
+    });
     return () => {
       alive = false;
     };
-  }, [agent.agentId, sessionId, loadCatalog, loadSessions, openSession]);
+  }, [agent.agentId]);
 
   const mentionable = useMemo(
     () => roster.filter((a) => a.agentId !== agent.agentId && a.tier !== "lead"),
     [roster, agent.agentId],
   );
 
-  if (bindError) return <NotBoundYet detail={`${t("society.card.chat_bind_failed")} (${bindError})`} />;
-
   return (
-    <div className="flex h-full min-h-0 flex-col" data-testid="society-chat">
+    <div
+      className="flex h-full min-h-0 flex-col"
+      data-testid="society-chat"
+      data-session-id={sessionId ?? ""}
+      data-session-ready={sessionReady ? "true" : "false"}
+    >
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
         {agent.provider ? <ProviderLogo providerId={agent.provider} label={agent.providerLabel} size="sm" /> : null}
         <span className="truncate text-foreground">{agent.providerLabel || t("society.chat.model_default")}</span>
         {agent.model ? <span className="truncate font-mono">{agent.model}</span> : null}
         {agent.effort ? <span className="ml-auto rounded-full border border-border px-2 py-0.5">{agent.effort}</span> : null}
       </div>
-      <Transcript items={items} agent={agent} busy={busy} onDecide={decide} />
-      {lastError ? (
+      <Transcript key={sessionId ?? agent.agentId} items={visibleItems} agent={agent} busy={sessionReady && busy} onDecide={decide} />
+      {lastError && sessionReady ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
         </p>
       ) : null}
+      {bindError ? (
+        <p role="alert" className="px-4 pb-1 text-xs text-destructive">
+          {`${t("society.card.chat_bind_failed")} (${bindError})`}
+        </p>
+      ) : null}
       <Composer
+        key={agent.agentId}
         agent={agent}
         mentionable={mentionable}
-        busy={busy || activeSessionId !== sessionId}
-        sessionId={activeSessionId}
+        busy={busy || !sessionReady}
+        sessionId={sessionReady ? activeSessionId : sessionId}
         cwd=""
         provider={agent.provider}
         surface="society"

@@ -265,6 +265,9 @@ function onLadder(value: string, ladder: readonly string[], fallback: string): s
   return ladder.includes(value) ? value : fallback;
 }
 
+/** How many left-behind transcripts the store keeps for an instant switch-back. */
+const TIMELINE_CACHE_LIMIT = 24;
+
 export function createAgentChatStore(surface: AgentChatSurface) {
   const DRAFT_KEY = draftKey(surface);
 
@@ -274,6 +277,25 @@ export function createAgentChatStore(surface: AgentChatSurface) {
   let cancelReconnect: (() => void) | null = null;
   /** Consecutive failed reconnects — the exponent under the jitter. */
   let reconnectAttempt = 0;
+  /**
+   * Last-known transcript per session. Switching chats (or society agents)
+   * used to keep painting the previous session until the new socket's
+   * snapshot arrived; this cache is restored synchronously in `openSession`
+   * so the column never shows another conversation, and a return visit
+   * paints immediately while the socket refreshes.
+   */
+  const timelineCache = new Map<string, Timeline>();
+
+  function rememberTimeline(sessionId: string, timeline: Timeline): void {
+    if (timeline.lastSeq <= 0 && timeline.items.length === 0) return;
+    timelineCache.delete(sessionId);
+    timelineCache.set(sessionId, timeline);
+    while (timelineCache.size > TIMELINE_CACHE_LIMIT) {
+      const oldest = timelineCache.keys().next().value;
+      if (oldest === undefined) break;
+      timelineCache.delete(oldest);
+    }
+  }
 
   function closeSocket(): void {
     cancelReconnect?.();
@@ -576,10 +598,15 @@ export function createAgentChatStore(surface: AgentChatSurface) {
 
       openSession: (sessionId) => {
         if (get().activeSessionId === sessionId && socket) return;
+        const prev = get();
+        if (prev.activeSessionId && prev.activeSessionId !== sessionId) {
+          rememberTimeline(prev.activeSessionId, prev.timeline);
+        }
         set({
           activeSessionId: sessionId,
-          activeSession: get().sessions.find((s) => s.session_id === sessionId) ?? null,
-          timeline: EMPTY_TIMELINE,
+          activeSession: prev.sessions.find((s) => s.session_id === sessionId) ?? null,
+          timeline: timelineCache.get(sessionId) ?? EMPTY_TIMELINE,
+          busy: false,
           lastError: null,
         });
         connect(sessionId, 0);
@@ -591,6 +618,7 @@ export function createAgentChatStore(surface: AgentChatSurface) {
         } catch (err) {
           set({ lastError: errorText(err) });
         }
+        timelineCache.delete(sessionId);
         if (get().activeSessionId === sessionId) get().newChat();
         set((s) => ({ sessions: s.sessions.filter((x) => x.session_id !== sessionId) }));
         void get().loadSessions();
@@ -603,8 +631,8 @@ export function createAgentChatStore(surface: AgentChatSurface) {
         if (!content && attachments.length === 0) return;
         const st = get();
         set({ busy: true, lastError: null });
+        let sid = st.activeSessionId;
         try {
-          let sid = st.activeSessionId;
           if (!sid) {
             const d = st.draft;
             const session = await createAgentChatSession({
@@ -625,11 +653,13 @@ export function createAgentChatStore(surface: AgentChatSurface) {
             connect(sid, 0);
           }
           await sendAgentChatMessage(sid, content, attachments, toolChoices);
-          void get().loadSessions();
+          if (get().activeSessionId === sid) void get().loadSessions();
         } catch (err) {
-          set({ lastError: errorText(err) });
+          if (get().activeSessionId === sid) set({ lastError: errorText(err) });
         } finally {
-          set({ busy: false });
+          // A switch away from this session already cleared `busy`; do not
+          // unlock (or error) the chat that is on screen now.
+          if (get().activeSessionId === sid) set({ busy: false });
         }
       },
 

@@ -87,7 +87,7 @@ export function AgentCardOverlay({
                   aria-label={t("society.card.chat")}
                   data-testid="agent-card-chat"
                 >
-                  <AgentChatPanel agent={agent} roster={roster} />
+                  <AgentChatPanel key={agent.agentId} agent={agent} roster={roster} />
                 </section>
                 <OptionsRail agent={agent} onRetired={onClose} sample={sample} />
               </div>
