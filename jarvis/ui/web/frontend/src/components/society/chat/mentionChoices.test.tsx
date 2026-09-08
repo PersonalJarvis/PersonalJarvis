@@ -59,11 +59,8 @@ it("uses Add to select a real branded chip and preserves the existing pin protoc
   fireEvent.click(screen.getByRole("button", { name: "society.chat.more" }));
   fireEvent.click(screen.getByRole("button", { name: "chat_tools.all" }));
   fireEvent.click(await screen.findByRole("option", { name: /@\s*gmail/ }));
-  const chips = screen.getByTestId("tool-choice-chips");
-  expect(chips.querySelector('[data-brand="gmail"] img')).not.toBeNull();
   const input = screen.getByRole("textbox");
-  expect((input as HTMLTextAreaElement).value).toBe("");
-  fireEvent.change(input, { target: { value: "Check unread mail" } });
+  expect(input.querySelector('[data-brand="gmail"] img')).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "society.chat.send" }));
   await waitFor(() => expect(send).toHaveBeenCalledOnce());
   const text = String(send.mock.calls[0][0]);
@@ -77,8 +74,8 @@ it("uses Add to select a real branded chip and preserves the existing pin protoc
 it("reconstructs branded tags from an existing saved agent-card message", () => {
   const text = "Read this @gmail\n\n[tools: plugin:gmail]";
   render(<UserBubble item={{ type: "user", id: "m1", tsMs: 1, text, attachments: [] }} />);
-  expect(screen.getByText("Read this")).toBeTruthy();
-  expect(screen.queryByText(/@gmail/)).toBeNull();
+  expect(screen.getByTestId("tool-choice-chips").textContent).toContain("Read this");
+  expect(screen.queryByText("@gmail")).toBeNull();
   expect(
     screen.getByTestId("tool-choice-chips").querySelector('[data-brand="gmail"]'),
   ).not.toBeNull();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
   Bot,
@@ -32,10 +32,9 @@ import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { DictationStatus } from "@/components/agentchat/DictationStatus";
 import { ComposerAddMenu } from "@/components/agentchat/ComposerAddMenu";
-import { ToolChoiceChips } from "@/components/agentchat/ToolChoiceChips";
+import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
 import type { ToolChoice } from "@/components/agentchat/toolChoices";
 import { GigiMark } from "@/components/GigiMark";
-import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -83,9 +82,16 @@ import { cn } from "@/lib/utils";
 export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const t = useT();
   const [value, setValueState] = useState("");
-  const textareaRef = useAutoGrowTextarea(value);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fieldRef = useRef<ComposerChipFieldHandle>(null);
   const setValue = useCallback(
-    (next: string | ((current: string) => string)) => setValueState(next),
+    (next: string | ((current: string) => string)) => {
+      setValueState((current) => {
+        const text = typeof next === "function" ? next(current) : next;
+        fieldRef.current?.setText(text);
+        return text;
+      });
+    },
     [],
   );
   const connected = useEventStore((s) => s.connected);
@@ -173,7 +179,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     provider: draft.provider,
     cwd: draft.cwd,
     triggers,
-  });
+  }, fieldRef);
 
   const running = runningTurn(timeline) !== null;
 
@@ -187,6 +193,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     if (files.analyzing > 0) return; // a file still being read would be sent without its contents
     if (dictating) stopDictation();
     setValueState("");
+    fieldRef.current?.clear();
     setAttachError("");
     const attached = files.attachments;
     files.clear();
@@ -204,18 +211,6 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       setValueState((current) => current || content);
     } else {
       setSelectedTools([]);
-    }
-  }
-
-  function onKeyDown(ev: KeyboardEvent<HTMLTextAreaElement>) {
-    // Watches for a Ctrl+V the embedded browser may never answer; does nothing
-    // in a real browser, where the box pastes on its own.
-    pasteRescue.onKeyDown(ev);
-    // An open list owns the arrows, Enter, Tab and Escape.
-    if (typeahead.onKeyDown(ev)) return;
-    if (ev.key === "Enter" && !ev.shiftKey) {
-      ev.preventDefault();
-      void onSend();
     }
   }
 
@@ -470,10 +465,6 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       {/* The blue variant of this strip lived here; a running microphone is a
           live state, not the accent, so it now shares the one green strip. */}
       <DictationStatus onStop={stopDictation} />
-      <ToolChoiceChips
-        items={selectedTools}
-        onRemove={(id) => setSelectedTools((rows) => rows.filter((row) => row.id !== id))}
-      />
       <ChatAttachmentStrip
         attachments={files.attachments}
         analyzing={files.analyzing}
@@ -489,29 +480,26 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         onHover={typeahead.setActiveIndex}
         onPick={typeahead.pick}
       />
-      <textarea
-        ref={textareaRef}
-        data-jarvis-chat-input=""
+      <ComposerChipField
+        ref={fieldRef}
+        placeholder={placeholder}
+        disabled={!connected}
         autoFocus={autoFocus}
-        value={value}
-        onChange={(e) => setValueState(e.target.value)}
-        onKeyDown={onKeyDown}
-        onSelect={typeahead.refresh}
-        onClick={typeahead.refresh}
-        onBlur={typeahead.blur}
-        aria-expanded={typeahead.open || undefined}
-        aria-autocomplete={triggers.length ? "list" : undefined}
-        onPaste={(e) => {
+        onSubmit={() => void onSend()}
+        onDraftChange={(draft) => {
+          setValueState(draft.text);
+          setSelectedTools(draft.choices);
+        }}
+        onKeyDown={(ev) => {
+          pasteRescue.onKeyDown(ev);
+          if (typeahead.onKeyDown(ev)) return true;
+          return false;
+        }}
+        onPasteFiles={(e) => {
           pasteRescue.onPaste();
           files.onPaste(e);
         }}
-        placeholder={placeholder}
-        disabled={!connected}
-        rows={2}
-        // Grows with the text up to half the window (useAutoGrowTextarea), so
-        // a message is read whole while it is written; past the cap the box
-        // scrolls rather than pushing the picks and Send out of reach.
-        className="max-h-[50vh] w-full resize-none bg-transparent px-1 py-1 text-reading text-foreground scrollbar-jarvis placeholder:text-muted-foreground focus-visible:outline-none disabled:opacity-50"
+        className="max-h-[50vh] text-reading scrollbar-jarvis"
       />
       <div className="flex flex-wrap items-center gap-1">
         {surface === "jarvis" && (
@@ -524,6 +512,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             stance={draft.permissionMode}
             selected={selectedTools}
             onChange={setSelectedTools}
+            onInsert={(row) => fieldRef.current?.insertChip(row)}
             onAttach={() => fileInputRef.current?.click()}
             onFolder={() => void onPickFolder()}
             onConnect={(row) =>

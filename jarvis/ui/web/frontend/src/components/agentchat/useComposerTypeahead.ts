@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 
+import type { ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
 import { fetchTypeahead, type AgentChatSurface } from "@/lib/agentChatApi";
 import {
   activeToken,
@@ -25,7 +26,7 @@ export interface ComposerTypeahead {
   /** Re-read the caret; call after any change, click or arrow key in the box. */
   refresh: () => void;
   /** Returns true when the key was the list's — the caller must then stop. */
-  onKeyDown: (ev: KeyboardEvent<HTMLTextAreaElement>) => boolean;
+  onKeyDown: (ev: KeyboardEvent<HTMLElement>) => boolean;
   pick: (item: TypeaheadItem) => void;
   /** Escape: hide the list for this token until the token changes. */
   close: () => void;
@@ -56,6 +57,7 @@ export function useComposerTypeahead(
   value: string,
   setValue: (next: string) => void,
   seat: Seat,
+  fieldRef?: RefObject<ComposerChipFieldHandle | null>,
 ): ComposerTypeahead {
   const [token, setToken] = useState<ActiveToken | null>(null);
   const [rawItems, setRawItems] = useState<TypeaheadItem[]>([]);
@@ -68,12 +70,15 @@ export function useComposerTypeahead(
   seatRef.current = seat;
 
   const refresh = useCallback(() => {
+    const draft = fieldRef?.current?.getDraft();
     const box = textareaRef.current;
-    if (!box) {
+    const text = draft?.text ?? box?.value;
+    if (text == null) {
       setToken(null);
       return;
     }
-    const next = activeToken(box.value, box.selectionStart ?? box.value.length, seatRef.current.triggers);
+    const caret = draft?.caret ?? box?.selectionStart ?? text.length;
+    const next = activeToken(text, caret, seatRef.current.triggers);
     if (next && dismissedStart.current === next.start) {
       setToken(null);
       return;
@@ -84,7 +89,7 @@ export function useComposerTypeahead(
         ? prev
         : next,
     );
-  }, [textareaRef]);
+  }, [textareaRef, fieldRef]);
 
   // The value can change under the box without a key (dictation, a paste
   // rescue, a pick); the caret is read afterwards so the token follows.
@@ -173,28 +178,31 @@ export function useComposerTypeahead(
   const pick = useCallback(
     (item: TypeaheadItem) => {
       const box = textareaRef.current;
+      const field = fieldRef?.current;
       if (!token) return;
-      const applied = applyPick(box ? box.value : value, token, item);
+      const applied = applyPick(field?.getDraft().text ?? box?.value ?? value, token, item);
       setValue(applied.text);
+      if (field) field.hydrate(applied.text, field.getDraft().choices);
       dismissedStart.current = null;
       setToken(null);
-      // The caret lands after what was inserted, once React has painted the new value.
       window.requestAnimationFrame(() => {
         const el = textareaRef.current;
-        if (!el) return;
-        el.focus();
-        el.setSelectionRange(applied.caret, applied.caret);
-        // A folder keeps the list open on its contents; refresh reads the caret.
+        if (el) {
+          el.focus();
+          el.setSelectionRange(applied.caret, applied.caret);
+        } else {
+          field?.focus();
+        }
         if (item.kind === "folder") refresh();
       });
     },
-    [token, textareaRef, value, setValue, refresh],
+    [token, textareaRef, fieldRef, value, setValue, refresh],
   );
 
   const open = Boolean(token) && (loading || items.length > 0 || query.length > 0);
 
   const onKeyDown = useCallback(
-    (ev: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    (ev: KeyboardEvent<HTMLElement>): boolean => {
       if (!token || !open) return false;
       switch (ev.key) {
         case "ArrowDown":

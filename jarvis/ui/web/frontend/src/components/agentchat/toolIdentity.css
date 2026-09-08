@@ -34,6 +34,27 @@
   background: var(--tool-wash);
   box-shadow: inset 0 0 0 1px var(--tool-wash);
 }
+.composer-chip-field {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.composer-chip-field:empty::before,
+.composer-chip-field:not(:focus):has(> br:only-child)::before {
+  content: attr(data-placeholder);
+  color: hsl(var(--muted-foreground));
+  pointer-events: none;
+}
+.composer-chip-field .tool-choice-chip,
+.tool-choice-chip[data-inline="true"] {
+  display: inline-flex;
+  vertical-align: middle;
+  margin: 0 0.12em;
+  padding: 1px 8px 1px 6px;
+  border-radius: 999px;
+  background: var(--tool-wash);
+  box-shadow: inset 0 0 0 1px var(--tool-wash);
+  max-width: 14rem;
+}
 .tool-choice-chip button {
   color: inherit;
   opacity: 0.65;

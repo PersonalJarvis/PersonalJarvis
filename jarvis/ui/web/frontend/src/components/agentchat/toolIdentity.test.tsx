@@ -112,7 +112,7 @@ describe("tool visual identities", () => {
     const chips = screen.getByTestId("tool-choice-chips");
     expect(chips.dataset.editable).toBe("false");
     expect(chips.querySelector('[data-brand="gmail"]')).not.toBeNull();
-    expect(chips.previousElementSibling?.textContent).toBe("Find that email");
+    expect(chips.textContent).toContain("Find that email");
     expect(chips.querySelector("button")).toBeNull();
   });
 

@@ -20,14 +20,16 @@ import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBub
  * the voice runs on the realtime tier (`[brain.realtime]`), which no text
  * runner can drive. The header says so while voice is showing.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Brain, ChevronRight, MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { AgentChatStoreProvider, useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
-import { ToolChoiceChips } from "@/components/agentchat/ToolChoiceChips";
+import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
+import { MessageWithChips } from "@/components/agentchat/ToolChoiceChips";
+import { choiceToken } from "@/components/agentchat/composerChips";
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { DictationStatus } from "@/components/agentchat/DictationStatus";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
@@ -52,7 +54,7 @@ import { AgentSwatch } from "../AgentSwatch";
 import { useResolveProposal, useSocietyCapabilities, type SocietyAgent } from "../data";
 import { MentionPicker } from "./MentionPicker";
 import { AgentModelPicker } from "./AgentModelPicker";
-import { mentionChoice, messageChoices, withoutChoiceTokens } from "./mentionChoices";
+import { mentionChoice, messageChoices } from "./mentionChoices";
 import {
   buildMentionCatalog,
   filterMentions,
@@ -809,12 +811,11 @@ function visibleUserText(text: string): string {
 
 export function UserBubble({ item }: { item: UserItem }) {
   const choices = messageChoices(item);
-  const text = withoutChoiceTokens(visibleUserText(item.text), choices);
+  const text = visibleUserText(item.text);
   return (
     <div className="flex max-w-[85%] flex-col items-end gap-1 self-end">
-      <div className="whitespace-pre-wrap rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-sm leading-relaxed text-foreground">
-        {text}
-        <ToolChoiceChips items={choices} />
+      <div className="rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-sm leading-relaxed text-foreground">
+        <MessageWithChips text={text} choices={choices} />
       </div>
       {item.attachments.length > 0 ? (
         <div className="flex flex-wrap justify-end gap-1">
@@ -1103,19 +1104,15 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   const [activeIndex, setActiveIndex] = useState(0);
   const [selectedTools, setSelectedTools] = useState<MentionItem[]>([]);
   useEffect(() => { setSelectedTools([]); }, [sessionId, agent.agentId]);
-  const textarea = useRef<HTMLTextAreaElement>(null);
+  const fieldRef = useRef<ComposerChipFieldHandle>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const attachments = useChatAttachments({ sessionId, cwd, provider, surface }, (message) => setProblem(message));
-  const dictation = useComposerDictation(value, setValue);
-
-  const resize = useCallback(() => {
-    const el = textarea.current;
-    if (!el) return;
-    el.style.height = "0px";
-    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
-  }, []);
-  useEffect(resize, [value, resize]);
+  const dictation = useComposerDictation(value, (next) => {
+    const text = typeof next === "function" ? next(value) : next;
+    setValue(text);
+    fieldRef.current?.setText(text);
+  });
 
   // "@" completes teammates AND the capability catalog — plugins, MCP
   // servers, CLIs, skills, Jarvis tools — on every agent card, including
@@ -1137,32 +1134,35 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     if (activeIndex >= matches.length) setActiveIndex(Math.max(0, matches.length - 1));
   }, [matches.length, activeIndex]);
 
-  const onChange = (next: string, caret: number) => {
-    setValue(next);
-    setMention(mentionToken(next, caret));
+  const onDraftChange = (draft: { text: string; caret: number }) => {
+    setValue(draft.text);
+    setMention(mentionToken(draft.text, draft.caret));
   };
 
   const insertMention = (item: MentionItem) => {
-    if (!mention) return;
-    const el = textarea.current;
-    const caret = el?.selectionStart ?? value.length;
-    const inserted = item.agent ? `@${item.value} ` : "";
-    if (!item.agent) setSelectedTools((items) => items.some((row) => row.key === item.key) ? items : [...items, item]);
-    const next = `${value.slice(0, mention.start)}${inserted}${value.slice(caret)}`;
-    setValue(next);
+    const field = fieldRef.current;
+    const draft = field?.getDraft();
+    const start = mention?.start ?? draft?.caret ?? value.length;
+    const caret = draft?.caret ?? value.length;
+    const before = (draft?.text ?? value).slice(0, start);
+    const after = (draft?.text ?? value).slice(caret);
+    if (item.agent) {
+      const next = `${before}@${item.value} ${after}`;
+      field?.hydrate(next, draft?.choices ?? []);
+    } else {
+      const row = mentionChoice(item);
+      const next = `${before}${choiceToken(row)} ${after}`;
+      field?.hydrate(next, [...(draft?.choices ?? []), row]);
+      setSelectedTools((items) => (items.some((row) => row.key === item.key) ? items : [...items, item]));
+    }
     setMention(null);
-    requestAnimationFrame(() => {
-      if (!el) return;
-      el.focus();
-      const at = mention.start + inserted.length;
-      el.setSelectionRange(at, at);
-    });
   };
 
   const submit = async () => {
-    const draftText = value.trim();
+    const draft = fieldRef.current?.getDraft();
+    const draftText = (draft?.text ?? value).trim();
     const selected = selectedTools;
-    const text = [draftText, ...selected.map((row) => `@${row.value}`)].filter(Boolean).join(" ");
+    const text = draftText;
     if (!text || busy || modelSaving) return;
     const named = mentionsInText(text, catalog);
     const lines = named.agents.map(
@@ -1171,6 +1171,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     if (named.pinIds.length > 0) lines.push(`${TOOL_PIN_MARK} ${named.pinIds.join(", ")}]`);
     const hint = lines.join("\n");
     setValue("");
+    fieldRef.current?.clear();
     setMention(null);
     setProblem(null);
     try {
@@ -1179,6 +1180,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       attachments.clear();
     } catch (err) {
       setValue(draftText);
+      fieldRef.current?.hydrate(draftText, draft?.choices ?? []);
       setSelectedTools(selected);
       setProblem(err instanceof Error ? err.message : String(err));
     }
@@ -1190,10 +1192,6 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     <div className="shrink-0 border-t border-border px-3 pb-3 pt-2">
       {problem ? <p className="mb-1 px-1 text-xs text-destructive">{problem}</p> : null}
       <div className={CHAT_MEASURE}>
-        <div className="mb-1.5">
-          <ToolChoiceChips items={selectedTools.map(mentionChoice)}
-            onRemove={(id) => setSelectedTools((items) => items.filter((row) => row.key !== id))} />
-        </div>
         <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
       </div>
       <DictationStatus onStop={dictation.stop} className={cn(CHAT_MEASURE, "mb-1.5")} />
@@ -1232,12 +1230,8 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
             <div className="absolute bottom-full left-0 z-20 mb-1 w-52 overflow-hidden rounded-lg border border-border bg-popover py-1 shadow-float">
               <button type="button" onClick={() => {
                 setPlusOpen(false);
-                const caret = textarea.current?.selectionStart ?? value.length;
-                const prefix = value.slice(0, caret);
-                const token = `${prefix && !/\s$/.test(prefix) ? " " : ""}@`;
-                const next = prefix + token + value.slice(caret);
-                onChange(next, caret + token.length);
-                requestAnimationFrame(() => { textarea.current?.focus(); textarea.current?.setSelectionRange(caret + token.length, caret + token.length); });
+                fieldRef.current?.insertText("@");
+                fieldRef.current?.focus();
               }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground hover:bg-secondary">
                 <Plus className="h-3.5 w-3.5" aria-hidden />{t("chat_tools.all")}
               </button>
@@ -1277,46 +1271,42 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
             }}
           />
         </div>
-        <textarea
-          ref={textarea}
-          value={value}
-          rows={1}
+        <ComposerChipField
+          ref={fieldRef}
           placeholder={t("society.chat.placeholder").replace("{0}", agent.name)}
-          onChange={(e) => onChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
-          onPaste={attachments.onPaste}
+          disabled={busy}
+          onSubmit={() => void submit()}
+          onDraftChange={onDraftChange}
+          onPasteFiles={attachments.onPaste}
           onKeyDown={(e) => {
-            if (pickerOpen) {
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                if (matches.length) setActiveIndex((i) => (i + 1) % matches.length);
-                return;
-              }
-              if (e.key === "ArrowUp") {
-                e.preventDefault();
-                if (matches.length) setActiveIndex((i) => (i - 1 + matches.length) % matches.length);
-                return;
-              }
-              if (e.key === "Escape") {
-                e.preventDefault();
-                setMention(null);
-                return;
-              }
-              if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
-                const item = matches[activeIndex] ?? matches[0];
-                if (item) {
-                  e.preventDefault();
-                  insertMention(item);
-                  return;
-                }
-                if (e.key === "Tab") return;
-              }
-            }
-            if (e.key === "Enter" && !e.shiftKey) {
+            if (!pickerOpen) return false;
+            if (e.key === "ArrowDown") {
               e.preventDefault();
-              void submit();
+              if (matches.length) setActiveIndex((i) => (i + 1) % matches.length);
+              return true;
             }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              if (matches.length) setActiveIndex((i) => (i - 1 + matches.length) % matches.length);
+              return true;
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setMention(null);
+              return true;
+            }
+            if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+              const item = matches[activeIndex] ?? matches[0];
+              if (item) {
+                e.preventDefault();
+                insertMention(item);
+                return true;
+              }
+              if (e.key === "Tab") return true;
+            }
+            return false;
           }}
-          className="max-h-[180px] min-h-[32px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none"
+          className="max-h-[180px]"
         />
         <button
           type="button"

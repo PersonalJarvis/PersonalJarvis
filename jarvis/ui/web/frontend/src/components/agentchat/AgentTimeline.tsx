@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 
 import { LiveCore } from "@/components/LiveCore";
-import { ToolChoiceChips } from "./ToolChoiceChips";
+import { MessageWithChips } from "./ToolChoiceChips";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { formatThoughtDuration } from "@/components/home/TurnSteps";
 import { agentToolView, formatTokens, outputTokens } from "@/components/agentchat/toolView";
@@ -113,8 +113,7 @@ export function AgentTimeline({
               data-message-id={item.id}
             >
               <div className="jarvis-user-bubble max-w-[85%] rounded-lg px-4 py-3 text-reading">
-                {item.text && <div className="whitespace-pre-wrap">{item.text}</div>}
-                <ToolChoiceChips items={item.toolChoices ?? []} />
+                <MessageWithChips text={item.text} choices={item.toolChoices ?? []} />
                 {item.attachments.length > 0 && (
                   <div
                     data-testid="agent-message-attachments"

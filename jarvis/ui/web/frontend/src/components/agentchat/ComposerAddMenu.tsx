@@ -22,6 +22,7 @@ export function ComposerAddMenu({
   stance,
   selected,
   onChange,
+  onInsert,
   onAttach,
   onFolder,
   onConnect,
@@ -34,6 +35,7 @@ export function ComposerAddMenu({
   stance: string;
   selected: ToolChoice[];
   onChange: (items: ToolChoice[]) => void;
+  onInsert?: (row: ToolChoice) => void;
   onAttach: () => void;
   onFolder: () => void;
   onConnect: (row: ToolChoice) => void;
@@ -326,6 +328,11 @@ export function ComposerAddMenu({
                           if (!row.available) {
                             close();
                             onConnect(row);
+                            return;
+                          }
+                          if (onInsert) {
+                            onInsert(row);
+                            if (!picked) onChange([...selected, row]);
                             return;
                           }
                           onChange(
