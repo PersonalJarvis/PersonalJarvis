@@ -63,22 +63,22 @@ def test_engine_and_weights_present_is_ready(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_whisper_cache_probe_never_reaches_the_network(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """The probe must ask the cache only — a status poll may not start a download."""
     seen: dict[str, object] = {}
 
     def _fake_download(name: str, **kwargs: object) -> str:
         seen.update(kwargs)
-        return name
+        return str(tmp_path)
 
-    monkeypatch.setitem(
-        __import__("sys").modules,
-        "faster_whisper.utils",
-        type("M", (), {"download_model": staticmethod(_fake_download)}),
-    )
+    import huggingface_hub
 
-    assert local_models.whisper_model_cached("large-v3") is True
+    for name in ("config.json", "model.bin", "tokenizer.json", "vocabulary.json"):
+        (tmp_path / name).write_text("fixture", encoding="utf-8")
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", _fake_download)
+
+    assert local_models.whisper_model_cached("test/whisper") is True
     assert seen.get("local_files_only") is True
 
 

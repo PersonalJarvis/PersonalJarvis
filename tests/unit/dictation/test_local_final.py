@@ -301,6 +301,84 @@ def test_warm_up_spawns_off_the_press_path(_local_ok: dict[str, Any]) -> None:
     assert _local_ok["args"] == [(local_final_mod.DEFAULT_FINAL_MODEL, FINAL_COMPUTE)]
 
 
+@pytest.mark.asyncio
+async def test_cancelled_waiter_keeps_the_pipe_guard_until_reader_exits(_local_ok):
+    entered, release = threading.Event(), threading.Event()
+
+    class SlowWorker(_FakeWorker):
+        def transcribe(self, *args, **kwargs):
+            entered.set()
+            assert release.wait(3)
+            return super().transcribe(*args, **kwargs)
+
+    worker = SlowWorker()
+    stt = LocalFinalSTT()
+    stt._worker = worker
+    task = asyncio.create_task(stt.transcribe_pcm(_pcm()))
+    try:
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert entered.is_set()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert worker.closed
+        assert stt._call_lock.locked()
+        assert stt._worker is None
+    finally:
+        release.set()
+        for _ in range(100):
+            if not stt._call_lock.locked():
+                break
+            await asyncio.sleep(0.01)
+    assert not stt._call_lock.locked()
+    assert (await stt.transcribe_pcm(_pcm())).text == "Hallo Welt."
+
+
+def test_local_only_final_pass_keeps_the_isolated_cpu_floor(_local_ok):
+    _local_ok["next"] = _FakeWorker(device="cpu")
+    stt = LocalFinalSTT(allow_cpu=True)
+    assert asyncio.run(stt.transcribe_pcm(_pcm())).text == "Hallo Welt."
+    assert stt.device == "cpu"
+
+
+def test_a_retired_read_cannot_drop_the_replacement(_local_ok, monkeypatch):
+    stt = LocalFinalSTT()
+    replacement = _FakeWorker()
+
+    class RetiredWorker(_FakeWorker):
+        def transcribe(self, *args, **kwargs):
+            stt._worker = replacement
+            raise RuntimeError("old pipe closed")
+
+    stt._worker = RetiredWorker()
+    with pytest.raises(LocalEngineUnavailable):
+        stt._transcribe_blocking(_pcm(), None)
+    assert stt._worker is replacement
+    assert not replacement.closed
+
+
+def test_local_only_chain_does_not_reenter_the_desktop_engine(monkeypatch):
+    import jarvis.dictation.local_preview as preview
+    import jarvis.plugins.stt as plugins
+    import jarvis.speech.pipeline as pipeline
+    import jarvis.speech.stt_dictionary as dictionary
+    from jarvis.core.config import DictationConfig, STTConfig
+
+    monkeypatch.setattr(plugins, "build_stt_from_config", lambda *a, **k: object())
+    monkeypatch.setattr(pipeline, "_resolve_stt_fallback_chain", lambda *a: ())
+    monkeypatch.setattr(dictionary, "wrap_stt_with_dictionary", lambda p: p)
+    monkeypatch.setattr(preview, "faster_whisper_available", lambda: True)
+    pipe = pipeline.SpeechPipeline.__new__(pipeline.SpeechPipeline)
+    pipe._config = SimpleNamespace(stt=STTConfig(provider="faster-whisper"))
+    pipe._dictation_cfg = DictationConfig()
+    provider = pipe._dictation_stt()
+    assert provider._alternate_names == []
+    assert provider._primary._allow_cpu
+
+
 def test_the_lane_puts_the_local_engine_in_front_of_the_configured_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

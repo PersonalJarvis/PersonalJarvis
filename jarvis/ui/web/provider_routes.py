@@ -1504,7 +1504,7 @@ async def _tier_section_health(
     # calling the tier healthy. The real inference test still stays off the
     # page-open path: it would force a multi-gigabyte load for no extra signal.
     if getattr(spec, "auth_mode", None) == "none":
-        local_state = _local_runtime_payload(spec)
+        local_state = await asyncio.to_thread(_local_runtime_payload, spec)
         if local_state is not None and not local_state["ready"]:
             return SectionHealth(
                 status=_section_health.NEEDS_SETUP,

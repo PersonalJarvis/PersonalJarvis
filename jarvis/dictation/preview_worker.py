@@ -97,6 +97,7 @@ def serve(stdin: IO[bytes], stdout: IO[bytes], model_name: str, compute: str | N
             "ready": True,
             "device": engine._engine_device,  # noqa: SLF001
             "compute": engine._engine_compute,  # noqa: SLF001
+            "timings": getattr(engine, "_load_timings", {}),
         },
     )
     while True:

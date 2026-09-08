@@ -109,3 +109,26 @@ async def test_an_endless_build_eventually_gives_up() -> None:
             await _join(task, provider)
     finally:
         task.cancel()
+
+
+async def test_expired_join_does_not_spawn_a_second_native_build(monkeypatch):
+    from jarvis.speech.pipeline import SpeechPipeline
+
+    provider = _LocalProvider()
+    task = asyncio.create_task(asyncio.sleep(30))
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._dictation_stt_instance = provider
+    pipe._dictation_warmup_task = task
+    pipe._dictation_warmup_provider = provider
+
+    async def expired(*args):
+        raise TimeoutError
+
+    monkeypatch.setattr(pipe, "_await_warmup_or_cold_load", expired)
+    try:
+        assert await pipe._join_dictation_warmup(provider) is provider
+        assert pipe._dictation_stt_instance is provider
+        assert not task.cancelled()
+        assert pipe._dictation_warmup_task is task
+    finally:
+        task.cancel()

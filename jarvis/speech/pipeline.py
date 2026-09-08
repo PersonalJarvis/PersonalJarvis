@@ -10861,7 +10861,7 @@ class SpeechPipeline:
         # wrapper silently handed the voice provider — bias prompt included —
         # back to the dictation lane.
         try:
-            from jarvis.plugins.stt import build_named_stt_provider
+            from jarvis.plugins.stt import build_named_stt_provider, stt_family_id
 
             configured = str(getattr(stt_cfg, "provider", "") or "").strip()
             alternates = list(_resolve_stt_fallback_chain(stt_cfg, configured))
@@ -10886,6 +10886,11 @@ class SpeechPipeline:
                 from jarvis.speech.stt_fallback import FallbackSTT
 
                 chain = [configured, *alternates] if configured else alternates
+                # A local worker cannot fail over to another cold native engine
+                # in the desktop process. Preserve the existing upload policy:
+                # only already-authorized cloud alternates may receive audio.
+                chain = [name for name in chain if stt_family_id(name) != "local"]
+                local_final._allow_cpu = not chain
                 instance = FallbackSTT(
                     local_final,
                     chain,
@@ -11100,6 +11105,15 @@ class SpeechPipeline:
             await self._await_warmup_or_cold_load(task, provider)
             return provider
         except TimeoutError:
+            if getattr(provider, "is_loading", False) and not task.done():
+                # A deadline ends this press's wait, not the worker's native
+                # initialization. Retain its owner so the next press cannot
+                # spawn a second model onto the same device (RUB-37/AP-24).
+                log.warning(
+                    "Dictation engine is still starting after the warm-up "
+                    "deadline; retaining its in-flight load."
+                )
+                return provider
             log.warning(
                 "Dictation STT warm-up did not finish within %.0fs; replacing "
                 "the provider instance before transcription.",

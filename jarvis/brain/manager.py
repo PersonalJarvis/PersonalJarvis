@@ -123,7 +123,7 @@ from .provider_registry import BrainProviderRegistry
 from .rate_limit_tracker import RateLimitTracker
 from .streaming import aggregate
 from .tool_call_recovery import extract_leaked_tool_calls
-from .tool_surface import maybe_reconcile_tool_surface, stamp_tool_surface
+from .tool_surface import stamp_tool_surface
 from .turn_planner import is_contextual_follow_up, plan_turn
 from .voice_command_gate import match_voice_command
 
@@ -10758,7 +10758,9 @@ class BrainManager:
         # session and the model refuses with "tool not available". Cheap
         # names-only drift check against the live CLI/plugin/MCP caches; one
         # refresh_tools() when they diverge. Never raises.
-        maybe_reconcile_tool_surface(self)
+        from jarvis.brain.tool_surface import reconcile_tool_surface_async
+
+        await reconcile_tool_surface_async(self)
 
         # auto mode: resolve this turn's language so _reply_language_directive()
         # hard-pins it (a soft "mirror" drifts to German on tool-synthesis
@@ -12876,21 +12878,44 @@ class BrainManager:
     # ------------------------------------------------------------------
 
     def refresh_tools(self) -> None:
-        """Reloads the tool dict from the factory.
+        """Synchronous refresh for callers outside the running event loop."""
+        snapshot = self._build_tool_snapshot()
+        if snapshot is not None:
+            self._apply_tool_snapshot(snapshot)
 
-        Triggered by the ``BrainToolsChanged`` event handler (see
-        ``attach_to_bus``) after a new CLI connects. Idempotent — if the
-        factory returns the same dict, effectively nothing changes.
+    async def refresh_tools_async(self) -> None:
+        """Coalesce registry events and build snapshots without blocking the loop."""
+        self._tool_refresh_pending = True
+        task = getattr(self, "_tool_refresh_task", None)
+        if task is None or task.done():
+            async def refresh() -> None:
+                from jarvis.brain.tool_surface import live_tool_surface_fingerprint
 
-        The simplest approach runs through ``_load_tools_for_tier`` and
-        replaces ``self._tools`` in-place. The tier is derived from an
-        internally set marker (the factory sets ``_tier`` during build).
-        If no tier is known, the tool dict stays unchanged — the user must
-        restart manually in that case.
+                while self._tool_refresh_pending:
+                    self._tool_refresh_pending = False
+                    before = live_tool_surface_fingerprint()
+                    snapshot = await asyncio.to_thread(self._build_tool_snapshot)
+                    if snapshot is not None:
+                        self._apply_tool_snapshot(snapshot)
+                        if live_tool_surface_fingerprint() != before:
+                            self._tool_refresh_pending = True
+
+            task = asyncio.create_task(refresh(), name="brain-tool-refresh")
+            self._tool_refresh_task = task
+        # A cancelled subscriber/turn must not abandon a registry refresh that
+        # other subscribers are awaiting, or cause another concurrent build.
+        await asyncio.shield(task)
+
+    def _build_tool_snapshot(self):
+        """Build replacement dictionaries while preserving the boot-time DI.
+
+        Plugin imports and entry-point scans can block for seconds on cold
+        storage. Running-loop callers execute this on a worker and publish
+        the complete result back on the loop. No tier means no replacement.
         """
         tier = getattr(self, "_tier", None)
         if not tier:
-            log.debug("refresh_tools: kein _tier gesetzt, skip")
+            log.debug("refresh_tools: no tier set; skipping")
             return
         try:
             # Lazy import: the factory may pull in heavy modules depending on
@@ -12908,7 +12933,7 @@ class BrainManager:
                 ToolExecutor,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("refresh_tools: Factory-Module nicht importierbar: %s", exc)
+            log.warning("refresh_tools: factory modules could not be imported: %s", exc)
             return
 
         try:
@@ -12932,7 +12957,7 @@ class BrainManager:
 
             harness_manager = HarnessManager(bus=self._bus)
 
-            # ROOT CAUSE of the "der lokale Verlaufsspeicher ist nicht verfügbar"
+            # ROOT CAUSE of the "local history store is unavailable"
             # voice bug (live 2026-06-18): this rebuild — triggered by EVERY
             # CLI/MCP connect at boot ("Tool-Registry refreshed: 29 -> 107") —
             # used to drop the four shared DI references the boot path passes, so
@@ -12961,9 +12986,13 @@ class BrainManager:
                 config=self._config,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("refresh_tools: Factory-Call fehlgeschlagen: %s", exc)
+            log.warning("refresh_tools: factory call failed: %s", exc)
             return
 
+        return new_tools, new_local_action_tools
+
+    def _apply_tool_snapshot(self, snapshot) -> None:
+        new_tools, new_local_action_tools = snapshot
         old_count = len(self._tools)
         self._tools = new_tools
         self._local_action_tools = new_local_action_tools
@@ -13002,8 +13031,8 @@ class BrainManager:
             return
 
         async def _on_tools_changed(ev: BrainToolsChanged) -> None:
-            log.info("BrainToolsChanged empfangen (reason=%s) -> refresh_tools()", ev.reason)
-            self.refresh_tools()
+            log.info("BrainToolsChanged received (reason=%s); refreshing tools", ev.reason)
+            await self.refresh_tools_async()
 
         target_bus.subscribe(BrainToolsChanged, _on_tools_changed)
         target_bus.subscribe(AnnouncementRequested, self._on_cu_tool_completion)

@@ -73,7 +73,7 @@ async def test_voice_status_tracks_latest_state() -> None:
 
 
 @pytest.mark.asyncio
-async def test_voice_ready_watchdog_force_releases_stuck_ui(monkeypatch) -> None:
+async def test_voice_ready_watchdog_releases_boot_without_claiming_usable(monkeypatch) -> None:
     """Permanent "starting up" backstop: if warm-up never signals ready (a crash
     during pipeline construction or a wedged model load), the watchdog fires
     after its deadline and force-releases the UI so the banner cannot hang
@@ -93,8 +93,8 @@ async def test_voice_ready_watchdog_force_releases_stuck_ui(monkeypatch) -> None
 
     await srv._voice_ready_watchdog(deadline_s=0.01)
 
-    assert srv._voice_ready is True
-    assert any(e.ready and e.detail == "watchdog_timeout" for e in seen)
+    assert srv._voice_ready is False
+    assert any(e.ready and not e.voice_usable and e.detail == "watchdog_timeout" for e in seen)
 
 
 @pytest.mark.asyncio

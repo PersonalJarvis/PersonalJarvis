@@ -8,6 +8,7 @@ These models are exported to JSON schema in Phase 1a (via
 `scripts/export_ws_schema.py`) and generated into Zod validators on the
 frontend, so front- and backend stay structurally in sync.
 """
+
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
@@ -22,6 +23,7 @@ from jarvis.safety.command_impact import classify_command
 # ----------------------------------------------------------------------
 # Outgoing (Server → Client)
 # ----------------------------------------------------------------------
+
 
 class WSEventEnvelope(BaseModel):
     """Wraps an arbitrary bus event for transport to the UI.
@@ -70,6 +72,7 @@ class WSAudioLevel(BaseModel):
 # ----------------------------------------------------------------------
 # Incoming (Client → Server)
 # ----------------------------------------------------------------------
+
 
 class WSMessageIn(BaseModel):
     """User message from the UI — text chat, voice transcript, or action."""
@@ -187,6 +190,14 @@ def event_to_ws_envelope(event: Event) -> dict[str, Any]:
         payload[k] = _jsonable(v)
 
     _enrich_shell_impact(event, payload)
+
+    # The bus also uses ready=True to release boot waiters in degraded mode.
+    # A browser's ready flag promises speech is usable, so transport the same
+    # stricter capability that the desktop overlay and boot harness consume.
+    from jarvis.core.events import VoiceBootStatus
+
+    if isinstance(event, VoiceBootStatus):
+        payload["ready"] = event.voice_usable
 
     envelope = WSEventEnvelope(
         event_name=type(event).__name__,

@@ -174,19 +174,32 @@ class _WorkerModel:
         return segments, info
 
     def close(self) -> None:
-        """Kill the worker. Never raises — this runs on drop/replace paths."""
+        """Kill and reap the worker. Blocking: callers must keep this off-loop."""
         try:
             self._proc.kill()
         except Exception as exc:  # noqa: BLE001 — an already-dead worker is the goal state
             log.debug("Preview worker kill skipped: %s", exc)
+        try:
+            wait = getattr(self._proc, "wait", None)
+            if callable(wait):
+                wait(timeout=3.0)
+        except Exception as exc:  # noqa: BLE001 — never wait forever on teardown
+            log.warning("Preview worker did not exit after kill: %s", exc)
+            return
+        for stream in (self._proc.stdin, self._proc.stdout):
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception as exc:  # noqa: BLE001 — already-closed pipe is harmless
+                    log.debug("Preview worker pipe close skipped: %s", exc)
 
 
 def _spawn_worker_model(model_name: str, *, compute: str | None = None) -> _WorkerModel | None:
     """Start the out-of-process engine; ``None`` when this host cannot.
 
-    A refused spawn is not an error — the caller falls back to the in-process
-    CPU floor, which never touches the CUDA DLLs and therefore never holds
-    the loader lock. ``compute`` pins the CUDA compute type for the worker
+    A refused spawn disables the decorative preview; final STT retains its
+    authorized fallback policy. No native engine is loaded into the parent.
+    ``compute`` pins the CUDA compute type (or the CPU floor) for the worker
     (the dictation final pass shares the card and asks for ``int8_float16``).
     """
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
@@ -195,6 +208,7 @@ def _spawn_worker_model(model_name: str, *, compute: str | None = None) -> _Work
     argv = [_child_python(), "-X", "utf8", "-m", "jarvis.dictation.preview_worker", model_name]
     if compute:
         argv.append(compute)
+    started = time.perf_counter()
     try:
         proc = subprocess.Popen(  # noqa: S603 — our own interpreter + module, no user input
             argv,
@@ -220,13 +234,16 @@ def _spawn_worker_model(model_name: str, *, compute: str | None = None) -> _Work
             result["exc"] = exc
         done.set()
 
-    threading.Thread(target=_handshake, name="dictation-preview-handshake", daemon=True).start()
+    spawned_ms = (time.perf_counter() - started) * 1000.0
+    reader = threading.Thread(target=_handshake, name="dictation-preview-handshake", daemon=True)
+    reader.start()
     if not done.wait(_WORKER_BOOT_TIMEOUT_S):
         log.info(
             "Dictation preview worker did not become ready within %.0f s — killed.",
             _WORKER_BOOT_TIMEOUT_S,
         )
-        proc.kill()
+        _WorkerModel(proc, "", "").close()
+        reader.join(timeout=3.0)
         return None
     message = result.get("msg")
     if not isinstance(message, dict) or not message.get("ready"):
@@ -236,8 +253,16 @@ def _spawn_worker_model(model_name: str, *, compute: str | None = None) -> _Work
             else result.get("exc") or "worker exited during startup"
         )
         log.info("Dictation preview worker reported no engine (%s).", detail)
-        proc.kill()
+        _WorkerModel(proc, "", "").close()
+        reader.join(timeout=3.0)
         return None
+    reader.join(timeout=3.0)
+    log.info(
+        "Dictation worker startup: spawn=%.0f ms, ready=%.0f ms, stages=%s.",
+        spawned_ms,
+        (time.perf_counter() - started) * 1000.0,
+        message.get("timings", {}),
+    )
     return _WorkerModel(
         proc,
         str(message.get("device", "?") or "?"),
@@ -284,6 +309,9 @@ class LocalPreviewTranscriber:
         self._unavailable = False
         self._loading = False
         self._load_failed = False
+        self._load_task: asyncio.Task | None = None
+        self._cleanup_task: asyncio.Task | None = None
+        self._load_timings: dict[str, float] = {}
         #: Language of the MOST RECENT preview, as ``(code, probability)``.
         #: The engine computes this on every call and it used to be discarded.
         #: It is the only reading of the spoken language taken from the AUDIO
@@ -308,10 +336,15 @@ class LocalPreviewTranscriber:
     def _load_model(self) -> None:
         """Build the engine. Runs OFF the transcribe path — see ``transcribe``."""
         try:
-            from jarvis.plugins.stt.fwhisper import _new_whisper_model
-
             if self._prefer_worker:
-                worker = _spawn_worker_model(self._model_name)
+                # Recovery must advance the WORKER'S device ladder too. Resetting
+                # the child to its default recreated the same wedged GPU forever.
+                compute = (None, "int8_float16", "cpu")[min(self._attempt_index, 2)]
+                worker = (
+                    _spawn_worker_model(self._model_name, compute=compute)
+                    if compute
+                    else _spawn_worker_model(self._model_name)
+                )
                 if worker is not None:
                     with self._lock:
                         self._model = worker
@@ -324,15 +357,22 @@ class LocalPreviewTranscriber:
                         worker.compute,
                     )
                     return
-                # No worker on this host: stay on the CPU floor IN process.
-                # Deliberately never CUDA here — the in-process cublas load
-                # holds the Windows loader lock for 15-30 s on a cold boot,
-                # which is the freeze this worker exists to remove.
-                preferred = ("cpu", "int8")
+                # A decorative preview must never defeat process isolation
+                # because its worker failed. Final STT retains the recording.
+                self._load_failed = True
+                self._unavailable = True
+                log.info("Local preview unavailable: isolated worker could not start.")
+                return
             else:
-                preferred = self._pick_device()
+                probe_started = time.perf_counter()
+                preferred = (
+                    ("cpu", "int8") if self._compute_override == "cpu" else self._pick_device()
+                )
+                self._load_timings["probe_ms"] = (time.perf_counter() - probe_started) * 1000.0
                 if self._compute_override and preferred[0] == "cuda":
                     preferred = ("cuda", self._compute_override)
+            from jarvis.plugins.stt.fwhisper import _new_whisper_model
+
             attempts = [preferred]
             if preferred == ("cuda", "float16"):
                 # The quantized pair is the old GPU default and still the
@@ -348,7 +388,9 @@ class LocalPreviewTranscriber:
             last_error: Exception | None = None
             for device, compute in attempts:
                 try:
+                    build_started = time.perf_counter()
                     model = _new_whisper_model(self._model_name, device, compute)
+                    self._load_timings["build_ms"] = (time.perf_counter() - build_started) * 1000.0
                 except Exception as exc:  # noqa: BLE001 — try the portable floor
                     last_error = exc
                     log.info(
@@ -370,10 +412,7 @@ class LocalPreviewTranscriber:
 
                     rng = np.random.default_rng(0)
                     warm_audio = (
-                        rng.standard_normal(int(16_000 * _WARM_CLIP_S)).astype(
-                            np.float32
-                        )
-                        * 0.001
+                        rng.standard_normal(int(16_000 * _WARM_CLIP_S)).astype(np.float32) * 0.001
                     )
                     started = time.perf_counter()
                     segments, _info = model.transcribe(
@@ -384,11 +423,11 @@ class LocalPreviewTranscriber:
                     )
                     list(segments)
                     warm_s = time.perf_counter() - started
+                    self._load_timings["first_decode_ms"] = warm_s * 1000.0
                 except Exception as exc:  # noqa: BLE001 — try the portable floor
                     last_error = exc
                     log.info(
-                        "Dictation preview rejected %s after its first "
-                        "decode failed (%s: %s).",
+                        "Dictation preview rejected %s after its first decode failed (%s: %s).",
                         device,
                         type(exc).__name__,
                         exc,
@@ -399,8 +438,7 @@ class LocalPreviewTranscriber:
                     self._engine_device = device
                     self._engine_compute = compute
                 log.info(
-                    "Dictation preview engine ready: %s on %s (%s), %.0fs clip "
-                    "in %.2fs.",
+                    "Dictation preview engine ready: %s on %s (%s), %.0fs clip in %.2fs.",
                     self._model_name,
                     device,
                     compute,
@@ -439,7 +477,7 @@ class LocalPreviewTranscriber:
 
             ensure_cuda_libraries_findable()
             with inference_only_import_shield():
-                import ctranslate2
+                import ctranslate2  # type: ignore[import-untyped]
 
             supported = set(ctranslate2.get_supported_compute_types("cuda"))
             # Plain half precision first: on the one GPU measured so far the
@@ -456,7 +494,9 @@ class LocalPreviewTranscriber:
             log.debug("Preview CUDA probe failed (%s); using CPU.", exc)
         return "cpu", "int8"
 
-    def _transcribe_sync(self, pcm: bytes, language: str | None) -> tuple[str, str, float]:
+    def _transcribe_sync(
+        self, pcm: bytes, language: str | None, *, model: Any = None
+    ) -> tuple[str, str, float]:
         """``(text, language_code, language_probability)``.
 
         The language is reported back rather than dropped: it costs nothing
@@ -464,11 +504,13 @@ class LocalPreviewTranscriber:
         which no downstream text inspection can reconstruct once a provider
         has translated the words.
         """
-        text, detected, probability, _timings = self._transcribe_sync_detailed(pcm, language)
+        text, detected, probability, _timings = self._transcribe_sync_detailed(
+            pcm, language, model=model
+        )
         return text, detected, probability
 
     def _transcribe_sync_detailed(
-        self, pcm: bytes, language: str | None, *, beam_size: int = 1
+        self, pcm: bytes, language: str | None, *, beam_size: int = 1, model: Any = None
     ) -> tuple[str, str, float, list[dict[str, Any]]]:
         """:meth:`_transcribe_sync` plus the decoder's own segment timings.
 
@@ -483,7 +525,7 @@ class LocalPreviewTranscriber:
         samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         if samples.size == 0:
             return "", "", 0.0, []
-        model = self._model
+        model = self._model if model is None else model
         if model is None:  # pragma: no cover — transcribe() gates on ready
             return "", "", 0.0, []
         segments, info = model.transcribe(
@@ -550,7 +592,7 @@ class LocalPreviewTranscriber:
         release_here = True
         try:
             work = asyncio.create_task(
-                asyncio.to_thread(self._transcribe_sync, pcm, language),
+                asyncio.to_thread(self._transcribe_sync, pcm, language, model=self._model),
                 name="dictation-local-preview",
             )
             text, detected, probability = await asyncio.wait_for(
@@ -592,7 +634,8 @@ class LocalPreviewTranscriber:
                         # It came back late, but it came back: a slow engine is
                         # not a wedged one, and the streak that would have
                         # dropped it is over.
-                        self._failures = 0
+                        if self._busy is guard:
+                            self._failures = 0
 
                 work.add_done_callback(_release_finished_worker)
             if release_here:
@@ -604,9 +647,26 @@ class LocalPreviewTranscriber:
             if self._loading or self._model is not None or self._load_failed:
                 return
             self._loading = True
-        threading.Thread(
-            target=self._load_model, name="dictation-preview-load", daemon=True
-        ).start()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            threading.Thread(
+                target=self._load_model, name="dictation-preview-load", daemon=True
+            ).start()
+            return
+
+        async def load() -> None:
+            try:
+                if self._cleanup_task is not None:
+                    await asyncio.shield(self._cleanup_task)
+                await asyncio.to_thread(self._load_model)
+            except Exception:
+                self._loading = False
+                self._load_failed = True
+                self._unavailable = True
+                log.exception("Dictation preview background load failed")
+
+        self._load_task = loop.create_task(load(), name="dictation-preview-load")
 
     def _note_failure(self, why: str) -> None:
         """Count a failure and drop the engine once they persist.
@@ -645,7 +705,19 @@ class LocalPreviewTranscriber:
         # in-process model has no close() and is left to the GC as before.
         close = getattr(dropped, "close", None)
         if callable(close):
-            close()
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                close()
+            else:
+
+                async def cleanup() -> None:
+                    try:
+                        await asyncio.to_thread(close)
+                    except Exception:
+                        log.exception("Dictation preview cleanup failed")
+
+                self._cleanup_task = loop.create_task(cleanup(), name="dictation-preview-cleanup")
         log.info(
             "Dictation preview engine dropped (%s on %s/%s); rebuilding on the "
             "next tick with the next engine.",
