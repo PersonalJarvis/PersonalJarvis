@@ -8,6 +8,7 @@ Exports:
   ``jarvis.tasks.schema``.
 - Implementations: ``TaskStore``, ``TaskScheduler``, ``TaskRunner``.
 """
+
 from __future__ import annotations
 
 from .runner import TaskRunner
@@ -30,6 +31,7 @@ from .schema import (
     Trigger,
     TriggerAfterDelay,
     TriggerAtTime,
+    TriggerCalendar,
     TriggerEvery,
     TriggerOnEvent,
 )
@@ -49,6 +51,7 @@ __all__ = [
     "TriggerAtTime",
     "TriggerOnEvent",
     "TriggerEvery",
+    "TriggerCalendar",
     "Trigger",
     "RetryPolicy",
     "TaskState",

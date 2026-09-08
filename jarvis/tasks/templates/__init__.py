@@ -29,6 +29,7 @@ Rules for a template:
 - ``name``/``description`` carry ``en``/``de``/``es`` — the UI picks the
   active locale and falls back to ``en``.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -44,6 +45,7 @@ from jarvis.tasks.schema import (
     AgentAction,
     PluginGrant,
     TaskSpec,
+    TriggerCalendar,
     TriggerEvery,
 )
 
@@ -53,7 +55,11 @@ LOCALES: tuple[Locale, ...] = ("en", "de", "es")
 TemplateCategory = Literal["news", "productivity", "finance", "research", "developer"]
 #: Display order of the catalogue sections (the UI groups cards by this).
 CATEGORIES: tuple[TemplateCategory, ...] = (
-    "news", "productivity", "finance", "research", "developer",
+    "news",
+    "productivity",
+    "finance",
+    "research",
+    "developer",
 )
 
 #: Tag that marks a task as "created from template <key>" — the UI uses it to
@@ -63,6 +69,7 @@ TEMPLATE_TAG_PREFIX = "template:"
 
 class LocalizedText(BaseModel):
     """A short UI string in the three product locales (``en`` is mandatory)."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     en: str = Field(min_length=1, max_length=512)
     de: str = Field(default="", max_length=512)
@@ -75,6 +82,7 @@ class LocalizedText(BaseModel):
 class TemplateInput(BaseModel):
     """A value the user may fill in when adding the template (a watchlist, a
     city, a repo path). ``key`` is the ``{placeholder}`` used in the prompt."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     key: str = Field(min_length=1, max_length=32, pattern=r"^[a-z][a-z0-9_]*$")
     label: LocalizedText
@@ -90,10 +98,12 @@ class TemplateSchedule(BaseModel):
 
     ``weekday`` follows ``datetime.weekday()``: 0 = Monday … 6 = Sunday.
     """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["hourly", "daily", "weekly"] = "daily"
     time: str = Field(default="08:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     weekday: int = Field(default=0, ge=0, le=6)
+    timezone: str | None = None
 
 
 class AutomationTemplate(BaseModel):
@@ -174,14 +184,11 @@ def all_templates(*, refresh: bool = False) -> dict[str, AutomationTemplate]:
             continue
         if template.key in found:
             raise RuntimeError(
-                f"duplicate automation template key {template.key!r} "
-                f"({info.name}.py)"
+                f"duplicate automation template key {template.key!r} ({info.name}.py)"
             )
         found[template.key] = template
     order = {c: i for i, c in enumerate(CATEGORIES)}
-    _cache = dict(
-        sorted(found.items(), key=lambda kv: (order[kv[1].category], kv[0]))
-    )
+    _cache = dict(sorted(found.items(), key=lambda kv: (order[kv[1].category], kv[0])))
     return _cache
 
 
@@ -193,6 +200,7 @@ def get_template(key: str) -> AutomationTemplate | None:
 # Readiness
 # ---------------------------------------------------------------------
 
+
 def grant_matches(grant: str, tool_name: str) -> bool:
     """A grant names a tool exactly, or is a prefix grant for a bridged
     plugin whose tools are namespaced ``<plugin>/<tool>`` (``github`` covers
@@ -201,18 +209,17 @@ def grant_matches(grant: str, tool_name: str) -> bool:
 
 
 def missing_requirements(
-    requires: Iterable[str], live_tools: Iterable[str] | None,
+    requires: Iterable[str],
+    live_tools: Iterable[str] | None,
 ) -> list[str]:
     live = list(live_tools or ())
-    return [
-        req for req in requires
-        if not any(grant_matches(req, name) for name in live)
-    ]
+    return [req for req in requires if not any(grant_matches(req, name) for name in live)]
 
 
 # ---------------------------------------------------------------------
 # Schedule → trigger
 # ---------------------------------------------------------------------
+
 
 def _parse_hhmm(value: str) -> tuple[int, int]:
     hh, mm = value.split(":")
@@ -239,7 +246,16 @@ def next_occurrence(schedule: TemplateSchedule, now: datetime) -> datetime:
     return candidate
 
 
-def schedule_to_trigger(schedule: TemplateSchedule, now: datetime | None = None) -> TriggerEvery:
+def schedule_to_trigger(
+    schedule: TemplateSchedule, now: datetime | None = None
+) -> TriggerEvery | TriggerCalendar:
+    if schedule.timezone and schedule.kind != "hourly":
+        return TriggerCalendar(
+            timezone=schedule.timezone,
+            local_time=schedule.time,
+            weekdays=(schedule.weekday,) if schedule.kind == "weekly" else (),
+        )
+    # Legacy API callers with no client timezone retain interval semantics.
     now = now or datetime.now()
     interval = {"hourly": 3600, "daily": 86_400, "weekly": 7 * 86_400}[schedule.kind]
     first = next_occurrence(schedule, now)
@@ -252,21 +268,29 @@ def schedule_to_trigger(schedule: TemplateSchedule, now: datetime | None = None)
 _WEEKDAY_NAMES: dict[str, tuple[str, ...]] = {
     "en": ("Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"),
     "de": (  # i18n-allow
-        "Montags", "Dienstags", "Mittwochs", "Donnerstags", "Freitags", "Samstags", "Sonntags",
+        "Montags",
+        "Dienstags",
+        "Mittwochs",
+        "Donnerstags",
+        "Freitags",
+        "Samstags",
+        "Sonntags",
     ),
     "es": ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábados", "Domingos"),
 }
 _SCHEDULE_WORDS: dict[str, dict[str, str]] = {
     "en": {"hourly": "Every hour", "daily": "Daily at {time}", "weekly": "{day} at {time}"},
     "de": {  # i18n-allow
-        "hourly": "Stündlich", "daily": "Täglich um {time}", "weekly": "{day} um {time}",
+        "hourly": "Stündlich",
+        "daily": "Täglich um {time}",
+        "weekly": "{day} um {time}",
     },
     "es": {"hourly": "Cada hora", "daily": "Diario a las {time}", "weekly": "{day} a las {time}"},
 }
 
 
 def schedule_label(schedule: TemplateSchedule, locale: str = "en") -> str:
-    """"Daily at 07:30" / "Täglich um 07:30" / "Mondays at 09:00"."""
+    """ "Daily at 07:30" / "Täglich um 07:30" / "Mondays at 09:00"."""
     loc = locale if locale in _SCHEDULE_WORDS else "en"
     words = _SCHEDULE_WORDS[loc]
     if schedule.kind == "hourly":
@@ -287,8 +311,7 @@ _PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
 def render_prompt(template: AutomationTemplate, inputs: dict[str, str] | None) -> str:
     """Substitute ``{input_key}`` placeholders; unknown braces stay literal."""
     values = {
-        i.key: ((inputs or {}).get(i.key) or "").strip() or i.default
-        for i in template.inputs
+        i.key: ((inputs or {}).get(i.key) or "").strip() or i.default for i in template.inputs
     }
 
     def _sub(match: re.Match[str]) -> str:
@@ -309,7 +332,8 @@ def build_spec(
 ) -> TaskSpec:
     """The TaskSpec a template turns into when the user adds it."""
     missing_inputs = [
-        i.key for i in template.inputs
+        i.key
+        for i in template.inputs
         if i.required and not (((inputs or {}).get(i.key) or "").strip() or i.default)
     ]
     if missing_inputs:

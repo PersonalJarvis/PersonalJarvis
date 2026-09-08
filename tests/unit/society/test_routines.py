@@ -71,7 +71,7 @@ async def test_spec_carries_identity_tags_and_grants(agent):
         agent,
         title="  Morning   inbox  brief ",
         prompt="Summarize new mail.",
-        schedule={"kind": "every", "interval_seconds": 3600, "start_at": "2026-09-02T07:00:00"},
+        schedule={"kind": "every", "interval_seconds": 3600, "start_at": "2026-09-02T07:00:00+00:00"},
         plugin_grants=[{"plugin_id": "gmail", "scope": "read"}, {"plugin_id": ""}],
     )
     assert spec.title == "[agent:Mailbox] Morning inbox brief"
@@ -90,7 +90,7 @@ async def test_every_schedule_kind(agent):
         agent,
         title="t",
         prompt="p",
-        schedule={"kind": "at_time", "iso_timestamp": "2026-09-02T07:00:00"},
+        schedule={"kind": "at_time", "iso_timestamp": "2026-09-02T07:00:00+00:00"},
     )
     assert at.trigger.type == "at_time"
     ev = build_task_spec(

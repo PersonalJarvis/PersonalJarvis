@@ -48,6 +48,7 @@ export interface TaskDraft {
 export type TaskTrigger =
   | { type: "after_delay"; delay_seconds: number }
   | { type: "at_time"; iso_timestamp: string }
+  | { type: "calendar"; local_time: string; timezone: string; weekdays?: number[]; month_days?: number[]; months?: number[]; start_date?: string }
   | { type: "every"; interval_seconds: number; start_at?: string }
   | {
       type: "on_event";
@@ -171,7 +172,7 @@ export function buildEventTrigger(draft: TaskDraft): TaskTrigger {
   };
 }
 
-export function buildTrigger(draft: TaskDraft, now: Date = new Date()): TaskTrigger {
+export function buildTrigger(draft: TaskDraft, _now: Date = new Date()): TaskTrigger {
   if (draft.triggerMode === "event") {
     return buildEventTrigger(draft);
   }
@@ -187,9 +188,9 @@ export function buildTrigger(draft: TaskDraft, now: Date = new Date()): TaskTrig
   }
   if (draft.recurringMode === "daily") {
     return {
-      type: "every",
-      interval_seconds: 86400,
-      start_at: nextDailyOccurrence(draft.dailyTime, now),
+      type: "calendar",
+      local_time: draft.dailyTime,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
   }
   return { type: "every", interval_seconds: draft.customIntervalSeconds };

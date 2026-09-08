@@ -1,24 +1,17 @@
--- Personal Jarvis — Task-Queue Schema (Phase 5, ADR-0003)
---
--- Additives Schema fuer die persistente Task-Queue, wird additiv auf die
--- Memory-DB (`data/jarvis.db`) angewandt. Alle CREATEs sind idempotent
--- (IF NOT EXISTS), sodass beim TaskStore.init() mehrfaches Ausfuehren
--- keine Probleme macht.
---
--- WAL-Mode + busy_timeout sind schon durch `jarvis/memory/schema.sql`
--- aktiv und muessen hier nicht nochmal gesetzt werden.
+-- Persistent task queue, additive to the memory database.
+-- WAL and busy_timeout are configured by TaskStore.
 
 CREATE TABLE IF NOT EXISTS tasks (
-    id              TEXT PRIMARY KEY,             -- UUID4 als str
+    id              TEXT PRIMARY KEY,             -- UUID4 as string
     trace_id        TEXT NOT NULL,
     spec_json       TEXT NOT NULL,                -- serialized TaskSpec (Pydantic)
     state           TEXT NOT NULL CHECK(state IN (
                         'pending','scheduled','paused','running','completed',
                         'failed','cancelled','interrupted')),
     trigger_type    TEXT NOT NULL CHECK(trigger_type IN (
-                        'after_delay','at_time','on_event','every')),
-    due_at_ns       INTEGER,                      -- NULL fuer on_event
-    event_selector  TEXT,                         -- nur fuer on_event (Event-Klasse)
+                        'after_delay','at_time','on_event','every','calendar')),
+    due_at_ns       INTEGER,                      -- NULL for on_event
+    event_selector  TEXT,                         -- on_event only (event class)
     title           TEXT NOT NULL DEFAULT '',
     created_at_ns   INTEGER NOT NULL,
     started_at_ns   INTEGER,

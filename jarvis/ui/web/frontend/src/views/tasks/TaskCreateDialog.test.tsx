@@ -83,7 +83,7 @@ describe("TaskCreateDialog", () => {
       action: { kind: string; plugin_grants: unknown[] };
     };
     expect(spec.title).toBe("Morning Briefing");
-    expect(spec.trigger.type).toBe("every");
+    expect(spec.trigger.type).toBe("calendar");
     expect(spec.action.kind).toBe("agent");
     expect(spec.action.plugin_grants).toEqual([{ plugin_id: "gmail", scope: "read" }]);
   });

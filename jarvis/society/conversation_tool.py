@@ -53,7 +53,8 @@ class RoutineListTool:
     name = "society_routines"
     risk_tier = "safe"
     description = (
-        "List YOUR routines, their ids, schedules and current state. Use those ids with "
+        "List YOUR routines, ids, prompts, schedules, state, client timezone and supported "
+        "event names/fields (external events need an installed publisher). Use those ids with "
         "society_propose_change to update, pause, resume or delete a routine."
     )
     schema = {"type": "object", "properties": {}}
@@ -70,4 +71,14 @@ class RoutineListTool:
         store, _ = self._runtime.task_services()
         if store is None:
             return ToolResult(False, {}, "The task store is unavailable")
-        return ToolResult(True, {"routines": await list_routines(store, self._agent_id)})
+        from jarvis.tasks.context import client_timezone
+        from jarvis.tasks.event_catalog import event_catalog
+
+        return ToolResult(
+            True,
+            {
+                "routines": await list_routines(store, self._agent_id),
+                "timezone": client_timezone.get(),
+                "events": event_catalog(),
+            },
+        )

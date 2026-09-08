@@ -68,7 +68,7 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
   function submit() {
     setTouched(true);
     if (!valid) return;
-    const schedule: TemplateSchedule = { kind, time, weekday };
+    const schedule: TemplateSchedule = { kind, time, weekday, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
     addMut.mutate(
       {
         key: template.key,

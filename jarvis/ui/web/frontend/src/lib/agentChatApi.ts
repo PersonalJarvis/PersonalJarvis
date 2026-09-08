@@ -357,6 +357,7 @@ export async function sendAgentChatMessage(
         text,
         attachments,
         ...(toolChoices.length ? { tool_choices: toolChoices } : {}),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       }),
     }),
     "send-failed",

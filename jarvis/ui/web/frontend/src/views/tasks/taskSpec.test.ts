@@ -49,13 +49,11 @@ describe("buildTaskSpec — trigger mapping", () => {
     expect(spec.trigger).toEqual({ type: "every", interval_seconds: 3600 });
   });
 
-  it("maps recurring+daily to every(86400) anchored to the next HH:MM", () => {
+  it("maps daily to local calendar time with the client IANA timezone", () => {
     const spec = buildTaskSpec(
       baseDraft({ scheduleMode: "recurring", recurringMode: "daily", dailyTime: "07:00" }),
     );
-    expect(spec.trigger.type).toBe("every");
-    expect((spec.trigger as { interval_seconds: number }).interval_seconds).toBe(86400);
-    expect((spec.trigger as { start_at?: string }).start_at).toBeTruthy();
+    expect(spec.trigger).toEqual({ type: "calendar", local_time: "07:00", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
   });
 
   it("maps recurring+custom to every(customIntervalSeconds)", () => {

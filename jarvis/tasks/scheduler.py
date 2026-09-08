@@ -51,7 +51,13 @@ class TaskStateConflict(RuntimeError):
 
 
 class _Dispatchable(Protocol):
-    async def run(self, task_id: str, *, trigger_event: dict[str, Any] | None = None) -> None: ...
+    async def run(
+        self,
+        task_id: str,
+        cancel_token: CancelToken | None = None,
+        *,
+        trigger_event: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 def parse_iso_timestamp_to_ns(iso: str) -> int:
@@ -95,6 +101,7 @@ class TaskScheduler:
         self._wakeup = asyncio.Event()
         # On-event tasks — map event class name → set of task_ids.
         # The wildcard subscriber checks the event class against this index.
+        self._event_dispatch_lock = asyncio.Lock()
         self._on_event_index: dict[str, set[str]] = {}
         self._bound = False
         self._hydrated = False
@@ -263,7 +270,7 @@ class TaskScheduler:
             raise TaskNotFound(task_id)
         now = time.time_ns() if now_ns is None else now_ns
         due: int | None = None
-        if spec.trigger.type == "every":
+        if spec.trigger.type in ("every", "calendar"):
             due = next_every_due_ns(spec, now)
             await self._store.set_next_due(task_id, due)
         await self._store.update_state(task_id, "scheduled")
@@ -325,6 +332,10 @@ class TaskScheduler:
         self._bound = True
 
     async def _on_any_event(self, event: Event) -> None:
+        async with self._event_dispatch_lock:
+            await self._dispatch_event(event)
+
+    async def _dispatch_event(self, event: Event) -> None:
         """Wildcard handler: if an event class matches an ``on_event`` task,
         dispatch the runner fire-and-forget.
 
@@ -365,13 +376,15 @@ class TaskScheduler:
                 self._trim_dedup()
             # H10 fix: track max_firings in memory. When 0 → remove the task
             # from the index, mark it "completed", and do NOT dispatch it.
-            left = self._firings_left.get(tid)
+            maximum = spec.trigger.max_firings
+            left = None if maximum is None else maximum - await self._store.event_firings(tid)
             if left is not None:
                 if left <= 0:
                     task_ids.discard(tid)
                     self._firings_left.pop(tid, None)
                     continue
                 self._firings_left[tid] = left - 1
+            await self._store.append_step(tid, "log", {"event": "event_fired"})
             await self._dispatch_runner(tid, trigger_event=event_ctx)
             # If that was the last fire: clean up.
             if left is not None and left - 1 <= 0:
@@ -408,7 +421,7 @@ class TaskScheduler:
                 continue
             stored_due = row.get("due_at_ns")
             if (
-                spec.trigger.type == "every"
+                spec.trigger.type in ("every", "calendar")
                 and stored_due is not None
                 and is_missed(int(stored_due), now_ns)
             ):
@@ -486,6 +499,13 @@ class TaskScheduler:
                 else parse_iso_timestamp_to_ns(trig.iso_timestamp)
             )
             heapq.heappush(self._heap, (due, task_id))
+        elif trig.type == "calendar":
+            due = (
+                stored_due_at_ns
+                if stored_due_at_ns is not None
+                else next_every_due_ns(spec, time.time_ns())
+            )
+            heapq.heappush(self._heap, (due, task_id))
         elif trig.type == "every":
             if stored_due_at_ns is not None:
                 due = stored_due_at_ns
@@ -508,6 +528,8 @@ class TaskScheduler:
                 return parse_iso_timestamp_to_ns(trig.iso_timestamp)
             except ValueError:
                 return None
+        if trig.type == "calendar":
+            return next_every_due_ns(spec, time.time_ns())
         if trig.type == "every":
             if trig.start_at:
                 try:
@@ -567,7 +589,7 @@ class TaskScheduler:
             due, tid = heapq.heappop(self._heap)
             self._known.discard(tid)
             spec = await self._store.get_spec(tid)
-            if spec is not None and spec.trigger.type == "every":
+            if spec is not None and spec.trigger.type in ("every", "calendar"):
                 if is_missed(due, now_ns):
                     # The process lived but did not tick (machine asleep,
                     # loop blocked): same rule as at boot — skip, never
@@ -662,6 +684,10 @@ def next_every_due_ns(spec: TaskSpec, now_ns: int) -> int:
     A malformed ``start_at`` degrades to the unanchored rule.
     """
     trig = spec.trigger
+    if trig.type == "calendar":
+        from .calendar import next_calendar_due_ns
+
+        return next_calendar_due_ns(trig, now_ns)
     if trig.type != "every":
         raise ValueError(f"not a recurring trigger: {trig.type}")
     interval_ns = int(trig.interval_seconds * 1e9)

@@ -51,9 +51,10 @@ PROPOSAL_KINDS: Final[frozenset[str]] = frozenset(
 )
 CAPABILITY_PREFIX: Final[str] = "core:config:"
 #: Schedule kinds the Automations scheduler can keep (``jarvis/tasks/schema.py``).
-#: There is deliberately no weekday form: the model must not promise what the
-#: scheduler cannot run (plan decision D4).
-SCHEDULE_KINDS: Final[frozenset[str]] = frozenset({"every", "at_time", "after_delay", "on_event"})
+#: Calendar rules carry explicit local clock and IANA timezone semantics.
+SCHEDULE_KINDS: Final[frozenset[str]] = frozenset(
+    {"every", "calendar", "at_time", "after_delay", "on_event"}
+)
 _MAX_RULE: Final[int] = 600
 _MAX_TEXT: Final[int] = 2_000
 _MAX_LIST: Final[int] = 24
@@ -186,6 +187,14 @@ def validate(kind: str, payload: Any, *, catalog: list[CapabilityRow]) -> dict[s
             "kind": schedule_kind,
             **{k: v for k, v in schedule.items() if k not in ("kind", "type")},
         }
+        if schedule_kind in {"calendar", "at_time"} or clean.get("start_at"):
+            from .routines import _trigger
+
+            try:
+                stored = _trigger(clean).model_dump(mode="json")
+            except ValueError as exc:
+                raise ProposalRefused(FailureReason.BLOCKED_BY_POLICY, str(exc)) from exc
+            clean = {"kind": stored.pop("type"), **stored}
         out: dict[str, Any] = {"title": title, "prompt": prompt, "schedule": clean}
         if operation == "update":
             out.update(operation=operation, task_id=task_id)

@@ -1,3 +1,5 @@
+import { describeTrigger } from "@/lib/triggerDescription";
+
 /**
  * Pure model for the Automations section — types mirroring the tasks API and
  * the small derivations the cards need (schedule line, countdown, template
@@ -19,13 +21,14 @@ export type TaskState =
   | "cancelled"
   | "interrupted";
 
-export type TriggerType = "after_delay" | "at_time" | "on_event" | "every";
+export type TriggerType = "after_delay" | "at_time" | "on_event" | "every" | "calendar";
 
 export interface TaskSummary {
   id: string;
   title: string;
   state: TaskState;
   trigger_type: TriggerType;
+  trigger?: unknown;
   due_at_ns: number | null;
   created_at_ns: number | null;
   started_at_ns: number | null;
@@ -73,6 +76,7 @@ export const TEMPLATE_CATEGORIES: readonly TemplateCategory[] = [
 export type ScheduleKind = "hourly" | "daily" | "weekly";
 
 export interface TemplateSchedule {
+  timezone?: string;
   kind: ScheduleKind;
   time: string; // "HH:MM"
   weekday: number; // 0 = Monday … 6 = Sunday (Python weekday())
@@ -130,7 +134,7 @@ export function isActive(state: TaskState): boolean {
 
 /** A recurring task (an "automation") — the `every` / `on_event` triggers. */
 export function isRecurringTrigger(trigger: TriggerType): boolean {
-  return trigger === "every" || trigger === "on_event";
+  return trigger === "every" || trigger === "calendar" || trigger === "on_event";
 }
 
 /** A one-off timed task (a "schedule") — the `after_delay` / `at_time` triggers. */
@@ -320,9 +324,10 @@ export function mondayWeekday(d: Date): number {
  * moment (the wall-clock time of the next occurrence IS the schedule time).
  */
 export function scheduleLineForTask(
-  task: Pick<TaskSummary, "trigger_type" | "interval_seconds" | "next_due_at_ns" | "due_at_ns">,
+  task: Pick<TaskSummary, "trigger" | "trigger_type" | "interval_seconds" | "next_due_at_ns" | "due_at_ns">,
   words: ScheduleWords,
 ): string {
+  if (task.trigger_type === "calendar") return describeTrigger(task.trigger, () => words.daily.replace("{time}", "{0}"));
   if (task.trigger_type === "on_event") return words.onEvent;
   const interval = task.interval_seconds ?? null;
   const dueNs = task.next_due_at_ns ?? task.due_at_ns ?? null;

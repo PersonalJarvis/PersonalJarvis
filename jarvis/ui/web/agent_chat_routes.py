@@ -117,6 +117,7 @@ class PatchSessionBody(BaseModel):
 
 
 class MessageBody(BaseModel):
+    timezone: str | None = Field(default=None, max_length=100)
     #: May be empty when files are attached — dropping a screenshot and
     #: pressing Enter is a complete gesture. The service refuses a message
     #: that carries neither.
@@ -701,7 +702,16 @@ async def delete_session(session_id: str, request: Request) -> dict[str, Any]:
 
 @router.post("/sessions/{session_id}/messages", status_code=202)
 async def post_message(session_id: str, body: MessageBody, request: Request) -> dict[str, Any]:
+    from jarvis.tasks.calendar import calendar_zone
+    from jarvis.tasks.context import client_timezone
+
+    if body.timezone is not None:
+        try:
+            calendar_zone(body.timezone)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     svc = _service(request)
+    token = client_timezone.set(body.timezone)
     try:
         turn_id = await svc.send(
             session_id, body.text, body.attachments, tool_choices=body.tool_choices
@@ -712,6 +722,8 @@ async def post_message(session_id: str, body: MessageBody, request: Request) -> 
         raise HTTPException(status_code=409, detail="a turn is already running") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        client_timezone.reset(token)
     return {"turn_id": turn_id, "session_id": session_id}
 
 

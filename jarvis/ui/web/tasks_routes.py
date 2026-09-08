@@ -20,6 +20,7 @@ names from ``app.state.brain`` when it exists.
 Route order matters: the ``/templates`` routes are registered BEFORE the
 ``/{task_id}`` routes so "templates" is never captured as a task id.
 """
+
 from __future__ import annotations
 
 import json
@@ -116,6 +117,7 @@ def _row_to_summary(
         "title": row.get("title") or "",
         "state": row["state"],
         "trigger_type": row["trigger_type"],
+        "trigger": trigger,
         "due_at_ns": row.get("due_at_ns"),
         "next_due_at_ns": row.get("due_at_ns"),
         "created_at_ns": row.get("created_at_ns"),
@@ -135,6 +137,7 @@ def _row_to_summary(
 # Templates (registered first — see module docstring)
 # ----------------------------------------------------------------------
 
+
 class TemplateAddRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     inputs: dict[str, str] = Field(default_factory=dict)
@@ -150,8 +153,7 @@ async def list_templates(request: Request, locale: str = "en") -> dict[str, Any]
     live_tools = _live_tool_names(request)
     return {
         "templates": [
-            t.to_api(locale, live_tools=live_tools)
-            for t in tpl.all_templates().values()
+            t.to_api(locale, live_tools=live_tools) for t in tpl.all_templates().values()
         ],
         "categories": list(tpl.CATEGORIES),
     }
@@ -159,7 +161,9 @@ async def list_templates(request: Request, locale: str = "en") -> dict[str, Any]
 
 @router.post("/templates/{key}/add", status_code=201)
 async def add_template(
-    key: str, body: TemplateAddRequest, request: Request,
+    key: str,
+    body: TemplateAddRequest,
+    request: Request,
 ) -> dict[str, Any]:
     """Instantiate a template as a scheduled task (``created_by="template"``,
     tagged ``template:<key>``). 404 unknown key, 422 missing required input."""
@@ -188,6 +192,7 @@ async def add_template(
 # ----------------------------------------------------------------------
 # Routes
 # ----------------------------------------------------------------------
+
 
 @router.post("", status_code=201)
 async def create_task(spec: TaskSpec, request: Request) -> dict[str, Any]:
@@ -221,7 +226,8 @@ async def list_tasks(
         filter_val = state
     rows = await store.list(state_filter=filter_val, limit=limit)
     results = await store.latest_agent_results(
-        [r["id"] for r in rows], max_chars=LAST_RESULT_MAX_CHARS,
+        [r["id"] for r in rows],
+        max_chars=LAST_RESULT_MAX_CHARS,
     )
     return {
         "tasks": [_row_to_summary(r, last_result=results.get(r["id"])) for r in rows],
@@ -239,7 +245,8 @@ async def get_task(task_id: str, request: Request) -> dict[str, Any]:
 
     spec_obj = _parse_spec(task)
     results = await store.latest_agent_results(
-        [task_id], max_chars=LAST_RESULT_MAX_CHARS,
+        [task_id],
+        max_chars=LAST_RESULT_MAX_CHARS,
     )
     task_out = _row_to_summary(task, spec=spec_obj, last_result=results.get(task_id))
     task_out["spec"] = spec_obj
@@ -254,7 +261,9 @@ class TaskPatchRequest(BaseModel):
 
 @router.patch("/{task_id}")
 async def patch_task(
-    task_id: str, body: TaskPatchRequest, request: Request,
+    task_id: str,
+    body: TaskPatchRequest,
+    request: Request,
 ) -> dict[str, Any]:
     """``{"enabled": false}`` pauses a recurring task, ``true`` resumes it at
     its next occurrence. 409 for one-shot triggers or a conflicting state."""
@@ -330,8 +339,7 @@ async def cancel_task(task_id: str, request: Request) -> dict[str, Any]:
         ok = await scheduler.cancel_task(task_id, reason="web_ui_cancel")
     else:
         await store.update_state(task_id, "cancelled", error="web_ui_cancel")
-        await store.append_step(task_id, "log",
-                                {"event": "cancelled", "reason": "web_ui_cancel"})
+        await store.append_step(task_id, "log", {"event": "cancelled", "reason": "web_ui_cancel"})
         ok = True
     return {"ok": bool(ok), "id": task_id, "state": "cancelled"}
 

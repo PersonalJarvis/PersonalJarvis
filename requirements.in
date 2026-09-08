@@ -194,3 +194,6 @@ aiosqlite>=0.21
 # >=6.15: PYSEC-2026-3655/-3656 are fixed there (pip-audit gate).
 pypdf>=6.15
 python-telegram-bot>=22,<23
+
+# Portable IANA timezone data for calendar routines.
+tzdata>=2025.2

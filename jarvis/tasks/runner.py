@@ -49,6 +49,7 @@ from jarvis.core.events import (
 
 if TYPE_CHECKING:
     from jarvis.control.cancel import CancelToken
+    from jarvis.tasks.schema import TaskSpec, TaskState
     from jarvis.tasks.store import TaskStore
 
 
@@ -147,6 +148,14 @@ class TaskRunner:
 
     # ------------------------------------------------------------------
 
+    async def _keeps_schedule(self, task_id: str, spec: TaskSpec) -> bool:
+        trigger = spec.trigger
+        if trigger.type == "on_event":
+            return trigger.max_firings is None or (
+                max(1, await self._store.event_firings(task_id)) < trigger.max_firings
+            )
+        return trigger.type in ("every", "calendar")
+
     async def run(
         self,
         task_id: str,
@@ -191,7 +200,7 @@ class TaskRunner:
             # its next occurrence. Only one-shot tasks end in `failed`
             # (live 2026-08-24: the first automation ever added died for
             # good on one provider error and "Run now" refused it as final).
-            is_recurring = getattr(spec.trigger, "type", None) == "every"
+            is_recurring = await self._keeps_schedule(task_id, spec)
             await self._store.update_state(
                 task_id,
                 "scheduled" if is_recurring else "failed",
@@ -214,8 +223,8 @@ class TaskRunner:
         # Recurring (`every`) tasks return to `scheduled` so they survive a
         # restart and keep firing; the scheduler re-arms the next due time.
         # One-shot triggers terminate as `completed`.
-        is_recurring = getattr(spec.trigger, "type", None) == "every"
-        final_state = "scheduled" if is_recurring else "completed"
+        is_recurring = await self._keeps_schedule(task_id, spec)
+        final_state: TaskState = "scheduled" if is_recurring else "completed"
         await self._store.update_state(
             task_id,
             final_state,
@@ -536,16 +545,16 @@ class TaskRunner:
         if self._approver is not None:
             self._approver.arm(trace_id, auto_plugins, approved_by=f"scheduled-task:{task_id}")
         try:
-            result = (
-                owned_result
-                if owned_result is not None
-                else await self._brain.run_task(
+            if owned_result is not None:
+                result = owned_result
+            else:
+                assert self._brain is not None
+                result = await self._brain.run_task(
                     prompt=prompt,
                     allowed_tools=allowed_tools,
                     model_tier=action.model_tier,
                     trace_id=trace_id,
                 )
-            )
         finally:
             if self._approver is not None:
                 self._approver.disarm(trace_id)

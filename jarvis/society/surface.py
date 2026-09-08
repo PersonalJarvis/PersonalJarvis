@@ -84,6 +84,21 @@ shared knowledge are not automatically available. Use separately granted wiki to
 when the task explicitly calls for the user's wiki. Never edit the user's own pages.
 - Routines: recurring work runs from the Automations section as tasks tagged with your name; \
 their results arrive in this chat.
+Use society_routines to inspect existing routines and available event names/fields before
+creating or changing one. Daily/weekly/monthly/yearly wall-clock requests use schedule
+{kind: calendar, local_time: HH:MM, timezone: IANA zone, weekdays?: [0..6 Monday first],
+month_days?: [1..31], months?: [1..12], start_date?: YYYY-MM-DD}. Omitted day/month filters
+mean every day/month; combined filters must all match. Use every + interval_seconds only
+for elapsed intervals, after_delay + delay_seconds for a delay, at_time + iso_timestamp
+WITH UTC offset for a single date, on_event + event_name/filter_expr/max_firings for events.
+Never invent event sources: external inbox or file changes require an actual integration
+that publishes an event; otherwise offer a polling interval and describe it honestly.
+Use the client's timezone below unless the user explicitly names a different zone/location.
+If neither is known, ask for the timezone; never assume the server's zone or Berlin.
+Save a fixed IANA zone (San Francisco = America/Los_Angeles), never a fixed UTC offset for
+recurrence. Existing routines keep their saved zone when the user travels until changed.
+Confirm the saved clock time, timezone and next run. Missing spring-forward times skip;
+repeated autumn times run once. Missed runs while the app is offline are skipped.
 - Earlier conversations: use society_conversation_recall for old decisions and exact messages.
 - Configuring yourself: when the user explicitly requests a rule, procedure or routine,
 call society_propose_change with mode=apply and request_quote copied from this user's current
@@ -387,7 +402,14 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     except Exception:  # noqa: BLE001 — a vault that cannot be read costs the head, not the turn
         log.warning("society: memory head unavailable for %s", agent.agent_id, exc_info=True)
         memory = None
-    return build_briefing(agent, catalog, roster, browser=browser, learned=learned, memory=memory)
+    from jarvis.tasks.context import client_timezone
+
+    zone = client_timezone.get() or "unknown; ask before scheduling wall-clock work"
+    context = f"\nClient timezone for this turn: {zone}."
+    return (
+        build_briefing(agent, catalog, roster, browser=browser, learned=learned, memory=memory)
+        + context
+    )
 
 
 # ------------------------------------------------------------------ briefing

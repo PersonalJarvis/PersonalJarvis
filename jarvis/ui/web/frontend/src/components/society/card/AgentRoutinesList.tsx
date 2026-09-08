@@ -46,15 +46,12 @@ function sampleToLive(rows: AgentRoutine[]): LiveRoutine[] {
   }));
 }
 
-function buildSchedule(kind: Kind, amount: number, unit: Unit, time: string, eventName: string): Record<string, unknown> {
+function buildSchedule(kind: Kind, amount: number, unit: Unit, time: string, eventName: string, timezone: string): Record<string, unknown> {
   if (kind === "on_event") {
     return { kind: "on_event", event_name: eventName.trim() };
   }
   if (kind === "daily") {
-    const [hours, minutes] = time.split(":").map((part) => Number(part));
-    const start = new Date();
-    start.setHours(Number.isFinite(hours) ? hours : 8, Number.isFinite(minutes) ? minutes : 0, 0, 0);
-    return { kind: "every", interval_seconds: 86_400, start_at: start.toISOString() };
+    return { kind: "calendar", local_time: time, timezone };
   }
   const n = Math.max(1, amount);
   const seconds = unit === "minutes" ? n * 60 : n * 3_600;
@@ -82,6 +79,7 @@ export function AgentRoutinesList({
   const [amount, setAmount] = useState("5");
   const [unit, setUnit] = useState<Unit>("hours");
   const [time, setTime] = useState("08:00");
+  const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [eventName, setEventName] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -126,7 +124,7 @@ export function AgentRoutinesList({
       await create(agentId, {
         title: title.trim(),
         prompt: prompt.trim(),
-        schedule: buildSchedule(kind, Number.parseInt(amount, 10) || 1, unit, time, eventName),
+        schedule: buildSchedule(kind, Number.parseInt(amount, 10) || 1, unit, time, eventName, timezone),
       });
       reset();
       setOpen(false);
@@ -228,6 +226,7 @@ export function AgentRoutinesList({
             </div>
           ) : null}
           {kind === "daily" ? (
+            <>
             <input
               type="time"
               value={time}
@@ -235,6 +234,12 @@ export function AgentRoutinesList({
               aria-label={t("society.card.routines_daily")}
               className={fieldCls}
             />
+            <label className="text-[11px] text-muted-foreground">
+              {t("profile_view.fields.timezone")}
+              <input value={timezone} onChange={(e) => setTimezone(e.target.value)}
+                aria-label={t("profile_view.fields.timezone")} className={fieldCls} />
+            </label>
+            </>
           ) : null}
           {kind === "on_event" ? (
             <input
@@ -272,8 +277,12 @@ export function AgentRoutinesList({
                   <span className="block truncate text-[13px] font-medium leading-tight text-foreground">
                     {displayRoutineTitle(routine.title)}
                   </span>
-                  <span className="block truncate text-[11px] leading-tight text-muted-foreground">
+                  <span className="block break-words text-[11px] leading-snug text-muted-foreground">
                     {routineScheduleLine(routine, t)}
+                    {routine.state === "paused" ? ` · ${t("tasks_view.state.paused")}` : ""}
+                    {routine.dueMs && isActive(routine.state) ? (
+                      <span className="block">{t("automations_view.next_run")}: {new Date(routine.dueMs).toLocaleString(undefined, { timeZoneName: "short" })}</span>
+                    ) : null}
                   </span>
                 </span>
               </div>

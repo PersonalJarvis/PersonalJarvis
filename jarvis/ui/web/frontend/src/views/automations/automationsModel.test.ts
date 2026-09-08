@@ -208,3 +208,10 @@ describe("helpers", () => {
     expect(groups.map((g) => g.category)).toEqual(["news", "developer", "future"]);
   });
 });
+
+
+it("calendar routines appear in Automations with their own clock and zone", () => {
+  const row = task({ trigger_type: "calendar", trigger: { type: "calendar", local_time: "08:00", timezone: "America/Los_Angeles" } });
+  expect(selectAutomations([row])).toEqual([row]);
+  expect(scheduleLineForTask(row, WORDS)).toBe("Daily at 08:00 · America/Los_Angeles");
+});

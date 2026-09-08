@@ -1,5 +1,20 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Calendar routines (2026-09-08)
+
+Windows, macOS and Linux use the same lazy `zoneinfo` calendar implementation
+with the `tzdata` base dependency, including headless installs without system
+timezone files. `calendar_zone` is the shared timezone capability probe; an
+unknown zone is rejected rather than replaced with the host's zone. Browser
+IANA zones are scoped per chat turn and persisted in routine triggers. Calendar
+rules, event filters, SQL storage, API projection and UI share one contract.
+
+`tests/contract/test_calendar_routines.py` covers DST, calendar filters,
+hydration, migration, event limits and Python/SQL/API/TypeScript parity. Local
+Windows tests and a single-key live Gemini run with fresh isolated stores passed.
+Native macOS/Linux execution and a completely fresh OS installation remain
+unverified. See [routine behavior and examples](routines.md).
+
 **Society voice orchestration, 2026-09-07:** Persistent-team inventory,
 contextual assignments, assignment tracking and measured activity reuse the
 existing society roster, board and scheduler. Voice creation and profile/model

@@ -62,3 +62,9 @@ describe("routineScheduleLine", () => {
     expect(routineScheduleLine({ trigger: null, schedule: "daily 07:00" }, t)).toBe("daily 07:00");
   });
 });
+
+
+test("calendar display preserves the saved zone instead of converting to the viewer zone", () => {
+  expect(describeTrigger({ type: "calendar", local_time: "08:00", timezone: "America/Los_Angeles" }, t))
+    .toBe("Every day at 08:00 · America/Los_Angeles");
+});

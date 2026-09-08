@@ -14,6 +14,7 @@ lazy-init so the store instance can be constructed synchronously).
 
 from __future__ import annotations
 
+import builtins
 import json
 import time
 from collections.abc import Sequence
@@ -39,7 +40,7 @@ CREATE TABLE tasks_new (
                         'pending','scheduled','paused','running','completed',
                         'failed','cancelled','interrupted')),
     trigger_type    TEXT NOT NULL CHECK(trigger_type IN (
-                        'after_delay','at_time','on_event','every')),
+                        'after_delay','at_time','on_event','every','calendar')),
     due_at_ns       INTEGER,
     event_selector  TEXT,
     title           TEXT NOT NULL DEFAULT '',
@@ -86,8 +87,8 @@ class TaskStore:
         await self._conn.execute("PRAGMA foreign_keys = ON")
         schema = SCHEMA_FILE.read_text(encoding="utf-8")
         await self._conn.executescript(schema)
-        # Migrate legacy DBs whose trigger_type CHECK predates `every`
-        # (added 2026-06-17). CREATE TABLE IF NOT EXISTS never alters an
+        # Migrate legacy DBs whose trigger_type CHECK predates `calendar`
+        # (added 2026-09-08). CREATE TABLE IF NOT EXISTS never alters an
         # existing table, so this explicit migration is required.
         await self._migrate_trigger_type_check()
         # Same dance for the state CHECK, which predates `paused` (2026-08-24).
@@ -111,11 +112,11 @@ class TaskStore:
         return self._conn
 
     async def _migrate_trigger_type_check(self) -> None:
-        """Rebuild ``tasks`` if its trigger_type CHECK predates ``every``.
+        """Rebuild ``tasks`` if its trigger_type CHECK predates ``calendar``.
 
         SQLite cannot ALTER a CHECK constraint, so we do the standard
         create-copy-drop-rename dance. Guarded to run at most once: it is a
-        no-op once the live CHECK already mentions ``'every'`` (or has no
+        no-op once the live CHECK already mentions ``'calendar'`` (or has no
         CHECK at all).
         """
         table_sql = await self._tasks_table_sql()
@@ -123,7 +124,7 @@ class TaskStore:
             return
         if "trigger_type" not in table_sql or "CHECK" not in table_sql:
             return  # loose schema — nothing to migrate
-        if "'every'" in table_sql:
+        if "'calendar'" in table_sql:
             return  # fresh schema or already migrated
         await self._rebuild_tasks_table()
 
@@ -141,6 +142,16 @@ class TaskStore:
         if "'paused'" in table_sql:
             return  # fresh schema or already migrated
         await self._rebuild_tasks_table()
+
+    async def event_firings(self, task_id: str) -> int:
+        """Persisted event deliveries survive a scheduler restart or pause."""
+        cursor = await self._require_conn().execute(
+            "SELECT COUNT(*) FROM task_steps WHERE task_id=? AND kind='log' "
+            "AND json_extract(payload_json, '$.event')='event_fired'",
+            (task_id,),
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
 
     async def _tasks_table_sql(self) -> str | None:
         conn = self._require_conn()
@@ -231,6 +242,10 @@ class TaskStore:
             return "at_time", due, None
         if trig.type == "on_event":
             return "on_event", None, trig.event_name
+        if trig.type == "calendar":
+            from .calendar import next_calendar_due_ns
+
+            return "calendar", next_calendar_due_ns(trig, time.time_ns()), None
         if trig.type == "every":
             # Recurring: anchor to start_at if given, else now + interval.
             if trig.start_at:
@@ -483,7 +498,7 @@ class TaskStore:
         await cur.close()
         return rowcount > 0
 
-    async def all_pending_scheduled(self) -> list[dict[str, Any]]:
+    async def all_pending_scheduled(self) -> builtins.list[dict[str, Any]]:
         """For scheduler hydration: all tasks in state ``scheduled``."""
         return await self.list(state_filter="scheduled", limit=10_000)
 

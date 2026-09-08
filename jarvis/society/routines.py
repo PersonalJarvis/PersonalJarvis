@@ -22,6 +22,7 @@ from jarvis.tasks.schema import (
     TaskSpec,
     TriggerAfterDelay,
     TriggerAtTime,
+    TriggerCalendar,
     TriggerEvery,
     TriggerOnEvent,
 )
@@ -46,17 +47,39 @@ def agent_tag(agent_id: str) -> str:
 
 
 def _trigger(schedule: dict[str, Any]) -> Any:
+    from jarvis.tasks.calendar import absolute_timestamp
+    from jarvis.tasks.context import client_timezone
+
     kind = str(schedule.get("kind") or schedule.get("type") or "every")
+    if kind == "calendar":
+        schedule = dict(schedule)
+        schedule.setdefault("timezone", client_timezone.get())
+        return TriggerCalendar.model_validate(
+            {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}
+        )
     if kind == "every":
         return TriggerEvery(
-            interval_seconds=float(schedule.get("interval_seconds") or 86_400),
-            start_at=schedule.get("start_at"),
+            interval_seconds=float(schedule.get("interval_seconds", 86_400)),
+            start_at=(
+                absolute_timestamp(
+                    str(schedule["start_at"]), schedule.get("timezone") or client_timezone.get()
+                )
+                if schedule.get("start_at")
+                else None
+            ),
         )
     if kind == "at_time":
-        return TriggerAtTime(iso_timestamp=str(schedule["iso_timestamp"]))
+        return TriggerAtTime(
+            iso_timestamp=absolute_timestamp(
+                str(schedule["iso_timestamp"]), schedule.get("timezone") or client_timezone.get()
+            )
+        )
     if kind == "after_delay":
         return TriggerAfterDelay(delay_seconds=float(schedule["delay_seconds"]))
     if kind == "on_event":
+        from jarvis.tasks.event_catalog import validate_event_schedule
+
+        validate_event_schedule(schedule)
         return TriggerOnEvent(
             event_name=str(schedule["event_name"]),
             filter_expr=schedule.get("filter_expr"),
@@ -142,8 +165,10 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
         "title": row.get("title") or spec.get("title"),
         "state": row.get("state"),
         "trigger": spec.get("trigger"),
+        "prompt": str((spec.get("action") or {}).get("prompt") or "").partition("\nRoutine:\n")[2],
+        "announce_on_success": spec.get("announce_on_success"),
         "due_at_ns": row.get("due_at_ns"),
-        "last_run_ns": row.get("last_run_ns"),
+        "last_run_ns": row.get("started_at_ns") or row.get("last_run_ns"),
         "tags": list(_tags_of(row)),
     }
 
@@ -188,7 +213,15 @@ async def manage_routine(
             plugin_grants=[g.model_dump() for g in old.action.plugin_grants],
             announce_on_success=payload.get("announce_on_success"),
         )
-        await scheduler.update_task(tid, spec.model_copy(update={"id": old.id}))
+        assert spec.action.kind == "agent"
+        changes = {
+            "title": spec.title,
+            "trigger": spec.trigger,
+            "action": old.action.model_copy(update={"prompt": spec.action.prompt}),
+        }
+        if "announce_on_success" in payload:
+            changes["announce_on_success"] = payload["announce_on_success"]
+        await scheduler.update_task(tid, old.model_copy(update=changes))
     elif operation == "pause":
         await scheduler.pause(tid)
     elif operation == "resume":
