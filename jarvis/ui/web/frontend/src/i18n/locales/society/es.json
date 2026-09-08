@@ -1,5 +1,18 @@
 {
   "society": {
+    "chat": {
+      "model_scope": "Se aplica a los próximos mensajes y rutinas de este agente. Se conserva el historial.",
+      "model_busy": "Espera a que termine la respuesta antes de cambiar el modelo.",
+      "model_save_failed": "No se pudo guardar el modelo",
+      "model_load_failed": "No se pudieron cargar los proveedores conectados. Cierra y vuelve a intentarlo.",
+      "model_provider": "Proveedor",
+      "model_choose_provider": "Elige un proveedor conectado",
+      "model_account": "Cuenta",
+      "model_active_account": "Cuenta activa",
+      "model_connections": "Solo se muestran proveedores conectados. Añade conexiones en Ajustes.",
+      "model_saving": "Guardando…",
+      "model_apply": "Aplicar modelo"
+    },
     "world": {
       "talk_kind_query": "pregunta",
       "talk_kind_answer": "responde",

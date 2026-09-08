@@ -50,6 +50,7 @@ import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 import { AgentSwatch } from "../AgentSwatch";
 import { useResolveProposal, useSocietyCapabilities, type SocietyAgent } from "../data";
 import { MentionPicker } from "./MentionPicker";
+import { AgentModelPicker } from "./AgentModelPicker";
 import {
   buildMentionCatalog,
   filterMentions,
@@ -1058,6 +1059,7 @@ interface ComposerProps {
 
 function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onSend, onCancel }: ComposerProps) {
   const t = useT();
+  const [modelSaving, setModelSaving] = useState(false);
   const [value, setValue] = useState("");
   const [plusOpen, setPlusOpen] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -1120,7 +1122,7 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
 
   const submit = async () => {
     const text = value.trim();
-    if (!text || busy) return;
+    if (!text || busy || modelSaving) return;
     const named = mentionsInText(text, catalog);
     const lines = named.agents.map(
       (a) => `${DELEGATE_MARK} ${t("society.chat.delegate_line").replace("{0}", a.name).replace("{1}", a.agentId)}`,
@@ -1284,7 +1286,7 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={!value.trim()}
+            disabled={modelSaving || !value.trim()}
             aria-label={t("society.chat.send")}
             className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"
           >
@@ -1292,6 +1294,9 @@ function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface 
           </button>
         )}
       </div>
+      {surface === "society" ? <div className={cn(CHAT_MEASURE, "mt-1")}>
+        <AgentModelPicker key={agent.agentId} agent={agent} busy={busy} onSavingChange={setModelSaving} />
+      </div> : null}
     </div>
   );
 }

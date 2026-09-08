@@ -97,6 +97,8 @@ export interface SocietyAgent {
   providerLabel: string;
   model: string;
   effort: string;
+  /** Stored subscription login; empty means the platform's active account. */
+  accountId?: string;
   /** The character: archetype, base, parts, palette. null = the palette tile. */
   figure: FigureRecipe | null;
   palette: AgentPalette;
@@ -216,6 +218,7 @@ export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
     provider: row.provider,
     providerLabel: row.provider ? (PROVIDER_LABELS[row.provider] ?? row.provider) : "",
     model: row.model,
+    accountId: row.account_id,
     effort: row.effort,
     figure,
     palette: paletteFor(figure),
@@ -467,6 +470,28 @@ export function useUpdateAgentDescription() {
     },
     [client],
   );
+}
+
+/** Persist the roster choice and re-seat its canonical chat without losing history. */
+export function useUpdateAgentModel() {
+  const client = useQueryClient();
+  return useCallback(async (agentId: string, choice: {
+    provider: string; model: string; effort: string; account_id: string;
+  }) => {
+    const res = await fetch(`/api/society/agents/${encodeURIComponent(agentId)}/model`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(choice),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json() as { agent: SocietyAgentRow };
+    const updated = rowToAgent(body.agent);
+    client.setQueryData<RosterData>(ROSTER_QUERY_KEY, (previous) => previous ? {
+      ...previous,
+      agents: previous.agents.map((agent) => agent.agentId === agentId ? updated : agent),
+    } : previous);
+    await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+  }, [client]);
 }
 
 /** The knobs the card lets a person turn after the agent exists. */

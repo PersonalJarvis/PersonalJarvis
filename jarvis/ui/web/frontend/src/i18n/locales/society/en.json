@@ -1,5 +1,18 @@
 {
   "society": {
+    "chat": {
+      "model_scope": "Applies to this agent's next messages and routine runs. Chat history stays.",
+      "model_busy": "Wait for the current response before changing models.",
+      "model_save_failed": "Could not save the model",
+      "model_load_failed": "Could not load connected providers. Close and try again.",
+      "model_provider": "Provider",
+      "model_choose_provider": "Choose a connected provider",
+      "model_account": "Account",
+      "model_active_account": "Active account",
+      "model_connections": "Only connected providers are listed. Add connections in Settings.",
+      "model_saving": "Saving…",
+      "model_apply": "Apply model"
+    },
     "world": {
       "talk_kind_query": "asks",
       "talk_kind_answer": "answers",

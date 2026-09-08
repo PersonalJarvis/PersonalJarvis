@@ -1,5 +1,18 @@
 {
   "society": {
+    "chat": {
+      "model_scope": "Gilt für die nächsten Nachrichten und Routinen dieses Agenten. Der Chatverlauf bleibt erhalten.",
+      "model_busy": "Warte auf die laufende Antwort, bevor du das Modell wechselst.",
+      "model_save_failed": "Das Modell konnte nicht gespeichert werden",
+      "model_load_failed": "Verbundene Provider konnten nicht geladen werden. Schließe die Auswahl und versuche es erneut.",
+      "model_provider": "Provider",
+      "model_choose_provider": "Verbundenen Provider wählen",
+      "model_account": "Konto",
+      "model_active_account": "Aktives Konto",
+      "model_connections": "Nur verbundene Provider werden angezeigt. Weitere Zugänge findest du in den Einstellungen.",
+      "model_saving": "Wird gespeichert…",
+      "model_apply": "Modell übernehmen"
+    },
     "world": {
       "talk_kind_query": "fragt",
       "talk_kind_answer": "antwortet",
