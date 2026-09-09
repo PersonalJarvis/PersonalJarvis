@@ -112,4 +112,14 @@ describe("work trace", () => {
     expect(traceDuration(119999)).toBe("1m 59s");
     expect(traceDuration(-1)).toBe("0.0s");
   });
+
+  it.each([1, 49, 99])("preserves a measured %i ms call instead of displaying zero", ms => {
+    expect(traceDuration(ms)).toBe(`${ms}ms`);
+  });
+
+  it.each(["RunCommand", "RunShellCommand", "run_shell"])("shows the short duration beside a readable %s label", name => {
+    render(<WorkTrace {...props} blocks={[tool("shell", { name, input: { command: "read skill instructions" }, durationMs: 49 })]} />);
+    expect(screen.getByRole("button", { name: /Run command.*49ms/ })).toBeTruthy();
+    expect(screen.queryByText("0.0s")).toBeNull();
+  });
 });

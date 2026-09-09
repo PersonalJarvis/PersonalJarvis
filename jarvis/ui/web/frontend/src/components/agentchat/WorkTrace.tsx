@@ -14,6 +14,8 @@ export type Decide = (id: string, decision: ApprovalDecision) => void | Promise<
 type Group = { id: string; blocks: TurnBlock[]; family: string | null };
 
 export function traceDuration(ms: number): string {
+  // Keep short, measured calls visible instead of rounding 49 ms to "0.0s".
+  if (ms > 0 && ms < 100) return `${Math.ceil(ms)}ms`;
   const seconds = Math.max(0, ms) / 1000;
   if (seconds < 10) return `${seconds.toFixed(1)}s`;
   if (seconds < 60) return `${Math.floor(seconds)}s`;
@@ -142,7 +144,7 @@ export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { 
   const family = operation(block.name);
   const description = describeToolStep(block.name, (block.input && typeof block.input === "object" ? block.input : {}) as Record<string, unknown>);
   const readable = description.label.charAt(0).toUpperCase() + description.label.slice(1);
-  const action = /^(bash|powershell|shell|run_shell|exec_command|run_command)$/i.test(block.name) ? "command"
+  const action = /^(bash|powershell|shell|run_?shell(_?command)?|exec_?command|run_?command)$/i.test(block.name) ? "command"
     : /^(edit|edit_file|apply_patch|multi_edit|str_replace)$/i.test(block.name) ? "edit"
       : /^(write|write_file|create_file)$/i.test(block.name) ? "write" : family;
   const label = action ? t(`work_trace.${action}`) : description.labelKey ? t(description.labelKey) : readable;
