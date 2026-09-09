@@ -1,6 +1,13 @@
 {
   "society": {
     "chat": {
+      "model_search": "Modelle suchen",
+      "model_refresh": "Modelle aktualisieren",
+      "model_no_matches": "Keine passenden Modelle. Verbinde einen Provider oder aktualisiere die Liste.",
+      "model_group_anthropic": "Anthropic-Subscription",
+      "model_group_chatgpt": "ChatGPT- / Codex-Subscription",
+      "model_group_grok": "Grok-Subscription",
+      "model_group_google": "Google- / Gemini-Subscription",
       "model_scope": "Gilt für die nächsten Nachrichten und Routinen dieses Agenten. Der Chatverlauf bleibt erhalten.",
       "model_busy": "Warte auf die laufende Antwort, bevor du das Modell wechselst.",
       "model_save_failed": "Das Modell konnte nicht gespeichert werden",
@@ -234,6 +241,25 @@
       "place_gardens": "Gärten",
       "place_solar": "Solarfeld",
       "place_mine": "Die Mine"
+    },
+    "hooks": {
+      "webhook": "Webhook",
+      "event_hook": "Integrations-Ereignis",
+      "connect": "Webhook verbinden",
+      "endpoint": "Webhook-URL",
+      "token": "Zugangsschlüssel",
+      "copy": "Schlüssel kopieren",
+      "copied": "Kopiert",
+      "rotate": "Schlüssel erneuern",
+      "rotate_confirm": "Schlüssel ersetzen? Bestehende Integrationen benötigen danach den neuen Schlüssel.",
+      "remote": "Externe Dienste benötigen eine erreichbare HTTPS-Adresse dieser Jarvis-Instanz.",
+      "auth": "JSON mit Authorization: Bearer <token> senden. Bei Wiederholungen denselben Idempotency-Key verwenden.",
+      "conditions": "Payload-Filter (JSON-Feldvergleich)",
+      "event_name": "Ereignisname, z. B. crm.customer.created",
+      "loading": "Verbindung wird geladen…",
+      "configured": "Verbindung bereit",
+      "source": "Die Ereignisquelle muss aktiv sein.",
+      "filter_hint": "Beispiel: {\"data.status\": \"ready\"}. Mit {} wird jede Payload angenommen."
     }
   }
 }

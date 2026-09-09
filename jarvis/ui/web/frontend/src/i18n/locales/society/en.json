@@ -1,6 +1,13 @@
 {
   "society": {
     "chat": {
+      "model_search": "Search models",
+      "model_refresh": "Refresh models",
+      "model_no_matches": "No matching models. Connect a provider or refresh the list.",
+      "model_group_anthropic": "Anthropic subscription",
+      "model_group_chatgpt": "ChatGPT / Codex subscription",
+      "model_group_grok": "Grok subscription",
+      "model_group_google": "Google / Gemini subscription",
       "model_scope": "Applies to this agent's next messages and routine runs. Chat history stays.",
       "model_busy": "Wait for the current response before changing models.",
       "model_save_failed": "Could not save the model",
@@ -234,6 +241,25 @@
       "place_gardens": "Gardens",
       "place_solar": "Solar Field",
       "place_mine": "The Mine"
+    },
+    "hooks": {
+      "webhook": "Webhook",
+      "event_hook": "Integration event",
+      "connect": "Connect webhook",
+      "endpoint": "Webhook URL",
+      "token": "Access token",
+      "copy": "Copy token",
+      "copied": "Copied",
+      "rotate": "Rotate token",
+      "rotate_confirm": "Replace the token? Existing integrations will need the new token.",
+      "remote": "External services need a reachable HTTPS address for this Jarvis instance.",
+      "auth": "Send JSON with Authorization: Bearer <token>. Reuse Idempotency-Key when retrying.",
+      "conditions": "Payload filters (JSON field equality)",
+      "event_name": "Event name, e.g. crm.customer.created",
+      "loading": "Loading connection…",
+      "configured": "Connection ready",
+      "source": "Event source must be active.",
+      "filter_hint": "Example: {\"data.status\": \"ready\"}. Leave {} to accept every payload."
     }
   }
 }

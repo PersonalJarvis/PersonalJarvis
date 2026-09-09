@@ -1,6 +1,13 @@
 {
   "society": {
     "chat": {
+      "model_search": "Buscar modelos",
+      "model_refresh": "Actualizar modelos",
+      "model_no_matches": "No hay modelos coincidentes. Conecta un proveedor o actualiza la lista.",
+      "model_group_anthropic": "Suscripción de Anthropic",
+      "model_group_chatgpt": "Suscripción de ChatGPT / Codex",
+      "model_group_grok": "Suscripción de Grok",
+      "model_group_google": "Suscripción de Google / Gemini",
       "model_scope": "Se aplica a los próximos mensajes y rutinas de este agente. Se conserva el historial.",
       "model_busy": "Espera a que termine la respuesta antes de cambiar el modelo.",
       "model_save_failed": "No se pudo guardar el modelo",
@@ -234,6 +241,25 @@
       "place_gardens": "Jardines",
       "place_solar": "Campo Solar",
       "place_mine": "La Mina"
+    },
+    "hooks": {
+      "webhook": "Webhook",
+      "event_hook": "Evento de integración",
+      "connect": "Conectar webhook",
+      "endpoint": "URL del webhook",
+      "token": "Token de acceso",
+      "copy": "Copiar token",
+      "copied": "Copiado",
+      "rotate": "Renovar token",
+      "rotate_confirm": "¿Reemplazar el token? Las integraciones existentes necesitarán el nuevo token.",
+      "remote": "Los servicios externos necesitan una dirección HTTPS accesible de esta instancia de Jarvis.",
+      "auth": "Envía JSON con Authorization: Bearer <token>. Reutiliza Idempotency-Key al reintentar.",
+      "conditions": "Filtros de datos (igualdad de campos JSON)",
+      "event_name": "Nombre del evento, p. ej. crm.customer.created",
+      "loading": "Cargando conexión…",
+      "configured": "Conexión lista",
+      "source": "La fuente del evento debe estar activa.",
+      "filter_hint": "Ejemplo: {\"data.status\": \"ready\"}. Usa {} para aceptar cualquier contenido."
     }
   }
 }
