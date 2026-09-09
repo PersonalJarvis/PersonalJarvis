@@ -124,7 +124,7 @@ describe("PaneChat", () => {
     expect(turn.textContent).toContain("Looking at it now.");
     expect(turn.textContent).toContain("Found it.");
     expect(turn.textContent).toContain("src/login.ts");
-    expect(screen.getByTestId("agent-turn-footer").getAttribute("data-outcome")).toBe("done");
+    expect(screen.getByTestId("work-trace").getAttribute("data-state")).toBe("done");
     // The chat's composer, not a plain box: its pills show what the pane runs on.
     expect(screen.getByTestId("agent-composer")).toBeTruthy();
     expect(screen.getByTestId("composer-surface").getAttribute("data-surface")).toBe("agent");
@@ -144,8 +144,9 @@ describe("PaneChat", () => {
     renderStage();
     await screen.findByTestId("agent-turn");
 
-    const box = screen.getByTestId("agent-composer").querySelector("textarea")!;
-    fireEvent.change(box, { target: { value: "Now the tests" } });
+    const box = screen.getByRole("textbox");
+    box.textContent = "Now the tests";
+    fireEvent.input(box);
     fireEvent.keyDown(box, { key: "Enter" });
     await vi.waitFor(() =>
       expect(api.promptTerminal).toHaveBeenCalledWith("T7", "Now the tests", {
