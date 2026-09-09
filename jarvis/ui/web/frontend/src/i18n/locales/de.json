@@ -603,6 +603,8 @@
   },
   "agent_chat": {
     "internal_message": "Interne Nachricht",
+    "internal_expand": "Ganze Nachricht zeigen",
+    "internal_collapse": "Weniger anzeigen",
     "delivery_queued": "Eingereiht",
     "delivery_delivered": "Zugestellt",
     "delivery_failed": "Fehlgeschlagen",

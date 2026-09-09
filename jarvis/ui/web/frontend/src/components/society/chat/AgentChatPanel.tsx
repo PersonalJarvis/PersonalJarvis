@@ -203,7 +203,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
         {agent.model ? <span className="truncate font-mono">{agent.model}</span> : null}
         {agent.effort ? <span className="ml-auto rounded-full border border-border px-2 py-0.5">{agent.effort}</span> : null}
       </div>
-      <Transcript key={sessionId ?? agent.agentId} items={visibleItems} agent={agent} busy={sessionReady && busy} onDecide={decide} />
+      <Transcript key={sessionId ?? agent.agentId} items={visibleItems} agent={agent} roster={roster} busy={sessionReady && busy} onDecide={decide} />
       {lastError && sessionReady ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -313,7 +313,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
           <RotateCcw className="h-3.5 w-3.5" aria-hidden />
         </button>
       </div>
-      <Transcript items={items} agent={agent} busy={busy} onDecide={decide} />
+      <Transcript items={items} agent={agent} roster={roster} busy={busy} onDecide={decide} />
       {lastError ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -552,11 +552,13 @@ function EffortPicker() {
 function Transcript({
   items,
   agent,
+  roster,
   busy,
   onDecide,
 }: {
   items: TimelineItem[];
   agent: SocietyAgent;
+  roster: SocietyAgent[];
   busy: boolean;
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
@@ -588,7 +590,11 @@ function Transcript({
             <div key={item.id} className="flex flex-col gap-2">
               {stamp ? <TimeStamp ms={stamp} /> : null}
               {item.type === "internal" ? (
-                <InternalMessageBubble item={item} />
+                <InternalMessageBubble
+                  item={item}
+                  sender={roster.find((a) => a.agentId === item.message.sender_id) ?? null}
+                  recipient={agent}
+                />
               ) : item.type === "user" ? (
                 <UserBubble item={item} />
               ) : item.type === "turn" ? (

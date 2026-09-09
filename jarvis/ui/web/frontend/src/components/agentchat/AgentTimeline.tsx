@@ -1,4 +1,4 @@
-import { InternalMessageBubble } from "./InternalMessageBubble";
+import { InternalMessageBubble, type InternalParticipant } from "./InternalMessageBubble";
 import {
   memo,
   useEffect,
@@ -91,18 +91,31 @@ export function AgentTimeline({
   assistantName,
   providerLabel,
   onDecide,
+  recipientName,
+  agentsById,
 }: {
   items: TimelineItem[];
   assistantName: string;
   providerLabel: (providerId: string) => string;
   onDecide: (approvalId: string, decision: ApprovalDecision) => void;
+  /** Who an internal agent message was sent to — the chat owner (defaults to the assistant). */
+  recipientName?: string;
+  /** Sender faces by agent id, where the caller has a roster. */
+  agentsById?: Record<string, InternalParticipant>;
 }) {
   const t = useT();
   return (
     <>
       {items.map((item) => {
         if (item.type === "internal") {
-          return <InternalMessageBubble key={item.id} item={item} />;
+          return (
+            <InternalMessageBubble
+              key={item.id}
+              item={item}
+              sender={agentsById?.[item.message.sender_id] ?? null}
+              recipientName={recipientName ?? assistantName}
+            />
+          );
         }
         if (item.type === "user") {
           return (

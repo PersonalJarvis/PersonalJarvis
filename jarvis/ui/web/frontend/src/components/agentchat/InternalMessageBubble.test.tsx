@@ -1,9 +1,9 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import en from "@/i18n/locales/en.json";
 import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
-import { InternalMessageBubble } from "./InternalMessageBubble";
+import { InternalMessageBubble, internalNeedsFold, internalPreview } from "./InternalMessageBubble";
 import { EMPTY_TIMELINE, reduceEvent, reduceEvents } from "./reduce";
 import type { AgentChatEvent } from "@/lib/agentChatApi";
 
@@ -62,4 +62,47 @@ it("shows agent authors and a terminal failure without changing the message", ()
   expect(screen.getByText("Scout")).toBeTruthy();
   expect(screen.getByText("Failed")).toBeTruthy();
   expect(screen.getByText("The recipient is paused")).toBeTruthy();
+});
+
+it("folds a long message to one sentence and unfolds it on click", () => {
+  locale.strings = en.agent_chat;
+  const long = "First sentence here. Second sentence follows with details. Third one too.";
+  const timeline = reduceEvent(EMPTY_TIMELINE, {
+    ...incoming,
+    payload: { ...incoming.payload, message_id: "m-long", text: long },
+  });
+  const item = timeline.items[0];
+  if (item.type !== "internal") throw new Error("Expected an internal message");
+  render(<InternalMessageBubble item={item} recipientName="Scout" />);
+  const card = screen.getByTestId("agent-message-internal");
+  expect(card.getAttribute("data-state")).toBe("folded");
+  // Only the first sentence shows; the rest stays hidden until the click.
+  expect(screen.getByTestId("agent-message-internal-preview").textContent).toContain("First sentence here.");
+  expect(screen.queryByTestId("agent-message-internal-full")).toBeNull();
+  expect(screen.getByText("Scout")).toBeTruthy();
+
+  fireEvent.click(screen.getByTestId("agent-message-internal-toggle"));
+  expect(card.getAttribute("data-state")).toBe("open");
+  expect(screen.getByTestId("agent-message-internal-full").textContent).toContain("Third one too.");
+
+  fireEvent.click(screen.getByTestId("agent-message-internal-toggle"));
+  expect(card.getAttribute("data-state")).toBe("folded");
+});
+
+it("shows a short message whole with no toggle", () => {
+  locale.strings = en.agent_chat;
+  const timeline = reduceEvent(EMPTY_TIMELINE, incoming);
+  const item = timeline.items[0];
+  if (item.type !== "internal") throw new Error("Expected an internal message");
+  render(<InternalMessageBubble item={item} recipientName="Scout" />);
+  expect(screen.getByTestId("agent-message-internal").getAttribute("data-state")).toBe("whole");
+  expect(screen.getByTestId("agent-message-internal-toggle").hasAttribute("disabled")).toBe(true);
+  expect(screen.getByTestId("agent-message-internal-full").textContent).toContain("A test message");
+});
+
+it("derives a one-sentence preview", () => {
+  expect(internalPreview("Hello world. More follows.")).toBe("Hello world.");
+  expect(internalPreview("Short")).toBe("Short");
+  expect(internalNeedsFold("Short")).toBe(false);
+  expect(internalNeedsFold("First. Second.")).toBe(true);
 });
