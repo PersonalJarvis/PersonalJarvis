@@ -2352,6 +2352,55 @@ _TOOL_LIST_RULE = (
 # dump, and the token cost is identical either way.
 _TOOL_LIST_WRAP_CHARS = 88
 
+# Professional style for typed (written) turns: the front-page chat, society
+# chats and every other surface with {"delivery": "written"}. The shared
+# system prompt carries the VOICE persona ("never emit Markdown, never write
+# a digit, no emojis — your text is spoken"), which is correct for speech but
+# leaves a typed turn with no visual rules at all. Without an explicit
+# written block the model falls back to its pretraining default: emoji
+# headers, hype openers ("echter Volltreffer!"), status-dot tables and three
+# redundant closers. This block overrides the spoken-output rules for written
+# turns only and pins the Frontier-lab default: calm, plain, zero emojis.
+_WRITTEN_CHAT_STYLE = (
+    "WRITTEN CHAT STYLE (this is a typed turn read on screen, NOT voice — "
+    "this block overrides the voice persona's spoken-output rules for this turn):\n"
+    "This answer is read, not spoken: Markdown (headings, tables, lists, code) "
+    "and digits ARE allowed here.\n"
+    "Write in a professional, calm Frontier-lab style: direct, precise, no hype, "
+    "no marketing superlatives, no filler openers, no pep-talk before the content.\n"
+    "NEVER use emojis — not in headings, tables, lists, status columns or body "
+    "text. Zero emojis unless the user explicitly asks for one in this turn. "
+    "No emoji status icons (no colored dots, rockets, folders, pointers, check "
+    "marks as emoji): use plain words such as No risk, Low, Medium, Check first.\n"
+    "Structure: lead with the result in one or two sentences, then the details. "
+    "Tables only for genuinely tabular data, with plain-text headers and no emoji "
+    "column. Keep it tight: one concrete next step at most, never a triple of "
+    "summary plus action plan plus emoji question."
+)
+
+
+def _is_written_turn() -> bool:
+    """True when the current turn is a typed (written) turn, not voice.
+
+    Reads the per-turn override's tool context (``{"delivery": "written"}``,
+    set by the agent-chat brain runner for every typed chat turn). Defensive:
+    any missing piece means a voice-style turn, so the spoken-output rules
+    keep applying.
+    """
+    try:
+        override = _TURN_OVERRIDE.get()
+    except Exception:  # noqa: BLE001 — no override context: voice-style turn
+        return False
+    if override is None:
+        return False
+    context = getattr(override, "tool_context", None)
+    if not isinstance(context, dict):
+        try:
+            context = dict(context or {})
+        except Exception:  # noqa: BLE001 — unexpected mapping shape
+            return False
+    return context.get("delivery") == "written"
+
 
 def normalize_reply_language(value: object) -> str:
     """Coerce a raw reply-language value to a known code, else ``"auto"``.
@@ -4445,6 +4494,13 @@ class BrainManager:
             parts.append(
                 _provider_identity_directive(identity[0], identity[1], name)
             )
+
+        # Written-turn style: typed chat answers are read on screen, so the
+        # voice persona's spoken-output rules must not govern them. Without
+        # this override the model drifts to emoji-heavy marketing copy.
+        # Byte-stable per delivery mode, so the prompt cache stays warm.
+        if _is_written_turn():
+            parts.append(_WRITTEN_CHAT_STYLE)
 
         # Reply-language directive LAST — highest recency-salience so it wins
         # over the otherwise German prompt above it. Byte-stable across turns

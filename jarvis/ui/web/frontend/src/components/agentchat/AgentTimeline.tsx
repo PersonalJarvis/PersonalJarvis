@@ -519,12 +519,15 @@ function Prose({ block }: { block: TextBlock }) {
     <div
       data-testid="agent-text"
       className={cn(
-        "prose prose-neutral max-w-none text-reading dark:prose-invert [overflow-wrap:anywhere]",
-        "prose-p:my-2 prose-headings:font-display prose-headings:tracking-tight prose-h1:text-xl prose-h2:text-lg prose-h3:text-base",
+        "prose prose-neutral max-w-none text-[17px] leading-[30px] text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
+        "prose-p:my-2 prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground-strong",
+        "prose-headings:font-display prose-headings:tracking-tight prose-headings:text-foreground-strong prose-h1:text-xl prose-h2:text-lg prose-h3:text-base",
         "prose-a:text-foreground-strong prose-a:underline prose-a:decoration-border-strong prose-a:underline-offset-2",
         "prose-code:rounded prose-code:bg-secondary prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:before:hidden prose-code:after:hidden",
-        "prose-pre:my-2 prose-pre:bg-card prose-pre:text-meta",
+        "prose-pre:my-2 prose-pre:bg-card prose-pre:text-[14px] prose-pre:leading-[22px]",
         "prose-li:my-0.5 prose-ul:my-2 prose-ol:my-2",
+        "prose-table:my-3 prose-table:text-[15px] prose-table:leading-[22px]",
+        "prose-thead:text-foreground-strong prose-th:text-foreground-strong prose-td:text-foreground",
       )}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>

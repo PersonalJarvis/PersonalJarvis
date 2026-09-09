@@ -66,7 +66,7 @@ class Soul:
         We include only the tone rules + boundaries (calibration is internal
         metadata). Budget-safe.
         """
-        # Extract the first section up to and including "## Grenzen"
+        # Extract the tone rules + limits, in either language the file uses.
         lines = self._body.splitlines()
         out: list[str] = ["## Persona"]
         in_tone = False
@@ -74,14 +74,20 @@ class Soul:
         for line in lines:
             if line.startswith("## Tone-Regeln") or line.startswith("## Tone"):
                 in_tone = True
+                in_grenzen = False
                 out.append("### Tone")
                 continue
-            if line.startswith("## Grenzen"):
+            if line.startswith("## Grenzen") or line.startswith("## Limits"):
                 in_tone = False
                 in_grenzen = True
                 out.append("### Grenzen")
                 continue
-            if line.startswith("## Kalibrierung") or line.startswith("## Wer ich bin"):
+            if (
+                line.startswith("## Kalibrierung")
+                or line.startswith("## Calibration")
+                or line.startswith("## Wer ich bin")
+                or line.startswith("## Who I am")
+            ):
                 in_tone = False
                 in_grenzen = False
                 continue
