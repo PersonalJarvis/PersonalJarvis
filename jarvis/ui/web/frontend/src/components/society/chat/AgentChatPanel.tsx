@@ -8,8 +8,7 @@ import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBub
  * voice stage use (`useAgentChatStore`, the "jarvis" surface): one history,
  * whatever a person said or typed anywhere. "@Name" hands the task to that
  * agent; "@gmail" (and the other catalog tags) pins that plugin, MCP server
- * or tool for the turn. The reasoning trail stays readable: a centred
- * "Thought for 4s" pill above the answer, never a second wall of text.
+ * or tool for the turn. The shared work trace preserves the order of thoughts, tools and replies.
  *
  * Jarvis' card alone also has a `Voice | Chat` switch (maintainer,
  * 2026-09-02): Jarvis is the one agent a person talks to by voice, so the
@@ -21,7 +20,7 @@ import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBub
  * runner can drive. The header says so while voice is showing.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Brain, ChevronRight, MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
+import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -37,15 +36,12 @@ import { DictationStatus } from "@/components/agentchat/DictationStatus";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import type {
   NoticeItem,
-  ReasoningBlock,
   TimelineItem,
-  ToolBlock,
   TurnItem,
   UserItem,
 } from "@/components/agentchat/reduce";
-import { formatThoughtDuration } from "@/components/home/TurnSteps";
+import { TurnTrace } from "@/components/agentchat/WorkTrace";
 import { VoiceStage } from "@/components/home/VoiceStage";
-import { LiveCore } from "@/components/LiveCore";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -850,36 +846,7 @@ function TurnBubble({
   item: TurnItem;
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
-  const t = useT();
-  const running = item.status === "running";
-  return (
-    <div className="flex w-full flex-col gap-1.5">
-      {item.blocks.map((block) => {
-        if (block.kind === "reasoning") return <ReasoningTrace key={block.id} block={block} turnLive={running} />;
-        if (block.kind === "tool") return <ToolLine key={block.callId} block={block} onDecide={onDecide} />;
-        if (!block.text.trim()) return null;
-        return (
-          <div
-            key={block.id}
-            className="max-w-[88%] self-start rounded-2xl rounded-bl-md bg-popover px-3.5 py-2 text-foreground"
-          >
-            <Prose text={block.text} />
-          </div>
-        );
-      })}
-      {running && item.blocks.every((b) => b.kind !== "text") ? (
-        <div
-          className="flex items-center gap-1 self-start rounded-2xl rounded-bl-md bg-popover px-3.5 py-2.5"
-          aria-label={t("society.chat.thinking")}
-        >
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:150ms]" />
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:300ms]" />
-        </div>
-      ) : null}
-      {item.error ? <p className="self-start text-xs text-destructive">{item.error}</p> : null}
-    </div>
-  );
+  return <TurnTrace turn={item} onDecide={onDecide} renderText={(text) => <Prose text={text} />} />;
 }
 
 /**
@@ -908,184 +875,6 @@ function Prose({ text, muted }: { text: string; muted?: boolean }) {
       )}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-    </div>
-  );
-}
-
-/** Live elapsed readout for a running thought; 1 s is fine — the label shows whole seconds. */
-function useElapsedMs(startedMs: number | null): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (startedMs === null) return;
-    setNow(Date.now());
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [startedMs]);
-  return startedMs === null ? 0 : Math.max(0, now - startedMs);
-}
-
-/**
- * The reasoning trace — the model's thinking, centred above the answer.
- *
- * Modelled on the Claude and ChatGPT desktop apps (maintainer, 2026-09-02:
- * the old `<details>` row was a bare summary with a wall of pre-wrapped text
- * under it). Three states, one shape:
- *
- * WHILE IT THINKS a centred live line — the product's one live core, a
- * shimmering "Thinking for 8s" and a ticking clock — sits over an open card
- * whose text is anchored to its NEWEST lines, so the reader watches the
- * thought arrive instead of chasing a scrollbar. Older lines fade out at the
- * top rather than being cut.
- *
- * ONCE IT CLOSES the line becomes a centred pill: a brain mark, "Thought for
- * 8s", a chevron. It stays open while the turn still works — watching the
- * work is the point of a running turn — and folds itself the moment the turn
- * lands, because a finished conversation should read as its answer.
- *
- * A REDACTED thought (the vendor hides its reasoning) is the same pill
- * without a chevron and without a card: it still says the thinking happened.
- *
- * The trace is centred on purpose: it is not the agent speaking, it is the
- * turn's own state, and the column already places its meta rows — the time
- * stamps — down the middle.
- */
-export function ReasoningTrace({ block, turnLive }: { block: ReasoningBlock; turnLive: boolean }) {
-  const t = useT();
-  // `null` until the person decides; until then the turn's own state decides.
-  const [manual, setManual] = useState<boolean | null>(null);
-  const text = block.text.trim();
-  const live = block.live;
-  const elapsed = useElapsedMs(live ? block.startedMs : null);
-  const open = live || (text !== "" && (manual ?? turnLive));
-
-  const label = live
-    ? t("society.chat.thinking_for").replace("{0}", formatThoughtDuration(elapsed))
-    : block.durationMs !== null && block.durationMs > 0
-      ? t("society.chat.thought_for").replace("{0}", formatThoughtDuration(block.durationMs))
-      : t("society.chat.thought");
-
-  return (
-    <div
-      className="my-0.5 flex flex-col items-center gap-1.5"
-      data-testid="society-reasoning"
-      data-state={live ? "live" : text === "" ? "silent" : open ? "open" : "folded"}
-    >
-      {live ? (
-        <div className="flex items-center gap-2 text-xs" role="status" aria-live="polite">
-          <LiveCore />
-          <span className="thinking-shimmer font-medium tabular-nums">{label}</span>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setManual(!open)}
-          aria-expanded={open}
-          disabled={text === ""}
-          title={text === "" ? t("society.chat.thought_hidden") : undefined}
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-secondary/40 px-2.5 py-1",
-            "text-xs text-muted-foreground transition-colors",
-            text === "" ? "cursor-default" : "hover:border-border hover:bg-secondary hover:text-foreground",
-          )}
-        >
-          <Brain className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
-          <span className="tabular-nums">{label}</span>
-          {text === "" ? null : (
-            <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-90")} aria-hidden />
-          )}
-        </button>
-      )}
-
-      {open ? (
-        <div className="w-full rounded-2xl border border-border/60 bg-secondary/25 px-4 py-3">
-          {live ? <ThoughtTail text={text} /> : <Prose text={text} muted />}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * The streaming thought, pinned to its newest lines.
- *
- * A fixed window with the text against its bottom edge: new words push the
- * old ones up and out. Once more has been written than fits, the top fades
- * so the clipping reads as depth rather than as a cut; a thought that fits
- * shows whole and unfaded.
- */
-function ThoughtTail({ text }: { text: string }) {
-  const outer = useRef<HTMLDivElement>(null);
-  const inner = useRef<HTMLDivElement>(null);
-  const [clipped, setClipped] = useState(false);
-  useLayoutEffect(() => {
-    const box = outer.current;
-    const body = inner.current;
-    if (!box || !body) return;
-    setClipped(body.offsetHeight > box.clientHeight + 1);
-  }, [text]);
-  return (
-    <div
-      ref={outer}
-      className={cn(
-        "flex max-h-40 flex-col justify-end overflow-hidden",
-        clipped && "[mask-image:linear-gradient(to_bottom,transparent,black_2.5rem)]",
-      )}
-      data-testid="society-reasoning-tail"
-      data-clipped={clipped ? "true" : undefined}
-    >
-      <div ref={inner}>
-        {text ? <Prose text={text} muted /> : null}
-      </div>
-    </div>
-  );
-}
-
-function ToolLine({
-  block,
-  onDecide,
-}: {
-  block: ToolBlock;
-  onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
-}) {
-  const t = useT();
-  const pending = block.approval && block.approval.decision === null;
-  const state = block.isError
-    ? t("society.chat.tool_failed")
-    : block.output === null && !pending
-      ? t("society.chat.tool_running")
-      : pending
-        ? t("society.chat.tool_waiting")
-        : t("society.chat.tool_done");
-  return (
-    <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground">
-      <span className="font-mono">{block.name}</span>
-      <span>· {state}</span>
-      {pending && block.approval ? (
-        <span className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => void onDecide(block.approval!.approvalId, "allow")}
-            className="rounded-full border border-border px-2 py-0.5 text-foreground hover:bg-secondary"
-          >
-            {t("society.chat.approve")}
-          </button>
-          <button
-            type="button"
-            onClick={() => void onDecide(block.approval!.approvalId, "allow_always")}
-            title={t("society.chat.allow_always")}
-            className="rounded-full border border-border px-2 py-0.5 text-foreground hover:bg-secondary"
-          >
-            {t("society.chat.allow_always")}
-          </button>
-          <button
-            type="button"
-            onClick={() => void onDecide(block.approval!.approvalId, "deny")}
-            className="rounded-full border border-border px-2 py-0.5 hover:bg-secondary"
-          >
-            {t("society.chat.deny")}
-          </button>
-        </span>
-      ) : null}
     </div>
   );
 }

@@ -402,27 +402,12 @@ describe("ChatStage (agent chat)", () => {
     expect(screen.getByTestId("composer-plan").getAttribute("aria-checked")).toBe("false");
   });
 
-  it("grows the text box with the typed text and caps it at its max height", () => {
+  it("accepts a prompt through the current rich text composer", () => {
     render(<ChatStage />);
-    const box = screen.getByPlaceholderText("Ask anything…") as HTMLTextAreaElement;
-    // jsdom has no layout: stand in for scrollHeight and the max-height rule.
-    let scrollHeight = 48;
-    Object.defineProperty(box, "scrollHeight", { configurable: true, get: () => scrollHeight });
-    const computed = vi.spyOn(window, "getComputedStyle").mockImplementation(
-      () => ({ maxHeight: "192px" }) as CSSStyleDeclaration,
-    );
-    try {
-      scrollHeight = 120;
-      fireEvent.change(box, { target: { value: "one two three four five" } });
-      expect(box.style.height).toBe("120px");
-      expect(box.style.overflowY).toBe("hidden");
-      scrollHeight = 400;
-      fireEvent.change(box, { target: { value: "a much longer prompt".repeat(40) } });
-      expect(box.style.height).toBe("192px");
-      expect(box.style.overflowY).toBe("auto");
-    } finally {
-      computed.mockRestore();
-    }
+    const box = screen.getByRole("textbox");
+    box.textContent = "Check this trace";
+    fireEvent.input(box);
+    expect((screen.getByTestId("composer-send") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("shows no restart notice when the catalog carries the permission ladders", () => {
@@ -457,9 +442,9 @@ describe("ChatStage (agent chat)", () => {
     const turn = screen.getByTestId("agent-turn");
     expect(turn.textContent).toContain("Anthropic Claude");
     expect(turn.textContent).toContain("claude-opus-5");
-    const tool = within(turn).getByTestId("agent-tool");
-    expect(tool.getAttribute("data-tool")).toBe("Bash");
-    expect(tool.getAttribute("data-state")).toBe("done");
+    const tool = turn.querySelector<HTMLElement>("[data-trace-tool]")!;
+    expect(tool.textContent).toContain("Run command");
+    expect(tool.getAttribute("data-state")).toBe("completed");
     // The row opens to show input and output.
     fireEvent.click(within(tool).getByRole("button"));
     expect(tool.textContent).toContain("a.py");
@@ -547,10 +532,10 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s2", timeline, decide });
     render(<ChatStage />);
-    const card = screen.getByTestId("agent-approval");
+    const card = screen.getByRole("group", { name: "Approval required" });
     expect(card.textContent).toContain("rm x");
     act(() => {
-      fireEvent.click(within(card).getByTestId("approval-allow"));
+      fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
     });
     expect(decide).toHaveBeenCalledWith("a1", "allow");
     // The composer offers Stop while the turn runs.
@@ -575,8 +560,8 @@ describe("ChatStage (agent chat)", () => {
       // the duplication the maintainer objected to (2026-08-25).
       expect(screen.queryByTestId("agent-reasoning")).toBeNull();
 
-      const live = screen.getByTestId("agent-turn-live");
-      expect(within(live).getByTestId("live-core")).toBeTruthy();
+      const live = within(screen.getByTestId("work-trace")).getByRole("status");
+      expect(live.textContent).toContain("Working");
       expect(live.textContent).toMatch(/4\.8k/);
       // Output only: the input side of a CLI re-counts the whole conversation
       // on every step, so it reads as an absurd number for one question.
@@ -614,18 +599,12 @@ describe("ChatStage (agent chat)", () => {
     useAgentChatStore.setState({ activeSessionId: "s4", timeline });
     render(<ChatStage />);
 
-    const rows = screen.getAllByTestId("agent-reasoning");
-    expect(rows).toHaveLength(2);
-    // Each thought keeps its own time and shows its words without a click.
-    expect(rows[0].textContent).toMatch(/1s/);
-    expect(rows[0].textContent).toContain("First the port.");
-    expect(rows[1].textContent).toMatch(/4s/);
-    expect(rows[1].textContent).toContain("It is listening.");
-    // Thought, command, thought — the order they happened in.
-    const order = Array.from(
-      document.querySelectorAll("[data-testid='agent-reasoning'],[data-testid='agent-tool']"),
-    ).map((el) => el.getAttribute("data-testid"));
-    expect(order).toEqual(["agent-reasoning", "agent-tool", "agent-reasoning"]);
+    const trace = screen.getByTestId("work-trace");
+    expect(within(trace).getByRole("button", { name: "Thought for 1.0s" })).toBeTruthy();
+    expect(within(trace).getByRole("button", { name: "Thought for 4.0s" })).toBeTruthy();
+    const text = trace.textContent!;
+    expect(text.indexOf("First the port.")).toBeLessThan(text.indexOf("Get-NetTCPConnection"));
+    expect(text.indexOf("Get-NetTCPConnection")).toBeLessThan(text.indexOf("It is listening."));
   });
 
   it("says how a turn ended — including one that answered nothing at all", () => {
@@ -642,18 +621,18 @@ describe("ChatStage (agent chat)", () => {
     useAgentChatStore.setState({ activeSessionId: "s4", timeline });
     render(<ChatStage />);
 
-    const outcome = screen.getByTestId("agent-turn-footer");
-    expect(outcome.getAttribute("data-outcome")).toBe("no-answer");
+    const outcome = within(screen.getByTestId("work-trace")).getByRole("status");
+    expect(outcome.textContent).toContain("Finished without an answer");
     expect(outcome.textContent).toContain("448");
     // Only the output side reaches the receipt.
     expect(outcome.textContent).not.toContain("35.4k");
     // The failure reads on the row itself, without opening anything.
-    expect(screen.getByTestId("agent-tool-gist").textContent).toContain("permission check failed");
+    expect(screen.getByText(/permission check failed for command/).textContent).toContain("permission check failed");
     // Nothing claims to still be working.
     expect(screen.queryByTestId("agent-turn-live")).toBeNull();
   });
 
-  it("does not print a tool's input twice when the row already says it", () => {
+  it("keeps full tool input behind the detail disclosure", () => {
     const timeline = reduceEvents(EMPTY_TIMELINE, [
       ev("turn_started", { turn_id: "t5", provider: "claude-api", model: "claude-opus-5", effort: "high", runner: "claude-cli" }),
       ev("tool_call", { turn_id: "t5", call_id: "c1", name: "Bash", input: { command: "ls -la" } }),
@@ -665,10 +644,10 @@ describe("ChatStage (agent chat)", () => {
     useAgentChatStore.setState({ activeSessionId: "s5", timeline });
     render(<ChatStage />);
 
-    const [shell, grep] = screen.getAllByTestId("agent-tool");
+    const [shell, grep] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-tool]"));
     fireEvent.click(within(shell).getByRole("button"));
-    // One field, and the row's summary already carries it — no INPUT block.
-    expect(within(shell).queryByText("Input")).toBeNull();
+    // The full receipt is available on demand.
+    expect(within(shell).getByText("Input")).toBeTruthy();
     expect(shell.textContent).toContain("a.py");
 
     fireEvent.click(within(grep).getByRole("button"));
@@ -676,7 +655,7 @@ describe("ChatStage (agent chat)", () => {
     expect(within(grep).getByText("Input")).toBeTruthy();
   });
 
-  it("names tools the way the agent's log does and closes with time and tokens", () => {
+  it("uses readable tool names, preserves canonical detail, and closes with usage", () => {
     const timeline = reduceEvents(EMPTY_TIMELINE, [
       ev("user_message", { text: "check the repo" }),
       ev("turn_started", { turn_id: "t9", provider: "claude-api", model: "claude-opus-5", effort: "high", runner: "claude-cli" }),
@@ -691,20 +670,19 @@ describe("ChatStage (agent chat)", () => {
     useAgentChatStore.setState({ activeSessionId: "s9", timeline });
     render(<ChatStage />);
 
-    const tools = screen.getAllByTestId("agent-tool");
-    expect(tools[0].getAttribute("data-tool")).toBe("PowerShell");
+    const tools = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-tool]"));
+    expect(tools[0].textContent).toContain("Run command");
+    fireEvent.click(within(tools[0]).getByRole("button"));
     expect(tools[0].textContent).toContain("PowerShell");
     expect(tools[0].textContent).toContain("Get-ChildItem");
     // An MCP call is named after its server, and wears its mark.
-    expect(tools[1].getAttribute("data-family")).toBe("mcp");
     expect(tools[1].textContent).toContain("GitHub");
 
     // Thinking with no readable text still shows its time and does not open.
-    const reasoning = screen.getByTestId("agent-reasoning");
-    expect(reasoning.textContent).toMatch(/9s|8\.6s|8s/);
-    expect(within(reasoning).getByRole("button").hasAttribute("disabled")).toBe(true);
+    const reasoning = screen.getByRole("button", {name: "Thought for 8.6s"});
+    expect(reasoning.hasAttribute("disabled")).toBe(true);
 
-    const footer = screen.getByTestId("agent-turn-footer");
+    const footer = within(screen.getByTestId("work-trace")).getByRole("status");
     expect(footer.textContent).toContain("12s");
     expect(footer.textContent).toContain("219");
     expect(footer.textContent).toContain("$0.8483");

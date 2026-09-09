@@ -74,7 +74,7 @@ export function ChatStage() {
     [catalog],
   );
   const onDecide = useCallback(
-    (approvalId: string, decision: ApprovalDecision) => void decide(approvalId, decision),
+    (approvalId: string, decision: ApprovalDecision) => decide(approvalId, decision),
     [decide],
   );
 
