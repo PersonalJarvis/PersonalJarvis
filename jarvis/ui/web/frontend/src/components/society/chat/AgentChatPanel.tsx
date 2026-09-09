@@ -27,6 +27,8 @@ import remarkGfm from "remark-gfm";
 
 import { AgentChatStoreProvider, useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
+import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
+import { useStickToBottom } from "@/hooks/useStickToBottom";
 import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
 import { MessageWithChips } from "@/components/agentchat/ToolChoiceChips";
 import { choiceToken } from "@/components/agentchat/composerChips";
@@ -203,7 +205,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
         {agent.model ? <span className="truncate font-mono">{agent.model}</span> : null}
         {agent.effort ? <span className="ml-auto rounded-full border border-border px-2 py-0.5">{agent.effort}</span> : null}
       </div>
-      <Transcript key={sessionId ?? agent.agentId} items={visibleItems} agent={agent} roster={roster} busy={sessionReady && busy} onDecide={decide} />
+      <Transcript key={sessionId ?? agent.agentId} items={visibleItems} agent={agent} roster={roster} onDecide={decide} />
       {lastError && sessionReady ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -313,7 +315,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
           <RotateCcw className="h-3.5 w-3.5" aria-hidden />
         </button>
       </div>
-      <Transcript items={items} agent={agent} roster={roster} busy={busy} onDecide={decide} />
+      <Transcript items={items} agent={agent} roster={roster} onDecide={decide} />
       {lastError ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -549,24 +551,27 @@ function EffortPicker() {
 // transcript
 // ---------------------------------------------------------------------------
 
-function Transcript({
+export function Transcript({
   items,
   agent,
   roster,
-  busy,
   onDecide,
 }: {
   items: TimelineItem[];
   agent: SocietyAgent;
   roster: SocietyAgent[];
-  busy: boolean;
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
   const t = useT();
-  const bottom = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "end" });
-  }, [items.length, busy]);
+  // Follow the newest while the view sits at the end — the rule every
+  // conversation surface shares (hooks/useStickToBottom). This used to scroll
+  // a bottom sentinel into view on `[items.length, busy]` only, so a
+  // reasoning trace or answer that STREAMS — growing in place, no new item —
+  // never pulled the view along and the reader scrolled by hand. The hook
+  // watches the content's own size too, so growth follows; scrolled up, the
+  // reader keeps their place and gets a button back.
+  const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
+  useLayoutEffect(follow, [follow, items.length]);
 
   if (items.length === 0) {
     return (
@@ -580,8 +585,9 @@ function Transcript({
 
   let lastStamp = 0;
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-      <div className={cn(CHAT_MEASURE, "flex flex-col gap-2")}>
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={rootRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3" data-testid="society-transcript">
+        <div ref={contentRef} className={cn(CHAT_MEASURE, "flex flex-col gap-2")}>
         {items.map((item) => {
           const ts = item.type === "user" || item.type === "internal" ? item.tsMs : item.type === "turn" ? item.startedMs : 0;
           const stamp = ts && ts - lastStamp > STAMP_GAP_MS ? ts : 0;
@@ -611,8 +617,9 @@ function Transcript({
             </div>
           );
         })}
-        <div ref={bottom} />
+        </div>
       </div>
+      {!atEnd && <ScrollToEndButton onClick={jumpToEnd} testId="society-scroll-end" className="top-auto bottom-3" />}
     </div>
   );
 }
