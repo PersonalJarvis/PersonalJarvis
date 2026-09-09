@@ -86,17 +86,18 @@ async function renderCrop(recipe: FigureRecipe): Promise<string | null> {
   if (!figure) return null;
   const { renderer, scene, camera } = acquireStage();
   try {
-    // Turn the figure a little toward the light and frame head and shoulders:
-    // a face fills the circle, a whole figure would be a stripe. A spirit
-    // carries its face lower on the body than a biped carries its head.
+    // Turn the figure a little toward the light and frame the whole head
+    // with air around it: the swatch shows the full face, never a cropped
+    // close-up. A spirit carries its face lower on the body than a biped
+    // carries its head.
     figure.root.rotation.y = -0.25;
     scene.add(figure.root);
     figure.actions.idle?.play();
     figure.mixer.update(0.4);
     const spirit = figure.extras.archetype === "spirit";
     const headY = height * (spirit ? 0.66 : 0.78);
-    camera.position.set(0.06, headY + height * 0.03, height * (spirit ? 1.15 : 0.92));
-    camera.lookAt(0, headY - height * 0.01, 0);
+    camera.position.set(0.06, headY + height * 0.04, height * (spirit ? 1.6 : 1.35));
+    camera.lookAt(0, headY, 0);
     camera.updateProjectionMatrix();
     renderer.render(scene, camera);
     return renderer.domElement.toDataURL("image/png");

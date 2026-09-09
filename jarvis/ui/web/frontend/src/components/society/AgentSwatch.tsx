@@ -81,11 +81,9 @@ export function AgentSwatch({
           src={crop}
           alt=""
           draggable={false}
-          className="absolute inset-0 h-full w-full object-contain"
+          className="absolute inset-[10%] h-[80%] w-[80%] object-contain"
           style={{
             imageRendering: size <= 40 ? "auto" : "pixelated",
-            transform: "scale(1.0)",
-            transformOrigin: "50% 45%",
           }}
         />
       ) : (
