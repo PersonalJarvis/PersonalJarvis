@@ -2,6 +2,8 @@
   "society": {
     "chat": {
       "model_search": "Modelle suchen",
+      "model_show_more": "Weitere Modelle anzeigen",
+      "model_show_fewer": "Weniger Modelle anzeigen",
       "model_refresh": "Modelle aktualisieren",
       "model_no_matches": "Keine passenden Modelle. Verbinde einen Provider oder aktualisiere die Liste.",
       "model_group_anthropic": "Anthropic-Subscription",

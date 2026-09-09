@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import type { ProviderOption } from "@/store/agentChat";
 import type { SocietyProviderRow } from "@/lib/societyApi";
-import { modelEffort, modelSeats } from "./modelChoices";
+import { isFreeOpenCodeModel, modelEffort, modelSeats } from "./modelChoices";
 
 const option = (overrides: Partial<ProviderOption> = {}): ProviderOption => ({
   id: "cli", label: "CLI", family: "cli", runner: "grok-cli", connected: false,
@@ -31,4 +31,13 @@ test("live labels retain model-specific effort metadata and duplicate ids collap
   ] });
   expect(seat.provider.curated_models).toHaveLength(1);
   expect(modelEffort(seat, "small", "high")).toBe("low");
+});
+
+test("free model detection does not infer price from labels, size or unrelated aliases", () => {
+  for (const id of ["opencode/next-free", "openrouter/vendor/model:free", "opencode/big-pickle"]) {
+    expect(isFreeOpenCodeModel({ id, label: "Model" })).toBe(true);
+  }
+  for (const id of ["opencode/gpt-5-nano", "other/big-pickle", "opencode/freedom", "opencode/free-preview-paid"]) {
+    expect(isFreeOpenCodeModel({ id, label: "Free model" })).toBe(false);
+  }
 });

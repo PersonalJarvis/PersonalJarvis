@@ -2,6 +2,8 @@
   "society": {
     "chat": {
       "model_search": "Search models",
+      "model_show_more": "Show more models",
+      "model_show_fewer": "Show fewer models",
       "model_refresh": "Refresh models",
       "model_no_matches": "No matching models. Connect a provider or refresh the list.",
       "model_group_anthropic": "Anthropic subscription",
