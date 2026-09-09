@@ -67,7 +67,7 @@ Claude, OpenAI, or OpenRouter, one setting for each. It can rewrite its own conf
 and it runs on a headless server just as well as on a desktop with a microphone.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/home-2026-09-08.webp" alt="The home view: typed chat through the same brain and keys, and the live voice bar waiting for a wake word" width="900" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/home-2026-09-09.webp" alt="The home view: typed chat through the same brain and keys, and the live voice bar waiting for a wake word" width="900" />
 </p>
 
 <p align="center">
