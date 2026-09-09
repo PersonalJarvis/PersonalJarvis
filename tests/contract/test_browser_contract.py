@@ -39,3 +39,14 @@ async def test_slow_viewer_keeps_approval_and_only_latest_pixels():
     assert (await buffer.get())["id"] == "one"
     assert (await buffer.get())["sequence"] == 99
 
+def test_browser_children_do_not_inherit_provider_credentials(monkeypatch, tmp_path):
+    from jarvis.society.browser.install import worker_env
+    monkeypatch.setenv("OPENAI_API_KEY", "test-placeholder")
+    monkeypatch.setenv("EXAMPLE_ACCESS_TOKEN", "test-placeholder")
+    monkeypatch.setenv("PIP_INDEX_URL", "https://example.invalid/simple")
+    env = worker_env(tmp_path)
+    assert "OPENAI_API_KEY" not in env
+    assert "EXAMPLE_ACCESS_TOKEN" not in env
+    assert "PIP_INDEX_URL" not in env
+    assert env["ANONYMIZED_TELEMETRY"] == "false"
+

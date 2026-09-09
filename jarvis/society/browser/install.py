@@ -82,8 +82,15 @@ def is_installed(data_dir: Path | None = None) -> bool:
     )
 
 
-def worker_env(data_dir: Path | None = None) -> dict[str, str]:
-    env = dict(os.environ)
+def worker_env(data_dir: Path | None = None, *, for_installer: bool = False) -> dict[str, str]:
+    # Inference credentials stay in the parent. The browser and its children
+    # do not need account tokens, SSH agents or package-index credentials.
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not any(part in name.upper() for part in ("TOKEN", "SECRET", "API_KEY", "AUTH"))
+        and (for_installer or not name.upper().startswith("PIP_"))
+    }
     env.update(
         {
             "PYTHONIOENCODING": "utf-8",
@@ -162,7 +169,7 @@ def ensure_installed(
     with FileLock(str(root / "install.lock"), timeout=960):
         if is_installed(data_dir) and not repair:
             return snapshot(data_dir)
-        env = worker_env(data_dir)
+        env = worker_env(data_dir, for_installer=True)
         runtime = root / "runtimes" / uuid.uuid4().hex
         runtime.parent.mkdir(exist_ok=True)
         _set(data_dir, phase="installing", percent=5, error="", detail="Preparing browser runtime")

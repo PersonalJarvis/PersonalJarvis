@@ -24,6 +24,8 @@ install/uninstall.ps1        text eol=lf
 # on Windows. `verify-wave6.sh` is the goal-terminal proof script.
 requirements.txt             text eol=lf
 requirements.in              text eol=lf
+jarvis/assets/browser/requirements.lock text eol=lf
+jarvis/assets/browser/requirements.in text eol=lf
 verify-wave6.sh              text eol=lf
 
 # Git hooks run through a POSIX shell and must never be checked out as CRLF.
