@@ -66,6 +66,14 @@ detail. If you would rather use a hosted model, you pick the provider per tier: 
 Claude, OpenAI, or OpenRouter, one setting for each. It can rewrite its own configuration,
 and it runs on a headless server just as well as on a desktop with a microphone.
 
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/home-2026-09-08.webp" alt="The home view: typed chat through the same brain and keys, and the live voice bar waiting for a wake word" width="900" />
+</p>
+
+<p align="center">
+  <sub>The home view. Type in the chat or just talk: both go through the same brain on the same keys, and the bar in the middle of the pane is the live voice channel.</sub>
+</p>
+
 ## What you can say
 
 | You say | What happens |
