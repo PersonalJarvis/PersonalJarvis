@@ -8,7 +8,7 @@
  * The ground pairs the figure's primary with its secondary so two agents
  * never collapse to the same dark disc; the fallback draws a simple
  * two-eye face from the figure's own skin/hair/eyes cells; a loaded crop
- * is scaled up so the head fills the disc instead of hiding in it.
+ * is shown in full so the whole face stays visible inside the disc.
  */
 import { useEffect, useState } from "react";
 
@@ -81,11 +81,11 @@ export function AgentSwatch({
           src={crop}
           alt=""
           draggable={false}
-          className="absolute inset-0 h-full w-full object-cover"
+          className="absolute inset-0 h-full w-full object-contain"
           style={{
             imageRendering: size <= 40 ? "auto" : "pixelated",
-            transform: "scale(1.25)",
-            transformOrigin: "50% 32%",
+            transform: "scale(1.0)",
+            transformOrigin: "50% 45%",
           }}
         />
       ) : (

@@ -95,8 +95,8 @@ async function renderCrop(recipe: FigureRecipe): Promise<string | null> {
     figure.mixer.update(0.4);
     const spirit = figure.extras.archetype === "spirit";
     const headY = height * (spirit ? 0.66 : 0.78);
-    camera.position.set(0.06, headY + height * 0.03, height * (spirit ? 0.95 : 0.72));
-    camera.lookAt(0, headY - height * 0.02, 0);
+    camera.position.set(0.06, headY + height * 0.03, height * (spirit ? 1.15 : 0.92));
+    camera.lookAt(0, headY - height * 0.01, 0);
     camera.updateProjectionMatrix();
     renderer.render(scene, camera);
     return renderer.domElement.toDataURL("image/png");
