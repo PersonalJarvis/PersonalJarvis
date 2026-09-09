@@ -1110,6 +1110,9 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           }}
           className="max-h-[180px]"
         />
+        {surface === "society" ? <div className="flex h-8 min-w-0 max-w-[40%] shrink-0 items-center">
+          <AgentModelPicker key={agent.agentId} agent={agent} busy={busy} onSavingChange={setModelSaving} />
+        </div> : null}
         <button
           type="button"
           onClick={dictation.toggle}
@@ -1145,9 +1148,6 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           </button>
         )}
       </div>
-      {surface === "society" ? <div className={cn(CHAT_MEASURE, "mt-1")}>
-        <AgentModelPicker key={agent.agentId} agent={agent} busy={busy} onSavingChange={setModelSaving} />
-      </div> : null}
     </div>
   );
 }
