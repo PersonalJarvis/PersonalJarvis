@@ -1,0 +1,12 @@
+{
+  "date": "2026-09-09",
+  "scope": "Bundled society GLBs; procedural assets listed separately in brief",
+  "counts": {
+    "character-base": 26,
+    "animation-library": 2,
+    "accessory": 55,
+    "building": 12
+  },
+  "total_glbs": 95,
+  "total_bytes": 8822748
+}

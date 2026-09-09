@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "study": "city-realism-study",
+  "brief": "brief.md",
+  "assets": [],
+  "runtime_evidence": [],
+  "technical_report": "",
+  "approval": {
+    "status": "pending",
+    "record": "review.md",
+    "evidence_sha256": ""
+  }
+}
