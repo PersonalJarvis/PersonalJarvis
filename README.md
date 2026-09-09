@@ -66,22 +66,6 @@ detail. If you would rather use a hosted model, you pick the provider per tier: 
 Claude, OpenAI, or OpenRouter, one setting for each. It can rewrite its own configuration,
 and it runs on a headless server just as well as on a desktop with a microphone.
 
-<p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/agents-2026-09-08.webp" alt="The Agents island: two figures on the market square, a roster of agents on the right, and a switch between the island and the ledger" width="900" />
-</p>
-
-<p align="center">
-  <sub>The Agents island. Every agent is a figure you can watch and click. The rail on the right is the same roster as a list, and Ledger is the table when you want numbers instead of the map.</sub>
-</p>
-
-<p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/home-2026-09-08.webp" alt="The desktop app's home view: every section listed in the sidebar, the greeting in the main pane, and the realtime voice bar waiting for a wake word" width="900" />
-</p>
-
-<p align="center">
-  <sub>The home view, waiting. Every section is one click away in the sidebar, and the bar in the middle of the pane is the live voice channel. The assistant answers to whatever wake word you pick; this install answers to George.</sub>
-</p>
-
 ## What you can say
 
 | You say | What happens |
