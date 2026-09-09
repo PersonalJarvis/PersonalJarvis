@@ -67,6 +67,18 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     setOpen(false); setSubmenu(null); trigger.current?.focus();
   }
 
+  useEffect(() => {
+    if (!open) return;
+    // Radix listens on document capture: the nested menu must handle Escape first.
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault(); event.stopPropagation();
+      if (submenu) { setSubmenu(null); input.current?.focus(); } else close();
+    };
+    window.addEventListener("keydown", escape, true);
+    return () => window.removeEventListener("keydown", escape, true);
+  }, [open, submenu]);
+
   useLayoutEffect(() => {
     if (!open) return;
     let frame = 0;

@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import * as Dialog from "@radix-ui/react-dialog";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { loadLocaleChunk } from "@/i18n";
@@ -52,7 +53,7 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function mount(busy = false) {
+function mount(busy = false, inDialog = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const initial: SocietyAgent = { ...SAMPLE_ROSTER[1], ...rowToAgent(row) };
   client.setQueryData(["society", "roster"], { agents: [initial], sample: false });
@@ -60,7 +61,9 @@ function mount(busy = false) {
     const { agent } = useSocietyAgent("scout");
     return <AgentModelPicker agent={agent ?? initial} busy={busy} onSavingChange={saving} />;
   }
-  return render(<QueryClientProvider client={client}><Subject /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}>{inDialog ? <Dialog.Root defaultOpen>
+    <Dialog.Content><Dialog.Title>Agent</Dialog.Title><Dialog.Description>Model controls</Dialog.Description><Subject /></Dialog.Content>
+  </Dialog.Root> : <Subject />}</QueryClientProvider>);
 }
 
 async function open() {
@@ -178,5 +181,13 @@ test("keyboard navigation moves through results and closes back to the trigger",
   fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
   expect(document.activeElement).toBe(screen.getByTitle("gemini-large"));
   fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Model" }));
+});
+
+test("Escape closes a nested menu before the surrounding agent card", async () => {
+  mount(false, true); const input = await open();
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByRole("dialog")).toBeTruthy();
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Model" }));
 });
