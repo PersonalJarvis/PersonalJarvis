@@ -94,9 +94,15 @@ async function renderCrop(recipe: FigureRecipe): Promise<string | null> {
     scene.add(figure.root);
     figure.actions.idle?.play();
     figure.mixer.update(0.4);
-    const spirit = figure.extras.archetype === "spirit";
+    const archetype = figure.extras.archetype;
+    const spirit = archetype === "spirit";
+    const quadruped = archetype === "quadruped";
     const headY = height * (spirit ? 0.66 : 0.78);
-    camera.position.set(0.06, headY + height * 0.04, height * (spirit ? 1.6 : 1.35));
+    // Per-archetype distance: a human head is small relative to its body,
+    // so a biped needs a closer camera than the mascot or an animal whose
+    // face already fills more of the frame at the same factor.
+    const distance = height * (spirit ? 1.6 : quadruped ? 1.35 : 0.95);
+    camera.position.set(0.06, headY + height * 0.04, distance);
     camera.lookAt(0, headY, 0);
     camera.updateProjectionMatrix();
     renderer.render(scene, camera);
