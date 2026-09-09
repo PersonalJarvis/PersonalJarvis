@@ -1,5 +1,20 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Routine hooks (2026-09-09)
+
+Webhook ingress, named integration events and their durable task inbox use the
+same Python/SQLite/ASGI code on Windows, macOS and headless Linux. They require
+no native event hook or desktop API. Readiness is gated by the existing task
+store/scheduler capability; credential availability uses the portable
+`get_secret`/`set_secret` path and reports failures in-app. Internal publishers
+retain their existing OS availability rather than gaining fictitious sources.
+
+`tests/contract/test_routine_hooks.py` verifies authentication scope, raw-body
+HMAC, replay protection, persistence, typed filters and API/CLI schemas.
+Windows tests, a single-key Gemini run with isolated stores, and real Chrome
+light/dark UI checks passed. Physical macOS/Linux execution and a clean OS
+installation remain unverified. See [hook configuration](routines.md#webhooks-and-integration-event-hooks).
+
 ## Calendar routines (2026-09-08)
 
 Windows, macOS and Linux use the same lazy `zoneinfo` calendar implementation

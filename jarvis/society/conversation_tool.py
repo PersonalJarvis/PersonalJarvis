@@ -80,5 +80,9 @@ class RoutineListTool:
                 "routines": await list_routines(store, self._agent_id),
                 "timezone": client_timezone.get(),
                 "events": event_catalog(),
+                "hook_triggers": {
+                    "webhook": "POST JSON; use Connect webhook in the app for credentials",
+                    "event_hook": "POST event_name and payload to /api/tasks/events",
+                },
             },
         )

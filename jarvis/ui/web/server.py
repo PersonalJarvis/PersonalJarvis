@@ -386,6 +386,7 @@ class WebServer:
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
+        from .routine_hooks_routes import router as routine_hooks_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
@@ -470,6 +471,7 @@ class WebServer:
         # modal too, not just the `jarvis frontier` CLI command.
         app.include_router(frontier_router)
         app.include_router(self_mod_router)
+        app.include_router(routine_hooks_router)
         app.include_router(tasks_router)
         app.include_router(skills_router)
         app.include_router(docs_router)

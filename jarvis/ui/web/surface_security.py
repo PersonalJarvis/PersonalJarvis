@@ -744,6 +744,13 @@ def _external_http_auth(path: str, method: str) -> bool:
         (path == "/api/telephony/voice" and method == "POST")
         or (path == "/api/marketplace/oauth/callback" and method == "GET")
         or _is_conductor_hook(path, method)
+        or (
+            method == "POST"
+            and re.fullmatch(
+                r"/api/tasks/hooks/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", path
+            )
+            is not None
+        )
     )
 
 

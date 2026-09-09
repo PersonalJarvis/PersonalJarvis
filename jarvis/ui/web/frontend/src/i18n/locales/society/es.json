@@ -255,7 +255,7 @@
       "rotate": "Renovar token",
       "rotate_confirm": "¿Reemplazar el token? Las integraciones existentes necesitarán el nuevo token.",
       "remote": "Los servicios externos necesitan una dirección HTTPS accesible de esta instancia de Jarvis.",
-      "auth": "Envía JSON con Authorization: Bearer <token>. Reutiliza Idempotency-Key al reintentar.",
+      "auth": "Envía JSON con Authorization: Bearer <token>. Reutiliza Idempotency-Key al reintentar. En GitHub, usa este token como Secret del webhook (HMAC-SHA256).",
       "conditions": "Filtros de datos (igualdad de campos JSON)",
       "event_name": "Nombre del evento, p. ej. crm.customer.created",
       "loading": "Cargando conexión…",
