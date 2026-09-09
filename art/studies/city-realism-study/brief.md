@@ -2,6 +2,8 @@
 
 Date: 2026-09-09. Stage: brief and references. Tier: T1 research artifact only.
 
+Implementation kickoff for 2026-09-10: [work packages, acceptance matrix and start prompt](implementation-plan.md).
+
 ## Updated user direction: a future metropolis
 
 This section supersedes the earlier compact island/European district proposal below. The user explicitly requires a city, no island, new spatial dimensions, strongly modern future architecture, trains and faster agent travel between work locations. The supplied screenshot is the primary visual direction; Cities: Skylines remains supporting research.
