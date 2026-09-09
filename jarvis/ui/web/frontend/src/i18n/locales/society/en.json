@@ -260,6 +260,26 @@
       "configured": "Connection ready",
       "source": "Event source must be active.",
       "filter_hint": "Example: {\"data.status\": \"ready\"}. Leave {} to accept every payload."
+    },
+    "browser_live": {
+      "live": "Live",
+      "manual": "You are in control",
+      "expand": "Expand browser",
+      "collapse": "Collapse browser",
+      "back": "Back",
+      "forward": "Forward",
+      "reload": "Reload",
+      "address": "Website address",
+      "tabs": "Browser tabs",
+      "new_tab": "New tab",
+      "screen": "Live browser of {0}",
+      "return_control": "Return to agent",
+      "take_control": "Take control / sign in",
+      "cancel": "Stop task",
+      "approval": "Allow browser action?",
+      "allow": "Allow",
+      "deny": "Deny",
+      "repair": "Repair browser"
     }
   }
 }

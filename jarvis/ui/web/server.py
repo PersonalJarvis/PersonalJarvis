@@ -98,6 +98,7 @@ class WebServer:
 
     def __init__(self, cfg: JarvisConfig, bus: EventBus | None = None) -> None:
         self.cfg = cfg
+        self._browser_prepare_task: asyncio.Task[None] | None = None
         self.bus = bus if bus is not None else get_default_bus()
         self._clients: dict[str, WebSocket] = {}
         self._client_send_locks: dict[str, asyncio.Lock] = {}
@@ -395,6 +396,7 @@ class WebServer:
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
         from .society_routes import router as society_router
+        from .society_browser_routes import router as society_browser_router
         from .society_figure_routes import router as society_figure_router
         from .starter_plan_routes import router as starter_plan_router
         from .sub_agents_routes import router as sub_agents_router
@@ -582,6 +584,7 @@ class WebServer:
 
         set_society_factory(self._build_society_runtime)
         app.include_router(society_router)
+        app.include_router(society_browser_router)
         app.include_router(society_figure_router)
         app.include_router(drop_router)
         # Default: no recorder wired up — _init_session_stack() in start()
@@ -998,6 +1001,9 @@ class WebServer:
             # browser can paint after the full FastAPI app has already taken
             # over, so the live app must accept the same POST as an idempotent
             # no-op instead of returning FastAPI's 405 Method Not Allowed.
+            from jarvis.society.browser.install import start_install
+            browser_data = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
+            start_install(browser_data)
             return Response(status_code=204)
 
         @app.get("/api/config")
@@ -2793,6 +2799,23 @@ class WebServer:
         # browser-only install has no desktop shell to warm the realtime
         # transport for it.
         self._schedule_realtime_transport_warm()
+        # Defer provisioning until the boot chain returns control to the server.
+        async def prepare_browser() -> None:
+            from jarvis.society.browser import install
+            data_dir = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
+            try:
+                install.start_install(data_dir)
+                while install.snapshot(data_dir)["running"]:
+                    await asyncio.sleep(1)
+                if install.is_installed(data_dir):
+                    runtime = self._build_society_runtime()
+                    await runtime.ensure_started()
+                    lead = await runtime.roster.get("jarvis")
+                    if lead is not None:
+                        await runtime.browser.live.ensure(lead)
+            except Exception:
+                logger.debug("Browser preparation deferred after failure", exc_info=True)
+        self._browser_prepare_task = asyncio.create_task(prepare_browser(), name="browser-prepare")
 
     async def _init_screenshot_retention(self) -> None:
         """Auto-delete captured screenshot blobs older than the configured
@@ -3647,6 +3670,19 @@ class WebServer:
                 getattr(state, "task_store", None), getattr(state, "task_scheduler", None)
             ),
         )
+        def browser_brain(agent: Any) -> Any:
+            from jarvis.brain.resolver import resolve_browser_brain
+            provider = agent.provider
+            if not provider:
+                from jarvis.local_models.assistant_session import agents_tier
+                tier = agents_tier(self.cfg)
+                provider = tier.provider
+            return resolve_browser_brain(self.cfg, provider, agent.model)
+
+        state.society.browser.live.model_resolver = browser_brain
+        state.society.browser.live.executor = lambda: getattr(
+            getattr(state, "brain", None), "_tool_executor", None
+        )
         return state.society
 
     def _build_agent_chat_service(self) -> Any:
@@ -3667,6 +3703,13 @@ class WebServer:
         return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
     async def stop(self) -> None:
+        if self._browser_prepare_task is not None:
+            self._browser_prepare_task.cancel()
+            await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
+            self._browser_prepare_task = None
+        society = getattr(self.app.state, "society", None)
+        if society is not None:
+            await society.browser.close()
         self._mic_level_sessions.clear()
         self._stop_mic_level_bridge()
 

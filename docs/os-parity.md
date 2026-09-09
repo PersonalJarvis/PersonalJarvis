@@ -1,5 +1,18 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+**Managed agent browser, 2026-09-09:** The Browser-Use environment and browser
+are provisioned per host with one shared installer. The live viewport uses
+CDP pixels over the authenticated app WebSocket, including on headless Linux;
+manual login uses the same streamed surface rather than an OS-specific window.
+Windows native and a real python:3.11-slim browser render probe passed locally.
+The browser-runtime CI workflow covers Windows, macOS and Linux installations;
+native macOS acceptance remains pending its actual workflow result.
+The normal Linux installer and container build provision browser system
+libraries before the non-root app starts. API-key and subscription model
+adapters share the browser protocol; text-only models use DOM observations.
+See [managed browser](browser-use.md) for exact versions and test boundaries.
+
+
 ## Calendar routines (2026-09-08)
 
 Windows, macOS and Linux use the same lazy `zoneinfo` calendar implementation

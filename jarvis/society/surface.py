@@ -174,7 +174,7 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
             ),
         }
     )
-    if rt.browser.is_installed():
+    if rt.browser.is_installed() or rt.browser.live.model_resolver is not None:
         from .browser.tool import BrowserTool
 
         tools[BrowserTool.name] = cast(Tool, BrowserTool(rt, agent_id, rt.browser))

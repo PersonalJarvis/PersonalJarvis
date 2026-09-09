@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from starlette.requests import HTTPConnection
 
 from jarvis.society.events import MsgType
 from jarvis.society.failure_reasons import FailureReason, retry_action
@@ -33,7 +34,7 @@ router = APIRouter(prefix="/api/society", tags=["society"])
 # ------------------------------------------------------------------ runtime
 
 
-async def _runtime(request: Request) -> SocietyRuntime:
+async def _runtime(request: HTTPConnection) -> SocietyRuntime:
     state = request.app.state
     runtime = getattr(state, "society", None)
     if runtime is None:

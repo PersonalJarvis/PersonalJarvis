@@ -66,6 +66,11 @@ class BrowserTool:
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
+            "files": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Explicit workspace files the task may upload.",
+            },
             "task": {"type": "string", "description": "What to do and what to bring back."},
             "url": {"type": "string", "description": "Where to start (optional)."},
             "max_steps": {
@@ -83,6 +88,8 @@ class BrowserTool:
         self._jobs = jobs
 
     def risk_tier_for_args(self, args: dict[str, Any]) -> str | None:
+        if self._jobs._python is None:
+            return None  # The persistent runner proposes each actual action separately.
         return "ask" if task_needs_approval(str(args.get("task") or "")) else None
 
     def describe_args(self, args: dict[str, Any]) -> dict[str, str] | None:
@@ -103,6 +110,10 @@ class BrowserTool:
         task = str(args.get("task") or "").strip()
         if not task:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "task is required")
+        if self._jobs._python is None:
+            from .bridge import execute_live
+
+            return await execute_live(rt, caller, self._jobs, args, ctx)
         if not self._jobs.is_installed():
             return _failure(
                 FailureReason.BLOCKED_BY_POLICY,

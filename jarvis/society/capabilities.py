@@ -141,6 +141,8 @@ class CapabilityRow:
 
 def capability_id_for_tool(tool_name: str) -> str | None:
     """The catalog id of a brain tool name; ``None`` for never-granted tools."""
+    if tool_name in {"society_browser", "society_browser_action"}:
+        return "core:browser"
     if tool_name in NEVER_GRANTED:
         return None
     if tool_name.startswith("cli_"):
@@ -154,6 +156,8 @@ def capability_id_for_tool(tool_name: str) -> str | None:
 
 def tool_name_for_capability(capability_id: str) -> str | None:
     """Inverse of :func:`capability_id_for_tool`; ``None`` for skills."""
+    if capability_id == "core:browser":
+        return "society_browser"
     kind, _, rest = capability_id.partition(":")
     if kind == "cli":
         return f"cli_{rest}"
@@ -220,6 +224,8 @@ def build_catalog(
             continue
         kind = CapabilityKind(cap_id.split(":", 1)[0])
         aliases: tuple[str, ...] = ()
+        if cap_id == "core:browser":
+            aliases = ("browser", "browser-use", "browser_use")
         if kind is CapabilityKind.MCP:
             server = name.split("/", 1)[0]
             aliases = (server,)
