@@ -254,3 +254,16 @@ async def test_explicit_sender_deny_and_paused_recipient_are_not_bypassed(world)
         {"target": "Scout", "text": "hello"}, CTX
     )
     assert not paused.success and paused.output["reason"] == "target_paused"
+
+
+async def test_reply_to_lead_is_visible_in_the_front_page_chat(world):
+    rt, svc, _ = world
+    session = svc.store.create_session(
+        provider="openai", model="test-model", effort="", cwd="", surface="jarvis"
+    )
+    env = await rt.say(from_agent="scout", to_agent=rt.lead_id, text="Here is the answer")
+    await drain(rt)
+    receipt = svc.store.incoming_message(session.session_id, env.event_id)
+    assert receipt["sender_id"] == "scout" and receipt["status"] == "delivered"
+    assert svc.store.get_session("society:jarvis") is None
+    assert not svc.is_running(session.session_id)

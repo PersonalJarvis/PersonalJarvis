@@ -215,6 +215,13 @@ async def _settle() -> None:
         await asyncio.sleep(0.01)
 
 
+async def _wait_for_checkpoint(rt: SocietyRuntime, expected: Checkpoint, pushed: list) -> None:
+    # Wait for the persisted observation, not six assumed SQLite scheduling slots.
+    async with asyncio.timeout(2):
+        while not pushed or pushed[-1].checkpoint != str(expected):
+            await asyncio.sleep(0.01)
+
+
 async def test_a_typed_turn_walks_to_the_docks_and_back(rt: SocietyRuntime):
     """A message typed into the card never passes the scheduler — the turn watcher
     still sends the figure to the shop of the tools it uses."""
@@ -225,17 +232,18 @@ async def test_a_typed_turn_walks_to_the_docks_and_back(rt: SocietyRuntime):
     session = "society:scout"
     svc.running.add(session)
     rt.checkpoints.note_turn_started("scout", session)
-    await _settle()
+    await _wait_for_checkpoint(rt, Checkpoint.DESK, pushed)
     assert (await rt.roster.get("scout")).checkpoint is Checkpoint.DESK
     assert rt.checkpoints.is_busy("scout")
     svc.emit(session, "tool_call", name="google_drive", input={})
-    await _settle()
+    await _wait_for_checkpoint(rt, Checkpoint.HUB_PLUGINS, pushed)
     assert (await rt.roster.get("scout")).checkpoint is Checkpoint.HUB_PLUGINS
     # A second watcher for the same agent is not started while one runs.
     rt.checkpoints.note_turn_started("scout", session)
     assert len(svc.queues[session]) == 1
     svc.running.discard(session)
     svc.emit(session, "turn_finished", status="ok")
+    await _wait_for_checkpoint(rt, Checkpoint.IDLE, pushed)
     await _settle()
     assert (await rt.roster.get("scout")).checkpoint is Checkpoint.IDLE
     assert svc.queues[session] == []

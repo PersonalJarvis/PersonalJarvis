@@ -323,6 +323,7 @@ class SocietyScheduler:
             return True
         if self._deliver is None:
             return False
+        assert isinstance(target, AgentRecord)
         try:
             await self._deliver(target, env)
         except DeliveryBusy:

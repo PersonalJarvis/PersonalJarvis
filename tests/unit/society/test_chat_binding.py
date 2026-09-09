@@ -122,7 +122,9 @@ async def test_deliver_hook_frames_and_sends(world):
     assert svc.sent == [
         (
             "society:scout",
-            "[query from Archivist]\nWhere is the VPS note?\nRefs: wiki:society/archivist/vps.md",
+            "[query from Archivist]\nWhere is the VPS note?\nRefs: wiki:society/archivist/vps.md\n"
+            "Reply to the sender using society_message_agent with kind 'answer'. "
+            "This is internal communication; do not use an external messaging connector.",
         )
     ]
     svc.busy.add("society:scout")

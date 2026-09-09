@@ -131,6 +131,11 @@ def frame_incoming(env: SocietyEnvelope, sender_name: str) -> str:
     refs = env.payload.get("refs")
     if isinstance(refs, list) and refs:
         lines.append("Refs: " + ", ".join(str(r) for r in refs))
+    if env.msg_type is MsgType.QUERY:
+        lines.append(
+            "Reply to the sender using society_message_agent with kind 'answer'. "
+            "This is internal communication; do not use an external messaging connector."
+        )
     return "\n".join(lines)
 
 

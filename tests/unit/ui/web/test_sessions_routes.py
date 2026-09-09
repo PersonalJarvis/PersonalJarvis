@@ -75,6 +75,7 @@ def test_save_session_to_downloads_uses_events_for_plain_export(tmp_path, monkey
         saved = tmp_path / "Downloads" / res.json()["filename"]
         content = saved.read_text(encoding="utf-8")
         assert "Modus: Pipeline" in content.splitlines()[0]
+        assert "Ended by: hotkey" in content
         assert "Jarvis: Preamble first." in content
         assert content.index("Jarvis: Preamble first.") < content.index(
             "Jarvis: Final answer."
@@ -101,6 +102,7 @@ def test_copy_exports_include_the_effective_voice_mode(tmp_path) -> None:
         assert "- **Modus:** Pipeline" in markdown.text
         assert plain.status_code == 200
         assert "Modus: Pipeline" in plain.text.splitlines()[0]
+        assert "Ended by: hotkey" in plain.text
         assert json_export.status_code == 200
         assert json_export.json()["session"]["voice_mode"] == "pipeline"
     finally:

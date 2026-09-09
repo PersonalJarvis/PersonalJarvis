@@ -17,7 +17,8 @@ from tests.unit.realtime.test_tools import FakeExecutor, FakeTool, _bridge
 @pytest.mark.parametrize(
     "text",
     [
-        "Ja, kannst du bitte den Gmail Agenten eine Nachricht schreiben? Eine Testnachricht.",  # i18n-allow: German input regression
+        "Ja, kannst du bitte den Gmail Agenten eine Nachricht schreiben? "  # i18n-allow
+        "Eine Testnachricht.",  # i18n-allow  # i18n-allow: German input regression
         "Send the Gmail agent a test message.",
         "Escribe un mensaje al Gmail agente.",
     ],
@@ -46,7 +47,9 @@ async def test_original_request_cannot_start_gmail_approval(monkeypatch):
     bridge = RealtimeToolBridge(
         tools={"gmail": FakeTool("gmail")}, executor=executor, language="de"
     )
-    await bridge.handle_user_transcript("Kannst du dem Gmail Agenten eine Testnachricht schreiben?")  # i18n-allow: German input regression
+    await bridge.handle_user_transcript(
+        "Kannst du dem Gmail Agenten eine Testnachricht schreiben?"  # i18n-allow
+    )  # i18n-allow: German input regression
     _, result = await bridge.execute(wire_name="gmail", arguments={"app_name": "mail"})
     assert result["blocked"] and "message_agent" in result["error"]
     assert executor.execute_calls == []
@@ -86,7 +89,7 @@ async def test_new_request_after_confirmation_can_ask_again():
         ("de", "Ja, sende sie."),
         ("en", "Yes, send it."),
         ("es", "Sí, envíalo."),
-        ("de", "Nein, nicht senden."),  # i18n-allow: German cancellation input
+        ("de", "Nein, nicht senden."),  # i18n-allow  # i18n-allow: German cancellation input
     ],
 )
 def test_acoustically_grounded_answer_is_not_discarded_as_text_echo(language, text):

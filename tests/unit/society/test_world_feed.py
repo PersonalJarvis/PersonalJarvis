@@ -69,7 +69,7 @@ def test_preview_takes_one_very_long_word_whole_rather_than_only_an_ellipsis():
 
 async def test_a_message_between_two_agents_reaches_the_island_once(rt):
     runtime, pushed = rt
-    await runtime.say(from_agent="scout", to_agent="archivist", text="Found the manifest.")
+    env = await runtime.say(from_agent="scout", to_agent="archivist", text="Found the manifest.")
 
     sent = _messages(pushed)
     assert len(sent) == 1
@@ -77,7 +77,7 @@ async def test_a_message_between_two_agents_reaches_the_island_once(rt):
     assert event.from_agent == "scout"
     assert event.to_agent == "archivist"
     assert event.msg_type == "SAY"
-    assert event.society_trace == "chat:scout:archivist"
+    assert event.society_trace == env.trace_id
     assert event.text == "Found the manifest."
     assert event.truncated is False
     assert event.seq > 0
@@ -166,7 +166,7 @@ async def test_a_failing_publisher_never_breaks_the_append(tmp_path: Path):
         await runtime.roster.create(name="Archivist")
         env = await runtime.say(from_agent="scout", to_agent="archivist", text="still lands")
         assert env.seq is not None
-        assert len(await runtime.store.events_for_trace("chat:scout:archivist")) == 1
+        assert len(await runtime.store.events_for_trace(env.trace_id)) == 1
     finally:
         await runtime.close()
 
@@ -184,11 +184,11 @@ async def test_detach_stops_the_feed(rt):
 async def test_the_event_survives_the_websocket_sanitizer(rt):
     runtime, pushed = rt
     room = await runtime.rooms.open(opened_by="jarvis", members=["scout", "archivist"])
-    await runtime.say(from_agent="scout", to_agent="archivist", text="hello")
+    env = await runtime.say(from_agent="scout", to_agent="archivist", text="hello")
 
     message = event_to_ws_envelope(_messages(pushed)[0])
     assert message["event_name"] == "SocietyMessageSent"
-    assert message["payload"]["society_trace"] == "chat:scout:archivist"
+    assert message["payload"]["society_trace"] == env.trace_id
     # The base UUID owns `trace_id`; ours must not have been shadowed away.
     assert "trace_id" not in message["payload"]
 
