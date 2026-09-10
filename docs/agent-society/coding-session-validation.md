@@ -81,8 +81,10 @@ it does not promise zero latency or interruption of an already-busy owner chat.
 
 ## Remaining live acceptance
 
-This worktree has not been landed in the running app. No desktop restart, quit,
-push or release was performed.
+The source integration is landed on `main` in `f24e77229` and `cbbc5567a`.
+It preserves the newer rich composer, model controls, plugin-family grouping,
+mention routing and media/history changes, including unrelated working changes.
+No desktop restart, quit, push or release was performed.
 
 Native Windows, macOS and Linux CLI sessions and a fresh install with one
 arbitrary supported key still need live acceptance. The cross-platform shared
@@ -100,3 +102,25 @@ An accepted delivery only proves submission. A pending/uncertain receipt is
 never automatically replayed; inspect the existing IDE sessions before deciding
 whether a new request is appropriate. Transcript context exposes only what the
 provider recorded, including available reasoning notes or summaries.
+
+
+## Main-project integration evidence
+
+The integration includes an additional startup/closure guard: closing a pane
+while startup is queued prevents spawning, and closing during spawn reaps only
+the newly created orphan. The revised fixture preserves shared fake state.
+The focused startup/session regression run passed 133 tests. The final coding
+contracts plus routine integration run passed 46 tests, including directly from
+the saved main project. The current rich-composer, mention, branding and locale
+suite passed 34 tests; TypeScript also passed on the clean integrated source.
+
+`tests/integration/test_coding_supervision_routine.py` exercises the real
+AgentChatService, SQLite chat store, owner-bound routine entry, supervision
+receipts and IDE registry through assignment, question, answer and completion.
+The model and PTY are deterministic fakes; all three turns retain the same
+owner identity and are not direct-user turns. This closes the automated
+routine round-trip gap, not the native vendor or fresh-key live acceptance gap.
+
+The committed bundle is built from committed integrated sources. A separate
+main working-tree build includes concurrent uncommitted work, which remains
+owned by its authors and is not swept into the integration commit.
