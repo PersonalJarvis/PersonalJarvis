@@ -5156,7 +5156,11 @@
       "proposal_kind_approval_rule": "Approval rules",
       "proposal_kind_focus": "Tools to reach for first",
       "proposal_kind_team": "Teammates",
-      "allow_always": "Always allow"
+      "allow_always": "Always allow",
+      "history_chats": "Chats",
+      "history_voice": "Voice",
+      "history_empty": "Nothing here yet",
+      "history_delete": "Delete"
     },
     "world": {
       "minimap_label": "Island map",

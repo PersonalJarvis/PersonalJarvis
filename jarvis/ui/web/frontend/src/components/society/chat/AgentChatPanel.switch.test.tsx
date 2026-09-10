@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { EMPTY_TIMELINE, type Timeline, type UserItem } from "@/components/agentchat/reduce";
@@ -7,10 +7,15 @@ import {
   AgentChatPanel,
   itemsForOpenSession,
   useSocietyChatStore,
+  setJarvisCardMode,
 } from "./AgentChatPanel";
+import { useAgentChatStore } from "@/store/agentChat";
+import { useEventStore } from "@/store/events";
+import type { AgentChatSession } from "@/lib/agentChatApi";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
 vi.mock("./AgentModelPicker", () => ({ AgentModelPicker: () => null }));
+vi.mock("@/components/home/VoiceStage", () => ({ VoiceStage: () => <div data-testid="voice-stage" /> }));
 vi.mock("../data", async (original) => ({
   ...(await original<typeof import("../data")>()),
   useSocietyCapabilities: () => ({ isLoading: false, data: [] }),
@@ -132,4 +137,25 @@ it("shows the previous specialist's own chat again the moment you switch back", 
   expect(screen.queryByText("UNIQUE_GMAIL_INBOX")).toBeNull();
   expect(screen.getByText("UNIQUE_VISUAL_QA_FLOWCHART")).toBeTruthy();
   expect(screen.getByTestId("society-chat").getAttribute("data-session-id")).toBe(visual.chatSessionId);
+});
+
+it("keeps Jarvis on a fresh chat when history refreshes or the card is reopened", () => {
+  const jarvis = agent({ agentId: "jarvis", name: "Jarvis", tier: "lead" });
+  const session: AgentChatSession = {
+    session_id: "previous-chat", title: "Previous chat", provider: "openai", model: "m",
+    effort: "low", cwd: "", permission_mode: "ask", surface: "jarvis", vendor_session: null,
+    created_ms: 1, updated_ms: 2, message_count: 1, preview: "Previous chat",
+  };
+  useAgentChatStore.getState().disconnect();
+  useAgentChatStore.setState({ activeSessionId: session.session_id, activeSession: session, sessions: [session], timeline: EMPTY_TIMELINE, busy: false });
+  useEventStore.setState({ activeKind: "text", activeThreadId: null });
+  setJarvisCardMode("chat");
+  const view = render(<AgentChatPanel agent={jarvis} roster={[jarvis]} />);
+  fireEvent.click(screen.getByRole("button", { name: "society.chat.new_chat" }));
+  expect(useAgentChatStore.getState().activeSessionId).toBeNull();
+  act(() => useAgentChatStore.setState({ sessions: [{ ...session }] }));
+  expect(useAgentChatStore.getState().activeSessionId).toBeNull();
+  view.unmount();
+  render(<AgentChatPanel agent={jarvis} roster={[jarvis]} />);
+  expect(useAgentChatStore.getState().activeSessionId).toBeNull();
 });

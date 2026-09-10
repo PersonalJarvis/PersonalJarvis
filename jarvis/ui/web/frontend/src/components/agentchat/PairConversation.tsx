@@ -3,6 +3,7 @@ import { ArrowLeftRight, Lock, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 import type { SocietyEnvelope } from "@/lib/societyApi";
 import { useStickToBottom } from "@/hooks/useStickToBottom";
 import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
@@ -107,8 +108,8 @@ export function PairConversation({ pair, onClose }: { pair: Pair; onClose: () =>
             {loading && <p role="status" className="text-center text-xs text-muted-foreground">{t("agent_chat.pair_loading")}</p>}
             {error && <p role="alert" className="text-center text-xs text-destructive">{t("agent_chat.pair_error")}</p>}
             {!loading && !error && messages.length === 0 && <p className="text-center text-xs text-muted-foreground">{t("agent_chat.pair_empty")}</p>}
-            {messages.map((message) => <article key={message.event_id} className="max-w-[90%] self-start" data-message-id={message.event_id}>
-              <div className="mb-1 flex flex-wrap items-baseline gap-2 text-xs">
+            {messages.map((message) => <article key={message.event_id} className={cn("max-w-[90%]", message.from_agent === first ? "self-start" : "self-end")} data-message-id={message.event_id}>
+              <div className={cn("mb-1 flex flex-wrap items-baseline gap-2 text-xs", message.from_agent !== first && "justify-end")}>
                 <span className="font-medium text-foreground">{pair.find((person) => person.id === message.from_agent)?.name ?? message.from_agent}</span>
                 <time className="text-muted-foreground" dateTime={new Date(message.ts_ms).toISOString()}>{new Date(message.ts_ms).toLocaleString()}</time>
               </div>
