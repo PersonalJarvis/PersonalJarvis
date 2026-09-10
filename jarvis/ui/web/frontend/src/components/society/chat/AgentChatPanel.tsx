@@ -59,6 +59,7 @@ import { CodingProjectChoice } from "./CodingProjectChoice";
 import { MentionPicker } from "./MentionPicker";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { mentionChoice, messageChoices } from "./mentionChoices";
+import { ChatCommandPanel, useChatCommands } from "@/components/agentchat/ChatCommands";
 import { useTranscriptView } from "./useTranscriptView";
 import {
   buildMentionCatalog,
@@ -646,7 +647,7 @@ export function Transcript({
           const stamp = ts && ts - lastStamp > STAMP_GAP_MS ? ts : 0;
           if (stamp) lastStamp = ts;
           return (
-            <div key={item.id} className="flex flex-col gap-2">
+            <div key={item.id} data-chat-item={item.id} className="flex flex-col gap-2">
               {stamp ? <TimeStamp ms={stamp} /> : null}
               {item.type === "internal" ? (
                 <InternalMessageBubble
@@ -693,6 +694,7 @@ function TimeStamp({ ms }: { ms: number }) {
  */
 function NoticeLine({ item }: { item: NoticeItem }) {
   const t = useT();
+  if (item.kind === "native_goal_verdict") return <p className="py-1 text-xs text-muted-foreground">{t("slash.verifying")}</p>;
   const headline =
     item.kind === "society_result"
       ? t(item.status === "done" ? "society.chat.result_done" : "society.chat.result_blocked").replace(
@@ -878,8 +880,10 @@ function visibleUserText(text: string): string {
 }
 
 export function UserBubble({ item }: { item: UserItem }) {
+  const t = useT();
   const choices = messageChoices(item);
   const text = visibleUserText(item.text);
+  if (item.origin === "control") return <div className="self-start px-1 py-2 text-xs text-muted-foreground">{t("slash.control_turn")}{item.attachments.map((file) => <span key={file.name} className="ml-2">{file.name}</span>)}</div>;
   return (
     <div className="flex max-w-[85%] flex-col items-end gap-1 self-end">
       <div className="rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-sm leading-relaxed text-foreground">
@@ -970,6 +974,11 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   const composerRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const attachments = useChatAttachments({ sessionId, cwd, provider, surface }, (message) => setProblem(message));
+  const commands = useChatCommands({ value, agentId: agent.agentId, onClear,
+    attachments: attachments.attachments, attachmentsBusy: attachments.analyzing > 0, onAttachmentsSent: attachments.clear,
+    setValue: (next) => { setValue(next); fieldRef.current?.setText(next); },
+    onModel: () => composerRef.current?.querySelector<HTMLButtonElement>("[data-chat-model-trigger]")?.click(),
+  });
   const dictation = useComposerDictation(value, (next) => {
     const text = typeof next === "function" ? next(value) : next;
     setValue(text);
@@ -1046,16 +1055,8 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     const submittedFolder = codingFolder;
     const selected = selectedTools;
     const text = draftText;
-    if (!text || busy || modelSaving) return;
-    if (text === "/clear" && onClear) {
-      onClear();
-      setValue("");
-      fieldRef.current?.clear();
-      setSelectedTools([]);
-      setMention(null);
-      setProblem(null);
-      return;
-    }
+    if (await commands.execute(text)) return;
+    if (!text || busy && !commands.canSteer || modelSaving) return;
     const named = mentionsInText(text, catalog);
     const lines: string[] = [];
     if (named.agents.length > 0 && surface === "society") {
@@ -1096,6 +1097,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
 
   return (
     <div className="shrink-0 border-t border-border px-3 pb-3 pt-2">
+      <div className={CHAT_MEASURE}><ChatCommandPanel control={commands} /></div>
       {problem ? <p className="mb-1 px-1 text-xs text-destructive">{problem}</p> : null}
       {mentionOpen && codingError ? <button type="button" className="mb-1 text-xs text-destructive underline" onClick={() => setCodingRetry((n) => n + 1)}>{t("society.chat.coding_retry")}</button> : null}
       <div className={CHAT_MEASURE}>
@@ -1188,11 +1190,12 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         <ComposerChipField
           ref={fieldRef}
           placeholder={t("society.chat.placeholder").replace("{0}", agent.name)}
-          disabled={busy}
+          disabled={false}
           onSubmit={() => void submit()}
           onDraftChange={onDraftChange}
           onPasteFiles={attachments.onPaste}
           onKeyDown={(e) => {
+            if (commands.onKeyDown(e)) return true;
             if (!pickerOpen) return false;
             if (e.key === "ArrowDown") {
               e.preventDefault();
@@ -1239,7 +1242,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         >
           {dictation.dictating ? <Square className="h-4 w-4" aria-hidden /> : <Mic className="h-4 w-4" aria-hidden />}
         </button>
-        {busy ? (
+        {busy && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
           <button
             type="button"
             onClick={() => void onCancel()}

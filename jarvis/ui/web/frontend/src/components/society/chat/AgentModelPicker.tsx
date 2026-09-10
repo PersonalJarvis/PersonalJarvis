@@ -167,7 +167,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   } : {};
 
   return <>
-    <button ref={trigger} type="button" aria-label={t("society.chat.model")} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined}
+    <button ref={trigger} data-chat-model-trigger type="button" aria-label={t("society.chat.model")} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined}
       disabled={busy || saving} title={busy ? t("society.chat.model_busy") : t("society.chat.model")}
       onClick={() => { if (open) close(); else { setSearch(""); setAccounts({}); setExpanded({}); setError(null); setOpen(true); } }}
       className="flex max-w-full items-center gap-1.5 rounded-full px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">

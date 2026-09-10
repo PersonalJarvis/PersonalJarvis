@@ -1,3 +1,4 @@
+import { useTranscriptView } from "../society/chat/useTranscriptView";
 import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
@@ -62,9 +63,11 @@ function ChatStageContent() {
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   const surface = useAgentChat((s) => s.surface);
-  const items = useAgentChat((s) => s.timeline.items);
+  const allItems = useAgentChat((s) => s.timeline.items);
   const cwd = useAgentChat((s) => s.draft.cwd);
   const activeSessionId = useAgentChat((s) => s.activeSessionId);
+  const view = useTranscriptView(surface === "jarvis" ? activeSessionId : null, allItems);
+  const items = view.items;
   const catalog = useAgentChat((s) => s.catalog);
   const decide = useAgentChat((s) => s.decide);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);

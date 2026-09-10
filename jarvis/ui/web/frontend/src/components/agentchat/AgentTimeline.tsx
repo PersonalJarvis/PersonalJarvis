@@ -43,6 +43,7 @@ export function AgentTimeline({
           );
         }
         if (item.type === "user") {
+          if (item.origin === "control") return <div key={item.id} data-message-id={item.id} className="text-xs text-muted-foreground">{t("slash.control_turn")}{item.attachments.map((file) => <span key={file.name} className="ml-2">{file.name}</span>)}</div>;
           return (
             <div
               key={item.id}
@@ -129,6 +130,7 @@ export function AgentTimeline({
           );
         }
         if (item.type === "notice") {
+          if (item.kind === "native_goal_verdict") return <p key={item.id} className="text-xs text-muted-foreground">{t("slash.verifying")}</p>;
           // The society reporting back on a task Jarvis handed out: the
           // agent's name as the headline, its summary underneath. Muted and
           // centred like a stamp — it is not Jarvis speaking.

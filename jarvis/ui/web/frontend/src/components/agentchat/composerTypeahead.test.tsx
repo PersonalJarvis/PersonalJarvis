@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentComposer } from "@/components/agentchat/AgentComposer";
 import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
 import { EMPTY_TIMELINE } from "@/components/agentchat/reduce";
-import { useAgentChatStore } from "@/store/agentChat";
+import { useAgentSessionStore as useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import type { AgentChatCatalog } from "@/lib/agentChatApi";
 
@@ -80,16 +80,20 @@ function composer() {
   );
 }
 
-function box(): HTMLTextAreaElement {
-  return document.querySelector("textarea[data-jarvis-chat-input]") as HTMLTextAreaElement;
+function box(): HTMLElement {
+  return document.querySelector('[role="textbox"][contenteditable]') as HTMLElement;
 }
 
 /** Type into the box the way a person does: the value lands, the caret sits at its end. */
 function type(text: string) {
   const el = box();
-  fireEvent.change(el, { target: { value: text } });
-  el.setSelectionRange(text.length, text.length);
-  fireEvent.select(el);
+  el.textContent = text;
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  const selection = document.getSelection();
+  selection?.removeAllRanges(); selection?.addRange(range);
+  fireEvent.input(el);
 }
 
 const SLASH_ITEMS = [
@@ -151,8 +155,8 @@ describe("composer typeahead", () => {
     ]);
     expect(screen.getByTestId("composer-typeahead").textContent).toContain("Plugins");
     const asked = new URL(String(fetchMock.mock.calls[0][0]), "http://x").searchParams;
-    // The default store speaks for the front page; the IDE's store would say "agent".
-    expect(asked.get("surface")).toBe("jarvis");
+    // Native CLI completions belong to the IDE chat surface.
+    expect(asked.get("surface")).toBe("agent");
     expect(asked.get("provider")).toBe("claude-api");
     expect(asked.get("cwd")).toBe("C:\\work");
 
@@ -165,7 +169,7 @@ describe("composer typeahead", () => {
     );
     expect(screen.getByTestId("composer-typeahead-item").textContent).toContain("/review");
     fireEvent.keyDown(box(), { key: "Enter" });
-    await waitFor(() => expect(box().value).toBe("/review "));
+    await waitFor(() => expect(box().textContent).toBe("/review "));
     expect(sent).toEqual([]);
     expect(screen.queryByTestId("composer-typeahead")).toBeNull();
   });
@@ -187,7 +191,7 @@ describe("composer typeahead", () => {
     fireEvent.keyDown(box(), { key: "ArrowDown" });
     fireEvent.keyDown(box(), { key: "ArrowUp" });
     fireEvent.keyDown(box(), { key: "Tab" });
-    await waitFor(() => expect(box().value).toBe("look at @src/"));
+    await waitFor(() => expect(box().textContent).toBe("look at @src/"));
     expect(sent).toEqual([]);
   });
 

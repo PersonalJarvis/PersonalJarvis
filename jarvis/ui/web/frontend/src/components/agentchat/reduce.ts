@@ -1,4 +1,5 @@
 import type { AgentChatEvent, InternalMessage } from "@/lib/agentChatApi";
+import type { ChatControlState } from "@/lib/chatControlApi";
 import { readToolChoices, type ToolChoice } from "./toolChoices";
 
 /**
@@ -60,6 +61,7 @@ export type TurnBlock = TextBlock | ReasoningBlock | ToolBlock;
 export type TurnStatus = "running" | "done" | "cancelled" | "error";
 
 export interface UserItem {
+  origin?: "control";
   type: "user";
   id: string;
   /**
@@ -162,6 +164,7 @@ export interface PendingApproval {
 }
 
 export interface Timeline {
+  control?: ChatControlState;
   items: TimelineItem[];
   pendingApprovals: PendingApproval[];
   /** Highest persisted seq folded so far — the `?after=` for a reconnect. */
@@ -298,6 +301,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
           {
             type: "user",
             id: `u-${seq || ev.ts_ms}`,
+            ...(p.origin === "control" ? { origin: "control" as const } : {}),
             // `typed` is present only when the message carried files, and it
             // is the person's own sentence; `text` is the composed prompt.
             text: str(p.typed) || str(p.text),
@@ -614,6 +618,9 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
     }
 
     case "notice": {
+      if (p.kind === "chat_control" && p.state && typeof p.state === "object") {
+        return { ...base, control: p.state as ChatControlState };
+      }
       const text = str(p.text);
       const kind = str(p.kind);
       if (!text && !kind) return base;

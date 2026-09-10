@@ -1,3 +1,4 @@
+import { ChatCommandPanel, useChatCommands } from "./ChatCommands";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
@@ -173,6 +174,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   // seat honours is the catalog row's word (`typeahead`), read from the
   // runner, so a seat that would take the slash as text never gets a list.
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const commands = useChatCommands({ value, setValue,
+    attachments: files.attachments, attachmentsBusy: files.analyzing > 0, onAttachmentsSent: files.clear,
+    onModel: () => cardRef.current?.querySelector<HTMLButtonElement>('[data-testid="composer-model"]')?.click(),
+  });
   const triggers = useMemo(() => provider?.typeahead ?? [], [provider]);
   const typeahead = useComposerTypeahead(textareaRef, value, setValueState, {
     surface,
@@ -186,10 +191,11 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   async function onSend() {
     const sessionAtSend = activeSessionId;
     const content = value.trim();
+    if (await commands.execute(content)) return;
     // A message may be files alone: dropping a screenshot and pressing Enter
     // is a complete gesture, and refusing it would be the composer insisting
     // on a sentence the picture already is.
-    if ((!content && files.attachments.length === 0) || running || busy) return;
+    if ((!content && files.attachments.length === 0) || (running || busy) && !commands.canSteer) return;
     if (files.analyzing > 0) return; // a file still being read would be sent without its contents
     if (dictating) stopDictation();
     setValueState("");
@@ -426,11 +432,11 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     (provider?.permission_modes ?? []).find((m) => m.id === draft.permissionMode)?.description ?? "";
 
   const canSend =
-    connected &&
+    commands.isCommand || connected &&
     (Boolean(value.trim()) || files.attachments.length > 0) &&
     files.analyzing === 0 &&
-    !running &&
-    !busy &&
+    (!running || commands.canSteer) &&
+    (!busy || commands.canSteer) &&
     Boolean(provider?.connected);
   const placeholder = connected
     ? t("agent_chat.placeholder")
@@ -465,6 +471,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       {/* The blue variant of this strip lived here; a running microphone is a
           live state, not the accent, so it now shares the one green strip. */}
       <DictationStatus onStop={stopDictation} />
+      <ChatCommandPanel control={commands} />
       <ChatAttachmentStrip
         attachments={files.attachments}
         analyzing={files.analyzing}
@@ -472,7 +479,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       />
       <ComposerTypeahead
         anchorRef={cardRef}
-        open={typeahead.open}
+        open={typeahead.open && !commands.open}
         trigger={typeahead.token?.trigger ?? null}
         items={typeahead.items}
         loading={typeahead.loading}
@@ -483,7 +490,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       <ComposerChipField
         ref={fieldRef}
         placeholder={placeholder}
-        disabled={!connected}
+        disabled={!connected && !commands.enabled}
         autoFocus={autoFocus}
         onSubmit={() => void onSend()}
         onDraftChange={(draft) => {
@@ -491,6 +498,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           setSelectedTools(draft.choices);
         }}
         onKeyDown={(ev) => {
+          if (commands.onKeyDown(ev)) return true;
           pasteRescue.onKeyDown(ev);
           if (typeahead.onKeyDown(ev)) return true;
           return false;
@@ -700,7 +708,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         >
           {dictating ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
         </button>
-        {running ? (
+        {running && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
           <button
             type="button"
             onClick={() => void cancel()}

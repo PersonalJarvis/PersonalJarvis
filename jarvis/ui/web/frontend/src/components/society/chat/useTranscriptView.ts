@@ -24,6 +24,20 @@ export const useTranscriptViewStore = create<{ boundaries: Boundaries }>(() => (
   boundaries: readClearedViews(),
 }));
 
+export function restoreTranscriptView(sessionId: string | null): void {
+  if (!sessionId) return;
+  useTranscriptViewStore.setState((state) => {
+    const boundaries = { ...state.boundaries };
+    delete boundaries[sessionId];
+    return { boundaries };
+  });
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(useTranscriptViewStore.getState().boundaries));
+  } catch {
+    // Restoring remains usable for this window if browser preferences cannot be saved.
+  }
+}
+
 function timestamp(item: TimelineItem): number {
   return item.type === "turn" ? item.startedMs : item.tsMs;
 }
