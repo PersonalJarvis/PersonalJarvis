@@ -1,0 +1,13 @@
+node_modules/
+.hyperframes/
+.media/
+.thumbnails/
+.waveform-cache/
+AGENTS.md
+CLAUDE.md
+renders/
+snapshots/
+reference-analysis/
+assets/*.mp4
+assets/*.wav
+assets/*.mp3

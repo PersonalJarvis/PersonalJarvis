@@ -1,0 +1,29 @@
+{
+  "artifact": "Personal-Jarvis-Agent-Mode-1080p.mp4",
+  "sha256": "2f945c364d93586deecad2afe10c3867d480618cc47fcb6eb7c14c1e1158cf48",
+  "bytes": 8826413,
+  "duration_seconds": 85,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "frames": 2550,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_sample_rate": 48000,
+  "audio_channels": 2,
+  "integrated_loudness_lufs": -17.61,
+  "true_peak_dbtp": -2.83,
+  "source_check": {
+    "ok": true,
+    "lint_errors": 0,
+    "lint_warnings": 0,
+    "runtime_errors": 0,
+    "layout_errors": 0,
+    "contrast_checks_passed": 19
+  },
+  "decode_errors": 0,
+  "black_intervals_at_least_0_2s": 0,
+  "silences_at_least_0_5s": 0,
+  "visual_review": "Source snapshots and exported representative frames inspected; prompt, handoff, specialist answer and full result readable.",
+  "source_type": "Actual product UI capture with synthetic fixture data and edited timing"
+}
