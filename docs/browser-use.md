@@ -16,6 +16,9 @@ decode, and atomically records readiness. Failed upgrades do not replace the
 previous runtime. The manifest under the configured data directory records
 versions and the installed Python package/license inventory.
 
+The pip bootstrap is pinned separately. Windows ARM uses a managed x64 Python
+helper through Windows emulation because the crypto stack lacks ARM wheels.
+
 This Playwright version delivers **Chrome for Testing 151.0.7922.34**, based on
 Chromium. It does not overwrite the user's installed Chrome. Each agent owns
 a separate persistent profile and workspace. Raw CDP ports are local and are

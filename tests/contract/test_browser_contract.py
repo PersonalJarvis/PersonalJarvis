@@ -50,3 +50,11 @@ def test_browser_children_do_not_inherit_provider_credentials(monkeypatch, tmp_p
     assert "PIP_INDEX_URL" not in env
     assert env["ANONYMIZED_TELEMETRY"] == "false"
 
+def test_managed_python_uses_windows_emulation_only_where_needed():
+    from jarvis.society.browser.install import managed_python_request
+    assert managed_python_request("win32", "ARM64") == "cpython-3.12-windows-x86_64-none"
+    assert managed_python_request("win32", "AMD64") == "3.12"
+    assert managed_python_request("linux", "aarch64") == "3.12"
+    assert managed_python_request("darwin", "arm64") == "3.12"
+
+

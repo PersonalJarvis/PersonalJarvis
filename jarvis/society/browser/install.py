@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import platform
 import subprocess
 import sys
 import threading
@@ -39,6 +40,14 @@ def runner_path() -> Path:
 
 def requirements_path() -> Path:
     return Path(__file__).resolve().parents[2] / "assets" / "browser" / "requirements.lock"
+
+
+def managed_python_request(system: str, machine: str) -> str:
+    # Windows supports x64 emulation on ARM. Some crypto dependencies have no
+    # Windows ARM wheels, so keep that ABI boundary in the isolated helper.
+    if system == "win32" and machine.lower() in {"arm64", "aarch64"}:
+        return "cpython-3.12-windows-x86_64-none"
+    return "3.12"
 
 
 def _manifest(data_dir: Path | None = None) -> dict[str, Any]:
@@ -174,15 +183,35 @@ def ensure_installed(
         runtime.parent.mkdir(exist_ok=True)
         _set(data_dir, phase="installing", percent=5, error="", detail="Preparing browser runtime")
         try:
-            if not getattr(sys, "frozen", False) and (3, 11) <= sys.version_info[:2] < (3, 14):
+            request = managed_python_request(sys.platform, platform.machine())
+            if (
+                not getattr(sys, "frozen", False)
+                and (3, 11) <= sys.version_info[:2] < (3, 14)
+                and request == "3.12"
+            ):
                 _run([sys.executable, "-m", "venv", str(runtime)], env=env)
             else:
                 from .bootstrap import ensure_uv
 
                 uv = ensure_uv(root / "bootstrap")
-                _run([uv, "venv", "--python", "3.12", str(runtime)], env=env)
+                _run([uv, "venv", "--python", request, str(runtime)], env=env)
             python = runtime / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
             _run([str(python), "-m", "ensurepip", "--upgrade"], env=env)
+            # ensurepip may seed a pip whose marker parser treats kernel
+            # releases as PEP-440 versions ("2025Server", "...-azure").
+            _run(
+                [
+                    str(python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--upgrade",
+                    "--require-hashes",
+                    "-r",
+                    str(requirements_path().with_name("bootstrap.lock")),
+                ],
+                env=env,
+            )
             _set(data_dir, percent=20, detail="Installing Browser-Use and browser components")
             _run(
                 [
