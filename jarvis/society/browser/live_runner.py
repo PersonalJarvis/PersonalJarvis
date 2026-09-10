@@ -90,7 +90,6 @@ class Worker:
         self.target = ""
         self.tabs: dict[str, Any] = {}
         self.dialog: Any = None
-        self.downloads: list[str] = []
         self.owns_context = True
         self.capture_fallback = False
         self.agent_gate = asyncio.Event()
@@ -203,24 +202,11 @@ class Worker:
         return {"generation": self.generation, "protocol": PROTOCOL_VERSION}
 
     def page_opened(self, page: Any) -> None:
-        page.on("download", self.download)
         page.on("dialog", self.on_dialog)
 
     def on_dialog(self, dialog: Any) -> None:
         self.dialog = dialog
         emit("dialog", type=dialog.type, message=dialog.message[:500])
-
-    async def download(self, download: Any) -> None:
-        folder = self.workspace / "downloads"
-        folder.mkdir(exist_ok=True)
-        name = Path(download.suggested_filename.replace("\\", "/")).name
-        target = folder / (uuid.uuid4().hex[:8] + "-" + name)
-        try:
-            await download.save_as(str(target))
-            self.downloads.append(str(target))
-            emit("download", path=str(target))
-        except Exception as exc:
-            emit("warning", error=f"Download failed: {type(exc).__name__}")
 
     async def focused(self) -> Any:
         self.tabs = {}
@@ -345,6 +331,7 @@ class Worker:
 
     async def run(self, args: dict) -> dict:
         self.step_idle.clear()
+        previous_downloads = set(self.browser.downloaded_files)
         from browser_use import Agent, Tools  # type: ignore[import-not-found]
         from browser_use.agent.views import ActionResult  # type: ignore[import-not-found]
         from browser_use.llm.views import (  # type: ignore[import-not-found]
@@ -447,7 +434,8 @@ class Worker:
                 "steps": history.number_of_steps(),
                 "seconds": time.monotonic() - started,
                 "error": None if successful else "Browser task did not complete successfully",
-                "artifacts": list(self.downloads),
+                # One SDK owns downloads; a second Playwright save would duplicate files.
+                "artifacts": sorted(set(self.browser.downloaded_files) - previous_downloads),
             }
         finally:
             self.agent = None

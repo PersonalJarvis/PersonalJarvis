@@ -8,8 +8,6 @@ on:
       - 'tests/unit/society/test_browser*'
       - 'jarvis/society/approvals.py'
       - '.github/workflows/browser-runtime.yml'
-  push:
-    branches: ['codex/browser-use-live']
   workflow_dispatch:
 permissions:
   contents: read

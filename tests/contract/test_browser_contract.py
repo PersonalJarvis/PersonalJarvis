@@ -1,21 +1,30 @@
 """Deterministic tests for browser contracts and policy boundaries."""
+
 from types import SimpleNamespace
 from pathlib import Path
 import pytest
 from jarvis.society.browser.bridge import brain_messages
-from jarvis.society.capabilities import capability_id_for_tool, tool_name_for_capability, build_catalog
+from jarvis.society.capabilities import (
+    capability_id_for_tool,
+    tool_name_for_capability,
+    build_catalog,
+)
 from jarvis.ui.web.society_browser_routes import validate_control
+
 
 def test_browser_capability_roundtrip():
     assert capability_id_for_tool("society_browser") == "core:browser"
     assert tool_name_for_capability("core:browser") == "society_browser"
-    rows = build_catalog({"society_browser": SimpleNamespace(description="Browse", risk_tier="monitor")})
+    rows = build_catalog(
+        {"society_browser": SimpleNamespace(description="Browse", risk_tier="monitor")}
+    )
     assert "browser-use" in rows[0].aliases
 
 
 async def test_stopped_browser_turn_cannot_retry_but_new_user_turn_can(tmp_path):
     from jarvis.society.browser.live import LiveSessions
     from jarvis.society.browser.bridge import execute_live
+
     live = LiveSessions(tmp_path)
     live.stop_turn("agent", "denied-turn")
     jobs = SimpleNamespace(live=live)
@@ -29,6 +38,7 @@ async def test_stopped_browser_turn_cannot_retry_but_new_user_turn_can(tmp_path)
 async def test_stop_button_also_stops_the_owning_chat(monkeypatch):
     import asyncio
     from jarvis.ui.web import society_browser_routes as routes
+
     seen = []
     lock = asyncio.Lock()
     await lock.acquire()
@@ -45,35 +55,75 @@ async def test_stop_button_also_stops_the_owning_chat(monkeypatch):
         return SimpleNamespace(agent_id="test")
 
     async def runtime(_):
-        return SimpleNamespace(roster=SimpleNamespace(resolve=resolve), browser=SimpleNamespace(
-            live=SimpleNamespace(sessions={"test": session}, cancel=cancel_browser)))
+        return SimpleNamespace(
+            roster=SimpleNamespace(resolve=resolve),
+            browser=SimpleNamespace(
+                live=SimpleNamespace(sessions={"test": session}, cancel=cancel_browser)
+            ),
+        )
 
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
-        agent_chat=SimpleNamespace(cancel=cancel_chat))))
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(agent_chat=SimpleNamespace(cancel=cancel_chat)))
+    )
     monkeypatch.setattr(routes, "_runtime", runtime)
     assert await routes.cancel_agent_browser("test", request) == {"cancelled": True}
     assert seen == ["browser", "society:test"]
 
-@pytest.mark.parametrize("value", [
-    {"op": "evaluate", "args": {}},
-    {"op": "click", "args": {"x": float("nan"), "y": 1}},
-    {"op": "click", "args": {"x": 1}},
-    {"op": "text", "args": {"text": "x" * 8193}},
-])
+
+async def test_upload_rejects_files_outside_the_agent_workspace(tmp_path, monkeypatch):
+    from jarvis.society.browser.live import LiveSessions
+    from jarvis.society.browser.bridge import execute_live
+
+    monkeypatch.setattr("jarvis.core.config.get_jarvis_agent_secret", lambda _: None)
+    live = LiveSessions(tmp_path)
+    live.executor = object()
+    live.model_resolver = lambda _: SimpleNamespace(complete=lambda *_: None)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private fixture", encoding="utf-8")
+    result = await execute_live(
+        SimpleNamespace(data_dir=tmp_path),
+        SimpleNamespace(agent_id="test", provider="openai"),
+        SimpleNamespace(live=live),
+        {"task": "Upload", "files": [str(outside)]},
+        SimpleNamespace(trace_id="test"),
+    )
+    assert not result.success and "inside this agent's workspace" in result.error
+    assert not live.sessions
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"op": "evaluate", "args": {}},
+        {"op": "click", "args": {"x": float("nan"), "y": 1}},
+        {"op": "click", "args": {"x": 1}},
+        {"op": "text", "args": {"text": "x" * 8193}},
+    ],
+)
 def test_invalid_remote_controls_are_rejected(value):
     with pytest.raises(ValueError):
         validate_control(value)
 
+
 def test_browser_multimodal_messages_preserve_images():
-    messages = brain_messages([{"role": "user", "content": [
-        {"type": "text", "text": "Look at this"},
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,YQ=="}},
-    ]}])
+    messages = brain_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Look at this"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,YQ=="}},
+                ],
+            }
+        ]
+    )
     assert messages[0].content == "Look at this"
     assert messages[0].images[0].data_b64 == "YQ=="
 
+
 async def test_slow_viewer_keeps_approval_and_only_latest_pixels():
     from jarvis.society.browser.live import LiveUpdates
+
     buffer = LiveUpdates()
     buffer.put_nowait({"kind": "approval", "id": "one"})
     for sequence in range(100):
@@ -81,8 +131,10 @@ async def test_slow_viewer_keeps_approval_and_only_latest_pixels():
     assert (await buffer.get())["id"] == "one"
     assert (await buffer.get())["sequence"] == 99
 
+
 def test_browser_children_do_not_inherit_provider_credentials(monkeypatch, tmp_path):
     from jarvis.society.browser.install import worker_env
+
     monkeypatch.setenv("OPENAI_API_KEY", "test-placeholder")
     monkeypatch.setenv("EXAMPLE_ACCESS_TOKEN", "test-placeholder")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-placeholder")
@@ -97,8 +149,10 @@ def test_browser_children_do_not_inherit_provider_credentials(monkeypatch, tmp_p
     assert "PIP_INDEX_URL" not in env
     assert env["ANONYMIZED_TELEMETRY"] == "false"
 
+
 def test_managed_python_uses_windows_emulation_only_where_needed():
     from jarvis.society.browser.install import managed_python_request
+
     assert managed_python_request("win32", "ARM64") == "cpython-3.12-windows-x86_64-none"
     assert managed_python_request("win32", "AMD64") == "3.12"
     assert managed_python_request("linux", "aarch64") == "3.12"
@@ -110,6 +164,7 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch, burst):
     import asyncio
     from starlette.websockets import WebSocketDisconnect
     from jarvis.ui.web import society_browser_routes as routes
+
     started = asyncio.Event()
     cancelled = asyncio.Event()
     released = asyncio.Event()
@@ -123,7 +178,7 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch, burst):
         async def control(self, *args):
             started.set()
             if burst:
-                await asyncio.sleep(.01)
+                await asyncio.sleep(0.01)
                 seen.append(args[-1]["text"])
                 if len(seen) == 20:
                     completed.set()
@@ -165,7 +220,9 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch, burst):
         return SimpleNamespace(agent_id="test")
 
     async def runtime(_):
-        return SimpleNamespace(roster=SimpleNamespace(resolve=resolve), browser=SimpleNamespace(live=Live()))
+        return SimpleNamespace(
+            roster=SimpleNamespace(resolve=resolve), browser=SimpleNamespace(live=Live())
+        )
 
     monkeypatch.setattr(routes, "_runtime", runtime)
     monkeypatch.setattr(routes, "credentials_valid", lambda _: True)
@@ -175,5 +232,3 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch, burst):
     else:
         assert cancelled.is_set()
     assert released.is_set()
-
-

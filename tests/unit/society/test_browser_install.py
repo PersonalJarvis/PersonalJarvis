@@ -1,4 +1,5 @@
 """Managed installation failures must preserve the previously verified runtime."""
+
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -27,8 +28,15 @@ def installer(monkeypatch, tmp_path):
             binary = root / "browsers" / "chrome"
             binary.parent.mkdir(exist_ok=True)
             binary.write_bytes(b"test browser")
-            return json.dumps({"kind": "probe", "ok": True, "executable": str(binary),
-                               "version": "test", "packages": [{"name": "test", "license": "MIT"}]})
+            return json.dumps(
+                {
+                    "kind": "probe",
+                    "ok": True,
+                    "executable": str(binary),
+                    "version": "test",
+                    "packages": [{"name": "test", "license": "MIT"}],
+                }
+            )
         return ""
 
     monkeypatch.setattr(install, "_run", run)
