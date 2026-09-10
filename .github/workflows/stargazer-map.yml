@@ -1,0 +1,92 @@
+name: Stargazer map
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/stargazer-map.yml
+      - .github/scripts/test-stargazer-map.mjs
+  watch:
+    types: [started]
+  schedule:
+    # Reconcile unstars, profile edits, and any delayed/missed star events.
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stargazer-map
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test .github/scripts/test-stargazer-map.mjs
+
+  refresh:
+    needs: verify
+    if: github.repository == 'PersonalJarvis/PersonalJarvis'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The geocoder belongs to the website. Pin reviewed code: it runs with
+      # this repository's token, never a contributor-controlled checkout.
+      - uses: actions/checkout@v4
+        with:
+          repository: PersonalJarvis/personaljarvis.github.io
+          ref: 70125a6f2206415a60f15cdf99921f7b0dd4f0f2
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Resolve public profile locations
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/fetch-stargazers.mjs --repo PersonalJarvis/PersonalJarvis
+
+      - name: Publish the aggregate feed
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const repo = context.repo;
+            const branch = 'stargazer-map';
+            const path = 'data/stargazers.json';
+            const raw = fs.readFileSync('src/data/stargazers.json', 'utf8');
+            const data = JSON.parse(raw);
+            // Publish an explicit allowlist, never profile names or raw locations.
+            const { count, forks, placed, stated, generatedAt } = data;
+            const clusters = data.clusters.map(({ lat, lon, label, country, count }) =>
+              ({ lat, lon, label, country, count }));
+            const body = { repo: 'PersonalJarvis/PersonalJarvis', count, forks,
+              placed, stated, generatedAt, clusters };
+            try {
+              await github.rest.git.getRef({ ...repo, ref: `heads/${branch}` });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              const main = await github.rest.git.getRef({ ...repo, ref: 'heads/main' });
+              await github.rest.git.createRef({ ...repo, ref: `refs/heads/${branch}`,
+                sha: main.data.object.sha });
+            }
+            let sha;
+            try {
+              const existing = await github.rest.repos.getContent({ ...repo, path, ref: branch });
+              sha = existing.data.sha;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            await github.rest.repos.createOrUpdateFileContents({ ...repo, path, branch, sha,
+              message: 'chore: refresh public stargazer map',
+              content: Buffer.from(JSON.stringify(body, null, 2) + '\n').toString('base64') });
+            core.info(`Published ${placed} resolved stargazers across ${clusters.length} places.`);
