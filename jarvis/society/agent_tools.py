@@ -411,7 +411,8 @@ class ProposeChangeTool:
                 turn is None
                 or not turn.direct_user
                 or turn.session_id != caller.session_id
-                or len(quote) < 4
+                or not quote
+                or (len(quote) < 4 and quote != turn.user_text.strip())
                 or quote not in turn.user_text
             ):
                 return _failure(

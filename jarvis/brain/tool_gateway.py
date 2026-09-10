@@ -33,10 +33,13 @@ class BrainSupervisorToolGateway:
         *,
         session_tool: Callable[[str], Awaitable[Tool | None]] | None = None,
         browser_tool: Callable[[str], Awaitable[Tool | None]] | None = None,
+        session_tools: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any] | None]]
+        | None = None,
     ) -> None:
         self._manager = manager
         self._session_tool = session_tool
         self._browser_tool = browser_tool
+        self._session_tools = session_tools
         self._lock = threading.Lock()
         self._fingerprint: tuple[tuple[str, int], ...] = ()
         self._catalog_version = 0
@@ -60,6 +63,10 @@ class BrainSupervisorToolGateway:
                 self._fingerprint = fingerprint
                 self._catalog_version += 1
 
+        return self._describe(tools)
+
+    @staticmethod
+    def _describe(tools: dict[str, Any]) -> tuple[SupervisorToolDescriptor, ...]:
         descriptors: list[SupervisorToolDescriptor] = []
         for name, tool in sorted(tools.items()):
             if not callable(getattr(tool, "execute", None)):
@@ -107,8 +114,17 @@ class BrainSupervisorToolGateway:
                 error=f"cancelled ({request.cancel_token.reason or 'requested'})",
             )
 
-        tool = self._live_tools().get(name)
-        if name in {"coding-session", "society_browser"}:
+        tools = self._live_tools()
+        ref = str(request.config_snapshot.get("approval_ref") or "")
+        scoped = None
+        if (
+            self._session_tools is not None
+            and request.origin == "agent-chat"
+            and ref.startswith("agent-chat:")
+        ):
+            scoped = await self._session_tools(ref.removeprefix("agent-chat:"), tools)
+        tool = (scoped if scoped is not None else tools).get(name)
+        if scoped is None and name in {"coding-session", "society_browser"}:
             # Never install this controller in the global worker tool set.
             # The authenticated chat transport supplies its canonical session reference.
             ref = str(request.config_snapshot.get("approval_ref") or "")
@@ -154,6 +170,10 @@ class BrainSupervisorToolGateway:
 
     async def session_catalog(self, session_id: str) -> tuple[SupervisorToolDescriptor, ...]:
         """Resolve the permitted session-owned tools without exposing them globally."""
+        if self._session_tools is not None:
+            tools = await self._session_tools(session_id, self._live_tools())
+            if tools is not None:
+                return self._describe(tools)
         catalog = self.catalog()
         scoped = []
         for resolver in (self._session_tool, self._browser_tool):

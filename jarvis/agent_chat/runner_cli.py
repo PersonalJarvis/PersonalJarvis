@@ -74,6 +74,7 @@ from jarvis.agent_chat.effort import normalize_effort, snap_to_ladder
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import normalize_permission
 from jarvis.agent_chat.runner_api import TurnHandle
+from jarvis.agent_chat.tool_context import register_turn, unregister_turn
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 log = logging.getLogger(__name__)
@@ -1060,7 +1061,28 @@ def _with_identity(
     context for nothing. The block is fenced so the model can tell the head
     from the person's words.
     """
-    if identity is None or resume:
+    if identity is None:
+        return prompt
+    if resume:
+        if identity.session_id.startswith("society:"):
+            # A resumed vendor conversation may remember an old, incomplete
+            # tool catalog. Refresh the execution contract without repeating
+            # the large identity/history block on every turn.
+            return (
+                "<jarvis_turn_context>\n"
+                "You are a Society agent in the running Personal Jarvis app. "
+                "Your current tools are available through the jarvis MCP server. "
+                "For recurring-work requests, inspect society_routines, then call "
+                "society_propose_change with kind=routine, mode=apply and an exact "
+                "request_quote from the current user message. Brief confirmations "
+                "refer to the agreed task. Read back the saved routine with "
+                "society_routines before reporting it active. Do not substitute "
+                "a plan, memory note, shell command or workspace file for scheduling. "
+                "Use existing connected-account information; ask only for essential "
+                "missing information. If a tool is unavailable or fails, report the "
+                "actual blocker without claiming completion. Existing permission "
+                "rules still apply.\n</jarvis_turn_context>\n\n" + prompt
+            )
         return prompt
     text = identity.compact if compact else identity.text
     return f"<jarvis_identity>\n{text}\n</jarvis_identity>\n\n{prompt}"
@@ -2385,6 +2407,7 @@ async def run_cli_turn(
                     ask=handle.request_approval,
                 ),
             )
+    tool_context = register_turn(session.session_id) if identity else None
     try:
         outcome = await _run_cli_once(
             handle, user_text, runner, resume, identity=ident, bridge=bridge
@@ -2416,6 +2439,7 @@ async def run_cli_turn(
                 handle, user_text, runner, None, identity=ident, bridge=bridge
             )
     finally:
+        unregister_turn(session.session_id, tool_context)
         ACCOUNT_OVERRIDE.reset(account_token)
         if bridge is not None and identity:
             bridge.disarm(ref)

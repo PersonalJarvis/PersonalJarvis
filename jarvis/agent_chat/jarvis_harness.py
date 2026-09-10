@@ -177,6 +177,11 @@ def codex_config_args(session_id: str | None = None) -> list[str]:
                 "-c",
                 f'mcp_servers.{_SERVER_NAME}.http_headers={{"{HEADER_NAME}"="{session_id}"}}',
             ]
+            if session_id.startswith("society:"):
+                # A society seat cannot carry out its role without its owned
+                # tools. Surface startup failures instead of a tools-free chat
+                # that can only promise to configure the running app.
+                args += ["-c", f"mcp_servers.{_SERVER_NAME}.required=true"]
         return args
     except Exception:  # noqa: BLE001 — see mcp_config_json
         log.warning("agent chat: could not build the Codex MCP overrides", exc_info=True)
