@@ -35,6 +35,7 @@ from .agent_tools import (
     WikiNoteTool,
 )
 from .capabilities import CapabilityKind, CapabilityRow, capability_id_for_tool, select_tools
+from .coding_tool import CodingSessionTool
 from .conversation_tool import ConversationRecallTool, RoutineListTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
@@ -69,7 +70,11 @@ _ECOSYSTEM_CARD: Final[str] = """\
 ## The Jarvis ecosystem you work in
 - Jarvis is the voice-steered lead of this society; the user talks to Jarvis by voice and to \
 you by typed chat. Only Jarvis and orchestrators assign work; a scheduler (not a model) turns \
-an assignment into a run under the assignee's identity. You never spawn agents or workers.
+an assignment into a run under the assignee's identity. You never spawn society agents or
+mission workers.
+- Coding: when granted, coding-session controls external coding CLIs in the existing IDE.
+Discover projects and connected CLIs first; use explicit project paths and persistent pane IDs.
+Opening and sending obey your approval rules. Read recorded context before claiming completion.
 - Teammates: send ONE teammate a message with society_message_agent (kinds: say, query, \
 answer, propose). Compose it yourself. When you finish work for someone, end with a handoff: \
 what is done, where the output is, what evidence you used, what remains open, who owns the \
@@ -152,6 +157,49 @@ def capability_epoch(catalog: list[CapabilityRow]) -> str:
 # ------------------------------------------------------------------ builders
 
 
+async def coding_tool_for_session(session_id: str) -> Tool | None:
+    """The same grant and approval gate for society seats and the lead's chat."""
+    rt = current_runtime()
+    if rt is None:
+        from jarvis.core.runtime_refs import get_web_app
+
+        state = getattr(get_web_app(), "state", None)
+        factory = getattr(state, "society_factory", None)
+        if state is None or factory is None:
+            return None
+        rt = getattr(state, "society", None) or factory()
+        state.society = rt
+        await rt.ensure_started()
+    agent_id = agent_id_of(session_id)
+    if agent_id is None:
+        service = rt.chat_service()
+        session = service.store.get_session(session_id) if service is not None else None
+        if session is None or str(session.surface) != "jarvis":
+            return None
+        from .roster import LEAD_AGENT_ID
+
+        agent_id = LEAD_AGENT_ID
+    agent = await rt.roster.get(agent_id)
+    if agent is None or str(agent.state) != "active":
+        return None
+    service = rt.chat_service()
+    if service is not None:
+        session = service.store.get_session(session_id)
+        if session is None or session.permission_mode in ("plan", "read-only"):
+            return None
+    tool = CodingSessionTool(rt, agent_id, session_id=session_id)
+    picked = select_tools(
+        {tool.name: tool},
+        grant_mode=str(agent.grant_mode),
+        grants=agent.grants,
+        focus=agent.focus,
+        denies=agent.denies,
+    )
+    if tool.name not in picked:
+        return None
+    return cast(Tool, _GatedTool(tool, agent, "core:coding-session"))
+
+
 def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     rt = current_runtime()
     agent_id = agent_id_of(getattr(session, "session_id", "") or "")
@@ -163,6 +211,7 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     # kit's tools REPLACE the folder tools (runner_brain.build_override), so the
     # agent would otherwise have no file hands at all; and the plain folder tools
     # accept absolute paths, which its workspace rule forbids.
+    tools[CodingSessionTool.name] = cast(Tool, CodingSessionTool(rt, agent_id))
     tools.update(_contained_folder_tools(workspace, getattr(session, "permission_mode", "")))
     tools.update(
         {

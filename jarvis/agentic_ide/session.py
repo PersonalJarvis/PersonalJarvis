@@ -62,6 +62,7 @@ PATH. Other batch shims use a one-shot ``cmd /c`` (so rule 1 above still holds).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
 import shutil
@@ -894,6 +895,7 @@ class Terminal:
     # still the same pane. Prompt-history files use this id to preserve exactly
     # that boundary across app restarts.
     history_id: str = field(default_factory=lambda: uuid4().hex)
+    prompt_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     # Hidden from the chat-mode session list. The pane itself keeps running —
     # archive is a list filter, not a close. Survives a restart because the
     # resume snapshot carries it, so a cleaned-up sidebar stays cleaned up.
@@ -1471,6 +1473,8 @@ class Session:
         """
         if not wanted:
             return None
+        if wanted.startswith("pane:"):
+            return next((t for t in self.terminals if t.history_id == wanted[5:]), None)
         key = normalize(wanted)
         for term in self.terminals:
             if normalize(term.name) == key:
@@ -2113,6 +2117,7 @@ class Registry:
         terminals: list[Terminal],
         *,
         name: str | None = None,
+        workspace_id: str | None = None,
     ) -> Session:
         """Turn a prepared list of panes into a NEW open workspace, at the front.
 
@@ -2134,7 +2139,7 @@ class Registry:
             logger.warning("Agentic IDE: pre-trust failed: {}", exc)
 
         session = Session(
-            id=f"ide_{uuid4().hex[:12]}",
+            id=workspace_id or f"ide_{uuid4().hex[:12]}",
             folder=str(root),
             name=self._available_workspace_name(name or profile.name or root.name or str(root)),
             profile=profile,
@@ -2369,7 +2374,14 @@ class Registry:
         # spoken instruction ambiguous — so a collision is renamed here. Only the
         # label moves; the resume handle underneath it continues the conversation.
         self._dedupe_names(terminals)
-        session = await self._open_locked(root, terminals, name=space.name or None)
+        # Restore the same logical workspace identity. Background controllers must
+        # not lose their project binding when the persisted panes come back.
+        session = await self._open_locked(
+            root,
+            terminals,
+            name=space.name or None,
+            workspace_id=space.session_id or None,
+        )
         # Which record this came back from, so a second restore of the same file
         # recognises it rather than opening a duplicate.
         session.restored_from = _restore_key(space)
@@ -3297,6 +3309,9 @@ class Registry:
             # slot stays taken until this pane's input line appears.
             async with self._cold_start_slot(ready=lambda: self._prompt_ready(session, term)):
                 try:
+                    identity = "pane:" + term.history_id
+                    if term.stopping or self._locate(identity, session.id) != (session, term):
+                        raise SessionError("The selected terminal closed before startup.")
                     pty_session = await manager.spawn(
                         shell_argv=argv,
                         shell_id=f"agentic-ide:{term.key}",
@@ -3316,6 +3331,9 @@ class Registry:
                         # typed. Off the loop it is immediate.
                         on_probe=term.queries.feed,
                     )
+                    if term.stopping or self._locate(identity, session.id) != (session, term):
+                        manager.close(pty_session.terminal_id)
+                        raise SessionError("The selected terminal closed during startup.")
                 except Exception as exc:  # noqa: BLE001 - surfaced to the pane
                     term.status = "error"
                     term.error = str(exc)
@@ -4640,6 +4658,61 @@ class Registry:
         workspace_id: str | None = None,
         typed: str = "",
         attachments: Sequence[Any] = (),
+        require_idle: bool = False,
+        expected_input: str = "",
+        allow_question: bool = False,
+    ) -> Terminal:
+        """Serialize deliveries and pin the pane before the first await."""
+        found = self.find_terminal(wanted, workspace_id)
+        if found is None:
+            raise self._unknown_terminal(wanted)
+        owner, term = found
+        identity = "pane:" + term.history_id
+        async with term.prompt_lock:
+            if self.find_terminal(identity, owner.id) != (owner, term):
+                raise SessionError("The selected terminal was closed; nothing was sent.")
+            if expected_input and (
+                term.reading().activity
+                not in (("asking", "waiting") if allow_question else ("waiting",))
+                or self.input_token(term) != expected_input
+            ):
+                raise SessionError("The input request changed; nothing was sent.")
+            if require_idle:
+                activity = term.reading().activity
+                has_submission = (
+                    term.last_submit_at is not None
+                    and term.submit_generation == term.process_generation
+                )
+                if activity in ("working", "asking", "failed", "exited") or (
+                    has_submission and activity != "waiting"
+                ):
+                    raise SessionError("The selected coding agent is busy; nothing was sent.")
+            return await self._send_prompt_locked(
+                identity,
+                text,
+                workspace_id=owner.id,
+                typed=typed,
+                attachments=attachments,
+                expected_input=expected_input,
+                allow_question=allow_question,
+            )
+
+    @staticmethod
+    def input_token(term: Terminal) -> str:
+        """Bind a textual reply to the current process and visible input request."""
+        data = f"{term.history_id}|{term.process_generation}|{term.pty_id}|{term.last_submit_at}|"
+        return hashlib.sha256((data + "\n".join(term.transcript.tail(20))).encode()).hexdigest()
+
+    async def _send_prompt_locked(
+        self,
+        wanted: str,
+        text: str,
+        *,
+        workspace_id: str | None = None,
+        typed: str = "",
+        attachments: Sequence[Any] = (),
+        expected_input: str = "",
+        allow_question: bool = False,
     ) -> Terminal:
         """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
@@ -4714,12 +4787,14 @@ class Registry:
         # stable fast path (Claude) remains immediate and new CLIs fail safe.
         from . import fleet_actions
 
+        process_id = term.pty_id
+        generation = term.process_generation
         ready = await fleet_actions.wait_for_prompt_ready(
             owner,
-            [term.name],
+            [wanted],
             timeout_s=fleet_actions.READY_TIMEOUT_S,
         )
-        if term.name not in ready:
+        if wanted not in ready:
             if term.status != "live" or not term.pty_id:
                 raise SessionError(
                     f"{term.name} stopped while it was starting (status: {term.status}) — "
@@ -4730,6 +4805,19 @@ class Registry:
                 "so nothing was sent."
             )
 
+        if (
+            self.find_terminal("pane:" + term.history_id, owner.id) != (owner, term)
+            or term.pty_id != process_id
+            or term.process_generation != generation
+            or term.status != "live"
+        ):
+            raise SessionError("The selected terminal changed while waiting; nothing was sent.")
+        if expected_input and (
+            self.input_token(term) != expected_input
+            or term.reading().activity
+            not in (("asking", "waiting") if allow_question else ("waiting",))
+        ):
+            raise SessionError("The input request changed while waiting; nothing was sent.")
         manager = self._manager()
         multiline = "\n" in payload
 

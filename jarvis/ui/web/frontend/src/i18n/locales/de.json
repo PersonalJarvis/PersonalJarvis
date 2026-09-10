@@ -612,6 +612,7 @@
     "internal_expand": "Ganze Nachricht zeigen",
     "internal_collapse": "Weniger anzeigen",
     "delivery_queued": "Eingereiht",
+    "delivery_sent": "Gesendet",
     "delivery_delivered": "Zugestellt",
     "delivery_failed": "Fehlgeschlagen",
 
@@ -5105,6 +5106,17 @@
       "mention_group_cli": "Kommandozeile",
       "mention_group_skills": "Skills",
       "mention_group_tools": "Jarvis-Werkzeuge",
+      "mention_group_coding": "Coding Agents",
+      "coding_selected": "Auftrag an",
+      "coding_not_installed": "Nicht installiert",
+      "coding_unsupported": "Nicht per Chat steuerbar",
+      "coding_project": "Projektordner (optional)",
+      "coding_project_hint": "Pfad eingeben oder im Auftrag nennen",
+      "coding_choose_folder": "Ordner wählen",
+      "coding_project_optional": "Du kannst den Projektordner auch direkt in deiner Nachricht nennen.",
+      "coding_close": "Schließen",
+      "coding_use_folder": "Ordner übernehmen",
+      "coding_retry": "Coding-Agents konnten nicht geladen werden. Erneut versuchen.",
       "result_done": "{0} ist fertig",
       "result_blocked": "{0} kam nicht weiter",
       "result_agent": "Ein Agent",
@@ -5537,5 +5549,12 @@
     "command": "Befehl ausführen",
     "edit": "Datei bearbeiten",
     "write": "Datei schreiben"
+},
+  "chat_media": {
+    "unavailable": "Dieses Medium kann nicht geladen oder abgespielt werden. Du kannst die Datei weiterhin öffnen.",
+    "expand": "{file} vergrößern",
+    "open_file": "Datei öffnen",
+    "download": "Herunterladen",
+    "retry": "Erneut versuchen"
 }
 }

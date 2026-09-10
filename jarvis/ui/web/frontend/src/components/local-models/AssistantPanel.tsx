@@ -57,7 +57,7 @@ import {
   type Proposal,
   type ProposalStep,
 } from "./assistantProposal";
-import { renderInline } from "./assistantText";
+import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { useLocalModelsAssistantStore } from "./assistantStore";
 import { BrainSwitchCard, SetupProposalCard } from "./SetupProposalCard";
 
@@ -506,11 +506,7 @@ export function AssistantPanel({
                       className="flex flex-col gap-3 text-title text-foreground"
                       data-testid="assistant-answer"
                     >
-                      {answer.split(/\n{2,}/).map((para, k) => (
-                        <p key={k} className="whitespace-pre-wrap">
-                          {renderInline(para)}
-                        </p>
-                      ))}
+                      <ChatMarkdown text={answer} className="prose prose-sm max-w-none dark:prose-invert" />
                     </div>
                   )}
                   {item.status === "error" && item.error && (

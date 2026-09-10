@@ -4,10 +4,12 @@ Higher layers receive only secret-free descriptors and execute by name. The
 concrete ``Tool`` objects and ``ToolExecutor`` remain inside the brain layer,
 and every call resolves against the current catalog immediately before use.
 """
+
 from __future__ import annotations
 
 import copy
 import threading
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 from uuid import UUID
 
@@ -15,6 +17,7 @@ from jarvis.core.protocols import (
     RiskTier,
     SupervisorToolDescriptor,
     SupervisorToolRequest,
+    Tool,
     ToolResult,
 )
 
@@ -24,8 +27,14 @@ _VALID_RISK_TIERS = frozenset({"safe", "monitor", "ask", "block"})
 class BrainSupervisorToolGateway:
     """Adapter that keeps Brain Manager implementation details private."""
 
-    def __init__(self, manager: Any) -> None:
+    def __init__(
+        self,
+        manager: Any,
+        *,
+        session_tool: Callable[[str], Awaitable[Tool | None]] | None = None,
+    ) -> None:
         self._manager = manager
+        self._session_tool = session_tool
         self._lock = threading.Lock()
         self._fingerprint: tuple[tuple[str, int], ...] = ()
         self._catalog_version = 0
@@ -97,6 +106,17 @@ class BrainSupervisorToolGateway:
             )
 
         tool = self._live_tools().get(name)
+        if name == "coding-session":
+            # Never install this controller in the global worker tool set.
+            # The authenticated chat transport supplies its canonical session reference.
+            ref = str(request.config_snapshot.get("approval_ref") or "")
+            tool = (
+                await self._session_tool(ref.removeprefix("agent-chat:"))
+                if self._session_tool is not None
+                and request.origin == "agent-chat"
+                and ref.startswith("agent-chat:")
+                else None
+            )
         executor = getattr(self._manager, "_tool_executor", None)
         if tool is None or not callable(getattr(tool, "execute", None)):
             return ToolResult(
@@ -127,6 +147,24 @@ class BrainSupervisorToolGateway:
             trace_id=request.trace_id,
             rationale=request.rationale,
             cancel_token=request.cancel_token,
+        )
+
+    async def session_catalog(self, session_id: str) -> tuple[SupervisorToolDescriptor, ...]:
+        """Add only the scoped IDE hand for a permitted society chat identity."""
+        catalog = self.catalog()
+        tool = await self._session_tool(session_id) if self._session_tool is not None else None
+        if tool is None:
+            return catalog
+        return (
+            *catalog,
+            SupervisorToolDescriptor(
+                name=tool.name,
+                description=tool.description,
+                input_schema=copy.deepcopy(tool.schema),
+                risk_tier="ask",
+                is_action_tool=True,
+                risk_tier_for_args=getattr(tool, "risk_tier_for_args", None),
+            ),
         )
 
     async def execute_confirmed(

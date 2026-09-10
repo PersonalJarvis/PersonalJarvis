@@ -3676,6 +3676,7 @@ class WebServer:
             # The island learns of a figure's new place through the app bus the
             # WebSocket forwards (SocietyCheckpointChanged).
             event_publish=self.bus.publish,
+            app_bus=self.bus,
             task_services=lambda: (
                 getattr(state, "task_store", None), getattr(state, "task_scheduler", None)
             ),

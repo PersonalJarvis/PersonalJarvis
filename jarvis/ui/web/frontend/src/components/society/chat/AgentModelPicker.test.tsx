@@ -10,6 +10,7 @@ import { AgentModelPicker } from "./AgentModelPicker";
 import type { SocietyAgentRow } from "@/lib/societyApi";
 import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
 import { createAgentChatStore, type AgentChatStoreHook } from "@/store/agentChat";
+import { clearModelMenuSnapshot, MODEL_MENU_SNAPSHOT_KEY, writeModelMenuSnapshot } from "./modelMenuSnapshot";
 
 const provider = (id: string, overrides: Partial<AgentChatProvider> = {}): AgentChatProvider => ({
   id, label: id, family: id, runner: "brain", models_source: "curated",
@@ -31,6 +32,7 @@ let connectionsGate: Promise<void> | undefined;
 let accountsGate: Promise<void> | undefined;
 
 beforeEach(async () => {
+  clearModelMenuSnapshot();
   await loadLocaleChunk("society");
   row = {
     agent_id: "scout", name: "Scout", title: "Research", description: "Keep my instructions",
@@ -61,6 +63,51 @@ beforeEach(async () => {
   }));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+test("a first open after page reload needs no request when a snapshot is available", async () => {
+  writeModelMenuSnapshot({ version: 1, savedAt: Date.now(),
+    catalog: { providers: [provider("openai")], default_cwd: "", shell: "" },
+    connections: [{ jarvis: "openai", key_set: true, is_active_brain: false }], providers: [], live: {},
+  });
+  const serialized = localStorage.getItem(MODEL_MENU_SNAPSHOT_KEY)!;
+  clearModelMenuSnapshot();
+  localStorage.setItem(MODEL_MENU_SNAPSHOT_KEY, serialized);
+  mount();
+  fireEvent.click(screen.getByRole("button", { name: "Model" }));
+  expect(screen.getByTitle("openai-small")).toBeTruthy();
+  expect(screen.queryByText("Loading the provider catalog…")).toBeNull();
+  expect(catalogCalls).toBe(0);
+});
+
+test("an idle open menu schedules no animation loop and batches layout changes", async () => {
+  const frames: FrameRequestCallback[] = [];
+  const requestFrame = vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+  vi.stubGlobal("requestAnimationFrame", requestFrame);
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  mount(); await open();
+  expect(requestFrame).not.toHaveBeenCalled();
+  fireEvent.resize(window);
+  fireEvent.resize(window);
+  expect(requestFrame).toHaveBeenCalledTimes(1);
+  act(() => frames[0](0));
+  expect(requestFrame).toHaveBeenCalledTimes(1);
+});
+
+test("freshly disconnected credentials supersede a display snapshot", async () => {
+  writeModelMenuSnapshot({ version: 1, savedAt: Date.now(),
+    catalog: { providers: [provider("openai")], default_cwd: "", shell: "" },
+    connections: [{ jarvis: "openai", key_set: true, is_active_brain: false }], providers: [], live: {},
+  });
+  const store = createAgentChatStore("society");
+  mount(false, false, store);
+  fireEvent.click(screen.getByRole("button", { name: "Model" }));
+  expect(screen.getByTitle("openai-small")).toBeTruthy();
+  act(() => store.setState({
+    catalog: { providers: [provider("openai")], default_cwd: "", shell: "" },
+    connections: [{ jarvis: "openai", key_set: false, api_key_set: false, is_active_brain: false }],
+  }));
+  await waitFor(() => expect(screen.queryByTitle("openai-small")).toBeNull());
+});
 
 function mount(busy = false, inDialog = false, store?: AgentChatStoreHook) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -1,8 +1,11 @@
 """Grok Build auth service — status / login parsing, isolated worker home."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import pytest
 
 from jarvis.grok_build_auth import (
     GrokBuildAuthService,
@@ -15,11 +18,103 @@ from jarvis.grok_build_auth import (
     prepare_worker_home,
 )
 
+_CLI_SCOPE = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"
+
+
+@pytest.fixture(autouse=True)
+def isolated_auth_scope(monkeypatch):
+    for prefix in ("GROK_OIDC", "GROK_OAUTH2"):
+        for suffix in ("ISSUER", "CLIENT_ID"):
+            monkeypatch.delenv(f"{prefix}_{suffix}", raising=False)
+
+
+def test_current_cli_store_connects_cards_and_agent_picker(monkeypatch, tmp_path):
+    from jarvis.ui.web.agent_chat_routes import _cli_subscription_connected
+
+    (tmp_path / "auth.json").write_text(
+        json.dumps(
+            {
+                _CLI_SCOPE: {
+                    "key": "test-bearer",
+                    "auth_mode": "oidc",
+                    "refresh_token": "test-refresh",
+                    "email": "ada@example.com",
+                },
+                "https://other.example::client": {
+                    "key": "other",
+                    "auth_mode": "oidc",
+                    "email": "other@example.com",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = GrokBuildAuthService(grok_home_dir=tmp_path)
+    monkeypatch.setattr(service, "_resolve_binary", lambda: "grok")
+    monkeypatch.setattr(service, "_probe_version", lambda _: "grok 1.0.13")
+    status = service.status()
+    assert grok_build_provider_ready(status)
+    assert _cli_subscription_connected("grok-cli", status)
+    assert status.user_email == "ada@example.com"
+    assert "test-bearer" not in json.dumps(status.to_dict())
+    assert "test-refresh" not in json.dumps(status.to_dict())
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {},
+        None,
+        "invalid",
+        {"email": "ada@example.com"},
+        {"auth_mode": "oidc", "key": " "},
+        {"auth_mode": "external", "key": "test-key", "refresh_token": "test-refresh"},
+        {"auth_mode": "web_login", "key": "test-key"},
+    ],
+)
+def test_scoped_invalid_or_unsupported_login_is_disconnected(record):
+    assert _derive_auth({_CLI_SCOPE: record}) == (False, "unknown")
+
+
+def test_scoped_api_key_is_never_a_subscription():
+    assert _derive_auth(
+        {
+            "xai::api_key": {
+                "key": "test-api-key",
+                "auth_mode": "api_key",
+                "refresh_token": "test-refresh",
+            }
+        }
+    ) == (True, "api_key")
+
+
+def test_cli_scope_does_not_borrow_another_login(monkeypatch):
+    auth = {_CLI_SCOPE: {"key": "test-bearer", "auth_mode": "oidc"}}
+    monkeypatch.setenv("GROK_OIDC_ISSUER", "https://tenant.example/")
+    monkeypatch.setenv("GROK_OIDC_CLIENT_ID", "test-client")
+    assert _derive_auth(auth) == (False, "unknown")
+    auth["https://tenant.example::test-client"] = {
+        "key": "tenant-test-bearer",
+        "auth_mode": "oidc",
+        "email": "tenant@example.com",
+    }
+    assert _derive_auth(auth) == (True, "subscription")
+    assert _email_from_auth(auth) == "tenant@example.com"
+
+
+def test_scoped_refreshable_login_is_recognized():
+    assert _derive_auth(
+        {
+            _CLI_SCOPE: {
+                "auth_mode": "oidc",
+                "refresh_token": "test-refresh",
+            }
+        }
+    ) == (True, "subscription")
+
 
 def test_derive_auth_subscription_tokens() -> None:
-    connected, mode = _derive_auth(
-        {"tokens": {"access_token": "tok", "refresh_token": "ref"}}
-    )
+    connected, mode = _derive_auth({"tokens": {"access_token": "tok", "refresh_token": "ref"}})
     assert connected is True
     assert mode == "subscription"
 

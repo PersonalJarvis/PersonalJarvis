@@ -3831,7 +3831,9 @@ def _unknown_terminal_detail(registry: object, wanted: str) -> str:
 
 
 @router.post("/terminals/{name}/prompt", summary="Send a prompt to one terminal")
-async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> dict:
+async def terminal_prompt(
+    request: Request, name: str, req: PromptRequest, workspace: str | None = None
+) -> dict:
     """Type ``prompt`` into the terminal called ``name`` and press Enter.
 
     With ``compose=true`` the text is first rewritten into a prompt worth
@@ -3857,7 +3859,7 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
     # or not composition was asked for. It used to 404 with composition on and
     # 409 with it off, which gave a caller two different-looking dead ends for
     # one cause — and neither of them said what to do about it.
-    found = registry.find_terminal(name)
+    found = registry.find_terminal(name, workspace)
     if found is None:
         raise HTTPException(status_code=404, detail=_unknown_terminal_detail(registry, name))
 
@@ -3953,7 +3955,13 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
         try:
             # The receipt beside the brief: the sentence as typed and the files
             # that went with it, for the pane's chat stage (prompt_receipts).
-            term = await registry.send_prompt(name, text, typed=req.prompt, attachments=attachments)
+            term = await registry.send_prompt(
+                "pane:" + found[1].history_id,
+                text,
+                workspace_id=found[0].id,
+                typed=req.prompt,
+                attachments=attachments,
+            )
         except SessionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 

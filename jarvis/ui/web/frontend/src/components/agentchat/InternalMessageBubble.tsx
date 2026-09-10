@@ -1,5 +1,6 @@
 import { useOpenPairConversation } from "./PairConversation";
 import { useState } from "react";
+import { ChatMarkdown } from "./ChatMarkdown";
 import { ArrowRight, ChevronDown, MessagesSquare } from "lucide-react";
 
 import { AgentSwatch } from "@/components/society/AgentSwatch";
@@ -98,9 +99,13 @@ export function InternalMessageBubble({
   const shown = !foldable || open;
 
   const senderName = sender?.name || item.message.sender_name;
-  const toName = recipient?.name || recipientName || "";
+  const toName = item.outgoing?.recipientName || recipient?.name || recipientName || "";
+  const counterpart = item.outgoing
+    ? { id: item.outgoing.recipientId, name: toName }
+    : { id: item.message.sender_id, name: senderName };
   const status = item.message.status;
-  const statusLabel = t(`agent_chat.delivery_${status}`);
+  const statusLabel = item.outgoing && status !== "failed"
+    ? t("agent_chat.delivery_sent") : t(`agent_chat.delivery_${status}`);
   const statusTone =
     status === "failed"
       ? "text-destructive"
@@ -117,7 +122,7 @@ export function InternalMessageBubble({
     >
       <button
         type="button"
-        onClick={() => canOpenPair ? openPair?.({ id: item.message.sender_id, name: senderName }) : foldable && setOpen((v) => !v)}
+        onClick={() => canOpenPair ? openPair?.(counterpart) : foldable && setOpen((v) => !v)}
         aria-expanded={!canOpenPair && foldable ? open : undefined}
         aria-label={
           canOpenPair ? t("agent_chat.pair_open") : foldable
@@ -171,10 +176,10 @@ export function InternalMessageBubble({
           ) : null}
         </span>
       </button>
-      <div className="px-3 pb-2.5 pl-[30px]" onClick={canOpenPair ? () => openPair?.({ id: item.message.sender_id, name: senderName }) : undefined} style={canOpenPair ? { cursor: "pointer" } : undefined}>
+      <div className="px-3 pb-2.5 pl-[30px]" onClick={canOpenPair ? () => openPair?.(counterpart) : undefined} style={canOpenPair ? { cursor: "pointer" } : undefined}>
         {shown ? (
           <div data-testid="agent-message-internal-full" className="whitespace-pre-wrap text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">
-            {text}
+            <ChatMarkdown text={text} />
           </div>
         ) : (
           <p

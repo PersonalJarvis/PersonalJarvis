@@ -4,11 +4,29 @@ import type { Capability, SocietyAgent } from "@/components/society/data";
 
 import {
   buildMentionCatalog,
+  codingMentionsInText,
   filterMentions,
   groupMentions,
   mentionToken,
   mentionsInText,
 } from "./mentionItems";
+
+it("uses short coding tags, retains legacy tags and lists unavailable CLIs honestly", () => {
+  const coding = [
+    { name: "codex", display_name: "Codex", installed: true, version: null, install_command: null },
+    { name: "custom", display_name: "Custom CLI", installed: false, version: null, install_command: null },
+  ];
+  const catalog = buildMentionCatalog([], [], coding);
+  expect(catalog[0].value).toBe("codex");
+  expect(filterMentions(catalog, "").map((item) => item.label)).toEqual(["Codex", "Custom CLI"]);
+  expect(filterMentions(catalog, "coding/").map((item) => item.label)).toEqual(["Codex", "Custom CLI"]);
+  expect(codingMentionsInText("@codex fix this", catalog)).toHaveLength(1);
+  expect(codingMentionsInText("@coding/codex fix this", catalog)).toHaveLength(1);
+  expect(mentionsInText("@coding/codex fix this", catalog).pinIds).toEqual(["core:coding-session"]);
+  const collision = buildMentionCatalog([agent({ agentId: "test-agent", name: "Codex" })], [], coding);
+  expect(collision.find((item) => item.kind === "coding")?.value).toBe("coding/codex");
+  expect(codingMentionsInText("@Codex hello", collision)).toHaveLength(0);
+});
 
 function agent(over: Partial<SocietyAgent> & Pick<SocietyAgent, "agentId" | "name">): SocietyAgent {
   return {

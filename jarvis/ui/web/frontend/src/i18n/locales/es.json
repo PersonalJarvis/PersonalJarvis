@@ -612,6 +612,7 @@
     "internal_expand": "Mostrar el mensaje completo",
     "internal_collapse": "Mostrar menos",
     "delivery_queued": "En cola",
+    "delivery_sent": "Enviado",
     "delivery_delivered": "Entregado",
     "delivery_failed": "Error",
 
@@ -5105,6 +5106,17 @@
       "mention_group_cli": "Línea de comandos",
       "mention_group_skills": "Habilidades",
       "mention_group_tools": "Herramientas de Jarvis",
+      "mention_group_coding": "Agentes de código",
+      "coding_selected": "Tarea para",
+      "coding_not_installed": "No instalado",
+      "coding_unsupported": "Control por chat no disponible",
+      "coding_project": "Carpeta del proyecto (opcional)",
+      "coding_project_hint": "Escribe una ruta o indícala en el mensaje",
+      "coding_choose_folder": "Elegir carpeta",
+      "coding_project_optional": "También puedes indicar la carpeta del proyecto en tu mensaje.",
+      "coding_close": "Cerrar",
+      "coding_use_folder": "Usar carpeta",
+      "coding_retry": "No se pudieron cargar los agentes. Reintentar.",
       "result_done": "{0} ha terminado",
       "result_blocked": "{0} se quedó atascado",
       "result_agent": "Un agente",
@@ -5537,5 +5549,12 @@
     "command": "Ejecutar comando",
     "edit": "Editar archivo",
     "write": "Escribir archivo"
+},
+  "chat_media": {
+    "unavailable": "No se puede cargar o reproducir este archivo. Puedes abrirlo directamente.",
+    "expand": "Ampliar {file}",
+    "open_file": "Abrir archivo",
+    "download": "Descargar",
+    "retry": "Reintentar"
 }
 }

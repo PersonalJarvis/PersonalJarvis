@@ -612,6 +612,7 @@
     "internal_expand": "Show the full message",
     "internal_collapse": "Show less",
     "delivery_queued": "Queued",
+    "delivery_sent": "Sent",
     "delivery_delivered": "Delivered",
     "delivery_failed": "Failed",
 
@@ -5138,6 +5139,17 @@
       "mention_group_cli": "Command line",
       "mention_group_skills": "Skills",
       "mention_group_tools": "Jarvis tools",
+      "mention_group_coding": "Coding Agents",
+      "coding_selected": "Assignment for",
+      "coding_not_installed": "Not installed",
+      "coding_unsupported": "Chat control unavailable",
+      "coding_project": "Project folder (optional)",
+      "coding_project_hint": "Enter a path or name it in your message",
+      "coding_choose_folder": "Choose folder",
+      "coding_project_optional": "You can also specify the project folder directly in your message.",
+      "coding_close": "Close",
+      "coding_use_folder": "Use folder",
+      "coding_retry": "Could not load coding agents. Retry.",
       "result_done": "{0} is done",
       "result_blocked": "{0} got stuck",
       "result_agent": "An agent",
@@ -5570,5 +5582,12 @@
     "command": "Run command",
     "edit": "Edit file",
     "write": "Write file"
+},
+  "chat_media": {
+    "unavailable": "This media cannot be loaded or played. You can still open the file.",
+    "expand": "Enlarge {file}",
+    "open_file": "Open file",
+    "download": "Download",
+    "retry": "Retry"
 }
 }

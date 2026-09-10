@@ -1,5 +1,6 @@
 import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
 import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBubble";
+import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
  * 2026-09-02): bubbles, a time stamp, one pill-shaped composer with a "+"
@@ -20,10 +21,9 @@ import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBub
  * the voice runs on the realtime tier (`[brain.realtime]`), which no text
  * runner can drive. The header says so while voice is showing.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
 import { AgentChatStoreProvider, useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
@@ -37,8 +37,7 @@ import { DictationStatus } from "@/components/agentchat/DictationStatus";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
-import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
-import { transcriptFromMessages } from "@/lib/homeTranscript";
+import { startNewVoiceRun } from "@/lib/chatsApi";
 import type {
   NoticeItem,
   TimelineItem,
@@ -55,11 +54,16 @@ import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
 import { useResolveProposal, useSocietyCapabilities, type SocietyAgent } from "../data";
+import { fetchIdeAgents, type AgentStatus } from "@/lib/agenticIdeApi";
+import { CodingProjectChoice } from "./CodingProjectChoice";
 import { MentionPicker } from "./MentionPicker";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { mentionChoice, messageChoices } from "./mentionChoices";
+import { useTranscriptView } from "./useTranscriptView";
 import {
   buildMentionCatalog,
+  codingMentionsInText,
+  codingAssignmentHint,
   filterMentions,
   mentionToken,
   mentionsInText,
@@ -105,38 +109,18 @@ export const useSocietyChatStore = createAgentChatStore("society");
 
 type JarvisCardMode = "chat" | "voice";
 
-/** Remembered for the app session, so a card reopened stays on the half you last used. */
-let lastJarvisCardMode: JarvisCardMode = "chat";
-const modeListeners = new Set<() => void>();
-
+/** The lead card and its history share the voice lifecycle, even while closed. */
 export function getJarvisCardMode(): JarvisCardMode {
-  return lastJarvisCardMode;
+  return useHomeStore.getState().jarvisCardMode;
 }
 
-/**
- * Switch the lead card's Voice | Chat half from anywhere — the column's own
- * switch and the history rail in the Options column share this, so opening a
- * row there lands on the half that shows it.
- */
 export function setJarvisCardMode(next: JarvisCardMode): void {
-  if (lastJarvisCardMode === next) return;
-  lastJarvisCardMode = next;
-  for (const notify of [...modeListeners]) notify();
+  useHomeStore.getState().setJarvisCardMode(next);
 }
 
-/** The lead card's Voice | Chat half. */
 export function useJarvisCardMode(): JarvisCardMode {
-  return useSyncExternalStore(
-    (notify) => {
-      modeListeners.add(notify);
-      return () => {
-        modeListeners.delete(notify);
-      };
-    },
-    getJarvisCardMode,
-  );
+  return useHomeStore((s) => s.jarvisCardMode);
 }
-
 /**
  * The transcript a specialist column may paint. One store serves every
  * specialist, so the chrome (name, rail, composer) can already show the
@@ -202,6 +186,12 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
   const sessionId = agent.chatSessionId;
   const sessionReady = Boolean(sessionId) && activeSessionId === sessionId;
   const visibleItems = itemsForOpenSession(sessionId, activeSessionId, items);
+  const outgoing = useOutgoingMessages(sessionReady ? agent.agentId : null);
+  const allItems = useMemo(() => mergeOutgoingMessages(
+    visibleItems, outgoing, agent.agentId, agent.name,
+    new Map(roster.map((member) => [member.agentId, member.name])),
+  ), [visibleItems, outgoing, agent.agentId, agent.name, roster]);
+  const view = useTranscriptView(sessionReady ? sessionId : null, allItems);
 
   // Open the agent's own session before the browser paints. Waiting on bind /
   // catalog / sessions left the previous specialist's transcript on screen
@@ -247,7 +237,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
         {agent.model ? <span className="truncate font-mono">{agent.model}</span> : null}
         {agent.effort ? <span className="ml-auto rounded-full border border-border px-2 py-0.5">{agent.effort}</span> : null}
       </div>
-      <Transcript key={sessionId ?? agent.agentId} items={visibleItems} agent={agent} roster={roster} onDecide={decide} />
+      <Transcript key={`${sessionId ?? agent.agentId}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
       {lastError && sessionReady ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -267,6 +257,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
         cwd=""
         provider={agent.provider}
         surface="society"
+        onClear={view.clear}
         onSend={send}
         onCancel={cancel}
       />
@@ -291,6 +282,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
   const send = useAgentChat((s) => s.send);
   const cancel = useAgentChat((s) => s.cancel);
   const decide = useAgentChat((s) => s.decide);
+  const view = useTranscriptView(activeSessionId, items);
 
   useEffect(() => {
     void loadCatalog();
@@ -308,14 +300,20 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
       .catch(() => undefined);
   }, [loadSessions]);
 
-  // A spoken thread opened from the history rail: read here, in the column
-  // the composer would otherwise own — the same sharing the front page's
-  // chat stage does (components/home/ChatStage).
-  const voiceThreadId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
-  const voiceMessages = useEventStore((s) => s.messages);
   const setActiveConversation = useEventStore((s) => s.setActiveConversation);
   const setMessages = useEventStore((s) => s.setMessages);
-  const seedTranscript = useHomeStore((s) => s.seedTranscript);
+  const voiceState = useEventStore((s) => s.voiceState);
+  const freshVoicePending = useHomeStore((s) => s.freshVoicePending);
+
+  useEffect(() => {
+    if (!freshVoicePending || voiceState !== "idle" || !useHomeStore.getState().freshVoicePending) return;
+    useHomeStore.setState({ freshVoicePending: false });
+    // Use the existing reset contract once after hangup, including re-entry
+    // after the card was closed. Never interrupt a call started elsewhere.
+    void startNewVoiceRun().catch(() => {
+      useEventStore.getState().pushToast("error", `${t("sidebar.new_voice_chat")}: ${t("voice_state.error")}`);
+    });
+  }, [freshVoicePending, voiceState, t]);
 
   // A null session is an intentional fresh chat. Only an explicit history
   // selection may open an older session; polling must not undo New chat.
@@ -334,10 +332,6 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
     newChat();
   }, [newChat, setActiveConversation, setMessages]);
 
-  const continueByVoice = useCallback(() => {
-    seedTranscript(transcriptFromMessages(voiceMessages));
-    pickMode("voice");
-  }, [seedTranscript, voiceMessages]);
 
   if (mode === "voice") {
     return (
@@ -375,26 +369,10 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
     </div>
   );
 
-  // A spoken thread from the history rail, read in place — no composer, like
-  // the front page: a recording is continued by speaking.
-  if (voiceThreadId && !activeSessionId) {
-    return (
-      <div
-        className="flex h-full min-h-0 flex-col"
-        data-testid="society-chat"
-        data-mode="chat"
-        data-thread={voiceThreadId}
-      >
-        {header}
-        <VoiceThreadStage onContinueByVoice={continueByVoice} />
-      </div>
-    );
-  }
-
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="society-chat" data-mode="chat">
       {header}
-      <Transcript items={items} agent={agent} roster={roster} onDecide={decide} />
+      <Transcript key={`${activeSessionId ?? ""}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
       {lastError ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -407,6 +385,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
         sessionId={activeSessionId}
         cwd={draft.cwd}
         provider={draft.provider}
+        onClear={view.clear}
         onSend={send}
         onCancel={cancel}
       />
@@ -673,7 +652,7 @@ export function Transcript({
                 <InternalMessageBubble
                   item={item}
                   sender={roster.find((a) => a.agentId === item.message.sender_id) ?? null}
-                  recipient={agent}
+                  recipient={item.outgoing ? roster.find((a) => a.agentId === item.outgoing?.recipientId) : agent}
                 />
               ) : item.type === "user" ? (
                 <UserBubble item={item} />
@@ -724,7 +703,7 @@ function NoticeLine({ item }: { item: NoticeItem }) {
   return (
     <div className="flex max-w-[85%] flex-col gap-0.5 self-start rounded-2xl rounded-bl-md border border-border bg-card px-3.5 py-2 text-xs">
       {headline ? <p className="font-medium text-foreground">{headline}</p> : null}
-      {item.text ? <p className="whitespace-pre-wrap leading-relaxed text-muted-foreground">{item.text}</p> : null}
+      {item.text ? <ChatMarkdown text={item.text} className="leading-relaxed text-muted-foreground" /> : null}
     </div>
   );
 }
@@ -893,6 +872,7 @@ function visibleUserText(text: string): string {
     .filter((line) => !line.trimStart().startsWith(DELEGATE_MARK))
     .filter((line) => !line.trimStart().startsWith(MENTION_MARK))
     .filter((line) => !line.trimStart().startsWith(TOOL_PIN_MARK))
+    .filter((line) => !line.trimStart().startsWith("[coding-agent]"))
     .join("\n")
     .trimEnd();
 }
@@ -908,7 +888,7 @@ export function UserBubble({ item }: { item: UserItem }) {
       {item.attachments.length > 0 ? (
         <div className="flex flex-wrap justify-end gap-1">
           {item.attachments.map((a) => (
-            <span key={a.name} className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+            a.url && (a.kind === "image" || mediaKind(a.url)) ? <MediaPreview key={a.name} src={a.url} label={a.name} kind={mediaKind(a.url) ?? "image"} /> : <span key={a.name} className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
               {a.name}
             </span>
           ))}
@@ -953,7 +933,7 @@ function Prose({ text, muted }: { text: string; muted?: boolean }) {
         "prose-hr:my-3 prose-blockquote:border-l-2 prose-blockquote:pl-3 prose-blockquote:not-italic",
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      <ChatMarkdown text={text} />
     </div>
   );
 }
@@ -963,6 +943,7 @@ function Prose({ text, muted }: { text: string; muted?: boolean }) {
 // ---------------------------------------------------------------------------
 
 interface ComposerProps {
+  onClear?: () => void;
   agent: SocietyAgent;
   mentionable: SocietyAgent[];
   busy: boolean;
@@ -975,7 +956,7 @@ interface ComposerProps {
   onCancel: () => Promise<void>;
 }
 
-export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onSend, onCancel }: ComposerProps) {
+export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend, onCancel }: ComposerProps) {
   const t = useT();
   const [modelSaving, setModelSaving] = useState(false);
   const [value, setValue] = useState("");
@@ -998,11 +979,30 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   // "@" completes teammates AND the capability catalog — plugins, MCP
   // servers, CLIs, skills, Jarvis tools — on every agent card, including
   // Jarvis'. Naming one pins it for the turn (see `submit`).
+  const [codingAgents, setCodingAgents] = useState<AgentStatus[]>([]);
+  const [codingLoading, setCodingLoading] = useState(false);
+  const [codingError, setCodingError] = useState(false);
+  const [codingRetry, setCodingRetry] = useState(0);
+  const [codingFolder, setCodingFolder] = useState("");
+  const mentionOpen = mention !== null;
+  useEffect(() => {
+    if (!mentionOpen) return;
+    let current = true;
+    setCodingLoading(true);
+    setCodingError(false);
+    void fetchIdeAgents().then((result) => {
+      if (current) setCodingAgents(result.terminal_available ? result.agents : []);
+    }).catch(() => { if (current) setCodingError(true); })
+      .finally(() => { if (current) setCodingLoading(false); });
+    return () => { current = false; };
+  }, [mentionOpen, codingRetry]);
   const capabilities = useSocietyCapabilities();
   const catalog = useMemo(
-    () => buildMentionCatalog(mentionable, capabilities.data ?? []),
-    [mentionable, capabilities.data],
+    () => buildMentionCatalog(mentionable, capabilities.data ?? [], codingAgents),
+    [mentionable, capabilities.data, codingAgents],
   );
+  const codingSelections = useMemo(() => codingMentionsInText(value, catalog), [value, catalog]);
+  useEffect(() => { if (!codingSelections.length) setCodingFolder(""); }, [codingSelections.length]);
   const matches = useMemo(
     () => (mention ? filterMentions(catalog, mention.query) : []),
     [mention, catalog],
@@ -1021,13 +1021,14 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   };
 
   const insertMention = (item: MentionItem) => {
+    if (item.kind === "coding" && !item.connected) return;
     const field = fieldRef.current;
     const draft = field?.getDraft();
     const start = mention?.start ?? draft?.caret ?? value.length;
     const caret = draft?.caret ?? value.length;
     const before = (draft?.text ?? value).slice(0, start);
     const after = (draft?.text ?? value).slice(caret);
-    if (item.agent) {
+    if (item.agent || item.codingAgent) {
       const next = `${before}@${item.value} ${after}`;
       field?.hydrate(next, draft?.choices ?? []);
     } else {
@@ -1042,9 +1043,19 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   const submit = async () => {
     const draft = fieldRef.current?.getDraft();
     const draftText = (draft?.text ?? value).trim();
+    const submittedFolder = codingFolder;
     const selected = selectedTools;
     const text = draftText;
     if (!text || busy || modelSaving) return;
+    if (text === "/clear" && onClear) {
+      onClear();
+      setValue("");
+      fieldRef.current?.clear();
+      setSelectedTools([]);
+      setMention(null);
+      setProblem(null);
+      return;
+    }
     const named = mentionsInText(text, catalog);
     const lines: string[] = [];
     if (named.agents.length > 0 && surface === "society") {
@@ -1061,6 +1072,8 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       ));
     }
     if (named.pinIds.length > 0) lines.push(`${TOOL_PIN_MARK} ${named.pinIds.join(", ")}]`);
+    const codingHint = codingAssignmentHint(codingSelections, codingFolder);
+    if (codingHint) lines.push(codingHint);
     const hint = lines.join("\n");
     setValue("");
     fieldRef.current?.clear();
@@ -1074,15 +1087,17 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       setValue(draftText);
       fieldRef.current?.hydrate(draftText, draft?.choices ?? []);
       setSelectedTools(selected);
+      setCodingFolder(submittedFolder);
       setProblem(err instanceof Error ? err.message : String(err));
     }
   };
 
-  const pickerOpen = Boolean(mention) && (matches.length > 0 || (mention?.query.length ?? 0) > 0 || capabilities.isLoading);
+  const pickerOpen = Boolean(mention) && (matches.length > 0 || (mention?.query.length ?? 0) > 0 || capabilities.isLoading || codingLoading);
 
   return (
     <div className="shrink-0 border-t border-border px-3 pb-3 pt-2">
       {problem ? <p className="mb-1 px-1 text-xs text-destructive">{problem}</p> : null}
+      {mentionOpen && codingError ? <button type="button" className="mb-1 text-xs text-destructive underline" onClick={() => setCodingRetry((n) => n + 1)}>{t("society.chat.coding_retry")}</button> : null}
       <div className={CHAT_MEASURE}>
         <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
       </div>
@@ -1091,7 +1106,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         anchorRef={composerRef}
         open={pickerOpen}
         items={matches}
-        loading={capabilities.isLoading}
+        loading={capabilities.isLoading || codingLoading}
         activeIndex={activeIndex}
         onHover={setActiveIndex}
         onPick={insertMention}
@@ -1126,6 +1141,13 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
                 fieldRef.current?.focus();
               }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground hover:bg-secondary">
                 <Plus className="h-3.5 w-3.5" aria-hidden />{t("chat_tools.all")}
+              </button>
+              <button type="button" onClick={() => {
+                setPlusOpen(false);
+                fieldRef.current?.insertText("@coding/");
+                fieldRef.current?.focus();
+              }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground hover:bg-secondary">
+                <MessageSquare className="h-3.5 w-3.5" aria-hidden />{t("society.chat.mention_group_coding")}
               </button>
               <button
                 type="button"
@@ -1238,6 +1260,9 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           </button>
         )}
       </div>
+      {codingSelections.length > 0 && <div className={CHAT_MEASURE}>
+        <CodingProjectChoice agents={codingSelections.flatMap((item) => item.codingAgent ? [item.codingAgent] : [])} folder={codingFolder} onFolder={setCodingFolder} />
+      </div>}
     </div>
   );
 }

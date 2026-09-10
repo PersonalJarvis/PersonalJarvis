@@ -79,6 +79,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
     session = SimpleNamespace(session_id="society:mailbox")
     own = society_tools(cfg, None, session)
     assert set(own) == {
+        "coding-session",
         MESSAGE_TOOL_NAME,
         WIKI_NOTE_TOOL_NAME,
         SHELL_TOOL_NAME,
@@ -153,7 +154,7 @@ async def test_briefing_is_deterministic_and_complete(rt: SocietyRuntime):
     assert "## Standing instructions" in a and "external mail only after approval" in a
     assert "Reach for these first:\n- gmail (plugin:gmail): Read and send mail." in a
     assert "Also available" in a
-    assert all(name in a for name in ("browser", "search-web", "wiki-ingest", "wiki-recall"))
+    assert all(name in a for name in ("browser", "coding-session", "search-web", "wiki-ingest", "wiki-recall"))
     assert "spawn-worker" not in a
     assert f"Capability epoch: {capability_epoch(catalog)}" in a
     assert "## The Jarvis ecosystem" in a and "society_message_agent" in a

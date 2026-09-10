@@ -35,6 +35,36 @@ def _isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 # ------------------------------------------------------------------ built-in
 
 
+@pytest.mark.parametrize(
+    "auth, expected",
+    [
+        ({}, False),
+        ({"xai::api_key": {"auth_mode": "api_key", "key": "test-api-key"}}, False),
+        (
+            {
+                "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+                    "auth_mode": "oidc",
+                    "key": "test-bearer",
+                    "email": "ada@example.com",
+                }
+            },
+            True,
+        ),
+    ],
+)
+def test_grok_account_requires_subscription_material(auth, expected, monkeypatch):
+    for prefix in ("GROK_OIDC", "GROK_OAUTH2"):
+        for suffix in ("ISSUER", "CLIENT_ID"):
+            monkeypatch.delenv(f"{prefix}_{suffix}", raising=False)
+    account = agent_accounts.active_account("grok-build")
+    account.config_dir.mkdir(parents=True)
+    (account.config_dir / "auth.json").write_text(json.dumps(auth), encoding="utf-8")
+    snapshot = agent_accounts.describe(account)
+    assert snapshot.connected is expected
+    if expected:
+        assert snapshot.email == "ada@example.com"
+
+
 def test_every_platform_offers_its_builtin_account_with_no_store() -> None:
     """A fresh install has one usable account per CLI and no file at all."""
     for platform in agent_accounts.platforms():
@@ -222,9 +252,7 @@ def test_an_added_account_pins_its_own_directory() -> None:
 def test_spawn_env_inherits_rather_than_replaces() -> None:
     """A bare {VAR: dir} would strip PATH and the agent binary would vanish."""
     account = agent_accounts.create_account("claude", "Second seat")
-    env = agent_accounts.spawn_env(
-        "claude", account.id, base={"PATH": "/usr/bin", "TERM": "xterm"}
-    )
+    env = agent_accounts.spawn_env("claude", account.id, base={"PATH": "/usr/bin", "TERM": "xterm"})
     assert env["PATH"] == "/usr/bin"
     assert env["TERM"] == "xterm"
     assert env["CLAUDE_CONFIG_DIR"] == str(account.config_dir)
@@ -634,7 +662,7 @@ def test_two_genuinely_different_subscriptions_are_never_flagged() -> None:
 
 
 def test_accounts_without_a_readable_email_are_never_grouped() -> None:
-    """"Both unknown" is not evidence of sameness — it is absence of evidence."""
+    """ "Both unknown" is not evidence of sameness — it is absence of evidence."""
     first = agent_accounts.create_account("claude", "Seat A")
     second = agent_accounts.create_account("claude", "Seat B")
     for account in (first, second):

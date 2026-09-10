@@ -1,3 +1,4 @@
+import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { useLayoutEffect, useMemo } from "react";
 import { AudioLines, Mic } from "lucide-react";
 
@@ -148,7 +149,7 @@ function SpokenTurn({ message }: { message: ChatMessage }) {
           </div>
         )}
         {!isUser && trace && <ThoughtTraceDisclosure trace={trace} />}
-        <div className={cn("whitespace-pre-wrap", !isUser && "mt-1.5")}>{message.content}</div>
+        {isUser ? <div className="whitespace-pre-wrap">{message.content}</div> : <ChatMarkdown text={message.content} className="prose prose-sm mt-1.5 max-w-none dark:prose-invert" />}
       </div>
     </div>
   );

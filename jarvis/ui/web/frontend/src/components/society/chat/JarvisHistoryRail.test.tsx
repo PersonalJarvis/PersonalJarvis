@@ -2,7 +2,7 @@
  * The lead card's history rail: typed chats and voice sessions as two lists,
  * opening in place — never navigating away from the card.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { JarvisHistoryRail } from "@/components/society/chat/JarvisHistoryRail";
@@ -75,7 +75,10 @@ describe("JarvisHistoryRail", () => {
       vi.fn(async (url: string, init?: RequestInit) => {
         const path = String(url);
         if (path.includes("/api/chats/voice/")) {
-          return json({ kind: "voice", id: "voice-1", title: "Evening call", messages: [] });
+          return json({ kind: "voice", id: "voice-1", title: "Evening call", messages: [
+            { role: "user", text: "Previous spoken question", ts_ms: 1 },
+            { role: "assistant", text: "Previous spoken answer", ts_ms: 2 },
+          ] });
         }
         if (path.includes("/api/chats?")) {
           return json([voiceSummary()]);
@@ -130,6 +133,25 @@ describe("JarvisHistoryRail", () => {
     fireEvent.click(await screen.findByTestId("jarvis-history-voice-row"));
     expect(useAgentChatStore.getState().activeSessionId).toBeNull();
     expect(useEventStore.getState().activeThreadId).toBe("voice-1");
+    await waitFor(() => expect(useHomeStore.getState().transcript.map((line) => line.text)).toEqual([
+      "Previous spoken question", "Previous spoken answer",
+    ]));
+    expect(setJarvisCardMode).toHaveBeenCalledWith("voice");
+  });
+
+  test("a late archive response cannot restore the previous call after hangup", async () => {
+    let finish!: (response: Response) => void;
+    render(<JarvisHistoryRail />);
+    await screen.findByTestId("jarvis-history-voice-row");
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }));
+    fireEvent.click(screen.getByTestId("jarvis-history-voice-row"));
+    await act(async () => {
+      useHomeStore.getState().ingest("VoiceSessionEnded", { hangup_reason: "hotkey" }, 5);
+      finish(json({ kind: "voice", id: "voice-1", messages: [{ role: "user", text: "Stale archive", ts_ms: 1 }] }));
+    });
+    await waitFor(() => expect((screen.getByTestId("jarvis-history-voice-row")).getAttribute("data-active")).toBeNull());
+    expect(useHomeStore.getState().transcript).toEqual([]);
+    expect(useEventStore.getState().messages).toEqual([]);
   });
 
   test("the new button clears whatever is open", async () => {

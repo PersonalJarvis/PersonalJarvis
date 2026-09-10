@@ -419,6 +419,8 @@ class SupervisorToolGateway(Protocol):
 
     def catalog(self) -> tuple[SupervisorToolDescriptor, ...]: ...
 
+    async def session_catalog(self, session_id: str) -> tuple[SupervisorToolDescriptor, ...]: ...
+
     async def execute(
         self,
         name: str,
@@ -686,4 +688,12 @@ class IntentClassifier(Protocol):
         self, utterance: str, *, ctx: ExecutionContext
     ) -> IntentClassification:
         """Klassifiziert `utterance` und liefert Intent + Konfidenz."""
+        ...
+
+
+class CodingSessionGateway(Protocol):
+    """Scoped coding CLI lifecycle and recorded context; never society spawning."""
+
+    async def run(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Discover, open, send, or read using explicit persistent IDE identities."""
         ...

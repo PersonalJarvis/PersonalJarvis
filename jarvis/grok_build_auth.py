@@ -16,6 +16,7 @@ reachable under ``pythonw.exe``.
 
 No secret value is ever logged: only the binary name and connection booleans.
 """
+
 from __future__ import annotations
 
 import base64
@@ -51,6 +52,32 @@ _ISO_HOME_MARKER = ".jarvis_src_mtime"
 # Login material mirrored into the isolated worker home. Presence-only — the
 # token VALUE is never read into business logic (same rule as Google ToS copy).
 _LOGIN_FILES: tuple[str, ...] = ("auth.json",)
+
+# Public CLI OAuth client, from xai-grok-login/src/config.rs (not a secret).
+_DEFAULT_AUTH_SCOPE = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"
+
+
+def _auth_record(auth: dict[str, Any]) -> dict[str, Any]:
+    """Select the CLI's current issuer/client entry, preserving old flat files.
+
+    Grok Build 1.x stores an AuthStore map, not a flat token object. Never
+    borrow an unrelated issuer's cached login to mark the active one ready.
+    See xai-org/grok-build, xai-grok-login/src/{model,config}.rs.
+    """
+    scope = _DEFAULT_AUTH_SCOPE
+    for prefix in ("GROK_OIDC", "GROK_OAUTH2"):
+        issuer = os.environ.get(f"{prefix}_ISSUER")
+        client = os.environ.get(f"{prefix}_CLIENT_ID")
+        if issuer and client:
+            scope = f"{issuer.rstrip('/')}::{client}"
+            break
+    if scope in auth:
+        record = auth[scope]
+        return record if isinstance(record, dict) else {}
+    if "xai::api_key" in auth:
+        record = auth["xai::api_key"]
+        return record if isinstance(record, dict) else {}
+    return auth
 
 
 def grok_build_install_command(platform: str | None = None) -> str:
@@ -111,6 +138,20 @@ def _derive_auth(auth: dict[str, Any] | None) -> tuple[bool, str]:
     """
     if not isinstance(auth, dict):
         return False, "unknown"
+    auth = _auth_record(auth)
+    if "auth_mode" in auth:
+        # The current CLI calls the bearer field `key`. An API-key entry or
+        # unknown/retired auth mode must never become a subscription merely
+        # because it also has a refresh_token or profile attached.
+        key = auth.get("key")
+        present = isinstance(key, str) and bool(key.strip())
+        if auth["auth_mode"] == "api_key":
+            return (True, "api_key") if present else (False, "unknown")
+        if auth["auth_mode"] == "oidc":
+            refresh = auth.get("refresh_token")
+            renewable = isinstance(refresh, str) and bool(refresh.strip())
+            return (True, "subscription") if present or renewable else (False, "unknown")
+        return False, "unknown"
     tokens = auth.get("tokens")
     if isinstance(tokens, dict) and any(
         isinstance(tokens.get(k), str) and tokens.get(k).strip()
@@ -152,6 +193,7 @@ def _email_from_id_token(token: str | None) -> str | None:
 def _email_from_auth(auth: dict[str, Any] | None) -> str | None:
     if not isinstance(auth, dict):
         return None
+    auth = _auth_record(auth)
     for key in ("email", "user_email"):
         value = auth.get(key)
         if isinstance(value, str) and value.strip():
@@ -277,9 +319,7 @@ def grok_build_provider_ready(status: GrokBuildAuthStatus) -> bool:
     Subscription-only on this card: the xAI API key lives on the separate
     Grok brain/subagent card. A missing binary must never paint Ready.
     """
-    return bool(
-        status.installed and status.connected and status.mode == "subscription"
-    )
+    return bool(status.installed and status.connected and status.mode == "subscription")
 
 
 class GrokBuildAuthService:
@@ -349,9 +389,7 @@ class GrokBuildAuthService:
         version = self._probe_version(binary)
         connected, mode, email = grok_build_login_in(self._home_dir())
         if connected and mode == "subscription":
-            message = (
-                f"Connected as {email}" if email else "Connected via SuperGrok / X Premium+"
-            )
+            message = f"Connected as {email}" if email else "Connected via SuperGrok / X Premium+"
         elif connected and mode == "api_key":
             message = "API key present in Grok Build auth (use the xAI Grok card for API billing)"
         else:
@@ -370,9 +408,7 @@ class GrokBuildAuthService:
         """Spawn ``grok login`` in a visible terminal. Raises if the CLI is absent."""
         binary = self._resolve_binary()
         if binary is None:
-            raise FileNotFoundError(
-                f"Grok Build CLI not found. {grok_build_install_hint()}"
-            )
+            raise FileNotFoundError(f"Grok Build CLI not found. {grok_build_install_hint()}")
         argv = [binary, "login"]
         log.info("Starting Grok Build login (interactive grok login)")
         try:

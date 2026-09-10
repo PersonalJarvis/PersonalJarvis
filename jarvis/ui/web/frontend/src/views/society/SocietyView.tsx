@@ -20,12 +20,14 @@ import { CreateAgentDialog } from "@/components/society/create/CreateAgentDialog
 import type { PlaceId } from "@/components/society/world/islandLayout";
 import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
+import { useModelMenuData } from "@/components/society/chat/useModelMenuData";
 
 const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
 );
 
 export function SocietyView() {
+  useModelMenuData();
   const t = useT();
   const roster = useSocietyRoster();
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data]);

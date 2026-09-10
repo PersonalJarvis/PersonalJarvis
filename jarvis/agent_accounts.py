@@ -853,6 +853,22 @@ def describe(account: AgentAccount) -> AccountSnapshot:
         return _describe_claude(account)
     if account.platform == "codex":
         return _describe_codex(account)
+    if account.platform == "grok-build":
+        from jarvis.grok_build_auth import grok_build_login_in
+
+        connected, mode, email = grok_build_login_in(account.config_dir)
+        subscription = connected and mode == "subscription"
+        return AccountSnapshot(
+            account=account,
+            connected=subscription,
+            mode=mode,
+            email=email,
+            message=(
+                "Connected via Grok Build subscription."
+                if subscription
+                else _not_signed_in_message(account)
+            ),
+        )
     return _describe_generic(account)
 
 
