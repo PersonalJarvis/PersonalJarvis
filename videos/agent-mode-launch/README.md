@@ -1,40 +1,47 @@
-# Agent Mode — YouTube launch film
+# Agent Mode — native 60 fps motion edition
 
-An 85-second, 1920×1080, 30 fps HyperFrames product film with an instrumental soundtrack. English, no narrator. The story follows a launch briefing through a lead agent, agent-to-agent context exchange, direct specialist instruction and a final result.
+An 85-second, 1920×1080 HyperFrames film. Revision 2 replaces the rejected slowed recording with a live, isolated product fixture, a separately choreographed vector cursor and a full editorial motion treatment. Every frame is evaluated directly at 60 fps. English, music-led, no narrator.
 
-## Files
+## Deliverables
 
-- `renders/Personal-Jarvis-Agent-Mode-1080p.mp4`: delivery master.
-- `REFERENCE-ANALYSIS.md`: source-backed design analysis, observed reference structure, motion recipes, audio measurements and translation into this brand.
-- `STORYBOARD.md`: seven editorial beats.
-- `DESIGN.md`: palette, typography and motion direction.
-- `YOUTUBE-DESCRIPTION.txt`: proposed title, description and required music attribution.
-- `build.mjs`: deterministic authoring source; generates the seven frame files and root timeline.
-- `index.html`, `style.css`, `compositions/frames/`: editable HyperFrames project.
+- `renders/Personal-Jarvis-Agent-Mode-60fps.mp4`: revised delivery master.
+- `MOTION-REBUILD.md`: dense reference-motion analysis, root cause of the old stutter and revision acceptance criteria.
+- `REFERENCE-ANALYSIS.md`: wider analysis of the two references; its first-cut implementation notes are explicitly superseded.
+- `STORYBOARD-V2.md`: eight visual phases and their motion treatments.
+- `YOUTUBE-DESCRIPTION.txt`: upload copy and music credit.
+- `VERIFICATION-V2.json`: export and motion evidence.
 
-## Product fidelity
+## Editable source
 
-The visual source is the existing capture at `personaljarvisweb/public/agents-demo/agents-feature-v4-sharp.mp4`. It uses actual product components with isolated fixture data. This film edits and reframes that capture. It does not modify the live application, execute an agent, contact external integrations, or redesign the world. The upload copy identifies the synthetic examples and edited timing. This is not a performance benchmark.
+`motion-v2.html.in`, `motion.css` and `motion.js` are the authored scene, styling and choreography. `node build.mjs` inserts the motion script into `index.html`. A single root timeline preserves the same product instance and measured camera/cursor coordinates across editorial sections. Older frame files remain historical source and are not mounted by the new film.
 
-## Rebuild
+The native app bundle is staged into `app/` from `personaljarvisweb/video/agents-hyperframes/app/`. It uses the actual WorldStage, RosterRail, AgentCardOverlay and conversation stores with synthetic data and stubbed networking. It never executes a real agent or sends real messages. The copied bundle is frozen for reproducibility and included in the local source archive; large generated bundles are omitted from Git.
 
-From this directory, with Node.js 22+ and FFmpeg installed:
+The native fixture records actual control bounds and verifies its own Send handlers before declaring readiness. The film uses those coordinates for its own 0.62-second cubic cursor moves, independently of the narrative clock. Important text bounds determine camera framing. There are no `<video>` elements in the revised composition and no frame-rate conversion of old footage.
+
+## Render
+
+With Node.js 22+ and FFmpeg, run from this directory:
 
 ```sh
 node build.mjs
 npm run check
 npx --yes hyperframes@0.8.33 preview --background
-npx --yes hyperframes@0.8.33 render --quality high --fps 30 --workers 2 --video-frame-format png --output renders/Personal-Jarvis-Agent-Mode-1080p.mp4
+npx --yes hyperframes@0.8.33 render --quality high --fps 60 --workers 2 --output renders/Personal-Jarvis-Agent-Mode-60fps.mp4
 ```
 
-The local handoff archive includes the media, Inter font and GSAP runtime. Repository history omits large rendered media. Restore `assets/agents-source.mp4` from the existing capture above; retrieve `Cipher2.mp3` from the composer's catalog if rebuilding without the handoff archive. The selected music starts at source time 12.8 seconds, lasts 85 seconds, and is normalized to approximately −17 LUFS before the composition fade. No credentials are required to render the prepared project.
+The local source archive includes `app/`, the font, GSAP, music and SFX. No credentials are needed to render the prepared project. The legacy `build-v1` reference and original recording are not required by revision 2.
 
-## Rights and sources
+## Motion treatment
 
-Music: Cipher by Kevin MacLeod, ISRC USUAN1100844, [official catalog](https://incompetech.com/agent-section/), [track](https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100844), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Include the music credit in `YOUTUBE-DESCRIPTION.txt` when publishing.
-
-Inter: included license in `assets/INTER-LICENSE.txt`. Brand mark and product capture: existing project assets. GSAP: copied from the existing project's 3.14.2 package. Camera geometry is adapted from the installed HyperFrames `ui-focus-zoom` component. No third-party reference-video pixels or audio are included in the film.
+Masked kinetic type; a directional reveal into the real composer; task-card splitting; curved connection draws with traveling signals; staggered task rows; a camera push through the finding; native world focus changes; direct specialist interaction; a three-layer evidence assembly; a circular inspection mask and drawn emphasis; a converging briefing sheet; a short layered brand close. These are editorial explanations of the example workflow, not extra product features.
 
 ## Verification
 
-The final source check samples prompts, both agent messages, the specialist reply, the result and the closing frame. Runtime, layout, contrast and lint must pass. Actual screenshots, not just automated findings, govern camera crops. The export is separately probed for duration, dimensions, frame rate, video/audio streams and decodability. See `VERIFICATION.json` for the final evidence.
+HyperFrames checks runtime, layout, contrast and structure. Native interaction tests check 36 separate pointer poses across 0.6 seconds and verify lead/specialist selection at the important timestamps. Export verification checks 60 fps, 5,100 frames, 85 seconds, complete decode, audio continuity, and actual encoded frame variation during pointer travel. Representative exported frames are visually inspected. Metadata alone is not accepted as motion proof.
+
+## Rights
+
+Music: **Cipher**, Kevin MacLeod, ISRC USUAN1100844; [official catalog and license metadata](https://incompetech.com/agent-section/), [track](https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100844), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Include the provided attribution when uploading. The track is excerpted, level-adjusted and faded.
+
+Quiet clicks and transition sweeps use the installed HyperFrames SFX library; its Pixabay license attribution is retained in `assets/SFX-CREDITS.md`. Inter's license is in `assets/INTER-LICENSE.txt`. GSAP 3.14.2, the ghost mark and the original product bundle come from existing project assets. No reference-video footage, audio or competitor branding appears in the film.

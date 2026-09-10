@@ -1,65 +1,52 @@
-/** Isolated city reference. Existing catalogs and saved island positions remain intact. */
+/** Live city surface: authored districts, physical metro journeys and real work state. */
 import {
   Suspense,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Html, OrbitControls, useGLTF } from "@react-three/drei";
-import { useCityReducedMotion } from "./cityMotion";
-import {
-  AnimationMixer,
-  Color,
-  Group,
-  Mesh,
-  PMREMGenerator,
-  Vector3,
-  type DirectionalLight,
-  type HemisphereLight,
-} from "three";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import type { OrbitControls as OrbitControlsType } from "three-stdlib";
+import { Canvas } from "@react-three/fiber";
 import { useCanvasAwake } from "@/hooks/useCanvasAwake";
 import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useWebglSupported } from "@/lib/graphDimension";
 import { useLocaleChunk, useT } from "@/i18n";
+import { useEventStore } from "@/store/events";
 import { useSocietyRoster } from "../data";
-import { FigureRig, type FigureDrive } from "../figures/FigureRig";
-import type { FigureRecipe } from "../figures/figureRecipe";
 import type { PlaceId } from "../world/islandLayout";
 import {
+  CAMERA_BOUNDS,
   CITY,
   DISTRICTS,
-  MATERIALS,
-  PLOTS,
   checkpointStop,
-  stopX,
-  validPlacement,
+  district,
+  restoreLayout,
+  transformPoint,
   type Stop,
-  type Vec3,
 } from "./cityModel";
 import {
   addCitizen,
-  advanceHour,
-  createSimulation,
-  daylight,
-  previewCrossing,
-  safeDestination,
+  cancelJourney,
+  moveBuilding,
   setTarget,
-  stepSimulation,
+  setTaskActive,
   trainAt,
-  type CitySimulation,
-  type Citizen,
+  type JourneyStage,
 } from "./citySimulation";
-import stationUrl from "../../../../../../../../art/studies/city-realism-study/exports/station.glb";
-import buildingUrl from "../../../../../../../../art/studies/city-realism-study/exports/building.glb";
-import trainUrl from "../../../../../../../../art/studies/city-realism-study/exports/train.glb";
-import treeUrl from "../../../../../../../../art/studies/city-realism-study/exports/tree.glb";
-import citizenUrl from "../../../../../../../../art/studies/city-realism-study/exports/citizen.glb";
+import { tickCityClock } from "./cityClock";
+import { citySessions } from "./citySession";
+import { useCityReducedMotion } from "./cityMotion";
+import { CityEnvironment } from "./CityEnvironment";
+import {
+  CityRuntime,
+  MovingActor,
+  OVERVIEW,
+  type CameraFocus,
+  type CityActor,
+  type CityMetrics,
+} from "./CityRuntime";
 
 interface Props {
   topRight?: ReactNode;
@@ -67,516 +54,84 @@ interface Props {
   onSelectAgent?: (id: string | null) => void;
   onSelectPlace?: (place: PlaceId) => void;
 }
-interface Actor {
-  id: string;
-  label: string;
-  recipe?: FigureRecipe | null;
-  checkpoint: string;
-  state: string;
+const LAYOUT_KEY = "jarvis.city.layout.v2";
+function initialLayout() {
+  try {
+    return restoreLayout(
+      JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "null"),
+    );
+  } catch {
+    return restoreLayout(null); /* Private storage uses default city plots. */
+  }
 }
-interface Metrics {
-  fps: number;
-  calls: number;
-  triangles: number;
-  geometries: number;
-  textures: number;
-}
-const INITIAL_METRICS: Metrics = {
+const DEMO_CHECKPOINT: Record<Stop, string> = {
+  west: "meeting",
+  east: "hub:cli",
+  knowledge: "archive",
+  workshop: "hub:skills",
+  communications: "hub:comms",
+};
+const EMPTY_METRICS: CityMetrics = {
   fps: 0,
   calls: 0,
   triangles: 0,
   geometries: 0,
   textures: 0,
 };
-
-function Asset({
-  url,
-  ...props
-}: {
-  url: string;
-  position?: Vec3;
-  rotation?: Vec3;
-  scale?: number;
-  onClick?: () => void;
-}) {
-  const { scene } = useGLTF(url);
-  // Reference structures have no animated subnodes. Merge by material to keep
-  // the artist's authored detail without one draw call for every facade strip.
-  const clone = useMemo(() => {
-    scene.updateMatrixWorld(true);
-    const groups = new Map<Mesh["material"], Mesh[]>();
-    scene.traverse((o) => {
-      if (o instanceof Mesh) {
-        const list = groups.get(o.material) ?? [];
-        list.push(o);
-        groups.set(o.material, list);
-      }
-    });
-    const result = new Group();
-    for (const [material, meshes] of groups) {
-      const pieces = meshes.map((mesh) =>
-        mesh.geometry.clone().applyMatrix4(mesh.matrixWorld),
-      );
-      const geometry = mergeGeometries(pieces);
-      pieces.forEach((piece) => piece.dispose());
-      if (!geometry)
-        throw new Error("Reference asset has incompatible geometry attributes");
-      const mesh = new Mesh(geometry, material);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      result.add(mesh);
-    }
-    return result;
-  }, [scene]);
-  useEffect(
-    () => () => {
-      clone.traverse((o) => {
-        if (o instanceof Mesh) o.geometry.dispose();
-      });
-    },
-    [clone],
-  );
-  return <primitive object={clone} {...props} dispose={null} />;
-}
-function Solid({
-  at,
-  size,
-  color = MATERIALS.concrete,
-}: {
-  at: Vec3;
-  size: Vec3;
-  color?: string;
-}) {
-  return (
-    <mesh position={at} receiveShadow castShadow>
-      <boxGeometry args={size} />
-      <meshStandardMaterial color={color} roughness={0.8} />
-    </mesh>
+export function CityStage(props: Props) {
+  const ready = useLocaleChunk("society");
+  return ready ? (
+    <ReadyCity {...props} />
+  ) : (
+    <div className="h-full animate-pulse bg-secondary" aria-busy="true" />
   );
 }
-function Connection({
-  a,
-  b,
-  width,
-  color,
-}: {
-  a: Vec3;
-  b: Vec3;
-  width: number;
-  color: string;
-}) {
-  const direction = new Vector3(...b).sub(new Vector3(...a));
-  const center = new Vector3(...a).add(new Vector3(...b)).multiplyScalar(0.5);
-  const group = useRef<Group>(null);
-  useEffect(() => {
-    group.current?.quaternion.setFromUnitVectors(
-      new Vector3(0, 1, 0),
-      direction.clone().normalize(),
-    );
-  }, [a[0], a[1], a[2], b[0], b[1], b[2]]);
-  return (
-    <group ref={group} position={center}>
-      <Solid
-        at={[0, 0, 0]}
-        size={[width, direction.length(), width]}
-        color={color}
-      />
-    </group>
-  );
-}
-function District({
-  placements,
-  onPlace,
-}: {
-  placements: Record<Stop, Vec3>;
-  onPlace: (stop: Stop) => void;
-}) {
-  const t = useT();
-  return (
-    <>
-      <Solid
-        at={[0, -1.3, 0]}
-        size={[CITY.width, 2, CITY.depth]}
-        color="#6d7468"
-      />
-      <Solid at={[0, -0.06, 40]} size={[590, 0.1, 12]} color="#535c60" />
-      <Solid
-        at={[0, -0.03, 43]}
-        size={[590, 0.08, 0.15]}
-        color={MATERIALS.light}
-      />
-      <Solid
-        at={[0, 10.9, 0]}
-        size={[276, 1, 5.5]}
-        color={MATERIALS.graphite}
-      />
-      {[-1.7, 1.7].map((z) => (
-        <Solid
-          key={z}
-          at={[0, 11.65, z]}
-          size={[276, 0.15, 0.12]}
-          color={MATERIALS.metal}
-        />
-      ))}
-      {[-120, -80, -40, 0, 40, 80, 120].map((x) => (
-        <Connection
-          key={x}
-          a={[x - 3, 0, 0]}
-          b={[x + 3, 10.4, 0]}
-          width={1}
-          color={MATERIALS.graphite}
-        />
-      ))}
-      <Solid at={[0, 19.6, 20]} size={[6, 0.8, 120]} />
-      {[-3, 3].map((x) => (
-        <Solid
-          key={x}
-          at={[x, 20.7, 20]}
-          size={[0.16, 1.4, 120]}
-          color={MATERIALS.metal}
-        />
-      ))}
-      <Solid at={[0, 10, 80]} size={[4, 20, 4]} color={MATERIALS.glass} />
-      {(["west", "east"] as Stop[]).map((s) => (
-        <group key={s}>
-          <Solid at={[stopX(s), -0.15, 69]} size={[76, 0.3, 116]} />
-          <Asset url={stationUrl} position={[stopX(s), 12, 0]} />
-          <Solid at={[stopX(s), 11.75, 15]} size={[6, 0.5, 6]} />
-          <mesh position={[stopX(s), 6, 16]}>
-            <boxGeometry args={[4, 12, 4]} />
-            <meshStandardMaterial
-              color={MATERIALS.glass}
-              transparent
-              opacity={0.18}
-              roughness={0.2}
-              depthWrite={false}
-            />
-          </mesh>
-          {[-2, 2].map((offset) => (
-            <Solid
-              key={offset}
-              at={[stopX(s) + offset, 6, 16]}
-              size={[0.15, 12, 4]}
-              color={MATERIALS.metal}
-            />
-          ))}
-          <Asset
-            url={buildingUrl}
-            position={placements[s]}
-            rotation={[0, Math.PI, 0]}
-            onClick={() => onPlace(s)}
-          />
-          <Html
-            zIndexRange={[1, 0]}
-            position={[stopX(s), 23, 7]}
-            center
-            distanceFactor={180}
-            style={{ pointerEvents: "none" }}
-          >
-            <span className="whitespace-nowrap rounded border border-border bg-popover px-3 py-1 text-xs text-popover-foreground">
-              {t(`society.city.${s}`)}
-            </span>
-          </Html>
-          {[-1, 1].flatMap((side) =>
-            [24, 48, 72, 112].map((z) => (
-              <Asset
-                key={`${side}:${z}`}
-                url={treeUrl}
-                position={[stopX(s) + side * 32, 0, z]}
-              />
-            )),
-          )}
-        </group>
-      ))}
-      {DISTRICTS.slice(2).map((d) => (
-        <group key={d.id} position={[d.x, 0, d.z]}>
-          {[0, 1, 2].map((i) => (
-            <Solid
-              key={i}
-              at={[i * 55 - 55, 25 + i * 12, 0]}
-              size={[32, 50 + i * 24, 34]}
-              color={MATERIALS.graphite}
-            />
-          ))}
-          <Html
-            zIndexRange={[1, 0]}
-            position={[0, 110, 0]}
-            center
-            style={{ pointerEvents: "none" }}
-          >
-            <span className="whitespace-nowrap rounded bg-popover px-2 py-1 text-xs text-popover-foreground">
-              {t(`society.city.${d.id}`)} · {t("society.city.blockout")}
-            </span>
-          </Html>
-        </group>
-      ))}
-    </>
-  );
-}
-
-function ReferenceCitizen({
-  citizen,
-  paused,
-  detailed,
-}: {
-  citizen: Citizen;
-  paused: boolean;
-  detailed: { current: boolean };
-}) {
-  const { scene, animations } = useGLTF(citizenUrl);
-  const clone = useMemo(() => scene.clone(true), [scene]);
-  const mixer = useMemo(() => new AnimationMixer(clone), [clone]);
-  const wasMoving = useRef(false);
-  useEffect(() => {
-    for (const clip of animations) mixer.clipAction(clip).play();
-    return () => {
-      mixer.stopAllAction();
-      mixer.uncacheRoot(clone);
-    };
-  }, [animations, clone, mixer]);
-  useFrame((_, dt) => {
-    const moving = !paused && detailed.current && citizen.speed > 0;
-    if (moving) mixer.update((dt * citizen.speed) / 1.28);
-    else if (wasMoving.current) mixer.setTime(0);
-    wasMoving.current = moving;
-  });
-  return <primitive object={clone} dispose={null} />;
-}
-function MovingActor({
-  actor,
-  sim,
-  paused,
-  selected,
-  onClick,
-}: {
-  actor: Actor;
-  sim: CitySimulation;
-  paused: boolean;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const root = useRef<Group>(null);
-  const body = useRef<Group>(null);
-  const distant = useRef<Mesh>(null);
-  const detailed = useRef(true);
-  const drive = useRef<FigureDrive>({ mode: "idle", speed: 0 });
-  const citizen = sim.citizens.get(actor.id)!;
-  useFrame(({ camera }) => {
-    if (!root.current) return;
-    root.current.position.set(...citizen.position);
-    root.current.rotation.y = citizen.heading;
-    detailed.current = selected || camera.position.distanceTo(root.current.position) < 80;
-    if (body.current) body.current.visible = detailed.current;
-    if (distant.current) distant.current.visible = !detailed.current;
-    drive.current.mode = citizen.speed > 0 ? "walk" : "idle";
-    drive.current.speed = citizen.speed;
-  });
-  return (
-    <group
-      ref={root}
-      position={citizen.position}
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick();
-      }}
-    >
-      <group ref={body}>
-        {actor.recipe ? (
-          <FigureRig recipe={actor.recipe} drive={drive} paused={paused} />
-        ) : (
-          <ReferenceCitizen citizen={citizen} paused={paused} detailed={detailed} />
-        )}
-      </group>
-      <mesh ref={distant} position={[0, 0.85, 0]} visible={false}>
-        <capsuleGeometry args={[0.24, 1.2, 3, 6]} />
-        <meshStandardMaterial color="#438c9e" roughness={0.8} />
-      </mesh>
-      {selected && (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
-          <ringGeometry args={[0.7, 0.85, 24]} />
-          <meshBasicMaterial color="#e7c56b" />
-        </mesh>
-      )}
-      {selected && (
-        <Html zIndexRange={[1, 0]} position={[0, 2.5, 0]} center>
-          <span className="whitespace-nowrap rounded bg-popover px-2 py-1 text-xs text-popover-foreground">
-            {actor.label}
-          </span>
-        </Html>
-      )}
-    </group>
-  );
-}
-
-function Runtime({
-  sim,
-  hour,
-  paused,
-  awake,
-  follow,
-  overview,
-  onMetrics,
-}: {
-  sim: CitySimulation;
-  hour: number;
-  paused: boolean;
-  awake: boolean;
-  follow: string | null;
-  overview: number;
-  onMetrics: (m: Metrics) => void;
-}) {
-  const train = useRef<Group>(null);
-  const sun = useRef<DirectionalLight>(null);
-  const sky = useRef<HemisphereLight>(null);
-  const controls = useRef<OrbitControlsType>(null);
-  const { scene, camera, gl, invalidate } = useThree();
-  const lastTime = useRef(performance.now());
-  const sample = useRef({ seconds: 0, frames: 0 });
-  const colors = useMemo(
-    () => ({ night: new Color("#263449"), day: new Color("#afc9da") }),
-    [],
-  );
-  useEffect(() => {
-    // A local reflection environment keeps metal/glass legible without a network HDRI.
-    const room = new RoomEnvironment();
-    const generator = new PMREMGenerator(gl);
-    const target = generator.fromScene(room, 0.04);
-    const previous = scene.environment;
-    scene.environment = target.texture;
-    room.dispose(); generator.dispose(); invalidate();
-    return () => { scene.environment = previous; target.dispose(); };
-  }, [gl, scene, invalidate]);
-  useEffect(() => {
-    lastTime.current = performance.now();
-    invalidate();
-  }, [paused, awake, invalidate]);
-  useEffect(() => {
-    camera.position.set(200, 140, 240);
-    controls.current?.target.set(0, 0, 45);
-    controls.current?.update();
-    invalidate();
-  }, [overview, camera, invalidate]);
-  useEffect(() => {
-    const citizen = follow ? sim.citizens.get(follow) : null;
-    if (citizen && controls.current) {
-      const [x, y, z] = citizen.position;
-      controls.current.target.set(x, y + 1, z);
-      camera.position.set(x + 14, y + 10, z - 18);
-      controls.current.update();
-      invalidate();
-    }
-  }, [follow, camera, sim, invalidate]);
-  useFrame((_, dt) => {
-    const now = performance.now();
-    if (!paused)
-      stepSimulation(sim, Math.max(0, (now - lastTime.current) / 1000));
-    lastTime.current = now;
-    const currentTrain = trainAt(sim.time);
-    train.current?.position.set(...currentTrain.position);
-    const strength = daylight(hour);
-    scene.background = colors.night.clone().lerp(colors.day, strength);
-    scene.environmentIntensity = 0.2 + strength * 0.6;
-    if (sun.current) {
-      sun.current.intensity = 0.25 + strength * 2.5;
-      sun.current.position.set(
-        Math.cos((hour / 24) * Math.PI * 2) * 180,
-        60 + strength * 220,
-        120,
-      );
-    }
-    if (sky.current) sky.current.intensity = 0.65 + strength * 1.2;
-    if (follow && controls.current) {
-      const citizen = sim.citizens.get(follow);
-      if (citizen) {
-        const target = new Vector3(...citizen.position);
-        camera.position.add(target.clone().sub(controls.current.target));
-        controls.current.target.copy(target);
-        controls.current.update();
-      }
-    }
-    sample.current.seconds += dt;
-    sample.current.frames++;
-    if (sample.current.seconds >= 1) {
-      onMetrics({
-        fps: Math.round(sample.current.frames / sample.current.seconds),
-        calls: gl.info.render.calls,
-        triangles: gl.info.render.triangles,
-        geometries: gl.info.memory.geometries,
-        textures: gl.info.memory.textures,
-      });
-      sample.current = { seconds: 0, frames: 0 };
-    }
-  }, -1);
-  return (
-    <>
-      <hemisphereLight ref={sky} args={["#c6d8e9", "#69695a", 1.4]} />
-      <directionalLight
-        ref={sun}
-        castShadow
-        position={[100, 180, 120]}
-        intensity={2}
-        shadow-mapSize={[1024, 1024]}
-        shadow-camera-left={-220}
-        shadow-camera-right={220}
-        shadow-camera-top={200}
-        shadow-camera-bottom={-200}
-        shadow-camera-far={700}
-        shadow-bias={-0.0005}
-      />
-      <OrbitControls
-        ref={controls}
-        makeDefault
-        target={[0, 0, 45]}
-        minDistance={5}
-        maxDistance={1800}
-        maxPolarAngle={Math.PI / 2 - 0.02}
-        enableDamping={!paused}
-      />
-      <group ref={train}>
-        <Asset url={trainUrl} />
-      </group>
-    </>
-  );
-}
-
-export function CityStage({
+function ReadyCity({
   topRight,
   onOpenLedger,
   onSelectAgent,
   onSelectPlace,
 }: Props) {
   const t = useT();
-  const ready = useLocaleChunk("society");
+  const setActiveSection = useEventStore((s) => s.setActiveSection);
   const host = useRef<HTMLDivElement>(null);
   const { generation } = useWebglSurface(host);
-  const awake = useCanvasAwake(host);
-  const webgl = useWebglSupported();
-  const reduced = useCityReducedMotion();
+  const awake = useCanvasAwake(host),
+    webgl = useWebglSupported(),
+    reduced = useCityReducedMotion();
   const roster = useSocietyRoster();
-  const sim = useMemo(createSimulation, []);
   const [demo, setDemo] = useState(false);
-  const [count, setCount] = useState(1);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [follow, setFollow] = useState<string | null>(null);
-  const [overview, setOverview] = useState(0);
-  const [hour, setHour] = useState(10);
-  const [dayPaused, setDayPaused] = useState(false);
-  const [metrics, setMetrics] = useState(INITIAL_METRICS);
-  const [tick, setTick] = useState(0);
-  const [activePlot, setActivePlot] = useState<Stop | null>(null);
-  const [placementError, setPlacementError] = useState(false);
-  const [placements, setPlacements] = useState<Record<Stop, Vec3>>({
-    west: [-120, 0, 104],
-    east: [120, 0, 104],
-  });
-  const actors = useMemo<Actor[]>(
+  const sample = !demo && roster.data?.sample === true;
+  const loading = !demo && !roster.data;
+  const { sim, clock } = useMemo(() => citySessions.get(demo ? "demo" : sample ? "sample" : "live", () => initialLayout().placements, performance.now()), [demo, sample]);
+  const metrics = useRef<CityMetrics>({ ...EMPTY_METRICS }),
+    requestFrame = useRef<() => void>(() => undefined);
+  const signatures = useRef(new Map<string, string>());
+  const [count, setCount] = useState(8),
+    [demoStop, setDemoStop] = useState<Stop>("east");
+  const [selected, setSelected] = useState<string | null>(null),
+    [follow, setFollow] = useState<string | null>(null);
+  const [selectedStop, setSelectedStop] = useState<Stop | null>(null),
+    [focus, setFocus] = useState<CameraFocus>(OVERVIEW);
+  const [interiorStop, setInteriorStop] = useState<Stop | null>(null);
+  const [details, setDetails] = useState(false),
+    [message, setMessage] = useState<string | null>(null);
+  const [version, setVersion] = useState(0),
+    [snapshot, setSnapshot] = useState({
+      hour: 10,
+      time: 0,
+      workKey: "",
+      debt: 0,
+    });
+  const demoLabel = t("society.city.reference_agent");
+  const actors = useMemo<CityActor[]>(
     () =>
       demo
         ? Array.from({ length: count }, (_, i) => ({
-            id: `reference-${i}`,
-            label: `${t("society.city.reference_agent")} ${i + 1}`,
-            checkpoint: "idle",
-            state: "demo",
+            id: `city-demo-${i}`,
+            label: `${demoLabel} ${i + 1}`,
+            checkpoint: DEMO_CHECKPOINT[demoStop],
+            state: "working",
           }))
         : (roster.data?.agents ?? []).map((a) => ({
             id: a.agentId,
@@ -585,14 +140,10 @@ export function CityStage({
             checkpoint: a.checkpoint,
             state: a.state,
           })),
-    [demo, count, roster.data, t],
+    [demo, count, demoStop, roster.data, demoLabel],
   );
-  // Reconcile outside the render loop; a changed checkpoint replaces intent, not position.
-  const signatures = useRef(new Map<string, string>());
-  for (const actor of actors)
-    if (!sim.citizens.has(actor.id))
-      addCitizen(sim, actor.id, checkpointStop(actor.checkpoint) ?? "west");
   useEffect(() => {
+    if (!demo && !roster.data) return; // A pending fetch is not an empty roster.
     const ids = new Set(actors.map((a) => a.id));
     for (const id of sim.citizens.keys())
       if (!ids.has(id)) {
@@ -600,122 +151,131 @@ export function CityStage({
         signatures.current.delete(id);
       }
     for (const actor of actors) {
+      const created = !sim.citizens.has(actor.id);
+      const citizen = addCitizen(sim, actor.id, "west");
       const signature = `${actor.checkpoint}:${actor.state}`;
-      if (signatures.current.get(actor.id) === signature) continue;
+      if (!created && signatures.current.get(actor.id) === signature) continue;
       signatures.current.set(actor.id, signature);
-      const citizen = sim.citizens.get(actor.id)!;
       const target = checkpointStop(actor.checkpoint);
-      if (target) setTarget(sim, actor.id, target, citizen.revision + 1);
-      else if (!demo && citizen.stage !== "arrived") {
-        const safeStop = safeDestination(sim, citizen);
-        setTarget(sim, actor.id, safeStop, citizen.revision + 1);
+      if (actor.state === "paused" || !target) {
+        setTaskActive(sim, actor.id, false);
+        if (citizen.stage !== "arrived")
+          cancelJourney(sim, actor.id, citizen.revision + 1);
+      } else {
+        setTarget(sim, actor.id, target, citizen.revision + 1);
+        setTaskActive(sim, actor.id, actor.state === "working");
       }
     }
-  }, [actors, sim, demo]);
+    setVersion((v) => v + 1);
+    requestFrame.current();
+  }, [actors, sim, demo, roster.data]);
   useEffect(() => {
-    let last = performance.now();
     const timer = window.setInterval(() => {
-      const now = performance.now(),
-        dt = (now - last) / 1000;
-      last = now;
-      if (!awake && !reduced) stepSimulation(sim, dt);
-      setHour((h) => advanceHour(h, dt, dayPaused || reduced));
-      setTick((n) => n + 1);
+      tickCityClock(clock, sim, performance.now(), reduced);
+      setSnapshot({
+        hour: clock.hour,
+        time: sim.time,
+        workKey: [...sim.citizens.values()]
+          .filter((c) => c.atWork && c.taskActive)
+          .map((c) => c.target)
+          .sort()
+          .join(","),
+        debt: sim.debt,
+      });
     }, 250);
     return () => window.clearInterval(timer);
-  }, [sim, awake, reduced, dayPaused]);
-  function travel(stop: Stop) {
-    for (const c of sim.citizens.values())
-      setTarget(sim, c.id, stop, c.revision + 1);
-    setTick((n) => n + 1);
+  }, [clock, sim, reduced]);
+  const activeStops = useMemo(
+    () => new Set(snapshot.workKey.split(",").filter(Boolean) as Stop[]),
+    [snapshot.workKey],
+  );
+  const selectActor = useCallback((id: string) => {
+    setSelected(id);
+    requestFrame.current();
+  }, []);
+  const selectStop = useCallback(
+    (stop: Stop) => {
+      const d = district(stop);
+      setSelectedStop(stop);
+      setFollow(null);
+      setMessage(null);
+      setInteriorStop(stop);
+      const position = transformPoint(
+        sim.placements[stop],
+        d.buildingRotation,
+        [0, 0, -8],
+      );
+      setFocus((f) => ({
+        position,
+        distance: 88,
+        yaw: d.buildingRotation + Math.PI + 0.3,
+        key: f.key + 1,
+      }));
+    },
+    [sim],
+  );
+  function overview() {
+    setFollow(null);
+    setSelectedStop(null);
+    setInteriorStop(null);
+    setFocus((f) => ({ ...OVERVIEW, key: f.key + 1 }));
   }
-  function movePlot(delta: number) {
-    if (!activePlot) return;
-    const current = placements[activePlot];
-    const x = current[0] + delta;
-    const valid = validPlacement(
-      PLOTS.find((p) => p.id === activePlot)!,
-      x,
-      current[2],
-      48,
-      42,
-      [],
-    );
-    setPlacementError(!valid);
-    if (valid)
-      setPlacements({ ...placements, [activePlot]: [x, 0, current[2]] });
+  function movePlot(dx: number, dz: number) {
+    if (!selectedStop) return;
+    const p = sim.placements[selectedStop];
+    if (!moveBuilding(sim, selectedStop, [p[0] + dx, p[1], p[2] + dz])) {
+      setMessage("invalid_plot");
+      return;
+    }
+    if (demo || sample) { setMessage("demo_plot"); setVersion((v) => v + 1); requestFrame.current(); return; }
+    try {
+      localStorage.setItem(
+        LAYOUT_KEY,
+        JSON.stringify({ version: 2, placements: sim.placements }),
+      );
+      setMessage("saved_plot");
+    } catch {
+      setMessage("session_plot");
+    }
+    setVersion((v) => v + 1);
+    requestFrame.current();
   }
-  const selectedActor = actors.find((a) => a.id === selected);
-  const citizen = selected ? sim.citizens.get(selected) : null;
+  const citizen = selected ? sim.citizens.get(selected) : undefined;
+  const actor = actors.find((a) => a.id === selected),
+    train = trainAt(snapshot.time);
   const button =
-    "rounded border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-muted disabled:opacity-40";
-  if (!ready) return null;
+    "rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring";
+  const activeDistrict = selectedStop ? district(selectedStop) : null;
+  const stageText = (stage: JourneyStage, workspaceQueue = false) =>
+    t(
+      workspaceQueue
+        ? "society.city.waiting_workspace"
+        : `society.city.stage_${stage}`,
+    );
   return (
     <div
       className="relative flex h-full min-h-0 flex-col bg-background text-foreground"
       data-testid="city-reference"
+      data-version={version}
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-popover p-2">
         <strong className="mr-auto text-sm">{t("society.city.title")}</strong>
         {topRight}
-        <label className="flex items-center gap-1 text-xs">
-          <input
-            type="checkbox"
-            checked={demo}
-            onChange={(e) => {
-              setDemo(e.target.checked);
-              setSelected(null);
-              setFollow(null);
-            }}
-          />
-          {t("society.city.demo")}
-        </label>
-        {demo && (
-          <>
-            <select
-              className={button}
-              aria-label={t("society.city.agent_count")}
-              value={count}
-              onChange={(e) => setCount(Number(e.target.value))}
-            >
-              {[1, 8, 30].map((n) => (
-                <option key={n}>{n}</option>
-              ))}
-            </select>
-            <button className={button} onClick={() => travel("west")}>
-              {t("society.city.west")}
-            </button>
-            <button className={button} onClick={() => travel("east")}>
-              {t("society.city.east")}
-            </button>
-            <button
-              className={button}
-              disabled={
-                !actors.some((a) =>
-                  ["arrived", "waiting", "unreachable"].includes(
-                    sim.citizens.get(a.id)?.stage ?? "",
-                  ),
-                )
-              }
-              onClick={() => {
-                for (const actor of actors) previewCrossing(sim, actor.id);
-              }}
-            >
-              {t("society.city.bridge_walk")}
-            </button>
-          </>
-        )}
+        <button className={button} onClick={overview}>
+          {t("society.city.overview")}
+        </button>
         <button
           className={button}
           onClick={() => {
-            setFollow(null);
-            setOverview((n) => n + 1);
+            clock.dayPaused = !clock.dayPaused;
+            setSnapshot((s) => ({ ...s }));
           }}
         >
-          {t("society.city.overview")}
-        </button>
-        <button className={button} onClick={() => setDayPaused(!dayPaused)}>
-          {t(dayPaused ? "society.city.resume_day" : "society.city.pause_day")}
+          {t(
+            clock.dayPaused
+              ? "society.city.resume_day"
+              : "society.city.pause_day",
+          )}
         </button>
         <label className="flex items-center gap-1 text-xs">
           {t("society.city.hour")}
@@ -726,57 +286,113 @@ export function CityStage({
             min="0"
             max="23.9"
             step="0.1"
-            value={hour}
+            value={snapshot.hour}
             onChange={(e) => {
-              setHour(Number(e.target.value));
-              setDayPaused(true);
+              clock.hour = Number(e.target.value);
+              clock.dayPaused = true;
+              setSnapshot((s) => ({ ...s, hour: clock.hour }));
+              requestFrame.current();
             }}
           />
-          {String(Math.floor(hour)).padStart(2, "0")}:00
+          {String(Math.floor(snapshot.hour)).padStart(2, "0")}:00
         </label>
+        <button
+          className={button}
+          aria-expanded={details}
+          onClick={() => setDetails(!details)}
+        >
+          {t("society.city.options")}
+        </button>
       </div>
+      {details && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/40 p-2 text-xs">
+          <label className="flex items-center gap-1">
+            <input
+              type="checkbox"
+              checked={demo}
+              onChange={(e) => {
+                setDemo(e.target.checked);
+                setSelected(null);
+                setFollow(null);
+              }}
+            />
+            {t("society.city.demo")}
+          </label>
+          {demo && (
+            <>
+              <select
+                className={button}
+                aria-label={t("society.city.agent_count")}
+                value={count}
+                onChange={(e) => setCount(Number(e.target.value))}
+              >
+                {[1, 8, 30].map((n) => (
+                  <option key={n}>{n}</option>
+                ))}
+              </select>
+              <select
+                className={button}
+                aria-label={t("society.city.demo_target")}
+                value={demoStop}
+                onChange={(e) => setDemoStop(e.target.value as Stop)}
+              >
+                {DISTRICTS.map((d) => (
+                  <option key={d.stop} value={d.stop}>
+                    {t(d.labelKey)}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+          <span data-testid="city-metrics">
+            {metrics.current.fps} FPS · {metrics.current.calls} draws ·{" "}
+            {metrics.current.triangles.toLocaleString()} triangles
+          </span>
+        </div>
+      )}
       <div ref={host} className="relative isolate min-h-0 flex-1">
         {webgl ? (
           <Canvas
             key={generation}
             camera={{
-              position: [200, 140, 240],
+              position: [700, 550, 850],
               fov: 45,
               near: 0.2,
-              far: 4000,
+              far: 9000,
             }}
             dpr={1}
-            shadows
             gl={{ antialias: true, alpha: false }}
             frameloop={!awake ? "never" : reduced ? "demand" : "always"}
           >
             <Suspense fallback={null}>
-              <Runtime
+              <CityRuntime
                 sim={sim}
-                hour={hour}
+                clock={clock}
                 paused={reduced}
-                awake={awake}
+                focus={focus}
                 follow={follow}
-                overview={overview}
-                onMetrics={setMetrics}
+                metrics={metrics}
+                requestFrame={requestFrame}
               />
-              <District
-                placements={placements}
-                onPlace={(s) => {
-                  setActivePlot(s);
-                  setPlacementError(false);
-                }}
+              <CityEnvironment
+                graph={sim.graph}
+                placements={sim.placements}
+                activeStops={activeStops}
+                onSelect={selectStop}
+                interiorStop={interiorStop ?? (follow && sim.citizens.get(follow)?.atWork ? sim.citizens.get(follow)!.target : null)}
               />
-              {actors.map((actor) => (
-                <MovingActor
-                  key={actor.id}
-                  actor={actor}
-                  sim={sim}
-                  paused={reduced}
-                  selected={selected === actor.id}
-                  onClick={() => setSelected(actor.id)}
-                />
-              ))}
+              {actors
+                .filter((a) => sim.citizens.has(a.id))
+                .map((a) => (
+                  <MovingActor
+                    key={a.id}
+                    actor={a}
+                    sim={sim}
+                    paused={reduced || !awake}
+                    selected={selected === a.id}
+                    onSelect={selectActor}
+                  />
+                ))}
             </Suspense>
           </Canvas>
         ) : (
@@ -787,64 +403,139 @@ export function CityStage({
             </button>
           </div>
         )}
-        <div className="absolute z-20 bottom-3 left-3 max-w-sm rounded border border-border bg-popover/95 p-3 text-xs shadow-lg">
-          <p className="font-medium">{t("society.city.reference_notice")}</p>
-          <p className="mt-1 text-muted-foreground">
-            {t("society.city.controls")}
+        <div
+          className="absolute left-3 top-3 z-20 flex max-w-[55%] flex-wrap gap-1 rounded-lg border border-border bg-popover/95 p-1.5 shadow-sm"
+          aria-label={t("society.city.districts")}
+        >
+          {DISTRICTS.map((d) => (
+            <button
+              key={d.stop}
+              className="rounded px-2 py-1 text-xs hover:bg-muted"
+              onClick={() => selectStop(d.stop)}
+            >
+              {t(d.labelKey)}
+            </button>
+          ))}
+        </div>
+        <div className="absolute right-3 top-3 z-20 max-h-[40%] w-48 overflow-auto rounded-lg border border-border bg-popover/95 p-2 text-xs shadow-sm">
+          <p className="mb-2 font-medium">
+            {t(
+              demo
+                ? "society.city.demo"
+                : loading
+                  ? "society.city.loading"
+                  : sample
+                  ? "society.city.sample"
+                  : "society.city.live",
+            )}
           </p>
-          <p className="mt-2 font-mono" data-testid="city-metrics">
-            {metrics.fps} FPS · {metrics.calls} draws ·{" "}
-            {metrics.triangles.toLocaleString()} triangles
-          </p>
-          <p className="text-muted-foreground">
-            600 × 400 m · {actors.length} {t("society.city.agents")} ·{" "}
-            {Math.floor(sim.time)} s
-          </p>
-          {reduced && <p>{t("society.city.reduced")}</p>}
+          {sample && (
+            <p className="mb-2 text-muted-foreground">
+              {t("society.city.sample_notice")}
+            </p>
+          )}
           {roster.isError && !demo && (
             <p role="alert">{t("society.city.feed_error")}</p>
           )}
-        </div>
-        <div className="absolute z-20 right-3 top-3 max-h-[55%] w-52 overflow-auto rounded border border-border bg-popover/95 p-2 text-xs">
-          <p className="mb-2 font-medium">
-            {t(demo ? "society.city.demo" : "society.city.live")}
-          </p>
           {actors.map((a) => (
             <button
               key={a.id}
-              className="mb-1 block w-full rounded px-2 py-1 text-left hover:bg-muted"
-              onClick={() => setSelected(a.id)}
+              className="mb-1 block w-full rounded p-1.5 text-left hover:bg-muted"
+              onClick={() => selectActor(a.id)}
             >
               {a.label}
               <span className="block text-muted-foreground">
-                {t(
-                  `society.city.stage_${sim.citizens.get(a.id)?.stage ?? "arrived"}`,
+                {stageText(
+                  sim.citizens.get(a.id)?.stage ?? "arrived",
+                  sim.citizens.get(a.id)?.waitingForWorkspace,
                 )}
               </span>
             </button>
           ))}
         </div>
-        {selectedActor && citizen && (
+        <div className="absolute bottom-3 left-3 z-20 rounded-lg border border-border bg-popover/95 p-3 text-xs shadow-sm">
+          <svg
+            viewBox="-950 -650 1900 1300"
+            width="190"
+            height="120"
+            role="img"
+            aria-label={t("society.city.city_map")}
+          >
+            <rect
+              x={CAMERA_BOUNDS.minX}
+              y={CAMERA_BOUNDS.minZ}
+              width={CAMERA_BOUNDS.maxX - CAMERA_BOUNDS.minX}
+              height={CAMERA_BOUNDS.maxZ - CAMERA_BOUNDS.minZ}
+              rx="40"
+              fill="none"
+              stroke="currentColor"
+              opacity="0.2"
+              strokeWidth="8"
+            />
+            <ellipse
+              cx="0"
+              cy="-110"
+              rx="500"
+              ry="280"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="10"
+              opacity="0.4"
+            />
+            {DISTRICTS.map((d) => (
+              <circle
+                key={d.stop}
+                cx={d.stationPosition[0]}
+                cy={d.stationPosition[2]}
+                r="26"
+                fill={d.color}
+              />
+            ))}
+            <circle
+              cx={train.position[0]}
+              cy={train.position[2]}
+              r="17"
+              fill="currentColor"
+            />
+          </svg>
+          <p>
+            {t("society.city.metro_line")} · {actors.length}{" "}
+            {t("society.city.agents")}
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            {CITY.width / 1000} × {CITY.depth / 1000} km ·{" "}
+            {t("society.city.city_limits")}
+          </p>
+          {reduced && (
+            <p className="mt-2 max-w-52">{t("society.city.reduced")}</p>
+          )}
+          {snapshot.debt > 1 && <p>{t("society.city.catching_up")}</p>}
+        </div>
+        {citizen && actor && (
           <div
-            className="absolute z-20 bottom-3 right-3 w-64 rounded border border-border bg-popover p-3 text-xs shadow-lg"
+            className="absolute bottom-3 right-3 z-20 w-64 rounded-lg border border-border bg-popover p-3 text-xs shadow-lg"
             data-testid="city-journey"
             data-stage={citizen.stage}
             data-position={citizen.position.join(",")}
-            data-tick={tick}
+            data-simulation-time={snapshot.time}
           >
-            <strong>{selectedActor.label}</strong>
-            <p>
-              {t("society.city.task")}: {selectedActor.checkpoint} ·{" "}
-              {selectedActor.state}
+            <strong>{actor.label}</strong>
+            <p className="mt-1">
+              {t(
+                demo || sample
+                  ? "society.city.example_state"
+                  : "society.city.task",
+              )}
+              : {actor.checkpoint} · {actor.state}
             </p>
             <p>
               {t("society.city.travel")}:{" "}
-              {t(`society.city.stage_${citizen.stage}`)}
+              {stageText(citizen.stage, citizen.waitingForWorkspace)}
             </p>
             <p>
-              {t("society.city.target")}: {t(`society.city.${citizen.target}`)}
+              {t("society.city.target")}: {t(district(citizen.target).labelKey)}
             </p>
-            <div className="mt-2 flex gap-2">
+            <div className="mt-2 flex flex-wrap gap-2">
               <button
                 className={button}
                 onClick={() =>
@@ -857,7 +548,7 @@ export function CityStage({
                     : "society.city.follow",
                 )}
               </button>
-              {!demo && (
+              {!demo && !sample && (
                 <button
                   className={button}
                   onClick={() => onSelectAgent?.(citizen.id)}
@@ -868,34 +559,76 @@ export function CityStage({
             </div>
           </div>
         )}
-        {activePlot && (
-          <div className="absolute z-20 left-3 top-3 rounded border border-border bg-popover p-3 text-xs shadow-lg">
-            <strong>{t(`society.city.${activePlot}`)}</strong>
-            <p className="my-2">{t("society.city.plot")}</p>
-            <div className="flex gap-2">
-              <button className={button} onClick={() => movePlot(-4)}>
-                −4 m
-              </button>
-              <button className={button} onClick={() => movePlot(4)}>
-                +4 m
-              </button>
-              <button
-                className={button}
-                onClick={() =>
-                  onSelectPlace?.(activePlot === "west" ? "civic" : "cli")
-                }
-              >
-                {t("society.city.open_building")}
-              </button>
-              <button className={button} onClick={() => setActivePlot(null)}>
-                {t("society.city.close")}
-              </button>
-            </div>
-            {placementError && (
-              <p role="alert" className="mt-2">
-                {t("society.city.invalid_plot")}
+        {activeDistrict && (
+          <div
+            className="absolute left-3 top-16 z-20 max-w-72 rounded-lg border border-border bg-popover p-3 text-xs shadow-lg"
+            data-testid="city-building-panel"
+          >
+            <strong>{t(activeDistrict.labelKey)}</strong>
+            <p className="my-2 text-muted-foreground">
+              {t(`society.city.description_${activeDistrict.id}`)}
+            </p>
+            <button
+              className={button}
+              onClick={() =>
+                activeDistrict.stop === "east"
+                  ? setActiveSection("agentic-ide")
+                  : onSelectPlace?.(activeDistrict.placeId)
+              }
+            >
+              {t(
+                activeDistrict.stop === "east"
+                  ? "society.city.open_terminal"
+                  : "society.city.open_building",
+              )}
+            </button>
+            <button
+              className={`${button} ml-1`}
+              onClick={() => {
+                setInteriorStop(
+                  interiorStop === activeDistrict.stop
+                    ? null
+                    : activeDistrict.stop,
+                );
+                requestFrame.current();
+              }}
+            >
+              {t(
+                interiorStop === activeDistrict.stop
+                  ? "society.city.exterior"
+                  : "society.city.work_floor",
+              )}
+            </button>
+            <details className="mt-3">
+              <summary className="cursor-pointer">
+                {t("society.city.adjust_plot")}
+              </summary>
+              <div className="my-2 flex flex-wrap gap-1">
+                <button className={button} onClick={() => movePlot(-4, 0)}>
+                  ← 4 m
+                </button>
+                <button className={button} onClick={() => movePlot(4, 0)}>
+                  4 m →
+                </button>
+                <button className={button} onClick={() => movePlot(0, -4)}>
+                  ↑ 4 m
+                </button>
+                <button className={button} onClick={() => movePlot(0, 4)}>
+                  4 m ↓
+                </button>
+              </div>
+            </details>
+            {message && (
+              <p role="status" className="my-2">
+                {t(`society.city.${message}`)}
               </p>
             )}
+            <button
+              className="mt-2 text-muted-foreground underline"
+              onClick={() => setSelectedStop(null)}
+            >
+              {t("society.city.close")}
+            </button>
           </div>
         )}
       </div>

@@ -13,6 +13,8 @@ https://github.com/PersonalJarvis/PersonalJarvis
 
 This is an illustrative product demonstration made with actual Personal Jarvis UI components and synthetic example data. Conversations are staged and timing is edited for clarity; the film is not a benchmark or a recording of live external-service execution.
 
+Rendered natively at 60 fps. The diagram and paper sequences illustrate how the example task is organized; they are editorial graphics.
+
 MUSIC
 "Cipher" by Kevin MacLeod (incompetech.com)
 https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100844

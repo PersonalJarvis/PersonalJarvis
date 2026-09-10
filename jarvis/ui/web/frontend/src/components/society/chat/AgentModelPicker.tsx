@@ -78,7 +78,6 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   }, [open, submenu]);
 
   useLayoutEffect(() => {
-    if (!open) return;
     let frame = 0;
     const place = () => {
       const rect = trigger.current?.getBoundingClientRect();
@@ -102,7 +101,8 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
     // Resizing the composer or its ancestors can move an unchanged trigger.
     for (let node: HTMLElement | null = trigger.current; node; node = node.parentElement) observer?.observe(node);
-    place(); input.current?.focus();
+    // Prepare geometry while hidden; opening must not force a page layout.
+    place();
     window.addEventListener("resize", schedule);
     window.addEventListener("scroll", scroll, { capture: true, passive: true });
     const dialog = trigger.current?.closest('[role="dialog"]');
@@ -113,6 +113,10 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
       window.removeEventListener("scroll", scroll, true);
       dialog?.removeEventListener("animationend", schedule);
     };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (open) input.current?.focus({ preventScroll: true });
   }, [open]);
 
   useEffect(() => {
@@ -182,7 +186,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
       <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
     </button>
     {host && (open || !loading) ? createPortal(<>
-      <div ref={panel} id={menuId} aria-hidden={!open} style={{ ...position, display: open ? "flex" : "none" }} className="fixed z-[80] flex-col overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-float"
+      <div ref={panel} id={menuId} aria-hidden={!open} style={{ ...position, visibility: open ? "visible" : "hidden", contain: "layout paint style" }} className="fixed z-[80] flex flex-col overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-float"
         onKeyDown={(event) => moveFocus(event, panel.current)}>
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
           <Search className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />

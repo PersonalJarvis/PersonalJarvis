@@ -172,6 +172,7 @@ class HostedContext:
             "RunCommand",
             "society_shell",
             "society_browser",
+            "society_browser_action",
             "society_run_skill",
         }
         tools = {name: tool for name, tool in tools.items() if name not in excluded}

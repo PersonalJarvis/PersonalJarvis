@@ -14,7 +14,7 @@ Inter 400/500/600 for all editorial text. Inter bold only for the two-word featu
 
 ## Motion
 
-30 fps. Functional camera reframes 0.65–1.0s with power3.inOut; arrivals 0.5–0.8s with power3.out; mask reveals 0.55s. Preserve the product pointer and actual recorded clicks. Use clean cuts between meaningfully different views, and short 0.25s crossfades only between title and product. Holds last long enough to read. Never loop breathing effects.
+Native 60 fps. Functional camera reframes 0.55–0.8s with power3.inOut; arrivals 0.45–0.85s with power3.out; circular and directional mask reveals 0.65–0.8s. A newly animated vector pointer targets measured native controls; its travel remains fast even when reading holds grow. The task becomes a two-branch diagram, packets traverse curved SVG paths, and evidence sheets converge into a readable briefing. Retain object identity and continuous movement through transitions. No retimed footage or duplicated-frame frame-rate conversion. Never loop breathing effects.
 
 ## What NOT to Do
 

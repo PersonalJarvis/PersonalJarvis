@@ -427,9 +427,11 @@ class SocietyRuntime:
     def catalog(self) -> list[CapabilityRow]:
         from jarvis.machines.tools import MachineTool
 
+        from .browser.tool import BrowserTool
         from .coding_tool import CodingSessionTool
 
         tools = dict(self._get_tools() or {})
+        tools[BrowserTool.name] = BrowserTool(self, "", self.browser)
         tools[CodingSessionTool.name] = CodingSessionTool(self, "")
         tools[MachineTool.name] = MachineTool
         try:

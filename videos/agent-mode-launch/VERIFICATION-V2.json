@@ -1,0 +1,40 @@
+{
+  "revision": 2,
+  "artifact": "Personal-Jarvis-Agent-Mode-60fps.mp4",
+  "sha256": "5a4832f50f788769208f753de64bcd597b0bbdd5fbb212230031436773720d21",
+  "bytes": 22058847,
+  "duration_seconds": 85,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "frames": 5100,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_channels": 2,
+  "integrated_loudness_lufs": -17.42,
+  "true_peak_dbtp": -2.94,
+  "source_check": {
+    "ok": true,
+    "lint_errors": 0,
+    "runtime_errors": 0,
+    "layout_errors": 0,
+    "contrast_errors": 0
+  },
+  "native_motion": {
+    "sample_rate": 60,
+    "travel_seconds": 0.6,
+    "samples": 36,
+    "distinct_cursor_poses": 36,
+    "video_elements": 0
+  },
+  "exported_motion": {
+    "start_seconds": 12.1,
+    "sampled_frames": 36,
+    "unique_cropped_frame_hashes": 36
+  },
+  "decode_errors": 0,
+  "black_intervals_at_least_0_2s": 0,
+  "silences_at_least_0_5s": 0,
+  "visual_review": "Source and exported scenes inspected; complete prompt, specialist suggestions and final result. Iris overlap is intentional.",
+  "limitations": "Synthetic product fixture; edited narrative timing; diagrams and paper assembly are editorial graphics."
+}

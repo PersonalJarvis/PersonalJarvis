@@ -183,6 +183,15 @@ def capability_epoch(catalog: list[CapabilityRow]) -> str:
 
 async def coding_tool_for_session(session_id: str) -> Tool | None:
     """The same grant and approval gate for society seats and the lead's chat."""
+    return await _scoped_tool_for_session(session_id, "core:coding-session")
+
+
+async def browser_tool_for_session(session_id: str) -> Tool | None:
+    """Expose the same owned browser to CLI seats as to API-driven agents."""
+    return await _scoped_tool_for_session(session_id, "core:browser")
+
+
+async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | None:
     rt = current_runtime()
     if rt is None:
         from jarvis.core.runtime_refs import get_web_app
@@ -211,7 +220,13 @@ async def coding_tool_for_session(session_id: str) -> Tool | None:
         session = service.store.get_session(session_id)
         if session is None or session.permission_mode in ("plan", "read-only"):
             return None
-    tool = CodingSessionTool(rt, agent_id, session_id=session_id)
+    tool: Tool
+    if capability == "core:browser":
+        from .browser.tool import BrowserTool
+
+        tool = cast(Tool, BrowserTool(rt, agent_id, rt.browser))
+    else:
+        tool = cast(Tool, CodingSessionTool(rt, agent_id, session_id=session_id))
     picked = select_tools(
         {tool.name: tool},
         grant_mode=str(agent.grant_mode),
@@ -221,7 +236,7 @@ async def coding_tool_for_session(session_id: str) -> Tool | None:
     )
     if tool.name not in picked:
         return None
-    return cast(Tool, _GatedTool(tool, agent, "core:coding-session"))
+    return cast(Tool, _GatedTool(tool, agent, capability))
 
 
 def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
@@ -260,7 +275,7 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
             ),
         }
     )
-    if rt.browser.is_installed():
+    if rt.browser.is_installed() or rt.browser.live.model_resolver is not None:
         from .browser.tool import BrowserTool
 
         tools[BrowserTool.name] = cast(Tool, BrowserTool(rt, agent_id, rt.browser))
@@ -277,6 +292,7 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
             "RunCommand",
             "society_shell",
             "society_browser",
+            "society_browser_action",
             "society_run_skill",
         }
         tools = {name: tool for name, tool in tools.items() if name not in local_names}
@@ -447,7 +463,12 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
     def restrict_target(tools: dict[str, Tool]) -> dict[str, Tool]:
         if not remote_task:
             return tools
-        excluded = {"society_shell", "society_browser", "society_run_skill"}
+        excluded = {
+            "society_shell",
+            "society_browser",
+            "society_browser_action",
+            "society_run_skill",
+        }
         return {
             name: tool
             for name, tool in tools.items()
@@ -535,7 +556,10 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     from jarvis.machines.context import target_machine
 
     if target_machine.get():
-        context += f"\nThis task is bound to computer {target_machine.get()}. Use remote-machine for its files, shell and desktop."
+        context += (
+            f"\nThis task is bound to computer {target_machine.get()}. "
+            "Use remote-machine for its files, shell and desktop."
+        )
     return (
         build_briefing(agent, catalog, roster, browser=browser, learned=learned, memory=memory)
         + context
