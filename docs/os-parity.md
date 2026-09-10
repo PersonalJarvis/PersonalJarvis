@@ -1,12 +1,15 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
-**Managed agent browser, 2026-09-09:** The Browser-Use environment and browser
+**Managed agent browser, 2026-09-10:** The Browser-Use environment and browser
 are provisioned per host with one shared installer. The live viewport uses
 CDP pixels over the authenticated app WebSocket, including on headless Linux;
 manual login uses the same streamed surface rather than an OS-specific window.
 Windows native and a real python:3.11-slim browser render probe passed locally.
-The browser-runtime CI workflow covers Windows, macOS and Linux installations;
-native macOS acceptance remains pending its actual workflow result.
+The browser-runtime CI passed real installation and browser contracts on
+Linux x64/ARM64, Windows x64/ARM64, and macOS Intel/Apple Silicon
+([run](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/34451340158)).
+Windows ARM uses the managed x64 helper under emulation. Desktop UI validation
+was performed in Chrome on Windows; UI checks on other hosts are not implied.
 The normal Linux installer and container build provision browser system
 libraries before the non-root app starts. API-key and subscription model
 adapters share the browser protocol; text-only models use DOM observations.

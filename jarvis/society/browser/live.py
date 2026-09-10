@@ -67,6 +67,7 @@ class LiveSession:
     rpc: dict[str, RPC] = field(default_factory=dict)
     rpc_context: contextvars.Context | None = None
     control_owner: str | None = None
+    active_trace: str = ""
     generation: str = ""
     closed: bool = False
     stderr_tail: str = ""
@@ -214,6 +215,17 @@ class LiveSessions:
         self.executor: Any = None
         self.cdp_url = "http://127.0.0.1:9222"
         self.idle_tasks: dict[str, asyncio.Task] = {}
+        self.stopped_turns: dict[tuple[str, str], None] = {}
+
+    def stop_turn(self, agent_id: str, trace_id: str) -> None:
+        if trace_id:
+            self.stopped_turns[(agent_id, trace_id)] = None
+            while len(self.stopped_turns) > 512:
+                self.stopped_turns.pop(next(iter(self.stopped_turns)))
+
+    async def cancel(self, session: LiveSession) -> dict:
+        self.stop_turn(session.agent_id, session.active_trace)
+        return await session.command("cancel")
 
     def release_when_idle(self, session: LiveSession) -> None:
         old = self.idle_tasks.pop(session.agent_id, None)
@@ -343,6 +355,8 @@ class LiveSessions:
                 return result
         if op != "cancel" and session.control_owner != owner:
             raise ValueError("Take browser control first")
+        if op == "cancel":
+            return await self.cancel(session)
         result = await session.command(op, args)
         if op == "dialog":
             session.publish({"kind": "dialog_cleared"})
@@ -358,6 +372,7 @@ class LiveSessions:
         action: RPC,
         vision: bool = True,
         files: list[str] | None = None,
+        trace_id: str = "",
     ) -> dict:
         session = await self.ensure(agent)
         if session.run_lock.locked() or session.control_owner:
@@ -365,6 +380,7 @@ class LiveSessions:
         async with session.run_lock:
             session.rpc = {"llm": llm, "action": action}
             session.rpc_context = contextvars.copy_context()
+            session.active_trace = trace_id
             try:
                 return await session.command(
                     "run",
@@ -387,6 +403,7 @@ class LiveSessions:
                 await asyncio.gather(*session.tasks, return_exceptions=True)
                 session.rpc = {}
                 session.rpc_context = None
+                session.active_trace = ""
                 if not session.subscribers:
                     self.release_when_idle(session)
 

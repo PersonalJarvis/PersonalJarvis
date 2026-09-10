@@ -84,6 +84,12 @@ async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: An
     from .tool import _default_provider
 
     live = jobs.live
+    turn_trace = str(getattr(ctx, "trace_id", "") or "")
+    stopped_message = (
+        "Browser work was stopped or denied for this turn. Wait for a new user request."
+    )
+    if (caller.agent_id, turn_trace) in live.stopped_turns:
+        return ToolResult(False, None, stopped_message)
     executor = live.executor() if callable(live.executor) else live.executor
     if live.model_resolver is None or executor is None:
         return ToolResult(False, None, "Browser model service is not ready")
@@ -210,7 +216,7 @@ async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: An
                 agent_id=caller.agent_id,
                 trace_id=str(trace),
                 capability="core:browser",
-                action={"action": proposal},
+                action={"action": proposal, "resume_in_place": True},
                 summary=f"Browser: {name} on {payload.get('url', '')}"[:300],
             )
             session = live.sessions.get(caller.agent_id)
@@ -218,7 +224,8 @@ async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: An
                 session.publish({"kind": "approval", "id": approval.id, "action": name})
             if not await wait_for_browser_approval(runtime, approval.id, session):
                 denied = True
-                return {"ok": False, "error": "Browser action was not approved"}
+                live.stop_turn(caller.agent_id, turn_trace)
+                return {"ok": False, "error": stopped_message}
         result = await executor.execute(
             ApprovedBrowserAction(payload["apply"]),
             {"action": proposal},
@@ -247,9 +254,14 @@ async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: An
             action=action,
             vision=bool(getattr(brain, "supports_vision", False)),
             files=files,
+            trace_id=turn_trace,
         )
     except Exception as exc:
-        return ToolResult(False, None, str(exc))
+        return ToolResult(
+            False,
+            None,
+            stopped_message if (caller.agent_id, turn_trace) in live.stopped_turns else str(exc),
+        )
     result["usage"] = usage_total
     result["provider"] = provider
     result["model"] = caller.model

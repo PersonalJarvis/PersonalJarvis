@@ -12,6 +12,48 @@ def test_browser_capability_roundtrip():
     rows = build_catalog({"society_browser": SimpleNamespace(description="Browse", risk_tier="monitor")})
     assert "browser-use" in rows[0].aliases
 
+
+async def test_stopped_browser_turn_cannot_retry_but_new_user_turn_can(tmp_path):
+    from jarvis.society.browser.live import LiveSessions
+    from jarvis.society.browser.bridge import execute_live
+    live = LiveSessions(tmp_path)
+    live.stop_turn("agent", "denied-turn")
+    jobs = SimpleNamespace(live=live)
+    caller = SimpleNamespace(agent_id="agent")
+    denied = await execute_live(None, caller, jobs, {}, SimpleNamespace(trace_id="denied-turn"))
+    assert not denied.success and "new user request" in denied.error
+    fresh = await execute_live(None, caller, jobs, {}, SimpleNamespace(trace_id="new-turn"))
+    assert "not ready" in fresh.error  # A fresh turn reaches normal readiness checks.
+
+
+async def test_stop_button_also_stops_the_owning_chat(monkeypatch):
+    import asyncio
+    from jarvis.ui.web import society_browser_routes as routes
+    seen = []
+    lock = asyncio.Lock()
+    await lock.acquire()
+    session = SimpleNamespace(closed=False, run_lock=lock)
+
+    async def cancel_browser(value):
+        assert value is session
+        seen.append("browser")
+
+    async def cancel_chat(value):
+        seen.append(value)
+
+    async def resolve(_):
+        return SimpleNamespace(agent_id="test")
+
+    async def runtime(_):
+        return SimpleNamespace(roster=SimpleNamespace(resolve=resolve), browser=SimpleNamespace(
+            live=SimpleNamespace(sessions={"test": session}, cancel=cancel_browser)))
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        agent_chat=SimpleNamespace(cancel=cancel_chat))))
+    monkeypatch.setattr(routes, "_runtime", runtime)
+    assert await routes.cancel_agent_browser("test", request) == {"cancelled": True}
+    assert seen == ["browser", "society:test"]
+
 @pytest.mark.parametrize("value", [
     {"op": "evaluate", "args": {}},
     {"op": "click", "args": {"x": float("nan"), "y": 1}},

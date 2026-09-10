@@ -78,6 +78,7 @@ class Worker:
         self.agent: Any = None
         self.job: asyncio.Task | None = None
         self.stream: asyncio.Task | None = None
+        self.state_task: asyncio.Task | None = None
         self.generation = uuid.uuid4().hex
         self.latest: dict | None = None
         self.sequence = 0
@@ -196,6 +197,7 @@ class Worker:
                 "<h1>Your browser is ready</h1><p>Ask your agent to open a website.</p>"
                 "</main></body></html>"
             )
+        self.state_task = asyncio.create_task(self.watch_state())
         self.stream = asyncio.create_task(self.watch())
         return {"generation": self.generation, "protocol": PROTOCOL_VERSION}
 
@@ -282,26 +284,41 @@ class Worker:
             )
             self.capture_fallback = True
 
-    async def watch(self) -> None:
-        last_meta = 0.0
+    async def watch_state(self) -> None:
+        """Slow tab discovery must not delay the frame pump."""
         while not self.closed:
             try:
                 if self.viewers:
-                    if time.monotonic() - last_meta > 0.5:
-                        page = await self.focused()
-                        target = next((t for t, p in self.tabs.items() if p is page), "")
-                        if page and (target != self.target or self.cdp is None):
-                            await self.switch_stream(page, target)
-                        emit(
-                            "state",
-                            generation=self.generation,
-                            running=bool(self.job and not self.job.done()),
-                            manual=self.manual,
-                            url=page.url if page else "",
-                            target=target,
-                            tabs=[{"id": t, "url": p.url} for t, p in self.tabs.items()],
-                        )
-                        last_meta = time.monotonic()
+                    page = await self.focused()
+                    target = next((t for t, p in self.tabs.items() if p is page), "")
+                    if page and (target != self.target or self.cdp is None):
+                        await self.switch_stream(page, target)
+                    emit(
+                        "state",
+                        generation=self.generation,
+                        running=bool(self.job and not self.job.done()),
+                        manual=self.manual,
+                        url=page.url if page else "",
+                        target=target,
+                        tabs=[{"id": t, "url": p.url} for t, p in self.tabs.items()],
+                    )
+                elif self.cdp:
+                    await self.cdp.send("Page.stopScreencast")
+                    await self.cdp.detach()
+                    self.cdp = None
+                    self.target = ""
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                emit("warning", error=f"Browser stream: {type(exc).__name__}")
+                self.target = ""
+                await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
+
+    async def watch(self) -> None:
+        while not self.closed:
+            try:
+                if self.viewers:
                     if self.capture_fallback and self.page and not self.page.is_closed():
                         captured_at = time.time()
                         blob = await self.page.screenshot(type="jpeg", quality=65)
@@ -317,11 +334,6 @@ class Worker:
                         self.latest = None
                         self.sequence += 1
                         emit("frame", generation=self.generation, sequence=self.sequence, **frame)
-                elif self.cdp:
-                    await self.cdp.send("Page.stopScreencast")
-                    await self.cdp.detach()
-                    self.cdp = None
-                    self.target = ""
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -563,9 +575,10 @@ class Worker:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            if self.stream:
-                self.stream.cancel()
-                await asyncio.gather(self.stream, return_exceptions=True)
+            monitors = [task for task in (self.stream, self.state_task) if task is not None]
+            for task in monitors:
+                task.cancel()
+            await asyncio.gather(*monitors, return_exceptions=True)
             if self.browser:
                 with contextlib.suppress(Exception):
                     await self.browser.stop()

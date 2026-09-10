@@ -61,10 +61,23 @@ Linux: Browser-Use/Playwright installed in python:3.11-slim with browser system
 libraries; actual headless launch, text input and screenshot decoding passed.
 The application container includes the required native libraries.
 
-The browser-runtime workflow exercises the managed install and real browser
-contract on Windows, macOS and Linux. Native macOS results and complete
-cross-platform UI acceptance must be read from actual CI/host runs; the existence
-of the workflow is not evidence of a pass.
+The managed installation and real-browser contracts passed on Linux x64/ARM64,
+Windows x64/ARM64, and macOS Intel/Apple Silicon in
+[the six-platform run](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/34451340158).
+Subsequent changes must pass the same matrix before integration.
+
+A full ordinary agent-chat turn selected the browser capability, submitted the
+disposable form and verified its success heading using one existing OpenRouter
+key. The browser job completed in three steps; the chat finished in 23.7 seconds.
+Real-browser tests cover pause/resume of the same task, cancelled takeover,
+exclusive ownership and idle animation. A 60-second local Windows animation
+soak delivered 13.61 fps with capture-to-backend p95 age of 74.56 ms. This is a
+transport measurement, not a measurement of the final frontend paint latency.
+
+Chrome checks verified the actual right-rail pixels, expanded view, manual text
+entry and form submission, tab creation/switching, reconnection and light/dark
+appearance. These UI checks were on Windows; the native CI matrix exercises
+the shared headless browser contract, not a desktop UI on every host.
 
 Run the deterministic suite with:
 ```
@@ -72,5 +85,6 @@ python -m pytest tests/contract/test_browser_contract.py tests/unit/society/test
 ```
 Real-browser tests use JARVIS_BROWSER_TEST_PYTHON and
 JARVIS_BROWSER_TEST_EXECUTABLE to select an isolated verified environment.
+Set JARVIS_BROWSER_SOAK_SECONDS=60 for the longer animation measurement.
 Live model tests additionally require JARVIS_BROWSER_MODEL_TEST=1 and an
 explicit test data root; they never use real third-party forms.

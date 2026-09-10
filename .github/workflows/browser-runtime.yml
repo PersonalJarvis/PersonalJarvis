@@ -5,6 +5,8 @@ on:
       - 'jarvis/society/browser/**'
       - 'jarvis/ui/web/society_browser_routes.py'
       - 'tests/contract/test_browser*'
+      - 'tests/unit/society/test_browser*'
+      - 'jarvis/society/approvals.py'
       - '.github/workflows/browser-runtime.yml'
   push:
     branches: ['codex/browser-use-live']
@@ -42,4 +44,4 @@ jobs:
               stream.write(f"JARVIS_BROWSER_TEST_PYTHON={venv_python()}\n")
               stream.write(f"JARVIS_BROWSER_TEST_EXECUTABLE={browser_executable()}\n")
       - name: Test real frames, ownership and protocol
-        run: python -m pytest tests/contract/test_browser_live.py tests/contract/test_browser_contract.py tests/unit/society/test_browser.py -q --tb=short
+        run: python -m pytest tests/contract/test_browser_live.py tests/contract/test_browser_contract.py tests/unit/society/test_browser.py tests/unit/society/test_browser_install.py tests/unit/society/test_approvals.py -q --tb=short

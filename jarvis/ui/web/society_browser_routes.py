@@ -89,7 +89,11 @@ async def cancel_agent_browser(agent_id: str, request: Request) -> dict[str, Any
     if session is None or session.closed:
         return {"cancelled": False}
     running = session.run_lock.locked()
-    await session.command("cancel")
+    await rt.browser.live.cancel(session)
+    # The owning chat must also stop; otherwise its planner may try another tool.
+    chat = getattr(request.app.state, "agent_chat", None)
+    if running and chat is not None:
+        await chat.cancel(f"society:{agent.agent_id}")
     return {"cancelled": running}
 
 

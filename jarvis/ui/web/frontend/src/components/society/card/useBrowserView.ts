@@ -32,7 +32,9 @@ export function useBrowserView(agentId: string) {
     let generation = "";
     let lastSequence = -1;
     let decodeBusy = false;
-    let latestFrame: { data: string; sequence: number } | null = null;
+    let lastLiveEvent = Date.now();
+    let renderedFrames = 0;
+    let latestFrame: { data: string; sequence: number; timestamp: number } | null = null;
     const abort = new AbortController();
     setState(empty);
     const clearCanvas = () => {
@@ -53,6 +55,9 @@ export function useBrowserView(agentId: string) {
           if (el.width !== image.width) el.width = image.width;
           if (el.height !== image.height) el.height = image.height;
           el.getContext("2d")?.drawImage(image, 0, 0);
+          // Read-only diagnostics for end-to-end stream acceptance and support.
+          el.dataset.browserFrameAgeMs = String(Math.max(0, Date.now() - frame.timestamp * 1000));
+          el.dataset.browserRenderedFrames = String(++renderedFrames);
           setState((s) => s.ready ? s : { ...s, ready: true });
         }
         decodeBusy = false;
@@ -76,6 +81,7 @@ export function useBrowserView(agentId: string) {
         socket.current = ws;
         ws.onopen = () => {
           attempt = 0;
+          lastLiveEvent = Date.now();
           setState((s) => ({ ...s, connected: true, error: "" }));
         };
         ws.onmessage = (message) => {
@@ -84,6 +90,8 @@ export function useBrowserView(agentId: string) {
             const event = JSON.parse(message.data);
             if (event.kind === "frame") {
               if (typeof event.data !== "string" || typeof event.sequence !== "number") return;
+              if (!Number.isFinite(event.timestamp)) return;
+              lastLiveEvent = Date.now();
               if (event.generation !== generation) {
                 generation = event.generation;
                 lastSequence = -1;
@@ -94,6 +102,7 @@ export function useBrowserView(agentId: string) {
               latestFrame = event;
               decodeFrame();
             } else if (event.kind === "state") {
+              lastLiveEvent = Date.now();
               setState((s) => ({ ...s, manual: event.manual, running: event.running,
                 url: event.url, target: event.target, tabs: event.tabs ?? [] }));
             } else if (event.kind === "control") {
@@ -137,10 +146,18 @@ export function useBrowserView(agentId: string) {
       }).catch((error) => {
         if (!disposed) setState((s) => ({ ...s, error: String(error) }));
       });
+    // Static pages still send state heartbeats. A silent transport is not Live.
+    const watchdog = setInterval(() => {
+      if (socket.current?.readyState === WebSocket.OPEN && Date.now() - lastLiveEvent > 7500) {
+        setState((s) => ({ ...s, connected: false, manual: false, controlPending: false }));
+        socket.current.close(); // onclose reconnects through the shared jittered budget.
+      }
+    }, 1000);
     return () => {
       disposed = true;
       epoch++;
       abort.abort();
+      clearInterval(watchdog);
       cancelConnect();
       const ws = socket.current;
       socket.current = null;
