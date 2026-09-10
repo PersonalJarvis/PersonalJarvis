@@ -36,6 +36,11 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   const sidePanel = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
+  const [host, setHost] = useState<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    setHost(trigger.current?.closest<HTMLElement>('[role="dialog"]') ?? document.body);
+  }, []);
 
   const chatCatalog = useAgentChat((state) => state.surface === "society" ? state.catalog : null);
   const chatConnections = useAgentChat((state) => state.connections);
@@ -57,7 +62,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
 
   function close() {
     if (inFlight.current) return;
-    setOpen(false); setSubmenu(null); trigger.current?.focus();
+    setOpen(false); setSubmenu(null); setSearch(""); trigger.current?.focus();
   }
 
   useEffect(() => {
@@ -119,7 +124,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     const outside = (event: PointerEvent) => {
       const node = event.target as Node;
       if (!trigger.current?.contains(node) && !panel.current?.contains(node) && !sidePanel.current?.contains(node) && !inFlight.current) {
-        setOpen(false); setSubmenu(null);
+        setOpen(false); setSubmenu(null); setSearch("");
       }
     };
     document.addEventListener("pointerdown", outside);
@@ -161,7 +166,6 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     buttons[index].focus(); buttons[index].scrollIntoView?.({ block: "nearest" });
   }
 
-  const host = trigger.current?.closest<HTMLElement>('[role="dialog"]') ?? document.body;
   const sideStyle: CSSProperties = submenu ? { position: "fixed", width: 210,
     left: Math.max(8, submenu.anchor.right + 210 < window.innerWidth - 8 ? submenu.anchor.right + 4 : submenu.anchor.left - 214),
     top: Math.max(8, Math.min(submenu.anchor.top, window.innerHeight - 300)), maxHeight: Math.min(290, window.innerHeight - 16),
@@ -177,8 +181,8 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
       {agent.effort ? <span className="shrink-0 opacity-70">{effortLabel(agent.effort, t)}</span> : null}
       <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
     </button>
-    {open ? createPortal(<>
-      <div ref={panel} id={menuId} style={position} className="z-[80] flex flex-col overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-float"
+    {host && (open || !loading) ? createPortal(<>
+      <div ref={panel} id={menuId} aria-hidden={!open} style={{ ...position, display: open ? "flex" : "none" }} className="fixed z-[80] flex-col overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-float"
         onKeyDown={(event) => moveFocus(event, panel.current)}>
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
           <Search className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
@@ -251,7 +255,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
           </button>
         </div>
       </div>
-      {submenu && sideSeat ? <div ref={sidePanel} style={sideStyle} role="menu" aria-label={t(submenu.model ? "society.chat.effort" : "society.chat.model_account")}
+      {open && submenu && sideSeat ? <div ref={sidePanel} style={sideStyle} role="menu" aria-label={t(submenu.model ? "society.chat.effort" : "society.chat.model_account")}
         className="z-[81] overflow-y-auto rounded-md border border-border bg-popover py-1 shadow-float" onKeyDown={(event) => moveFocus(event, sidePanel.current)}>
         <p className="px-3 py-2 text-[11px] font-semibold uppercase text-muted-foreground">{submenu.model ? t("society.chat.effort") : t("society.chat.model_account")}</p>
         {submenu.model ? effortsFor(sideSeat, submenu.model.id).map((effort) => <button key={effort} type="button" role="menuitemradio" data-menu-choice

@@ -93,6 +93,17 @@ test("an idle open menu schedules no animation loop and batches layout changes",
   expect(requestFrame).toHaveBeenCalledTimes(1);
 });
 
+test("reopening reuses prepared model rows without exposing a closed menu to accessibility", async () => {
+  mount(); const input = await open();
+  const prepared = screen.getByTitle("openai-small");
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByTitle("openai-small")).toBe(prepared);
+  fireEvent.click(screen.getByRole("button", { name: "Model" }));
+  expect(screen.getByRole("menu", { name: "Model" })).toBeTruthy();
+  expect(screen.getByTitle("openai-small")).toBe(prepared);
+});
+
 test("freshly disconnected credentials supersede a display snapshot", async () => {
   writeModelMenuSnapshot({ version: 1, savedAt: Date.now(),
     catalog: { providers: [provider("openai")], default_cwd: "", shell: "" },
