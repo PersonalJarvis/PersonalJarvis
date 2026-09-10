@@ -86,6 +86,12 @@ async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: An
 
     live = jobs.live
     turn_trace = str(getattr(ctx, "trace_id", "") or "")
+    approval_ref = str((getattr(ctx, "config", {}) or {}).get("approval_ref", ""))
+    chat_session_id = (
+        approval_ref.removeprefix("agent-chat:")
+        if approval_ref.startswith("agent-chat:")
+        else f"society:{caller.agent_id}"
+    )
     stopped_message = (
         "Browser work was stopped or denied for this turn. Wait for a new user request."
     )
@@ -256,6 +262,7 @@ async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: An
             vision=bool(getattr(brain, "supports_vision", False)),
             files=files,
             trace_id=turn_trace,
+            chat_session_id=chat_session_id,
         )
     except Exception as exc:
         # The tool result reports the failure to both the chat and the planner.

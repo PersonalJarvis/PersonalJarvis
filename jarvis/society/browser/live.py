@@ -68,6 +68,7 @@ class LiveSession:
     rpc_context: contextvars.Context | None = None
     control_owner: str | None = None
     active_trace: str = ""
+    active_chat: str = ""
     generation: str = ""
     closed: bool = False
     stderr_tail: str = ""
@@ -375,6 +376,7 @@ class LiveSessions:
         vision: bool = True,
         files: list[str] | None = None,
         trace_id: str = "",
+        chat_session_id: str = "",
     ) -> dict:
         session = await self.ensure(agent)
         if session.run_lock.locked() or session.control_owner:
@@ -383,6 +385,7 @@ class LiveSessions:
             session.rpc = {"llm": llm, "action": action}
             session.rpc_context = contextvars.copy_context()
             session.active_trace = trace_id
+            session.active_chat = chat_session_id
             try:
                 return await session.command(
                     "run",
@@ -406,6 +409,7 @@ class LiveSessions:
                 session.rpc = {}
                 session.rpc_context = None
                 session.active_trace = ""
+                session.active_chat = ""
                 if not session.subscribers:
                     self.release_when_idle(session)
 

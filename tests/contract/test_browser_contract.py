@@ -35,14 +35,15 @@ async def test_stopped_browser_turn_cannot_retry_but_new_user_turn_can(tmp_path)
     assert "not ready" in fresh.error  # A fresh turn reaches normal readiness checks.
 
 
-async def test_stop_button_also_stops_the_owning_chat(monkeypatch):
+@pytest.mark.parametrize("chat_id", ["", "jarvis-root-test"])
+async def test_stop_button_also_stops_the_owning_chat(monkeypatch, chat_id):
     import asyncio
     from jarvis.ui.web import society_browser_routes as routes
 
     seen = []
     lock = asyncio.Lock()
     await lock.acquire()
-    session = SimpleNamespace(closed=False, run_lock=lock)
+    session = SimpleNamespace(closed=False, run_lock=lock, active_chat=chat_id)
 
     async def cancel_browser(value):
         assert value is session
@@ -67,7 +68,45 @@ async def test_stop_button_also_stops_the_owning_chat(monkeypatch):
     )
     monkeypatch.setattr(routes, "_runtime", runtime)
     assert await routes.cancel_agent_browser("test", request) == {"cancelled": True}
-    assert seen == ["browser", "society:test"]
+    assert seen == ["browser", chat_id or "society:test"]
+
+
+async def test_jarvis_chat_uses_the_lead_browser_with_its_selected_model(tmp_path, monkeypatch):
+    from jarvis.agent_chat.surface_kits import kit_for
+    from jarvis.agent_chat.tool_catalog import build_catalog, resolve_choices
+    from jarvis.society.runtime import SocietyRuntime
+    from jarvis.core.protocols import ToolResult
+
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
+    await runtime.ensure_started()
+    seen = []
+
+    async def execute(rt, caller, jobs, args, ctx):
+        seen.append((caller.agent_id, caller.provider, caller.model))
+        return ToolResult(True, {"ok": True}, None)
+
+    monkeypatch.setattr("jarvis.society.browser.bridge.execute_live", execute)
+    try:
+        original = await runtime.roster.get(runtime.lead_id)
+        session = SimpleNamespace(
+            provider="openrouter",
+            model="selected-model",
+            cwd=str(tmp_path / "chat"),
+            permission_mode="ask",
+        )
+        tools = kit_for("jarvis").session_tools(None, None, session)
+        assert "Read" in tools
+        choice = resolve_choices(["tool:society_browser"], build_catalog(tools))[0]
+        assert choice.tool_names == ("society_browser",)
+        result = await tools["society_browser"].execute(
+            {"task": "Read the page"}, SimpleNamespace()
+        )
+        assert result.success
+        assert seen == [(runtime.lead_id, "openrouter", "selected-model")]
+        current = await runtime.roster.get(runtime.lead_id)
+        assert (current.provider, current.model) == (original.provider, original.model)
+    finally:
+        await runtime.close()
 
 
 async def test_upload_rejects_files_outside_the_agent_workspace(tmp_path, monkeypatch):

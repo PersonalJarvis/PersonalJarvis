@@ -6,6 +6,10 @@ Opening an agent subscribes to that agent's actual rendered tab in the right
 Options rail. The browser remains open between tasks. Expand the view and take
 control to navigate or sign in, then return control to the agent.
 
+The Jarvis root chat uses the lead agent's same browser profile and its selected
+chat model. Its Add picker includes the browser tool. Stopping the browser task
+also stops the owning chat, whether it is the root chat or a specialist session.
+
 ## Runtime and data
 
 Browser-Use 0.13.10 and Playwright 1.62.0 are pinned independently of the app's
@@ -69,6 +73,10 @@ Subsequent changes must pass the same matrix before integration.
 A full ordinary agent-chat turn selected the browser capability, submitted the
 disposable form and verified its success heading using one existing OpenRouter
 key. The browser job completed in three steps; the chat finished in 23.7 seconds.
+The root Jarvis chat separately completed the same real form workflow through
+its selected OpenRouter model in 31.8 seconds, without changing the lead's saved
+provider/model settings. Real file tests also cover upload, completed downloads,
+workspace containment and omission of old downloads from a later task's result.
 Real-browser tests cover pause/resume of the same task, cancelled takeover,
 exclusive ownership and idle animation. A 60-second local Windows animation
 soak delivered 13.61 fps with capture-to-backend p95 age of 74.56 ms. This is a
