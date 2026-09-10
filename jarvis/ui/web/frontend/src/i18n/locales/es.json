@@ -4192,6 +4192,8 @@
     }
   },
   "agent_accounts": {
+    "not_signed_in": "sin sesión iniciada",
+    "single_google_login": "Utiliza la suscripción de Google conectada en API Keys. Todavía no se puede alternar entre otras cuentas de Google aquí.",
     "title": "Tus suscripciones",
     "hint": "varios inicios de sesión por CLI",
     "description": "¿Tienes más de un plan para la misma CLI de programación? Registra cada uno aquí y cambia sin cerrar sesión: todos los accesos siguen siendo válidos a la vez. La marca indica la cuenta con la que se abren los terminales NUEVOS; los terminales en curso conservan la cuenta con la que se iniciaron.",
@@ -4221,9 +4223,11 @@
         "other": "Límite"
       },
       "state": {
-        "unsupported": "Esta cuenta no tiene un límite de plan que mostrar.",
+        "unsupported": "Los datos de uso de este proveedor no están disponibles aquí.",
         "unavailable": "El uso no se puede leer ahora mismo — volverá por sí solo."
-      }
+      },
+      "used": "utilizado",
+      "remaining": "restante"
     },
     "flow": {
       "starting": "Iniciando el inicio de sesión…",

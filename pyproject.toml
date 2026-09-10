@@ -259,6 +259,8 @@ remote = [
     "asyncssh==2.23.1; sys_platform == 'win32' and platform_machine == 'ARM64'",
     "asyncssh>=2.24,<3; sys_platform != 'win32' or platform_machine != 'ARM64'",
 ]
+# Optional message transports; the base application remains headless-friendly.
+trigger-streams = ["aiokafka>=0.12,<1", "aio-pika>=9,<10", "paho-mqtt>=2.1,<3", "redis>=5,<9"]
 dev = [
     # Pull the runtime extras the test suite exercises. The local-voice + desktop
     # packages were base dependencies until the cloud-first split; tests still
@@ -852,6 +854,8 @@ jarvis = [
     "clis/catalog/seed_catalog.json",
     "skills/catalog/seed_catalog.json",
     "marketplace/seed_catalog.json",
+    "marketplace/plugins/*/plugin.json",
+    "marketplace/plugins/*/mcp.json",
     # Marketplace "how to use this plugin" cards shown in the UI
     # (marketplace/usage_cards/loader.py).
     "marketplace/usage_cards/*.md",

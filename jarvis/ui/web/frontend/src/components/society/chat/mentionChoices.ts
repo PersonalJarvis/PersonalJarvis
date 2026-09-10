@@ -31,11 +31,12 @@ function choice(id: string, name: string, description = ""): ToolChoice {
   };
 }
 
-export function mentionChoice(item: MentionItem): ToolChoice {
+export function mentionChoice(item: MentionItem): ToolChoice & { mentionValue: string } {
   const family = item.kind === "plugin" ? pluginFamily(item.toolName) ?? pluginFamily(item.key.replace(/^plugin:/, "")) : undefined;
   const base = choice(item.key, item.toolName || item.value, item.hint);
   return {
     ...base,
+    mentionValue: item.value,
     label: item.label || base.label,
     brand: family?.id || base.brand,
     category: item.kind === "plugin" ? "plugins" : item.kind === "cli" ? "cli" : base.category,

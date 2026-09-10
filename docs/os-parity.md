@@ -466,3 +466,24 @@ gateway, desktop ownership, and enum parity. Desktop tests use fake screen provi
 on all three named OS cells; they are not claims of native macOS/Linux verification.
 Full CLI hosting, moving the hub itself, native connector installers/autostart, and
 the remaining live acceptance are still open. See [Connected computers](connected-computers.md).
+
+## Routine trigger sources (2026-09-10, T3)
+
+Human, time, API, provider callbacks, streams, file polling and workflow chains
+share the same Python/SQLite implementation on Windows, macOS and headless Linux.
+The catalogue probes optional protocol clients without importing or connecting
+them. Missing clients and unreachable services have explicit in-app states.
+No Win32 event hook or other native watcher is required. File access remains
+subject to each host's permissions and available paths.
+
+Windows contract tests cover all seven groups, DST, source lifecycle, typed
+forms, queue durability, provider signatures and trusted workflow ancestry.
+Real Kafka, RabbitMQ, MQTT and Redis instances passed admission/acknowledgement
+checks. A fresh `python:3.11-slim` container installed the built wheel and all
+base dependencies, then used one Gemini key for actual model-driven chat creation
+and canonical agent-chat execution of a manually submitted routine. A duplicate
+input was suppressed. Provider account subscriptions were not created.
+Chrome checks cover the shared editor in light and dark mode. Native macOS
+execution and provider-account provisioning remain unverified; portable contract
+coverage is not a claim of physical hardware testing.
+See [source configuration and delivery limits](trigger-sources.md).

@@ -22,6 +22,7 @@ import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 import { useModelMenuData } from "@/components/society/chat/useModelMenuData";
 import { MachinesButton } from "@/components/society/MachinesPanel";
+import { CanvasActivity } from "@/hooks/useCanvasAwake";
 
 const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
@@ -75,9 +76,11 @@ export function SocietyView() {
           <span className="ml-auto"><MachinesButton /></span>
         </div>
         <div className="relative min-h-0 flex-1">
-          <Suspense fallback={null}>
-            <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} />
-          </Suspense>
+          <CanvasActivity.Provider value={!openAgent && !openPlace && !creating}>
+            <Suspense fallback={null}>
+              <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} />
+            </Suspense>
+          </CanvasActivity.Provider>
         </div>
       </div>
       <RosterRail

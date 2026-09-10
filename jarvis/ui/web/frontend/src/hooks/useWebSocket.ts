@@ -638,6 +638,7 @@ export function useWebSocket(): void {
         }
 
         if (env.event_name === "MarketplaceItemInstalled") {
+          void queryClient.invalidateQueries({ queryKey: ["society", "capabilities"] });
           // The install may have come from anywhere: a terminal running
           // `jarvis marketplace install`, a spoken sentence, the storefront's
           // button, or another window of this app. Only the window that
@@ -654,6 +655,10 @@ export function useWebSocket(): void {
           } else if (p.kind === "plugin") {
             void queryClient.invalidateQueries({ queryKey: ["marketplace-plugins"] });
           }
+        }
+
+        if (env.event_name === "SkillRegistryReloaded" || env.event_name === "BrainToolsChanged") {
+          void queryClient.invalidateQueries({ queryKey: ["society", "capabilities"] });
         }
 
         if (env.event_name === "ActionApprovalRequired") {

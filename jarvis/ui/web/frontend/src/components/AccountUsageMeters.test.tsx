@@ -50,6 +50,12 @@ function usage(overrides: Partial<AccountUsage> = {}): AccountUsage {
 }
 
 describe("AccountUsageMeters", () => {
+  it("distinguishes 46 percent used from 54 percent remaining", () => {
+    render(<AccountUsageMeters now={NOW} usage={usage({ windows: [window_({ percent: 46 })] })} />);
+    expect(screen.getByText("46% used")).toBeTruthy();
+    expect(screen.getByText("54% remaining")).toBeTruthy();
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("46");
+  });
   it("draws every window, including a scoped one beside the overall week", () => {
     render(
       <AccountUsageMeters

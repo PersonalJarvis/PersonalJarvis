@@ -88,7 +88,7 @@ describe("AgentRoutinesList", () => {
       const body = JSON.parse(String(post?.[1]?.body));
       expect(body.title).toBe("X marketing");
       expect(body.prompt).toBe("Draft the post.");
-      expect(body.schedule.kind).toBe("every");
+      expect(body.schedule.type).toBe("every");
     });
 
     await waitFor(() => expect(screen.getByTestId("agent-routines").textContent).toContain("X marketing"));
@@ -98,14 +98,14 @@ describe("AgentRoutinesList", () => {
     fireEvent.click(await screen.findByTestId("agent-routines-add"));
     fireEvent.change(screen.getByPlaceholderText("Title"), { target: { value: "Customer event" } });
     fireEvent.change(screen.getByPlaceholderText("What to do"), { target: { value: "Summarize the new customer." } });
-    fireEvent.click(screen.getByTestId("agent-routines-kind"));
-    fireEvent.click(await screen.findByRole("option", { name: "Webhook" }));
+    fireEvent.click(screen.getByTestId("routine-trigger-group"));
+    fireEvent.click(await screen.findByRole("option", { name: "API" }));
     fireEvent.change(screen.getByLabelText("Payload filters (JSON field equality)"), { target: { value: '{"customer.vip":true}' } });
     fireEvent.click(screen.getByText("Add"));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find((call) => (call[1] as RequestInit | undefined)?.method === "POST");
       expect(post).toBeTruthy();
-      expect(JSON.parse(String(post?.[1]?.body)).schedule).toEqual({ kind: "webhook", conditions: { "customer.vip": true } });
+      expect(JSON.parse(String(post?.[1]?.body)).schedule).toEqual({ type: "webhook", provider: "generic", conditions: { "customer.vip": true } });
     });
   });
 

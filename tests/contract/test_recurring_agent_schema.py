@@ -71,7 +71,7 @@ def test_trigger_every_caps_interval_at_one_year():
 
 
 def test_trigger_types_now_includes_every():
-    assert TRIGGER_TYPES == ("after_delay", "at_time", "on_event", "every", "calendar", "webhook", "event_hook")
+    assert TRIGGER_TYPES == ("after_delay", "at_time", "on_event", "every", "calendar", "webhook", "event_hook", "source", "cron")
 
 
 def test_cron_trigger_still_rejected():
@@ -120,7 +120,7 @@ def test_agent_action_requires_prompt():
 
 
 def test_action_kinds_now_includes_agent():
-    assert ACTION_KINDS == ("harness_dispatch", "speak", "tool_call", "agent")
+    assert ACTION_KINDS == ("harness_dispatch", "speak", "tool_call", "agent", "workflow")
 
 
 def test_plugin_grant_scopes_are_read_write_full():

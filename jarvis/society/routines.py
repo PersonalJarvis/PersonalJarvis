@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from typing import Any, Final
+from uuid import UUID
 
 from jarvis.tasks.schema import (
     AgentAction,
@@ -23,10 +24,13 @@ from jarvis.tasks.schema import (
     TriggerAfterDelay,
     TriggerAtTime,
     TriggerCalendar,
+    TriggerCron,
     TriggerEventHook,
     TriggerEvery,
     TriggerOnEvent,
+    TriggerSource,
     TriggerWebhook,
+    WorkflowAction,
 )
 
 from .roster import AgentRecord
@@ -53,6 +57,16 @@ def _trigger(schedule: dict[str, Any]) -> Any:
     from jarvis.tasks.context import client_timezone
 
     kind = str(schedule.get("kind") or schedule.get("type") or "every")
+    if kind == "source":
+        return TriggerSource.model_validate(
+            {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}
+        )
+    if kind == "cron":
+        values = dict(schedule)
+        values.setdefault("timezone", client_timezone.get())
+        return TriggerCron.model_validate(
+            {"type": kind, **{k: v for k, v in values.items() if k not in ("kind", "type")}}
+        )
     if kind in ("webhook", "event_hook"):
         model = TriggerWebhook if kind == "webhook" else TriggerEventHook
         return model.model_validate(
@@ -116,6 +130,7 @@ def build_task_spec(
     schedule: dict[str, Any],
     plugin_grants: list[dict[str, str]] | None = None,
     announce_on_success: str | None = None,
+    workflow_id: str | None = None,
 ) -> TaskSpec:
     grants = tuple(
         PluginGrant(plugin_id=str(g["plugin_id"]), scope=g.get("scope", "read"))  # type: ignore[arg-type]
@@ -126,7 +141,11 @@ def build_task_spec(
     return TaskSpec(
         title=f"[agent:{agent.name}] {clean_title}",
         trigger=_trigger(schedule),
-        action=AgentAction(prompt=_routine_prompt(agent, prompt), plugin_grants=grants),
+        action=(
+            WorkflowAction(workflow_id=UUID(workflow_id))
+            if workflow_id
+            else AgentAction(prompt=_routine_prompt(agent, prompt), plugin_grants=grants)
+        ),
         created_by="society",
         tags=(ROUTINE_TAG, agent_tag(agent.agent_id)),
         announce_on_success=announce_on_success,
@@ -220,14 +239,19 @@ async def manage_routine(
             title=payload["title"],
             prompt=payload["prompt"],
             schedule=payload["schedule"],
-            plugin_grants=[g.model_dump() for g in old.action.plugin_grants],
+            plugin_grants=[g.model_dump() for g in getattr(old.action, "plugin_grants", ())],
+            workflow_id=payload.get("workflow_id")
+            or (str(old.action.workflow_id) if old.action.kind == "workflow" else None),
             announce_on_success=payload.get("announce_on_success"),
         )
-        assert spec.action.kind == "agent"
         changes = {
             "title": spec.title,
             "trigger": spec.trigger,
-            "action": old.action.model_copy(update={"prompt": spec.action.prompt}),
+            "action": (
+                old.action.model_copy(update={"prompt": spec.action.prompt})
+                if old.action.kind == "agent" and spec.action.kind == "agent"
+                else spec.action
+            ),
         }
         if "announce_on_success" in payload:
             changes["announce_on_success"] = payload["announce_on_success"]

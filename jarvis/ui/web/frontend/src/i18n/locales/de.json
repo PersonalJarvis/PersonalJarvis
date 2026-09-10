@@ -4192,6 +4192,8 @@
     }
   },
   "agent_accounts": {
+    "not_signed_in": "nicht angemeldet",
+    "single_google_login": "Nutzt das unter API Keys verbundene Google-Abo. Weitere Google-Anmeldungen lassen sich hier noch nicht wechseln.",
     "title": "Deine Abos",
     "hint": "mehrere Logins pro CLI",
     "description": "Du hast mehr als ein Abo für dasselbe Coding-CLI? Trag hier jedes ein und wechsle, ohne dich abzumelden — jeder Login bleibt parallel gültig. Der Haken markiert das Konto, mit dem NEUE Terminals starten; bereits laufende Terminals behalten das Konto, mit dem sie gestartet wurden.",
@@ -4221,9 +4223,11 @@
         "other": "Limit"
       },
       "state": {
-        "unsupported": "Dieser Zugang hat kein Plan-Limit, das angezeigt werden kann.",
+        "unsupported": "Für diesen Anbieter sind hier keine Verbrauchsdaten verfügbar.",
         "unavailable": "Der Verbrauch ist gerade nicht lesbar — er erscheint von selbst wieder."
-      }
+      },
+      "used": "verbraucht",
+      "remaining": "übrig"
     },
     "flow": {
       "starting": "Anmeldung wird gestartet…",

@@ -26,6 +26,8 @@ from jarvis.society.runtime import SocietyRuntime
 #: The vocabulary a client is entitled to find. Adding a tool is a feature;
 #: removing or renaming one breaks every connected client, so it fails here.
 EXPECTED_TOOLS = {
+    "routine_invoke",
+    "routine_status",
     "ecosystem_status",
     "agents_list",
     "agent_get",
@@ -55,6 +57,7 @@ EXPECTED_TOOLS = {
 #: Everything that starts spend, work, or stops the house. A tool that becomes
 #: dangerous without being listed here is a client that stopped asking first.
 EXPECTED_DANGEROUS = {
+    "routine_invoke",
     "agent_chat",
     "quest_post",
     "quest_cancel",

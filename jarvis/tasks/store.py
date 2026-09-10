@@ -42,7 +42,7 @@ CREATE TABLE tasks_new (
                         'pending','scheduled','paused','running','completed',
                         'failed','cancelled','interrupted')),
     trigger_type    TEXT NOT NULL CHECK(trigger_type IN (
-                        'after_delay','at_time','on_event','every','calendar','webhook','event_hook')),
+                        'after_delay','at_time','on_event','every','calendar','webhook','event_hook','source','cron')),
     due_at_ns       INTEGER,
     event_selector  TEXT,
     title           TEXT NOT NULL DEFAULT '',
@@ -97,7 +97,19 @@ class TaskStore:
         # Same dance for the state CHECK, which predates `paused` (2026-08-24).
         await self._migrate_state_check()
         await self._conn.executescript(HOOK_SCHEMA + COUNTER_TRIGGER)
+        async with self._conn.execute("PRAGMA table_info(task_hook_deliveries)") as cursor:
+            columns = {row[1] for row in await cursor.fetchall()}
+        if "lineage_json" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE task_hook_deliveries ADD COLUMN lineage_json TEXT NOT NULL "
+                "DEFAULT '[]'"
+            )
         self._hooks = HookInbox(self._conn)
+        from .source_store import SCHEMA as SOURCE_SCHEMA
+        from .source_store import SourceStore
+
+        await self._conn.executescript(SOURCE_SCHEMA)
+        self.sources = SourceStore(self._conn)
 
     @property
     def hooks(self) -> HookInbox:
@@ -251,7 +263,11 @@ class TaskStore:
             except ValueError:
                 due = 0
             return "at_time", due, None
-        if trig.type in ("webhook", "event_hook"):
+        if trig.type == "cron":
+            from .cron_schedule import next_cron_ns
+
+            return "cron", next_cron_ns(trig.expression, trig.timezone, time.time_ns()), None
+        if trig.type in ("webhook", "event_hook", "source"):
             return trig.type, None, getattr(trig, "event_name", None)
         if trig.type == "on_event":
             return "on_event", None, trig.event_name

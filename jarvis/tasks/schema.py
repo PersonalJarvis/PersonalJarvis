@@ -1,7 +1,7 @@
 """TaskSpec schema — Pydantic models for the persistent task queue.
 
 Triggers support delays, absolute timestamps, events, elapsed intervals and
-explicit timezone-aware calendar rules. There is no raw cron or RRULE parser.
+explicit timezone-aware calendar/cron rules and typed input sources.
 
 ADR-0003 describes the DB schema; this module covers the in-memory and JSON
 representation.
@@ -23,6 +23,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from .source_schema import SourceSettings
 
 # ---------------------------------------------------------------------
 # Trigger
@@ -108,6 +110,21 @@ class TriggerWebhook(HookOptions):
     """Authenticated JSON POST to this routine's webhook endpoint."""
 
     type: Literal["webhook"] = "webhook"
+    provider: Literal["generic", "github", "linear", "gmail", "slack", "stripe"] = "generic"
+    oidc_audience: str = Field(default="", max_length=2000)
+    service_account: str = Field(default="", max_length=320)
+
+    @model_validator(mode="after")
+    def provider_settings(self) -> TriggerWebhook:
+        if (
+            self.provider == "gmail"
+            and self.service_account
+            and not self.service_account.endswith(".gserviceaccount.com")
+        ):
+            raise ValueError("Use the Pub/Sub service account email, not the Gmail mailbox address")
+        if self.provider != "gmail" and (self.oidc_audience or self.service_account):
+            raise ValueError("OIDC settings belong to Gmail Pub/Sub triggers")
+        return self
 
 
 class TriggerEventHook(HookOptions):
@@ -115,6 +132,25 @@ class TriggerEventHook(HookOptions):
 
     type: Literal["event_hook"] = "event_hook"
     event_name: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z][A-Za-z0-9_.:-]*$")
+
+
+class TriggerSource(HookOptions):
+    type: Literal["source"] = "source"
+    source: SourceSettings
+
+
+class TriggerCron(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    type: Literal["cron"] = "cron"
+    expression: str = Field(min_length=9, max_length=128)
+    timezone: str = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def valid_schedule(self) -> TriggerCron:
+        from .cron_schedule import validate_cron
+
+        validate_cron(self.expression, self.timezone)
+        return self
 
 
 class TriggerCalendar(BaseModel):
@@ -170,7 +206,9 @@ Trigger = Annotated[
     | TriggerEvery
     | TriggerCalendar
     | TriggerWebhook
-    | TriggerEventHook,
+    | TriggerEventHook
+    | TriggerSource
+    | TriggerCron,
     Field(discriminator="type"),
 ]
 
@@ -183,6 +221,8 @@ TRIGGER_TYPES: tuple[str, ...] = (
     "calendar",
     "webhook",
     "event_hook",
+    "source",
+    "cron",
 )
 
 
@@ -252,13 +292,19 @@ class AgentAction(BaseModel):
     model_tier: Literal["fast", "deep", "auto"] = "auto"
 
 
+class WorkflowAction(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["workflow"] = "workflow"
+    workflow_id: UUID
+
+
 TaskAction = Annotated[
-    HarnessDispatchAction | SpeakAction | ToolCallAction | AgentAction,
+    HarnessDispatchAction | SpeakAction | ToolCallAction | AgentAction | WorkflowAction,
     Field(discriminator="kind"),
 ]
 
 
-ACTION_KINDS: tuple[str, ...] = ("harness_dispatch", "speak", "tool_call", "agent")
+ACTION_KINDS: tuple[str, ...] = ("harness_dispatch", "speak", "tool_call", "agent", "workflow")
 
 
 # ---------------------------------------------------------------------
@@ -305,7 +351,15 @@ TASK_STATES: tuple[str, ...] = (
 #: States a task never leaves on its own (hard-delete is allowed here).
 TERMINAL_STATES: tuple[str, ...] = ("completed", "failed", "cancelled", "interrupted")
 #: Trigger types that can be paused/resumed — the recurring ones.
-PAUSABLE_TRIGGER_TYPES: tuple[str, ...] = ("every", "calendar", "on_event", "webhook", "event_hook")
+PAUSABLE_TRIGGER_TYPES: tuple[str, ...] = (
+    "every",
+    "calendar",
+    "on_event",
+    "webhook",
+    "event_hook",
+    "source",
+    "cron",
+)
 
 
 class TaskSpec(BaseModel):

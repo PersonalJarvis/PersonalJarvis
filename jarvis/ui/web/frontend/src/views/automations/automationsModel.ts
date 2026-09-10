@@ -21,7 +21,7 @@ export type TaskState =
   | "cancelled"
   | "interrupted";
 
-export type TriggerType = "after_delay" | "at_time" | "on_event" | "every" | "calendar" | "webhook" | "event_hook";
+export type TriggerType = "after_delay" | "at_time" | "on_event" | "every" | "calendar" | "webhook" | "event_hook" | "source" | "cron";
 
 export interface TaskSummary {
   id: string;
@@ -134,7 +134,7 @@ export function isActive(state: TaskState): boolean {
 
 /** A recurring task (an "automation") — the `every` / `on_event` triggers. */
 export function isRecurringTrigger(trigger: TriggerType): boolean {
-  return trigger === "every" || trigger === "calendar" || trigger === "on_event" || trigger === "webhook" || trigger === "event_hook";
+  return trigger === "every" || trigger === "calendar" || trigger === "on_event" || trigger === "webhook" || trigger === "event_hook" || trigger === "source" || trigger === "cron";
 }
 
 /** A one-off timed task (a "schedule") — the `after_delay` / `at_time` triggers. */
@@ -327,6 +327,8 @@ export function scheduleLineForTask(
   task: Pick<TaskSummary, "trigger" | "trigger_type" | "interval_seconds" | "next_due_at_ns" | "due_at_ns">,
   words: ScheduleWords,
 ): string {
+  if (task.trigger_type === "cron") { const rule = task.trigger as { expression: string; timezone: string }; return `${rule.expression} · ${rule.timezone}`; }
+  if (task.trigger_type === "source") { const source = (task.trigger as { source: { kind: string; topic?: string; path?: string } }).source; return [source.kind, source.topic || source.path].filter(Boolean).join(" · "); }
   if (task.trigger_type === "calendar") return describeTrigger(task.trigger, () => words.daily.replace("{time}", "{0}"));
   if (task.trigger_type === "webhook") return "Webhook";
   if (task.trigger_type === "event_hook") return `${words.onEvent} · ${String((task.trigger as { event_name?: string } | undefined)?.event_name ?? "")}`;

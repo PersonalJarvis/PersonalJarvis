@@ -2,7 +2,7 @@
 
 Plugins (``jarvis.tool`` entry points, marketplace included), connected CLIs
 (``cli_<name>`` tools), MCP servers (``<server>/<tool>`` adapters), skills
-(``active`` lifecycle only) and the built-in core tools all already exist in
+(``active`` and ``validated`` lifecycle states) and the built-in core tools all already exist in
 their own registries. This module is a read-only view that gives each of
 them one id (``plugin:gmail``, ``cli:gh``, ``mcp:github/create_issue``,
 ``skill:daily-brief``, ``core:search-web``) so a roster row can grant, focus
@@ -199,9 +199,10 @@ def _skill_fields(skill: Any) -> tuple[str, str, str]:
 
 
 def _skill_is_active(skill: Any) -> bool:
+    # Match SkillRegistry.list_active(): validation makes installed skills usable.
     state = getattr(skill, "state", None)
     value = getattr(state, "value", state)
-    return str(value).lower() == "active"
+    return str(value).lower() in {"active", "validated"}
 
 
 def build_catalog(

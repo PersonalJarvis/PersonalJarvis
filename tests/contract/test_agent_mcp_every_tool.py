@@ -63,11 +63,23 @@ async def world(tmp_path: Path):
     app.state.society = runtime
     app.state.society_factory = lambda: runtime
     runtime_refs.set_web_app(app)
+    from jarvis.tasks.store import TaskStore
+    from jarvis.tasks.scheduler import TaskScheduler
+    from jarvis.tasks.runner import TaskRunner
+    from jarvis.core.bus import EventBus
+
+    tasks = TaskStore(tmp_path / "tasks.db")
+    await tasks.init()
+    bus = EventBus()
+    scheduler = TaskScheduler(tasks, bus, TaskRunner(tasks, bus))
+    runtime.task_services = lambda: (tasks, scheduler)
     try:
         yield runtime, svc
     finally:
         runtime_refs._reset_for_tests()
         await runtime.close()
+        await scheduler.shutdown()
+        await tasks.close()
 
 
 async def test_every_published_tool_runs_against_a_live_society(world) -> None:
@@ -205,6 +217,22 @@ async def test_every_published_tool_runs_against_a_live_society(world) -> None:
     # A superset: quest_post forged a generalist ("Runner") earlier, and it
     # travels in the bundle like any other teammate.
     assert set(replayed["updated"]) >= {"Archivist", "Scout"}
+
+    from jarvis.tasks.schema import TaskSpec, TriggerSource, AgentAction
+    from jarvis.tasks.source_schema import SourceSettings
+
+    _, scheduler = rt.task_services()
+    tid = await scheduler.schedule(
+        TaskSpec(
+            title="MCP input",
+            trigger=TriggerSource(source=SourceSettings(kind="mcp")),
+            action=AgentAction(prompt="Read input"),
+        )
+    )
+    assert (await s.ok("routine_invoke", task_id=tid, payload={"fixture": True}))[
+        "status"
+    ] == "queued"
+    assert (await s.ok("routine_status", task_id=tid))["state"] == "scheduled"
 
     # ------------------------------------------------------- the floor
     published = {t.name for t in TOOLS}

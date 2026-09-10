@@ -4225,6 +4225,8 @@
     }
   },
   "agent_accounts": {
+    "not_signed_in": "not signed in",
+    "single_google_login": "Uses the Google subscription connected under API Keys. Additional Google logins cannot be switched here yet.",
     "title": "Your subscriptions",
     "hint": "several logins per CLI",
     "description": "Hold more than one plan for the same coding CLI? Register each one here and switch without signing out — every login stays valid side by side. The tick marks the account NEW terminals open on; terminals that are already running keep the account they were started with.",
@@ -4241,6 +4243,8 @@
     "remove": "Remove",
     "usage": {
       "title": "Plan usage",
+      "used": "used",
+      "remaining": "remaining",
       "refresh": "Refresh",
       "live": "live",
       "cached": "from cache",
@@ -4254,7 +4258,7 @@
         "other": "Limit"
       },
       "state": {
-        "unsupported": "This seat has no plan limit to show.",
+        "unsupported": "Plan usage is not available for this provider here.",
         "unavailable": "Usage is not readable right now — it comes back on its own."
       }
     },
