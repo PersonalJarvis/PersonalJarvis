@@ -54,8 +54,66 @@ support equality, inequality, and `and`/`or`/`not`. `max_firings: null` means a
 standing rule; finite limits are persisted through the event-delivery log.
 
 A schema's presence does not guarantee a live publisher. External inbox, file,
-webhook, or application events require an integration that actually publishes
+or application events require an integration that actually publishes
 them. If unavailable, the agent explains the gap and offers interval polling.
+
+## Webhooks and integration event hooks
+
+Ask an agent, for example: "Create a webhook routine that summarizes a new
+customer, but only when customer.vip is true." The saved trigger is
+`{"kind":"webhook","conditions":{"customer.vip":true}}`. A named integration
+event uses `{"kind":"event_hook","event_name":"crm.customer.created"}`.
+Both kinds accept optional `conditions`, `max_firings` and `cooldown_seconds`.
+Conditions compare scalar JSON fields; dotted paths access nested objects.
+
+Use **Connect webhook** on the agent's routine or in its expanded Automations
+row. The app shows the endpoint and a masked, copyable credential. Credentials
+are stored through the existing portable secret store and never included in the
+routine specification or returned by the agent's routine tools. Rotation revokes
+the old credential without changing other routines.
+
+Send a JSON object to `POST /api/tasks/hooks/{task_id}` using
+`Authorization: Bearer <token copied in the app>`. GitHub-compatible senders can
+instead use the same token as their webhook Secret: the receiver checks
+`X-Hub-Signature-256` against the exact raw body, following
+[GitHub's signature format](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries).
+External services need a reachable HTTPS address with the corresponding host
+configured in Jarvis. Creating a routine does not open a tunnel or expose the
+desktop automatically.
+
+Authenticated integrations can publish named events to `POST /api/tasks/events`
+with `{"event_name":"crm.customer.created","payload":{"customer":{"vip":true}}}`.
+This endpoint needs the normal Control API credential or authenticated UI; a
+single routine's webhook token cannot publish events or access other APIs.
+It returns admission results for matching routines and cannot impersonate an
+internal system event. Python integrations may publish `RoutineEventReceived`
+on the existing EventBus after the task scheduler has bound its subscriptions.
+
+### Delivery behavior
+
+- A `queued` response means the payload was persisted, not that the task finished.
+  Execution goes through the owning agent's current policy and canonical chat.
+- Reuse `Idempotency-Key` for Bearer-authenticated retries. Signed requests use
+  the signed body hash so changing an unsigned delivery header cannot replay it.
+  The latest 4,096 delivery receipts per routine are retained for deduplication;
+  pending deliveries are never pruned.
+- Payloads are limited to 32 KiB, admission to 60 deliveries per minute per
+  routine, and outstanding work to 100 deliveries. Cooldowns and finite lifetime
+  budgets are checked before admission. Filtered payloads consume no budget.
+- Pending work survives restart and waits while a routine is paused. New requests
+  to paused or exhausted routines are refused. Deleting the task revokes its URL.
+- Interrupted running work is recorded but never automatically replayed because
+  an external side effect may already have happened. Inspect its result before
+  manually retrying. Execution errors remain visible in the normal task history.
+- External payloads are appended as untrusted data, not as new user instructions.
+  Hooks grant no additional tool permissions and cannot authorize self-configuration.
+
+`tests/contract/test_routine_hooks.py` covers scoped credentials, signatures,
+tampering, replay, boolean filter roundtrips, durable queues, pause/resume,
+limits and OpenAPI payload schemas. A live single-key Gemini check created a
+webhook through chat, delivered an HTTP payload to fresh isolated SQLite stores,
+executed the owner's chat, and suppressed a repeated delivery. Native macOS/Linux
+execution and a completely fresh OS installation are not claimed.
 
 ## Verification
 

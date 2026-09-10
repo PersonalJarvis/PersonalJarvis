@@ -3,6 +3,29 @@ import type { SocietyProviderRow } from "@/lib/societyApi";
 import type { ProviderOption } from "@/store/agentChat";
 import { brainSeats, effortsFor, type BrainSeat } from "../create/brainPicker";
 
+/** Presentation order: plans, OpenCode's mixed catalog, APIs, local models. */
+export function modelGroupOrder(seat: BrainSeat): number {
+  if (seat.provider.runner === "opencode-cli") return 1;
+  return { subscription: 0, api: 2, local: 3 }[seat.kind];
+}
+
+export function collapsibleModels(seat: BrainSeat): boolean {
+  return seat.provider.runner === "opencode-cli" || seat.provider.family === "openrouter";
+}
+
+/** Only explicit free variants; a cheap model or a free-sounding label is not proof. */
+export function isFreeOpenCodeModel(model: CuratedModel): boolean {
+  // Zen's one free alias without a suffix. Pricing verified 2026-09-09:
+  // https://opencode.ai/docs/zen/#pricing. Never apply it to another endpoint.
+  return model.id === "opencode/big-pickle" || /(?:-free|:free)$/i.test(model.id);
+}
+
+/** Search reveals matching hidden entries without changing the saved fold state. */
+export function visibleModels(seat: BrainSeat, models: CuratedModel[], expanded: boolean, search: string): CuratedModel[] {
+  if (expanded || search.trim() || !collapsibleModels(seat)) return models;
+  return seat.provider.runner === "opencode-cli" ? models.filter(isFreeOpenCodeModel) : [];
+}
+
 /** CLI-owned credentials need no duplicate account entry in the app. */
 export function modelSeats(options: ProviderOption[], providers: SocietyProviderRow[], live: Record<string, CuratedModel[]>): BrainSeat[] {
   const usable = options.map((option) => ({ ...option,

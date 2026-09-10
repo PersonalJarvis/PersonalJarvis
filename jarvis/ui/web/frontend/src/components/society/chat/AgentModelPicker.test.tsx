@@ -44,7 +44,7 @@ beforeEach(async () => {
       return response({ agent: row, reseated: "society:scout" });
     }
     if (url.includes("/catalog")) { catalogCalls++; return response({ providers: [provider("openai"), provider("gemini"), provider("offline"), provider("ollama", { keyless: true, models_source: "live" }), ...extraProviders] }); }
-    if (url.endsWith("/status")) return response({ mapping: [{ jarvis: "openai", key_set: true }, { jarvis: "gemini", key_set: true }, { jarvis: "offline", key_set: false }] });
+    if (url.endsWith("/status")) return response({ mapping: [{ jarvis: "openai", key_set: true }, { jarvis: "gemini", key_set: true }, { jarvis: "openrouter", key_set: true }, { jarvis: "offline", key_set: false }] });
     if (url.endsWith("/models")) return response({ models: liveModels[url.split("/").at(-2)!] ?? [] });
     if (url.endsWith("/providers")) return response({ providers: providerRows });
     if (url.endsWith("/agents")) return response({ agents: [row] });
@@ -135,11 +135,11 @@ test("the effort submenu commits the model and chosen effort together", async ()
 
 test("OpenCode models are offered without a duplicate app-managed login", async () => {
   extraProviders = [provider("opencode", { runner: "opencode-cli", cli_installed: true,
-    curated_models: [{ id: "opencode/free-model", label: "Free model" }] })];
+    curated_models: [{ id: "opencode/test-free", label: "Free model" }] })];
   mount(); await open();
-  fireEvent.click(screen.getByTitle("opencode/free-model"));
+  fireEvent.click(screen.getByTitle("opencode/test-free"));
   await waitFor(() => expect(posts[0].provider).toBe("opencode"));
-  expect(posts[0].model).toBe("opencode/free-model");
+  expect(posts[0].model).toBe("opencode/test-free");
 });
 
 test("all connected subscription accounts are selectable for a model", async () => {
@@ -161,6 +161,7 @@ test("refresh reloads catalogs and reveals newly available models", async () => 
   mount(); await open();
   extraProviders = [provider("opencode", { runner: "opencode-cli", cli_installed: true })];
   fireEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Show more models/ }));
   await screen.findByTitle("opencode-small");
   expect(catalogCalls).toBe(2);
 });
@@ -190,4 +191,52 @@ test("Escape closes a nested menu before the surrounding agent card", async () =
   expect(screen.queryByRole("menu")).toBeNull();
   expect(screen.getByRole("dialog")).toBeTruthy();
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Model" }));
+});
+
+test("subscriptions precede OpenCode, which initially shows only explicit free models", async () => {
+  extraProviders = [provider("opencode", { runner: "opencode-cli", cli_installed: true, curated_models: [
+    { id: "opencode/paid", label: "Paid" }, { id: "opencode/test-free", label: "Free" },
+    { id: "opencode/big-pickle", label: "Big Pickle" },
+  ] }), provider("z-plan", { runner: "grok-cli", cli_installed: true })];
+  mount(); await open();
+  const groups = screen.getAllByRole("group");
+  expect(groups[0].getAttribute("aria-label")).toBe("Grok subscription");
+  expect(groups[1].getAttribute("aria-label")).toBe("opencode");
+  expect(screen.getByTitle("opencode/test-free")).toBeTruthy();
+  expect(screen.getByTitle("opencode/big-pickle")).toBeTruthy();
+  expect(screen.queryByTitle("opencode/paid")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Show more models/ }));
+  expect(screen.getByTitle("opencode/paid")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Show fewer models" }));
+  expect(screen.queryByTitle("opencode/paid")).toBeNull();
+  expect(posts).toEqual([]);
+});
+
+test("OpenRouter folds independently, searching finds hidden models, and clearing restores the fold", async () => {
+  extraProviders = [provider("openrouter")];
+  mount(); const input = await open();
+  const toggle = screen.getByRole("button", { name: "openrouter · API key" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByTitle("openrouter-small")).toBeNull();
+  fireEvent.click(toggle);
+  expect(screen.getByTitle("openrouter-small")).toBeTruthy();
+  fireEvent.click(toggle);
+  fireEvent.change(input, { target: { value: "openrouter large" } });
+  expect(screen.getByTitle("openrouter-large")).toBeTruthy();
+  expect(screen.queryByTitle("openrouter-small")).toBeNull();
+  fireEvent.change(input, { target: { value: "" } });
+  expect(screen.queryByTitle("openrouter-large")).toBeNull();
+  expect(posts).toEqual([]);
+});
+
+test("hidden OpenCode models remain selectable through search and a reopened menu is compact", async () => {
+  extraProviders = [provider("opencode", { runner: "opencode-cli", cli_installed: true })];
+  mount(); const input = await open();
+  fireEvent.click(screen.getByRole("button", { name: /Show more models/ }));
+  fireEvent.keyDown(input, { key: "Escape" });
+  const reopened = await open();
+  expect(screen.queryByTitle("opencode-large")).toBeNull();
+  fireEvent.change(reopened, { target: { value: "opencode large" } });
+  fireEvent.click(screen.getByTitle("opencode-large"));
+  await waitFor(() => expect(posts[0]).toEqual({ provider: "opencode", model: "opencode-large", effort: "high", account_id: "" }));
 });

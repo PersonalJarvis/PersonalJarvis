@@ -10,7 +10,8 @@ import { useMemo, useState } from "react";
 import { Clock, Plus, X } from "lucide-react";
 
 import { BrandedSelect } from "@/components/ui/select";
-import { useT } from "@/i18n";
+import { useT, useLocaleChunk } from "@/i18n";
+import { WebhookConnection } from "./WebhookConnection";
 import { cn } from "@/lib/utils";
 
 import {
@@ -22,7 +23,7 @@ import {
 } from "../cardData";
 import type { AgentRoutine } from "../data";
 
-type Kind = "every" | "daily" | "on_event";
+type Kind = "every" | "daily" | "on_event" | "webhook" | "event_hook";
 type Unit = "hours" | "minutes";
 
 export interface AgentRoutinesListProps {
@@ -46,7 +47,9 @@ function sampleToLive(rows: AgentRoutine[]): LiveRoutine[] {
   }));
 }
 
-function buildSchedule(kind: Kind, amount: number, unit: Unit, time: string, eventName: string, timezone: string): Record<string, unknown> {
+function buildSchedule(kind: Kind, amount: number, unit: Unit, time: string, eventName: string, timezone: string, conditions: Record<string, unknown>): Record<string, unknown> {
+  if (kind === "webhook") return { kind, conditions };
+  if (kind === "event_hook") return { kind, event_name: eventName.trim(), conditions };
   if (kind === "on_event") {
     return { kind: "on_event", event_name: eventName.trim() };
   }
@@ -70,6 +73,7 @@ export function AgentRoutinesList({
   className,
 }: AgentRoutinesListProps) {
   const t = useT();
+  useLocaleChunk("society");
   const live = useAgentRoutines(agentId);
   const create = useCreateAgentRoutine();
   const [open, setOpen] = useState(false);
@@ -81,6 +85,9 @@ export function AgentRoutinesList({
   const [time, setTime] = useState("08:00");
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [eventName, setEventName] = useState("");
+  const [conditionText, setConditionText] = useState("{}");
+  let conditions: Record<string, unknown> | null = null;
+  try { const parsed: unknown = JSON.parse(conditionText); if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) conditions = parsed as Record<string, unknown>; } catch { /* Invalid draft stays local until corrected. */ }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -92,6 +99,8 @@ export function AgentRoutinesList({
     { value: "every", label: t("society.card.routines_every") },
     { value: "daily", label: t("society.card.routines_daily") },
     { value: "on_event", label: t("society.card.routines_on_event") },
+    { value: "event_hook", label: t("society.hooks.event_hook") },
+    { value: "webhook", label: t("society.hooks.webhook") },
   ];
   const unitOptions = [
     { value: "hours", label: t("society.card.routines_hours") },
@@ -101,7 +110,8 @@ export function AgentRoutinesList({
   const valid =
     title.trim().length > 0 &&
     prompt.trim().length > 0 &&
-    (kind !== "on_event" || eventName.trim().length > 0) &&
+    ((kind !== "on_event" && kind !== "event_hook") || eventName.trim().length > 0) &&
+    ((kind !== "webhook" && kind !== "event_hook") || conditions !== null) &&
     (kind !== "every" || Number.parseInt(amount, 10) > 0) &&
     (kind !== "daily" || /^\d{2}:\d{2}$/.test(time));
 
@@ -113,6 +123,7 @@ export function AgentRoutinesList({
     setUnit("hours");
     setTime("08:00");
     setEventName("");
+    setConditionText("{}");
     setError("");
   };
 
@@ -124,7 +135,7 @@ export function AgentRoutinesList({
       await create(agentId, {
         title: title.trim(),
         prompt: prompt.trim(),
-        schedule: buildSchedule(kind, Number.parseInt(amount, 10) || 1, unit, time, eventName, timezone),
+        schedule: buildSchedule(kind, Number.parseInt(amount, 10) || 1, unit, time, eventName, timezone, conditions ?? {}),
       });
       reset();
       setOpen(false);
@@ -241,14 +252,21 @@ export function AgentRoutinesList({
             </label>
             </>
           ) : null}
-          {kind === "on_event" ? (
+          {kind === "on_event" || kind === "event_hook" ? (
             <input
               value={eventName}
               onChange={(e) => setEventName(e.target.value)}
-              placeholder={t("society.card.routines_event_name")}
+              placeholder={t(kind === "event_hook" ? "society.hooks.event_name" : "society.card.routines_event_name")}
               className={fieldCls}
               autoComplete="off"
             />
+          ) : null}
+          {kind === "webhook" || kind === "event_hook" ? (
+            <label className="text-[11px] text-muted-foreground">{t("society.hooks.conditions")}
+              <textarea aria-label={t("society.hooks.conditions")} value={conditionText}
+                onChange={(e) => setConditionText(e.target.value)} className={fieldCls} rows={2} />
+              <span>{t("society.hooks.filter_hint")}</span>
+            </label>
           ) : null}
           <button
             type="submit"
@@ -284,6 +302,7 @@ export function AgentRoutinesList({
                       <span className="block">{t("automations_view.next_run")}: {new Date(routine.dueMs).toLocaleString(undefined, { timeZoneName: "short" })}</span>
                     ) : null}
                   </span>
+                  {(routine.trigger as { type?: string } | null)?.type === "webhook" ? <WebhookConnection key={routine.id} taskId={routine.id} /> : null}
                 </span>
               </div>
             </li>

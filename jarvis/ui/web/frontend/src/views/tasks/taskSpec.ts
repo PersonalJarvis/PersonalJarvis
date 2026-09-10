@@ -45,7 +45,11 @@ export interface TaskDraft {
   announceText: string; // spoken confirmation after the action finishes
 }
 
+export interface HookOptions { conditions?: Record<string, string | number | boolean | null>; max_firings?: number | null; cooldown_seconds?: number; }
+
 export type TaskTrigger =
+  | ({ type: "webhook" } & HookOptions)
+  | ({ type: "event_hook"; event_name: string } & HookOptions)
   | { type: "after_delay"; delay_seconds: number }
   | { type: "at_time"; iso_timestamp: string }
   | { type: "calendar"; local_time: string; timezone: string; weekdays?: number[]; month_days?: number[]; months?: number[]; start_date?: string }

@@ -27,6 +27,11 @@ export function describeTrigger(trigger: unknown, t: (key: string) => string = (
   if (!trigger || typeof trigger !== "object") return "";
   const raw = trigger as Record<string, unknown>;
   const kind = String(raw.kind ?? raw.type ?? "");
+  if (kind === "webhook" || kind === "event_hook") {
+    const label = kind === "webhook" ? "Webhook" : t("society.hooks.event_hook") + " · " + String(raw.event_name ?? "");
+    const conditions = raw.conditions && typeof raw.conditions === "object" ? Object.entries(raw.conditions).map(([field, value]) => `${field} = ${JSON.stringify(value)}`).join(", ") : "";
+    return conditions ? `${label} · ${conditions}` : label;
+  }
   if (kind === "calendar") {
     const time = String(raw.local_time ?? "");
     const zone = String(raw.timezone ?? "");

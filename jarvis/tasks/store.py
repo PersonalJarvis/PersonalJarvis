@@ -23,7 +23,9 @@ from typing import Any
 
 import aiosqlite
 
-from .schema import TERMINAL_STATES, TaskSpec, TaskState
+from .hook_inbox import COUNTER_TRIGGER, HookInbox
+from .hook_inbox import SCHEMA as HOOK_SCHEMA
+from .schema import TERMINAL_STATES, TRIGGER_TYPES, TaskSpec, TaskState
 
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
@@ -40,7 +42,7 @@ CREATE TABLE tasks_new (
                         'pending','scheduled','paused','running','completed',
                         'failed','cancelled','interrupted')),
     trigger_type    TEXT NOT NULL CHECK(trigger_type IN (
-                        'after_delay','at_time','on_event','every','calendar')),
+                        'after_delay','at_time','on_event','every','calendar','webhook','event_hook')),
     due_at_ns       INTEGER,
     event_selector  TEXT,
     title           TEXT NOT NULL DEFAULT '',
@@ -69,6 +71,7 @@ class TaskStore:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: aiosqlite.Connection | None = None
+        self._hooks: HookInbox | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -93,6 +96,14 @@ class TaskStore:
         await self._migrate_trigger_type_check()
         # Same dance for the state CHECK, which predates `paused` (2026-08-24).
         await self._migrate_state_check()
+        await self._conn.executescript(HOOK_SCHEMA + COUNTER_TRIGGER)
+        self._hooks = HookInbox(self._conn)
+
+    @property
+    def hooks(self) -> HookInbox:
+        if self._hooks is None:
+            raise RuntimeError("TaskStore is not initialized")
+        return self._hooks
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -124,7 +135,7 @@ class TaskStore:
             return
         if "trigger_type" not in table_sql or "CHECK" not in table_sql:
             return  # loose schema — nothing to migrate
-        if "'calendar'" in table_sql:
+        if all(f"'{kind}'" in table_sql for kind in TRIGGER_TYPES):
             return  # fresh schema or already migrated
         await self._rebuild_tasks_table()
 
@@ -240,6 +251,8 @@ class TaskStore:
             except ValueError:
                 due = 0
             return "at_time", due, None
+        if trig.type in ("webhook", "event_hook"):
+            return trig.type, None, getattr(trig, "event_name", None)
         if trig.type == "on_event":
             return "on_event", None, trig.event_name
         if trig.type == "calendar":

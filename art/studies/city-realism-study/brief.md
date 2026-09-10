@@ -2,6 +2,40 @@
 
 Date: 2026-09-09. Stage: brief and references. Tier: T1 research artifact only.
 
+Implementation kickoff for 2026-09-10: [work packages, acceptance matrix and start prompt](implementation-plan.md).
+
+## Updated user direction: a future metropolis
+
+This section supersedes the earlier compact island/European district proposal below. The user explicitly requires a city, no island, new spatial dimensions, strongly modern future architecture, trains and faster agent travel between work locations. The supplied screenshot is the primary visual direction; Cities: Skylines remains supporting research.
+
+Reference: [user-supplied X video](https://x.com/cb_doge/status/2085372286735925741/video/1). The page returned HTTP 403; the video has not been watched. Observations below concern only the supplied screenshot. It depicts broad overhanging roofs, substantial diagonal structural supports, elevated pedestrian connections, layered public space, integrated trees and planting, dark structural surfaces and long warm-white light strips at dusk. Vehicle motion, transport technology and the full city extent cannot be established from the still image.
+
+### Spatial and visual proposal
+
+Design a continuous urban territory with districts, a skyline and multiple circulation levels. Do not carry forward the coastline, central island plateau or old map extent as design constraints. Establish dimensions in metres through building/door/person scale, station spacing and travel-time trials before choosing the final city bounds. Preserve stable functional place identities while allowing entirely new physical locations.
+
+Create a civic/coordination district, a terminal and compute district, a knowledge/archive district and a fabrication/integration district, connected by a rail backbone. These district names and groupings are proposals. Architecture should express large-span transport halls, terraces, elevated walkways and planted public plazas. Use selective linear lighting to describe structures while retaining readable daylight and low-cost rendering profiles.
+
+### Agent travel is part of the redesign
+
+The current `Walkers.tsx` maps semantic checkpoints to destinations and animates A* ground paths. `walkerKinematics.ts` sets purposeful walking to 1.28 metres per second. Increasing that constant alone will not establish believable metropolitan travel.
+
+Introduce a layered route graph: pedestrian links, accessible building entrances, station boarding anchors, rail connections and level-change links. A single ground height at an X/Z position cannot represent both a bridge deck and the route beneath it. Route nodes therefore need explicit elevation/layer identity; retain the ground grid where it remains useful for local walking.
+
+Travel presentation should support walking, boarding, riding and exiting, with run animation for suitable short urgent trips. Select travel by estimated end-to-end time, including the walk to a station and any wait, rather than selecting a train solely by distance. Avoid holding an agent through long simulated commutes while its actual task changes.
+
+Actual task execution must remain independent of travel animation. Shell commands and other tools must not wait for a train or a visual arrival. The phrase "Shell Comments" is provisionally interpreted as shell commands, not a confirmed new task category. Rapid activity changes should update the current intent and coalesce obsolete journeys. While a vehicle is moving, retarget to an appropriate reachable stop; show the true task status immediately. Cancellation, completed tasks, hidden views, reduced motion and unreachable stops need explicit behavior, including an honest shortened transition where appropriate.
+
+This is a proposed behavioral design; no transport code or backend activity contract has been changed. Verify which actual tool events are exposed before promising command-by-command routing. Introducing a shared activity or transport schema would be T3 contract work under the repository rules; the present brief is T1 only.
+
+### Revised first playable reference
+
+Build two station stops and two functional work destinations with one traversable rail connection, a ground route, an elevated walkway and a representative agent. Author one finished station/plaza with the screenshot's structural and lighting language. This is the minimum slice that can demonstrate the new city scale, art direction and useful transport together.
+
+Acceptance: correct boarding and alighting, no foot sliding or train intersections with static geometry, correct navigation above and below the walkway, destination changes during travel, continued execution of real tasks during journeys, and working selection/status displays. Compare walking with total train journey time. Capture the actual runtime at district overview and pedestrian scale, in day and dusk lighting, and report measured performance with device and agent count. Expand districts and asset families only after approval of this specific runtime reference, as required by the art-production standard.
+
+Next action: establish the layered blockout, scale/travel budgets and isolated runtime preview for this two-stop district. The previously proposed standalone workshop street no longer covers the requested reference scope.
+
 ## Outcome and scope
 
 The requested transformation is feasible as an authored asset and rendering project in the existing Three.js/WebView renderer. A filter change alone cannot establish the intended look. Use Cities: Skylines II as the working reference for contemporary architecture and natural human proportions. The user named the franchise, not a specific installment; choosing II and a compact European-influenced district is a proposal, not approved art direction.
@@ -124,4 +158,4 @@ Relevant existing commands: `python scripts/ci/check_society_figures.py`, `pytho
 
 ## Handoff
 
-Study: `art/studies/city-realism-study/`. Current stage: researched brief with complete bundled GLB ledger and procedural family map. Approved scope: research and exploration requested; no specific finished runtime reference approved. Open: exact installment/regional direction, treatment of stylized character families, device budgets and close-view camera policy. Next action: capture the runtime baseline and build the skill-forge/worker reference blockout in this isolated study.
+Study: `art/studies/city-realism-study/`. Current stage: researched brief with complete bundled GLB ledger and procedural family map, amended by the future-metropolis direction at the top. User direction: a large modern city with no island and faster travel including trains. No specific finished runtime reference approved. Open: measured city dimensions, device budgets, treatment of stylized character families and detailed activity-event mapping. Next action: build the layered two-stop district blockout and isolated preview described above. Earlier island-based proposals are superseded.

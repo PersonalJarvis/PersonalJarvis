@@ -12,7 +12,17 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 # ---------------------------------------------------------------------
 # Trigger
@@ -72,6 +82,41 @@ class TriggerEvery(BaseModel):
     start_at: str | None = Field(default=None, min_length=10, max_length=40)
 
 
+HookScalar = StrictStr | StrictBool | StrictInt | StrictFloat | None
+
+
+class HookOptions(BaseModel):
+    """JSON field equality filters and a lifetime delivery limit."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+    conditions: dict[str, HookScalar] = Field(default_factory=dict, max_length=20)
+    max_firings: int | None = Field(default=None, ge=1, le=1000)
+    cooldown_seconds: float = Field(default=0, ge=0, le=86400)
+
+    @field_validator("conditions")
+    @classmethod
+    def valid_paths(cls, value: dict[str, HookScalar]) -> dict[str, HookScalar]:
+        import re
+
+        for key in value:
+            if len(key) > 160 or not re.fullmatch(r"[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*", key):
+                raise ValueError("Conditions use dot-separated JSON object field names")
+        return value
+
+
+class TriggerWebhook(HookOptions):
+    """Authenticated JSON POST to this routine's webhook endpoint."""
+
+    type: Literal["webhook"] = "webhook"
+
+
+class TriggerEventHook(HookOptions):
+    """An explicitly named event emitted by an integration or the events API."""
+
+    type: Literal["event_hook"] = "event_hook"
+    event_name: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z][A-Za-z0-9_.:-]*$")
+
+
 class TriggerCalendar(BaseModel):
     """Recurring wall-clock time pinned to a user's explicit IANA timezone."""
 
@@ -119,12 +164,26 @@ class TriggerCalendar(BaseModel):
 
 
 Trigger = Annotated[
-    TriggerAfterDelay | TriggerAtTime | TriggerOnEvent | TriggerEvery | TriggerCalendar,
+    TriggerAfterDelay
+    | TriggerAtTime
+    | TriggerOnEvent
+    | TriggerEvery
+    | TriggerCalendar
+    | TriggerWebhook
+    | TriggerEventHook,
     Field(discriminator="type"),
 ]
 
 
-TRIGGER_TYPES: tuple[str, ...] = ("after_delay", "at_time", "on_event", "every", "calendar")
+TRIGGER_TYPES: tuple[str, ...] = (
+    "after_delay",
+    "at_time",
+    "on_event",
+    "every",
+    "calendar",
+    "webhook",
+    "event_hook",
+)
 
 
 # ---------------------------------------------------------------------
@@ -246,7 +305,7 @@ TASK_STATES: tuple[str, ...] = (
 #: States a task never leaves on its own (hard-delete is allowed here).
 TERMINAL_STATES: tuple[str, ...] = ("completed", "failed", "cancelled", "interrupted")
 #: Trigger types that can be paused/resumed — the recurring ones.
-PAUSABLE_TRIGGER_TYPES: tuple[str, ...] = ("every", "calendar", "on_event")
+PAUSABLE_TRIGGER_TYPES: tuple[str, ...] = ("every", "calendar", "on_event", "webhook", "event_hook")
 
 
 class TaskSpec(BaseModel):

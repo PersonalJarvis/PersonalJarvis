@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { joinProviderOptions } from "@/store/agentChat";
 import { effortsFor, type BrainSeat } from "../create/brainPicker";
 import { useUpdateAgentModel, type SocietyAgent } from "../data";
-import { matchesModel, modelEffort, modelSeats, providerTitle } from "./modelChoices";
+import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, visibleModels } from "./modelChoices";
 
 type Submenu = { provider: string; model?: CuratedModel; anchor: DOMRect };
 const menuRow = "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-popover-foreground hover:bg-secondary focus-visible:bg-secondary focus-visible:outline-none disabled:opacity-45";
@@ -29,6 +29,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   const [error, setError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Record<string, string>>({});
   const [submenu, setSubmenu] = useState<Submenu | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [position, setPosition] = useState<CSSProperties>({});
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -57,8 +58,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   const groups = seats.map((seat) => ({ seat, title: providerTitle(seat, t),
     models: seat.provider.curated_models.filter((model) => matchesModel(seat, model, search, providerTitle(seat, t))),
   })).filter((group) => group.models.length > 0).sort((a, b) => {
-    const order = { subscription: 0, api: 1, local: 2 };
-    return order[a.seat.kind] - order[b.seat.kind] || a.title.localeCompare(b.title);
+    return modelGroupOrder(a.seat) - modelGroupOrder(b.seat) || a.title.localeCompare(b.title);
   });
   const sideSeat = seats.find((seat) => seat.provider.id === submenu?.provider);
 
@@ -159,7 +159,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   return <>
     <button ref={trigger} type="button" aria-label={t("society.chat.model")} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined}
       disabled={busy || saving} title={busy ? t("society.chat.model_busy") : t("society.chat.model")}
-      onClick={() => { if (open) close(); else { setSearch(""); setAccounts({}); setError(null); setOpen(true); } }}
+      onClick={() => { if (open) close(); else { setSearch(""); setAccounts({}); setExpanded({}); setError(null); setOpen(true); } }}
       className="flex max-w-full items-center gap-1.5 rounded-full px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
       {agent.provider ? <ProviderLogo providerId={agent.provider} label={agent.providerLabel} size="sm" /> : null}
       <span className="truncate">{agent.model || agent.providerLabel || t("society.chat.model_default")}</span>
@@ -180,9 +180,21 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
           {loading ? <p role="status" className="px-3 py-3 text-xs text-muted-foreground">{t("society.create.catalog_loading")}</p> : null}
           {failed ? <p role="alert" className="px-3 py-3 text-xs text-destructive">{t("society.chat.model_load_failed")}</p> : null}
           {!loading && !failed && groups.length === 0 ? <p className="px-3 py-3 text-xs text-muted-foreground">{t(refreshing ? "society.chat.models_loading" : "society.chat.model_no_matches")}</p> : null}
-          {!loading && !failed ? groups.map(({ seat, title, models }) => <div key={seat.provider.id} role="group" aria-label={title}>
+          {!loading && !failed ? groups.map(({ seat, title, models }) => {
+            const isExpanded = expanded[seat.provider.id] ?? false;
+            const shown = visibleModels(seat, models, isExpanded, search);
+            const foldable = collapsibleModels(seat) && !search.trim();
+            const isRouter = seat.provider.family === "openrouter";
+            const choicesId = `${menuId}-${seat.provider.id}-models`;
+            const toggle = () => { setSubmenu(null); setExpanded((previous) => ({ ...previous, [seat.provider.id]: !isExpanded })); };
+            return <div key={seat.provider.id} role="group" aria-label={title}>
             <div className="sticky top-0 z-10 flex items-center gap-1 bg-popover px-3 pb-1 pt-3">
-              <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground" title={title}>{title}</span>
+              {foldable && isRouter ? <button type="button" data-menu-choice disabled={busy || saving}
+                onClick={toggle} aria-label={title} aria-expanded={isExpanded} aria-controls={choicesId}
+                className="flex min-w-0 flex-1 items-center gap-1 rounded text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+                {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" aria-hidden /> : <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />}
+                <span className="truncate">{title}</span><span className="ml-auto">{models.length}</span>
+              </button> : <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground" title={title}>{title}</span>}
               {seat.accounts.length ? <button type="button" disabled={busy || saving} data-menu-choice
                 aria-label={`${t("society.chat.model_account")}: ${title}`} aria-haspopup="menu" aria-expanded={submenu?.provider === seat.provider.id && !submenu.model}
                 onClick={(event) => setSubmenu({ provider: seat.provider.id, anchor: event.currentTarget.getBoundingClientRect() })}
@@ -190,7 +202,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
                 <Users className="h-3 w-3 shrink-0" aria-hidden /><span className="truncate">{seat.accounts.find((account) => account.id === currentAccount(seat))?.label ?? t("society.chat.model_active_account")}</span><ChevronDown className="h-2.5 w-2.5 shrink-0" aria-hidden />
               </button> : null}
             </div>
-            {models.map((model) => {
+            <div id={choicesId}>{shown.map((model) => {
               const selected = agent.provider === seat.provider.id && agent.model === model.id && (agent.accountId ?? "") === currentAccount(seat);
               const effort = preferredEffort(seat, model);
               return <div key={model.id} className={cn("group flex items-center", selected && "bg-secondary/70")}>
@@ -211,8 +223,15 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
                   <ChevronRight className="h-3 w-3" aria-hidden />
                 </button> : null}
               </div>;
-            })}
-          </div>) : null}
+            })}</div>
+            {foldable && !isRouter && (isExpanded || shown.length < models.length) ? <button type="button" data-menu-choice
+              disabled={busy || saving} aria-expanded={isExpanded} aria-controls={choicesId} onClick={toggle}
+              className={cn(menuRow, "text-muted-foreground")}>
+              {isExpanded ? <ChevronDown className="h-3 w-3" aria-hidden /> : <ChevronRight className="h-3 w-3" aria-hidden />}
+              {t(isExpanded ? "society.chat.model_show_fewer" : "society.chat.model_show_more")}
+              {!isExpanded ? <span className="ml-auto text-xs">{models.length - shown.length}</span> : null}
+            </button> : null}
+          </div>; }) : null}
         </div>
         {error ? <p role="alert" className="shrink-0 border-t border-border px-3 py-2 text-xs text-destructive">{error}</p> : null}
         <div className="shrink-0 border-t border-border py-1">
