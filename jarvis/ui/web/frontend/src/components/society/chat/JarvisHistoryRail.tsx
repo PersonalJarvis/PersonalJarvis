@@ -7,6 +7,7 @@ import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { startNewVoiceRun } from "@/lib/chatsApi";
+import { transcriptFromMessages } from "@/lib/homeTranscript";
 import { CONVERSATIONS_REFRESH_MS, useConversations } from "@/hooks/useConversations";
 import { formatChatWhen } from "@/components/home/chatRows";
 import { setJarvisCardMode } from "./AgentChatPanel";
@@ -55,10 +56,14 @@ export function JarvisHistoryRail() {
     setJarvisCardMode("chat");
   };
 
-  const openVoice = (voiceId: string) => {
+  const openVoice = async (voiceId: string) => {
     useAgentChatStore.getState().newChat();
-    setJarvisCardMode("chat");
-    void openConversation("voice", voiceId);
+    useHomeStore.getState().seedTranscript([]);
+    setJarvisCardMode("voice");
+    const messages = await openConversation("voice", voiceId);
+    const active = useEventStore.getState();
+    if (active.activeKind !== "voice" || active.activeThreadId !== voiceId) return;
+    useHomeStore.getState().seedTranscript(transcriptFromMessages(messages));
   };
 
   const startNew = () => {
@@ -85,6 +90,7 @@ export function JarvisHistoryRail() {
       useEventStore.getState().seedThinkingTraces({});
       useEventStore.getState().setTranscription("", true);
       useHomeStore.getState().resetTranscript();
+      useHomeStore.setState({ freshVoicePending: false });
       setJarvisCardMode("voice");
       void refresh();
     } catch {
@@ -173,7 +179,7 @@ export function JarvisHistoryRail() {
                 title={c.title || c.preview || t("society.chat.new_chat")}
                 when={formatChatWhen(c.updated_ms)}
                 active={c.id === voiceThreadId}
-                onOpen={() => openVoice(c.id)}
+                onOpen={() => void openVoice(c.id)}
                 testId="jarvis-history-voice-row"
               />
             ))}

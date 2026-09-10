@@ -1,18 +1,17 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { useQueries, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronRight, Loader2, RefreshCw, Search, Users } from "lucide-react";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { effortLabel } from "@/components/agentchat/AgentComposer";
 import { useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
 import { useT } from "@/i18n";
-import { fetchAgentChatCatalog, fetchAgentConnections, fetchProviderModels, type CuratedModel } from "@/lib/agentChatApi";
-import { fetchSocietyProviders } from "@/lib/societyApi";
+import type { CuratedModel } from "@/lib/agentChatApi";
 import { cn } from "@/lib/utils";
-import { joinProviderOptions } from "@/store/agentChat";
 import { effortsFor, type BrainSeat } from "../create/brainPicker";
 import { useUpdateAgentModel, type SocietyAgent } from "../data";
 import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, visibleModels } from "./modelChoices";
+
+import { useModelMenuData } from "./useModelMenuData";
 
 type Submenu = { provider: string; model?: CuratedModel; anchor: DOMRect };
 const menuRow = "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-popover-foreground hover:bg-secondary focus-visible:bg-secondary focus-visible:outline-none disabled:opacity-45";
@@ -40,34 +39,19 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
 
   const chatCatalog = useAgentChat((state) => state.surface === "society" ? state.catalog : null);
   const chatConnections = useAgentChat((state) => state.connections);
-  // Start with the card, not its first click. The chat store has usually already
-  // loaded these same facts; a slow refresh must not replace them with a spinner.
-  const catalog = useQuery({ queryKey: ["agent-chat", "catalog", "society"], queryFn: () => fetchAgentChatCatalog("society"), placeholderData: chatCatalog ?? undefined, staleTime: 60_000 });
-  const connections = useQuery({ queryKey: ["agent-chat", "connections"], queryFn: fetchAgentConnections, placeholderData: chatCatalog ? chatConnections : undefined, staleTime: 60_000 });
-  const providers = useQuery({ queryKey: ["society", "providers"], queryFn: fetchSocietyProviders, staleTime: 60_000 });
-  const availableCatalog = catalog.data ?? chatCatalog;
-  const availableConnections = connections.data ?? (chatCatalog ? chatConnections : undefined);
-  const options = useMemo(() => joinProviderOptions(availableCatalog?.providers ?? [], availableConnections ?? []), [availableCatalog, availableConnections]);
-  const liveProviders = options.filter((option) => option.connected && option.models_source === "live");
-  const liveQueries = useQueries({ queries: liveProviders.map((provider) => ({
-    queryKey: ["society", "model-menu", "live", provider.id],
-    queryFn: async (): Promise<CuratedModel[]> => (await fetchProviderModels(provider.id)).map((model) => ({ id: model.id, label: model.label ?? model.name ?? model.id })),
-    enabled: open && Boolean(availableConnections), staleTime: 60_000, retry: false,
-  })) });
-  const live: Record<string, CuratedModel[]> = {};
-  liveProviders.forEach((provider, index) => { if (liveQueries[index].data) live[provider.id] = liveQueries[index].data!; });
-  const seats = modelSeats(options, providers.data ?? [], live);
-  // Subscription accounts enrich the menu independently of its model rows.
-  const loading = !availableCatalog || !availableConnections;
-  const refreshing = catalog.isFetching || connections.isFetching || providers.isFetching || liveQueries.some((query) => query.isFetching);
-  const failed = (!availableCatalog && catalog.isError) || (!availableConnections && connections.isError);
+  const { options, providers, live, loading, refreshing, failed, refresh: refreshData } = useModelMenuData(chatCatalog, chatConnections);
+  const seats = useMemo(() => modelSeats(options, providers ?? [], live), [options, providers, live]);
   const currentAccount = (seat: BrainSeat) => accounts[seat.provider.id] ?? (agent.provider === seat.provider.id ? agent.accountId ?? "" : "");
   const preferredEffort = (seat: BrainSeat, model: CuratedModel) => modelEffort(seat, model.id, seat.provider.id === agent.provider ? agent.effort : seat.provider.default_effort);
-  const groups = seats.map((seat) => ({ seat, title: providerTitle(seat, t),
-    models: seat.provider.curated_models.filter((model) => matchesModel(seat, model, search, providerTitle(seat, t))),
-  })).filter((group) => group.models.length > 0).sort((a, b) => {
-    return modelGroupOrder(a.seat) - modelGroupOrder(b.seat) || a.title.localeCompare(b.title);
-  });
+  // useT returns a new function each render; memoize by its actual labels.
+  const titleKey = JSON.stringify(seats.map((seat) => providerTitle(seat, t)));
+  const groups = useMemo(() => {
+    const titles = JSON.parse(titleKey) as string[];
+    return seats.map((seat, index) => ({ seat, title: titles[index],
+      models: seat.provider.curated_models.filter((model) => matchesModel(seat, model, search, titles[index])),
+    })).filter((group) => group.models.length > 0).sort((a, b) =>
+      modelGroupOrder(a.seat) - modelGroupOrder(b.seat) || a.title.localeCompare(b.title));
+  }, [seats, search, titleKey]);
   const sideSeat = seats.find((seat) => seat.provider.id === submenu?.provider);
 
   function close() {
@@ -100,11 +84,29 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
         ...(above ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
       };
       setPosition((previous) => previous.left === next.left && previous.top === next.top && previous.bottom === next.bottom && previous.width === next.width && previous.maxHeight === next.maxHeight ? previous : next);
-      // Dialog content can settle after the menu opens without a window resize.
-      frame = requestAnimationFrame(place);
+
     };
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; place(); });
+    };
+    const scroll = (event: Event) => {
+      if (!panel.current?.contains(event.target as Node)) schedule();
+    };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    // Resizing the composer or its ancestors can move an unchanged trigger.
+    for (let node: HTMLElement | null = trigger.current; node; node = node.parentElement) observer?.observe(node);
     place(); input.current?.focus();
-    return () => cancelAnimationFrame(frame);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", scroll, { capture: true, passive: true });
+    const dialog = trigger.current?.closest('[role="dialog"]');
+    dialog?.addEventListener("animationend", schedule);
+    return () => {
+      cancelAnimationFrame(frame); observer?.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", scroll, true);
+      dialog?.removeEventListener("animationend", schedule);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -138,7 +140,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
 
   async function refresh() {
     setSubmenu(null);
-    await Promise.all([catalog.refetch(), connections.refetch(), providers.refetch(), ...liveQueries.map((query) => query.refetch())]);
+    await refreshData();
   }
 
   function moveFocus(event: KeyboardEvent, container: HTMLElement | null) {

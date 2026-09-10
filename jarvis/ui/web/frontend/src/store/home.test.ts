@@ -1,19 +1,27 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { reduceLiveReply, useHomeStore } from "@/store/home";
+import { useEventStore } from "@/store/events";
 
 describe("voice conversation boundaries", () => {
   beforeEach(() => useHomeStore.getState().resetTranscript());
 
   it.each(["hotkey", "voice_pattern", "client_stop", "idle_timeout"])("starts a fresh lane after %s", (hangup_reason) => {
     const home = useHomeStore.getState();
+    home.setJarvisCardMode("chat");
+    useEventStore.setState({ activeKind: "voice", activeThreadId: "first", transcription: "stale preview", transcriptionFinal: false });
     home.ingest("TranscriptFinal", { transcript: { text: "Old conversation" } }, 1);
     home.ingest("AssistantTextDelta", { channel: "voice", text: "Partial reply" }, 2);
     expect(useHomeStore.getState().transcript.length).toBeGreaterThan(0);
     home.ingest("VoiceSessionEnded", { session_id: "first", hangup_reason }, 3);
     expect(useHomeStore.getState().transcript).toEqual([]);
     expect(useHomeStore.getState().liveReply).toBe("");
+    expect(useHomeStore.getState().jarvisCardMode).toBe("voice");
+    expect(useHomeStore.getState().freshVoicePending).toBe(true);
+    expect(useEventStore.getState().activeThreadId).toBeNull();
+    expect(useEventStore.getState().transcription).toBe("");
     home.ingest("VoiceSessionStarted", { session_id: "second" }, 4);
+    expect(useHomeStore.getState().freshVoicePending).toBe(false);
     home.ingest("TranscriptFinal", { transcript: { text: "New conversation" } }, 5);
     expect(useHomeStore.getState().transcript.map((line) => line.text)).toEqual(["New conversation"]);
   });

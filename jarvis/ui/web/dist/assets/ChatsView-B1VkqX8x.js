@@ -1,0 +1,1 @@
+import{j as s}from"./index-Dx5wgWEw.js";import{P as o}from"./PageHeader-BY_L0tn-.js";function p({icon:a,title:i,titleBadge:r,subtitle:n,right:e}){return s.jsx("div",{className:"shrink-0 px-8",children:s.jsx(o,{icon:a,title:i,description:n,className:"pb-4",actions:r||e?s.jsxs(s.Fragment,{children:[r,e]}):void 0})})}export{p as V};

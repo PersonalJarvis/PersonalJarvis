@@ -430,7 +430,9 @@ export function createAgentChatStore(surface: AgentChatSurface) {
           // Deliberately not awaited: the sweep makes one real request per
           // provider and can take seconds. The composer paints from the
           // catalog now and the dots appear when the answers arrive.
-          void get().loadHealth();
+          // The society picker has no health dots. Opening its card must not
+          // send model test requests to every configured provider.
+          if (surface !== "society") void get().loadHealth();
           // Settle the draft: an empty or unknown provider becomes the active
           // sub-agent (else the first connected one); blank picks take the
           // provider's defaults.

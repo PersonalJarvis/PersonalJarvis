@@ -1,4 +1,5 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useTranscriptViewStore } from "./useTranscriptView";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { EMPTY_TIMELINE, type Timeline, type UserItem } from "@/components/agentchat/reduce";
@@ -12,11 +13,16 @@ import {
 import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import type { AgentChatSession } from "@/lib/agentChatApi";
-import { useTranscriptViewStore } from "./useTranscriptView";
+import { useHomeStore } from "@/store/home";
+import { JarvisHistoryRail } from "./JarvisHistoryRail";
 
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, fill: (text: string) => text }));
 vi.mock("./AgentModelPicker", () => ({ AgentModelPicker: () => null }));
-vi.mock("@/components/home/VoiceStage", () => ({ VoiceStage: () => <div data-testid="voice-stage" /> }));
+vi.mock("@/components/home/JarvisBar", () => ({ JarvisBar: () => <div data-testid="jarvis-bar" /> }));
+vi.mock("@/components/home/Greeting", () => ({ Greeting: () => <div>Greeting</div> }));
+vi.mock("@/components/agentic/useVoiceCall", () => ({ useVoiceCall: () => ({ connecting: false }) }));
+vi.mock("@/hooks/useVoiceReadiness", () => ({ useVoiceReadiness: () => ({ connected: true, warming: false }) }));
+vi.mock("@/hooks/useWakeWord", () => ({ useWakeWord: () => ({ config: { phrase: "Hey Jarvis" } }) }));
 vi.mock("../data", async (original) => ({
   ...(await original<typeof import("../data")>()),
   useSocietyCapabilities: () => ({ isLoading: false, data: [] }),
@@ -87,6 +93,9 @@ const gmail = agent({ agentId: "gmail-agent", name: "Gmail Agent" });
 
 beforeEach(() => {
   useTranscriptViewStore.setState({ boundaries: {} });
+  useHomeStore.setState({ transcript: [], liveReply: "", jarvisCardMode: "voice", freshVoicePending: false });
+  useEventStore.setState({ activeKind: "text", activeThreadId: null, messages: [], voiceState: "idle" });
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal("WebSocket", FakeSocket);
   vi.stubGlobal(
@@ -113,35 +122,6 @@ it("hides another session's items until that session is the open one", () => {
   expect(itemsForOpenSession("society:gmail-agent", "society:visual-qa", visualItems)).toEqual([]);
   expect(itemsForOpenSession("society:gmail-agent", "society:gmail-agent", visualItems)).toEqual(visualItems);
   expect(itemsForOpenSession(null, "society:visual-qa", visualItems)).toEqual([]);
-});
-
-it.each(["specialist", "lead"] as const)("/clear empties only the %s view and keeps its session and context", (tier) => {
-  const current = tier === "lead" ? agent({ agentId: "jarvis", name: "Jarvis", tier }) : gmail;
-  const store = tier === "lead" ? useAgentChatStore : useSocietyChatStore;
-  const original = timelineWith("PREVIOUS_CONTEXT_TO_KEEP");
-  store.getState().openSession(current.chatSessionId!);
-  store.setState({ activeSessionId: current.chatSessionId, timeline: original, busy: false });
-  setJarvisCardMode("chat");
-  const view = render(<AgentChatPanel agent={current} roster={[current]} />);
-  expect(screen.getByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeTruthy();
-  const input = screen.getByRole("textbox");
-  input.textContent = " /clear ";
-  fireEvent.input(input);
-  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
-  expect(screen.queryByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeNull();
-  expect(input.textContent).toBe("");
-  expect(store.getState().activeSessionId).toBe(current.chatSessionId);
-  expect(store.getState().timeline).toBe(original);
-  expect(vi.mocked(fetch).mock.calls.some(([url, options]) =>
-    String(url).includes("/messages") || options?.method === "DELETE",
-  )).toBe(false);
-  act(() => store.setState({ timeline: { ...original, items: [...original.items, ...timelineWith("FIRST_VISIBLE_MESSAGE").items] } }));
-  expect(screen.getByText("FIRST_VISIBLE_MESSAGE")).toBeTruthy();
-  expect(screen.queryByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeNull();
-  view.unmount();
-  render(<AgentChatPanel agent={current} roster={[current]} />);
-  expect(screen.getByText("FIRST_VISIBLE_MESSAGE")).toBeTruthy();
-  expect(screen.queryByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeNull();
 });
 
 it("does not paint the previous specialist's transcript after a click onto another agent", () => {
@@ -189,4 +169,67 @@ it("keeps Jarvis on a fresh chat when history refreshes or the card is reopened"
   view.unmount();
   render(<AgentChatPanel agent={jarvis} roster={[jarvis]} />);
   expect(useAgentChatStore.getState().activeSessionId).toBeNull();
+});
+
+it("reads archived calls on the actual voice stage and returns there fresh after hangup while closed", async () => {
+  const jarvis = agent({ agentId: "jarvis", name: "Jarvis", tier: "lead" });
+  const voice = { kind: "voice", id: "voice-archive", title: "Archived call", preview: "", created_ms: 1, updated_ms: 2, message_count: 2 };
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    const path = String(url);
+    if (path.includes("/api/chats?")) return new Response(JSON.stringify([voice]));
+    if (path.includes("/voice/voice-archive/resume")) return new Response(JSON.stringify({ ...voice, messages: [
+      { role: "user", text: "Archived question", ts_ms: 1 },
+      { role: "assistant", text: "Archived answer", ts_ms: 2 },
+    ] }));
+    return new Response(JSON.stringify({ providers: [], sessions: [], mapping: [], events: [] }));
+  });
+  const view = render(<><AgentChatPanel agent={jarvis} roster={[jarvis]} /><JarvisHistoryRail /></>);
+  fireEvent.click(await screen.findByTestId("jarvis-history-voice-row"));
+  expect(await screen.findByText("Archived question")).toBeTruthy();
+  expect(screen.getByText("Archived answer")).toBeTruthy();
+  expect(screen.getByTestId("society-chat").getAttribute("data-mode")).toBe("voice");
+  expect(screen.getByTestId("jarvis-bar")).toBeTruthy();
+  expect(screen.queryByTestId("voice-thread-stage")).toBeNull();
+  fireEvent.click(screen.getByTestId("society-jarvis-mode-chat"));
+  fireEvent.click(screen.getByTestId("society-jarvis-mode-voice"));
+  expect(screen.getByText("Archived question")).toBeTruthy();
+  view.unmount();
+  act(() => {
+    setJarvisCardMode("chat");
+    useHomeStore.getState().ingest("VoiceSessionEnded", { hangup_reason: "hotkey" }, 3);
+  });
+  render(<AgentChatPanel agent={jarvis} roster={[jarvis]} />);
+  expect(screen.getByTestId("society-chat").getAttribute("data-mode")).toBe("voice");
+  expect(screen.getByTestId("voice-stage").getAttribute("data-empty")).toBe("true");
+  expect(screen.queryByText("Archived question")).toBeNull();
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/chats/voice/new", { method: "POST" }));
+});
+
+it.each(["specialist", "lead"] as const)("/clear empties only the %s view and keeps its session and context", (tier) => {
+  const current = tier === "lead" ? agent({ agentId: "jarvis", name: "Jarvis", tier }) : gmail;
+  const store = tier === "lead" ? useAgentChatStore : useSocietyChatStore;
+  const original = timelineWith("PREVIOUS_CONTEXT_TO_KEEP");
+  store.getState().openSession(current.chatSessionId!);
+  store.setState({ activeSessionId: current.chatSessionId, timeline: original, busy: false });
+  setJarvisCardMode("chat");
+  const view = render(<AgentChatPanel agent={current} roster={[current]} />);
+  expect(screen.getByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeTruthy();
+  const input = screen.getByRole("textbox");
+  input.textContent = " /clear ";
+  fireEvent.input(input);
+  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+  expect(screen.queryByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeNull();
+  expect(input.textContent).toBe("");
+  expect(store.getState().activeSessionId).toBe(current.chatSessionId);
+  expect(store.getState().timeline).toBe(original);
+  expect(vi.mocked(fetch).mock.calls.some(([url, options]) =>
+    String(url).includes("/messages") || options?.method === "DELETE",
+  )).toBe(false);
+  act(() => store.setState({ timeline: { ...original, items: [...original.items, ...timelineWith("FIRST_VISIBLE_MESSAGE").items] } }));
+  expect(screen.getByText("FIRST_VISIBLE_MESSAGE")).toBeTruthy();
+  expect(screen.queryByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeNull();
+  view.unmount();
+  render(<AgentChatPanel agent={current} roster={[current]} />);
+  expect(screen.getByText("FIRST_VISIBLE_MESSAGE")).toBeTruthy();
+  expect(screen.queryByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeNull();
 });

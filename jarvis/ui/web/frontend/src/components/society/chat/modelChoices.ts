@@ -63,6 +63,7 @@ export function modelEffort(seat: BrainSeat, model: string, preferred: string): 
 }
 
 export function matchesModel(seat: BrainSeat, model: CuratedModel, query: string, title: string): boolean {
+  if (!query.trim()) return true;
   const fold = (value: string) => value.toLocaleLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/[-_./]/g, " ");
   const haystack = fold([title, seat.provider.id, seat.provider.label, model.id, model.label,
     ...seat.accounts.map((account) => `${account.label} ${account.email ?? ""}`)].join(" "));

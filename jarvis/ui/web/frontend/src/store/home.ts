@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import { readHomeSurface, writeHomeSurface, type HomeSurface } from "@/lib/homeSurface";
 import { reduceTranscript, type TranscriptLine } from "@/lib/homeTranscript";
+import { useEventStore } from "@/store/events";
 
 /**
  * The front page's own store: which surface (voice / chat) is on screen, and
@@ -15,6 +16,9 @@ import { reduceTranscript, type TranscriptLine } from "@/lib/homeTranscript";
  * `set` turns into a no-op without waking a single subscriber.
  */
 interface HomeStore {
+  jarvisCardMode: "voice" | "chat";
+  setJarvisCardMode: (mode: "voice" | "chat") => void;
+  freshVoicePending: boolean;
   surface: HomeSurface;
   setSurface: (surface: HomeSurface) => void;
   /** What was said and answered, oldest first (lib/homeTranscript.ts). */
@@ -72,6 +76,9 @@ export function reduceLiveReply(current: string, name: string, payload: unknown)
 }
 
 export const useHomeStore = create<HomeStore>((set, get) => ({
+  jarvisCardMode: "voice",
+  setJarvisCardMode: (jarvisCardMode) => set({ jarvisCardMode }),
+  freshVoicePending: false,
   surface: readHomeSurface(),
   setSurface: (surface) => {
     writeHomeSurface(surface);
@@ -85,9 +92,22 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
       // A provider handover continues the same call. A real hangup opens an
       // empty lane; the completed conversation remains in the history rail.
       if (reason !== "realtime_fallback" && reason !== "desktop_fallback") {
-        set({ transcript: [], liveReply: "" });
+        const events = useEventStore.getState();
+        if (events.activeKind === "voice") {
+          events.setActiveConversation("voice", null);
+          events.setMessages([]);
+          events.seedThinkingTraces({});
+        }
+        events.setTranscription("", true);
+        // Remember this even while the card is closed. Returning to Jarvis
+        // must not restore the last archive selection or the typed surface.
+        set({ transcript: [], liveReply: "", jarvisCardMode: "voice", freshVoicePending: true });
         return;
       }
+    }
+    if (name === "VoiceSessionStarted") {
+      // A call already started elsewhere must not be ended on card re-entry.
+      set({ freshVoicePending: false });
     }
     const before = get().transcript;
     const after = reduceTranscript(before, name, payload, tsMs);
@@ -96,6 +116,6 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
       set({ transcript: after, liveReply: live });
     }
   },
-  seedTranscript: (lines) => set({ transcript: lines, liveReply: "" }),
+  seedTranscript: (lines) => set({ transcript: lines, liveReply: "", freshVoicePending: false }),
   resetTranscript: () => set({ transcript: [], liveReply: "" }),
 }));

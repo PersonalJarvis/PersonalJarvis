@@ -230,6 +230,25 @@ def test_changing_media_is_not_published_as_a_complete_artifact(tmp_path):
     assert not list(archive.rglob(".standalone-run.json"))
 
 
+def test_metadata_filenames_do_not_pick_up_unrelated_workspace_images(tmp_path):
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    (cwd / "logo.png").write_bytes(PNG)
+    result = normalize(
+        tmp_path, {"filename": "logo.png", "iconLink": "https://example.test/icon.png"}
+    )
+    assert len(result) == 1
+    assert not (tmp_path / "archive").exists()
+
+
+@pytest.mark.parametrize("key", ["output", "outputs", "artifacts", "files", "media"])
+def test_plain_output_lists_still_deliver_each_media_url(tmp_path, key):
+    result = normalize(
+        tmp_path, {key: ["https://example.test/a.png", "https://example.test/b.mp4"]}
+    )
+    assert len(result) == 3
+
+
 def test_media_in_failed_tool_output_is_not_claimed_as_a_result(tmp_path):
     result = normalize(tmp_path, "https://example.test/photo.png", is_error=True)
     assert len(result) == 1
