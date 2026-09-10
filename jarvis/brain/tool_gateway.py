@@ -166,7 +166,7 @@ class BrainSupervisorToolGateway:
                     description=tool.description,
                     input_schema=copy.deepcopy(tool.schema),
                     risk_tier=cast(RiskTier, tool.risk_tier),
-                    is_action_tool=True,
+                    is_action_tool=bool(getattr(tool, "is_action_tool", True)),
                     risk_tier_for_args=getattr(tool, "risk_tier_for_args", None),
                 )
             )

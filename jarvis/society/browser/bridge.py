@@ -46,8 +46,11 @@ class ApprovedBrowserAction:
     schema = {"type": "object", "properties": {"action": {"type": "object"}}}
     is_action_tool = True
 
-    def __init__(self, apply: Any) -> None:
+    def __init__(self, apply: Any, *, read_only: bool = False) -> None:
         self._apply = apply
+        if read_only:
+            self.risk_tier = "safe"
+            self.is_action_tool = False
 
     async def execute(self, args: dict, ctx: Any) -> ToolResult:
         result = await self._apply()
@@ -78,7 +81,9 @@ async def wait_for_browser_approval(runtime: Any, approval_id: str, session: Any
             await runtime.approvals.resolve(approval_id, approve=False, note="Browser task ended")
 
 
-async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: Any) -> ToolResult:
+async def execute_live(
+    runtime: Any, caller: Any, jobs: Any, args: dict, ctx: Any, *, read_only: bool = False
+) -> ToolResult:
     from jarvis.core.config import get_jarvis_agent_secret, override_provider_secrets
 
     from ..approvals import Verdict, decide
@@ -212,7 +217,13 @@ async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: An
             "done",
             "wait",
         }
-        tier = "monitor" if name in read_actions else "ask"
+        if read_only and name not in read_actions:
+            denied = True
+            return {
+                "ok": False,
+                "error": "This browser task is read-only; writing actions are blocked.",
+            }
+        tier = ("safe" if read_only else "monitor") if name in read_actions else "ask"
         verdict = decide(current, "core:browser", tier, verb=name)
         if verdict is Verdict.BLOCK:
             denied = True
@@ -234,7 +245,7 @@ async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: An
                 live.stop_turn(caller.agent_id, turn_trace)
                 return {"ok": False, "error": stopped_message}
         result = await executor.execute(
-            ApprovedBrowserAction(payload["apply"]),
+            ApprovedBrowserAction(payload["apply"], read_only=read_only),
             {"action": proposal},
             user_utterance=getattr(ctx, "user_utterance", ""),
             trace_id=trace if isinstance(trace, UUID) else uuid4(),
@@ -243,6 +254,11 @@ async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: An
         return {"ok": result.success, "error": result.error}
 
     task = str(args.get("task") or "").strip()
+    if read_only:
+        task = (
+            "READ-ONLY: use navigation, reading and extraction only; no clicks, inputs, uploads or writes. "
+            + task
+        )
     workspace = (Path(runtime.data_dir) / "society" / caller.agent_id / "workspace").resolve()
     files = []
     for raw in args.get("files") or []:

@@ -81,7 +81,7 @@ async def test_jarvis_chat_uses_the_lead_browser_with_its_selected_model(tmp_pat
     await runtime.ensure_started()
     seen = []
 
-    async def execute(rt, caller, jobs, args, ctx):
+    async def execute(rt, caller, jobs, args, ctx, *, read_only=False):
         seen.append((caller.agent_id, caller.provider, caller.model))
         return ToolResult(True, {"ok": True}, None)
 
