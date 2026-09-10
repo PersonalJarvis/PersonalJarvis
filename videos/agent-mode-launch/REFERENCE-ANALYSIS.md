@@ -1,5 +1,7 @@
 # Product films that show the work
 
+**Revision note:** The initial implementation did not realize enough of this motion grammar and introduced low-cadence cursor movement by slowing a 30 fps recording. The corrective, dense temporal analysis and native-60-fps implementation contract are in [MOTION-REBUILD.md](MOTION-REBUILD.md). That revision supersedes the first cut's technical implementation described below.
+
 This analysis covers the two reference films supplied for the Personal Jarvis Agent Mode launch. The useful common pattern is a complete piece of work, made understandable through art-directed UI, selective abstraction, musical rhythm, and a visible human decision.
 
 ## Sources and evidence

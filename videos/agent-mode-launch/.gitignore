@@ -5,6 +5,7 @@ node_modules/
 .waveform-cache/
 AGENTS.md
 CLAUDE.md
+app/
 renders/
 snapshots/
 reference-analysis/

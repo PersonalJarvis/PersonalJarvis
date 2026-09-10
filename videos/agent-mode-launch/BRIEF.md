@@ -20,8 +20,12 @@ One launch briefing runs from request to team handoff, direct specialist instruc
 
 ## Defaults
 
-English is the provisional language, matching the references and existing product footage; a language question is pending. 1920x1080, 30 fps. Music-led, no narrator, following the visually driven references. Use a separate licensed instrumental and include attribution in the upload copy. No publishing to YouTube is requested.
+English matches the references and remains unchanged in the revision. 1920x1080, native 60 fps. Music-led, no narrator, following the visually driven references. Use a separate licensed instrumental and include attribution in the upload copy. No publishing to YouTube is requested.
 
 ## Assets
 
 Product source: personaljarvisweb/public/agents-demo/agents-feature-v4-sharp.mp4. Source implementation: personaljarvisweb/video/agents-hyperframes/capture/entry.tsx and actions.ts. Brand mark: video/public/jarvis-gigi.png. Brand: warm charcoal, warm gold, off-white, Inter.
+
+## Revision 2 — accepted correction
+
+The user rejected the first cut as slow and insufficiently animated, specifically identifying the choppy cursor. Replace the retimed recording with the original isolated product fixture rendered at each frame. Add an independently timed vector cursor, semantic task splitting, path animation, packet travel, an iris inspection, paper assembly and energetic camera transitions. Evaluate 5,100 frames directly at 60 fps. Inspect actual exported motion, not only static snapshots or file metadata. The former footage is retained only as a historical/reference asset.

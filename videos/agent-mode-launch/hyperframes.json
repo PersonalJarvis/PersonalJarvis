@@ -15,6 +15,11 @@
       "name": "ui-focus-zoom",
       "type": "hyperframes:component",
       "target": "compositions/components/ui-focus-zoom.html"
+    },
+    {
+      "name": "zoom-through-transition",
+      "type": "hyperframes:component",
+      "target": "compositions/components/zoom-through-transition.html"
     }
   ]
 }

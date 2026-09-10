@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Agent Mode — motion edition</title><script src="assets/gsap.min.js"></script><link rel="stylesheet" href="motion.css"></head><body>
+<main id="film" data-composition-id="agent-mode-v2" data-duration="85" data-width="1920" data-height="1080" data-fps="60">
+ <div id="base" class="clip" data-start="0" data-duration="85" data-track-index="0"></div>
+ <div id="native-stage"><div id="native-world" data-layout-allow-overflow><iframe id="product" src="app/index.html" title="Actual Agents interface with isolated example data"></iframe></div><div id="native-label"><span id="native-caption">Give Jarvis the brief.</span><span>Personal Jarvis · Agent Mode</span></div></div>
+ <section id="intro" class="clip" data-start="0" data-duration="8.6" data-track-index="2"><div class="opening-scene"><div class="eyebrow" id="intro-label">The launch is tomorrow.</div><div class="opening-line"><span class="opening-word">One</span><span class="opening-word gold">brief.</span></div><div class="opening-line second"><span class="opening-word">Your</span><span class="opening-word">whole</span><span class="opening-word gold">team.</span></div><div id="task-strip"><span>Open issues</span><span>Release checklist</span><span>Welcome email</span></div><div id="opening-rule"></div></div></section>
+ <section id="handoff" class="clip" data-start="20.6" data-duration="17.9" data-track-index="3"><div class="scene-fill"></div><div id="graph-world">
+  <div id="graph-title"><span class="eyebrow">From one request</span><h2>A team with context.</h2></div>
+  <div id="brief-node" class="brief-node"><div class="node-label"><img src="assets/gigi.png" alt="Jarvis">Jarvis <span>Lead</span></div><p>Check the launch blockers.<br>Get the release checklist.</p></div>
+  <svg id="connections" viewBox="0 0 1920 1080" aria-hidden="true" data-layout-ignore><path id="path-left" d="M960 410 C960 525 500 445 500 575"/><path id="path-right" d="M960 410 C960 525 1420 445 1420 575"/><path id="path-cross" d="M755 710 C860 900 1060 900 1165 710"/><circle id="packet-left" r="7"/><circle id="packet-right" r="7"/><circle id="packet-cross" r="7"/></svg>
+  <article id="scout-node" class="agent-node"><div class="node-label"><span class="initial">S</span>Scout<span>Research & planning</span></div><h3>Launch blockers</h3><div class="item-row scout-row"><i></i>Open issues</div><div class="item-row scout-row"><i></i>Release status</div><div class="item-row scout-row"><i></i>Outstanding checks</div></article>
+  <article id="archivist-node" class="agent-node"><div class="node-label"><span class="initial">A</span>Archivist<span>Shared knowledge</span></div><h3>Release checklist</h3><div class="item-row archive-row"><i></i>Project context</div><div class="item-row archive-row"><i></i>Shared notes</div><div class="item-row archive-row gold"><i></i>Welcome email</div></article>
+  <div id="exchange" class="exchange"><span>Scout → Archivist</span><p>Which release checks are still outstanding?</p></div>
+  <div id="finding" class="finding"><div class="eyebrow">The missing piece</div><h2>The welcome email<br>needs a final review.</h2><div class="finding-rule"></div></div>
+ </div></section>
+ <section id="assembly" class="clip" data-start="61.7" data-duration="12.8" data-track-index="4"><div class="scene-fill"></div><div id="assembly-world">
+  <div id="assembly-title" class="eyebrow">From context to a clear next step</div>
+  <article class="paper evidence" id="issues-sheet"><span class="sheet-label">Scout / findings</span><h3>Open issues</h3><div class="paper-rule"></div><p>No release<br>blockers.</p><div class="check-symbol">✓</div></article>
+  <article class="paper evidence" id="checklist-sheet"><span class="sheet-label">Archivist / context</span><h3>Release checklist</h3><div class="paper-rule"></div><p>Checklist<br>complete.</p><div class="check-symbol">✓</div></article>
+  <article class="paper evidence" id="email-sheet"><span class="sheet-label">Your direction</span><h3>Welcome email</h3><div class="paper-rule"></div><p>Two changes.<br>One final review.</p><div class="check-symbol">→</div></article>
+  <div id="inspection"><div id="inspection-inner"><span class="eyebrow" data-layout-allow-overlap="Iris transition intentionally occludes the underlying sheet title.">Keep the important part.</span><h2>Review the<br><span class="gold">welcome email.</span></h2><svg viewBox="0 0 500 140" aria-hidden="true" data-layout-ignore><path id="emphasis" d="M18 87 C95 25 435 20 469 69 C511 141 57 144 28 85"/></svg></div></div>
+  <article id="final-sheet" class="paper"><span class="sheet-label">Personal Jarvis</span><h2>Launch briefing</h2><div class="paper-rule"></div><div class="final-row"><span>01</span><div><small>Issues</small><p>No release blockers.</p></div></div><div class="final-row"><span>02</span><div><small>Checklist</small><p>Complete.</p></div></div><div class="final-row important"><span>03</span><div><small>Next step</small><p>Review the welcome email.</p></div></div></article>
+ </div></section>
+ <section id="outro" class="clip" data-start="79.7" data-duration="5.3" data-track-index="5"><div class="outro-content"><p id="closing-line">You keep the final call.</p><div id="brand-lockup"><img src="assets/gigi.png" alt="Personal Jarvis"><div><span>Personal Jarvis</span><h1>Agent Mode</h1></div></div><p id="url">github.com/PersonalJarvis/PersonalJarvis</p></div></section>
+ <div id="pointer" aria-hidden="true" data-layout-ignore><svg viewBox="0 0 40 48"><path d="M2 2L32 27L20 29L27 43L20 47L13 32L3 41Z" fill="#f7f7f4" stroke="#0e0d0c" stroke-width="2.2"/></svg></div><div id="click-ring" aria-hidden="true" data-layout-ignore></div>
+ <audio id="music" src="assets/music.wav" data-start="0" data-duration="85" data-track-index="8"></audio>
+ <audio id="send-click" src="assets/click-soft.mp3" data-start="12.8" data-duration="0.37" data-volume="0.32" data-track-index="9"></audio><audio id="direct-click" src="assets/click-soft.mp3" data-start="52.7" data-duration="0.37" data-volume="0.32" data-track-index="9"></audio>
+ <audio id="handoff-sweep" src="assets/whoosh-short.mp3" data-start="21.05" data-duration="0.57" data-volume="0.12" data-track-index="10"></audio><audio id="result-sweep" src="assets/whoosh-short.mp3" data-start="69.4" data-duration="0.57" data-volume="0.12" data-track-index="10"></audio>
+</main>
+<!-- MOTION_SCRIPT -->
+</body></html>
+
