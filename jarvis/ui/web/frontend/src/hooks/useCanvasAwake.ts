@@ -10,9 +10,13 @@
  *
  * The society README mandates this pattern for every world/card canvas.
  */
-import { useEffect, useState, type RefObject } from "react";
+import { createContext, useContext, useEffect, useState, type RefObject } from "react";
+
+/** Explicit occlusion, independent of unreliable WebView document visibility. */
+export const CanvasActivity = createContext(true);
 
 export function useCanvasAwake(hostRef: RefObject<HTMLElement | null>): boolean {
+  const active = useContext(CanvasActivity);
   const [awake, setAwake] = useState(true);
 
   useEffect(() => {
@@ -29,7 +33,7 @@ export function useCanvasAwake(hostRef: RefObject<HTMLElement | null>): boolean 
     return () => observer.disconnect();
   }, [hostRef]);
 
-  return awake;
+  return active && awake;
 }
 
 export default useCanvasAwake;
