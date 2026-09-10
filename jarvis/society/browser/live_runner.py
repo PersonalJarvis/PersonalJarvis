@@ -191,10 +191,11 @@ class Worker:
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
         if self.owns_context and self.page.url == "about:blank":
             await self.page.set_content(
-                "<html><head><title>Browser ready</title></head>"
+                "<html><head><title>Personal Jarvis — Agent Browser</title></head>"
                 "<body style='background:#fafafa;color:#303030;font:24px system-ui;"
                 "display:grid;place-items:center;height:90vh'><main>"
-                "<h1>Your browser is ready</h1><p>Ask your agent to open a website.</p>"
+                "<h1>Personal Jarvis</h1><p>Your agent browser is ready.</p>"
+                "<p>Ask your agent to open a website, or take control in Personal Jarvis.</p>"
                 "</main></body></html>"
             )
         self.state_task = asyncio.create_task(self.watch_state())

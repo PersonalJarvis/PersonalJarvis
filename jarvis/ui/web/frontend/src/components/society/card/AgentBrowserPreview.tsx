@@ -34,7 +34,10 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
       "shrink-0", expanded && "fixed inset-4 z-[60] flex flex-col rounded-xl border border-border bg-background p-3 shadow-xl",
     )}>
       <div className="mb-1 flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
-        <span className="truncate">{agent.name} · {status}</span>
+        <div className="min-w-0">
+          <div className="font-medium text-foreground">Personal Jarvis</div>
+          <div className="truncate">{agent.name} · {status}</div>
+        </div>
         <button className={buttonClass} onClick={() => setExpanded((v) => !v)}
           aria-label={t(expanded ? "society.browser_live.collapse" : "society.browser_live.expand")}>
           {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
