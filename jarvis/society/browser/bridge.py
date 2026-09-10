@@ -193,6 +193,9 @@ async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: An
             "search_page",
             "screenshot",
             "get_dropdown_options",
+            "dropdown_options",
+            "find_text",
+            "read_file",
             "done",
             "wait",
         }

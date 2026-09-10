@@ -43,10 +43,15 @@ def test_browser_children_do_not_inherit_provider_credentials(monkeypatch, tmp_p
     from jarvis.society.browser.install import worker_env
     monkeypatch.setenv("OPENAI_API_KEY", "test-placeholder")
     monkeypatch.setenv("EXAMPLE_ACCESS_TOKEN", "test-placeholder")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-placeholder")
+    monkeypatch.setenv("DATABASE_PASSWORD", "test-placeholder")
     monkeypatch.setenv("PIP_INDEX_URL", "https://example.invalid/simple")
     env = worker_env(tmp_path)
     assert "OPENAI_API_KEY" not in env
     assert "EXAMPLE_ACCESS_TOKEN" not in env
+    assert "AWS_ACCESS_KEY_ID" not in env
+    assert "DATABASE_PASSWORD" not in env
+    assert env["PYTHON_DOTENV_DISABLED"] == "1"
     assert "PIP_INDEX_URL" not in env
     assert env["ANONYMIZED_TELEMETRY"] == "false"
 

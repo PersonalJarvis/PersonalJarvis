@@ -94,16 +94,56 @@ def is_installed(data_dir: Path | None = None) -> bool:
 def worker_env(data_dir: Path | None = None, *, for_installer: bool = False) -> dict[str, str]:
     # Inference credentials stay in the parent. The browser and its children
     # do not need account tokens, SSH agents or package-index credentials.
-    env = {
-        name: value
-        for name, value in os.environ.items()
-        if not any(part in name.upper() for part in ("TOKEN", "SECRET", "API_KEY", "AUTH"))
-        and (for_installer or not name.upper().startswith("PIP_"))
+    inherited = {
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        "WINDIR",
+        "COMSPEC",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PROGRAMW6432",
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TZ",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR",
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
     }
+    env = {name: value for name, value in os.environ.items() if name.upper() in inherited}
+    if for_installer:
+        env.update(
+            {
+                name: value
+                for name, value in os.environ.items()
+                if name.upper().startswith(("PIP_", "UV_"))
+                or name.upper() in {"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY"}
+            }
+        )
     env.update(
         {
             "PYTHONIOENCODING": "utf-8",
             "PYTHONUTF8": "1",
+            "PYTHON_DOTENV_DISABLED": "1",
             "ANONYMIZED_TELEMETRY": "false",
             "BROWSER_USE_DISABLE_EXTENSIONS": "1",
             "BROWSER_USE_LOGGING_LEVEL": "error",
@@ -236,7 +276,11 @@ def ensure_installed(
                 percent=90,
                 detail="Checking browser rendering and input",
             )
-            output = _run([str(python), str(runner_path()), "--probe"], env=env, timeout=120)
+            output = _run(
+                [str(python), str(runner_path()), "--probe"],
+                env=worker_env(data_dir),
+                timeout=120,
+            )
             lines = [
                 json.loads(line)
                 for line in output.splitlines()
