@@ -2508,16 +2508,14 @@ class WebServer:
         from jarvis.core import control_key as _control_key
         from jarvis.ui.web.control_auth import assert_bind_safe
 
+        resolved_port = port if port is not None else self.cfg.ui.admin_api_port
+        # Desktop bootstrap already owns the listener. CLI agents still need
+        # its address to mount Jarvis' scoped tools, including Browser-Use.
+        from jarvis.core import runtime_refs as _runtime_refs
+
+        _runtime_refs.set_api_base_url(f"http://127.0.0.1:{resolved_port}")
         if start_serving:
             assert_bind_safe(host, _control_key.get_control_key())
-
-            resolved_port = port if port is not None else self.cfg.ui.admin_api_port
-            # The one place the effective port is known: a dev instance offsets
-            # it at runtime while sharing jarvis.toml, so reading the config
-            # would point an in-process caller at the LIVE app's port.
-            from jarvis.core import runtime_refs as _runtime_refs
-
-            _runtime_refs.set_api_base_url(f"http://127.0.0.1:{resolved_port}")
             config = uvicorn.Config(
                 app=self.app,
                 host=host,

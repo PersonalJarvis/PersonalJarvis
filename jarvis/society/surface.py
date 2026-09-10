@@ -159,6 +159,15 @@ def capability_epoch(catalog: list[CapabilityRow]) -> str:
 
 async def coding_tool_for_session(session_id: str) -> Tool | None:
     """The same grant and approval gate for society seats and the lead's chat."""
+    return await _scoped_tool_for_session(session_id, "core:coding-session")
+
+
+async def browser_tool_for_session(session_id: str) -> Tool | None:
+    """Expose the same owned browser to CLI seats as to API-driven agents."""
+    return await _scoped_tool_for_session(session_id, "core:browser")
+
+
+async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | None:
     rt = current_runtime()
     if rt is None:
         from jarvis.core.runtime_refs import get_web_app
@@ -187,7 +196,13 @@ async def coding_tool_for_session(session_id: str) -> Tool | None:
         session = service.store.get_session(session_id)
         if session is None or session.permission_mode in ("plan", "read-only"):
             return None
-    tool = CodingSessionTool(rt, agent_id, session_id=session_id)
+    tool: Tool
+    if capability == "core:browser":
+        from .browser.tool import BrowserTool
+
+        tool = cast(Tool, BrowserTool(rt, agent_id, rt.browser))
+    else:
+        tool = cast(Tool, CodingSessionTool(rt, agent_id, session_id=session_id))
     picked = select_tools(
         {tool.name: tool},
         grant_mode=str(agent.grant_mode),
@@ -197,7 +212,7 @@ async def coding_tool_for_session(session_id: str) -> Tool | None:
     )
     if tool.name not in picked:
         return None
-    return cast(Tool, _GatedTool(tool, agent, "core:coding-session"))
+    return cast(Tool, _GatedTool(tool, agent, capability))
 
 
 def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:

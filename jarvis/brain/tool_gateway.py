@@ -32,9 +32,11 @@ class BrainSupervisorToolGateway:
         manager: Any,
         *,
         session_tool: Callable[[str], Awaitable[Tool | None]] | None = None,
+        browser_tool: Callable[[str], Awaitable[Tool | None]] | None = None,
     ) -> None:
         self._manager = manager
         self._session_tool = session_tool
+        self._browser_tool = browser_tool
         self._lock = threading.Lock()
         self._fingerprint: tuple[tuple[str, int], ...] = ()
         self._catalog_version = 0
@@ -106,13 +108,14 @@ class BrainSupervisorToolGateway:
             )
 
         tool = self._live_tools().get(name)
-        if name == "coding-session":
+        if name in {"coding-session", "society_browser"}:
             # Never install this controller in the global worker tool set.
             # The authenticated chat transport supplies its canonical session reference.
             ref = str(request.config_snapshot.get("approval_ref") or "")
+            resolver = self._browser_tool if name == "society_browser" else self._session_tool
             tool = (
-                await self._session_tool(ref.removeprefix("agent-chat:"))
-                if self._session_tool is not None
+                await resolver(ref.removeprefix("agent-chat:"))
+                if resolver is not None
                 and request.origin == "agent-chat"
                 and ref.startswith("agent-chat:")
                 else None
@@ -150,22 +153,24 @@ class BrainSupervisorToolGateway:
         )
 
     async def session_catalog(self, session_id: str) -> tuple[SupervisorToolDescriptor, ...]:
-        """Add only the scoped IDE hand for a permitted society chat identity."""
+        """Resolve the permitted session-owned tools without exposing them globally."""
         catalog = self.catalog()
-        tool = await self._session_tool(session_id) if self._session_tool is not None else None
-        if tool is None:
-            return catalog
-        return (
-            *catalog,
-            SupervisorToolDescriptor(
-                name=tool.name,
-                description=tool.description,
-                input_schema=copy.deepcopy(tool.schema),
-                risk_tier="ask",
-                is_action_tool=True,
-                risk_tier_for_args=getattr(tool, "risk_tier_for_args", None),
-            ),
-        )
+        scoped = []
+        for resolver in (self._session_tool, self._browser_tool):
+            tool = await resolver(session_id) if resolver is not None else None
+            if tool is None:
+                continue
+            scoped.append(
+                SupervisorToolDescriptor(
+                    name=tool.name,
+                    description=tool.description,
+                    input_schema=copy.deepcopy(tool.schema),
+                    risk_tier=cast(RiskTier, tool.risk_tier),
+                    is_action_tool=True,
+                    risk_tier_for_args=getattr(tool, "risk_tier_for_args", None),
+                )
+            )
+        return (*catalog, *scoped)
 
     async def execute_confirmed(
         self,
