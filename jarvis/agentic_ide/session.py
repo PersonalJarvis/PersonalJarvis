@@ -3309,6 +3309,9 @@ class Registry:
             # slot stays taken until this pane's input line appears.
             async with self._cold_start_slot(ready=lambda: self._prompt_ready(session, term)):
                 try:
+                    identity = "pane:" + term.history_id
+                    if term.stopping or self._locate(identity, session.id) != (session, term):
+                        raise SessionError("The selected terminal closed before startup.")
                     pty_session = await manager.spawn(
                         shell_argv=argv,
                         shell_id=f"agentic-ide:{term.key}",
@@ -3328,6 +3331,9 @@ class Registry:
                         # typed. Off the loop it is immediate.
                         on_probe=term.queries.feed,
                     )
+                    if term.stopping or self._locate(identity, session.id) != (session, term):
+                        manager.close(pty_session.terminal_id)
+                        raise SessionError("The selected terminal closed during startup.")
                 except Exception as exc:  # noqa: BLE001 - surfaced to the pane
                     term.status = "error"
                     term.error = str(exc)

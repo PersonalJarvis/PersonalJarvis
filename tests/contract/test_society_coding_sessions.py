@@ -490,3 +490,41 @@ async def test_jarvis_chat_receives_controller_without_becoming_a_coding_cli(rig
     session.permission_mode = "plan"
     tools, _ = await kit_payload(session, SimpleNamespace(_config=None))
     assert tools is None or "coding-session" not in tools
+
+
+async def test_close_while_startup_is_queued_does_not_spawn(rig, tmp_path, monkeypatch):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def gate(term):
+        entered.set()
+        await release.wait()
+        return None
+
+    monkeypatch.setattr(rig[0], "_acquire_agent_cold_start", gate)
+    pending = asyncio.create_task(open_one(rig, tmp_path))
+    await asyncio.wait_for(entered.wait(), 5)
+    await rig[0].end(rig[0].sessions[0].id)
+    release.set()
+    result = await pending
+    assert result["started"] is False and "closed" in result["error"]
+    assert not rig[1].spawns
+
+
+async def test_close_during_spawn_reaps_only_the_new_orphan(rig, tmp_path, monkeypatch):
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = rig[1].spawn
+
+    async def delayed(self, *args, **kwargs):
+        child = await original(*args, **kwargs)
+        entered.set()
+        await release.wait()
+        return child
+
+    monkeypatch.setattr(type(rig[1]), "spawn", delayed)
+    pending = asyncio.create_task(open_one(rig, tmp_path))
+    await asyncio.wait_for(entered.wait(), 5)
+    await rig[0].end(rig[0].sessions[0].id)
+    release.set()
+    result = await pending
+    assert result["started"] is False and "closed" in result["error"]
+    assert len(rig[1].spawns) == 1 and not rig[1]._live
