@@ -1347,6 +1347,26 @@ queued/delivered/failed status through storage, API, WebSocket and both chat UIs
 A persisted delivery receipt prevents another turn when the same event is
 replayed. Delivery means accepted by the chat, not successful task completion.
 
+### Scoped external coding sessions (2026-09-08)
+
+Persistent society agents may receive `core:coding-session` through their
+per-agent grant and approval rules. This narrowly controls existing IDE coding
+CLIs; it does not invoke the society scheduler or mission worker dispatcher.
+The tool is absent from the global worker catalog and only added to an
+authorized society chat's tools, including its subscription-seat MCP catalog,
+or the lead's typed Jarvis chat under that chat's own identity and approval rules.
+Router membership and the prohibition on recursive worker spawning are
+unchanged. Stable workspace/pane IDs and durable request receipts preserve
+project and delivery identity across asynchronous work and retries.
+
+Supervision extends that authorized assignment without introducing a worker
+spawn tool. A durable owner-bound record consumes IDE activity notifications
+and starts an internal turn in the same chat via its existing message receipt
+path. All terminal actions still pass ToolExecutor. Normal owned text follow-ups
+may inherit monitor-tier; approval dialogs retain ask-tier and stale replies are
+refused under the pane lock. Budget, kill-switch, grant and no-progress gates
+apply before automatic turns. No terminal output is treated as user authorization.
+
 Receiving turns inherit conversation provenance through task-local context;
 new conversations receive fresh traces. Replies retain the trace and parent
 event, so the scheduler's conversation cap remains effective. Lead replies go

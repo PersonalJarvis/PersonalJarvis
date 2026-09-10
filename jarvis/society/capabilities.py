@@ -8,8 +8,9 @@ them one id (``plugin:gmail``, ``cli:gh``, ``mcp:github/create_issue``,
 ``skill:daily-brief``, ``core:search-web``) so a roster row can grant, focus
 or deny them, and the model card can list them grouped by kind.
 
-Never granted, structurally (AP-5/AP-14): every dispatch tool and every app
-control tool. They are filtered out here, so no later layer can hand them to
+Never granted, structurally (AP-5/AP-14): every dispatch tool and general app
+control tool. Scoped coding-session control is a separate grantable capability.
+The prohibited tools are filtered out here, so no later layer can hand them to
 an agent by accident.
 
 Pure functions over the objects passed in — no registry is imported at
@@ -69,6 +70,7 @@ NEVER_GRANTED: Final[frozenset[str]] = frozenset(
 #: Built-in hands that are not "a plugin someone connected".
 _CORE_TOOLS: Final[frozenset[str]] = frozenset(
     {
+        "coding-session",
         "search-web",
         "search-backends",
         "run-shell",

@@ -11,14 +11,15 @@
 import { marketplacePluginId, pluginFamily } from "@/lib/pluginFamilies";
 
 import type { Capability, SocietyAgent } from "../data";
+import type { AgentStatus } from "@/lib/agenticIdeApi";
 
 /** "plugin:gmail" → "gmail"; "mcp:github/create_issue" → "github/create_issue". */
 function capabilityName(id: string): string {
   return id.replace(/^(plugin|cli|mcp|skill|core):/, "");
 }
 
-export type MentionKind = "agent" | "plugin" | "mcp" | "cli" | "skill" | "core";
-export type MentionGroup = "agents" | "plugins" | "mcp" | "cli" | "skills" | "tools";
+export type MentionKind = "agent" | "plugin" | "mcp" | "cli" | "skill" | "core" | "coding";
+export type MentionGroup = "agents" | "plugins" | "mcp" | "cli" | "skills" | "tools" | "coding";
 
 export interface MentionItem {
   key: string;
@@ -31,6 +32,7 @@ export interface MentionItem {
   /** Capability ids this tag pins for the turn; empty for agents. */
   pinIds: string[];
   agent?: SocietyAgent;
+  codingAgent?: AgentStatus;
   connected: boolean;
   searchText: string;
   /** Individual MCP tools — hidden until the query names them. */
@@ -41,6 +43,7 @@ export interface MentionItem {
 
 const GROUP_ORDER: readonly MentionGroup[] = [
   "agents",
+  "coding",
   "plugins",
   "mcp",
   "cli",
@@ -145,6 +148,7 @@ function capabilityItem(
 export function buildMentionCatalog(
   agents: readonly SocietyAgent[],
   capabilities: readonly Capability[],
+  codingAgents: readonly AgentStatus[] = [],
 ): MentionItem[] {
   const taken = new Set<string>();
   const items: MentionItem[] = [];
@@ -167,10 +171,23 @@ export function buildMentionCatalog(
     });
   }
 
+  for (const agent of codingAgents) {
+    if (agent.kind === "shell") continue;
+    const value = takeValue(agent.name, `coding/${agent.name}`, taken);
+    items.push({
+      key: `coding:${agent.name}`, kind: "coding", group: "coding", value,
+      label: agent.display_name, hint: agent.description ?? "",
+      pinIds: ["core:coding-session"], codingAgent: agent,
+      connected: agent.installed && agent.accepts_prompts !== false, detail: false, toolName: agent.name,
+      searchText: searchBlob([value, `coding/${agent.name}`, agent.name, agent.display_name, "coding message terminal IDE"]),
+    });
+  }
+
   const families = new Map<string, Capability[]>();
   const mcpByServer = new Map<string, Capability[]>();
   const rest: Capability[] = [];
   for (const cap of capabilities) {
+    if (cap.id === "core:coding-session" && codingAgents.length) continue;
     const familyId = marketplacePluginId(cap.id) || marketplacePluginId(cap.tool_name || "");
     if (familyId) {
       const bucket = families.get(familyId);
@@ -290,7 +307,7 @@ function scoreItem(item: MentionItem, q: string): number | null {
 export function filterMentions(items: readonly MentionItem[], query: string): MentionItem[] {
   const q = query.trim().toLowerCase();
   if (!q) {
-    return items.filter((item) => !item.detail && item.connected).slice(0, BROWSE_LIMIT);
+    return items.filter((item) => !item.detail && (item.connected || item.kind === "coding")).slice(0, BROWSE_LIMIT);
   }
   const ranked: { score: number; index: number; item: MentionItem }[] = [];
   items.forEach((item, index) => {
@@ -319,6 +336,30 @@ export function groupMentions(
 
 const TOKEN_RE = /(?:^|\s)@([^\s@]+)/g;
 
+export function codingMentionsInText(text: string, items: readonly MentionItem[]): MentionItem[] {
+  const values = new Set([...text.matchAll(TOKEN_RE)].map((m) => m[1].toLowerCase()));
+  return items.filter((item) => item.codingAgent && item.connected && (
+    values.has(item.value.toLowerCase()) || values.has(`coding/${item.codingAgent.name}`.toLowerCase())
+  ));
+}
+
+/** Explicit user selection, not a teammate dispatch or an arbitrary shell command. */
+export function codingAssignmentHint(items: readonly MentionItem[], folder: string): string {
+  if (!items.length) return "";
+  return [
+    "[Coding assignment selected by the user]",
+    `Coding CLI IDs: ${JSON.stringify(items.map((item) => item.codingAgent!.name))}.`,
+    "Acknowledge the selected coding agents by name. Selection alone is not evidence of startup or delivery.",
+    folder.trim()
+      ? `Project directory: ${JSON.stringify(folder.trim())}.`
+      : "Use the project directory specified in the user's message. If it is unclear, ask for it.",
+    "Use coding-session to discover and open or explicitly target the correct IDE session, then use assign " +
+      "with a self-contained task and user-grounded done_when criteria to supervise it to completion. " +
+      "Answer ordinary follow-up questions yourself. These are coding CLIs, not society teammates. " +
+      "Follow approval rules; accepted is not completed.",
+  ].map((line) => `[coding-agent] ${line}`).join("\n");
+}
+
 /**
  * Agents named in `text` and the capability ids those tags pin.
  *
@@ -338,6 +379,7 @@ export function mentionsInText(
     const list = byValue.get(key);
     if (list) list.push(item);
     else byValue.set(key, [item]);
+    if (item.codingAgent) byValue.set(`coding/${item.codingAgent.name}`.toLowerCase(), [item]);
   }
 
   const seen = tokens.map((token) => token.toLowerCase());

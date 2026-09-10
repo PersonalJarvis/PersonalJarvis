@@ -23,6 +23,29 @@ function cap(over: Partial<Capability> & Pick<Capability, "id">): Capability {
 }
 
 describe("MentionPicker", () => {
+  it("uses the existing coding logos and disables unavailable CLI rows", () => {
+    const items = buildMentionCatalog([], [], [
+      { name: "codex", display_name: "Codex", installed: true, version: null, install_command: null },
+      { name: "claude", display_name: "Claude Code", installed: true, version: null, install_command: null },
+      { name: "custom-cli", display_name: "Custom CLI", installed: true, custom: true,
+        logo_url: "/uploads/custom.svg", version: null, install_command: null },
+      { name: "missing", display_name: "Missing CLI", installed: false, version: null, install_command: null },
+    ]);
+    const anchor = createRef<HTMLDivElement>();
+    const picked: string[] = [];
+    render(<><div ref={anchor} /><MentionPicker anchorRef={anchor} open items={items} loading={false}
+      activeIndex={0} onHover={() => {}} onPick={(item) => picked.push(item.value)} /></>);
+    expect(screen.getByText("Coding Agents")).toBeTruthy();
+    expect(screen.getByTestId("agent-mark-codex").getAttribute("data-logo")).toBe("/provider-logos/openai.svg");
+    expect(screen.getByTestId("agent-mark-claude").getAttribute("data-logo")).toBe("/provider-logos/claude.svg");
+    expect(screen.getByTestId("agent-mark-custom-cli").getAttribute("data-logo")).toBe("/uploads/custom.svg");
+    const missing = screen.getByText("Missing CLI").closest('[role="option"]')!;
+    expect(missing.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(missing);
+    expect(picked).toEqual([]);
+    fireEvent.click(screen.getByText("Codex"));
+    expect(picked).toEqual(["codex"]);
+  });
   it("groups plugins and MCP servers and picks on click", () => {
     const items = filterMentions(
       buildMentionCatalog(

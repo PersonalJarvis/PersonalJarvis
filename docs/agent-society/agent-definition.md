@@ -117,6 +117,69 @@ card; nothing hidden drives behavior.
 
 ### 3.1 One capability catalog
 
+**Scoped coding sessions (2026-09-08).** `core:coding-session` is grantable to
+every roster agent, including newly created agents and Codex/Claude subscription
+seats. Native turns obtain it from the society surface; subscription seats obtain
+the same gated tool through the session-bound MCP catalog. It never enters the
+global worker catalog or enables general app control or society/mission spawning.
+
+The lead's typed Jarvis chat can use the same controller under its own session
+identity. The card composer's `@` picker and add menu expose a separate
+"Message coding agent" group from the live IDE CLI catalog. Selecting a CLI
+prepares a draft; it neither opens a terminal nor sends work immediately.
+The user can choose a project in the existing folder picker, enter its path,
+or specify it in the message. An omitted folder never silently becomes the
+agent's personal workspace. Coding references pin `core:coding-session` and
+stay distinct from society teammate mentions. Plan mode remains excluded.
+
+`discover` lists registered coding CLIs, launch choices, accounts and project
+sessions. `open` requires an explicit absolute project directory and coding CLI;
+ask for the project when unknown. It uses the existing registry and PTY attach
+lifecycle without requiring a viewer. This is approval-gated access to an
+external project, not a relaxation of the agent's contained personal shell.
+`open`/`send` are ask-tier; `discover`/`context` are monitor-tier. Grants, denies,
+approval rules and permission ceilings use the normal ToolExecutor path.
+
+Follow-ups require `workspace_id` and `terminal_id` (`pane:<history_id>`).
+Renaming and persisted restoration preserve identity; closed IDs cannot resolve
+a replacement pane. Reuse the same `request_id` and arguments on open/send
+retries. Durable receipts prevent duplicate side effects; interrupted pending
+requests require inspection rather than automatic replay. Sends serialize per
+pane, wait for readiness and report busy/startup failures honestly. Accepted,
+not accepted and uncertain delivery are distinct; accepted never means completed.
+
+`context` pages the pane's own account-scoped recorded timeline: messages,
+tool calls/results and provider-exposed notes actually recorded by the CLI.
+Unrecorded reasoning is unavailable. Unsupported transcripts and temporarily
+missing files are separate states. Cursors detect replacement, truncation and
+changes to already-read events; bounded excerpts are explicitly marked.
+Contract: `tests/contract/test_society_coding_sessions.py`.
+
+**Supervised conversations.** `assign` submits a structured task and binds its
+supervision to the calling chat. The task, user-grounded acceptance criteria and
+constraints are preserved; oversized briefs are refused instead of truncated.
+IDE activity events wake the supervisor; a jittered local sampler covers lost
+events. It wakes the same chat on actionable idle/input/error states, carrying
+the original goal and bounded recent recorded context. Busy chats retain one
+pending update. Internal message receipts prevent duplicate wakeups on restart.
+Progress tokens do not cause a new model turn for every terminal repaint.
+
+The owner answers with `input` then `respond` using the current `input_token`
+and supervision `update_id`, or sends further work to that same pane. Ordinary
+owned continuations at a waiting text prompt are monitor-tier; explicit approval
+rules still win. Text replies cannot answer an `asking` dialog: `dialog` mode
+retains ask-tier and must match the same visible request under the pane lock.
+This supports text input, not arbitrary native menu keystrokes. Login, secrets,
+unsupported interactions and additional authorization become precise blockers.
+
+`finish` records the evidence summary once the goal is met; `pause` records a
+blocker; `resume` explicitly restarts a paused workflow. The supervisor itself
+never writes to a PTY or approves a tool. It checks the current owner, grants,
+chat mode, kill switch and budgets before starting another owner turn. Forty
+turns and one day are the default limits; repeated unanswered updates pause
+with a durable notice instead of creating an endless model loop. Pending
+initial deliveries are never automatically replayed after interruption.
+
 Everything a Jarvis brain can call already exists in four registries. The society adds ONE
 read-only view over them — `jarvis/society/capabilities.py` — that returns typed rows
 `CapabilityRow(id, kind, label, one_liner, risk_tier, connected: bool, source)`:

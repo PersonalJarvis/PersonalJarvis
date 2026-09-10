@@ -30,6 +30,23 @@ Windows tests and a single-key live Gemini run with fresh isolated stores passed
 Native macOS/Linux execution and a completely fresh OS installation remain
 unverified. See [routine behavior and examples](routines.md).
 
+**Society coding-session control, 2026-09-08:** The shared capability reuses
+`workspace.agents.pty_available()` and the existing IDE lifecycle on Windows
+(ConPTY), macOS and Linux (POSIX PTY). No new native backend or boot-time
+initialization is introduced. Headless operation requires no browser viewer;
+missing PTY support degrades explicitly. Account and transcript support comes
+from each registered CLI's capabilities. Fake-PTY contracts cover the common
+control path and unsupported-backend behavior; native macOS/Linux execution
+and a fresh single-key live install are not established by those tests.
+
+Supervised coding conversations use the same asyncio, SQLite and application
+EventBus path on Windows, macOS and Linux. PTY input remains behind the existing
+IDE capability probe. Text-question replies are tied to the current process and
+visible input request; native dialogs requiring unsupported keystrokes degrade
+to an explicit user blocker. No new native hooks or platform dependencies are
+introduced. Contract tests exercise wakeups, recovery, ownership and reply
+guards with fake chat/PTY collaborators; native CLI timing remains live acceptance.
+
 **Society voice orchestration, 2026-09-07:** Persistent-team inventory,
 contextual assignments, assignment tracking and measured activity reuse the
 existing society roster, board and scheduler. Voice creation and profile/model

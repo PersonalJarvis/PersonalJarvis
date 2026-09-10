@@ -154,7 +154,16 @@ def build_server() -> Any:
     @server.list_tools()  # type: ignore[misc, no-untyped-call]
     async def _list_tools() -> list[Any]:
         tools: list[Any] = []
-        for entry in offered_tools():
+        entries = offered_tools()
+        session_id = CHAT_SESSION_REF.get()
+        scoped = getattr(_gateway(), "session_catalog", None)
+        if session_id and callable(scoped):
+            entries = [
+                entry
+                for entry in await scoped(session_id)
+                if _usable_name(str(entry.name)) and str(entry.name) not in _WITHHELD
+            ]
+        for entry in entries:
             schema = entry.input_schema
             if not isinstance(schema, dict) or not schema:
                 schema = {"type": "object", "properties": {}}

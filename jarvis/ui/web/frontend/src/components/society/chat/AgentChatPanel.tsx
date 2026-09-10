@@ -54,12 +54,16 @@ import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
 import { useResolveProposal, useSocietyCapabilities, type SocietyAgent } from "../data";
+import { fetchIdeAgents, type AgentStatus } from "@/lib/agenticIdeApi";
+import { CodingProjectChoice } from "./CodingProjectChoice";
 import { MentionPicker } from "./MentionPicker";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { mentionChoice, messageChoices } from "./mentionChoices";
 import { useTranscriptView } from "./useTranscriptView";
 import {
   buildMentionCatalog,
+  codingMentionsInText,
+  codingAssignmentHint,
   filterMentions,
   mentionToken,
   mentionsInText,
@@ -868,6 +872,7 @@ function visibleUserText(text: string): string {
     .filter((line) => !line.trimStart().startsWith(DELEGATE_MARK))
     .filter((line) => !line.trimStart().startsWith(MENTION_MARK))
     .filter((line) => !line.trimStart().startsWith(TOOL_PIN_MARK))
+    .filter((line) => !line.trimStart().startsWith("[coding-agent]"))
     .join("\n")
     .trimEnd();
 }
@@ -974,11 +979,30 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   // "@" completes teammates AND the capability catalog — plugins, MCP
   // servers, CLIs, skills, Jarvis tools — on every agent card, including
   // Jarvis'. Naming one pins it for the turn (see `submit`).
+  const [codingAgents, setCodingAgents] = useState<AgentStatus[]>([]);
+  const [codingLoading, setCodingLoading] = useState(false);
+  const [codingError, setCodingError] = useState(false);
+  const [codingRetry, setCodingRetry] = useState(0);
+  const [codingFolder, setCodingFolder] = useState("");
+  const mentionOpen = mention !== null;
+  useEffect(() => {
+    if (!mentionOpen) return;
+    let current = true;
+    setCodingLoading(true);
+    setCodingError(false);
+    void fetchIdeAgents().then((result) => {
+      if (current) setCodingAgents(result.terminal_available ? result.agents : []);
+    }).catch(() => { if (current) setCodingError(true); })
+      .finally(() => { if (current) setCodingLoading(false); });
+    return () => { current = false; };
+  }, [mentionOpen, codingRetry]);
   const capabilities = useSocietyCapabilities();
   const catalog = useMemo(
-    () => buildMentionCatalog(mentionable, capabilities.data ?? []),
-    [mentionable, capabilities.data],
+    () => buildMentionCatalog(mentionable, capabilities.data ?? [], codingAgents),
+    [mentionable, capabilities.data, codingAgents],
   );
+  const codingSelections = useMemo(() => codingMentionsInText(value, catalog), [value, catalog]);
+  useEffect(() => { if (!codingSelections.length) setCodingFolder(""); }, [codingSelections.length]);
   const matches = useMemo(
     () => (mention ? filterMentions(catalog, mention.query) : []),
     [mention, catalog],
@@ -997,13 +1021,14 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   };
 
   const insertMention = (item: MentionItem) => {
+    if (item.kind === "coding" && !item.connected) return;
     const field = fieldRef.current;
     const draft = field?.getDraft();
     const start = mention?.start ?? draft?.caret ?? value.length;
     const caret = draft?.caret ?? value.length;
     const before = (draft?.text ?? value).slice(0, start);
     const after = (draft?.text ?? value).slice(caret);
-    if (item.agent) {
+    if (item.agent || item.codingAgent) {
       const next = `${before}@${item.value} ${after}`;
       field?.hydrate(next, draft?.choices ?? []);
     } else {
@@ -1018,6 +1043,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   const submit = async () => {
     const draft = fieldRef.current?.getDraft();
     const draftText = (draft?.text ?? value).trim();
+    const submittedFolder = codingFolder;
     const selected = selectedTools;
     const text = draftText;
     if (!text || busy || modelSaving) return;
@@ -1046,6 +1072,8 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       ));
     }
     if (named.pinIds.length > 0) lines.push(`${TOOL_PIN_MARK} ${named.pinIds.join(", ")}]`);
+    const codingHint = codingAssignmentHint(codingSelections, codingFolder);
+    if (codingHint) lines.push(codingHint);
     const hint = lines.join("\n");
     setValue("");
     fieldRef.current?.clear();
@@ -1059,15 +1087,17 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       setValue(draftText);
       fieldRef.current?.hydrate(draftText, draft?.choices ?? []);
       setSelectedTools(selected);
+      setCodingFolder(submittedFolder);
       setProblem(err instanceof Error ? err.message : String(err));
     }
   };
 
-  const pickerOpen = Boolean(mention) && (matches.length > 0 || (mention?.query.length ?? 0) > 0 || capabilities.isLoading);
+  const pickerOpen = Boolean(mention) && (matches.length > 0 || (mention?.query.length ?? 0) > 0 || capabilities.isLoading || codingLoading);
 
   return (
     <div className="shrink-0 border-t border-border px-3 pb-3 pt-2">
       {problem ? <p className="mb-1 px-1 text-xs text-destructive">{problem}</p> : null}
+      {mentionOpen && codingError ? <button type="button" className="mb-1 text-xs text-destructive underline" onClick={() => setCodingRetry((n) => n + 1)}>{t("society.chat.coding_retry")}</button> : null}
       <div className={CHAT_MEASURE}>
         <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
       </div>
@@ -1076,7 +1106,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         anchorRef={composerRef}
         open={pickerOpen}
         items={matches}
-        loading={capabilities.isLoading}
+        loading={capabilities.isLoading || codingLoading}
         activeIndex={activeIndex}
         onHover={setActiveIndex}
         onPick={insertMention}
@@ -1111,6 +1141,13 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
                 fieldRef.current?.focus();
               }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground hover:bg-secondary">
                 <Plus className="h-3.5 w-3.5" aria-hidden />{t("chat_tools.all")}
+              </button>
+              <button type="button" onClick={() => {
+                setPlusOpen(false);
+                fieldRef.current?.insertText("@coding/");
+                fieldRef.current?.focus();
+              }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground hover:bg-secondary">
+                <MessageSquare className="h-3.5 w-3.5" aria-hidden />{t("society.chat.mention_group_coding")}
               </button>
               <button
                 type="button"
@@ -1223,6 +1260,9 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           </button>
         )}
       </div>
+      {codingSelections.length > 0 && <div className={CHAT_MEASURE}>
+        <CodingProjectChoice agents={codingSelections.flatMap((item) => item.codingAgent ? [item.codingAgent] : [])} folder={codingFolder} onFolder={setCodingFolder} />
+      </div>}
     </div>
   );
 }

@@ -211,6 +211,16 @@ async def kit_payload(session: AgentChatSession, brain: Any) -> tuple[dict[str, 
     cfg = getattr(brain, "_config", None)
     tools: dict[str, Tool] | None = None
     extra = ""
+    if session.surface == "jarvis":
+        from jarvis.society.surface import coding_tool_for_session
+
+        try:
+            coding_tool = await coding_tool_for_session(session.session_id)
+            if coding_tool is not None:
+                tools = folder_tools(Path(session.cwd), stance=session.permission_mode or "ask")
+                tools[coding_tool.name] = coding_tool
+        except Exception:
+            log.warning("Jarvis chat: coding-session capability unavailable", exc_info=True)
     if kit.session_tools is not None:
         try:
             tools = kit.session_tools(cfg, brain, session)

@@ -228,6 +228,16 @@ class SocietyStore:
             (key, value),
         )
 
+    async def meta_prefix(self, prefix: str) -> dict[str, str]:
+        """Read durable subsystem records without exposing unrelated metadata."""
+        cur = await self.conn.execute(
+            "SELECT key, value FROM society_meta WHERE substr(key, 1, ?) = ?",
+            (len(prefix), prefix),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+        return {str(row[0]): str(row[1]) for row in rows}
+
     async def kill_switch(self) -> bool:
         return (await self.get_meta(_KEY_KILL_SWITCH, "0")) == "1"
 

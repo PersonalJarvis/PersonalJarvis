@@ -11,6 +11,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } f
 import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
+import { AgentMark } from "@/components/agentic/AgentMark";
 import { ToolChoiceIcon } from "@/components/agentchat/ToolChoiceChips";
 import { toolIdentityStyle } from "@/components/agentchat/toolIdentity";
 import { mentionChoice } from "./mentionChoices";
@@ -135,11 +136,12 @@ export function MentionPicker({
                   data-index={index}
                   data-kind={item.kind}
                   data-testid="mention-picker-item"
-                  style={item.agent ? undefined : toolIdentityStyle(mentionChoice(item))}
+                  style={item.agent || item.codingAgent ? undefined : toolIdentityStyle(mentionChoice(item))}
                   onMouseEnter={() => onHover(index)}
-                  onClick={() => onPick(item)}
+                  aria-disabled={item.kind === "coding" && !item.connected || undefined}
+                  onClick={() => { if (item.kind !== "coding" || item.connected) onPick(item); }}
                   className={cn(
-                    !item.agent && "tool-identity",
+                    !item.agent && !item.codingAgent && "tool-identity",
                     "flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2",
                     active ? "bg-secondary text-foreground" : "text-foreground",
                     !item.connected && "opacity-50",
@@ -159,7 +161,7 @@ export function MentionPicker({
                   </span>
                   {!item.connected ? (
                     <span className="shrink-0 text-micro text-muted-foreground">
-                      {t("society.chat.mention_disconnected")}
+                      {t(item.codingAgent ? (item.codingAgent.accepts_prompts === false ? "society.chat.coding_unsupported" : "society.chat.coding_not_installed") : "society.chat.mention_disconnected")}
                     </span>
                   ) : null}
                 </div>
@@ -177,6 +179,8 @@ function groupLabel(group: MentionGroup, t: (key: string) => string): string {
   switch (group) {
     case "agents":
       return t("society.chat.mention_group_agents");
+    case "coding":
+      return t("society.chat.mention_group_coding");
     case "plugins":
       return t("society.chat.mention_group_plugins");
     case "mcp":
@@ -193,6 +197,10 @@ function groupLabel(group: MentionGroup, t: (key: string) => string): string {
 }
 
 function Mark({ item }: { item: MentionItem }) {
+  if (item.codingAgent) {
+    return <AgentMark agent={item.codingAgent.name} label={item.codingAgent.display_name}
+      logoUrl={item.codingAgent.logo_url || undefined} size="sm" className="rounded-lg" />;
+  }
   if (item.agent) {
     return <AgentSwatch agent={item.agent} size={28} className="h-7 w-7 rounded-lg" />;
   }
