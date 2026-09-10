@@ -150,8 +150,9 @@ tables in `terminalThemes.ts`, never one hardcoded mode.
 
 **Runtime restarts:** agents may restart the desktop app and related development
 processes when needed to apply or verify authorized work, without asking for
-additional approval. Announce the reason, prefer the normal restart flow, and
-verify that the application returns healthy. This does not authorize stopping
+additional approval. Announce the reason, prefer programmatic lifecycle/process
+control over desktop UI automation, and verify that the application returns
+healthy. This does not authorize stopping
 unrelated processes or leaving the desktop app shut down.
 
 Local model defaults (Ollama/llama.cpp) are checked against the live catalog
