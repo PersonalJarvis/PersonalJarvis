@@ -12,8 +12,9 @@
  * §2); the const arrays in lib/societyApi.ts are pinned to the Python enums by
  * the five-layer parity test (AP-4).
  */
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { MentionPlugin } from "./chat/mentionItems";
 
 import type { Checkpoint, SocietyAgentRow } from "@/lib/societyApi";
 
@@ -307,20 +308,37 @@ export interface Capability {
 }
 
 async function fetchCapabilities(): Promise<Capability[]> {
-  const res = await fetch("/api/society/capabilities");
+  const res = await fetch("/api/society/capabilities", { cache: "no-store" });
   if (!res.ok) throw new Error(`capabilities ${res.status}`);
   const body = (await res.json()) as { capabilities?: Capability[] };
   return body.capabilities ?? [];
 }
 
-export function useSocietyCapabilities(enabled = true) {
-  return useQuery({
+export function useSocietyCapabilities(enabled = true, mentionOpen = false) {
+  const query = useQuery({
     queryKey: CAPABILITIES_QUERY_KEY,
     queryFn: fetchCapabilities,
     enabled,
     staleTime: 60_000,
     retry: false,
   });
+  const plugins = useQuery({
+    queryKey: ["marketplace-plugins"],
+    queryFn: async () => {
+      const res = await fetch("/api/marketplace/plugins", { cache: "no-store" });
+      if (!res.ok) throw new Error(`plugins ${res.status}`);
+      return res.json() as Promise<{ plugins: MentionPlugin[] }>;
+    },
+    enabled: enabled && mentionOpen,
+    staleTime: 0,
+    retry: false,
+  });
+  const { refetch } = query;
+  useEffect(() => {
+    if (enabled && mentionOpen) void refetch();
+  }, [enabled, mentionOpen, refetch]);
+  return { ...query, plugins: plugins.data?.plugins ?? [], inventoryError: query.isError || plugins.isError,
+    retryInventory: () => { void refetch(); void plugins.refetch(); } };
 }
 
 /** A URL-safe id from a display name, unique against the rows already known. */

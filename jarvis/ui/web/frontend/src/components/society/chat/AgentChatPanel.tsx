@@ -996,10 +996,10 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       .finally(() => { if (current) setCodingLoading(false); });
     return () => { current = false; };
   }, [mentionOpen, codingRetry]);
-  const capabilities = useSocietyCapabilities();
+  const capabilities = useSocietyCapabilities(true, mentionOpen);
   const catalog = useMemo(
-    () => buildMentionCatalog(mentionable, capabilities.data ?? [], codingAgents),
-    [mentionable, capabilities.data, codingAgents],
+    () => buildMentionCatalog(mentionable, capabilities.data ?? [], codingAgents, capabilities.plugins ?? []),
+    [mentionable, capabilities.data, codingAgents, capabilities.plugins],
   );
   const codingSelections = useMemo(() => codingMentionsInText(value, catalog), [value, catalog]);
   useEffect(() => { if (!codingSelections.length) setCodingFolder(""); }, [codingSelections.length]);
@@ -1056,7 +1056,19 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       setProblem(null);
       return;
     }
-    const named = mentionsInText(text, catalog);
+    const chosenIds = new Set((draft?.choices ?? []).map((row) => row.id));
+    const chosen = [...chosenIds].map((id) => catalog.find((item) => item.key === id));
+    if (chosen.some((item) => !item || !item.connected)) {
+      setProblem(t("common.error_generic"));
+      return;
+    }
+    // Chips hold stable catalog IDs, even if new entries have changed short tags.
+    const chosenTags = new Set((draft?.choices ?? []).map((row) => choiceToken(row).toLowerCase()));
+    const unselectedText = text.replace(/(^|\s)(@[^\s@]+)/g, (whole, space: string, token: string) =>
+      chosenTags.has(token.toLowerCase()) ? space : whole,
+    );
+    const named = mentionsInText(unselectedText, catalog);
+    named.pinIds = [...new Set([...named.pinIds, ...chosen.flatMap((item) => item?.pinIds ?? [])])];
     const lines: string[] = [];
     if (named.agents.length > 0 && surface === "society") {
       const teammates = named.agents.map((a) => `${JSON.stringify(a.name)} (id ${JSON.stringify(a.agentId)})`).join(", ");
@@ -1092,12 +1104,13 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     }
   };
 
-  const pickerOpen = Boolean(mention) && (matches.length > 0 || (mention?.query.length ?? 0) > 0 || capabilities.isLoading || codingLoading);
+  const pickerOpen = mentionOpen;
 
   return (
     <div className="shrink-0 border-t border-border px-3 pb-3 pt-2">
       {problem ? <p className="mb-1 px-1 text-xs text-destructive">{problem}</p> : null}
       {mentionOpen && codingError ? <button type="button" className="mb-1 text-xs text-destructive underline" onClick={() => setCodingRetry((n) => n + 1)}>{t("society.chat.coding_retry")}</button> : null}
+      {mentionOpen && capabilities.inventoryError ? <button type="button" className="mb-1 text-xs text-destructive underline" onClick={capabilities.retryInventory}>{t("common.retry")}</button> : null}
       <div className={CHAT_MEASURE}>
         <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
       </div>

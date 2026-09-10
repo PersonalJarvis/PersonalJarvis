@@ -1,8 +1,32 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { Composer, UserBubble } from "./AgentChatPanel";
-import { pinnedMessageChoices, withoutChoiceTokens } from "./mentionChoices";
+import { mentionChoice, pinnedMessageChoices, withoutChoiceTokens } from "./mentionChoices";
+import { buildMentionCatalog, mentionsInText } from "./mentionItems";
+import { choiceLookup, choiceToken } from "@/components/agentchat/composerChips";
 import type { SocietyAgent } from "../data";
+
+it("preserves exact skill, server and tool tags when converting them to chips", () => {
+  const caps = ["skill:my_skill", "mcp:sentry/read_issue", "mcp:sentry/list_issues"].map((id) => ({
+    id, kind: id.split(":")[0], label: id, one_liner: "", risk_tier: "monitor", connected: true, tool_name: "",
+  }));
+  const catalog = buildMentionCatalog([], caps);
+  for (const item of catalog) {
+    const row = mentionChoice(item);
+    expect(choiceToken(row)).toBe(`@${item.value}`);
+    expect(mentionsInText(choiceToken(row), catalog).pinIds).toEqual(item.pinIds);
+  }
+});
+
+it("does not turn a teammate tag into a plugin chip when their names collide", () => {
+  const catalog = buildMentionCatalog([{ agentId: "mail-agent", name: "gmail" } as SocietyAgent], [{
+    id: "plugin:gmail", kind: "plugin", label: "Gmail", one_liner: "", risk_tier: "monitor", connected: true, tool_name: "gmail",
+  }]);
+  const row = mentionChoice(catalog.find((item) => item.kind === "plugin")!);
+  expect(choiceToken(row)).toBe("@plugin:gmail");
+  expect(choiceLookup([row]).has("gmail")).toBe(false);
+  expect(mentionsInText(choiceToken(row), catalog).agents).toEqual([]);
+});
 
 vi.mock("@/i18n", async () => {
   const { default: en } = await import("@/i18n/locales/en.json");
@@ -82,6 +106,37 @@ it("reconstructs branded tags from an existing saved agent-card message", () => 
   expect(
     screen.getByTestId("tool-choice-chips").querySelector('[data-brand="gmail"]'),
   ).not.toBeNull();
+});
+
+it("sends the selected plugin ID when an agent has the same name", async () => {
+  const send = vi.fn(async (_text: string) => {});
+  render(<Composer agent={{ agentId: "test", name: "Test" } as SocietyAgent}
+    mentionable={[{ agentId: "mail-agent", name: "gmail", title: "Mail", palette: { primary: "#333", secondary: "#555", accent: "#777" } } as SocietyAgent]}
+    busy={false} sessionId="society:test" cwd="" provider="openai" surface="society"
+    onSend={send} onCancel={async () => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "society.chat.more" }));
+  fireEvent.click(screen.getByRole("button", { name: "chat_tools.all" }));
+  fireEvent.click(await screen.findByRole("option", { name: /@plugin:gmail/ }));
+  fireEvent.click(screen.getByRole("button", { name: "society.chat.send" }));
+  await waitFor(() => expect(send).toHaveBeenCalledOnce());
+  expect(send.mock.calls[0][0]).toContain("[tools: plugin:gmail]");
+  expect(send.mock.calls[0][0]).not.toContain("Mentioned teammates");
+});
+
+it("does not send pins for a chip removed from the draft", async () => {
+  const send = vi.fn(async (_text: string) => {});
+  render(<Composer agent={{ agentId: "test", name: "Test" } as SocietyAgent} mentionable={[]}
+    busy={false} sessionId="society:test" cwd="" provider="openai" surface="society"
+    onSend={send} onCancel={async () => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "society.chat.more" }));
+  fireEvent.click(screen.getByRole("button", { name: "chat_tools.all" }));
+  fireEvent.click(await screen.findByRole("option", { name: /@gmail/ }));
+  const box = screen.getByRole("textbox");
+  box.textContent = "Explain this instead";
+  fireEvent.input(box);
+  fireEvent.click(screen.getByRole("button", { name: "society.chat.send" }));
+  await waitFor(() => expect(send).toHaveBeenCalledOnce());
+  expect(send.mock.calls[0][0]).toBe("Explain this instead");
 });
 
 it("collapses server pins but keeps specific MCP tool selections distinct", () => {
