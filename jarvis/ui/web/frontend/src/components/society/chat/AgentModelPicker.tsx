@@ -4,6 +4,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronRight, Loader2, RefreshCw, Search, Users } from "lucide-react";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { effortLabel } from "@/components/agentchat/AgentComposer";
+import { useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
 import { useT } from "@/i18n";
 import { fetchAgentChatCatalog, fetchAgentConnections, fetchProviderModels, type CuratedModel } from "@/lib/agentChatApi";
 import { fetchSocietyProviders } from "@/lib/societyApi";
@@ -37,22 +38,29 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   const input = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
 
-  const catalog = useQuery({ queryKey: ["agent-chat", "catalog", "society"], queryFn: () => fetchAgentChatCatalog("society"), enabled: open, staleTime: 60_000 });
-  const connections = useQuery({ queryKey: ["agent-chat", "connections"], queryFn: fetchAgentConnections, enabled: open, staleTime: 60_000 });
-  const providers = useQuery({ queryKey: ["society", "providers"], queryFn: fetchSocietyProviders, enabled: open, staleTime: 60_000 });
-  const options = useMemo(() => joinProviderOptions(catalog.data?.providers ?? [], connections.data ?? []), [catalog.data, connections.data]);
+  const chatCatalog = useAgentChat((state) => state.surface === "society" ? state.catalog : null);
+  const chatConnections = useAgentChat((state) => state.connections);
+  // Start with the card, not its first click. The chat store has usually already
+  // loaded these same facts; a slow refresh must not replace them with a spinner.
+  const catalog = useQuery({ queryKey: ["agent-chat", "catalog", "society"], queryFn: () => fetchAgentChatCatalog("society"), placeholderData: chatCatalog ?? undefined, staleTime: 60_000 });
+  const connections = useQuery({ queryKey: ["agent-chat", "connections"], queryFn: fetchAgentConnections, placeholderData: chatCatalog ? chatConnections : undefined, staleTime: 60_000 });
+  const providers = useQuery({ queryKey: ["society", "providers"], queryFn: fetchSocietyProviders, staleTime: 60_000 });
+  const availableCatalog = catalog.data ?? chatCatalog;
+  const availableConnections = connections.data ?? (chatCatalog ? chatConnections : undefined);
+  const options = useMemo(() => joinProviderOptions(availableCatalog?.providers ?? [], availableConnections ?? []), [availableCatalog, availableConnections]);
   const liveProviders = options.filter((option) => option.connected && option.models_source === "live");
   const liveQueries = useQueries({ queries: liveProviders.map((provider) => ({
     queryKey: ["society", "model-menu", "live", provider.id],
     queryFn: async (): Promise<CuratedModel[]> => (await fetchProviderModels(provider.id)).map((model) => ({ id: model.id, label: model.label ?? model.name ?? model.id })),
-    enabled: open && connections.isSuccess, staleTime: 60_000, retry: false,
+    enabled: open && Boolean(availableConnections), staleTime: 60_000, retry: false,
   })) });
   const live: Record<string, CuratedModel[]> = {};
   liveProviders.forEach((provider, index) => { if (liveQueries[index].data) live[provider.id] = liveQueries[index].data!; });
   const seats = modelSeats(options, providers.data ?? [], live);
-  const loading = catalog.isLoading || connections.isLoading || providers.isLoading;
+  // Subscription accounts enrich the menu independently of its model rows.
+  const loading = !availableCatalog || !availableConnections;
   const refreshing = catalog.isFetching || connections.isFetching || providers.isFetching || liveQueries.some((query) => query.isFetching);
-  const failed = catalog.isError || connections.isError || providers.isError;
+  const failed = (!availableCatalog && catalog.isError) || (!availableConnections && connections.isError);
   const currentAccount = (seat: BrainSeat) => accounts[seat.provider.id] ?? (agent.provider === seat.provider.id ? agent.accountId ?? "" : "");
   const preferredEffort = (seat: BrainSeat, model: CuratedModel) => modelEffort(seat, model.id, seat.provider.id === agent.provider ? agent.effort : seat.provider.default_effort);
   const groups = seats.map((seat) => ({ seat, title: providerTitle(seat, t),

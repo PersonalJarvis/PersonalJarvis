@@ -1,13 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { loadLocaleChunk } from "@/i18n";
-import type { AgentChatProvider } from "@/lib/agentChatApi";
+import type { AgentChatProvider, AgentConnectionRow } from "@/lib/agentChatApi";
 import { SAMPLE_ROSTER } from "../mockRoster";
 import { rowToAgent, useSocietyAgent, type SocietyAgent } from "../data";
 import { AgentModelPicker } from "./AgentModelPicker";
 import type { SocietyAgentRow } from "@/lib/societyApi";
+import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
+import { createAgentChatStore, type AgentChatStoreHook } from "@/store/agentChat";
 
 const provider = (id: string, overrides: Partial<AgentChatProvider> = {}): AgentChatProvider => ({
   id, label: id, family: id, runner: "brain", models_source: "curated",
@@ -24,6 +26,9 @@ let liveModels: Record<string, { id: string; label: string }[]>;
 let providerRows: unknown[];
 let catalogCalls: number;
 let saving: ReturnType<typeof vi.fn>;
+let catalogGate: Promise<void> | undefined;
+let connectionsGate: Promise<void> | undefined;
+let accountsGate: Promise<void> | undefined;
 
 beforeEach(async () => {
   await loadLocaleChunk("society");
@@ -34,7 +39,11 @@ beforeEach(async () => {
   } as unknown as SocietyAgentRow;
   posts = []; failSave = false; saving = vi.fn();
   extraProviders = []; liveModels = {}; providerRows = []; catalogCalls = 0;
+  catalogGate = undefined; connectionsGate = undefined; accountsGate = undefined;
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/catalog")) await catalogGate;
+    if (url.endsWith("/status")) await connectionsGate;
+    if (url.endsWith("/providers")) await accountsGate;
     const response = (data: unknown, ok = true) => ({ ok, status: ok ? 200 : 503, json: async () => data }) as Response;
     if (url.endsWith("/model")) {
       const choice = JSON.parse(String(init?.body));
@@ -53,18 +62,60 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function mount(busy = false, inDialog = false) {
+function mount(busy = false, inDialog = false, store?: AgentChatStoreHook) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const initial: SocietyAgent = { ...SAMPLE_ROSTER[1], ...rowToAgent(row) };
   client.setQueryData(["society", "roster"], { agents: [initial], sample: false });
   function Subject() {
     const { agent } = useSocietyAgent("scout");
-    return <AgentModelPicker agent={agent ?? initial} busy={busy} onSavingChange={saving} />;
+    const picker = <AgentModelPicker agent={agent ?? initial} busy={busy} onSavingChange={saving} />;
+    return store ? <AgentChatStoreProvider store={store}>{picker}</AgentChatStoreProvider> : picker;
   }
   return render(<QueryClientProvider client={client}>{inDialog ? <Dialog.Root defaultOpen>
     <Dialog.Content><Dialog.Title>Agent</Dialog.Title><Dialog.Description>Model controls</Dialog.Description><Subject /></Dialog.Content>
   </Dialog.Root> : <Subject />}</QueryClientProvider>);
 }
+
+test("already loaded chat models are immediately selectable while every refresh is stalled", async () => {
+  let release!: () => void;
+  catalogGate = connectionsGate = accountsGate = new Promise<void>((resolve) => { release = resolve; });
+  const store = createAgentChatStore("society");
+  store.setState({
+    catalog: { providers: [provider("openai")], default_cwd: "", shell: "" },
+    connections: [{ jarvis: "openai", key_set: true }] as AgentConnectionRow[],
+  });
+  try {
+    mount(false, false, store);
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    // Synchronous: no await, no timers and none of the requests has resolved.
+    expect(screen.getByTitle("openai-small")).toBeTruthy();
+    expect(screen.queryByText("Loading the provider catalog…")).toBeNull();
+    fireEvent.click(screen.getByTitle("openai-small"));
+    await waitFor(() => expect(posts[0].model).toBe("openai-small"));
+  } finally {
+    await act(async () => { release(); await catalogGate; });
+  }
+});
+
+test("a cold menu renders models without waiting for subscription account discovery", async () => {
+  let release!: () => void;
+  accountsGate = new Promise<void>((resolve) => { release = resolve; });
+  try {
+    mount(); await open();
+    expect(screen.getByTitle("gemini-small")).toBeTruthy();
+    expect(screen.queryByText("Loading the provider catalog…")).toBeNull();
+  } finally {
+    await act(async () => { release(); await accountsGate; });
+  }
+});
+
+test("catalog loading starts when the card mounts, before the picker is clicked", async () => {
+  mount();
+  await waitFor(() => expect(catalogCalls).toBe(1));
+  expect(screen.queryByRole("menu")).toBeNull();
+  await open();
+  expect(catalogCalls).toBe(1);
+});
 
 async function open() {
   fireEvent.click(screen.getByRole("button", { name: "Model" }));
