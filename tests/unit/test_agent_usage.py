@@ -19,7 +19,6 @@ usage meter can be confidently wrong, which is worse than having none at all:
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -420,14 +419,14 @@ def test_an_unreachable_host_is_left_alone_but_an_http_error_is_retried(
 
             return _Response()
 
-    monkeypatch.setitem(sys.modules, "httpx", _Unreachable())
+    monkeypatch.setattr(agent_usage._HTTP_POOL, "client", lambda: _Unreachable())
     assert agent_usage._http_get_json("https://example.invalid/u", {}) is None
     assert agent_usage._http_get_json("https://example.invalid/u", {}) is None
     assert attempts == ["https://example.invalid/u"], "the second probe must be skipped"
 
     attempts.clear()
     agent_usage.clear_cache()
-    monkeypatch.setitem(sys.modules, "httpx", _Rejecting())
+    monkeypatch.setattr(agent_usage._HTTP_POOL, "client", lambda: _Rejecting())
     assert agent_usage._http_get_json("https://example.invalid/v", {}) is None
     assert agent_usage._http_get_json("https://example.invalid/v", {}) is None
     assert len(attempts) == 2, "a rejected request must still be retried"
@@ -439,3 +438,112 @@ def test_an_over_consumed_window_is_clamped_to_full_rather_than_dropped() -> Non
     assert agent_usage._clamp_percent(-5) == 0.0
     assert agent_usage._clamp_percent("nope") is None
     assert agent_usage._clamp_percent(True) is None
+
+
+def test_codex_spark_never_replaces_the_main_weekly_allowance(tmp_path: Path) -> None:
+    _codex_signed_in(tmp_path)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+
+    def event(stamp, limit_id, percent):
+        return json.dumps(
+            {
+                "timestamp": stamp,
+                "payload": {
+                    "rate_limits": {
+                        "limit_id": limit_id,
+                        "plan_type": "pro",
+                        "primary": {"used_percent": percent, "window_minutes": 10080},
+                    }
+                },
+            }
+        )
+
+    # The same stream can report the main allowance followed by a Spark update.
+    (sessions / "rollout-main.jsonl").write_text(
+        event("2026-09-10T12:00:00Z", "codex", 46)
+        + "\n"
+        + event("2026-09-10T12:01:00Z", "codex_bengalfox", 0),
+        encoding="utf-8",
+    )
+    # A newly touched transcript is not necessarily the freshest measurement.
+    (sessions / "rollout-old.jsonl").write_text(
+        event("2026-09-09T12:00:00Z", "codex", 20), encoding="utf-8"
+    )
+    usage = agent_usage.read_usage(_account("codex", tmp_path))
+    assert usage.status == "ok" and usage.source == "cached"
+    assert [(w.kind, w.percent) for w in usage.windows] == [("weekly", 46)]
+
+
+def test_codex_spark_only_is_unavailable_not_an_empty_main_budget(tmp_path: Path) -> None:
+    _codex_signed_in(tmp_path)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "rollout-spark.jsonl").write_text(
+        json.dumps(
+            {
+                "payload": {
+                    "rate_limits": {
+                        "limit_id": "codex_bengalfox",
+                        "primary": {"used_percent": 0, "window_minutes": 10080},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert agent_usage.read_usage(_account("codex", tmp_path)).status == "unavailable"
+
+
+@pytest.mark.parametrize("percent", [0, 54, 100])
+def test_grok_build_reads_live_credit_usage_for_its_own_account(tmp_path, monkeypatch, percent):
+    scope = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"
+    (tmp_path / "auth.json").write_text(
+        json.dumps(
+            {
+                scope: {
+                    "auth_mode": "oidc",
+                    "key": "grok-test-bearer",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def get(url, headers):
+        assert url == "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+        assert headers["Authorization"] == "Bearer grok-test-bearer"
+        return {
+            "config": {
+                "creditUsagePercent": percent,
+                "currentPeriod": {
+                    "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                    "end": "2026-09-14T12:59:05Z",
+                },
+            }
+        }
+
+    monkeypatch.setattr(agent_usage, "_http_get_json", get)
+    usage = agent_usage.read_usage(_account("grok-build", tmp_path))
+    assert usage.status == "ok" and usage.source == "live"
+    assert usage.windows[0].kind == "weekly" and usage.windows[0].percent == percent
+    assert usage.windows[0].resets_at is not None
+    assert "grok-test-bearer" not in json.dumps(usage.to_dict())
+
+
+def test_grok_missing_usage_does_not_invent_zero(tmp_path, monkeypatch):
+    scope = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"
+    (tmp_path / "auth.json").write_text(
+        json.dumps(
+            {
+                scope: {
+                    "auth_mode": "oidc",
+                    "key": "grok-test-bearer",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent_usage, "_http_get_json", lambda *args: {"config": {}})
+    usage = agent_usage.read_usage(_account("grok-build", tmp_path))
+    assert usage.status == "unavailable" and usage.windows == ()

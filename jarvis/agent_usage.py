@@ -49,6 +49,7 @@ from typing import Any
 from loguru import logger
 
 from jarvis.agent_accounts import AgentAccount
+from jarvis.core.http_pool import SyncHttpClientPool
 
 #: How long a reading is reused before the provider is asked again. The panel
 #: polls, several seats are read at once, and a plan percentage simply does not
@@ -204,6 +205,7 @@ class AccountUsage:
 
 
 _CACHE = _Cache()
+_HTTP_POOL = SyncHttpClientPool(timeout_s=HTTP_TIMEOUT_S)
 
 
 # ------------------------------------------------------------------ helpers
@@ -306,12 +308,7 @@ def _http_get_json(url: str, headers: dict[str, str]) -> Any | None:
     if blocked_until is not None and time.time() < blocked_until:
         return None
     try:
-        import httpx
-    except ImportError as exc:  # pragma: no cover - httpx is a hard dependency
-        logger.debug("Agent usage: httpx is unavailable ({})", exc)
-        return None
-    try:
-        response = httpx.get(url, headers=headers, timeout=HTTP_TIMEOUT_S)
+        response = _HTTP_POOL.client().get(url, headers=headers, timeout=HTTP_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 - every transport failure is "no live answer"
         _UNREACHABLE_UNTIL[url] = time.time() + _UNREACHABLE_COOLDOWN_S
         logger.debug("Agent usage: {} could not be reached ({})", url, type(exc).__name__)
@@ -575,6 +572,10 @@ def _codex_rate_limit_windows(rate_limits: Any) -> tuple[UsageWindow, ...]:
     """
     if not isinstance(rate_limits, dict):
         return ()
+    # Spark and other separately metered models are not the account's Codex
+    # allowance. Their often-empty windows must never replace its weekly bar.
+    if rate_limits.get("limit_id") not in (None, "codex"):
+        return ()
     windows: list[UsageWindow] = []
     for slot in ("primary", "secondary"):
         block = rate_limits.get(slot)
@@ -660,6 +661,10 @@ def _codex_last_rate_limits(path: Path) -> tuple[dict[str, Any], float] | None:
         limits = payload.get("rate_limits") if isinstance(payload, dict) else None
         if not isinstance(limits, dict):
             continue
+        if limits.get("limit_id") not in (None, "codex"):
+            continue
+        if not _codex_rate_limit_windows(limits):
+            continue
         stamp = record.get("timestamp") if isinstance(record, dict) else None
         as_of = path.stat().st_mtime
         if isinstance(stamp, str):
@@ -740,11 +745,14 @@ def _codex_usage(account: AgentAccount) -> AccountUsage:
     # Codex writes the limits the server returned into its session transcript on
     # every turn, so the newest transcript holds the freshest reading this
     # machine has ever seen — which for a seat used today is minutes old.
+    readings: list[tuple[dict[str, Any], float]] = []
     for path in _codex_rollout_files(account.config_dir):
         found = _codex_last_rate_limits(path)
-        if found is None:
-            continue
-        rate_limits, as_of = found
+        if found is not None:
+            readings.append(found)
+    # A transcript can be touched long after its last usage event (titles,
+    # resumes, sync). Compare the event timestamps, not file modification order.
+    for rate_limits, as_of in sorted(readings, key=lambda item: item[1], reverse=True):
         windows = _codex_rate_limit_windows(rate_limits)
         if windows:
             return AccountUsage(
@@ -769,6 +777,59 @@ def _codex_usage(account: AgentAccount) -> AccountUsage:
 
 
 # ------------------------------------------------------------------ generic
+
+
+def _grok_build_usage(account: AgentAccount) -> AccountUsage:
+    """Read the same included-credit snapshot as Grok Build's /usage view.
+
+    Wire source: xai-grok-shell/src/extensions/billing.rs and
+    agent/remote_config/endpoint.rs in xai-org/grok-build.
+    """
+    from jarvis.grok_build_auth import _auth_record, _derive_auth
+
+    auth = _read_json_file(account.config_dir / "auth.json") or {}
+    connected, mode = _derive_auth(auth)
+    if not connected or mode != "subscription":
+        return AccountUsage(account.id, account.platform, "signed_out")
+    token = _auth_record(auth).get("key")
+    payload = None
+    if isinstance(token, str) and token:
+        payload = _http_get_json(
+            "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+            {"Authorization": f"Bearer {token}", "X-XAI-Token-Auth": "xai-grok-cli"},
+        )
+    config = payload.get("config") if isinstance(payload, dict) else None
+    if isinstance(config, dict):
+        percent = _clamp_percent(config.get("creditUsagePercent"))
+        period = config.get("currentPeriod")
+        period = period if isinstance(period, dict) else {}
+        minutes = {
+            "USAGE_PERIOD_TYPE_WEEKLY": WEEKLY_WINDOW_MINUTES,
+            "USAGE_PERIOD_TYPE_MONTHLY": MONTHLY_WINDOW_MINUTES,
+        }.get(period.get("type"))
+        if percent is not None:
+            return AccountUsage(
+                account.id,
+                account.platform,
+                "ok",
+                windows=(
+                    UsageWindow(
+                        kind=_kind_for_window(minutes),
+                        percent=percent,
+                        severity=_severity(percent),
+                        resets_at=_iso_or_none(period.get("end") or config.get("billingPeriodEnd")),
+                        window_minutes=minutes,
+                    ),
+                ),
+                source="live",
+                as_of=time.time(),
+            )
+    return AccountUsage(
+        account.id,
+        account.platform,
+        "unavailable",
+        message="Grok Build usage could not be read. Reconnect if the login expired.",
+    )
 
 
 def _generic_usage(account: AgentAccount) -> AccountUsage:
@@ -798,6 +859,7 @@ def _generic_usage(account: AgentAccount) -> AccountUsage:
 _READERS: dict[str, Any] = {
     "claude": _claude_usage,
     "codex": _codex_usage,
+    "grok-build": _grok_build_usage,
 }
 
 

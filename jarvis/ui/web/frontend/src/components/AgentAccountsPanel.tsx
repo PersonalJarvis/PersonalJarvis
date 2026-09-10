@@ -58,6 +58,7 @@ import {
   submitLoginFlowCode,
 } from "@/lib/agentAccountsApi";
 import { AccountUsageMeters } from "./AccountUsageMeters";
+import { AntigravitySubscriptionCard } from "./AntigravitySubscriptionCard";
 import { robustCopy, robustPaste } from "@/lib/clipboard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { useEventStore } from "@/store/events";
@@ -93,6 +94,7 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
   const [usage, setUsage] = useState<Record<string, AccountUsage>>({});
   const [usageTtl, setUsageTtl] = useState(60);
   const [refreshing, setRefreshing] = useState(false);
+  const [subscriptionRefresh, setSubscriptionRefresh] = useState(0);
   // Assumed true until a 404 proves otherwise, so the meters appear on the
   // first successful read instead of after a round trip spent proving support.
   const [usageAvailable, setUsageAvailable] = useState(true);
@@ -173,12 +175,13 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
 
   const refreshUsage = useCallback(async () => {
     setRefreshing(true);
+    setSubscriptionRefresh((value) => value + 1);
     try {
-      await loadUsage(true);
+      await Promise.all([reload(), loadUsage(true)]);
     } finally {
       setRefreshing(false);
     }
-  }, [loadUsage]);
+  }, [loadUsage, reload]);
 
   /** Run one account action, keeping the list and any error message honest. */
   const run = useCallback(
@@ -256,6 +259,7 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
             now={now}
           />
         ))}
+        <AntigravitySubscriptionCard refresh={subscriptionRefresh} />
       </div>
     </div>
   );
