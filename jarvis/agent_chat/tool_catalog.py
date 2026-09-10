@@ -175,7 +175,7 @@ def live_catalog(brain: Any, *, cwd: str = "", stance: str = "ask") -> list[Tool
 
     tools = dict(getattr(brain, "_tools", {}) or {})
     tools.update(folder_tools(Path(cwd or Path.home()), stance=stance))
-    tools.update(lead_browser_tools())
+    tools.update(lead_browser_tools(read_only=stance == "plan"))
     if stance == "plan":
         tools = plan_filter(tools)
     plugins = load_catalog().plugins

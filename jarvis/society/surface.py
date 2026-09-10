@@ -215,16 +215,20 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
     agent = await rt.roster.get(agent_id)
     if agent is None or str(agent.state) != "active":
         return None
+    read_only = str(agent.permission_ceiling) == "safe"
     service = rt.chat_service()
     if service is not None:
         session = service.store.get_session(session_id)
-        if session is None or session.permission_mode in ("plan", "read-only"):
+        if session is None:
+            return None
+        read_only = session.permission_mode in ("plan", "read-only")
+        if read_only and capability != "core:browser":
             return None
     tool: Tool
     if capability == "core:browser":
         from .browser.tool import BrowserTool
 
-        tool = cast(Tool, BrowserTool(rt, agent_id, rt.browser))
+        tool = cast(Tool, BrowserTool(rt, agent_id, rt.browser, read_only=read_only))
     else:
         tool = cast(Tool, CodingSessionTool(rt, agent_id, session_id=session_id))
     picked = select_tools(
@@ -275,7 +279,15 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     if rt.browser.is_installed() or rt.browser.live.model_resolver is not None:
         from .browser.tool import BrowserTool
 
-        tools[BrowserTool.name] = cast(Tool, BrowserTool(rt, agent_id, rt.browser))
+        tools[BrowserTool.name] = cast(
+            Tool,
+            BrowserTool(
+                rt,
+                agent_id,
+                rt.browser,
+                read_only=getattr(session, "permission_mode", "") in ("plan", "read-only"),
+            ),
+        )
     return tools
 
 

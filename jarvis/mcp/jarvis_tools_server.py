@@ -172,6 +172,9 @@ def build_server() -> Any:
                     name=str(entry.name),
                     description=str(entry.description or entry.name),
                     inputSchema=schema,
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=entry.risk_tier == "safe" and not entry.is_action_tool,
+                    ),
                 )
             )
         return tools

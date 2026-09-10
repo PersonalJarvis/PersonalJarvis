@@ -74,3 +74,67 @@ async def test_browser_is_scoped_and_runs_through_the_executor():
     unscoped = SupervisorToolRequest(trace_id=uuid4(), origin="worker", user_utterance="Read")
     assert not (await gateway.execute("society_browser", {}, unscoped)).success
     assert len(seen) == 1
+
+
+async def test_plan_session_gets_readonly_browser_but_not_coding_control(tmp_path):
+    from jarvis.society.runtime import SocietyRuntime
+    from jarvis.society.surface import browser_tool_for_session, coding_tool_for_session
+
+    rt = SocietyRuntime(tmp_path, seed_starter_team=False)
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Nala", permission_ceiling="safe")
+        rt.chat_service = lambda: SimpleNamespace(
+            store=SimpleNamespace(get_session=lambda _: SimpleNamespace(permission_mode="plan"))
+        )
+        browser = await browser_tool_for_session("society:nala")
+        assert browser is not None and browser.risk_tier == "safe"
+        assert browser.is_action_tool is False
+        assert await coding_tool_for_session("society:nala") is None
+        await rt.roster.update("nala", {"denies": ["core:browser"]})
+        assert await browser_tool_for_session("society:nala") is None
+    finally:
+        await rt.close()
+
+
+@pytest.mark.parametrize("action_name", ["navigate", "input", "click", "upload_file"])
+async def test_readonly_browser_enforces_action_boundary(tmp_path, monkeypatch, action_name):
+    from jarvis.society.runtime import SocietyRuntime
+    from jarvis.society.browser.bridge import execute_live
+
+    monkeypatch.setattr("jarvis.core.config.get_jarvis_agent_secret", lambda _: None)
+    rt = SocietyRuntime(tmp_path, seed_starter_team=False)
+    await rt.ensure_started()
+    applied = []
+
+    async def apply():
+        applied.append(action_name)
+        return {}
+
+    async def execute(tool, args, **kwargs):
+        assert tool.risk_tier == "safe"
+        return await tool.execute(args, None)
+
+    async def run(agent, *, action, **kwargs):
+        verdict = await action({"action": {action_name: {}}, "apply": apply})
+        return {"ok": verdict["ok"], "error": verdict.get("error"), "artifacts": []}
+
+    rt.browser.live.model_resolver = lambda _: SimpleNamespace(complete=lambda *_: None)
+    rt.browser.live.executor = SimpleNamespace(execute=execute)
+    rt.browser.live.run = run
+    try:
+        agent, _ = await rt.roster.create(
+            name="Reader", provider="openai", permission_ceiling="safe"
+        )
+        result = await execute_live(
+            rt,
+            agent,
+            rt.browser,
+            {"task": "Read"},
+            SimpleNamespace(trace_id="one", config={}),
+            read_only=True,
+        )
+        assert result.success == (action_name == "navigate")
+        assert applied == (["navigate"] if action_name == "navigate" else [])
+    finally:
+        await rt.close()
