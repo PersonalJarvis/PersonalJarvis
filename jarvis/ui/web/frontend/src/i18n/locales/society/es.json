@@ -444,6 +444,26 @@
       },
       "filtered": "La entrada no coincide con los filtros.",
       "duplicate": "La entrada ya se recibió."
+    },
+    "browser_live": {
+      "live": "En directo",
+      "manual": "Tienes el control",
+      "expand": "Ampliar navegador",
+      "collapse": "Reducir navegador",
+      "back": "Atrás",
+      "forward": "Adelante",
+      "reload": "Recargar",
+      "address": "Dirección web",
+      "tabs": "Pestañas del navegador",
+      "new_tab": "Nueva pestaña",
+      "screen": "Navegador en directo de {0}",
+      "return_control": "Devolver al agente",
+      "take_control": "Tomar control / iniciar sesión",
+      "cancel": "Detener tarea",
+      "approval": "¿Permitir la acción?",
+      "allow": "Permitir",
+      "deny": "Denegar",
+      "repair": "Reparar navegador"
     }
   }
 }

@@ -237,7 +237,7 @@ def _ensure_node_reachable(env: dict[str, str], binary: str) -> None:
     )
 
 
-def _build_cli_command(binary: str, model: str | None) -> list[str]:
+def _build_cli_command(binary: str, model: str | None, *, text_only: bool = False) -> list[str]:
     """Build the read-only subscription CLI command with an optional model."""
     cmd = [
         binary,
@@ -250,6 +250,18 @@ def _build_cli_command(binary: str, model: str | None) -> list[str]:
         "approval_policy=never",
     ]
     selected = str(model or "").strip()
+    if text_only:
+        # Browser observations are untrusted. This child supplies inference,
+        # never a second set of host/MCP/browser tools outside ToolExecutor.
+        cmd.extend(["--ignore-user-config", "--ignore-rules", "--ephemeral",
+                    "-c", 'web_search="disabled"', "-c", "project_doc_max_bytes=0"])
+        for feature in (
+            "shell_tool", "unified_exec", "plugins", "apps", "browser_use",
+            "browser_use_external", "view_image", "multi_agent", "multi_agent_v2",
+            "code_mode_host", "workspace_dependencies",
+        ):
+            cmd.extend(["--disable", feature])
+        cmd.extend(["--enable", "skip_host_skill_discovery"])
     if selected:
         if not _CLI_MODEL_RE.fullmatch(selected):
             raise RuntimeError("Codex subscription model id contains unsupported characters.")
@@ -330,6 +342,7 @@ class CodexBrain:
         cli_timeout_s: float | None = None,
         prefer_subscription: bool = False,
         persistent_subscription_transport: bool = False,
+        subscription_text_only: bool = False,
     ) -> None:
         self._model = model or DEFAULT_MODEL
         # Empty means "use the subscription CLI default". Keep this distinct
@@ -347,6 +360,7 @@ class CodexBrain:
         # it, a stored API key silently wins and the user's selected
         # subscription card is billed through the API instead.
         self._prefer_subscription = bool(prefer_subscription)
+        self._subscription_text_only = bool(subscription_text_only)
         # Voice follow-ups reuse one warm App Server on the SpeechPipeline's
         # event loop. One-shot callers (provider previews and setup checks)
         # must close their transport after the turn; otherwise they retain the
@@ -559,7 +573,7 @@ class CodexBrain:
         # CODEX_HOME (a custom home breaks the global ~/.codex auth lookup).
         env = {k: v for k, v in os.environ.items() if k not in ("OPENAI_API_KEY", "CODEX_HOME")}
         _ensure_node_reachable(env, binary)
-        cmd = _build_cli_command(binary, self._cli_model)
+        cmd = _build_cli_command(binary, self._cli_model, text_only=self._subscription_text_only)
         creationflags = NO_WINDOW_CREATIONFLAGS if sys.platform == "win32" else 0
         log.info(
             "CodexBrain CLI: spawning '%s exec' for the ChatGPT-login brain (prompt=%d chars)",
@@ -721,7 +735,12 @@ class CodexBrain:
                 "CodexBrain.complete: explicit ChatGPT-subscription path (model=%s)",
                 self._model,
             )
-            async for delta in self._complete_via_app_server(req):
+            stream = (
+                self._complete_via_cli(req)
+                if self._subscription_text_only
+                else self._complete_via_app_server(req)
+            )
+            async for delta in stream:
                 yield delta
             return
 

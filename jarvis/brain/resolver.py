@@ -776,6 +776,38 @@ def _local_tail(
 # Test-Hooks
 # ----------------------------------------------------------------------
 
+def resolve_browser_brain(config: JarvisConfig, provider: str, model: str = "") -> Brain:
+    """Resolve an agent's existing access with a structured-output contract.
+
+    CLI aliases are read from the chat catalog; capabilities are probed on the
+    constructor. Browser inference never changes the voice provider/cache.
+    """
+    import inspect
+
+    from jarvis.agent_chat.catalog import PROVIDER_ROWS
+
+    registry = _get_registry()
+    name = provider
+    row = next((r for r in PROVIDER_ROWS if r.id == provider), None)
+    if name not in registry.available() and row and row.agent and row.agent in registry.available():
+        name = row.agent
+    cls = registry.get_class(name)
+    parameters = inspect.signature(cls).parameters
+    kwargs: dict[str, Any] = {}
+    if model:
+        kwargs["model"] = model
+    if "structured_prompts" in parameters:
+        kwargs["structured_prompts"] = True
+    if "prefer_subscription" in parameters:
+        kwargs["prefer_subscription"] = True
+    if "subscription_text_only" in parameters:
+        kwargs["subscription_text_only"] = True
+    cfg = config.brain.providers.get(name)
+    if cfg and cfg.base_url and "base_url" in parameters:
+        kwargs["base_url"] = cfg.base_url
+    return registry.instantiate(name, **kwargs)
+
+
 def _reset_for_tests() -> None:
     """Reset cache and registry singleton — for tests only."""
     global _registry, _subscribed_to_bus_id

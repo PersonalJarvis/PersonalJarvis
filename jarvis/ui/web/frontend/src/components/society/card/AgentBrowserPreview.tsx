@@ -1,138 +1,124 @@
 /**
- * The agent's browser, as a small screen on the chat-face Options rail.
- *
- * There is no live Chrome frame yet (runs are headless; the runner emits
- * step URLs, not pixels). This box is honest about that: not set up, idle,
- * signing in (a real OS window), or connecting while a run is in flight.
- * The 16:10 rounded well is the slot a later screencast can occupy.
+ * The real agent browser, continuously rendered in the Options rail.
+ * Pixels stay out of React state; all manual actions require a control lease.
  */
-import { useState } from "react";
-
-import { useT } from "@/i18n";
+import { useEffect, useState } from "react";
+import { ArrowLeft, ArrowRight, Maximize2, Minimize2, RotateCw } from "lucide-react";
+import { useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-
-import {
-  useAgentBrowser,
-  useAgentBrowserLogin,
-  useBrowserInstallStatus,
-  useStartBrowserInstall,
-} from "../cardData";
+import { BrandedSelect } from "@/components/ui/select";
 import type { SocietyAgent } from "../data";
-
+import { useBrowserInstallStatus } from "../cardData";
+import { useBrowserView } from "./useBrowserView";
 import "./agentCard.css";
 
-export interface AgentBrowserPreviewProps {
-  agent: SocietyAgent;
-}
-
-function PreviewFace({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 64 64" className={cn("h-12 w-12", className)} aria-hidden>
-      <circle cx="24" cy="26" r="4.2" fill="currentColor" />
-      <circle cx="40" cy="26" r="4.2" fill="currentColor" />
-      <path
-        d="M22 40c3.6 6.2 16.4 6.2 20 0"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="3.2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-export function AgentBrowserPreview({ agent }: AgentBrowserPreviewProps) {
+export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
   const t = useT();
-  const browser = useAgentBrowser(agent.agentId);
+  useLocaleChunk("society");
+  const { canvas, state, control, approve } = useBrowserView(agent.agentId);
   const install = useBrowserInstallStatus();
-  const startInstall = useStartBrowserInstall();
-  const login = useAgentBrowserLogin();
-  const [busy, setBusy] = useState<"install" | "login" | null>(null);
-  const [error, setError] = useState("");
-
-  const installed = Boolean(browser.data?.installed || install.data?.installed);
-  const running = Boolean(browser.data?.running);
-  const loggedIn = Boolean(browser.data?.loggedIn);
-  const installing = Boolean(install.data && (install.data.running || (install.data.phase !== "idle" && install.data.phase !== "done" && install.data.phase !== "error" && !install.data.installed)));
-  const percent = install.data?.percent ?? 0;
-  const installError = install.data?.error ?? "";
-
-  const status = installing
-    ? t("society.card.browser_setting_up")
-    : running
-      ? t("society.card.browser_connecting")
-      : !installed
-        ? t("society.card.browser_not_setup")
-        : t("society.card.browser_idle");
-
-  const onSetup = async () => {
-    setBusy("install");
-    setError("");
-    try {
-      await startInstall();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("society.card.browser_error"));
-    } finally {
-      setBusy(null);
-    }
+  const [expanded, setExpanded] = useState(false);
+  const [address, setAddress] = useState("");
+  useEffect(() => setAddress(state.url), [state.url]);
+  useEffect(() => { setExpanded(false); }, [agent.agentId]);
+  const status = !install.data?.installed ? t("society.card.browser_setting_up")
+    : !state.connected || !state.ready || state.controlPending ? t("society.card.browser_connecting")
+    : state.manual ? t("society.browser_live.manual") : t("society.browser_live.live");
+  const buttonClass = "rounded px-2 py-1 text-xs hover:bg-secondary disabled:opacity-40";
+  const enterUrl = () => {
+    const url = /^https?:\/\//i.test(address) ? address : "https://" + address;
+    control("navigate", { url });
   };
-
-  const onSignIn = () => {
-    setBusy("login");
-    setError("");
-    login(agent.agentId);
-    setBusy(null);
-  };
-
   return (
-    <div className="shrink-0" data-testid="agent-browser-preview">
-      <div
-        className="or-screen flex flex-col items-center justify-center gap-2 px-4"
-        data-busy={running || installing ? "1" : undefined}
-      >
-        <PreviewFace className="or-screen-mark" />
-        <p className="max-w-[16rem] text-center text-[11px] leading-snug text-muted-foreground">
-          {installing && install.data?.detail ? install.data.detail : status}
-        </p>
-        {installing ? (
-          <span className="or-screen-bar" aria-hidden>
-            <span style={{ width: `${Math.max(4, Math.min(100, percent))}%` }} />
-          </span>
-        ) : null}
+    <div data-testid="agent-browser-preview" className={cn(
+      "shrink-0", expanded && "fixed inset-4 z-[60] flex flex-col rounded-xl border border-border bg-background p-3 shadow-xl",
+    )}>
+      <div className="mb-1 flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
+        <div className="min-w-0">
+          <div className="font-medium text-foreground">Personal Jarvis</div>
+          <div className="truncate">{agent.name} · {status}</div>
+        </div>
+        <button className={buttonClass} onClick={() => setExpanded((v) => !v)}
+          aria-label={t(expanded ? "society.browser_live.collapse" : "society.browser_live.expand")}>
+          {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        </button>
       </div>
-      <p className="mt-1.5 truncate text-center text-[11px] text-muted-foreground" title={agent.name}>
-        {t("society.card.screen_of").replace("{0}", agent.name)}
-      </p>
-      <div className="mt-1.5 flex flex-col items-center gap-1">
-        {!installed && !installing ? (
-          <button
-            type="button"
-            className="text-[11px] font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50"
-            disabled={busy !== null}
-            onClick={() => void onSetup()}
-            data-testid="agent-browser-setup"
-          >
-            {busy === "install" ? t("society.card.browser_setting_up") : t("society.card.browser_setup")}
-          </button>
-        ) : null}
-        {installed && !loggedIn && !running ? (
-          <button
-            type="button"
-            className="text-[11px] font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50"
-            disabled={busy !== null}
-            title={t("society.card.browser_sign_in_hint")}
-            onClick={onSignIn}
-            data-testid="agent-browser-login"
-          >
-            {t("society.card.browser_sign_in")}
-          </button>
-        ) : null}
-        {(error || installError) && (
-          <p className="text-center text-[11px] text-destructive">{error || installError}</p>
-        )}
+      {expanded && (
+        <div className="mb-2 flex items-center gap-1">
+          <button disabled={!state.manual} className={buttonClass} onClick={() => control("back")} aria-label={t("society.browser_live.back")}><ArrowLeft size={16} /></button>
+          <button disabled={!state.manual} className={buttonClass} onClick={() => control("forward")} aria-label={t("society.browser_live.forward")}><ArrowRight size={16} /></button>
+          <button disabled={!state.manual} className={buttonClass} onClick={() => control("reload")} aria-label={t("society.browser_live.reload")}><RotateCw size={16} /></button>
+          <input className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-sm"
+            aria-label={t("society.browser_live.address")} disabled={!state.manual} value={address}
+            onChange={(e) => setAddress(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") enterUrl(); }} />
+          <BrandedSelect className="max-w-48 text-xs" disabled={!state.manual}
+            ariaLabel={t("society.browser_live.tabs")} value={state.target}
+            options={[...state.tabs.map((tab) => ({ value: tab.id, label: tab.url || "about:blank" })),
+              { value: "new", label: t("society.browser_live.new_tab") }]}
+            onValueChange={(target) => control("tab", { target })} />
+        </div>
+      )}
+      <div className={cn("relative flex items-center justify-center overflow-hidden rounded-lg bg-muted",
+        expanded ? "min-h-0 flex-1" : "aspect-[16/10]")}>
+        <canvas ref={canvas} width={1280} height={800} tabIndex={state.manual ? 0 : -1}
+          aria-label={t("society.browser_live.screen").replace("{0}", agent.name)}
+          className="block max-h-full max-w-full object-contain focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+          style={{ aspectRatio: "16/10", width: "100%", height: "100%", objectFit: "contain" }}
+          onClick={(e) => {
+            if (!state.manual) return;
+            e.currentTarget.focus();
+            const box = e.currentTarget.getBoundingClientRect();
+            const scale = Math.min(box.width / 1280, box.height / 800);
+            const x = (e.clientX - box.left - (box.width - 1280 * scale) / 2) / scale;
+            const y = (e.clientY - box.top - (box.height - 800 * scale) / 2) / scale;
+            if (x >= 0 && y >= 0 && x <= 1280 && y <= 800) control("click", { x, y });
+          }}
+          onWheel={(e) => { if (state.manual) control("scroll", { dx: e.deltaX, dy: e.deltaY }); }}
+          onPaste={(e) => {
+            if (!state.manual) return;
+            e.preventDefault();
+            control("text", { text: e.clipboardData.getData("text/plain") });
+          }}
+          onKeyDown={(e) => {
+            if (!state.manual) return;
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) control("text", { text: e.key });
+            else if (!["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+              const modifiers = [e.ctrlKey ? "Control" : "", e.metaKey ? "Meta" : "",
+                e.altKey ? "Alt" : "", e.shiftKey ? "Shift" : ""].filter(Boolean);
+              control("key", { key: [...modifiers, e.key].join("+") });
+            }
+          }} />
+        {!state.ready && <div className="absolute inset-0 grid place-items-center bg-muted p-3 text-center text-xs text-muted-foreground">
+          {install.data?.detail || status}
+          {install.data?.running && <span>{install.data.percent}%</span>}
+        </div>}
+        {state.ready && !state.connected && <div className="absolute bottom-2 rounded bg-background/90 px-2 py-1 text-xs">{status}</div>}
       </div>
+      <div className="mt-2 flex flex-wrap justify-center gap-1">
+        <button className={buttonClass} disabled={!state.connected || state.controlPending}
+          onClick={() => { setExpanded(true); control("takeover", { enabled: !state.manual }); }}>
+          {t(state.manual ? "society.browser_live.return_control" : "society.browser_live.take_control")}
+        </button>
+        {state.running && <button className={buttonClass} onClick={() => control("cancel")}>{t("society.browser_live.cancel")}</button>}
+      </div>
+      {state.approval && <div className="mt-2 text-xs">
+        <p>{t("society.browser_live.approval")} {state.approval.action}</p>
+        <button className={buttonClass} onClick={() => void approve(true)}>{t("society.browser_live.allow")}</button>
+        <button className={buttonClass} onClick={() => void approve(false)}>{t("society.browser_live.deny")}</button>
+      </div>}
+      {state.dialog && <div className="mt-2 text-xs">
+        <p>{state.dialog.message}</p>
+        <button className={buttonClass} onClick={() => control("dialog", { accept: true })}>{t("society.browser_live.allow")}</button>
+        <button className={buttonClass} onClick={() => control("dialog", { accept: false })}>{t("society.browser_live.deny")}</button>
+      </div>}
+      {(state.error || install.data?.error) && <div className="mt-2 text-xs text-destructive" role="status">
+        {state.error || install.data?.error}
+        <button className={buttonClass} onClick={() => void fetch("/api/society/browser/repair", { method: "POST" })}>{t("society.browser_live.repair")}</button>
+      </div>}
     </div>
   );
 }
-
 export default AgentBrowserPreview;

@@ -1,0 +1,45 @@
+name: Browser runtime
+on:
+  pull_request:
+    paths:
+      - 'jarvis/society/browser/**'
+      - 'jarvis/ui/web/society_browser_routes.py'
+      - 'tests/contract/test_browser*'
+      - 'tests/unit/society/test_browser*'
+      - 'jarvis/society/approvals.py'
+      - '.github/workflows/browser-runtime.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, windows-11-arm, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - name: Install the base app and test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Provision Linux browser system libraries
+        if: runner.os == 'Linux'
+        run: |
+          python -m pip install playwright==1.62.0
+          python -m playwright install-deps chromium
+      - name: Install and verify the isolated browser runtime
+        run: python -m jarvis.society.browser.install
+      - name: Select verified browser artifacts
+        shell: python
+        run: |
+          import os
+          from jarvis.society.browser.install import venv_python, browser_executable
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as stream:
+              stream.write(f"JARVIS_BROWSER_TEST_PYTHON={venv_python()}\n")
+              stream.write(f"JARVIS_BROWSER_TEST_EXECUTABLE={browser_executable()}\n")
+      - name: Test real frames, ownership and protocol
+        run: python -m pytest tests/contract/test_browser_live.py tests/contract/test_browser_contract.py tests/unit/society/test_browser.py tests/unit/society/test_browser_install.py tests/unit/society/test_approvals.py -q --tb=short

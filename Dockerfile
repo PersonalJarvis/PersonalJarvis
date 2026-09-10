@@ -62,6 +62,11 @@ COPY --from=web /web/dist ./jarvis/ui/web/dist
 RUN python -m pip install --upgrade pip \
  && python -m pip install -e .
 
+# Resolve native browser packages for this Debian version while still root.
+# Browser-Use itself remains isolated in its managed environment.
+RUN python -m pip install playwright==1.62.0 \
+ && python -m playwright install-deps chromium
+
 # Non-root. /app/data is the only writable location at runtime.
 RUN useradd --system --uid 1000 --shell /usr/sbin/nologin jarvis \
  && mkdir -p /app/data/home \

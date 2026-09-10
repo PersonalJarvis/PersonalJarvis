@@ -210,11 +210,14 @@ class Approvals:
             SocietyEnvelope(
                 msg_type=MsgType.RELEASE if approve else MsgType.VETO,
                 from_agent="user",
-                to_agent=current.agent_id,
+                # Inline workers already await this row. A RELEASE addressed to
+                # the agent would enqueue an extra chat turn and repeat the task.
+                to_agent="user" if current.action.get("resume_in_place") else current.agent_id,
                 trace_id=current.trace_id,
                 payload={
                     "approval_id": approval_id,
                     "capability": current.capability,
+                    "agent_id": current.agent_id,
                     "approved": approve,
                     "text": note or ("approved" if approve else "denied"),
                     **({"reason": "blocked_by_policy"} if not approve else {}),

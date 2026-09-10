@@ -856,9 +856,14 @@ def _register_runtime_manager(manager: Any) -> None:
 
             return await coding_tool_for_session(session_id)
 
+        async def browser_tool(session_id: str) -> Any:
+            from jarvis.society.surface import browser_tool_for_session
+
+            return await browser_tool_for_session(session_id)
+
         runtime_refs.set_brain_manager(manager)
         runtime_refs.set_supervisor_tool_gateway(
-            BrainSupervisorToolGateway(manager, session_tool=session_tool)
+            BrainSupervisorToolGateway(manager, session_tool=session_tool, browser_tool=browser_tool)
         )
     except Exception as exc:  # noqa: BLE001 - registration never blocks boot
         log.debug("Runtime supervisor gateway registration failed: %s", exc)

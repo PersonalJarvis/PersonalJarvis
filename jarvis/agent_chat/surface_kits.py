@@ -144,6 +144,16 @@ def _society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     return society_tools(cfg, brain, session)
 
 
+def _jarvis_tools(_cfg: Any, _brain: Any, session: Any) -> dict[str, Tool]:
+    from jarvis.agent_chat.folder_tools import folder_tools
+    from jarvis.society.browser.tool import lead_browser_tools
+
+    stance = "plan" if getattr(session, "permission_mode", "") == "plan" else "ask"
+    tools = folder_tools(Path(getattr(session, "cwd", "") or _chat_workspace()), stance=stance)
+    tools.update(lead_browser_tools(session))
+    return tools
+
+
 async def _society_extra(cfg: Any, brain: Any, session: Any) -> str:
     """Who the agent is, what it reaches for, how the ecosystem works (lazy)."""
     from jarvis.society.surface import society_system_extra
@@ -210,6 +220,7 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         cli_seats=False,
         ladder=_JARVIS_LADDER,
         uses_stance=True,
+        session_tools=_jarvis_tools,
         # Not the home directory: this surface hands out the folder tools, and
         # the read-only four are tier ``safe`` — they run without a card. The
         # composer hides the chip here (a person talks to Jarvis, they do not
