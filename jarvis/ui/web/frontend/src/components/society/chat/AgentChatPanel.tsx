@@ -20,7 +20,7 @@ import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBub
  * the voice runs on the realtime tier (`[brain.realtime]`), which no text
  * runner can drive. The header says so while voice is showing.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
@@ -36,8 +36,7 @@ import { DictationStatus } from "@/components/agentchat/DictationStatus";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
-import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
-import { transcriptFromMessages } from "@/lib/homeTranscript";
+import { startNewVoiceRun } from "@/lib/chatsApi";
 import type {
   NoticeItem,
   TimelineItem,
@@ -104,38 +103,18 @@ export const useSocietyChatStore = createAgentChatStore("society");
 
 type JarvisCardMode = "chat" | "voice";
 
-/** Remembered for the app session, so a card reopened stays on the half you last used. */
-let lastJarvisCardMode: JarvisCardMode = "chat";
-const modeListeners = new Set<() => void>();
-
+/** The lead card and its history share the voice lifecycle, even while closed. */
 export function getJarvisCardMode(): JarvisCardMode {
-  return lastJarvisCardMode;
+  return useHomeStore.getState().jarvisCardMode;
 }
 
-/**
- * Switch the lead card's Voice | Chat half from anywhere — the column's own
- * switch and the history rail in the Options column share this, so opening a
- * row there lands on the half that shows it.
- */
 export function setJarvisCardMode(next: JarvisCardMode): void {
-  if (lastJarvisCardMode === next) return;
-  lastJarvisCardMode = next;
-  for (const notify of [...modeListeners]) notify();
+  useHomeStore.getState().setJarvisCardMode(next);
 }
 
-/** The lead card's Voice | Chat half. */
 export function useJarvisCardMode(): JarvisCardMode {
-  return useSyncExternalStore(
-    (notify) => {
-      modeListeners.add(notify);
-      return () => {
-        modeListeners.delete(notify);
-      };
-    },
-    getJarvisCardMode,
-  );
+  return useHomeStore((s) => s.jarvisCardMode);
 }
-
 /**
  * The transcript a specialist column may paint. One store serves every
  * specialist, so the chrome (name, rail, composer) can already show the
@@ -307,14 +286,20 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
       .catch(() => undefined);
   }, [loadSessions]);
 
-  // A spoken thread opened from the history rail: read here, in the column
-  // the composer would otherwise own — the same sharing the front page's
-  // chat stage does (components/home/ChatStage).
-  const voiceThreadId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
-  const voiceMessages = useEventStore((s) => s.messages);
   const setActiveConversation = useEventStore((s) => s.setActiveConversation);
   const setMessages = useEventStore((s) => s.setMessages);
-  const seedTranscript = useHomeStore((s) => s.seedTranscript);
+  const voiceState = useEventStore((s) => s.voiceState);
+  const freshVoicePending = useHomeStore((s) => s.freshVoicePending);
+
+  useEffect(() => {
+    if (!freshVoicePending || voiceState !== "idle" || !useHomeStore.getState().freshVoicePending) return;
+    useHomeStore.setState({ freshVoicePending: false });
+    // Use the existing reset contract once after hangup, including re-entry
+    // after the card was closed. Never interrupt a call started elsewhere.
+    void startNewVoiceRun().catch(() => {
+      useEventStore.getState().pushToast("error", `${t("sidebar.new_voice_chat")}: ${t("voice_state.error")}`);
+    });
+  }, [freshVoicePending, voiceState, t]);
 
   // A null session is an intentional fresh chat. Only an explicit history
   // selection may open an older session; polling must not undo New chat.
@@ -333,10 +318,6 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
     newChat();
   }, [newChat, setActiveConversation, setMessages]);
 
-  const continueByVoice = useCallback(() => {
-    seedTranscript(transcriptFromMessages(voiceMessages));
-    pickMode("voice");
-  }, [seedTranscript, voiceMessages]);
 
   if (mode === "voice") {
     return (
@@ -373,22 +354,6 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
       </div>
     </div>
   );
-
-  // A spoken thread from the history rail, read in place — no composer, like
-  // the front page: a recording is continued by speaking.
-  if (voiceThreadId && !activeSessionId) {
-    return (
-      <div
-        className="flex h-full min-h-0 flex-col"
-        data-testid="society-chat"
-        data-mode="chat"
-        data-thread={voiceThreadId}
-      >
-        {header}
-        <VoiceThreadStage onContinueByVoice={continueByVoice} />
-      </div>
-    );
-  }
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="society-chat" data-mode="chat">

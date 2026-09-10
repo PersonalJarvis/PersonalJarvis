@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { EMPTY_TIMELINE, type Timeline, type UserItem } from "@/components/agentchat/reduce";
@@ -12,10 +12,16 @@ import {
 import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import type { AgentChatSession } from "@/lib/agentChatApi";
+import { useHomeStore } from "@/store/home";
+import { JarvisHistoryRail } from "./JarvisHistoryRail";
 
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, fill: (text: string) => text }));
 vi.mock("./AgentModelPicker", () => ({ AgentModelPicker: () => null }));
-vi.mock("@/components/home/VoiceStage", () => ({ VoiceStage: () => <div data-testid="voice-stage" /> }));
+vi.mock("@/components/home/JarvisBar", () => ({ JarvisBar: () => <div data-testid="jarvis-bar" /> }));
+vi.mock("@/components/home/Greeting", () => ({ Greeting: () => <div>Greeting</div> }));
+vi.mock("@/components/agentic/useVoiceCall", () => ({ useVoiceCall: () => ({ connecting: false }) }));
+vi.mock("@/hooks/useVoiceReadiness", () => ({ useVoiceReadiness: () => ({ connected: true, warming: false }) }));
+vi.mock("@/hooks/useWakeWord", () => ({ useWakeWord: () => ({ config: { phrase: "Hey Jarvis" } }) }));
 vi.mock("../data", async (original) => ({
   ...(await original<typeof import("../data")>()),
   useSocietyCapabilities: () => ({ isLoading: false, data: [] }),
@@ -85,6 +91,9 @@ const visual = agent({ agentId: "visual-qa", name: "Visual QA" });
 const gmail = agent({ agentId: "gmail-agent", name: "Gmail Agent" });
 
 beforeEach(() => {
+  useHomeStore.setState({ transcript: [], liveReply: "", jarvisCardMode: "voice", freshVoicePending: false });
+  useEventStore.setState({ activeKind: "text", activeThreadId: null, messages: [], voiceState: "idle" });
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal("WebSocket", FakeSocket);
   vi.stubGlobal(
@@ -158,4 +167,38 @@ it("keeps Jarvis on a fresh chat when history refreshes or the card is reopened"
   view.unmount();
   render(<AgentChatPanel agent={jarvis} roster={[jarvis]} />);
   expect(useAgentChatStore.getState().activeSessionId).toBeNull();
+});
+
+it("reads archived calls on the actual voice stage and returns there fresh after hangup while closed", async () => {
+  const jarvis = agent({ agentId: "jarvis", name: "Jarvis", tier: "lead" });
+  const voice = { kind: "voice", id: "voice-archive", title: "Archived call", preview: "", created_ms: 1, updated_ms: 2, message_count: 2 };
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    const path = String(url);
+    if (path.includes("/api/chats?")) return new Response(JSON.stringify([voice]));
+    if (path.includes("/voice/voice-archive/resume")) return new Response(JSON.stringify({ ...voice, messages: [
+      { role: "user", text: "Archived question", ts_ms: 1 },
+      { role: "assistant", text: "Archived answer", ts_ms: 2 },
+    ] }));
+    return new Response(JSON.stringify({ providers: [], sessions: [], mapping: [] }));
+  });
+  const view = render(<><AgentChatPanel agent={jarvis} roster={[jarvis]} /><JarvisHistoryRail /></>);
+  fireEvent.click(await screen.findByTestId("jarvis-history-voice-row"));
+  expect(await screen.findByText("Archived question")).toBeTruthy();
+  expect(screen.getByText("Archived answer")).toBeTruthy();
+  expect(screen.getByTestId("society-chat").getAttribute("data-mode")).toBe("voice");
+  expect(screen.getByTestId("jarvis-bar")).toBeTruthy();
+  expect(screen.queryByTestId("voice-thread-stage")).toBeNull();
+  fireEvent.click(screen.getByTestId("society-jarvis-mode-chat"));
+  fireEvent.click(screen.getByTestId("society-jarvis-mode-voice"));
+  expect(screen.getByText("Archived question")).toBeTruthy();
+  view.unmount();
+  act(() => {
+    setJarvisCardMode("chat");
+    useHomeStore.getState().ingest("VoiceSessionEnded", { hangup_reason: "hotkey" }, 3);
+  });
+  render(<AgentChatPanel agent={jarvis} roster={[jarvis]} />);
+  expect(screen.getByTestId("society-chat").getAttribute("data-mode")).toBe("voice");
+  expect(screen.getByTestId("voice-stage").getAttribute("data-empty")).toBe("true");
+  expect(screen.queryByText("Archived question")).toBeNull();
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/chats/voice/new", { method: "POST" }));
 });

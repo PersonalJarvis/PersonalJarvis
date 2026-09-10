@@ -68,6 +68,8 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
       }
       // The stored traces replace the previous conversation's, so a reply
       // in the new thread never wears the steps of an old one.
+      const active = useEventStore.getState();
+      if (active.activeKind !== kind || active.activeThreadId !== id) return [];
       seedThinkingTraces(traces);
       setMessages(messages);
       return messages;
