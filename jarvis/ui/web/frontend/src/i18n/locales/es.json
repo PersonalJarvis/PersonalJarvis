@@ -612,6 +612,7 @@
     "internal_expand": "Mostrar el mensaje completo",
     "internal_collapse": "Mostrar menos",
     "delivery_queued": "En cola",
+    "delivery_sent": "Enviado",
     "delivery_delivered": "Entregado",
     "delivery_failed": "Error",
 

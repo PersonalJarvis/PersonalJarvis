@@ -146,6 +146,8 @@ export interface InternalMessageItem {
   id: string;
   message: InternalMessage;
   tsMs: number;
+  /** Board-backed outbound receipt; it is never input to the receiving model. */
+  outgoing?: { recipientId: string; recipientName: string };
 }
 
 export type TimelineItem = UserItem | TurnItem | ErrorItem | NoticeItem | InternalMessageItem;

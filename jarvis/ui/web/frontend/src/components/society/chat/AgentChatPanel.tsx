@@ -1,5 +1,6 @@
 import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
 import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBubble";
+import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
  * 2026-09-02): bubbles, a time stamp, one pill-shaped composer with a "+"
@@ -181,7 +182,12 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
   const sessionId = agent.chatSessionId;
   const sessionReady = Boolean(sessionId) && activeSessionId === sessionId;
   const visibleItems = itemsForOpenSession(sessionId, activeSessionId, items);
-  const view = useTranscriptView(sessionReady ? sessionId : null, visibleItems);
+  const outgoing = useOutgoingMessages(sessionReady ? agent.agentId : null);
+  const allItems = useMemo(() => mergeOutgoingMessages(
+    visibleItems, outgoing, agent.agentId, agent.name,
+    new Map(roster.map((member) => [member.agentId, member.name])),
+  ), [visibleItems, outgoing, agent.agentId, agent.name, roster]);
+  const view = useTranscriptView(sessionReady ? sessionId : null, allItems);
 
   // Open the agent's own session before the browser paints. Waiting on bind /
   // catalog / sessions left the previous specialist's transcript on screen
@@ -642,7 +648,7 @@ export function Transcript({
                 <InternalMessageBubble
                   item={item}
                   sender={roster.find((a) => a.agentId === item.message.sender_id) ?? null}
-                  recipient={agent}
+                  recipient={item.outgoing ? roster.find((a) => a.agentId === item.outgoing?.recipientId) : agent}
                 />
               ) : item.type === "user" ? (
                 <UserBubble item={item} />

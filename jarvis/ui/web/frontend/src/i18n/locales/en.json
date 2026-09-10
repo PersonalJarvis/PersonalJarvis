@@ -612,6 +612,7 @@
     "internal_expand": "Show the full message",
     "internal_collapse": "Show less",
     "delivery_queued": "Queued",
+    "delivery_sent": "Sent",
     "delivery_delivered": "Delivered",
     "delivery_failed": "Failed",
 
