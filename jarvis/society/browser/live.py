@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -61,8 +62,10 @@ class LiveSession:
     readers: list[asyncio.Task] = field(default_factory=list)
     write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     run_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    control_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     state: dict[str, Any] = field(default_factory=dict)
     rpc: dict[str, RPC] = field(default_factory=dict)
+    rpc_context: contextvars.Context | None = None
     control_owner: str | None = None
     generation: str = ""
     closed: bool = False
@@ -147,7 +150,10 @@ class LiveSession:
                     if future and not future.done():
                         future.set_result(event.get("result") or {})
                 elif kind in {"llm", "action"}:
-                    task = asyncio.create_task(self.answer_rpc(event))
+                    task = asyncio.create_task(
+                        self.answer_rpc(event),
+                        context=self.rpc_context.copy() if self.rpc_context is not None else None,
+                    )
                     self.tasks.add(task)
                     task.add_done_callback(self.tasks.discard)
                 elif kind == "state":
@@ -316,11 +322,25 @@ class LiveSessions:
 
     async def control(self, session: LiveSession, owner: str, op: str, args: dict) -> dict:
         if op == "takeover":
-            if session.control_owner not in {None, owner}:
-                raise ValueError("Browser is controlled by another viewer")
-            result = await session.command(op, args)
-            session.control_owner = owner if args.get("enabled") else None
-            return result
+            async with session.control_lock:
+                if session.control_owner not in {None, owner}:
+                    raise ValueError("Browser is controlled by another viewer")
+                if args.get("enabled") and "approval" in session.attention:
+                    raise ValueError("Resolve the pending approval or stop the task first")
+                session.publish({"kind": "control_pending"})
+                try:
+                    result = await session.command(op, args, timeout=610)
+                except BaseException:
+                    try:
+                        if not session.closed:
+                            await session.command("takeover", {"enabled": False}, timeout=5)
+                    finally:
+                        session.control_owner = None
+                        session.publish({"kind": "control", "ok": True, "manual": False})
+                    raise
+                session.control_owner = owner if args.get("enabled") else None
+                session.publish({"kind": "control", "ok": True, **result})
+                return result
         if op != "cancel" and session.control_owner != owner:
             raise ValueError("Take browser control first")
         result = await session.command(op, args)
@@ -344,6 +364,7 @@ class LiveSessions:
             raise RuntimeError("This browser is busy or under manual control")
         async with session.run_lock:
             session.rpc = {"llm": llm, "action": action}
+            session.rpc_context = contextvars.copy_context()
             try:
                 return await session.command(
                     "run",
@@ -365,6 +386,7 @@ class LiveSessions:
                     pending.cancel()
                 await asyncio.gather(*session.tasks, return_exceptions=True)
                 session.rpc = {}
+                session.rpc_context = None
                 if not session.subscribers:
                     self.release_when_idle(session)
 

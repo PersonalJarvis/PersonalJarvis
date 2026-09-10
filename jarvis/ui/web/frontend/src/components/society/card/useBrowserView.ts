@@ -7,6 +7,7 @@ export interface BrowserViewState {
   ready: boolean;
   manual: boolean;
   running: boolean;
+  controlPending: boolean;
   url: string;
   tabs: Array<{ id: string; url: string }>;
   target: string;
@@ -15,7 +16,7 @@ export interface BrowserViewState {
   dialog?: { type: string; message: string };
 }
 const empty: BrowserViewState = {
-  connected: false, ready: false, manual: false, running: false,
+  connected: false, ready: false, manual: false, running: false, controlPending: false,
   url: "", tabs: [], target: "", error: "",
 };
 
@@ -96,8 +97,10 @@ export function useBrowserView(agentId: string) {
               setState((s) => ({ ...s, manual: event.manual, running: event.running,
                 url: event.url, target: event.target, tabs: event.tabs ?? [] }));
             } else if (event.kind === "control") {
-              setState((s) => ({ ...s, error: event.ok ? "" : event.error,
+              setState((s) => ({ ...s, controlPending: false, error: event.ok ? "" : event.error,
                 manual: typeof event.manual === "boolean" ? event.manual : s.manual }));
+            } else if (event.kind === "control_pending") {
+              setState((s) => ({ ...s, controlPending: true }));
             } else if (event.kind === "approval") {
               setState((s) => ({ ...s, approval: { id: event.id, action: event.action } }));
             } else if (event.kind === "dialog") {
@@ -116,7 +119,7 @@ export function useBrowserView(agentId: string) {
         ws.onclose = () => {
           if (disposed || socket.current !== ws) return;
           epoch++;
-          setState((s) => ({ ...s, connected: false, manual: false }));
+          setState((s) => ({ ...s, connected: false, manual: false, controlPending: false }));
           cancelConnect = requestConnect(() => void connect(), jitteredDelay(attempt++));
         };
         ws.onerror = () => ws.close();
@@ -147,9 +150,16 @@ export function useBrowserView(agentId: string) {
   }, [agentId]);
 
   const control = useCallback((op: string, args: Record<string, unknown> = {}) => {
+    if (op === "cancel") {
+      void fetch("/api/society/agents/" + encodeURIComponent(agentId) + "/browser/cancel",
+        { method: "POST" }).then((res) => {
+          if (!res.ok) setState((s) => ({ ...s, error: "Browser stop failed: " + res.status }));
+        }).catch(() => setState((s) => ({ ...s, error: "Browser stop could not connect" })));
+      return;
+    }
     if (socket.current?.readyState !== WebSocket.OPEN) return;
     socket.current.send(JSON.stringify({ op, args }));
-  }, []);
+  }, [agentId]);
   const approve = useCallback(async (allow: boolean) => {
     if (!state.approval) return;
     const response = await fetch("/api/society/approvals/" + state.approval.id + "/resolve", {

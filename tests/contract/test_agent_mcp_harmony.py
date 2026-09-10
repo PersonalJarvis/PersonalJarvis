@@ -93,6 +93,7 @@ WITHHELD: Final[dict[str, str]] = {
     "GET /api/society/browser/status": "browser install state is local setup, not ecosystem state",
     "POST /api/society/browser/install": "installs software on the machine — never from outside",
     "POST /api/society/browser/repair": "repairs host software; local owner setup",
+    "POST /api/society/agents/{agent_id}/browser/cancel": "local browser control belongs to the owner UI",
     "POST /api/society/agents/{agent_id}/browser/session": (
         "prepares the host browser environment; owner UI, not an external agent command"
     ),

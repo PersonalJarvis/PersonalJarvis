@@ -78,6 +78,21 @@ async def repair_browser(request: Request) -> dict[str, Any]:
     return install.snapshot(rt.data_dir)
 
 
+@router.post("/agents/{agent_id}/browser/cancel", openapi_extra={"x-jarvis-dangerous": True})
+async def cancel_agent_browser(agent_id: str, request: Request) -> dict[str, Any]:
+    """Stop a browser task even while a viewer is waiting to take control."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, "Agent not found")
+    session = rt.browser.live.sessions.get(agent.agent_id)
+    if session is None or session.closed:
+        return {"cancelled": False}
+    running = session.run_lock.locked()
+    await session.command("cancel")
+    return {"cancelled": running}
+
+
 @router.websocket("/agents/{agent_id}/browser/live")
 async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
     if not credentials_valid(websocket.scope):
@@ -94,6 +109,8 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
     session = None
     queue = None
     sender = None
+    receive = None
+    pending = None
     write_lock = asyncio.Lock()
 
     async def send(value: dict) -> None:
@@ -112,19 +129,33 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
                     return
 
         sender = asyncio.create_task(frames())
+        receive = asyncio.create_task(websocket.receive_json())
         while True:
-            receive = asyncio.create_task(websocket.receive_json())
-            done, _ = await asyncio.wait({receive, sender}, return_when=asyncio.FIRST_COMPLETED)
+            watched = {receive, sender}
+            if pending is not None:
+                watched.add(pending)
+            done, _ = await asyncio.wait(watched, return_when=asyncio.FIRST_COMPLETED)
             if sender in done:
                 receive.cancel()
                 await asyncio.gather(receive, return_exceptions=True)
                 await sender
                 break
+            if pending is not None and pending in done:
+                try:
+                    result = pending.result()
+                    await send({"kind": "control", "ok": True, **result})
+                except (ValueError, RuntimeError) as exc:
+                    await send({"kind": "control", "ok": False, "error": str(exc)[:500]})
+                pending = None
+            if receive not in done:
+                continue
             value = receive.result()  # any receive error terminates this socket
+            receive = asyncio.create_task(websocket.receive_json())
             try:
                 op, args = validate_control(value)
-                result = await live.control(session, owner, op, args)
-                await send({"kind": "control", "ok": True, "op": op, **result})
+                if pending is not None:
+                    raise ValueError("A browser control operation is still pending")
+                pending = asyncio.create_task(live.control(session, owner, op, args))
             except (ValueError, RuntimeError) as exc:
                 await send({"kind": "control", "ok": False, "error": str(exc)[:500]})
     except Exception:
@@ -132,6 +163,12 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
         with contextlib.suppress(Exception):
             await websocket.close(code=1011)
     finally:
+        for task in (receive, pending):
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (receive, pending) if task is not None), return_exceptions=True
+        )
         if sender:
             sender.cancel()
             await asyncio.gather(sender, return_exceptions=True)

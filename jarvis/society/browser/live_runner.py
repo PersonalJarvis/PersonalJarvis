@@ -92,6 +92,11 @@ class Worker:
         self.downloads: list[str] = []
         self.owns_context = True
         self.capture_fallback = False
+        self.agent_gate = asyncio.Event()
+        self.agent_gate.set()
+        self.step_idle = asyncio.Event()
+        self.step_idle.set()
+        self.takeover_generation = 0
 
     async def rpc(self, kind: str, payload: dict) -> dict:
         key = uuid.uuid4().hex
@@ -238,7 +243,7 @@ class Worker:
                 return
             self.latest = {
                 "data": event["data"],
-                "timestamp": time.time(),
+                "timestamp": event.get("metadata", {}).get("timestamp", time.time()),
                 "target": target,
                 "width": 1280,
                 "height": 800,
@@ -288,10 +293,11 @@ class Worker:
                         )
                         last_meta = time.monotonic()
                     if self.capture_fallback and self.page and not self.page.is_closed():
+                        captured_at = time.time()
                         blob = await self.page.screenshot(type="jpeg", quality=65)
                         self.latest = {
                             "data": base64.b64encode(blob).decode(),
-                            "timestamp": time.time(),
+                            "timestamp": captured_at,
                             "target": self.target,
                             "width": 1280,
                             "height": 800,
@@ -315,6 +321,7 @@ class Worker:
             await asyncio.sleep(1 / 15)
 
     async def run(self, args: dict) -> dict:
+        self.step_idle.clear()
         from browser_use import Agent, Tools  # type: ignore[import-not-found]
         from browser_use.agent.views import ActionResult  # type: ignore[import-not-found]
         from browser_use.llm.views import (  # type: ignore[import-not-found]
@@ -393,10 +400,20 @@ class Worker:
         )
 
         async def step(agent: Any) -> None:
-            emit("step", n=agent.state.n_steps, url=await self.browser.get_current_page_url())
+            try:
+                emit("step", n=agent.state.n_steps, url=await self.browser.get_current_page_url())
+            finally:
+                self.step_idle.set()
+
+        async def before_step(agent: Any) -> None:
+            self.step_idle.set()
+            await self.agent_gate.wait()
+            self.step_idle.clear()
 
         try:
-            history = await self.agent.run(max_steps=args.get("max_steps", 25), on_step_end=step)
+            history = await self.agent.run(
+                max_steps=args.get("max_steps", 25), on_step_start=before_step, on_step_end=step
+            )
             successful = history.is_successful() is True
             return {
                 "ok": successful,
@@ -410,6 +427,7 @@ class Worker:
             }
         finally:
             self.agent = None
+            self.step_idle.set()
 
     async def command(self, op: str, args: dict) -> dict:
         if op == "ensure":
@@ -424,11 +442,21 @@ class Worker:
                 self.job.cancel()
             return {}
         if op == "takeover":
-            if self.job and not self.job.done():
-                self.job.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self.job
-            self.manual = bool(args.get("enabled"))
+            self.takeover_generation += 1
+            generation = self.takeover_generation
+            if args.get("enabled"):
+                self.agent_gate.clear()
+                if self.job and not self.job.done():
+                    await self.step_idle.wait()
+                if generation != self.takeover_generation:
+                    return {"manual": self.manual}
+                await self.focused()
+                if generation != self.takeover_generation:
+                    return {"manual": self.manual}
+                self.manual = True
+            else:
+                self.manual = False
+                self.agent_gate.set()
             return {"manual": self.manual}
         if op == "run":
             if self.manual:

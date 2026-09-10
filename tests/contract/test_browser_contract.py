@@ -63,3 +63,58 @@ def test_managed_python_uses_windows_emulation_only_where_needed():
     assert managed_python_request("darwin", "arm64") == "3.12"
 
 
+async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch):
+    import asyncio
+    from starlette.websockets import WebSocketDisconnect
+    from jarvis.ui.web import society_browser_routes as routes
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    released = asyncio.Event()
+
+    class Live:
+        async def subscribe(self, agent):
+            return object(), asyncio.Queue()
+
+        async def control(self, *args):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        async def unsubscribe(self, *args):
+            released.set()
+
+    class Socket:
+        scope = {}
+        reads = 0
+
+        async def accept(self):
+            pass  # Test socket has no transport to accept.
+
+        async def close(self, **kwargs):
+            pass  # Test socket has no transport to close.
+
+        async def receive_json(self):
+            self.reads += 1
+            if self.reads == 1:
+                return {"op": "takeover", "args": {"enabled": True}}
+            await started.wait()
+            raise WebSocketDisconnect()
+
+        async def send_json(self, value):
+            pass  # No response is expected before the disconnect.
+
+    async def resolve(_):
+        return SimpleNamespace(agent_id="test")
+
+    async def runtime(_):
+        return SimpleNamespace(roster=SimpleNamespace(resolve=resolve), browser=SimpleNamespace(live=Live()))
+
+    monkeypatch.setattr(routes, "_runtime", runtime)
+    monkeypatch.setattr(routes, "credentials_valid", lambda _: True)
+    await asyncio.wait_for(routes.agent_browser_live(Socket(), "test"), 2)
+    assert cancelled.is_set()
+    assert released.is_set()
+
+

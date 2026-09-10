@@ -21,7 +21,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
   useEffect(() => setAddress(state.url), [state.url]);
   useEffect(() => { setExpanded(false); }, [agent.agentId]);
   const status = !install.data?.installed ? t("society.card.browser_setting_up")
-    : !state.connected || !state.ready ? t("society.card.browser_connecting")
+    : !state.connected || !state.ready || state.controlPending ? t("society.card.browser_connecting")
     : state.manual ? t("society.browser_live.manual") : t("society.browser_live.live");
   const buttonClass = "rounded px-2 py-1 text-xs hover:bg-secondary disabled:opacity-40";
   const enterUrl = () => {
@@ -95,7 +95,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
         {state.ready && !state.connected && <div className="absolute bottom-2 rounded bg-background/90 px-2 py-1 text-xs">{status}</div>}
       </div>
       <div className="mt-2 flex flex-wrap justify-center gap-1">
-        <button className={buttonClass} disabled={!state.connected}
+        <button className={buttonClass} disabled={!state.connected || state.controlPending}
           onClick={() => { setExpanded(true); control("takeover", { enabled: !state.manual }); }}>
           {t(state.manual ? "society.browser_live.return_control" : "society.browser_live.take_control")}
         </button>
