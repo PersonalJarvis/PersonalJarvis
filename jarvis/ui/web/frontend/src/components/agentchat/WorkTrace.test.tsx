@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { groupTrace, WorkTrace, traceDuration } from "./WorkTrace";
+import { groupTrace, groupActivityTrace, WorkTrace, traceDuration } from "./WorkTrace";
+import { traceToolIdentity } from "./traceActivity";
 import type { ToolBlock, TurnBlock, TurnStatus } from "./reduce";
 
 const tool = (id: string, over: Partial<ToolBlock> = {}): ToolBlock => ({
@@ -12,6 +13,46 @@ const props = { startedMs: 1000, durationMs: 12000, status: "done" as TurnStatus
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("work trace", () => {
+  it("summarizes integrations and mutations in first-use order with original logos", () => {
+    const blocks = [tool("linear", {name:"mcp__codex_apps__linear_list_issues"}), tool("edit", {name:"apply_patch"}), tool("shell", {name:"exec_command"}), tool("again", {name:"linear/get_issue"})];
+    const {container} = render(<WorkTrace {...props} blocks={blocks} />);
+    const summary = screen.getByRole("button", {name:"Used Linear Edited files Ran commands"});
+    expect(summary.getAttribute("aria-expanded")).toBe("false");
+    expect(summary.querySelector("img, [data-logo]")).toBeTruthy();
+    expect(container.querySelector("[data-trace-tool]")).toBeNull();
+    fireEvent.click(summary);
+    expect(container.querySelectorAll("[data-trace-tool]")).toHaveLength(4);
+    fireEvent.click(screen.getByRole("button",{name:/Linear · list issues/}));
+    expect(screen.getByText("mcp__codex_apps__linear_list_issues")).toBeTruthy();
+    expect(screen.getByText("Contents of linear")).toBeTruthy();
+  });
+
+  it("never folds failures, approvals, unfinished tools or replies into a successful summary", () => {
+    const barriers: TurnBlock[] = [tool("fail",{isError:true}), tool("pending",{output:null}), tool("approval",{approval:{approvalId:"ap",summary:"Confirm",decision:null}}), {kind:"text",id:"reply",text:"Update"}];
+    for (const barrier of barriers) {
+      const groups = groupActivityTrace([tool("a",{name:"linear/get_issue"}),tool("b",{name:"exec_command"}),barrier,tool("c")]);
+      expect(groups).toHaveLength(3);
+      expect(groups[1].blocks).toEqual([barrier]);
+    }
+  });
+
+  it("keeps live mixed activity open, then folds it at completion", () => {
+    const blocks = [tool("a",{name:"linear/get_issue"}),tool("b",{name:"exec_command"})];
+    const {rerender} = render(<WorkTrace {...props} status="running" blocks={blocks} />);
+    expect(screen.getByRole("button",{name:"Using Linear Running commands"}).getAttribute("aria-expanded")).toBe("true");
+    rerender(<WorkTrace {...props} blocks={blocks} />);
+    expect(screen.getByRole("button",{name:"Used Linear Ran commands"}).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("does not infer a plugin from arbitrary input text or substring names", () => {
+    expect(traceToolIdentity(tool("shell",{name:"run_shell",input:{command:"echo linear"}})).integration).toBe(false);
+    expect(traceToolIdentity(tool("math",{name:"nonlinear_solver"})).identity.logo).toBeUndefined();
+    const unknown = traceToolIdentity(tool("other",{name:"mcp__custom_server__lookup"}));
+    expect(unknown.integration).toBe(true);
+    expect(unknown.service).toBe("Custom Server");
+    expect(unknown.identity.logo).toBeUndefined();
+  });
+
   it("preserves reasoning, call, next step and final answer order", () => {
     const blocks = [thought, tool("a"), { kind: "text" as const, id: "next", text: "Next, check the tests." }, tool("b"), { kind: "text" as const, id: "final", text: "Everything is ready." }];
     render(<WorkTrace {...props} blocks={blocks} />);

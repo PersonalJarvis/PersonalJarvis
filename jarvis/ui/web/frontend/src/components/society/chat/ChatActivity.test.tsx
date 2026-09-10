@@ -68,7 +68,7 @@ it("folds successful work between replies without swallowing an error or reorder
   const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
   const blocks = [tool, { ...tool, callId: "b", name: "write_file" }, { kind: "text" as const, id: "reply", text: "Your report is ready." }, { ...tool, callId: "error", isError: true, output: "Upload failed" }];
   const { rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={blocks} />);
-  const activity = screen.getByRole("button", { name: "Activity · 2 steps" });
+  const activity = screen.getByRole("button", { name: "Reading files Creating files" });
   expect(activity.getAttribute("aria-expanded")).toBe("true");
   fireEvent.click(activity);
   fireEvent.click(activity);

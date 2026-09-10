@@ -99,3 +99,7 @@ we could not obtain. Record it below with `own work` as the legal basis.
 |---|---|
 | stripe | Publishes no square full-colour icon. Its real app icon **is** a white "S" on the brand purple, so the fallback is the faithful rendering and a bundled wordmark would be less accurate. |
 | cloudflare | Same: the real app icon is the white cloud on brand orange. |
+
+## Trace integration mark
+
+`chrome.svg`: Google Chrome, from https://cdn.simpleicons.org/googlechrome (Simple Icons, CC0 1.0). Used to identify Chrome tool activity; the trademark belongs to Google.

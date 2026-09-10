@@ -1,15 +1,17 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, ShieldQuestion, Wrench } from "lucide-react";
+import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, FileText, FolderSearch, ShieldQuestion, Terminal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { describeToolStep } from "@/lib/toolStepLabel";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import type { ReasoningBlock, ToolBlock, TurnBlock, TurnItem, TurnStatus } from "./reduce";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { toolDiff } from "./toolDiff";
 import { formatTokens, outputTokens } from "./toolView";
+import { activityParts, traceToolIdentity } from "./traceActivity";
+import { ToolChoiceIcon } from "./ToolChoiceChips";
+import { toolIdentityStyle } from "./toolIdentity";
 
 export type Decide = (id: string, decision: ApprovalDecision) => void | Promise<void>;
 type Group = { id: string; blocks: TurnBlock[]; family: string | null };
@@ -62,11 +64,33 @@ export function groupTrace(blocks: TurnBlock[]): Group[] {
 export function groupConversationTrace(blocks: TurnBlock[]): Group[] {
   const groups: Group[] = [];
   for (const block of blocks) {
-    const family = block.kind !== "text" && !(block.kind === "tool" && attention(block)) ? "activity" : null;
+    const family = block.kind === "reasoning" || (block.kind === "tool" && !attention(block) && block.output !== null) ? "activity" : null;
     const previous = groups.at(-1);
     if (family && previous?.family === family) previous.blocks.push(block);
     else groups.push({ id: block.kind === "tool" ? block.callId : block.id, blocks: [block], family });
   }
+  return groups;
+}
+
+/** Summarize completed adjacent work; replies and attention are hard boundaries. */
+export function groupActivityTrace(blocks: TurnBlock[]): Group[] {
+  const groups: Group[] = [];
+  let pending: ToolBlock[] = [];
+  const flush = () => {
+    if (!pending.length) return;
+    const reads = groupTrace(pending);
+    groups.push(...(reads.length === 1 || pending.length === 1 ? reads
+      : [{ id: pending[0].callId, blocks: pending, family: "activity" }]));
+    pending = [];
+  };
+  for (const block of blocks) {
+    if (block.kind === "tool" && !attention(block) && block.output !== null) pending.push(block);
+    else {
+      flush();
+      groups.push({ id: block.kind === "tool" ? block.callId : block.id, blocks: [block], family: null });
+    }
+  }
+  flush();
   return groups;
 }
 
@@ -75,7 +99,7 @@ function pretty(value: unknown): string {
   return JSON.stringify(value, null, 2) ?? "";
 }
 
-const rowButton = "flex w-full min-w-0 items-start gap-2.5 rounded-sm py-2 text-left text-sm leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:text-foreground";
+const rowButton = "group/trace flex w-full min-w-0 items-start gap-2.5 rounded-md py-2 text-left text-[13px] leading-6 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:text-foreground";
 const iconClass = "mt-0.5 h-4 w-4 shrink-0";
 
 function Disclosure({ label, children, forced = false, initiallyOpen = false, icon, trailing, tone, summary, resetKey = "" }: {
@@ -95,10 +119,10 @@ function Disclosure({ label, children, forced = false, initiallyOpen = false, ic
         {icon}
         <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{label}</span>
         {trailing ? <span className="shrink-0 text-xs tabular-nums">{trailing}</span> : null}
-        {children ? <ChevronRight aria-hidden className={cn(iconClass, "h-3.5 w-3.5", open && "rotate-90")} /> : null}
+        {children ? <ChevronRight aria-hidden className={cn(iconClass, "mt-1 h-3.5 w-3.5 opacity-50 transition-transform group-hover/trace:opacity-100", open && "rotate-90")} /> : null}
       </button>
       {summary}
-      {children && open ? <div id={id} className="ml-[7px] min-w-0 border-l border-border pb-2 pl-6">{children}</div> : null}
+      {children && open ? <div id={id} className="mb-2 ml-[7px] min-w-0 border-l border-border/70 pb-1 pl-5">{children}</div> : null}
     </div>
   );
 }
@@ -156,17 +180,16 @@ export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { 
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  const family = operation(block.name);
-  const description = describeToolStep(block.name, (block.input && typeof block.input === "object" ? block.input : {}) as Record<string, unknown>);
+  const view = traceToolIdentity(block);
+  const { description, action } = view;
   const readable = description.label.charAt(0).toUpperCase() + description.label.slice(1);
-  const action = /^(bash|powershell|shell|run_?shell(_?command)?|exec_?command|run_?command)$/i.test(block.name) ? "command"
-    : /^(edit|edit_file|apply_patch|multi_edit|str_replace)$/i.test(block.name) ? "edit"
-      : /^(write|write_file|create_file)$/i.test(block.name) ? "write" : family;
   const label = action ? t(`work_trace.${action}`) : description.labelKey ? t(description.labelKey) : readable;
   const detail = description.detail || (typeof block.input === "object" && block.input !== null
     ? String((block.input as Record<string, unknown>).file_path ?? (block.input as Record<string, unknown>).path ?? "") : "");
   const state = pending ? "approval" : denied ? "denied" : block.isError ? "failed" : running ? "running" : block.output === null ? "interrupted" : "completed";
-  const Icon = pending ? ShieldQuestion : block.isError ? CircleAlert : running ? CircleDashed : Wrench;
+  const ActionIcon = action === "command" ? Terminal : action === "edit" || action === "write" ? FilePenLine
+    : action === "read" ? FileText : action === "search" || action === "list" ? FolderSearch : view.identity.Glyph;
+  const Icon = pending ? ShieldQuestion : block.isError ? CircleAlert : ActionIcon;
   const decide = async (decision: ApprovalDecision) => {
     if (!onDecide || !block.approval || submitting.current) return;
     submitting.current = true;
@@ -177,9 +200,9 @@ export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { 
     finally { submitting.current = false; setBusy(false); }
   };
   return <div data-trace-tool={block.callId} data-state={state}>
-    <Disclosure label={<>{label}{detail ? <span className="ml-2 text-xs text-muted-foreground">{" "}{detail}</span> : null}</>}
-      icon={<Icon aria-hidden className={cn(iconClass, running && "motion-safe:animate-spin")} />}
-      trailing={running ? traceDuration(elapsed) : block.durationMs !== null ? traceDuration(block.durationMs) : undefined}
+    <Disclosure label={<><span className={view.integration ? "font-medium" : undefined}>{label}</span>{detail ? <span className="ml-2 text-xs text-muted-foreground">{" "}{detail}</span> : null}</>}
+      icon={view.identity.logo && !pending && !block.isError ? <span className={cn("tool-identity mt-1 shrink-0", running && "motion-safe:animate-pulse")} style={toolIdentityStyle(view.row)} data-trace-brand={view.identity.key}><ToolChoiceIcon row={view.row} size={16} /></span> : <Icon aria-hidden className={cn(iconClass, "mt-1", running && "motion-safe:animate-pulse")} />}
+      trailing={<span className="inline-flex items-center gap-1.5">{running ? <CircleDashed aria-hidden className="h-3 w-3 motion-safe:animate-spin" /> : null}{running ? traceDuration(elapsed) : block.durationMs !== null ? traceDuration(block.durationMs) : null}</span>}
       tone={block.isError ? "text-destructive" : pending ? "text-foreground" : undefined}
       summary={<>
         {state !== "completed" ? <p className={cn("mb-1 ml-6 text-xs", block.isError && "text-destructive")}>{t(`work_trace.${state}`)}</p> : null}
@@ -200,6 +223,27 @@ export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { 
   </div>;
 });
 
+function ActivitySummary({ blocks, live }: { blocks: TurnBlock[]; live: boolean }) {
+  const t = useT();
+  const parts = activityParts(blocks.filter((block): block is ToolBlock => block.kind === "tool"));
+  if (!parts.length) return <>{t("work_trace.thought")}</>;
+  return <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+    {parts.map((part, index) => <span key={`${part.key}:${part.service ?? ""}`} className="inline-flex items-center gap-1.5">
+      {index > 0 ? <span aria-hidden className="text-muted-foreground/50">·</span> : null}
+      {part.row && index > 0 ? <span className="tool-identity inline-flex" style={toolIdentityStyle(part.row)}><ToolChoiceIcon row={part.row} size={14} /></span> : null}
+      <span>{t(`work_trace.${live ? "live_" : ""}${part.key}`).replace("{service}", part.service ?? "")}</span>
+    </span>)}
+  </span>;
+}
+
+function ActivityIcon({ blocks, live }: { blocks: TurnBlock[]; live: boolean }) {
+  const first = activityParts(blocks.filter((block): block is ToolBlock => block.kind === "tool"))[0];
+  if (first?.row) return <span className={cn("tool-identity mt-1 shrink-0", live && "motion-safe:animate-pulse")} style={toolIdentityStyle(first.row)}><ToolChoiceIcon row={first.row} size={16} /></span>;
+  const Icon = live ? CircleDashed : first?.key === "activity_command" ? Terminal
+    : first?.key === "activity_edit" || first?.key === "activity_write" ? FilePenLine : first ? FileText : Brain;
+  return <Icon aria-hidden className={cn(iconClass, "mt-1", live && "motion-safe:animate-spin")} />;
+}
+
 export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false }: {
   blocks: TurnBlock[]; status: TurnStatus; startedMs: number; durationMs: number | null; error?: string | null;
   onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; className?: string;
@@ -208,17 +252,17 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
   const t = useT();
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
-  const groups = useMemo(() => conversation ? groupConversationTrace(blocks) : groupTrace(blocks), [blocks, conversation]);
+  const groups = useMemo(() => conversation ? groupConversationTrace(blocks) : groupActivityTrace(blocks), [blocks, conversation]);
   const pending = blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
   const outcome = pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
   const Icon = pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
   return <div className={cn("min-w-0 space-y-0.5", className)} data-testid="work-trace" data-state={status}>
     {groups.map(group => {
       const first = group.blocks[0];
-      if (conversation && group.family === "activity" && group.blocks.length > 1) return <div key={group.id} className="mx-auto w-full max-w-xl py-1 [&_button]:text-xs">
-        <Disclosure label={t("society.chat.activity_trace").replace("{count}", String(group.blocks.length))}
-          icon={<Wrench aria-hidden className={iconClass} />} initiallyOpen={live}
-          forced={live && group.blocks.some(block => block.kind === "reasoning" && block.live)}>
+      if (group.family === "activity" && group.blocks.length > 1) return <div key={group.id} className={cn("py-1", conversation && "w-full max-w-xl")} data-trace-summary>
+        <Disclosure label={<ActivitySummary blocks={group.blocks} live={live} />}
+          icon={<ActivityIcon blocks={group.blocks} live={live} />} initiallyOpen={live}
+          forced={live}>
           {group.blocks.map(block => block.kind === "tool"
             ? <TraceTool key={block.callId} block={block} status={status} onDecide={onDecide} />
             : block.kind === "reasoning" ? <ReasoningTrace key={block.id} block={block} turnLive={live} compact /> : null)}
