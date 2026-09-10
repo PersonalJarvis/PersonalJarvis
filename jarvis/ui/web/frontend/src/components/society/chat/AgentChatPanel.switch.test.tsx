@@ -12,6 +12,7 @@ import {
 import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import type { AgentChatSession } from "@/lib/agentChatApi";
+import { useTranscriptViewStore } from "./useTranscriptView";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
 vi.mock("./AgentModelPicker", () => ({ AgentModelPicker: () => null }));
@@ -85,11 +86,12 @@ const visual = agent({ agentId: "visual-qa", name: "Visual QA" });
 const gmail = agent({ agentId: "gmail-agent", name: "Gmail Agent" });
 
 beforeEach(() => {
+  useTranscriptViewStore.setState({ boundaries: {} });
   Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal("WebSocket", FakeSocket);
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify({ providers: [], sessions: [], mapping: [] }), { status: 200 })),
+    vi.fn(async () => new Response(JSON.stringify({ providers: [], sessions: [], mapping: [], events: [] }), { status: 200 })),
   );
   useSocietyChatStore.getState().disconnect();
   useSocietyChatStore.setState({
@@ -111,6 +113,35 @@ it("hides another session's items until that session is the open one", () => {
   expect(itemsForOpenSession("society:gmail-agent", "society:visual-qa", visualItems)).toEqual([]);
   expect(itemsForOpenSession("society:gmail-agent", "society:gmail-agent", visualItems)).toEqual(visualItems);
   expect(itemsForOpenSession(null, "society:visual-qa", visualItems)).toEqual([]);
+});
+
+it.each(["specialist", "lead"] as const)("/clear empties only the %s view and keeps its session and context", (tier) => {
+  const current = tier === "lead" ? agent({ agentId: "jarvis", name: "Jarvis", tier }) : gmail;
+  const store = tier === "lead" ? useAgentChatStore : useSocietyChatStore;
+  const original = timelineWith("PREVIOUS_CONTEXT_TO_KEEP");
+  store.getState().openSession(current.chatSessionId!);
+  store.setState({ activeSessionId: current.chatSessionId, timeline: original, busy: false });
+  setJarvisCardMode("chat");
+  const view = render(<AgentChatPanel agent={current} roster={[current]} />);
+  expect(screen.getByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeTruthy();
+  const input = screen.getByRole("textbox");
+  input.textContent = " /clear ";
+  fireEvent.input(input);
+  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+  expect(screen.queryByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeNull();
+  expect(input.textContent).toBe("");
+  expect(store.getState().activeSessionId).toBe(current.chatSessionId);
+  expect(store.getState().timeline).toBe(original);
+  expect(vi.mocked(fetch).mock.calls.some(([url, options]) =>
+    String(url).includes("/messages") || options?.method === "DELETE",
+  )).toBe(false);
+  act(() => store.setState({ timeline: { ...original, items: [...original.items, ...timelineWith("FIRST_VISIBLE_MESSAGE").items] } }));
+  expect(screen.getByText("FIRST_VISIBLE_MESSAGE")).toBeTruthy();
+  expect(screen.queryByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeNull();
+  view.unmount();
+  render(<AgentChatPanel agent={current} roster={[current]} />);
+  expect(screen.getByText("FIRST_VISIBLE_MESSAGE")).toBeTruthy();
+  expect(screen.queryByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeNull();
 });
 
 it("does not paint the previous specialist's transcript after a click onto another agent", () => {

@@ -57,6 +57,7 @@ import { useResolveProposal, useSocietyCapabilities, type SocietyAgent } from ".
 import { MentionPicker } from "./MentionPicker";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { mentionChoice, messageChoices } from "./mentionChoices";
+import { useTranscriptView } from "./useTranscriptView";
 import {
   buildMentionCatalog,
   filterMentions,
@@ -201,6 +202,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
   const sessionId = agent.chatSessionId;
   const sessionReady = Boolean(sessionId) && activeSessionId === sessionId;
   const visibleItems = itemsForOpenSession(sessionId, activeSessionId, items);
+  const view = useTranscriptView(sessionReady ? sessionId : null, visibleItems);
 
   // Open the agent's own session before the browser paints. Waiting on bind /
   // catalog / sessions left the previous specialist's transcript on screen
@@ -246,7 +248,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
         {agent.model ? <span className="truncate font-mono">{agent.model}</span> : null}
         {agent.effort ? <span className="ml-auto rounded-full border border-border px-2 py-0.5">{agent.effort}</span> : null}
       </div>
-      <Transcript key={sessionId ?? agent.agentId} items={visibleItems} agent={agent} roster={roster} onDecide={decide} />
+      <Transcript key={`${sessionId ?? agent.agentId}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
       {lastError && sessionReady ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -266,6 +268,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
         cwd=""
         provider={agent.provider}
         surface="society"
+        onClear={view.clear}
         onSend={send}
         onCancel={cancel}
       />
@@ -290,6 +293,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
   const send = useAgentChat((s) => s.send);
   const cancel = useAgentChat((s) => s.cancel);
   const decide = useAgentChat((s) => s.decide);
+  const view = useTranscriptView(activeSessionId, items);
 
   useEffect(() => {
     void loadCatalog();
@@ -393,7 +397,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="society-chat" data-mode="chat">
       {header}
-      <Transcript items={items} agent={agent} roster={roster} onDecide={decide} />
+      <Transcript key={`${activeSessionId ?? ""}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
       {lastError ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -406,6 +410,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
         sessionId={activeSessionId}
         cwd={draft.cwd}
         provider={draft.provider}
+        onClear={view.clear}
         onSend={send}
         onCancel={cancel}
       />
@@ -962,6 +967,7 @@ function Prose({ text, muted }: { text: string; muted?: boolean }) {
 // ---------------------------------------------------------------------------
 
 interface ComposerProps {
+  onClear?: () => void;
   agent: SocietyAgent;
   mentionable: SocietyAgent[];
   busy: boolean;
@@ -974,7 +980,7 @@ interface ComposerProps {
   onCancel: () => Promise<void>;
 }
 
-export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onSend, onCancel }: ComposerProps) {
+export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend, onCancel }: ComposerProps) {
   const t = useT();
   const [modelSaving, setModelSaving] = useState(false);
   const [value, setValue] = useState("");
@@ -1044,6 +1050,15 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     const selected = selectedTools;
     const text = draftText;
     if (!text || busy || modelSaving) return;
+    if (text === "/clear" && onClear) {
+      onClear();
+      setValue("");
+      fieldRef.current?.clear();
+      setSelectedTools([]);
+      setMention(null);
+      setProblem(null);
+      return;
+    }
     const named = mentionsInText(text, catalog);
     const lines: string[] = [];
     if (named.agents.length > 0 && surface === "society") {
