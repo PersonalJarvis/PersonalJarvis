@@ -3,6 +3,9 @@ import { useRef } from "react";
 import { X } from "lucide-react";
 import { useT } from "@/i18n";
 import { PluginsView } from "@/views/PluginsView";
+import { SkillsView } from "@/views/SkillsView";
+import { McpsView } from "@/views/McpsView";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 /** The catalog floats over the user's current work; nested setup stays inside. */
 export function PluginsDialog({ onClose }: { onClose: () => void }) {
@@ -31,7 +34,16 @@ export function PluginsDialog({ onClose }: { onClose: () => void }) {
               <X className="h-4 w-4" aria-hidden />
             </button>
           </Dialog.Close>
-          <PluginsView inDialog />
+          <Tabs defaultValue="plugins" className="flex min-h-0 flex-1 flex-col">
+            <TabsList aria-label={t("nav.extensions")} className="mx-6 mb-2 mt-4 w-fit shrink-0 self-start">
+              <TabsTrigger value="skills">{t("nav.skills")}</TabsTrigger>
+              <TabsTrigger value="plugins">{t("nav.plugins")}</TabsTrigger>
+              <TabsTrigger value="mcps">{t("nav.mcps")}</TabsTrigger>
+            </TabsList>
+            <TabsContent value="skills" className="mt-0 min-h-0 flex-1 overflow-hidden"><SkillsView /></TabsContent>
+            <TabsContent value="plugins" className="mt-0 min-h-0 flex-1 overflow-hidden"><PluginsView inDialog /></TabsContent>
+            <TabsContent value="mcps" className="mt-0 min-h-0 flex-1 overflow-hidden"><McpsView /></TabsContent>
+          </Tabs>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
