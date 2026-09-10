@@ -171,6 +171,17 @@ async def test_slow_viewer_keeps_approval_and_only_latest_pixels():
     assert (await buffer.get())["sequence"] == 99
 
 
+async def test_slow_viewer_does_not_clear_a_newer_approval():
+    from jarvis.society.browser.live import LiveUpdates
+
+    buffer = LiveUpdates()
+    buffer.put_nowait({"kind": "approval", "id": "old"})
+    buffer.put_nowait({"kind": "approval_cleared", "id": "old"})
+    buffer.put_nowait({"kind": "approval", "id": "new"})
+    assert await buffer.get() == {"kind": "approval_cleared", "id": "old"}
+    assert await buffer.get() == {"kind": "approval", "id": "new"}
+
+
 def test_browser_children_do_not_inherit_provider_credentials(monkeypatch, tmp_path):
     from jarvis.society.browser.install import worker_env
 

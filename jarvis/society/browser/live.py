@@ -35,7 +35,11 @@ class LiveUpdates:
         if event.get("kind") == "frame":
             self.frame = event
         else:
-            self.metadata[str(event.get("kind"))] = event
+            kind = str(event.get("kind"))
+            # Coalescing must preserve last-occurrence order: an old clear event
+            # must reach a slow viewer before a newer approval of the same kind.
+            self.metadata.pop(kind, None)
+            self.metadata[kind] = event
         self.changed.set()
 
     async def get(self) -> dict:

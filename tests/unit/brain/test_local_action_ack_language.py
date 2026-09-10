@@ -67,6 +67,20 @@ def _direct_open_explorer_plan(_text: str, **_kwargs: object) -> LocalActionPlan
     )
 
 
+async def test_scoped_browser_chat_never_uses_the_global_desktop_shortcut(monkeypatch):
+    from jarvis.brain.manager import _TURN_OVERRIDE
+    from jarvis.brain.turn_override import TurnOverride
+    manager = _make_direct_manager(reply_language="en")
+    monkeypatch.setattr("jarvis.brain.manager.match_local_action", _direct_open_explorer_plan)
+    token = _TURN_OVERRIDE.set(TurnOverride(provider="openrouter", tools_extra={"society_browser": object()}))
+    try:
+        result = await manager._run_local_action_fast_path("Open this in my agent browser")
+        assert result is None
+        assert manager._tool_executor.called_with is None
+    finally:
+        _TURN_OVERRIDE.reset(token)
+
+
 @pytest.mark.asyncio
 async def test_english_pin_acknowledges_in_english(monkeypatch) -> None:
     # Desktop "Languages" view set to English (brain.reply_language="en").

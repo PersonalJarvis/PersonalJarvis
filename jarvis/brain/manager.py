@@ -8984,6 +8984,10 @@ class BrainManager:
         The tools used here are intentionally hidden from ``self._tools`` so
         they never appear in the router LLM schema.
         """
+        if _TURN_OVERRIDE.get() is not None:
+            # Scoped chats must use their selected tools and approval context,
+            # not the voice shortcut's global desktop/browser tool set.
+            return None
         local_cfg = getattr(self._config, "local_action", None)
         if local_cfg is not None and not getattr(local_cfg, "enabled", True):
             return None
