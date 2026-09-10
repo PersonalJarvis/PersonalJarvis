@@ -1,6 +1,5 @@
 import { memo } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 import { CircleAlert, FileText, ImageIcon } from "lucide-react";
 import { InternalMessageBubble, type InternalParticipant } from "./InternalMessageBubble";
 import { MessageWithChips } from "./ToolChoiceChips";
@@ -65,7 +64,9 @@ export function AgentTimeline({
                       // icon (maintainer, 2026-08-27). A file with no url —
                       // a document, or the front page's chat, whose drops
                       // are read and not stored — keeps the chip.
-                      file.kind === "image" && file.url ? (
+                      file.url && (mediaKind(file.url) === "video" || mediaKind(file.url) === "audio") ? (
+                        <MediaPreview key={file.name} src={file.url} label={file.name} kind={mediaKind(file.url)!} />
+                      ) : (file.kind === "image" || (file.url && mediaKind(file.url) === "image")) && file.url ? (
                         <img
                           key={file.name}
                           src={file.url}
@@ -145,7 +146,7 @@ export function AgentTimeline({
               className="mx-auto flex max-w-[85%] flex-col gap-0.5 rounded-lg bg-card px-4 py-3 text-body"
             >
               {headline ? <span className="font-medium text-foreground">{headline}</span> : null}
-              {item.text ? <span className="whitespace-pre-wrap text-muted-foreground">{item.text}</span> : null}
+              {item.text ? <ChatMarkdown text={item.text} className="text-muted-foreground" /> : null}
             </div>
           );
         }
@@ -195,7 +196,7 @@ function Prose({ block }: { block: TextBlock }) {
         "prose-thead:text-foreground-strong prose-th:text-foreground-strong prose-td:text-foreground",
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
+      <ChatMarkdown text={block.text} />
     </div>
   );
 }

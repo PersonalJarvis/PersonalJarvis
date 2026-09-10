@@ -22,8 +22,7 @@ import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBub
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
 import { AgentChatStoreProvider, useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
@@ -724,7 +723,7 @@ function NoticeLine({ item }: { item: NoticeItem }) {
   return (
     <div className="flex max-w-[85%] flex-col gap-0.5 self-start rounded-2xl rounded-bl-md border border-border bg-card px-3.5 py-2 text-xs">
       {headline ? <p className="font-medium text-foreground">{headline}</p> : null}
-      {item.text ? <p className="whitespace-pre-wrap leading-relaxed text-muted-foreground">{item.text}</p> : null}
+      {item.text ? <ChatMarkdown text={item.text} className="leading-relaxed text-muted-foreground" /> : null}
     </div>
   );
 }
@@ -908,7 +907,7 @@ export function UserBubble({ item }: { item: UserItem }) {
       {item.attachments.length > 0 ? (
         <div className="flex flex-wrap justify-end gap-1">
           {item.attachments.map((a) => (
-            <span key={a.name} className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+            a.url && (a.kind === "image" || mediaKind(a.url)) ? <MediaPreview key={a.name} src={a.url} label={a.name} kind={mediaKind(a.url) ?? "image"} /> : <span key={a.name} className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
               {a.name}
             </span>
           ))}
@@ -953,7 +952,7 @@ function Prose({ text, muted }: { text: string; muted?: boolean }) {
         "prose-hr:my-3 prose-blockquote:border-l-2 prose-blockquote:pl-3 prose-blockquote:not-italic",
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      <ChatMarkdown text={text} />
     </div>
   );
 }

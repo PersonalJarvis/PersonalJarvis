@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeftRight, Lock, X } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { ChatMarkdown } from "./ChatMarkdown";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { SocietyEnvelope } from "@/lib/societyApi";
@@ -115,7 +114,7 @@ export function PairConversation({ pair, onClose }: { pair: Pair; onClose: () =>
               </div>
               <div className="rounded-2xl border border-border bg-card px-3.5 py-2.5 text-foreground">
                 <div className="prose prose-sm prose-neutral max-w-none dark:prose-invert prose-p:my-1 prose-pre:overflow-x-auto [overflow-wrap:anywhere]">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{String(message.payload.text)}</ReactMarkdown>
+                  <ChatMarkdown text={String(message.payload.text)} />
                 </div>
               </div>
             </article>)}

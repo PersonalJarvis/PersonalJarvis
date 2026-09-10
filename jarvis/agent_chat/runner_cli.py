@@ -1134,6 +1134,14 @@ def _content_text(content: Any) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
+        if any(
+            isinstance(block, dict)
+            and block.get("type")
+            in {"image", "image_url", "input_image", "video", "audio", "resource", "resource_link"}
+            for block in content
+        ):
+            # Preserve structured media for the common chat delivery layer.
+            return json.dumps(content, ensure_ascii=False)
         parts: list[str] = []
         for block in content:
             if isinstance(block, dict):
@@ -1144,6 +1152,8 @@ def _content_text(content: Any) -> str:
             elif isinstance(block, str):
                 parts.append(block)
         return "\n".join(p for p in parts if p)
+    if isinstance(content, dict):
+        return json.dumps(content, ensure_ascii=False)
     return "" if content is None else str(content)
 
 
@@ -1246,6 +1256,32 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
             content = [{"type": "text", "text": str(content)}]
         text_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
         snapshot = len(content) > 1
+        visual_blocks = [
+            block
+            for block in content
+            if isinstance(block, dict)
+            and block.get("type")
+            in {"image", "image_url", "input_image", "video", "audio", "resource", "resource_link"}
+        ]
+        if visual_blocks:
+            st.emitted_text = True
+            visual_content = [
+                block
+                for block in content
+                if block in visual_blocks
+                or (isinstance(block, dict) and block.get("type") == "text")
+            ]
+            out.append(
+                make_event(
+                    "assistant_text",
+                    {
+                        "turn_id": st.turn_id,
+                        "message_id": mid,
+                        "text": json.dumps({"content": visual_content}, ensure_ascii=False),
+                    },
+                )
+            )
+            text_blocks = []
         for block in content:
             if not isinstance(block, dict):
                 continue
@@ -1681,7 +1717,7 @@ def translate_agy_line(obj: dict[str, Any], st: _AgyState) -> list[dict[str, Any
                 err_text = (
                     str(err.get("message") or err) if isinstance(err, dict) else str(err or "")
                 )
-                output = str(info.get("output") or "") if isinstance(info, dict) else ""
+                output = _content_text(info.get("output")) if isinstance(info, dict) else ""
                 is_error = state != "DONE" or bool(err_text)
                 if is_error and err_text:
                     output = (output.rstrip() + ("\n" if output else "") + err_text).strip()
@@ -1852,7 +1888,7 @@ def translate_opencode_line(obj: dict[str, Any], st: _OpenCodeState) -> list[dic
         status = str(state.get("status") or "")
         if status in {"completed", "error"}:
             is_error = status == "error"
-            output = str(state.get("output") or "")
+            output = _content_text(state.get("output"))
             err = state.get("error")
             if is_error and err:
                 output = (output.rstrip() + ("\n" if output else "") + str(err)).strip()
@@ -1952,7 +1988,8 @@ def translate_kimi_line(obj: dict[str, Any], st: _KimiState) -> list[dict[str, A
     if role == "assistant":
         st.messages += 1
         mid = f"kimi-{st.messages}"
-        content = obj.get("content")
+        raw_content = obj.get("content")
+        content = _content_text(raw_content) if isinstance(raw_content, list) else raw_content
         if isinstance(content, str) and content.strip():
             st.emitted_text = True
             st.result_text = content
@@ -2082,12 +2119,12 @@ def _cursor_tool_output(payload: dict[str, Any]) -> tuple[str, bool]:
                 val = success.get(key)
                 if isinstance(val, str) and val.strip():
                     return val, False
-            return json.dumps(success, ensure_ascii=False)[:4000], False
+            return json.dumps(success, ensure_ascii=False), False
         return str(success or "done"), False
     if "error" in result or "failure" in result:
         err = result.get("error") or result.get("failure")
         return str(err or "failed"), True
-    return json.dumps(result, ensure_ascii=False)[:4000], False
+    return json.dumps(result, ensure_ascii=False), False
 
 
 def translate_cursor_line(obj: dict[str, Any], st: _CursorState) -> list[dict[str, Any]]:

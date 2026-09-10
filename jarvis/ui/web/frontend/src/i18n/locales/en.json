@@ -5570,5 +5570,12 @@
     "command": "Run command",
     "edit": "Edit file",
     "write": "Write file"
+},
+  "chat_media": {
+    "unavailable": "This media cannot be loaded or played. You can still open the file.",
+    "expand": "Enlarge {file}",
+    "open_file": "Open file",
+    "download": "Download",
+    "retry": "Retry"
 }
 }

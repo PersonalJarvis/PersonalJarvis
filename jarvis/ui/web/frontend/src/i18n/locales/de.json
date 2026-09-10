@@ -5537,5 +5537,12 @@
     "command": "Befehl ausführen",
     "edit": "Datei bearbeiten",
     "write": "Datei schreiben"
+},
+  "chat_media": {
+    "unavailable": "Dieses Medium kann nicht geladen oder abgespielt werden. Du kannst die Datei weiterhin öffnen.",
+    "expand": "{file} vergrößern",
+    "open_file": "Datei öffnen",
+    "download": "Herunterladen",
+    "retry": "Erneut versuchen"
 }
 }

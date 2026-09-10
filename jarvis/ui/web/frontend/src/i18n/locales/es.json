@@ -5537,5 +5537,12 @@
     "command": "Ejecutar comando",
     "edit": "Editar archivo",
     "write": "Escribir archivo"
+},
+  "chat_media": {
+    "unavailable": "No se puede cargar o reproducir este archivo. Puedes abrirlo directamente.",
+    "expand": "Ampliar {file}",
+    "open_file": "Abrir archivo",
+    "download": "Descargar",
+    "retry": "Reintentar"
 }
 }

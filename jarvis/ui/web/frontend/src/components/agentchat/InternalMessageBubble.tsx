@@ -1,5 +1,6 @@
 import { useOpenPairConversation } from "./PairConversation";
 import { useState } from "react";
+import { ChatMarkdown } from "./ChatMarkdown";
 import { ArrowRight, ChevronDown, MessagesSquare } from "lucide-react";
 
 import { AgentSwatch } from "@/components/society/AgentSwatch";
@@ -174,7 +175,7 @@ export function InternalMessageBubble({
       <div className="px-3 pb-2.5 pl-[30px]" onClick={canOpenPair ? () => openPair?.({ id: item.message.sender_id, name: senderName }) : undefined} style={canOpenPair ? { cursor: "pointer" } : undefined}>
         {shown ? (
           <div data-testid="agent-message-internal-full" className="whitespace-pre-wrap text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">
-            {text}
+            <ChatMarkdown text={text} />
           </div>
         ) : (
           <p

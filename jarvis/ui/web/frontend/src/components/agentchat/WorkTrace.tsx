@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { describeToolStep } from "@/lib/toolStepLabel";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import type { ReasoningBlock, ToolBlock, TurnBlock, TurnItem, TurnStatus } from "./reduce";
+import { ChatMarkdown } from "./ChatMarkdown";
 import { toolDiff } from "./toolDiff";
 import { formatTokens, outputTokens } from "./toolView";
 
@@ -207,7 +208,7 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
       </Disclosure>;
       if (first.kind === "tool") return <TraceTool key={group.id} block={first} status={status} onDecide={onDecide} />;
       if (first.kind === "reasoning") return <ReasoningTrace key={group.id} block={first} turnLive={live} />;
-      return first.text.trim() ? <div key={group.id} className="min-w-0 py-2">{renderText ? renderText(first.text, first.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ReactMarkdown remarkPlugins={[remarkGfm]}>{first.text}</ReactMarkdown></div>}</div> : null;
+      return first.text.trim() ? <div key={group.id} className="min-w-0 py-2">{renderText ? renderText(first.text, first.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={first.text} /></div>}</div> : null;
     })}
     {error ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{error}</p> : null}
     <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 border-t border-border pt-3 text-xs text-muted-foreground", status === "error" && "text-destructive")}>

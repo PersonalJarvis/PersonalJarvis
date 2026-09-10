@@ -286,6 +286,41 @@ class AgentChatService:
         await self._emit(session_id, make_event("notice", dict(payload)))
 
     async def _emit(self, session_id: str, event: dict[str, Any]) -> None:
+        # One delivery path for every runner. Normalize only finished receipts;
+        # token deltas and voice-critical streaming never perform file I/O.
+        if event.get("kind") in {"assistant_text", "tool_result", "user_message"}:
+            from jarvis.agent_chat.media import normalize_media_event
+            from jarvis.core.paths import repo_root
+            from jarvis.missions.isolation.worktree import resolve_outputs_root
+
+            session = self.store.get_session(session_id)
+            if session is not None:
+                try:
+                    expanded = await asyncio.to_thread(
+                        normalize_media_event,
+                        event,
+                        cwd=Path(session.cwd),
+                        outputs_root=resolve_outputs_root(repo_root()),
+                        scope=session_id,
+                    )
+                except (OSError, ValueError):
+                    log.warning("agent chat: media normalization failed", exc_info=True)
+                    expanded = [
+                        event,
+                        make_event(
+                            "error",
+                            {
+                                "turn_id": (event.get("payload") or {}).get("turn_id"),
+                                "message": "Media could not be added to the chat.",
+                            },
+                        ),
+                    ]
+                for item in expanded:
+                    self._publish_event(session_id, item)
+                return
+        self._publish_event(session_id, event)
+
+    def _publish_event(self, session_id: str, event: dict[str, Any]) -> None:
         stored = self.store.append_event(session_id, event)
         for q in list(self._subscribers.get(session_id, ())):
             try:
@@ -413,6 +448,7 @@ class AgentChatService:
                                 "attachments": [
                                     {
                                         "name": item.name,
+                                        "reference": item.reference,
                                         "kind": item.kind,
                                         "described_by": item.described_by,
                                         "note": item.note,
