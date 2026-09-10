@@ -318,3 +318,12 @@ describe("agent-chat store session switch", () => {
     expect(store.getState().timeline.items[0]).toMatchObject({ text: "gmail-inbox" });
   });
 });
+
+
+it("opening a society catalog never runs paid provider health probes", async () => {
+  const calls = stubFetch([]);
+  await createAgentChatStore("society").getState().loadCatalog();
+  expect(calls.some((call) => call.url.includes("provider-health"))).toBe(false);
+  await createAgentChatStore("jarvis").getState().loadCatalog();
+  expect(calls.some((call) => call.url.includes("provider-health"))).toBe(true);
+});
