@@ -12911,6 +12911,7 @@ class BrainManager:
 
     def clear_history(self) -> None:
         self._history = []
+        self.__dict__.pop("_voice_history_seed", None)
 
     def drop_last_turn(self, expected_user_text: str) -> bool:
         """Remove the most recent (user, assistant) pair when its user message
@@ -12988,6 +12989,18 @@ class BrainManager:
                 else BrainMessage(role=role, content=content)
             )
         self._history = seeded[-self._HISTORY_MAX :]
+        # Explicit archive selection also seeds the next duplex call. Ordinary
+        # generated turns never fill this slot: unrelated calls must stay fresh.
+        self._voice_history_seed = tuple(self._history)
+
+    def take_voice_history_seed(self) -> tuple[BrainMessage, ...]:
+        """Consume an explicit resume once, retaining the text brain's history.
+
+        A single dict pop transfers ownership even when desktop session setup
+        runs on a worker thread. Reconnects reuse the receiving call's copy.
+        """
+        history: tuple[BrainMessage, ...] = self.__dict__.pop("_voice_history_seed", ())
+        return history
 
     # ------------------------------------------------------------------
     # Live reload for the CLI tool registry (CLI integration, task 2)

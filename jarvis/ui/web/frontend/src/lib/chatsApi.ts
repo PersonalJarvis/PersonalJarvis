@@ -30,6 +30,15 @@ export class ChatsApiError extends Error {
   }
 }
 
+// All context-changing requests share one order. A slow archive load must
+// never seed its old context after a later selection or New voice chat.
+let contextQueue: Promise<unknown> = Promise.resolve();
+function changeContext<T>(request: () => Promise<T>): Promise<T> {
+  const result = contextQueue.then(request, request);
+  contextQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
 /**
  * The voice/text history. `limit` is deliberately generous: the sidebar shows
  * a handful, but the "All chats" archive promises everything, and a cap that
@@ -47,11 +56,13 @@ export async function resumeConversation(
   kind: ConversationKind,
   id: string,
 ): Promise<ConversationDetail> {
-  const res = await fetch(`/api/chats/${kind}/${encodeURIComponent(id)}/resume`, {
-    method: "POST",
+  return changeContext(async () => {
+    const res = await fetch(`/api/chats/${kind}/${encodeURIComponent(id)}/resume`, {
+      method: "POST",
+    });
+    if (!res.ok) throw new ChatsApiError("resume-failed", res.status);
+    return (await res.json()) as ConversationDetail;
   });
-  if (!res.ok) throw new ChatsApiError("resume-failed", res.status);
-  return (await res.json()) as ConversationDetail;
 }
 
 export async function speakInConversation(
@@ -74,9 +85,11 @@ export async function startNewVoiceRun(): Promise<{
   cleared: boolean;
   ended: boolean;
 }> {
-  const res = await fetch("/api/chats/voice/new", { method: "POST" });
-  if (!res.ok) throw new ChatsApiError("new-voice-run-failed", res.status);
-  return (await res.json()) as { cleared: boolean; ended: boolean };
+  return changeContext(async () => {
+    const res = await fetch("/api/chats/voice/new", { method: "POST" });
+    if (!res.ok) throw new ChatsApiError("new-voice-run-failed", res.status);
+    return (await res.json()) as { cleared: boolean; ended: boolean };
+  });
 }
 
 export async function deleteTextConversation(id: string): Promise<void> {

@@ -1,6 +1,8 @@
 import { useCallback, useEffect } from "react";
 
 import { useEventStore, type ChatMessage, type ConversationKind } from "@/store/events";
+import { useHomeStore } from "@/store/home";
+import { requestVoiceHangup } from "@/lib/voiceApi";
 import {
   deleteTextConversation,
   detailToMessages,
@@ -12,6 +14,25 @@ import {
 
 /** How often the history list is re-read while a poller is mounted. */
 export const CONVERSATIONS_REFRESH_MS = 5000;
+
+let selectionGeneration = 0;
+
+/** Wait for the real session boundary rather than treating an accepted stop as completion. */
+function waitForVoiceIdle(): Promise<void> {
+  if (useEventStore.getState().voiceState === "idle") return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      unsubscribe();
+      reject(new Error("The voice call has not ended yet. Please try again."));
+    }, 10_000);
+    const unsubscribe = useEventStore.subscribe((state) => {
+      if (state.voiceState !== "idle") return;
+      window.clearTimeout(timer);
+      unsubscribe();
+      resolve();
+    });
+  });
+}
 
 /**
  * The unified chat history (text threads + voice sessions) and the three
@@ -56,20 +77,37 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
    */
   const openConversation = useCallback(
     async (kind: ConversationKind, id: string): Promise<ChatMessage[]> => {
+      const generation = ++selectionGeneration;
+      useHomeStore.setState({ voiceSelectionPending: kind === "voice", freshVoicePending: false });
       setActiveConversation(kind, id);
       let messages: ChatMessage[] = [];
       let traces = {};
       try {
+        if (kind === "voice" && ["listening", "thinking", "speaking", "paused", "connecting"].includes(useEventStore.getState().voiceState)) {
+          useHomeStore.setState({ voiceSwitchStopping: true });
+          try {
+            await requestVoiceHangup();
+            await waitForVoiceIdle();
+          } finally {
+            useHomeStore.setState({ voiceSwitchStopping: false });
+          }
+        }
+        const selected = useEventStore.getState();
+        if (generation !== selectionGeneration || selected.activeKind !== kind || selected.activeThreadId !== id) return [];
         const detail = await resumeConversation(kind, id);
         messages = detailToMessages(detail);
         traces = detailToTraces(detail);
-      } catch {
-        /* unreachable / gone — an empty thread is the honest view */
+      } catch (error) {
+        if (generation === selectionGeneration) {
+          useEventStore.getState().pushToast("error", error instanceof Error ? error.message : "Could not open conversation");
+        }
+      } finally {
+        if (generation === selectionGeneration) useHomeStore.setState({ voiceSelectionPending: false });
       }
       // The stored traces replace the previous conversation's, so a reply
       // in the new thread never wears the steps of an old one.
       const active = useEventStore.getState();
-      if (active.activeKind !== kind || active.activeThreadId !== id) return [];
+      if (generation !== selectionGeneration || active.activeKind !== kind || active.activeThreadId !== id) return [];
       seedThinkingTraces(traces);
       setMessages(messages);
       return messages;

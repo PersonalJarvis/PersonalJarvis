@@ -2663,6 +2663,7 @@ class RealtimeVoiceSession:
                 log.debug("realtime: ActionProposed subscription failed", exc_info=True)
         self._delegate_turns: dict[str, _DelegateTurnState] = {}
         self._delegate_history: list[BrainMessage] = []
+        self._resume_history_loaded = False
         self._announcement_context_signatures: list[tuple[str, str, str]] = []
         self._delegate_required_for_turn = False
         self._delegate_reply_awaits_answer = False
@@ -3585,6 +3586,17 @@ class RealtimeVoiceSession:
             if offer_sdp:
                 self._transport_offer_sdp = offer_sdp
             if self._session is None:
+                if not self._resume_history_loaded:
+                    take_seed = getattr(self._brain, "take_voice_history_seed", None)
+                    if callable(take_seed):
+                        # Seed BEFORE the provider handshake, not just the text
+                        # brain. The same history grounds later tool delegation
+                        # and transport reconnects on every voice surface.
+                        self._delegate_history = [
+                            message for message in take_seed()
+                            if message.role in {"user", "assistant"}
+                        ]
+                    self._resume_history_loaded = True
                 # A cold subscription transport legitimately spends tens of
                 # seconds here (app-server spawn, account verification, WebRTC
                 # negotiation). Announcing the attempt BEFORE the wait is the
