@@ -143,6 +143,8 @@ class CapabilityRow:
 
 def capability_id_for_tool(tool_name: str) -> str | None:
     """The catalog id of a brain tool name; ``None`` for never-granted tools."""
+    if tool_name == "remote-machine":
+        return "core:remote-machine"
     if tool_name in NEVER_GRANTED:
         return None
     if tool_name.startswith("cli_"):

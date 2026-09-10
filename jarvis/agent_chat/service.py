@@ -138,6 +138,7 @@ class AgentChatService:
         # is NOT held by this lock.
         self._brain_lock = asyncio.Lock()
         self._running: dict[str, _Running] = {}
+        self._remote_turns: set[tuple[str, str]] = set()
         self._subscribers: dict[str, set[Subscriber]] = {}
         self._approvals: dict[str, asyncio.Future[str]] = {}
         self._approval_session: dict[str, str] = {}
@@ -286,6 +287,15 @@ class AgentChatService:
         await self._emit(session_id, make_event("notice", dict(payload)))
 
     async def _emit(self, session_id: str, event: dict[str, Any]) -> None:
+        payload = event.get("payload") or {}
+        turn_key = (session_id, str(payload.get("turn_id", "")))
+        if payload.get("machine_id") or (
+            event.get("kind") == "tool_result" and payload.get("name") == "remote-machine"
+        ):
+            self._remote_turns.add(turn_key)
+        remote = turn_key in self._remote_turns and event.get("kind") != "user_message"
+        if event.get("kind") == "turn_finished":
+            self._remote_turns.discard(turn_key)
         # One delivery path for every runner. Normalize only finished receipts;
         # token deltas and voice-critical streaming never perform file I/O.
         if event.get("kind") in {"assistant_text", "tool_result", "user_message"}:
@@ -302,6 +312,7 @@ class AgentChatService:
                         cwd=Path(session.cwd),
                         outputs_root=resolve_outputs_root(repo_root()),
                         scope=session_id,
+                        allow_local_files=not remote,
                     )
                 except (OSError, ValueError):
                     log.warning("agent chat: media normalization failed", exc_info=True)
@@ -505,6 +516,17 @@ class AgentChatService:
             )
             origin_token = current_chat_turn.set(origin)
             try:
+                if session.surface == "society":
+                    from jarvis.machines.context import target_machine
+                    from jarvis.machines.hosting import run_if_hosted
+
+                    if target_machine.get() and not supports_api_runner(session.provider):
+                        raise ValueError("The selected runner cannot enforce a remote task target; select an API agent")
+                    if await run_if_hosted(
+                        handle, prompt, bridge=self._bridge_for(bus),
+                        always_allowed=self.always_allowed(session_id),
+                    ):
+                        return
                 if runner == "brain":
                     async with self._brain_lock:
                         await run_brain_turn(

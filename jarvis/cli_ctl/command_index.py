@@ -30,6 +30,8 @@ from __future__ import annotations
 #: the parity test compares only the first token. Order: the groups a spoken
 #: request most often needs first, then the rest alphabetically.
 COMMAND_INDEX: dict[str, tuple[str, ...]] = {
+    "machines": ("list", "hosts", "move <agent> --host <id>", "transfer <id>"),
+    "costs": ("summary", "entries", "rates"),
     "skills": (
         "list",
         "show <name>",
@@ -121,7 +123,7 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
         'message <name> "<text>"',
     ),
     "frontier": ("pending", "ack"),
-    "ide": ("rename-terminal", "close-terminals"),
+    "ide": ("rename-terminal", "close-terminals", "archive-terminal"),
     "local-models": (
         "roles list",
         "roles set <chat|tools_screen|deep|embedding> <model>",

@@ -1144,6 +1144,17 @@ class SurfaceSecurity:
             await self.app(scope, receive, send)
             return
 
+        if path == "/api/machines/connect":
+            # A connector gets only a device credential, never the control key.
+            # The exact route authenticates its first frame within ten seconds.
+            # Browser origins are forbidden, even on loopback; all other routes
+            # still require their normal UI/control authentication.
+            if _headers(scope, "origin") or not is_secure_or_loopback(scope):
+                await reject_unauthorized(scope, send, receive)
+                return
+            await self.app(scope, receive, send)
+            return
+
         if _mission_inner_auth_socket(path):
             if not self.origin_is_trusted(scope, required=True):
                 await reject_origin(scope, send, receive)

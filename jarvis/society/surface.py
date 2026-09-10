@@ -207,6 +207,9 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
         return {}
     workspace = Path(getattr(session, "cwd", "") or _workspace_fallback(cfg, agent_id))
     tools: dict[str, Tool] = {}
+    from jarvis.machines.tools import MachineTool
+
+    tools[MachineTool.name] = cast(Tool, MachineTool(rt, agent_id))
     # The folder tools of the chat surface, contained: on the society surface the
     # kit's tools REPLACE the folder tools (runner_brain.build_override), so the
     # agent would otherwise have no file hands at all; and the plain folder tools
@@ -236,6 +239,22 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
         from .browser.tool import BrowserTool
 
         tools[BrowserTool.name] = cast(Tool, BrowserTool(rt, agent_id, rt.browser))
+    from jarvis.machines.context import target_machine
+
+    if target_machine.get():
+        local_names = {
+            "Read",
+            "Write",
+            "Edit",
+            "Ls",
+            "Glob",
+            "Grep",
+            "RunCommand",
+            "society_shell",
+            "society_browser",
+            "society_run_skill",
+        }
+        tools = {name: tool for name, tool in tools.items() if name not in local_names}
     return tools
 
 
@@ -396,6 +415,25 @@ def _workspace_fallback(cfg: Any, agent_id: str) -> Path:
 
 
 def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, Tool]] | None:
+    from jarvis.machines.context import target_machine
+
+    remote_task = bool(target_machine.get())
+
+    def restrict_target(tools: dict[str, Tool]) -> dict[str, Tool]:
+        if not remote_task:
+            return tools
+        excluded = {"society_shell", "society_browser", "society_run_skill"}
+        return {
+            name: tool
+            for name, tool in tools.items()
+            if name not in excluded
+            and (
+                name.startswith(_OWN_PREFIX)
+                or name == "remote-machine"
+                or (capability_id_for_tool(name) or "").startswith(("plugin:", "mcp:"))
+            )
+        }
+
     rt = current_runtime()
     agent_id = agent_id_of(getattr(session, "session_id", "") or "")
     if rt is None or agent_id is None:
@@ -405,11 +443,16 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
         # The briefing fills the cache before the override is built; a miss
         # means a turn without a briefing — keep the own hands, deny the rest
         # of the write paths the agent must not have.
-        return lambda tools: {
-            n: t for n, t in tools.items() if n.startswith(_OWN_PREFIX) or n not in _SOCIETY_DENIED
-        }
+        return lambda tools: restrict_target(
+            {
+                n: t
+                for n, t in tools.items()
+                if n.startswith(_OWN_PREFIX) or n not in _SOCIETY_DENIED
+            }
+        )
 
     def _apply(tools: dict[str, Tool]) -> dict[str, Tool]:
+        tools = restrict_target(tools)
         own = {
             n: t
             for n, t in tools.items()
@@ -464,6 +507,10 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
 
     zone = client_timezone.get() or "unknown; ask before scheduling wall-clock work"
     context = f"\nClient timezone for this turn: {zone}."
+    from jarvis.machines.context import target_machine
+
+    if target_machine.get():
+        context += f"\nThis task is bound to computer {target_machine.get()}. Use remote-machine for its files, shell and desktop."
     return (
         build_briefing(agent, catalog, roster, browser=browser, learned=learned, memory=memory)
         + context

@@ -442,3 +442,27 @@ status parity. Realtime confirmation/echo cases use fakes with no microphone
 or provider account. Native macOS execution and a fresh single-key live-provider
 run remain release validation requirements; running this portable contract on
 one operating system does not establish those results.
+
+## Connected computers and API-agent hosting (development)
+
+This is a T3 execution contract. The connector, hub ledger and permission models
+use one Python implementation on Windows, macOS and Linux. Native screen access
+stays behind the existing screen-provider probes; unavailable isolation never
+falls back to a user's visible desktop.
+
+| Surface | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Connector shell/files | Implemented; local shell exercised | Same implementation; live acceptance pending | Same implementation; headless supported |
+| SSH/SFTP | Pinned host key; PowerShell wrapper | Pinned host key; POSIX shell | Pinned host key; POSIX shell; loopback SSH contract exercised |
+| Hosted agent loop | API runners; central credential gateway | Same portable contract | Same portable contract, no display/audio requirement |
+| Visible desktop | Capture and teardown exercised; input acceptance pending | Requires native permissions; live acceptance pending | Existing attached provider requires X11; Wayland is unavailable |
+| Isolated desktop | Existing Windows Sandbox capability probe | No automatic isolated provider | Existing Xvfb capability probe |
+| Workspace-only shell | Refused without OS isolation | Refused without OS isolation | Refused without OS isolation |
+| UI/CLI | Shared theme-token UI and management routes | Same | Same |
+
+`tests/contract/test_machine*.py` covers transport authentication, restart/replay,
+permission and path guards, binary handoffs, independent copies, the hosted model
+gateway, desktop ownership, and enum parity. Desktop tests use fake screen providers
+on all three named OS cells; they are not claims of native macOS/Linux verification.
+Full CLI hosting, moving the hub itself, native connector installers/autostart, and
+the remaining live acceptance are still open. See [Connected computers](connected-computers.md).

@@ -254,12 +254,17 @@ Changelog = "https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CHANGELO
 Discord = "https://discord.gg/x7USduHxbc"
 
 [project.optional-dependencies]
+remote = [
+    # AsyncSSH 2.24 requires cryptography>=48, beyond the Windows ARM64 wheel floor.
+    "asyncssh==2.23.1; sys_platform == 'win32' and platform_machine == 'ARM64'",
+    "asyncssh>=2.24,<3; sys_platform != 'win32' or platform_machine != 'ARM64'",
+]
 dev = [
     # Pull the runtime extras the test suite exercises. The local-voice + desktop
     # packages were base dependencies until the cloud-first split; tests still
     # construct them, so the dev/CI environment keeps them via this self-reference
     # while the base install stays lean.
-    "personal-jarvis[desktop,local-voice]",
+    "personal-jarvis[desktop,local-voice,remote]",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
@@ -276,7 +281,7 @@ dev = [
 # native-engine-minimal floor for CI and tiny headless servers; users are pointed
 # at [full].
 full = [
-    "personal-jarvis[desktop,desktop-macos,telephony,channels,local-voice]",
+    "personal-jarvis[desktop,desktop-macos,telephony,channels,local-voice,remote]",
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the

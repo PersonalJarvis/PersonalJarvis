@@ -584,6 +584,9 @@ class WebServer:
 
         set_society_factory(self._build_society_runtime)
         app.include_router(society_router)
+        from .machines_routes import router as machines_router
+
+        app.include_router(machines_router)
         app.include_router(society_figure_router)
         app.include_router(drop_router)
         # Default: no recorder wired up — _init_session_stack() in start()

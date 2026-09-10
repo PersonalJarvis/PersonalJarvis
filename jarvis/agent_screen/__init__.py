@@ -15,6 +15,8 @@ Public surface:
   desktop tools, so swapping the tool map redirects a whole mission.
 """
 
+from typing import Any
+
 from jarvis.agent_screen.manager import (
     AgentScreenManager,
     ScreenSettings,
@@ -22,7 +24,6 @@ from jarvis.agent_screen.manager import (
     peek_agent_screen_manager,
     set_agent_screen_manager,
 )
-from jarvis.agent_screen.port import RealScreenPort, RemoteScreenPort, resolve_port
 from jarvis.agent_screen.protocol import (
     AgentScreenUnavailable,
     ProbeResult,
@@ -31,6 +32,15 @@ from jarvis.agent_screen.protocol import (
     ScreenSpec,
 )
 from jarvis.agent_screen.tools import screen_bound_tools
+
+
+def __getattr__(name: str) -> Any:
+    """Keep optional Computer-Use capture adapters off the screen-provider import path."""
+    if name in {"RealScreenPort", "RemoteScreenPort", "resolve_port"}:
+        from jarvis.agent_screen import port
+
+        return getattr(port, name)
+    raise AttributeError(name)
 
 __all__ = [
     "AgentScreenManager",

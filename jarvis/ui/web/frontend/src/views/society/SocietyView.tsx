@@ -21,6 +21,7 @@ import type { PlaceId } from "@/components/society/world/islandLayout";
 import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 import { useModelMenuData } from "@/components/society/chat/useModelMenuData";
+import { MachinesButton } from "@/components/society/MachinesPanel";
 
 const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
@@ -71,7 +72,7 @@ export function SocietyView() {
           <span aria-live="polite">
             {t("society.strip.active").replace("{0}", String(activeCount))}
           </span>
-          <span className="ml-auto">{t("society.strip.world_pending")}</span>
+          <span className="ml-auto"><MachinesButton /></span>
         </div>
         <div className="relative min-h-0 flex-1">
           <Suspense fallback={null}>

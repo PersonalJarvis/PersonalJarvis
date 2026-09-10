@@ -348,6 +348,7 @@ class _StepMirror:
                 "turn_id": self._turn_id,
                 "call_id": call_id,
                 "output": str(output)[:2000],
+                "name": tool_name,
                 "is_error": not ok,
                 "duration_ms": int(duration_ms or 0),
             },

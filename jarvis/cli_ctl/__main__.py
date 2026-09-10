@@ -32,6 +32,7 @@ from jarvis.cli_ctl.commands import docs as docs_cmd
 from jarvis.cli_ctl.commands import friends as friends_cmd
 from jarvis.cli_ctl.commands import frontier as frontier_cmd
 from jarvis.cli_ctl.commands import ide as ide_cmd
+from jarvis.cli_ctl.commands import machines as machines_cmd
 from jarvis.cli_ctl.commands import local_models as local_models_cmd
 from jarvis.cli_ctl.commands import marketplace as marketplace_cmd
 from jarvis.cli_ctl.commands import mcps as mcps_cmd
@@ -114,6 +115,7 @@ app.add_typer(commands_cmd.app, name="commands")
 app.add_typer(computer_use_cmd.app, name="computer-use")
 app.add_typer(config_cmd.app, name="config")
 app.add_typer(missions_cmd.app, name="missions")
+app.add_typer(machines_cmd.app, name="machines")
 app.add_typer(wiki_cmd.app, name="wiki")
 app.add_typer(sessions_cmd.app, name="sessions")
 app.add_typer(skills_cmd.app, name="skills")
