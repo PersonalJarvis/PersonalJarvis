@@ -621,7 +621,71 @@ def _refuse_typed(exc: Any) -> EcosystemUnavailable:
 # ------------------------------------------------------------- the catalog
 
 
+async def _routine_invoke(args: dict[str, Any]) -> dict[str, Any]:
+    from uuid import UUID, uuid4
+
+    from jarvis.tasks.hook_inbox import encode_payload
+
+    rt = await society()
+    if await rt.store.kill_switch():
+        raise EcosystemUnavailable("routine invocation", "the society is halted")
+    _, scheduler = rt.task_services()
+    if scheduler is None:
+        raise EcosystemUnavailable("routine scheduler", "wait for startup")
+    task_id = str(UUID(str(args["task_id"])))
+    payload = args.get("payload") or {}
+    encode_payload(payload)
+    status = await scheduler.invoke_source(
+        task_id, payload, str(args.get("delivery_id") or uuid4()), mode="mcp"
+    )
+    return {"task_id": task_id, "status": status}
+
+
+async def _routine_status(args: dict[str, Any]) -> dict[str, Any]:
+    from uuid import UUID
+
+    rt = await society()
+    store, _ = rt.task_services()
+    if store is None:
+        raise EcosystemUnavailable("routine store", "wait for startup")
+    task_id = str(UUID(str(args["task_id"])))
+    row = await store.get(task_id)
+    if row is None:
+        raise ValueError("Routine not found")
+    return {
+        "task_id": task_id,
+        "state": row["state"],
+        "error": row.get("last_error"),
+        "result": (await store.latest_agent_results([task_id])).get(task_id, ""),
+    }
+
+
 TOOLS: Final[tuple[AgentTool, ...]] = (
+    AgentTool(
+        name="routine_status",
+        description="Read a routine's state and most recent result after invocation.",
+        input_schema=_obj({"task_id": {"type": "string"}}, ["task_id"]),
+        handler=_routine_status,
+        tags=("routines",),
+    ),
+    AgentTool(
+        name="routine_invoke",
+        description=(
+            "Submit data to an MCP-triggered routine. Queued means durably accepted, "
+            "not completed. Reuse delivery_id when retrying."
+        ),
+        input_schema=_obj(
+            {
+                "task_id": {"type": "string"},
+                "payload": {"type": "object"},
+                "delivery_id": {"type": "string", "maxLength": 128},
+            },
+            ["task_id"],
+        ),
+        handler=_routine_invoke,
+        dangerous=True,
+        tags=("routines",),
+    ),
     AgentTool(
         name="ecosystem_status",
         description=(

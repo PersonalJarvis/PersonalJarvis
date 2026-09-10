@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS task_hook_deliveries (
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     delivery_id TEXT NOT NULL,
     payload_json TEXT NOT NULL,
+    lineage_json TEXT NOT NULL DEFAULT '[]',
     received_ns INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK(status IN ('pending','running','done','failed','interrupted')),
@@ -72,8 +73,11 @@ class HookInbox:
             return await cursor.fetchone()
 
     async def accept(
-        self, task_id: str, delivery_id: str, payload: dict[str, Any], trigger: HookOptions
+        self, task_id: str, delivery_id: str, payload: dict[str, Any], trigger: HookOptions,
+        lineage: tuple[str, ...] = ()
     ) -> str:
+        if "task:" + task_id in lineage or len(lineage) >= 16:
+            return "cycle"
         encoded = encode_payload(payload)
         async with self._lock:
             existing = await self._one(
@@ -82,9 +86,11 @@ class HookInbox:
             )
             if existing:
                 return "duplicate" if existing[0] == encoded else "id_conflict"
-            task = await self._one("SELECT state FROM tasks WHERE id=?", (task_id,))
+            task = await self._one("SELECT state,spec_json FROM tasks WHERE id=?", (task_id,))
             if task is None or task[0] not in ("scheduled", "running"):
                 return "inactive"
+            if json.loads(task[1])["trigger"] != trigger.model_dump(mode="json"):
+                return "changed"
             if not matches(payload, trigger.conditions):
                 return "filtered"
             now = time.time_ns()
@@ -110,12 +116,15 @@ class HookInbox:
                 return "rate_limited"
             # One SQL statement records both the delivery and its counter through
             # a trigger, avoiding a shared-connection transaction across awaits.
-            await self._conn.execute(
+            inserted = await self._conn.execute(
                 "INSERT INTO "
-                "task_hook_deliveries(task_id,delivery_id,payload_json,received_ns) "
-                "VALUES(?,?,?,?)",
-                (task_id, delivery_id, encoded, now),
+                "task_hook_deliveries(task_id,delivery_id,payload_json,received_ns,lineage_json) "
+                "SELECT ?,?,?,?,? FROM tasks WHERE id=? "
+                "AND state IN ('scheduled','running') AND spec_json=?",
+                (task_id, delivery_id, encoded, now, json.dumps(lineage), task_id, task[1]),
             )
+            if inserted.rowcount != 1:
+                return "changed"
             await self._conn.execute(
                 "DELETE FROM task_hook_deliveries WHERE task_id=? AND status IN "
                 "('done','failed','interrupted') "
@@ -153,7 +162,7 @@ class HookInbox:
         message = "Hook interrupted; inspect its result before retrying"
         await self._conn.execute(
             "UPDATE tasks SET state='scheduled',last_error=?,finished_at_ns=? "
-            "WHERE trigger_type IN ('webhook','event_hook') "
+            "WHERE trigger_type IN ('webhook','event_hook','source') "
             "AND state IN ('scheduled','running','interrupted') AND "
             "(state IN ('running','interrupted') OR id IN "
             "(SELECT task_id FROM task_hook_deliveries WHERE status='running'))",
@@ -165,7 +174,7 @@ class HookInbox:
         # An exhausted finite routine must not look armed after interruption.
         await self._conn.execute(
             "UPDATE tasks SET state='failed' WHERE state='scheduled' AND last_error=? "
-            "AND trigger_type IN ('webhook','event_hook') "
+            "AND trigger_type IN ('webhook','event_hook','source') "
             "AND json_extract(spec_json,'$.trigger.max_firings') <= "
             "COALESCE((SELECT accepted_count FROM task_hook_state WHERE task_id=tasks.id),0) "
             "AND NOT EXISTS (SELECT 1 FROM task_hook_deliveries "

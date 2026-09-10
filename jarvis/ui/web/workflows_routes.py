@@ -16,6 +16,7 @@ Expected on ``app.state``:
 Fallback: if neither is set, the endpoints return 503 — the UI then shows
 an empty state instead of crashing.
 """
+
 from __future__ import annotations
 
 import json
@@ -32,6 +33,7 @@ router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 # ----------------------------------------------------------------------
 # State accessor
 # ----------------------------------------------------------------------
+
 
 def _require_store(request: Request) -> Any:
     store = getattr(request.app.state, "workflow_store", None)
@@ -50,6 +52,7 @@ def _require_runner(request: Request) -> Any:
 # ----------------------------------------------------------------------
 # Row → UI dict
 # ----------------------------------------------------------------------
+
 
 def _row_to_summary(row: dict[str, Any]) -> dict[str, Any]:
     """Flat dashboard summary — without the full def (lean for lists)."""
@@ -82,6 +85,7 @@ def _row_to_summary(row: dict[str, Any]) -> dict[str, Any]:
 # Routes
 # ----------------------------------------------------------------------
 
+
 @router.get("/integrations")
 async def integrations_status(request: Request) -> dict[str, Any]:
     """Status of external integrations — the UI renders a setup banner when
@@ -100,6 +104,7 @@ async def integrations_status(request: Request) -> dict[str, Any]:
 
     # gws CLI: try to resolve the path
     import shutil
+
     gws_path = shutil.which("gws")
 
     return {
@@ -163,7 +168,13 @@ async def create_workflow(
 ) -> dict[str, Any]:
     """Creates a new workflow (or overwrites by ID)."""
     store = _require_store(request)
+    previous = await store.get_workflow(str(wf.id))
     wid = await store.upsert_workflow(wf)
+    notify = getattr(
+        getattr(request.app.state, "workflow_runner", None), "announce_activation", None
+    )
+    if callable(notify) and wf.enabled and (previous is None or not previous.get("enabled")):
+        await notify(wid, True)
     return {"id": wid}
 
 
@@ -187,7 +198,7 @@ async def get_workflow(workflow_id: str, request: Request) -> dict[str, Any]:
 async def patch_workflow(
     workflow_id: str,
     request: Request,
-    payload: dict[str, Any] = Body(...),
+    payload: dict[str, Any] = Body(...),  # noqa: B008 - FastAPI body declaration.
 ) -> dict[str, Any]:
     """Partial update. Currently only ``enabled`` — more fields as needed."""
     store = _require_store(request)
@@ -195,7 +206,13 @@ async def patch_workflow(
     if row is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
     if "enabled" in payload:
-        await store.set_enabled(workflow_id, bool(payload["enabled"]))
+        enabled = bool(payload["enabled"])
+        await store.set_enabled(workflow_id, enabled)
+        notify = getattr(
+            getattr(request.app.state, "workflow_runner", None), "announce_activation", None
+        )
+        if callable(notify) and enabled != bool(row.get("enabled")):
+            await notify(workflow_id, enabled)
         # Cron workflows: recompute next_run on toggle
         if not payload["enabled"]:
             await store.set_next_run(workflow_id, None)
@@ -216,7 +233,7 @@ async def delete_workflow(workflow_id: str, request: Request) -> dict[str, Any]:
 async def run_workflow(
     workflow_id: str,
     request: Request,
-    input_data: dict[str, Any] = Body(default_factory=dict),
+    input_data: dict[str, Any] = Body(default_factory=dict),  # noqa: B008 - FastAPI body.
 ) -> dict[str, Any]:
     """Manually triggers a workflow run. Returns the run ID immediately —
     the actual run is fire-and-forget; the UI polls / streams over WS."""

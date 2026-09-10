@@ -1,3 +1,5 @@
+import { TriggerBuilder } from "@/components/society/card/TriggerBuilder";
+import type { TaskTrigger } from "./taskSpec";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -18,7 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { useT, useUiLanguage } from "@/i18n";
+import { useLocaleChunk, useT, useUiLanguage } from "@/i18n";
 import { humanizeToolName } from "@/views/automations/automationsModel";
 import {
   buildTaskSpec,
@@ -127,6 +129,7 @@ export interface TaskCreateDialogProps {
 }
 
 export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProps) {
+  useLocaleChunk("society");
   const t = useT();
   const uiLang = useUiLanguage();
   const qc = useQueryClient();
@@ -134,7 +137,8 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
 
   const [title, setTitle] = useState(init.title ?? "");
   const [prompt, setPrompt] = useState(init.prompt ?? "");
-  const [triggerMode, setTriggerMode] = useState<"schedule" | "event">(init.triggerMode ?? "schedule");
+  const [triggerMode, setTriggerMode] = useState<"schedule" | "event" | "source">(init.triggerMode ?? "schedule");
+  const [sourceTrigger, setSourceTrigger] = useState<Record<string, unknown> | null>(null);
   const [whenKey, setWhenKey] = useState<WhenKey>(init.whenKey ?? "mission_succeeded");
   const [thenKind, setThenKind] = useState<ThenKind>(init.thenKind ?? "computer_use");
   const [cuPrompt, setCuPrompt] = useState(init.cuPrompt ?? "");
@@ -183,6 +187,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
       title,
       prompt,
       triggerMode,
+    sourceTrigger: sourceTrigger as TaskTrigger | undefined,
       scheduleMode,
       onceMode,
       delaySeconds: delayValue * (delayUnit === "hours" ? 3600 : 60),
@@ -197,7 +202,7 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
       cuPrompt,
       announceText,
     }),
-    [title, prompt, triggerMode, scheduleMode, onceMode, delayValue, delayUnit, atTimeLocal,
+    [title, prompt, triggerMode, sourceTrigger, scheduleMode, onceMode, delayValue, delayUnit, atTimeLocal,
      recurringMode, customValue, customUnit, dailyTime, modelTier, grants,
      whenKey, thenKind, cuPrompt, announceText],
   );
@@ -212,10 +217,10 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
 
   // The agent prompt + plugins + model picker only apply to an agentic action:
   // every time-based task, and an event rule whose "then" is an agent turn.
-  const showAgentConfig = triggerMode === "schedule" || thenKind === "agent";
+  const showAgentConfig = triggerMode !== "event" || thenKind === "agent";
 
   const valid =
-    title.trim().length > 0 &&
+    title.trim().length > 0 && (triggerMode !== "source" || sourceTrigger !== null) &&
     (triggerMode === "event"
       ? thenKind === "computer_use"
         ? cuPrompt.trim().length > 0
@@ -298,11 +303,13 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
                 options={[
                   { id: "schedule", label: t("tasks_view.create.mode_schedule"), icon: CalendarDays },
                   { id: "event", label: t("tasks_view.create.mode_event"), icon: Zap },
+                  { id: "source", label: t("society.triggers.all_sources"), icon: Zap },
                 ]}
               />
             </div>
 
             {/* When-Then rule: curated "when" event + "then" action */}
+            {triggerMode === "source" && <TriggerBuilder onChange={setSourceTrigger} />}
             {triggerMode === "event" && (
               <div className="space-y-4 rounded-xl border border-border/70 bg-background/30 p-4">
                 <div className="space-y-2">

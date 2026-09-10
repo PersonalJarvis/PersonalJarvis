@@ -25,7 +25,9 @@ async def run_owned_routine(
         raise RuntimeError("The canonical chat service is unavailable")
     session = ensure_session(service, runtime.config(), agent)
     if service.is_running(session.session_id):
-        raise RuntimeError("The routine owner is busy; retry this scheduled run later")
+        from jarvis.core.protocols import RoutineDeferred
+
+        raise RoutineDeferred("The routine owner is busy; waiting for the current turn")
     # Legacy tasks contain an identity snapshot. The live briefing owns identity now.
     _, separator, original = prompt.partition("\nRoutine:\n")
     task = original if separator else prompt

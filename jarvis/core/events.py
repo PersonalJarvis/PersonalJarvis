@@ -1444,6 +1444,13 @@ class WorkflowScheduled(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class WorkflowActivationChanged(Event):
+    """A workflow definition was explicitly enabled or disabled."""
+    workflow_id: str = ""
+    enabled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class WorkflowStarted(Event):
     """A workflow run is starting — either manually or triggered by cron."""
     workflow_id: str = ""

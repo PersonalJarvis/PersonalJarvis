@@ -3358,6 +3358,12 @@ class WebServer:
         # (entry-point class scan; instances build lazily on first dispatch).
         from jarvis.harness.manager import HarnessManager
 
+        def workflow_services():
+            return (
+                getattr(self.app.state, "workflow_store", None),
+                getattr(self.app.state, "workflow_runner", None),
+            )
+
         runner = TaskRunner(
             store=store,
             bus=self.bus,
@@ -3366,8 +3372,11 @@ class WebServer:
             auto_approver=auto_approver,
             result_sink=self._society_routine_result,
             owned_agent_runner=self._run_society_routine,
+            workflow_services=workflow_services,
         )
-        scheduler = TaskScheduler(store=store, bus=self.bus, runner=runner)
+        scheduler = TaskScheduler(
+            store=store, bus=self.bus, runner=runner, workflow_services=workflow_services
+        )
         scheduler.bind_bus()
         await scheduler.hydrate()
 

@@ -53,7 +53,17 @@ CAPABILITY_PREFIX: Final[str] = "core:config:"
 #: Schedule kinds the Automations scheduler can keep (``jarvis/tasks/schema.py``).
 #: Calendar rules carry explicit local clock and IANA timezone semantics.
 SCHEDULE_KINDS: Final[frozenset[str]] = frozenset(
-    {"every", "calendar", "at_time", "after_delay", "on_event", "webhook", "event_hook"}
+    {
+        "every",
+        "calendar",
+        "at_time",
+        "after_delay",
+        "on_event",
+        "webhook",
+        "event_hook",
+        "source",
+        "cron",
+    }
 )
 _MAX_RULE: Final[int] = 600
 _MAX_TEXT: Final[int] = 2_000
@@ -187,9 +197,14 @@ def validate(kind: str, payload: Any, *, catalog: list[CapabilityRow]) -> dict[s
             "kind": schedule_kind,
             **{k: v for k, v in schedule.items() if k not in ("kind", "type")},
         }
-        if schedule_kind in {"calendar", "at_time", "webhook", "event_hook"} or clean.get(
-            "start_at"
-        ):
+        if schedule_kind in {
+            "calendar",
+            "at_time",
+            "webhook",
+            "event_hook",
+            "source",
+            "cron",
+        } or clean.get("start_at"):
             from .routines import _trigger
 
             try:
@@ -198,6 +213,10 @@ def validate(kind: str, payload: Any, *, catalog: list[CapabilityRow]) -> dict[s
                 raise ProposalRefused(FailureReason.BLOCKED_BY_POLICY, str(exc)) from exc
             clean = {"kind": stored.pop("type"), **stored}
         out: dict[str, Any] = {"title": title, "prompt": prompt, "schedule": clean}
+        if payload.get("workflow_id"):
+            from uuid import UUID
+
+            out["workflow_id"] = str(UUID(str(payload["workflow_id"])))
         if operation == "update":
             out.update(operation=operation, task_id=task_id)
         announce = _text(payload.get("announce_on_success"), limit=300)
@@ -452,6 +471,7 @@ async def apply(
                 prompt=str(payload.get("prompt") or ""),
                 schedule=dict(payload.get("schedule") or {}),
                 announce_on_success=payload.get("announce_on_success"),
+                workflow_id=payload.get("workflow_id"),
             )
         except (ValueError, KeyError) as exc:
             return {"applied": False, "detail": f"invalid routine: {exc}", "kind": kind}

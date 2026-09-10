@@ -85,3 +85,24 @@ scheduler in the repo (tasks, workflows, Conductor):
   `now + interval`;
 - one-shot triggers (`after_delay`, `at_time`) are exempt and keep firing late:
   a reminder survives a crash (H9) and has no next occurrence to skip to.
+
+## Amendment 2026-09-10 — trigger sources and cron
+
+The heap scheduler remains the single owner of timed tasks. Five-field cron is
+now an optional input syntax using the existing croniter dependency; it does not
+replace chat or calendar configuration. All wall-clock schedules persist an IANA
+zone and calculate UTC due times, with DST folds once and gaps skipped.
+
+A source supervisor owns optional listener clients and feeds the existing durable
+hook inbox. Its lifecycle covers connection readiness, jittered shared-budget
+retries, pause/replacement/shutdown and admission before acknowledgement. Human,
+MCP and provider callback entry points use the same inbox. The existing low-level
+on_event dispatcher remains separate for compatibility.
+
+Native workflow lifecycle events and task completion events can feed downstream
+routines. Trusted context carries resource ancestry separately from untrusted
+payloads; configuration rejects static cycles and runtime ancestry rejects mixed
+workflow cycles. Existing native workflows may be dispatched as routine actions;
+their completion sources report actual results separately from dispatch success.
+The system has no new workflow execution engine or mandatory broker dependency.
+See [trigger sources](../trigger-sources.md) for exact delivery guarantees.

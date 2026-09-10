@@ -1,3 +1,4 @@
+import { SourceControls } from "@/components/society/card/SourceControls";
 /**
  * The user's recurring automations, as one dense table.
  *
@@ -365,6 +366,7 @@ function AutomationDetail({
   return (
     <div role="presentation" className="space-y-group border-b border-border px-4 py-4 last:border-b-0">
       {data?.trigger_type === "webhook" || data?.trigger_type === "event_hook" ? <p className="text-body text-muted-foreground">{describeTrigger(data.trigger, t)}</p> : null}
+      {data?.trigger_type === "source" ? <SourceControls key={taskId} taskId={taskId} source={(data.trigger as { source: { kind: string } }).source} /> : null}
       {data?.trigger_type === "webhook" ? <WebhookConnection key={taskId} taskId={taskId} /> : null}
       <div>
         <SectionLabel className="mb-stack">{t("automations_view.latest_result")}</SectionLabel>
