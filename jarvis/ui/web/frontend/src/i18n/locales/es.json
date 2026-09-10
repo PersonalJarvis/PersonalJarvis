@@ -602,6 +602,12 @@
     "background_hint": "La app se dibuja sobre un color liso por defecto. Elige una imagen abajo para usarla de fondo; «Color sólido» devuelve la superficie lisa."
   },
   "agent_chat": {
+    "pair_open": "Abrir conversación entre agentes",
+    "pair_close": "Cerrar chat",
+    "pair_read_only": "Este chat es de solo lectura. Solo los agentes pueden escribir aquí.",
+    "pair_loading": "Cargando conversación…",
+    "pair_error": "No se pudo cargar la conversación. Se reintentará automáticamente.",
+    "pair_empty": "Todavía no hay mensajes entre estos agentes.",
     "internal_message": "Mensaje interno",
     "internal_expand": "Mostrar el mensaje completo",
     "internal_collapse": "Mostrar menos",

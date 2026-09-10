@@ -1,3 +1,4 @@
+import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 import { useEventStore } from "@/store/events";
@@ -51,6 +52,13 @@ import { FolderCode } from "lucide-react";
  * you back. Nothing yanks the page out from under someone mid-sentence.
  */
 export function ChatStage() {
+  const assistantName = useEventStore((s) => s.assistantName);
+  const surface = useAgentChat((s) => s.surface);
+  const sessionId = useAgentChat((s) => s.activeSessionId);
+  return surface === "jarvis" ? <PairConversationBoundary key={sessionId} recipient={{ id: "jarvis", name: assistantName }}><ChatStageContent /></PairConversationBoundary> : <ChatStageContent />;
+}
+
+function ChatStageContent() {
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   const surface = useAgentChat((s) => s.surface);

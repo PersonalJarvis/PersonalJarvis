@@ -1,3 +1,4 @@
+import { useOpenPairConversation } from "./PairConversation";
 import { useState } from "react";
 import { ArrowRight, ChevronDown, MessagesSquare } from "lucide-react";
 
@@ -88,6 +89,8 @@ export function InternalMessageBubble({
   recipientName?: string;
 }) {
   const t = useT();
+  const openPair = useOpenPairConversation();
+  const canOpenPair = Boolean(openPair && item.message.sender_kind !== "user");
   const [open, setOpen] = useState(false);
   const text = item.message.text.trim();
   const preview = internalPreview(text);
@@ -114,21 +117,21 @@ export function InternalMessageBubble({
     >
       <button
         type="button"
-        onClick={() => foldable && setOpen((v) => !v)}
-        aria-expanded={foldable ? open : undefined}
+        onClick={() => canOpenPair ? openPair?.({ id: item.message.sender_id, name: senderName }) : foldable && setOpen((v) => !v)}
+        aria-expanded={!canOpenPair && foldable ? open : undefined}
         aria-label={
-          foldable
+          canOpenPair ? t("agent_chat.pair_open") : foldable
             ? open
               ? t("agent_chat.internal_collapse")
               : t("agent_chat.internal_expand")
             : undefined
         }
         data-testid="agent-message-internal-toggle"
-        disabled={!foldable}
+        disabled={!canOpenPair && !foldable}
         className={cn(
           "flex w-full items-center gap-1.5 px-3 py-2 text-left",
-          foldable && "cursor-pointer hover:bg-secondary/50",
-          !foldable && "cursor-default",
+          (canOpenPair || foldable) && "cursor-pointer hover:bg-secondary/50",
+          !canOpenPair && !foldable && "cursor-default",
         )}
       >
         <MessagesSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
@@ -160,7 +163,7 @@ export function InternalMessageBubble({
             />
             {statusLabel}
           </span>
-          {foldable ? (
+          {foldable && !canOpenPair ? (
             <ChevronDown
               className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-180")}
               aria-hidden
@@ -168,7 +171,7 @@ export function InternalMessageBubble({
           ) : null}
         </span>
       </button>
-      <div className="px-3 pb-2.5 pl-[30px]">
+      <div className="px-3 pb-2.5 pl-[30px]" onClick={canOpenPair ? () => openPair?.({ id: item.message.sender_id, name: senderName }) : undefined} style={canOpenPair ? { cursor: "pointer" } : undefined}>
         {shown ? (
           <div data-testid="agent-message-internal-full" className="whitespace-pre-wrap text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">
             {text}
