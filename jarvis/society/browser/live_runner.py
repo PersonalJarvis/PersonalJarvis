@@ -163,8 +163,18 @@ class Worker:
 
         if self.owns_context:
             await self.context.route("**/*", route_request)
-            port = (profile / "DevToolsActivePort").read_text().splitlines()[0]
-            cdp_url = f"http://127.0.0.1:{int(port)}"
+            # Chromium can return its first page before publishing the CDP port file.
+            async with asyncio.timeout(15):
+                while True:
+                    try:
+                        port = int((profile / "DevToolsActivePort").read_text().splitlines()[0])
+                        if not 0 < port < 65536:
+                            raise ValueError("Invalid browser debugging port")
+                        break
+                    except (FileNotFoundError, IndexError, ValueError):
+                        # A missing or partially written file is normal during launch.
+                        await asyncio.sleep(0.05)
+            cdp_url = f"http://127.0.0.1:{port}"
         self.browser = Browser(
             cdp_url=cdp_url,
             keep_alive=True,
