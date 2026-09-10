@@ -1,6 +1,12 @@
 {
   "society": {
     "chat": {
+      "activity_details": "Details",
+      "activity_trace": "Aktivität · {count} Schritte",
+      "routine_check": "Routine-Prüfung",
+      "message_to": "Nachricht an",
+      "message_from": "Nachricht von",
+      "message_failed": "Nachricht fehlgeschlagen",
       "model_search": "Modelle suchen",
       "model_show_more": "Weitere Modelle anzeigen",
       "model_show_fewer": "Weniger Modelle anzeigen",

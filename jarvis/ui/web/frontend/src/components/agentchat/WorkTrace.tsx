@@ -58,6 +58,18 @@ export function groupTrace(blocks: TurnBlock[]): Group[] {
   return groups;
 }
 
+/** Fold adjacent work between replies, keeping failures and decisions in view. */
+export function groupConversationTrace(blocks: TurnBlock[]): Group[] {
+  const groups: Group[] = [];
+  for (const block of blocks) {
+    const family = block.kind !== "text" && !(block.kind === "tool" && attention(block)) ? "activity" : null;
+    const previous = groups.at(-1);
+    if (family && previous?.family === family) previous.blocks.push(block);
+    else groups.push({ id: block.kind === "tool" ? block.callId : block.id, blocks: [block], family });
+  }
+  return groups;
+}
+
 function pretty(value: unknown): string {
   if (typeof value === "string") return value;
   return JSON.stringify(value, null, 2) ?? "";
@@ -66,19 +78,20 @@ function pretty(value: unknown): string {
 const rowButton = "flex w-full min-w-0 items-start gap-2.5 rounded-sm py-2 text-left text-sm leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:text-foreground";
 const iconClass = "mt-0.5 h-4 w-4 shrink-0";
 
-function Disclosure({ label, children, forced = false, initiallyOpen = false, icon, trailing, tone, summary }: {
+function Disclosure({ label, children, forced = false, initiallyOpen = false, icon, trailing, tone, summary, resetKey = "" }: {
   label: ReactNode; children?: ReactNode; forced?: boolean; initiallyOpen?: boolean;
-  icon: ReactNode; trailing?: ReactNode; tone?: string; summary?: ReactNode;
+  icon: ReactNode; trailing?: ReactNode; tone?: string; summary?: ReactNode; resetKey?: string;
 }) {
   const id = useId();
   // A manual choice during a live turn must not prevent completion folding.
-  const [choice, setChoice] = useState<{ phase: boolean; open: boolean } | null>(null);
-  const open = forced || (choice?.phase === initiallyOpen ? choice.open : initiallyOpen);
+  const phase = `${initiallyOpen}:${resetKey}`;
+  const [choice, setChoice] = useState<{ phase: string; open: boolean } | null>(null);
+  const open = forced || (choice?.phase === phase ? choice.open : initiallyOpen);
   return (
     <div className={cn("min-w-0 text-muted-foreground", tone)}>
       <button type="button" className={rowButton} aria-expanded={children ? open : undefined}
         aria-controls={children ? id : undefined} disabled={!children || forced}
-        onClick={() => setChoice({ phase: initiallyOpen, open: !open })}>
+        onClick={() => setChoice({ phase, open: !open })}>
         {icon}
         <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{label}</span>
         {trailing ? <span className="shrink-0 text-xs tabular-nums">{trailing}</span> : null}
@@ -90,7 +103,7 @@ function Disclosure({ label, children, forced = false, initiallyOpen = false, ic
   );
 }
 
-export function ReasoningTrace({ block, turnLive }: { block: ReasoningBlock; turnLive: boolean }) {
+export function ReasoningTrace({ block, turnLive, compact = false }: { block: ReasoningBlock; turnLive: boolean; compact?: boolean }) {
   const t = useT();
   const live = turnLive && block.live;
   const elapsed = useClock(block.startedMs, live);
@@ -100,8 +113,9 @@ export function ReasoningTrace({ block, turnLive }: { block: ReasoningBlock; tur
     : t(live ? "work_trace.thinking_for" : "work_trace.thought_for").replace("{duration}", traceDuration(duration));
   const gist = text.replace(/```[\s\S]*?```/g, " ").replace(/[`*_#>~]/g, "").replace(/\s+/g, " ").trim();
   return <Disclosure label={label} icon={<Brain aria-hidden className={cn(iconClass, live && "motion-safe:animate-pulse")} />}
-    forced={live} initiallyOpen={turnLive}
-    summary={!turnLive && gist ? <p className="mb-2 ml-6 line-clamp-2 text-xs leading-5">{gist.slice(0, 240)}</p> : undefined}>
+    forced={live} initiallyOpen={compact ? live : turnLive}
+    resetKey={compact ? String(turnLive) : ""}
+    summary={!compact && !turnLive && gist ? <p className="mb-2 ml-6 line-clamp-2 text-xs leading-5">{gist.slice(0, 240)}</p> : undefined}>
     {text ? <div className="prose prose-sm max-h-64 max-w-none overflow-auto text-xs leading-6 text-muted-foreground dark:prose-invert [overflow-wrap:anywhere] prose-p:my-1 prose-pre:overflow-auto">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
     </div> : undefined}
@@ -186,48 +200,57 @@ export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { 
   </div>;
 });
 
-export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel }: {
+export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false }: {
   blocks: TurnBlock[]; status: TurnStatus; startedMs: number; durationMs: number | null; error?: string | null;
   onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; className?: string;
-  receipt?: ReactNode; completionLabel?: string;
+  receipt?: ReactNode; completionLabel?: string; conversation?: boolean;
 }) {
   const t = useT();
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
-  const groups = useMemo(() => groupTrace(blocks), [blocks]);
+  const groups = useMemo(() => conversation ? groupConversationTrace(blocks) : groupTrace(blocks), [blocks, conversation]);
   const pending = blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
   const outcome = pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
   const Icon = pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
   return <div className={cn("min-w-0 space-y-0.5", className)} data-testid="work-trace" data-state={status}>
     {groups.map(group => {
       const first = group.blocks[0];
+      if (conversation && group.family === "activity" && group.blocks.length > 1) return <div key={group.id} className="mx-auto w-full max-w-xl py-1 [&_button]:text-xs">
+        <Disclosure label={t("society.chat.activity_trace").replace("{count}", String(group.blocks.length))}
+          icon={<Wrench aria-hidden className={iconClass} />} initiallyOpen={live}
+          forced={live && group.blocks.some(block => block.kind === "reasoning" && block.live)}>
+          {group.blocks.map(block => block.kind === "tool"
+            ? <TraceTool key={block.callId} block={block} status={status} onDecide={onDecide} />
+            : block.kind === "reasoning" ? <ReasoningTrace key={block.id} block={block} turnLive={live} compact /> : null)}
+        </Disclosure>
+      </div>;
       if (group.blocks.length > 1) return <Disclosure key={group.id}
         label={t(`work_trace.group_${group.family}`).replace("{count}", String(group.blocks.length))}
         icon={<Check aria-hidden className={iconClass} />} initiallyOpen={live}>
         {group.blocks.map(block => <TraceTool key={(block as ToolBlock).callId} block={block as ToolBlock} status={status} onDecide={onDecide} />)}
       </Disclosure>;
-      if (first.kind === "tool") return <TraceTool key={group.id} block={first} status={status} onDecide={onDecide} />;
-      if (first.kind === "reasoning") return <ReasoningTrace key={group.id} block={first} turnLive={live} />;
-      return first.text.trim() ? <div key={group.id} className="min-w-0 py-2">{renderText ? renderText(first.text, first.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={first.text} /></div>}</div> : null;
+      if (first.kind === "tool") return <div key={group.id} className={conversation ? "mx-auto w-full max-w-xl py-1 text-xs [&_button]:text-xs" : undefined}><TraceTool block={first} status={status} onDecide={onDecide} /></div>;
+      if (first.kind === "reasoning") return <div key={group.id} className={conversation ? "max-w-xl text-xs [&_button]:text-xs" : undefined}><ReasoningTrace block={first} turnLive={live} compact={conversation} /></div>;
+      return first.text.trim() ? <div key={group.id} className={cn("min-w-0 py-2", conversation && "w-fit max-w-[min(85%,42rem)] rounded-2xl rounded-bl-md bg-secondary px-4 py-2.5")}>{renderText ? renderText(first.text, first.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={first.text} /></div>}</div> : null;
     })}
     {error ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{error}</p> : null}
-    <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 border-t border-border pt-3 text-xs text-muted-foreground", status === "error" && "text-destructive")}>
+    <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 text-xs text-muted-foreground", conversation ? "px-1 pb-2 pt-1" : "border-t border-border pt-3", status === "error" && "text-destructive")}>
       <Icon aria-hidden className={cn("h-3.5 w-3.5", live && !pending && "motion-safe:animate-spin")} />
       <span>{outcome === "done" && completionLabel ? completionLabel : t(`work_trace.${outcome}`)}</span>
       {(live || durationMs !== null) ? <span aria-live="off" className="tabular-nums">{traceDuration(live ? elapsed : durationMs ?? 0)}</span> : null}
-      {receipt}
+      {receipt ? conversation ? <details className="ml-1"><summary className="cursor-pointer rounded-sm focus-visible:ring-2 focus-visible:ring-ring">{t("society.chat.activity_details")}</summary><div className="flex flex-wrap gap-2 py-1">{receipt}</div></details> : receipt : null}
     </div>
   </div>;
 }
 
-export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode }) {
+export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; conversation?: boolean }) {
   const t = useT();
   const tokens = outputTokens(turn.usage ?? turn.liveUsage);
   const answered = turn.blocks.some(block => block.kind === "text" && block.text.trim());
   return <WorkTrace {...props} blocks={turn.blocks} status={turn.status} startedMs={turn.startedMs} durationMs={turn.durationMs} error={turn.error}
     completionLabel={!answered ? t("agent_chat.turn_no_answer") : undefined}
-    receipt={<>
+    receipt={tokens !== null && tokens > 0 || turn.costUsd !== null && turn.costUsd > 0 ? <>
       {tokens !== null && tokens > 0 ? <span aria-live="off" className="tabular-nums">{formatTokens(tokens)} {t("agent_chat.tokens")}</span> : null}
       {turn.costUsd !== null && turn.costUsd > 0 ? <span className="tabular-nums">${turn.costUsd.toFixed(4)}</span> : null}
-    </>} />;
+    </> : undefined} />;
 }

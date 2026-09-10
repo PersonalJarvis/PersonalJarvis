@@ -1,6 +1,12 @@
 {
   "society": {
     "chat": {
+      "activity_details": "Details",
+      "activity_trace": "Activity · {count} steps",
+      "routine_check": "Routine check",
+      "message_to": "Message to",
+      "message_from": "Message from",
+      "message_failed": "Message failed",
       "model_search": "Search models",
       "model_show_more": "Show more models",
       "model_show_fewer": "Show fewer models",
