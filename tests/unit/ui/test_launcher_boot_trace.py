@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from jarvis.ui.desktop_app import SingleInstanceError
 from jarvis.ui.web import launcher
 
 
@@ -65,6 +66,8 @@ class _Calls:
 
     def acquire(self):
         self.acquired += 1
+        if not self.terminated or not self.killed:
+            raise SingleInstanceError("Jarvis is already running (pid=4242).")
         return _Lock()
 
 
@@ -249,7 +252,7 @@ def test_a_holder_without_a_window_is_evicted_only_on_yes(monkeypatch):
     lock = _recover(calls)
     assert isinstance(lock, _Lock)
     assert calls.terminated == [4242]
-    assert calls.acquired == 1
+    assert calls.acquired == 3
     title, message = calls.asked[0]
     assert "4242" in message and "stuck" in message
 
@@ -258,7 +261,7 @@ def test_declining_the_dialog_keeps_the_holder_alive():
     calls = _Calls(focused=False, meta={"pid": 4242, "port": 47821}, consent=False)
     assert _recover(calls) is None
     assert calls.terminated == []
-    assert calls.acquired == 0
+    assert calls.acquired == 1
 
 
 def test_an_unknown_holder_is_reported_not_killed(monkeypatch):
@@ -312,8 +315,138 @@ def test_a_kill_that_did_not_take_is_reported(monkeypatch):
     monkeypatch.setattr(launcher, "_report_startup_failure", seen.append)
     calls = _Calls(focused=False, meta={"pid": 4242}, consent=True, killed=False)
     assert _recover(calls) is None
-    assert calls.acquired == 0
+    assert calls.acquired == 2
     assert seen and "4242" in seen[0]
+
+
+def test_lock_error_pid_takes_precedence_over_stale_sidecar():
+    assert (
+        launcher._discover_holder_pid(
+            SingleInstanceError("Jarvis is already running (pid=47896)."),
+            {"pid": 36580, "port": 47821},
+        )
+        == 47896
+    )
+
+
+@pytest.mark.parametrize("released_on", [1, 2])
+def test_released_lock_is_taken_without_terminating_old_holder(released_on):
+    calls = _Calls(focused=False, meta={"pid": 4242}, consent=True)
+
+    def acquire():
+        calls.acquired += 1
+        if calls.acquired < released_on:
+            raise SingleInstanceError("Jarvis is already running (pid=4242).")
+        return _Lock()
+
+    calls.acquire = acquire
+    assert isinstance(_recover(calls), _Lock)
+    assert calls.terminated == []
+    assert len(calls.asked) == released_on - 1
+
+
+@pytest.mark.parametrize("replaced_on", [1, 2, 3])
+def test_replacement_during_recovery_is_focused_without_reusing_consent(monkeypatch, replaced_on):
+    calls = _Calls(focused=False, meta={"pid": 4242}, consent=True)
+    monkeypatch.setattr(launcher, "_report_startup_failure", calls.reported.append)
+    clock = {"t": 0.0}
+    focus_times = []
+
+    def acquire():
+        calls.acquired += 1
+        holder = 47896 if calls.acquired >= replaced_on else 4242
+        raise SingleInstanceError(f"Jarvis is already running (pid={holder}).")
+
+    def focus():
+        focus_times.append(clock["t"])
+        return clock["t"] >= 1.0
+
+    result = launcher._recover_from_already_running(
+        SingleInstanceError("Jarvis is already running (pid=4242)."),
+        focus=focus,
+        read_meta=calls.read_meta,
+        ask=calls.ask,
+        terminate=calls.terminate,
+        acquire=acquire,
+        process_age=lambda _pid: None,
+        sleep=lambda seconds: clock.__setitem__("t", clock["t"] + seconds),
+        now=lambda: clock["t"],
+        booting_grace=2.0,
+        health=lambda _port: False,
+    )
+    assert result is None
+    assert calls.terminated == ([4242] if replaced_on == 3 else [])
+    assert len(calls.asked) == (0 if replaced_on == 1 else 1)
+    assert calls.reported == []
+    assert focus_times[-1] == 1.0
+
+
+def test_default_recovery_acquisition_disables_automatic_eviction(monkeypatch):
+    from jarvis.ui import desktop_app
+
+    calls = _Calls(focused=False, meta={"pid": 4242}, consent=False)
+
+    def acquire(*, terminate):
+        assert terminate(47896) is False
+        return _Lock()
+
+    monkeypatch.setattr(desktop_app, "acquire_single_instance_lock", acquire)
+    lock = launcher._recover_from_already_running(
+        SingleInstanceError("Jarvis is already running (pid=4242)."),
+        focus=calls.focus,
+        read_meta=calls.read_meta,
+        ask=calls.ask,
+        terminate=calls.terminate,
+        process_age=lambda _pid: None,
+    )
+    assert isinstance(lock, _Lock)
+    assert calls.asked == []
+    assert calls.terminated == []
+
+
+def test_replacement_without_window_has_a_bounded_wait_and_is_not_killed(monkeypatch):
+    calls = _Calls(focused=False, meta={"pid": 4242}, consent=True)
+    monkeypatch.setattr(launcher, "_report_startup_failure", calls.reported.append)
+    clock = {"t": 0.0}
+
+    def acquire():
+        raise SingleInstanceError("Jarvis is already running (pid=47896).")
+
+    assert (
+        launcher._recover_from_already_running(
+            SingleInstanceError("Jarvis is already running (pid=4242)."),
+            focus=calls.focus,
+            read_meta=calls.read_meta,
+            ask=calls.ask,
+            terminate=calls.terminate,
+            acquire=acquire,
+            process_age=lambda _pid: None,
+            sleep=lambda seconds: clock.__setitem__("t", clock["t"] + seconds),
+            now=lambda: clock["t"],
+            booting_grace=1.0,
+        )
+        is None
+    )
+    assert clock["t"] == 1.0
+    assert calls.terminated == []
+    assert calls.asked == []
+    assert len(calls.reported) == 1
+    assert "47896" in calls.reported[0]
+    assert "stopped process" not in calls.reported[0]
+
+
+def test_lock_io_failure_is_reported_without_terminating_holder(monkeypatch):
+    calls = _Calls(focused=False, meta={"pid": 4242}, consent=True)
+    monkeypatch.setattr(launcher, "_report_startup_failure", calls.reported.append)
+
+    def acquire():
+        raise OSError("lock directory is unavailable")
+
+    calls.acquire = acquire
+    assert _recover(calls) is None
+    assert calls.asked == []
+    assert calls.terminated == []
+    assert "lock directory is unavailable" in calls.reported[0]
 
 
 def test_run_desktop_bounces_with_exit_3_when_recovery_declines(monkeypatch):

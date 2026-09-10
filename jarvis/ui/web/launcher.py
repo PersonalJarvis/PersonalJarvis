@@ -1061,18 +1061,19 @@ def _holder_pid_from_error(error: Exception) -> int | None:
 def _discover_holder_pid(error: Exception, meta) -> int | None:
     """Name the process that is blocking this desktop launch.
 
-    Order: sidecar, the lock-error text, then whoever is bound to the admin
-    port. A headless boot that never wrote the sidecar still has a pid on
+    Order: the lock-error text, sidecar, then whoever is bound to the admin
+    port. The lock check may already have rejected a stale sidecar. A headless
+    boot that never wrote the sidecar still has a pid on
     the port; without this the user got "running process is unknown" and
     no window.
     """
-    pid = None
-    with contextlib.suppress(Exception):
-        if meta and meta.get("pid") is not None:
-            pid = int(meta["pid"])
+    pid = _holder_pid_from_error(error)
     if pid is None:
         with contextlib.suppress(Exception):
-            pid = _holder_pid_from_error(error)
+            if meta and meta.get("pid") is not None:
+                candidate = int(meta["pid"])
+                if candidate > 0:
+                    pid = candidate
     if pid is None:
         with contextlib.suppress(Exception):
             from jarvis.ui.desktop_app import (
@@ -1173,7 +1174,13 @@ def _recover_from_already_running(
     focus = focus or _desktop_app.focus_existing_instance_robust
     read_meta = read_meta or _desktop_app._read_meta
     terminate = terminate or _desktop_app._terminate_pid
-    acquire = acquire or _desktop_app.acquire_single_instance_lock
+    # Recovery rechecks ownership around a potentially long-lived dialog.
+    # Those checks must never evict a replacement process without its consent.
+    if acquire is None:
+
+        def acquire():
+            return _desktop_app.acquire_single_instance_lock(terminate=lambda _pid: False)
+
     process_age = process_age or _process_age_seconds
     sleep = sleep or time.sleep
     now = now or time.monotonic
@@ -1275,6 +1282,46 @@ def _recover_from_already_running(
         )
         return None
 
+    def _recheck_lock() -> tuple[bool, object]:
+        """Take a released lock or follow a replacement; never kill on a probe."""
+        try:
+            return True, acquire()
+        except _desktop_app.SingleInstanceError as latest_error:
+            replacement_pid = _holder_pid_from_error(latest_error)
+            if replacement_pid is None or replacement_pid == pid:
+                return False, None
+            logger.info(
+                "launcher: holder changed from pid={} to pid={} during recovery",
+                pid,
+                replacement_pid,
+            )
+            # A relauncher can win the lock while this launch is waiting for
+            # consent. Let its shell appear, even before backend health is up.
+            # Consent for the old PID does not authorize killing this one.
+            deadline = now() + max(0.0, booting_grace)
+            while True:
+                try:
+                    if focus():
+                        return True, None
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("launcher: focusing the replacement instance failed: {}", exc)
+                if now() >= deadline:
+                    break
+                sleep(min(0.5, max(0.0, deadline - now())))
+            _report_startup_failure(
+                f"{APP_DISPLAY_NAME} is now running in process {replacement_pid}, "
+                "but its window could not be brought forward. "
+                "Give it a moment to finish starting, then open the app again."
+            )
+            return True, None
+        except Exception as exc:  # noqa: BLE001 — lock I/O failure
+            _report_startup_failure(f"{APP_DISPLAY_NAME} could not acquire its start lock: {exc}")
+            return True, None
+
+    handled, lock = _recheck_lock()
+    if handled:
+        return lock
+
     if frozen_window:
         stuck_detail = (
             f"{APP_DISPLAY_NAME} is already running (process {pid}), but its "
@@ -1305,21 +1352,25 @@ def _recover_from_already_running(
     if not consented:
         return None
 
+    handled, lock = _recheck_lock()
+    if handled:
+        return lock
+
     if not terminate(pid):
         _report_startup_failure(
             f"{APP_DISPLAY_NAME} could not stop the running process {pid}. "
             "End it in the task manager, then start the app again."
         )
         return None
-    try:
-        lock = acquire()
-    except Exception as exc:  # noqa: BLE001 — SingleInstanceError or lock I/O
+    handled, lock = _recheck_lock()
+    if not handled:
         _report_startup_failure(
             f"{APP_DISPLAY_NAME} stopped process {pid}, but the start lock is still "
-            f"held. Start the app again in a few seconds.\n\nDetail: {exc}"
+            "held. Start the app again in a few seconds."
         )
         return None
-    logger.info("launcher: evicted stuck holder pid={} and took the lock", pid)
+    if lock is not None:
+        logger.info("launcher: evicted stuck holder pid={} and took the lock", pid)
     return lock
 
 
