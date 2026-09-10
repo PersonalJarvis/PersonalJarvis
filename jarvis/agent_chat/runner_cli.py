@@ -2670,7 +2670,57 @@ async def _run_cli_once(
             )
         )
 
+    if plan.shape == "codex" and vendor_session:
+        delivered = await _deliver_codex_images(handle, plan.env, vendor_session, started_at)
+        if not delivered and status == "done":
+            status = "error"
+            error_text = "A generated image could not be added to the chat artifacts."
+
     return _Outcome(status, error_text, usage, cost_usd, vendor_session)
+
+
+async def _deliver_codex_images(
+    handle: TurnHandle, env: dict[str, str], thread_id: str, since: float
+) -> bool:
+    """Recover native visual results omitted by the CLI's text event stream."""
+    from jarvis.agent_chat.generated_images import collect_generated_images
+    from jarvis.core.paths import repo_root
+    from jarvis.missions.isolation.worktree import resolve_outputs_root
+
+    raw_home = env.get("CODEX_HOME", "")
+    home = Path(raw_home) if raw_home else Path.home() / ".codex"
+    try:
+        images = await asyncio.to_thread(
+            collect_generated_images,
+            codex_home=home,
+            thread_id=thread_id,
+            since=since,
+            outputs_root=resolve_outputs_root(repo_root()),
+        )
+    except (OSError, ValueError):
+        log.warning("agent chat: generated image delivery failed", exc_info=True)
+        await handle.emit(
+            make_event(
+                "error",
+                {
+                    "turn_id": handle.turn_id,
+                    "message": "A generated image could not be added to the chat artifacts.",
+                },
+            )
+        )
+        return False
+    for image in images:
+        await handle.emit(
+            make_event(
+                "assistant_text",
+                {
+                    "turn_id": handle.turn_id,
+                    "message_id": image.message_id,
+                    "text": image.markdown,
+                },
+            )
+        )
+    return True
 
 
 def _kill(proc: asyncio.subprocess.Process) -> None:
