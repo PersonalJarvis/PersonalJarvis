@@ -76,6 +76,9 @@ const CHAT_MEASURE = "mx-auto w-full max-w-[820px]";
 /** The line appended to a message that names an agent; Jarvis delegates on it. */
 const DELEGATE_MARK = "[to jarvis]";
 
+/** Specialist mentions identify teammates; they do not change the chat's recipient. */
+const MENTION_MARK = "[agent mentions]";
+
 /** The line a message adds when it names a capability: pin those tools for the turn. */
 const TOOL_PIN_MARK = "[tools:";
 
@@ -813,11 +816,12 @@ function ProposalCard({ item }: { item: NoticeItem }) {
   );
 }
 
-/** What the person typed, without the delegation line the composer added. */
+/** What the person typed, without the routing hints the composer added. */
 function visibleUserText(text: string): string {
   return text
     .split("\n")
     .filter((line) => !line.trimStart().startsWith(DELEGATE_MARK))
+    .filter((line) => !line.trimStart().startsWith(MENTION_MARK))
     .filter((line) => !line.trimStart().startsWith(TOOL_PIN_MARK))
     .join("\n")
     .trimEnd();
@@ -972,9 +976,20 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     const text = draftText;
     if (!text || busy || modelSaving) return;
     const named = mentionsInText(text, catalog);
-    const lines = named.agents.map(
-      (a) => `${DELEGATE_MARK} ${t("society.chat.delegate_line").replace("{0}", a.name).replace("{1}", a.agentId)}`,
-    );
+    const lines: string[] = [];
+    if (named.agents.length > 0 && surface === "society") {
+      const teammates = named.agents.map((a) => `${JSON.stringify(a.name)} (id ${JSON.stringify(a.agentId)})`).join(", ");
+      lines.push(
+        `${MENTION_MARK} Current sender: the user. Current recipient: ${JSON.stringify(agent.name)} (id ${JSON.stringify(agent.agentId)}). ` +
+        `Mentioned teammates: ${teammates}. For teammate contact requested by the user, use society_message_agent; ` +
+        "use kind 'query' when asking for information. If a work assignment is needed, contact Jarvis or an orchestrator with that tool. " +
+        "Reply to the user here. An @mention or prose addressed to a teammate does not deliver a message.",
+      );
+    } else if (surface === "jarvis") {
+      lines.push(...named.agents.map(
+        (a) => `${DELEGATE_MARK} ${t("society.chat.delegate_line").replace("{0}", a.name).replace("{1}", a.agentId)}`,
+      ));
+    }
     if (named.pinIds.length > 0) lines.push(`${TOOL_PIN_MARK} ${named.pinIds.join(", ")}]`);
     const hint = lines.join("\n");
     setValue("");
