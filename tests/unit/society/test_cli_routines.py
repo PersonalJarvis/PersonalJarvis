@@ -227,7 +227,22 @@ def test_resumed_society_seat_refreshes_routine_contract(monkeypatch, tmp_path):
         identity=identity,
     )
     assert "mcp_servers.jarvis.required=true" in plan.argv
+    assert 'mcp_servers.jarvis.tools.society_propose_change.approval_mode="approve"' in plan.argv
+    assert not any("default_tools_approval_mode" in arg for arg in plan.argv)
     assert "society_propose_change" in plan.stdin_text
     assert "LARGE OLD IDENTITY" not in plan.stdin_text
     assert plan.stdin_text.endswith("Check comments every hour")
     assert "test-key" not in " ".join(plan.argv)
+
+
+def test_routine_approval_delegation_is_only_for_society(monkeypatch):
+    from jarvis.agent_chat import jarvis_harness
+
+    monkeypatch.setattr(jarvis_harness, "control_key", lambda: "test-key")
+    monkeypatch.setattr(
+        jarvis_harness, "endpoint", lambda: "http://localhost:47821/api/control/mcp/"
+    )
+    for session_id in (None, "ordinary-chat"):
+        assert not any(
+            "approval_mode" in arg for arg in jarvis_harness.codex_config_args(session_id)
+        )

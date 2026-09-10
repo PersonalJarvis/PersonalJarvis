@@ -182,6 +182,14 @@ def codex_config_args(session_id: str | None = None) -> list[str]:
                 # tools. Surface startup failures instead of a tools-free chat
                 # that can only promise to configure the running app.
                 args += ["-c", f"mcp_servers.{_SERVER_NAME}.required=true"]
+                # This local configuration tool already verifies the current
+                # user request and routes permission changes to Jarvis' own
+                # approval card. A second Codex write prompt cannot be answered
+                # by `exec` and would reject even explicit routine requests.
+                args += [
+                    "-c",
+                    f'mcp_servers.{_SERVER_NAME}.tools.society_propose_change.approval_mode="approve"',
+                ]
         return args
     except Exception:  # noqa: BLE001 — see mcp_config_json
         log.warning("agent chat: could not build the Codex MCP overrides", exc_info=True)
