@@ -158,6 +158,7 @@ class Worker:
                         await route.abort()
                         return
                 except (OSError, ValueError):
+                    # An unresolved or invalid destination is denied at the network boundary.
                     await route.abort()
                     return
             await route.continue_()
@@ -399,6 +400,7 @@ class Worker:
                 try:
                     result = await super().act(action, browser_session, *pos, **kw)
                 except Exception as exc:
+                    # The result is emitted below and becomes the executor's visible failure.
                     result = ActionResult(error=f"{type(exc).__name__}: browser action failed")
                 emit("action_result", id=answer["permit"], result=result.model_dump(mode="json"))
                 return result

@@ -55,6 +55,7 @@ def _manifest(data_dir: Path | None = None) -> dict[str, Any]:
         row = json.loads((install_root(data_dir) / "installed.json").read_text("utf-8"))
         return row if isinstance(row, dict) else {}
     except (OSError, ValueError):
+        # Missing or incomplete manifests mean not installed and trigger repair.
         return {}
 
 
@@ -79,6 +80,7 @@ def is_installed(data_dir: Path | None = None) -> bool:
     try:
         digest = hashlib.sha256(requirements_path().read_bytes()).hexdigest()
     except OSError:
+        # A missing lock cannot attest a usable installation.
         return False
     return bool(
         row.get("browser_use") == BROWSER_USE_VERSION

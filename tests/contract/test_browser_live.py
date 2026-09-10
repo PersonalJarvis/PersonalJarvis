@@ -18,8 +18,9 @@ class PageHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         body = b"""<!doctype html><title>Live browser fixture</title>
         <input aria-label="Name"><h1 id="counter">0</h1>
-        <script>let n=0;setInterval(()=>{document.querySelector('#counter').textContent=++n;
-        document.body.style.background=n%2?'#fdd':'#ddf'},60)</script>"""
+        <script>let n=0;function paint(){document.querySelector('#counter').textContent=++n;
+        document.body.style.background=n%2?'#fdd':'#ddf';requestAnimationFrame(paint)}
+        requestAnimationFrame(paint)</script>"""
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
@@ -192,6 +193,13 @@ async def test_idle_animation_stream_soak(live, site, record_property):
         await live.control(session, "viewer", "navigate", {"url": site})
         await live.control(session, "viewer", "takeover", {"enabled": False})
         duration = float(os.environ.get("JARVIS_BROWSER_SOAK_SECONDS", "5"))
+        # Measure steady rendering separately from the first target attachment.
+        first_frame_started = time.monotonic()
+        while True:
+            event = await asyncio.wait_for(queue.get(), 5)
+            if event["kind"] == "frame":
+                break
+        record_property("first_frame_ms", round((time.monotonic() - first_frame_started) * 1000, 2))
         started = time.monotonic()
         ages = []
         changed = set()

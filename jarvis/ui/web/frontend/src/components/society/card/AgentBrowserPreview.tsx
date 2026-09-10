@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Maximize2, Minimize2, RotateCw } from "lucide-react";
 import { useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { BrandedSelect } from "@/components/ui/select";
 import type { SocietyAgent } from "../data";
 import { useBrowserInstallStatus } from "../cardData";
 import { useBrowserView } from "./useBrowserView";
@@ -47,12 +48,11 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
           <input className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-sm"
             aria-label={t("society.browser_live.address")} disabled={!state.manual} value={address}
             onChange={(e) => setAddress(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") enterUrl(); }} />
-          <select className="max-w-48 rounded border border-border bg-background p-1 text-xs" disabled={!state.manual}
-            aria-label={t("society.browser_live.tabs")} value={state.target}
-            onChange={(e) => control("tab", { target: e.target.value })}>
-            {state.tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.url || "about:blank"}</option>)}
-            <option value="new">{t("society.browser_live.new_tab")}</option>
-          </select>
+          <BrandedSelect className="max-w-48 text-xs" disabled={!state.manual}
+            ariaLabel={t("society.browser_live.tabs")} value={state.target}
+            options={[...state.tabs.map((tab) => ({ value: tab.id, label: tab.url || "about:blank" })),
+              { value: "new", label: t("society.browser_live.new_tab") }]}
+            onValueChange={(target) => control("tab", { target })} />
         </div>
       )}
       <div className={cn("relative flex items-center justify-center overflow-hidden rounded-lg bg-muted",

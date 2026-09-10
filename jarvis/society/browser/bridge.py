@@ -68,6 +68,7 @@ async def wait_for_browser_approval(runtime: Any, approval_id: str, session: Any
                     return False
                 await asyncio.sleep(0.5)
     except TimeoutError:
+        # The caller reports a declined action; the finally block clears the UI card.
         return False
     finally:
         if session:
@@ -257,6 +258,7 @@ async def execute_live(runtime: Any, caller: Any, jobs: Any, args: dict, ctx: An
             trace_id=turn_trace,
         )
     except Exception as exc:
+        # The tool result reports the failure to both the chat and the planner.
         return ToolResult(
             False,
             None,

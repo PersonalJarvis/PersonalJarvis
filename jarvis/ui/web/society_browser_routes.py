@@ -143,6 +143,7 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
                     result = await live.control(session, owner, op, args)
                     await send({"kind": "control", "ok": True, **result})
                 except (ValueError, RuntimeError) as exc:
+                    # Control errors are returned to the requesting viewer.
                     await send({"kind": "control", "ok": False, "error": str(exc)[:500]})
 
         pending = asyncio.create_task(controls())
@@ -165,6 +166,7 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
                 op, args = validate_control(value)
                 commands.put_nowait((op, args))
             except (ValueError, RuntimeError) as exc:
+                # Invalid controls are visibly rejected without closing a healthy stream.
                 await send({"kind": "control", "ok": False, "error": str(exc)[:500]})
     except Exception:
         log.debug("Browser view disconnected for %s", agent_id, exc_info=True)

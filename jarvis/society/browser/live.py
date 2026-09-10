@@ -126,6 +126,7 @@ class LiveSession:
                 else {"ok": False, "error": "No active browser task"}
             )
         except asyncio.CancelledError:
+            # The owning run already sends cancellation; a stale RPC must not reply.
             return
         except Exception as exc:
             log.warning("Browser RPC failed: %s", type(exc).__name__, exc_info=True)
@@ -195,6 +196,7 @@ class LiveSession:
         try:
             await asyncio.wait_for(self.proc.wait(), timeout=5)
         except TimeoutError:
+            log.debug("Browser graceful shutdown timed out; closing its process tree")
             self.tree.close()
             if self.proc.returncode is None:
                 self.proc.kill()
