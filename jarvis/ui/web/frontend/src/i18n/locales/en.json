@@ -1225,6 +1225,8 @@
     "add_community": "From the community marketplace",
     "add_marketplace": "Open the Marketplace",
     "filter_label": "Show",
+    "filter_recommended": "Recommended",
+    "added": "Added",
     "filter_all": "All",
     "filter_installed": "Installed",
     "filter_attention": "Needs attention",

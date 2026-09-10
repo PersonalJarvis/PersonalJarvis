@@ -615,7 +615,6 @@
     "delivery_sent": "Enviado",
     "delivery_delivered": "Entregado",
     "delivery_failed": "Error",
-
     "placeholder": "Pregunta lo que quieras…",
     "empty_subtitle": "{name} con teclado: el mismo asistente que atiende el micrófono. El modelo que elijas es sobre lo que corre {name} en este chat.",
     "empty_subtitle_agent": "Un agente de código trabaja en los archivos de esta carpeta, no en tu memoria, tu wiki ni tu calendario. Elige un modelo. Luego pregunta.",
@@ -1225,6 +1224,8 @@
     "add_community": "Desde el marketplace de la comunidad",
     "add_marketplace": "Abrir el Marketplace",
     "filter_label": "Mostrar",
+    "filter_recommended": "Recomendados",
+    "added": "Añadido",
     "filter_all": "Todos",
     "filter_installed": "Instalados",
     "filter_attention": "Requieren atención",
@@ -5569,12 +5570,12 @@
     "command": "Ejecutar comando",
     "edit": "Editar archivo",
     "write": "Escribir archivo"
-},
+  },
   "chat_media": {
     "unavailable": "No se puede cargar o reproducir este archivo. Puedes abrirlo directamente.",
     "expand": "Ampliar {file}",
     "open_file": "Abrir archivo",
     "download": "Descargar",
     "retry": "Reintentar"
-}
+  }
 }

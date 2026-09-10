@@ -479,6 +479,8 @@ label,
    * bare `R G B` list meant for `rgb(var(--x) / <alpha>)`.
    */
   :root {
+    /* Original app marks sit on the same white brand tile in both themes. */
+    --plugin-icon-surface: 0 0% 100%;
     /* --- Light: the same system, the value scale inverted ------------------
        White room, neutral near-black ink — the same zero-saturation system
        as dark. Every role below has exactly the job its dark twin has; only

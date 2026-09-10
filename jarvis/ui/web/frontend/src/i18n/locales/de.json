@@ -615,7 +615,6 @@
     "delivery_sent": "Gesendet",
     "delivery_delivered": "Zugestellt",
     "delivery_failed": "Fehlgeschlagen",
-
     "placeholder": "Frag mich alles …",
     "empty_subtitle": "{name} mit Tastatur — derselbe Assistent, den das Mikrofon erreicht. Das gewählte Modell ist das, worauf {name} in diesem Chat läuft.",
     "empty_subtitle_agent": "Ein Coding-Agent arbeitet an den Dateien in diesem Ordner — nicht an deinem Gedächtnis, deinem Wiki oder deinem Kalender. Modell wählen. Dann fragen.",
@@ -1225,6 +1224,8 @@
     "add_community": "Aus dem Community-Marketplace",
     "add_marketplace": "Marketplace öffnen",
     "filter_label": "Anzeigen",
+    "filter_recommended": "Empfohlen",
+    "added": "Hinzugefügt",
     "filter_all": "Alle",
     "filter_installed": "Installiert",
     "filter_attention": "Braucht Aufmerksamkeit",
@@ -5569,12 +5570,12 @@
     "command": "Befehl ausführen",
     "edit": "Datei bearbeiten",
     "write": "Datei schreiben"
-},
+  },
   "chat_media": {
     "unavailable": "Dieses Medium kann nicht geladen oder abgespielt werden. Du kannst die Datei weiterhin öffnen.",
     "expand": "{file} vergrößern",
     "open_file": "Datei öffnen",
     "download": "Herunterladen",
     "retry": "Erneut versuchen"
-}
+  }
 }
