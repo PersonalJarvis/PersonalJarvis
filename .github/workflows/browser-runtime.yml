@@ -4,6 +4,9 @@ on:
     paths:
       - 'jarvis/society/browser/**'
       - 'jarvis/ui/web/society_browser_routes.py'
+      - 'jarvis/ui/web/mcp_server_routes.py'
+      - 'jarvis/agent_chat/runner_cli.py'
+      - 'jarvis/brain/tool_gateway.py'
       - 'tests/contract/test_browser*'
       - 'tests/unit/society/test_browser*'
       - 'jarvis/society/approvals.py'
@@ -42,4 +45,10 @@ jobs:
               stream.write(f"JARVIS_BROWSER_TEST_PYTHON={venv_python()}\n")
               stream.write(f"JARVIS_BROWSER_TEST_EXECUTABLE={browser_executable()}\n")
       - name: Test real frames, ownership and protocol
-        run: python -m pytest tests/contract/test_browser_live.py tests/contract/test_browser_contract.py tests/unit/society/test_browser.py tests/unit/society/test_browser_install.py tests/unit/society/test_approvals.py -q --tb=short
+        run: python -m pytest tests/contract/test_browser_live.py tests/contract/test_browser_contract.py tests/contract/test_browser_desktop_mcp.py tests/unit/society/test_browser.py tests/unit/society/test_browser_install.py tests/unit/society/test_approvals.py tests/unit/agent_chat/test_jarvis_identity.py tests/unit/agent_chat/test_agent_chat_ladders.py tests/unit/brain/test_tool_gateway.py -q --tb=short --junitxml=browser-results.xml
+      - name: Preserve browser test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-results-${{ matrix.os }}
+          path: browser-results.xml
