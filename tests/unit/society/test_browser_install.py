@@ -86,3 +86,15 @@ def test_missing_binary_and_corrupt_marker_trigger_repair(installer):
     install.ensure_installed(data)
     assert install.is_installed(data)
     assert len(launches) == 3
+
+
+def test_lock_identity_survives_platform_line_endings(installer, monkeypatch, tmp_path):
+    data, root, _, _ = installer
+    install.ensure_installed(data)
+    original = install.requirements_path().read_bytes().replace(b"\r\n", b"\n")
+    copy = tmp_path / "requirements.lock"
+    copy.write_bytes(original.replace(b"\n", b"\r\n"))
+    monkeypatch.setattr(install, "requirements_path", lambda: copy)
+    assert install.is_installed(data)
+    copy.write_bytes(original + b"# changed dependency manifest\n")
+    assert not install.is_installed(data)

@@ -75,10 +75,19 @@ def browser_executable(data_dir: Path | None = None) -> Path:
     return _path(data_dir, "executable", "missing-browser")
 
 
+def _lock_digests() -> tuple[str, str]:
+    """Dependency identity is independent of Git's platform line endings."""
+    content = requirements_path().read_bytes().replace(b"\r\n", b"\n")
+    return (
+        hashlib.sha256(content).hexdigest(),
+        hashlib.sha256(content.replace(b"\n", b"\r\n")).hexdigest(),
+    )
+
+
 def is_installed(data_dir: Path | None = None) -> bool:
     row = _manifest(data_dir)
     try:
-        digest = hashlib.sha256(requirements_path().read_bytes()).hexdigest()
+        digests = _lock_digests()
     except OSError:
         # A missing lock cannot attest a usable installation.
         return False
@@ -87,7 +96,7 @@ def is_installed(data_dir: Path | None = None) -> bool:
         and row.get("playwright") == PLAYWRIGHT_VERSION
         and row.get("protocol") == PROTOCOL_VERSION
         and row.get("verified")
-        and row.get("lock_sha256") == digest
+        and row.get("lock_sha256") in digests
         and venv_python(data_dir).is_file()
         and browser_executable(data_dir).is_file()
     )
@@ -301,7 +310,7 @@ def ensure_installed(
                 "runtime": runtime.relative_to(root).as_posix(),
                 "executable": executable.relative_to(root).as_posix(),
                 "verified": True,
-                "lock_sha256": hashlib.sha256(requirements_path().read_bytes()).hexdigest(),
+                "lock_sha256": _lock_digests()[0],
                 "verified_at": time.time(),
                 "browser_version": probe["version"],
                 "packages": probe.get("packages", []),
