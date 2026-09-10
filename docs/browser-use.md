@@ -74,6 +74,11 @@ exclusive ownership and idle animation. A 60-second local Windows animation
 soak delivered 13.61 fps with capture-to-backend p95 age of 74.56 ms. This is a
 transport measurement, not a measurement of the final frontend paint latency.
 
+The corresponding Chrome canvas measurement ran for 188 seconds in the actual
+Options rail: 2,536 rendered frames, 13.48 fps, and 133.45 ms p95 capture-to-paint
+age. The agent was idle throughout. These are local Windows measurements,
+not a performance guarantee for every host or network.
+
 Chrome checks verified the actual right-rail pixels, expanded view, manual text
 entry and form submission, tab creation/switching, reconnection and light/dark
 appearance. These UI checks were on Windows; the native CI matrix exercises
