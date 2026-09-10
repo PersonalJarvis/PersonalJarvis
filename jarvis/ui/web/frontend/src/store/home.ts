@@ -80,6 +80,15 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
   transcript: [],
   liveReply: "",
   ingest: (name, payload, tsMs) => {
+    if (name === "VoiceSessionEnded") {
+      const reason = (payload as { hangup_reason?: string } | null)?.hangup_reason;
+      // A provider handover continues the same call. A real hangup opens an
+      // empty lane; the completed conversation remains in the history rail.
+      if (reason !== "realtime_fallback" && reason !== "desktop_fallback") {
+        set({ transcript: [], liveReply: "" });
+        return;
+      }
+    }
     const before = get().transcript;
     const after = reduceTranscript(before, name, payload, tsMs);
     const live = reduceLiveReply(get().liveReply, name, payload);
