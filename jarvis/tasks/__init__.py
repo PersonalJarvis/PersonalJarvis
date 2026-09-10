@@ -32,8 +32,10 @@ from .schema import (
     TriggerAfterDelay,
     TriggerAtTime,
     TriggerCalendar,
+    TriggerEventHook,
     TriggerEvery,
     TriggerOnEvent,
+    TriggerWebhook,
 )
 from .store import TaskStore
 
@@ -52,6 +54,8 @@ __all__ = [
     "TriggerOnEvent",
     "TriggerEvery",
     "TriggerCalendar",
+    "TriggerWebhook",
+    "TriggerEventHook",
     "Trigger",
     "RetryPolicy",
     "TaskState",

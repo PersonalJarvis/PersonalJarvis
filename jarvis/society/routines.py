@@ -23,8 +23,10 @@ from jarvis.tasks.schema import (
     TriggerAfterDelay,
     TriggerAtTime,
     TriggerCalendar,
+    TriggerEventHook,
     TriggerEvery,
     TriggerOnEvent,
+    TriggerWebhook,
 )
 
 from .roster import AgentRecord
@@ -51,6 +53,11 @@ def _trigger(schedule: dict[str, Any]) -> Any:
     from jarvis.tasks.context import client_timezone
 
     kind = str(schedule.get("kind") or schedule.get("type") or "every")
+    if kind in ("webhook", "event_hook"):
+        model = TriggerWebhook if kind == "webhook" else TriggerEventHook
+        return model.model_validate(
+            {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}
+        )
     if kind == "calendar":
         schedule = dict(schedule)
         schedule.setdefault("timezone", client_timezone.get())
@@ -165,6 +172,9 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
         "title": row.get("title") or spec.get("title"),
         "state": row.get("state"),
         "trigger": spec.get("trigger"),
+        "webhook_path": f"/api/tasks/hooks/{row.get('id')}"
+        if (spec.get("trigger") or {}).get("type") == "webhook"
+        else None,
         "prompt": str((spec.get("action") or {}).get("prompt") or "").partition("\nRoutine:\n")[2],
         "announce_on_success": spec.get("announce_on_success"),
         "due_at_ns": row.get("due_at_ns"),

@@ -93,4 +93,20 @@ describe("AgentRoutinesList", () => {
 
     await waitFor(() => expect(screen.getByTestId("agent-routines").textContent).toContain("X marketing"));
   });
+  test("the webhook composer preserves typed JSON filters", async () => {
+    mount();
+    fireEvent.click(await screen.findByTestId("agent-routines-add"));
+    fireEvent.change(screen.getByPlaceholderText("Title"), { target: { value: "Customer event" } });
+    fireEvent.change(screen.getByPlaceholderText("What to do"), { target: { value: "Summarize the new customer." } });
+    fireEvent.click(screen.getByTestId("agent-routines-kind"));
+    fireEvent.click(await screen.findByRole("option", { name: "Webhook" }));
+    fireEvent.change(screen.getByLabelText("Payload filters (JSON field equality)"), { target: { value: '{"customer.vip":true}' } });
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find((call) => (call[1] as RequestInit | undefined)?.method === "POST");
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post?.[1]?.body)).schedule).toEqual({ kind: "webhook", conditions: { "customer.vip": true } });
+    });
+  });
+
 });

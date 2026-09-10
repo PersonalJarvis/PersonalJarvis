@@ -21,7 +21,7 @@ export type TaskState =
   | "cancelled"
   | "interrupted";
 
-export type TriggerType = "after_delay" | "at_time" | "on_event" | "every" | "calendar";
+export type TriggerType = "after_delay" | "at_time" | "on_event" | "every" | "calendar" | "webhook" | "event_hook";
 
 export interface TaskSummary {
   id: string;
@@ -134,7 +134,7 @@ export function isActive(state: TaskState): boolean {
 
 /** A recurring task (an "automation") — the `every` / `on_event` triggers. */
 export function isRecurringTrigger(trigger: TriggerType): boolean {
-  return trigger === "every" || trigger === "calendar" || trigger === "on_event";
+  return trigger === "every" || trigger === "calendar" || trigger === "on_event" || trigger === "webhook" || trigger === "event_hook";
 }
 
 /** A one-off timed task (a "schedule") — the `after_delay` / `at_time` triggers. */
@@ -328,6 +328,8 @@ export function scheduleLineForTask(
   words: ScheduleWords,
 ): string {
   if (task.trigger_type === "calendar") return describeTrigger(task.trigger, () => words.daily.replace("{time}", "{0}"));
+  if (task.trigger_type === "webhook") return "Webhook";
+  if (task.trigger_type === "event_hook") return `${words.onEvent} · ${String((task.trigger as { event_name?: string } | undefined)?.event_name ?? "")}`;
   if (task.trigger_type === "on_event") return words.onEvent;
   const interval = task.interval_seconds ?? null;
   const dueNs = task.next_due_at_ns ?? task.due_at_ns ?? null;

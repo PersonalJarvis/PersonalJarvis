@@ -255,7 +255,7 @@
       "rotate": "Rotate token",
       "rotate_confirm": "Replace the token? Existing integrations will need the new token.",
       "remote": "External services need a reachable HTTPS address for this Jarvis instance.",
-      "auth": "Send JSON with Authorization: Bearer <token>. Reuse Idempotency-Key when retrying.",
+      "auth": "Send JSON with Authorization: Bearer <token>. Reuse Idempotency-Key when retrying. For GitHub, use this token as the webhook Secret (HMAC-SHA256).",
       "conditions": "Payload filters (JSON field equality)",
       "event_name": "Event name, e.g. crm.customer.created",
       "loading": "Loading connection…",

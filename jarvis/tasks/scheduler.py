@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import heapq
+import json
 import logging
 import time
 from datetime import datetime
@@ -30,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from jarvis.core.bus import EventBus
 from jarvis.core.events import Event, TaskScheduled
 from jarvis.core.misfire import is_missed, late_by_s
+from jarvis.tasks.hook_events import RoutineEventReceived
 from jarvis.tasks.schema import PAUSABLE_TRIGGER_TYPES, TERMINAL_STATES, TaskSpec
 
 if TYPE_CHECKING:
@@ -101,6 +103,7 @@ class TaskScheduler:
         self._wakeup = asyncio.Event()
         # On-event tasks — map event class name → set of task_ids.
         # The wildcard subscriber checks the event class against this index.
+        self._hook_running: set[str] = set()
         self._event_dispatch_lock = asyncio.Lock()
         self._on_event_index: dict[str, set[str]] = {}
         self._bound = False
@@ -153,6 +156,103 @@ class TaskScheduler:
         )
         self._wakeup.set()
         return task_id
+
+    async def receive_hook(
+        self, task_id: str, payload: dict[str, Any], delivery_id: str, *, source: str = "webhook"
+    ) -> str:
+        """Persist an authenticated delivery; the scheduler owns its execution."""
+        if self._runner is None:
+            return "unavailable"
+        spec = await self._store.get_spec(task_id)
+        if (
+            spec is None
+            or spec.trigger.type not in ("webhook", "event_hook")
+            or spec.trigger.type != source
+        ):
+            return "not_found"
+        status = await self._store.hooks.accept(task_id, delivery_id, payload, spec.trigger)
+        if status == "queued":
+            self._wakeup.set()
+        return status
+
+    async def _enqueue_hook_event(self, event: RoutineEventReceived) -> dict[str, str]:
+        statuses = {}
+        payload = json.loads(event.payload_json)
+        for tid in tuple(self._on_event_index.get("hook:" + event.event_name, ())):
+            statuses[tid] = await self.receive_hook(
+                tid, payload, event.delivery_id, source="event_hook"
+            )
+        return statuses
+
+    async def emit_hook_event(
+        self, event_name: str, payload: dict[str, Any], delivery_id: str
+    ) -> dict[str, str]:
+        from .hook_inbox import encode_payload
+
+        event = RoutineEventReceived(
+            event_name=event_name,
+            payload_json=encode_payload(payload),
+            delivery_id=delivery_id,
+            source_layer="tasks.hooks.accepted",
+        )
+        # The API acknowledges durable admission, independently of the bus's
+        # bounded best-effort observers. Publish only after saving the receipts.
+        statuses = await self._enqueue_hook_event(event)
+        await self._bus.publish(event)
+        return statuses
+
+    async def _drain_hooks(self) -> None:
+        if self._runner is None:
+            return
+        for row in await self._store.hooks.pending():
+            tid = str(row["task_id"])
+            if tid in self._hook_running or tid in self._running_tokens:
+                continue
+            self._hook_running.add(tid)
+            task = asyncio.create_task(self._run_hook(row), name=f"routine-hook-{tid}")
+            self._runner_tasks.add(task)
+            task.add_done_callback(self._runner_tasks.discard)
+
+    async def _run_hook(self, row: dict[str, Any]) -> None:
+        tid, delivery = str(row["task_id"]), str(row["delivery_id"])
+        try:
+            current = await self._store.get(tid)
+            if current is None or current["state"] != "scheduled":
+                return
+            await self._store.hooks.mark(tid, delivery, "running")
+            await self._store.append_step(
+                tid, "log", {"event": "hook_started", "delivery_id": delivery}
+            )
+            await self._safe_run(
+                tid, {"hook_payload": row["payload_json"], "hook_delivery_id": delivery}
+            )
+            current = await self._store.get(tid)
+            failed = (
+                current is None
+                or bool(current.get("last_error"))
+                or current["state"] in ("failed", "cancelled")
+            )
+            await self._store.hooks.mark(tid, delivery, "failed" if failed else "done")
+            spec = await self._store.get_spec(tid)
+            if spec is not None and spec.trigger.type in ("webhook", "event_hook"):
+                total, pending = await self._store.hooks.counts(tid)
+                if (
+                    spec.trigger.max_firings is not None
+                    and total >= spec.trigger.max_firings
+                    and pending == 0
+                    and current is not None
+                    and current["state"] == "scheduled"
+                ):
+                    await self._store.update_state(tid, "completed")
+        except asyncio.CancelledError:
+            await self._store.hooks.mark(tid, delivery, "interrupted")
+            raise
+        except Exception:
+            log.exception("Hook delivery failed for task %s", tid)
+            await self._store.hooks.mark(tid, delivery, "failed")
+        finally:
+            self._hook_running.discard(tid)
+            self._wakeup.set()
 
     async def run_now(self, task_id: str) -> None:
         """Run the task's action NOW, out of band — the schedule is untouched.
@@ -344,6 +444,10 @@ class TaskScheduler:
         the spec lives in the DB, and we don't want to block in this handler.
         Hence: the handler enqueues, and the runner checks.
         """
+        if isinstance(event, RoutineEventReceived):
+            if event.source_layer != "tasks.hooks.accepted":
+                await self._enqueue_hook_event(event)
+            return
         cls_name = type(event).__name__
         task_ids = self._on_event_index.get(cls_name)
         if not task_ids:
@@ -353,6 +457,8 @@ class TaskScheduler:
         event_ctx = _event_to_dict(event)
         # Copy, so the runner loop is allowed to modify the set.
         for tid in list(task_ids):
+            if getattr(event, "task_id", None) == tid:
+                continue  # A routine must not recursively trigger on its own lifecycle.
             # Filter-match here first — this avoids a runner launch for
             # events that obviously don't match.
             spec = await self._store.get_spec(tid)
@@ -413,6 +519,7 @@ class TaskScheduler:
         """
         if self._hydrated:
             return
+        await self._store.hooks.recover()
         rows = await self._store.all_pending_scheduled()
         now_ns = time.time_ns()
         for row in rows:
@@ -514,6 +621,8 @@ class TaskScheduler:
             else:
                 due = time.time_ns() + int(trig.interval_seconds * 1e9)
             heapq.heappush(self._heap, (due, task_id))
+        elif trig.type == "event_hook":
+            self._on_event_index.setdefault("hook:" + trig.event_name, set()).add(task_id)
         elif trig.type == "on_event":
             self._on_event_index.setdefault(trig.event_name, set()).add(task_id)
             self._firings_left[task_id] = trig.max_firings  # None = unlimited
@@ -562,6 +671,7 @@ class TaskScheduler:
                 return
             now_ns = time.time_ns()
             await self._drain_due_tasks(now_ns)
+            await self._drain_hooks()
 
             # Next wakeup: either the next-due time or indefinitely
             if self._heap:

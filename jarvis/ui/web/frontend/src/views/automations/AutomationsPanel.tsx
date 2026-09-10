@@ -12,6 +12,8 @@ import { Fragment, useState } from "react";
 import { Loader2, MoreHorizontal, Play, Trash2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { PanelSkeleton } from "@/components/layout/PanelSkeleton";
+import { describeTrigger } from "@/lib/triggerDescription";
+import { WebhookConnection } from "@/components/society/card/WebhookConnection";
 import {
   ActionMenu,
   Cell,
@@ -23,7 +25,7 @@ import {
   TableRow,
   type Column,
 } from "@/components/extensions/primitives";
-import { useT } from "@/i18n";
+import { useT, useLocaleChunk } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useTaskDetail } from "@/hooks/useAutomations";
 import { templateIcon } from "./automationIcons";
@@ -341,6 +343,7 @@ function AutomationDetail({
   fallbackResult?: string | null;
 }) {
   const t = useT();
+  useLocaleChunk("society");
   const { data, isLoading, error } = useTaskDetail(taskId);
   // No fill of its own: the rows around it already answer to the pointer with
   // one, and a second resting surface here leaves them nowhere to travel to.
@@ -361,6 +364,8 @@ function AutomationDetail({
   const steps = data?.steps ?? [];
   return (
     <div role="presentation" className="space-y-group border-b border-border px-4 py-4 last:border-b-0">
+      {data?.trigger_type === "webhook" || data?.trigger_type === "event_hook" ? <p className="text-body text-muted-foreground">{describeTrigger(data.trigger, t)}</p> : null}
+      {data?.trigger_type === "webhook" ? <WebhookConnection key={taskId} taskId={taskId} /> : null}
       <div>
         <SectionLabel className="mb-stack">{t("automations_view.latest_result")}</SectionLabel>
         <ResultText steps={steps} fallback={fallbackResult} />
