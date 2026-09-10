@@ -2458,6 +2458,11 @@ async def _run_cli_once(
     vendor_session: str | None = None
 
     try:
+        if runner == "agy-cli":
+            # A chat can start before the model picker has loaded its catalog.
+            # Resolve the installed CLI's effort ladder off the event loop so
+            # newly available models keep the required model/effort pairing.
+            await asyncio.to_thread(read_agy_models)
         plan: CliPlan = planner(
             prompt=user_text,
             cwd=cwd,
