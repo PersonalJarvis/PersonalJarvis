@@ -93,6 +93,22 @@ async def test_enqueue_resolve_and_board_projection(world):
         await approvals.resolve("nope", approve=True)
 
 
+async def test_inline_browser_approval_does_not_queue_a_second_chat_turn(world):
+    store, roster, approvals = world
+    await roster.create(name="Browser")
+    item = await approvals.enqueue(
+        agent_id="browser", trace_id="inline", capability="core:browser",
+        action={"action": {"input": {"text": "test"}}, "resume_in_place": True},
+        summary="Type in the disposable form",
+    )
+    await approvals.resolve(item.id, approve=True)
+    event = (await store.events_for_trace("inline"))[-1]
+    assert event.msg_type is MsgType.RELEASE
+    assert event.to_agent == "user"
+    assert event.payload["agent_id"] == "browser"
+    assert await store.pending_deliveries() == []
+
+
 async def test_expiry_parks_and_resurfaces(world):
     _, roster, approvals = world
     await roster.create(name="Mailbox")

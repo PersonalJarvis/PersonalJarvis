@@ -401,7 +401,9 @@ class SocietyRuntime:
     # ------------------------------------------------------------ catalog
 
     def catalog(self) -> list[CapabilityRow]:
-        tools = self._get_tools() or {}
+        tools = dict(self._get_tools() or {})
+        from .browser.tool import BrowserTool
+        tools[BrowserTool.name] = BrowserTool(self, "", self.browser)
         try:
             skills = list(self._get_skills() or [])
         except Exception:  # noqa: BLE001 — a broken skill registry costs the skill rows only

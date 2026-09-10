@@ -141,10 +141,14 @@ class BrowserJobs:
         cdp_url: str = DEFAULT_CDP_URL,
     ) -> None:
         self._data_dir = Path(data_dir)
+        from .live import LiveSessions
+
+        self.live = LiveSessions(self._data_dir)
         self._python = python
         self._runner = runner or install_mod.runner_path()
         self._installed = installed
         self._cdp_url = cdp_url
+        self.live.cdp_url = cdp_url
         self._procs: dict[str, asyncio.subprocess.Process] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -163,16 +167,20 @@ class BrowserJobs:
         return proc is not None and proc.returncode is None
 
     def status_for(self, agent: AgentRecord) -> dict[str, Any]:
+        session = self.live.sessions.get(agent.agent_id)
         return {
             "installed": self.is_installed(),
             "mode": str(agent.browser_mode),
             "profile_dir": str(profile_dir(self._data_dir, agent.agent_id)),
             "logged_in_profile": profile_has_logins(self._data_dir, agent.agent_id),
-            "running": self.running_for(agent.agent_id),
+            "running": self.running_for(agent.agent_id)
+            or bool(session and session.run_lock.locked()),
+            "session_ready": bool(session and not session.closed),
             "cdp_url": self._cdp_url if str(agent.browser_mode) == "attach" else None,
         }
 
     async def close(self) -> None:
+        await self.live.close()
         for agent_id in list(self._procs):
             await self.kill(agent_id)
 

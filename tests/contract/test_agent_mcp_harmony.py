@@ -18,6 +18,7 @@ from typing import Final
 
 from jarvis.mcp.agents import TOOLS
 from jarvis.ui.web.society_routes import router as society_router
+from jarvis.ui.web.society_browser_routes import router as browser_router
 
 #: REST route -> the MCP tool that covers it.
 COVERED: Final[dict[str, str]] = {
@@ -91,6 +92,11 @@ WITHHELD: Final[dict[str, str]] = {
     ),
     "GET /api/society/browser/status": "browser install state is local setup, not ecosystem state",
     "POST /api/society/browser/install": "installs software on the machine — never from outside",
+    "POST /api/society/browser/repair": "repairs host software; local owner setup",
+    "POST /api/society/agents/{agent_id}/browser/cancel": "local browser control belongs to the owner UI",
+    "POST /api/society/agents/{agent_id}/browser/session": (
+        "prepares the host browser environment; owner UI, not an external agent command"
+    ),
     "GET /api/society/agents/{agent_id}/browser": (
         "per-agent browser install state — local machine setup, like browser/status"
     ),
@@ -137,7 +143,7 @@ WITHHELD: Final[dict[str, str]] = {
 def _routes() -> set[str]:
     """Every society REST route as ``METHOD /path``."""
     found: set[str] = set()
-    for route in society_router.routes:
+    for route in (*society_router.routes, *browser_router.routes):
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", None) or set()
         if not path:

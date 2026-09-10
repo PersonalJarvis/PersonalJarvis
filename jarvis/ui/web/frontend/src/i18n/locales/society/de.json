@@ -262,6 +262,26 @@
       "configured": "Verbindung bereit",
       "source": "Die Ereignisquelle muss aktiv sein.",
       "filter_hint": "Beispiel: {\"data.status\": \"ready\"}. Mit {} wird jede Payload angenommen."
+    },
+    "browser_live": {
+      "live": "Live",
+      "manual": "Du steuerst den Browser",
+      "expand": "Browser vergrößern",
+      "collapse": "Browser verkleinern",
+      "back": "Zurück",
+      "forward": "Vorwärts",
+      "reload": "Neu laden",
+      "address": "Website-Adresse",
+      "tabs": "Browser-Tabs",
+      "new_tab": "Neuer Tab",
+      "screen": "Live-Browser von {0}",
+      "return_control": "An Agent zurückgeben",
+      "take_control": "Übernehmen / anmelden",
+      "cancel": "Auftrag stoppen",
+      "approval": "Browser-Aktion erlauben?",
+      "allow": "Erlauben",
+      "deny": "Ablehnen",
+      "repair": "Browser reparieren"
     }
   }
 }
