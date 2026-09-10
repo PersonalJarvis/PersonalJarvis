@@ -520,7 +520,7 @@ class AgentChatService:
                     from jarvis.machines.context import target_machine
                     from jarvis.machines.hosting import run_if_hosted
 
-                    if target_machine.get() and not supports_api_runner(session.provider):
+                    if target_machine.get() and runner not in {"brain", "api"}:
                         raise ValueError("The selected runner cannot enforce a remote task target; select an API agent")
                     if await run_if_hosted(
                         handle, prompt, bridge=self._bridge_for(bus),

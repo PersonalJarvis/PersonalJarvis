@@ -66,9 +66,14 @@ async def assign_machine_task(
     if str(agent.state) != "active":
         raise HTTPException(409, "Activate this agent before assigning a task")
     from jarvis.agent_chat.runner_api import supports_api_runner
+    from jarvis.agent_chat.service import resolve_runner
     from jarvis.society.chat_binding import pair_for
 
-    if not supports_api_runner(pair_for(runtime.config(), agent)[0]):
+    provider = pair_for(runtime.config(), agent)[0]
+    if not supports_api_runner(provider) or resolve_runner(provider, surface="society") not in {
+        "brain",
+        "api",
+    }:
         raise HTTPException(409, "This runner cannot enforce a remote target; select an API agent")
     if runtime.chat_service() is None:
         raise HTTPException(503, "The agent chat runtime is not ready")

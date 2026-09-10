@@ -120,6 +120,14 @@ a real local connector socket; both themes and a workspace handoff were inspecte
 Windows screen acquisition, capture and teardown were also exercised without
 injecting input into the user's desktop.
 
+The built wheel was installed into a clean `python:3.11-slim` container. Its
+installed package passed the 29 machine contract cases, and a real model request
+succeeded with one provider key supplied only through the probe's input pipe.
+The integration suites passed 635 cases (two existing skips), and the four
+required routing/output/language guards passed 595 cases. Five legacy CLI tests
+for the removed `local-models assistant` command also fail against the original
+CLI entry point; they are not caused by the machines commands.
+
 The original acceptance still requires the user's Linux VPS, real macOS and Linux
 desktop input, production connector packaging/autostart, full hosted tool parity,
 and a coordinated hub handoff. These are not implied by passing emulated OS tests.

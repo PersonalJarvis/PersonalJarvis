@@ -93,13 +93,18 @@ class AgentTransfer:
     ) -> dict[str, Any]:
         """Drain the canonical session, stage bytes, compare hashes, then change its host."""
         from jarvis.agent_chat.runner_api import supports_api_runner
+        from jarvis.agent_chat.service import resolve_runner
         from jarvis.society.chat_binding import _workspace, pair_for
 
         await self.hub.start()
         agent = await self.runtime.roster.get(agent_id)
         if agent is None:
             raise ValueError("Agent does not exist")
-        if not supports_api_runner(pair_for(self.runtime.config(), agent)[0]):
+        provider = pair_for(self.runtime.config(), agent)[0]
+        if not supports_api_runner(provider) or resolve_runner(provider, surface="society") not in {
+            "brain",
+            "api",
+        }:
             raise PermissionError("This connector requires an API-capable agent runner")
         machine = await self.hub.store.machine(target) if target != "local" else None
         if machine is not None:

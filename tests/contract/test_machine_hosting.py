@@ -66,6 +66,50 @@ async def test_host_cannot_invent_tool_calls():
         )
 
 
+@pytest.mark.asyncio
+async def test_hosted_turn_borrows_the_configured_scoped_provider(monkeypatch, tmp_path):
+    from jarvis.agent_chat import runner_brain
+    from jarvis.core import config
+
+    calls = []
+
+    class Provider:
+        async def aclose(self):
+            pytest.fail("A turn must not close the hub's cached provider")
+
+    provider = Provider()
+
+    def factory(name, model, *, scope):
+        calls.append((name, model, scope))
+        return provider
+
+    manager = SimpleNamespace(_tool_executor=object(), _get_brain=factory)
+
+    async def kit(session, brain):
+        return {}, "Standing instructions"
+
+    monkeypatch.setattr(runner_brain, "brain_manager", lambda: manager)
+    monkeypatch.setattr(runner_brain, "kit_payload", kit)
+    monkeypatch.setattr(
+        runner_brain,
+        "build_override",
+        lambda *a, **kw: SimpleNamespace(model="configured-model", tool_filter=None),
+    )
+    monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda _: None)
+    runtime = SimpleNamespace(
+        config=lambda: SimpleNamespace(brain=SimpleNamespace(reply_language="es"))
+    )
+    session = SimpleNamespace(
+        session_id="society:a", provider="openai", model="", cwd=str(tmp_path)
+    )
+    handle = SimpleNamespace(session=session, stance="ask", history=[], turn_id="t")
+    context = HostedContext(runtime, handle, "m", None, set(), {})
+    await context.prepare()
+    assert calls == [("openai", "configured-model", "machine-hosted:society:a")]
+    assert context.language == "es"
+    await context.close()
+
+
 class RunnerSocket:
     def __init__(self, hub, machine_id, runner):
         self.hub, self.machine_id, self.runner = hub, machine_id, runner

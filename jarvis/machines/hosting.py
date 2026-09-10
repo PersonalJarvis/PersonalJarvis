@@ -127,12 +127,15 @@ class HostedContext:
 
     async def prepare(self) -> None:
         from jarvis.agent_chat.approval_bridge import ChatGrant, approval_ref
-        from jarvis.agent_chat.runner_api import build_brain, supports_api_runner
+        from jarvis.agent_chat.runner_api import supports_api_runner
         from jarvis.agent_chat.runner_brain import brain_manager, build_override, kit_payload
+        from jarvis.agent_chat.service import resolve_runner
 
         handle = self.handle
         session = handle.session
-        if not supports_api_runner(session.provider):
+        if not supports_api_runner(session.provider) or resolve_runner(
+            session.provider, surface="society"
+        ) not in {"brain", "api"}:
             raise PermissionError(
                 "The selected runner needs a host-local CLI login; "
                 "API hosting is required on this connector"
@@ -198,7 +201,18 @@ class HostedContext:
             conversation_language=previous_language,
         )
         self.system += f"\nResponse language for this turn: {self.language}."
-        self.provider = build_brain(session.provider, session.model)
+        from jarvis.core.config import get_jarvis_agent_secret, override_provider_secrets
+
+        provider_factory = getattr(manager, "_get_brain", None)
+        if not callable(provider_factory):
+            raise RuntimeError("Hub provider factory is unavailable")
+        secret = get_jarvis_agent_secret(session.provider)
+        with override_provider_secrets({session.provider: secret} if secret else {}):
+            self.provider = provider_factory(
+                session.provider,
+                self.override.model or None,
+                scope=f"machine-hosted:{session.session_id}",
+            )
         if self.bridge is not None:
             self.bridge.arm(
                 approval_ref(session.session_id),
@@ -363,6 +377,5 @@ class HostedContext:
             from jarvis.agent_chat.approval_bridge import approval_ref
 
             self.bridge.disarm(approval_ref(self.handle.session.session_id))
-        closer = getattr(self.provider, "aclose", None)
-        if callable(closer):
-            await closer()
+        # The hub's scoped factory owns provider clients and configured endpoints.
+        # A completed turn must not close a client that the next turn will reuse.
