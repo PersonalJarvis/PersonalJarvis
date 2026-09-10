@@ -137,10 +137,13 @@ def content_markdown(blocks: list[Any], receipts: dict[str, str]) -> str:
 
 
 class MediaNormalizer:
-    def __init__(self, cwd: Path, outputs_root: Path, scope: str) -> None:
+    def __init__(
+        self, cwd: Path, outputs_root: Path, scope: str, *, allow_local_files: bool = True
+    ) -> None:
         self.cwd = cwd.expanduser().resolve()
         self.outputs_root = outputs_root.resolve()
         self.scope = scope
+        self.allow_local_files = allow_local_files
         self.receipts: dict[str, str] = {}
         self.errors: list[str] = []
         self._resolved: dict[str, str] = {}
@@ -223,6 +226,8 @@ class MediaNormalizer:
             elif ref.startswith("/api/"):
                 url = ref
             else:
+                if not self.allow_local_files:
+                    return raw
                 if ref.startswith("file:"):
                     parsed = urlsplit(ref)
                     if parsed.netloc:
@@ -266,6 +271,11 @@ class MediaNormalizer:
 
             def link(match: re.Match[str]) -> str:
                 raw = match[2].strip()
+                if not self.allow_local_files and not raw.strip("<>").startswith(
+                    ("https://", "http://", "data:", "/api/")
+                ):
+                    label = match[1].lstrip("![").removesuffix("](")
+                    return f"{label} (remote file: {raw})"
                 url = self.reference(raw)
                 return match[0] if url == raw else match[1] + "<" + url + ">" + match[3]
 
@@ -276,14 +286,20 @@ class MediaNormalizer:
                 ref = match[1]
                 candidate = (self.cwd / ref).resolve()
                 if ref.startswith(("http://", "https://", "file:///")) or (
-                    candidate.is_relative_to(self.cwd) and candidate.is_file()
+                    self.allow_local_files
+                    and candidate.is_relative_to(self.cwd)
+                    and candidate.is_file()
                 ):
                     self.reference(ref)
             for match in _RAW.finditer(without_links):
                 self.reference(match[0])
             for match in _BARE.finditer(without_links):
                 candidate = (self.cwd / match[0]).resolve()
-                if candidate.is_relative_to(self.cwd) and candidate.is_file():
+                if (
+                    self.allow_local_files
+                    and candidate.is_relative_to(self.cwd)
+                    and candidate.is_file()
+                ):
                     self.reference(match[0])
             parts[i] = part
         return "".join(parts)
@@ -385,13 +401,18 @@ class MediaNormalizer:
 
 
 def normalize_media_event(
-    event: dict[str, Any], *, cwd: Path, outputs_root: Path, scope: str
+    event: dict[str, Any],
+    *,
+    cwd: Path,
+    outputs_root: Path,
+    scope: str,
+    allow_local_files: bool = True,
 ) -> list[dict[str, Any]]:
     kind = event.get("kind")
     payload = event.get("payload") or {}
     if kind not in {"assistant_text", "tool_result", "user_message"} or payload.get("is_error"):
         return [event]
-    normalizer = MediaNormalizer(cwd, outputs_root, scope)
+    normalizer = MediaNormalizer(cwd, outputs_root, scope, allow_local_files=allow_local_files)
     if kind == "user_message":
         from jarvis.agentic_ide.drops import dereference
 

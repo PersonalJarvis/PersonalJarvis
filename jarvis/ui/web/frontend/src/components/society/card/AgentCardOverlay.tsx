@@ -7,6 +7,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { MachinesButton } from "../MachinesPanel";
 import { useLocaleChunk, useT } from "@/i18n";
 
 import { AgentSwatch } from "../AgentSwatch";
@@ -64,6 +65,7 @@ export function AgentCardOverlay({
                   </div>
                 </div>
                 <Badge variant="outline">{t(`society.state.${agent.state}`)}</Badge>
+                <MachinesButton agentId={agent.agentId} />
                 <Dialog.Close
                   aria-label={t("society.card.close")}
                   className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong"

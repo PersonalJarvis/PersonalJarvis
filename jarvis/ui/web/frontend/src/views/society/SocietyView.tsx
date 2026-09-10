@@ -21,6 +21,7 @@ import type { PlaceId } from "@/components/society/world/islandLayout";
 import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 import { useModelMenuData } from "@/components/society/chat/useModelMenuData";
+import { MachinesButton } from "@/components/society/MachinesPanel";
 import { CanvasActivity } from "@/hooks/useCanvasAwake";
 
 const JarvisAgentsBoard = lazy(() =>
@@ -74,6 +75,7 @@ export function SocietyView() {
             {t("society.strip.active").replace("{0}", String(activeCount))}
           </span>
           <span className="ml-auto">{cityTextReady ? t("society.city.subtitle") : null}</span>
+          <MachinesButton />
         </div>
         <div className="relative min-h-0 flex-1">
           <CanvasActivity.Provider value={!openAgent && !openPlace && !creating}>

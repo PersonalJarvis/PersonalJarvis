@@ -67,6 +67,31 @@ def test_without_runtime_everything_is_empty():
     assert society_tool_filter(session) is None
 
 
+async def test_explicit_machine_target_removes_local_hands_and_cannot_be_overridden(rt, tmp_path):
+    from jarvis.machines.context import target_machine
+
+    agent, _ = await rt.roster.create(name="Remote Writer")
+    rt.cache_agent(agent)
+    session = SimpleNamespace(session_id=agent.session_id, cwd=str(tmp_path), permission_mode="ask")
+    token = target_machine.set("chosen-node")
+    try:
+        own = society_tools(None, None, session)
+        assert "Read" not in own and SHELL_TOOL_NAME not in own
+        selected = society_tool_filter(session)(
+            {**TOOLS, **own, "click": _tool("click"), "Read": _tool("Read")}
+        )
+        assert "click" not in selected and "Read" not in selected
+        assert "remote-machine" in selected
+        result = await own["remote-machine"].execute(
+            {"operation": "shell", "machine_id": "other-node", "command": "echo test"},
+            SimpleNamespace(trace_id="t", approved_by="user"),
+        )
+        assert not result.success
+        assert "different target" in result.error
+    finally:
+        target_machine.reset(token)
+
+
 async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_path: Path):
     await rt.roster.create(
         name="Mailbox",
@@ -80,6 +105,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
     own = society_tools(cfg, None, session)
     assert set(own) == {
         "coding-session",
+        "remote-machine",
         MESSAGE_TOOL_NAME,
         WIKI_NOTE_TOOL_NAME,
         SHELL_TOOL_NAME,
@@ -156,7 +182,17 @@ async def test_briefing_is_deterministic_and_complete(rt: SocietyRuntime):
     assert "## Standing instructions" in a and "external mail only after approval" in a
     assert "Reach for these first:\n- gmail (plugin:gmail): Read and send mail." in a
     assert "Also available" in a
-    assert all(name in a for name in ("browser", "coding-session", "search-web", "wiki-ingest", "wiki-recall"))
+    assert all(
+        name in a
+        for name in (
+            "browser",
+            "coding-session",
+            "remote-machine",
+            "search-web",
+            "wiki-ingest",
+            "wiki-recall",
+        )
+    )
     assert "spawn-worker" not in a
     assert f"Capability epoch: {capability_epoch(catalog)}" in a
     assert "## The Jarvis ecosystem" in a and "society_message_agent" in a

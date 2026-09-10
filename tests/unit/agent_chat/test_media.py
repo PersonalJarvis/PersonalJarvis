@@ -43,6 +43,39 @@ def test_mixed_images_videos_and_audio_are_all_delivered(tmp_path):
     assert not (tmp_path / "archive").exists()  # No arbitrary server-side URL fetch.
 
 
+def test_remote_path_cannot_import_a_same_named_hub_file(tmp_path):
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    (cwd / "screen.png").write_bytes(PNG)
+    result = media.normalize_media_event(
+        event("![screen](screen.png)", "assistant_text"),
+        cwd=cwd,
+        outputs_root=tmp_path / "archive",
+        scope="session",
+        allow_local_files=False,
+    )
+    assert not (tmp_path / "archive").exists()
+    assert len(result) == 1
+    assert "remote file" in result[0]["payload"]["text"]
+    assert "![screen]" not in result[0]["payload"]["text"]
+
+
+def test_remote_inline_image_is_still_archived(tmp_path):
+    result = media.normalize_media_event(
+        event(
+            json.dumps(
+                {"type": "image", "mime": "image/png", "data": base64.b64encode(PNG).decode()}
+            )
+        ),
+        cwd=tmp_path,
+        outputs_root=tmp_path / "archive",
+        scope="session",
+        allow_local_files=False,
+    )
+    assert len(result) == 2
+    assert "/api/outputs/" in result[1]["payload"]["text"]
+
+
 @pytest.mark.parametrize(
     "shape",
     [

@@ -269,6 +269,11 @@ class SocietyRuntime:
 
     async def close(self) -> None:
         await self.coding_supervision.close()
+        from jarvis.machines.service import peek_machine_service
+
+        machines = peek_machine_service(self.data_dir)
+        if machines is not None:
+            await machines.close()
         if self._context_start_task is not None:
             self._context_start_task.cancel()
             await asyncio.gather(self._context_start_task, return_exceptions=True)
@@ -420,12 +425,15 @@ class SocietyRuntime:
         return self._coding_sessions
 
     def catalog(self) -> list[CapabilityRow]:
+        from jarvis.machines.tools import MachineTool
+
         from .browser.tool import BrowserTool
         from .coding_tool import CodingSessionTool
 
         tools = dict(self._get_tools() or {})
         tools[BrowserTool.name] = BrowserTool(self, "", self.browser)
         tools[CodingSessionTool.name] = CodingSessionTool(self, "")
+        tools[MachineTool.name] = MachineTool
         try:
             skills = list(self._get_skills() or [])
         except Exception:  # noqa: BLE001 — a broken skill registry costs the skill rows only
@@ -470,6 +478,9 @@ class SocietyRuntime:
         if svc.is_running(session.session_id):
             raise RuntimeError(f"target busy: {target.name} is running a turn")
         queue = svc.subscribe(session.session_id)
+        from jarvis.machines.context import target_machine
+
+        target_token = target_machine.set(env.payload.get("target_machine_id"))
         try:
             turn_id = await svc.send(
                 session.session_id,
@@ -483,6 +494,8 @@ class SocietyRuntime:
         except Exception:
             svc.unsubscribe(session.session_id, queue)
             raise
+        finally:
+            target_machine.reset(target_token)
         run_id = f"turn:{turn_id}"
         watcher = asyncio.create_task(
             self._watch_turn(svc, session.session_id, queue, turn_id, run_id, target, env)

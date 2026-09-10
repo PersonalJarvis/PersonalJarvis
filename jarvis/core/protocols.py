@@ -188,6 +188,15 @@ class ExecutionContext:
     approved_by: str | None = None  # "auto" | "user" | None (falls tier=safe)
 
 
+class MachineExecution(Protocol):
+    """Remote execution after ToolExecutor authorization; no implicit target fallback."""
+
+    async def execute_on_machine(
+        self, *, agent_id: str, machine_id: str, operation: str,
+        args: dict[str, Any], trace_id: str, timeout_s: float = 120,
+    ) -> dict[str, Any]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ToolResult:
     """Result of a tool execution."""

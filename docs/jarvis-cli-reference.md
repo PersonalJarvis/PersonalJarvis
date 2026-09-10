@@ -139,6 +139,13 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis local-models server test <base_url> --provider` — Probe a host before saving it: version and latency, or why it failed.
 - `jarvis local-models server verify --provider` — Prove the setup works: the server, one real chat answer, one real embedding.
 
+## machines
+
+- `jarvis machines hosts` — Show each agent's execution host and transfer history.
+- `jarvis machines list` — List computers and their available capabilities.
+- `jarvis machines move <agent_id> --host --yes --dry-run` — Queue a verified workspace handoff to a host (or 'local').
+- `jarvis machines transfer <transfer_id>` — Read a queued transfer's durable result.
+
 ## marketplace
 
 - `jarvis marketplace browse` — Show everything the community marketplace offers, and what you already have.
