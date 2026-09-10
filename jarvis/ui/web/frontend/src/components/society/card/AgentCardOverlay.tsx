@@ -47,7 +47,7 @@ export function AgentCardOverlay({
         <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none" />
         <Dialog.Content
           data-testid="agent-card"
-          className="fixed inset-4 z-50 flex flex-col overflow-hidden rounded-lg border border-border bg-card shadow-float focus:outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none lg:inset-10"
+          className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-card focus:outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none"
         >
           {agent ? (
             <>
