@@ -132,6 +132,12 @@ class BrainSupervisorToolGateway:
             )
 
         config_snapshot = dict(request.config_snapshot)
+        ref = str(config_snapshot.get("approval_ref") or "")
+        if ref.startswith("agent-chat:"):
+            from jarvis.core.tool_read_only import chat_is_read_only
+
+            if chat_is_read_only(ref.removeprefix("agent-chat:")):
+                config_snapshot["chat_read_only"] = True
         config_snapshot.update(
             {
                 "tool_origin": request.origin,

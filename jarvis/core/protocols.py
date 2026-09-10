@@ -19,6 +19,17 @@ from .chat_turn import ChatCompletion as ChatCompletion
 from .chat_turn import ChatTurn as ChatTurn
 from .chat_turn import current_chat_turn as current_chat_turn
 
+
+class ChatControlAdapter(Protocol):
+    """One owner of a chat's native goal loop; absence falls back to Jarvis."""
+    name: str
+
+    async def available(self, session: Any) -> bool: ...
+    async def run_goal(self, service: Any, session: Any, objective: str) -> dict[str, Any]: ...
+    async def interrupt(self, session_id: str) -> None: ...
+    async def clear_saved(self, service: Any, session: Any) -> None: ...
+
+
 # ----------------------------------------------------------------------
 # Audio Data-Types
 # ----------------------------------------------------------------------

@@ -50,6 +50,7 @@ from pydantic import BaseModel, Field
 from jarvis.agent_chat import attachments as chat_attachments
 from jarvis.agent_chat import runner_cli, typeahead
 from jarvis.agent_chat.catalog import CLAUDE_CODE_MODELS, offers, rows_for
+from jarvis.agent_chat.control_types import CommandRequest, CommandResult
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import (
@@ -86,6 +87,38 @@ SURFACE_NAMES: frozenset[str] = frozenset({"jarvis", "agent", "local-models", "s
 HIDDEN_SURFACES: frozenset[str] = frozenset({"society"})
 
 router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
+
+
+@router.get("/commands", summary="List chat slash commands and their availability")
+async def list_chat_commands(request: Request, session_id: str | None = None) -> dict[str, Any]:
+    try:
+        return _service(request).controls.catalog(session_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/control", summary="Read this chat's mode and goal state")
+async def get_chat_control(session_id: str, request: Request) -> dict[str, Any]:
+    try:
+        return _service(request).controls.state(session_id).model_dump()
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post(
+    "/sessions/{session_id}/commands",
+    response_model=CommandResult,
+    summary="Run one explicit chat command",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def run_chat_command(
+    session_id: str, body: CommandRequest, request: Request
+) -> CommandResult:
+    try:
+        return await _service(request).controls.execute(session_id, body)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
 
 _WS_PING_S = 20.0
 
@@ -678,6 +711,23 @@ async def patch_session(
         # A provider change folds the old mode onto the new runner's ladder
         # (a no-op on the Jarvis surface, whose ladder is the same for all).
         fields["permission_mode"] = normalize_permission(ladder, current.permission_mode)
+    if any(key in fields for key in ("provider", "model", "permission_mode", "account_id")):
+        if fields.get("permission_mode") == "plan" and current.permission_mode not in (
+            "plan",
+            "read-only",
+        ):
+            control = svc.controls.state(session_id)
+            control.previous_permission = current.permission_mode
+            svc.controls.store.save(control)
+        control = svc.controls.state(session_id)
+        if (
+            control.goal
+            and control.goal.status == "active"
+            or fields.get("permission_mode") == "plan"
+        ):
+            await svc.controls.pause(session_id, "Model or permission settings changed")
+        if "provider" in fields or "account_id" in fields:
+            await svc.controls._clear_saved_native(session_id)
     session = svc.store.update_session(session_id, **fields)
     assert session is not None
     changed = {k: v for k, v in fields.items() if k != "vendor_session"}
@@ -691,9 +741,13 @@ async def patch_session(
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str, request: Request) -> dict[str, Any]:
     svc = _service(request)
-    await svc.cancel(session_id)
+    if svc.store.get_session(session_id) is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    await svc.controls.pause(session_id, "Session deleted")
+    await svc.controls._clear_saved_native(session_id)
     if not svc.store.delete_session(session_id):
         raise HTTPException(status_code=404, detail="session not found")
+    svc.controls.store.delete(session_id)
     return {"ok": True, "session_id": session_id}
 
 
@@ -739,7 +793,11 @@ async def cancel_turn(session_id: str, request: Request) -> dict[str, Any]:
     svc = _service(request)
     if svc.store.get_session(session_id) is None:
         raise HTTPException(status_code=404, detail="session not found")
-    cancelled = await svc.cancel(session_id)
+    cancelled = svc.is_running(session_id)
+    if svc.store.get_session(session_id).surface in ("jarvis", "society"):
+        await svc.controls.pause(session_id, "Stopped by the user")
+    else:
+        cancelled = await svc.cancel(session_id)
     return {"cancelled": cancelled, "session_id": session_id}
 
 

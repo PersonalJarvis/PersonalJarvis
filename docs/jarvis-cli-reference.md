@@ -193,6 +193,8 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 ## sessions
 
+- `jarvis sessions command <session_id> <command> --arguments --request-id --yes --dry-run` — Run an explicit command in a Jarvis or agent chat.
+- `jarvis sessions control <session_id>` — Read a chat's current work mode and persistent goal.
 - `jarvis sessions delete <session_id> --yes --dry-run` — Delete a text conversation thread.
 - `jarvis sessions latest-turn --session-id` — Show the latest persisted user transcript and its complete turn.
 - `jarvis sessions list --days --limit` — List text + voice sessions, newest first.

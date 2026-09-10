@@ -150,6 +150,10 @@ class TurnHandle:
     bus: Any | None = None
     surface: str = "agent"
     stance: str = ""
+    tools_disabled: bool = False
+    output_language: str = ""
+    goal_turn: bool = False
+    control_service: Any = None
 
 
 # ------------------------------------------------------------ history
@@ -307,6 +311,8 @@ async def run_api_turn(handle: TurnHandle, user_text: str) -> None:
     system = system_prompt(
         cwd=cwd, assistant_name=handle.assistant_name, plan=permission_mode == "plan"
     )
+    if handle.output_language:
+        system += "\nRespond in this language: " + handle.output_language
     # Plan mode hands the model only the reading tools: it cannot change a
     # thing, and it is told so in the system prompt.
     tools: tuple[dict[str, Any], ...] = (

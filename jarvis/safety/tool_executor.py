@@ -272,6 +272,15 @@ class ToolExecutor:
         tid = trace_id or uuid4()
         t_start = time.perf_counter()
 
+        if (config_snapshot or {}).get("chat_read_only"):
+            from jarvis.core.tool_read_only import allows_read
+
+            if not allows_read(tool, args):
+                await self._bus.publish(ActionDenied(
+                    trace_id=tid, tool_name=tool.name, reason="Plan mode permits reads only",
+                ))
+                return ToolResult(False, None, "Plan mode permits reads only")
+
         if cancel_token is not None and cancel_token.is_cancelled():
             return ToolResult(
                 success=False,

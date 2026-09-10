@@ -25,6 +25,7 @@ import logging
 import shutil
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -368,6 +369,12 @@ class AgentChatService:
         tool_choices: list[str] | None = None,
         incoming: IncomingMessage | None = None,
         direct_user: bool = True,
+        read_only: bool = False,
+        control_owned: bool = False,
+        control_runner: Any = None,
+        output_language: str = "",
+        native_goal: bool = False,
+        display_text: str | None = None,
     ) -> str:
         """Persist the person's message and start the turn. Returns turn_id.
 
@@ -384,6 +391,31 @@ class AgentChatService:
         session = self.store.get_session(session_id)
         if session is None:
             raise NoSuchSession(session_id)
+        if (
+            session.surface in ("jarvis", "society")
+            and direct_user
+            and incoming is None
+            and not control_owned
+        ):
+            import re
+
+            from .control_types import COMMANDS
+
+            command = re.match(r"^/([a-z]+)(?:\s|$)", text.strip())
+            if command and command[1] in {row["name"] for row in COMMANDS}:
+                raise ValueError("Use the chat command endpoint for slash commands")
+            if hasattr(self, "_controls"):
+                await self._controls.user_message(session_id, text)
+        if read_only:
+            session = replace(session, permission_mode="plan")
+        if session.permission_mode in ("plan", "read-only") and session.surface in (
+            "jarvis",
+            "society",
+        ):
+            from .control import supports_restricted_turn
+
+            if not supports_restricted_turn(session):
+                raise ValueError("This runner cannot enforce read-only mode; choose an API model")
         if incoming is not None:
             receipt = await self.receive_message(session_id, incoming)
             if receipt["status"] == "delivered":
@@ -419,6 +451,9 @@ class AgentChatService:
         cancel = asyncio.Event()
         run = _Running(turn_id, cancel)
         self._running[session_id] = run
+        from jarvis.core.tool_read_only import set_chat_read_only
+
+        set_chat_read_only(session_id, session.permission_mode in ("plan", "read-only"))
 
         history_start = kit.history_start(session) if kit.history_start is not None else 0
         history = self.store.list_events(session_id, after_seq=history_start)
@@ -435,6 +470,7 @@ class AgentChatService:
                         # storing only the sentence would lose the picture on the
                         # NEXT turn (runner_api.messages_from_events).
                         "text": prompt,
+                        **({"origin": "control"} if control_owned and not direct_user else {}),
                         **(
                             {"tool_choices": [row.model_dump(mode="json") for row in selected]}
                             if selected
@@ -442,7 +478,7 @@ class AgentChatService:
                         ),
                         # What the person typed, when it differs from the prompt.
                         # Absent on an ordinary message, so nothing changes there.
-                        **({"typed": text} if attached else {}),
+                        **({"typed": display_text if display_text is not None else text} if attached or display_text is not None else {}),
                         **(
                             {
                                 "attachments": [
@@ -497,15 +533,22 @@ class AgentChatService:
             bus=bus,
             surface=session.surface,
             stance=session.permission_mode if kit.uses_stance else "",
+            output_language=output_language,
+            goal_turn=native_goal,
+            control_service=self,
         )
 
         async def _body() -> None:
             origin = ChatTurn(
-                session_id, turn_id, text, direct_user and incoming is None, str(handle.trace_id)
+                session_id, turn_id, display_text if display_text is not None else text, direct_user and incoming is None, str(handle.trace_id)
             )
             origin_token = current_chat_turn.set(origin)
             try:
-                if runner == "brain":
+                if control_runner is not None:
+                    vendor = await control_runner(handle, text)
+                    if vendor:
+                        self.store.update_session(session_id, vendor_session=vendor)
+                elif runner == "brain":
                     async with self._brain_lock:
                         await run_brain_turn(
                             handle,
@@ -525,7 +568,7 @@ class AgentChatService:
                     as_jarvis = kit.brain_runner and kit.cli_seats
                     vendor = await run_cli_turn(
                         handle,
-                        text,
+                        prompt,
                         runner,
                         identity=as_jarvis,
                         bridge=self._bridge_for(bus) if as_jarvis else None,
@@ -534,7 +577,7 @@ class AgentChatService:
                     if vendor and vendor != session.vendor_session:
                         self.store.update_session(session_id, vendor_session=vendor)
                 elif runner == "api" and supports_api_runner(session.provider):
-                    await run_api_turn(handle, text)
+                    await run_api_turn(handle, prompt)
                 else:
                     await self._emit(
                         session_id,
@@ -584,6 +627,13 @@ class AgentChatService:
                 )
             finally:
                 self._running.pop(session_id, None)
+                stored_session = self.store.get_session(session_id)
+                set_chat_read_only(
+                    session_id,
+                    bool(
+                        stored_session and stored_session.permission_mode in ("plan", "read-only")
+                    ),
+                )
                 current_chat_turn.reset(origin_token)
                 if kit.turn_completed is not None:
                     try:
@@ -601,6 +651,10 @@ class AgentChatService:
                     self._approval_session.pop(aid, None)
                     if fut is not None and not fut.done():
                         fut.set_result("cancel")
+                if hasattr(self, "_controls"):
+                    await self._controls.turn_completed(
+                        session_id, turn_id, origin.user_text, origin.direct_user, read_only
+                    )
 
         run.task = asyncio.create_task(_body(), name=f"agent-chat-{turn_id[:8]}")
         return turn_id
@@ -618,13 +672,32 @@ class AgentChatService:
             await asyncio.wait_for(asyncio.shield(run.task), timeout=15.0)
         except TimeoutError:
             run.task.cancel()
+            await asyncio.gather(run.task, return_exceptions=True)
+        except asyncio.CancelledError:
+            if asyncio.current_task().cancelling():
+                raise
         except Exception as exc:  # noqa: BLE001 — the task reported its own end already
             log.debug("agent chat cancel: task ended with %s", exc)
         return True
 
     async def cancel_all(self) -> None:
+        if hasattr(self, "_controls"):
+            await self._controls.close()
         for sid in list(self._running):
             await self.cancel(sid)
+
+    @property
+    def controls(self) -> Any:
+        if not hasattr(self, "_controls"):
+            from .control import ChatControls
+
+            self._controls = ChatControls(self)
+        return self._controls
+
+    async def wait_turn(self, session_id: str) -> None:
+        run = self._running.get(session_id)
+        if run is not None and run.task is not None:
+            await asyncio.shield(run.task)
 
     # ------------------------------------------------------------ approvals
 

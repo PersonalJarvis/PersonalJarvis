@@ -102,8 +102,14 @@ def plan_filter(tools: dict[str, Tool]) -> dict[str, Tool]:
     tier: a mixed tool whose default is a read stays, one whose default is
     an action goes.
     """
+    from jarvis.core.tool_read_only import allows_read
+
     return {
-        name: tool for name, tool in tools.items() if getattr(tool, "risk_tier", None) == "safe"
+        name: tool
+        for name, tool in tools.items()
+        if allows_read(tool)
+        or name not in FOLDER_RISK_TIERS
+        and callable(getattr(tool, "describe_args", None))
     }
 
 

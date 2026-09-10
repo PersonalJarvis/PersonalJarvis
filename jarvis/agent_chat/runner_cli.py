@@ -2350,11 +2350,17 @@ async def run_cli_turn(
     t0 = time.perf_counter()
     session = handle.session
     resume = session.vendor_session
+    if getattr(handle, "output_language", "") and not user_text.startswith("/goal"):
+        user_text += "\nRespond in this language: " + handle.output_language
     ident: jarvis_harness.Identity | None = None
     ref = approval_ref(session.session_id)
     # A society agent's seat: its own briefing is the identity (not Jarvis'
     # layers), and its pinned subscription account is the seat's login.
-    prompt_override = await _surface_identity(session)
+    prompt_override = await _surface_identity(session) if identity else None
+    if identity and getattr(handle, "output_language", ""):
+        prompt_override = (
+            (prompt_override or "") + "\nRespond in this language: " + handle.output_language
+        )
     account_token = ACCOUNT_OVERRIDE.set(getattr(session, "account_id", "") or "")
     if identity:
         ident = await jarvis_harness.build_identity(
@@ -2461,12 +2467,31 @@ async def _run_cli_once(
             resume=resume,
             identity=identity,
         )
+        if getattr(handle, "tools_disabled", False):
+            from .native_control import disable_cli_tools
+
+            disable_cli_tools(plan, runner)
     except CliUnavailable as exc:
         return _Outcome("error", str(exc), {}, None, None)
 
     vendor_session = plan.vendor_session
+    if (
+        getattr(handle, "goal_turn", False)
+        and vendor_session
+        and handle.control_service is not None
+    ):
+        handle.control_service.store.update_session(
+            session.session_id, vendor_session=vendor_session
+        )
     log.info("agent chat %s: %s argv=%s", handle.turn_id, runner, plan.argv[:6])
     started_at = time.time()
+    tree = None
+    if getattr(handle, "goal_turn", False) or (
+        session.surface == "society" and session.permission_mode == "plan"
+    ):
+        from jarvis.core.process_tree import make_process_tree
+
+        tree = make_process_tree("chat-controlled-cli")
     try:
         proc = await asyncio.create_subprocess_exec(
             *plan.argv,
@@ -2478,9 +2503,14 @@ async def _run_cli_once(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             creationflags=NO_WINDOW_CREATIONFLAGS,
+            start_new_session=tree is not None and os.name != "nt",
             limit=_READLINE_LIMIT,
         )
+        if tree is not None:
+            tree.assign(proc.pid)
     except (OSError, ValueError) as exc:
+        if tree is not None:
+            tree.close()
         return _Outcome("error", f"Could not start {runner}: {exc}", {}, None, None)
 
     make_state, translate = _SHAPES[plan.shape]
@@ -2647,7 +2677,10 @@ async def _run_cli_once(
     feeder = asyncio.create_task(_feed_stdin())
     watcher = asyncio.create_task(_watch_cancel())
     try:
-        await asyncio.wait_for(asyncio.gather(pump, drain, feeder), timeout=_TURN_TIMEOUT_S)
+        if getattr(handle, "goal_turn", False):
+            await asyncio.gather(pump, drain, feeder)
+        else:
+            await asyncio.wait_for(asyncio.gather(pump, drain, feeder), timeout=_TURN_TIMEOUT_S)
         await proc.wait()
     except TimeoutError:
         _kill(proc)
@@ -2661,6 +2694,15 @@ async def _run_cli_once(
         for task in (pump, drain, feeder):
             if not task.done():
                 task.cancel()
+        await asyncio.gather(watcher, pump, drain, feeder, return_exceptions=True)
+        if tree is not None:
+            tree.close()
+        if proc.returncode is None:
+            _kill(proc)
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except TimeoutError:
+                log.warning("Agent CLI did not reap after cancellation")
 
     if handle.cancel.is_set():
         status = "cancelled"

@@ -442,3 +442,43 @@ status parity. Realtime confirmation/echo cases use fakes with no microphone
 or provider account. Native macOS execution and a fresh single-key live-provider
 run remain release validation requirements; running this portable contract on
 one operating system does not establish those results.
+
+## Chat slash commands and persistent goals (2026-09-10)
+
+The Jarvis text chat and society cards share a command catalog, typed control
+state, SQLite receipts and an independent goal supervisor. Windows, macOS and
+Linux use the same implementation. Opening a menu performs no model call.
+`/clear` and `/history` change browser presentation only; neither clears a
+provider conversation, goal, archive or pending task.
+
+| Capability | Windows | macOS | Linux / headless |
+|---|---|---|---|
+| Command API, state, receipts and search | Supported | Supported | Supported |
+| API-backed goal execution and separate verification | Supported | Supported | Supported |
+| Native Codex App Server goals | Runtime schema probe | Same probe | Same probe |
+| Native Claude Code goals | Version and command probe | Same probe | Same probe |
+| Plan-mode tool execution gate | Supported | Supported | Supported |
+| Native CLI availability and permissions | Installed runner contract | Same contract | Same contract |
+
+Only one goal engine owns a session. Native adapters reuse the selected account
+and vendor conversation, never the ephemeral voice transport. Goal recovery
+pauses work after an app restart, and clears residual native goal state before
+an ordinary user message can resume that vendor conversation. A closed browser
+does not stop backend work. `/stop` cancels work without rolling back effects.
+
+Modes based only on a prompt are not advertised as an enforced read-only mode.
+The current Kimi and DSH print runners therefore cannot run plan, review or
+goal verification through this interface; their API-backed alternatives use the
+portable implementation. Antigravity, Grok, OpenCode and Cursor use their native
+plan flags for independent verification; Codex and Claude verifiers disable tools.
+
+Contracts in `test_chat_controls.py` and `test_native_chat_goals.py` cover API and
+SQL/TypeScript parity, evidence, idempotency, read-only execution, native terminal
+states and final-output ordering. The OS cases emulate capability selection;
+they do not claim physical macOS/Linux execution. Live native transport and
+fresh-install checks are recorded separately from these portable contracts.
+
+CLI access: `jarvis sessions control SESSION` reads state; `jarvis sessions
+command SESSION goal --arguments "..." --request-id ID --yes` submits a durable
+command. Reuse the request id after an uncertain response. The dynamic
+`jarvis api agent-chat` group exposes the same mounted endpoints.

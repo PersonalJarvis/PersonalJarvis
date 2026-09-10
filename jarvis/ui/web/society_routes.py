@@ -545,6 +545,10 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
         "effort": body.effort.strip(),
         "account_id": body.account_id.strip(),
     }
+    chat = rt._get_chat()
+    if chat is not None and hasattr(chat, "controls") and chat.store.get_session(agent.session_id):
+        await chat.controls.pause(agent.session_id, "Model settings changed")
+        await chat.controls._clear_saved_native(agent.session_id)
     try:
         updated = await rt.roster.update(agent.agent_id, fields)
     except RosterError as exc:

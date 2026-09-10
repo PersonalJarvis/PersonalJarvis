@@ -178,6 +178,7 @@ def build_override(
             "approval_ref": ref,
             "approval_timeout_s": APPROVAL_TIMEOUT_S,
             "tool_origin": kit.tool_origin,
+            **({"chat_read_only": True} if stance == PLAN_STANCE else {}),
             "cwd": str(cwd),
         },
         max_turns=kit.max_turns or MAX_TURNS,
@@ -563,6 +564,8 @@ async def _generate(
         "text_consumer": feed,
         "turn_override": override,
     }
+    if getattr(handle, "output_language", ""):
+        kwargs["force_output_language"] = handle.output_language
     secret = _agent_secret(get_jarvis_agent_secret, session.provider)
     overrides = {session.provider: secret} if secret else {}
     # The task inherits the credential override through its context copy, so

@@ -3,13 +3,45 @@
 The unified history merges text threads and voice sessions; most commands take a
 `kind` (text | voice) plus the id, mirroring /api/chats/{kind}/{id}.
 """
+
 from __future__ import annotations
+
+from urllib.parse import quote
+from uuid import uuid4
 
 import typer
 
 from jarvis.cli_ctl import invoke, options
 
 app = typer.Typer(no_args_is_help=True, help="Conversation history: list, show, manage.")
+
+
+@app.command("control")
+def control_state(session_id: str = typer.Argument(...)) -> None:
+    """Read a chat's current work mode and persistent goal."""
+    invoke.run("GET", f"/api/agent-chat/sessions/{quote(session_id, safe='')}/control")
+
+
+@app.command("command")
+def chat_command(
+    session_id: str = typer.Argument(...),
+    command: str = typer.Argument(..., help="Slash command name without the slash."),
+    arguments: str = typer.Option("", "--arguments"),
+    request_id: str | None = typer.Option(
+        None, "--request-id", help="Reuse this id after an uncertain network result."
+    ),
+    yes: bool = options.yes_opt(),
+    dry_run: bool = options.dry_opt(),
+) -> None:
+    """Run an explicit command in a Jarvis or agent chat."""
+    invoke.run(
+        "POST",
+        f"/api/agent-chat/sessions/{quote(session_id, safe='')}/commands",
+        body={"command": command, "arguments": arguments, "request_id": request_id or uuid4().hex},
+        assume_yes=yes,
+        dry_run=dry_run,
+        dangerous=True,
+    )
 
 
 @app.command("list")
@@ -51,8 +83,11 @@ def delete(
 ) -> None:
     """Delete a text conversation thread."""
     invoke.run(
-        "DELETE", f"/api/chats/text/{session_id}",
-        assume_yes=yes, dry_run=dry_run, dangerous=True,
+        "DELETE",
+        f"/api/chats/text/{session_id}",
+        assume_yes=yes,
+        dry_run=dry_run,
+        dangerous=True,
     )
 
 
@@ -65,8 +100,11 @@ def resume(
 ) -> None:
     """Seed the brain from a past conversation to continue it in text."""
     invoke.run(
-        "POST", f"/api/chats/{kind}/{session_id}/resume",
-        assume_yes=yes, dry_run=dry_run, dangerous=False,
+        "POST",
+        f"/api/chats/{kind}/{session_id}/resume",
+        assume_yes=yes,
+        dry_run=dry_run,
+        dangerous=False,
     )
 
 
@@ -79,6 +117,9 @@ def speak(
 ) -> None:
     """Start a voice session seeded from a past conversation (503 on headless)."""
     invoke.run(
-        "POST", f"/api/chats/{kind}/{session_id}/speak",
-        assume_yes=yes, dry_run=dry_run, dangerous=False,
+        "POST",
+        f"/api/chats/{kind}/{session_id}/speak",
+        assume_yes=yes,
+        dry_run=dry_run,
+        dangerous=False,
     )
