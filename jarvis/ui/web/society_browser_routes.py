@@ -115,7 +115,8 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
 
     async def send(value: dict) -> None:
         async with write_lock:
-            await asyncio.wait_for(websocket.send_json(value), timeout=10)
+            async with asyncio.timeout(10):
+                await websocket.send_json(value)
 
     try:
         session, queue = await live.subscribe(agent)
@@ -129,33 +130,36 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
                     return
 
         sender = asyncio.create_task(frames())
+        commands: asyncio.Queue[tuple[str, dict]] = asyncio.Queue(maxsize=256)
+
+        async def controls() -> None:
+            while True:
+                op, args = await commands.get()
+                try:
+                    result = await live.control(session, owner, op, args)
+                    await send({"kind": "control", "ok": True, **result})
+                except (ValueError, RuntimeError) as exc:
+                    await send({"kind": "control", "ok": False, "error": str(exc)[:500]})
+
+        pending = asyncio.create_task(controls())
         receive = asyncio.create_task(websocket.receive_json())
         while True:
-            watched = {receive, sender}
-            if pending is not None:
-                watched.add(pending)
-            done, _ = await asyncio.wait(watched, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(
+                {receive, sender, pending}, return_when=asyncio.FIRST_COMPLETED
+            )
             if sender in done:
                 receive.cancel()
                 await asyncio.gather(receive, return_exceptions=True)
                 await sender
                 break
-            if pending is not None and pending in done:
-                try:
-                    result = pending.result()
-                    await send({"kind": "control", "ok": True, **result})
-                except (ValueError, RuntimeError) as exc:
-                    await send({"kind": "control", "ok": False, "error": str(exc)[:500]})
-                pending = None
-            if receive not in done:
-                continue
+            if pending in done:
+                await pending
+                break
             value = receive.result()  # any receive error terminates this socket
             receive = asyncio.create_task(websocket.receive_json())
             try:
                 op, args = validate_control(value)
-                if pending is not None:
-                    raise ValueError("A browser control operation is still pending")
-                pending = asyncio.create_task(live.control(session, owner, op, args))
+                commands.put_nowait((op, args))
             except (ValueError, RuntimeError) as exc:
                 await send({"kind": "control", "ok": False, "error": str(exc)[:500]})
     except Exception:

@@ -63,13 +63,16 @@ def test_managed_python_uses_windows_emulation_only_where_needed():
     assert managed_python_request("darwin", "arm64") == "3.12"
 
 
-async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch):
+@pytest.mark.parametrize("burst", [False, True])
+async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch, burst):
     import asyncio
     from starlette.websockets import WebSocketDisconnect
     from jarvis.ui.web import society_browser_routes as routes
     started = asyncio.Event()
     cancelled = asyncio.Event()
     released = asyncio.Event()
+    completed = asyncio.Event()
+    seen = []
 
     class Live:
         async def subscribe(self, agent):
@@ -77,6 +80,12 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch):
 
         async def control(self, *args):
             started.set()
+            if burst:
+                await asyncio.sleep(.01)
+                seen.append(args[-1]["text"])
+                if len(seen) == 20:
+                    completed.set()
+                return {}
             try:
                 await asyncio.Event().wait()
             finally:
@@ -97,6 +106,11 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch):
 
         async def receive_json(self):
             self.reads += 1
+            if burst:
+                if self.reads <= 20:
+                    return {"op": "text", "args": {"text": str(self.reads)}}
+                await completed.wait()
+                raise WebSocketDisconnect()
             if self.reads == 1:
                 return {"op": "takeover", "args": {"enabled": True}}
             await started.wait()
@@ -114,7 +128,10 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch):
     monkeypatch.setattr(routes, "_runtime", runtime)
     monkeypatch.setattr(routes, "credentials_valid", lambda _: True)
     await asyncio.wait_for(routes.agent_browser_live(Socket(), "test"), 2)
-    assert cancelled.is_set()
+    if burst:
+        assert seen == [str(n) for n in range(1, 21)]
+    else:
+        assert cancelled.is_set()
     assert released.is_set()
 
 
