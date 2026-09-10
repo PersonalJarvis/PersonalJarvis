@@ -184,9 +184,19 @@ async function json<T>(res: Response, what: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function fetchAgentChatCatalog(surface?: AgentChatSurface): Promise<AgentChatCatalog> {
+// A chat and its picker mount together. Share their in-flight reads without
+// caching completed requests: explicit refreshes must still reach the server.
+const catalogRequests = new Map<string, Promise<AgentChatCatalog>>();
+
+export function fetchAgentChatCatalog(surface?: AgentChatSurface): Promise<AgentChatCatalog> {
   const query = surface ? `?surface=${encodeURIComponent(surface)}` : "";
-  return json(await fetch(`/api/agent-chat/catalog${query}`), "catalog-failed");
+  const pending = catalogRequests.get(query);
+  if (pending) return pending;
+  const request = fetch(`/api/agent-chat/catalog${query}`)
+    .then((response) => json<AgentChatCatalog>(response, "catalog-failed"))
+    .finally(() => catalogRequests.delete(query));
+  catalogRequests.set(query, request);
+  return request;
 }
 
 export interface TypeaheadRow {
@@ -243,12 +253,15 @@ export async function fetchProviderHealth(
   return Array.isArray(data.providers) ? data.providers : [];
 }
 
-export async function fetchAgentConnections(): Promise<AgentConnectionRow[]> {
-  const data = await json<{ mapping?: AgentConnectionRow[] }>(
-    await fetch("/api/jarvis-agent/status"),
-    "status-failed",
-  );
-  return Array.isArray(data.mapping) ? data.mapping : [];
+let connectionRequest: Promise<AgentConnectionRow[]> | null = null;
+
+export function fetchAgentConnections(): Promise<AgentConnectionRow[]> {
+  if (connectionRequest) return connectionRequest;
+  connectionRequest = fetch("/api/jarvis-agent/status")
+    .then((response) => json<{ mapping?: AgentConnectionRow[] }>(response, "status-failed"))
+    .then((data) => Array.isArray(data.mapping) ? data.mapping : [])
+    .finally(() => { connectionRequest = null; });
+  return connectionRequest;
 }
 
 export interface LiveModel {
