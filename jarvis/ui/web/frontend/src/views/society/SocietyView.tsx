@@ -12,7 +12,7 @@
  */
 import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 
-import { useT } from "@/i18n";
+import { useLocaleChunk, useT } from "@/i18n";
 import { AgentCardOverlay } from "@/components/society/card/AgentCardOverlay";
 import { BuildingCardOverlay } from "@/components/society/card/BuildingCardOverlay";
 import { isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
@@ -30,6 +30,7 @@ const JarvisAgentsBoard = lazy(() =>
 export function SocietyView() {
   useModelMenuData();
   const t = useT();
+  const cityTextReady = useLocaleChunk("society");
   const roster = useSocietyRoster();
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data]);
   const sample = roster.data?.sample ?? true;
@@ -72,7 +73,7 @@ export function SocietyView() {
           <span aria-live="polite">
             {t("society.strip.active").replace("{0}", String(activeCount))}
           </span>
-          <span className="ml-auto">{t("society.strip.world_pending")}</span>
+          <span className="ml-auto">{cityTextReady ? t("society.city.subtitle") : null}</span>
         </div>
         <div className="relative min-h-0 flex-1">
           <CanvasActivity.Provider value={!openAgent && !openPlace && !creating}>

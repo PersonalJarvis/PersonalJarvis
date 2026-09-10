@@ -1,0 +1,8 @@
+{
+  "legacy_expected": 95,
+  "study_expected": 13,
+  "rendered": 108,
+  "missing": [],
+  "source": "coverage.json",
+  "art_approval": "pending visual runtime review"
+}

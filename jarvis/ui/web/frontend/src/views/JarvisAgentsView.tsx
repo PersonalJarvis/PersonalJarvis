@@ -55,7 +55,7 @@ const RUN_PARAM = "run";
  * load for someone who only ever reads the ledger.
  */
 type AgentsMode = "world" | "ledger" | "city";
-const MODE_KEY = "jarvis.agents.mode";
+const MODE_KEY = "jarvis.agents.mode.v2";
 
 const WorldStage = lazy(() =>
   import("@/components/society/world/WorldStage").then((m) => ({ default: m.WorldStage })),
@@ -65,17 +65,18 @@ const CityStage = lazy(() =>
 );
 
 function readMode(): AgentsMode {
+  if (!detectWebgl()) return "ledger";
   try {
     const raw = localStorage.getItem(MODE_KEY);
-    if (raw === "world" || raw === "ledger") return raw;
+    if (raw === "city" || raw === "world" || raw === "ledger") return raw;
+    if (localStorage.getItem("jarvis.agents.mode") === "ledger") return "ledger";
   } catch {
     /* private mode: fall through to the default */
   }
-  return detectWebgl() ? "world" : "ledger";
+  return "city";
 }
 
 function writeMode(mode: AgentsMode): void {
-  if (mode === "city") return; // Reference preview never replaces a saved production preference.
   try {
     localStorage.setItem(MODE_KEY, mode);
   } catch {
@@ -94,9 +95,9 @@ function ModeSwitch({ mode, onChange }: { mode: AgentsMode; onChange: (m: Agents
         onChange={onChange}
         label={t("society.world.mode_label")}
         options={[
-          { id: "world", label: t("society.world.mode_world") },
-          { id: "ledger", label: t("society.world.mode_ledger") },
           { id: "city", label: t("society.city.mode") },
+          { id: "ledger", label: t("society.world.mode_ledger") },
+          { id: "world", label: t("society.city.legacy_mode") },
         ]}
       />
     </div>

@@ -1,6 +1,14 @@
-asset,source,export,bytes,meshes,animations,status
-building,source/city-reference.blend,exports/building.glb,461480,60,0,reference preview; production rollout unapproved
-citizen,source/city-reference.blend,exports/citizen.glb,94236,12,6,reference preview; production rollout unapproved
-station,source/city-reference.blend,exports/station.glb,163700,21,0,reference preview; production rollout unapproved
-train,source/city-reference.blend,exports/train.glb,93292,12,0,reference preview; production rollout unapproved
-tree,source/city-reference.blend,exports/tree.glb,43236,5,0,reference preview; production rollout unapproved
+asset,source,export,bytes,meshes,triangles,status
+station,source/city-reference.blend,exports/station.glb,681644,9,14536,authored study; individual Blender render available
+building,source/city-reference.blend,exports/building.glb,5442320,14,81624,authored study; individual Blender render available
+train,source/city-reference.blend,exports/train.glb,1041324,14,14644,authored study; individual Blender render available
+tree,source/city-reference.blend,exports/tree.glb,102116,3,1260,authored study; individual Blender render available
+citizen,source/city-reference.blend,exports/citizen.glb,125120,16,1632,authored study; individual Blender render available
+central,source/city-reference.blend,exports/central.glb,1453484,12,27168,authored study; individual Blender render available
+knowledge,source/city-reference.blend,exports/knowledge.glb,1575300,12,29956,authored study; individual Blender render available
+fabrication,source/city-reference.blend,exports/fabrication.glb,1562336,12,30112,authored study; individual Blender render available
+communications,source/city-reference.blend,exports/communications.glb,1651060,12,32720,authored study; individual Blender render available
+skyline-office,source/city-reference.blend,exports/skyline-office.glb,23352,3,288,authored study; individual Blender render available
+skyline-tower,source/city-reference.blend,exports/skyline-tower.glb,31752,3,408,authored study; individual Blender render available
+skyline-residence,source/city-reference.blend,exports/skyline-residence.glb,47752,3,636,authored study; individual Blender render available
+streetlamp,source/city-reference.blend,exports/streetlamp.glb,48108,3,636,authored study; individual Blender render available

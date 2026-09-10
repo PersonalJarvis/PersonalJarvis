@@ -1,0 +1,15 @@
+{
+  "after": {
+    "position": "-301.23284672154114,12.08,112.67460753107534",
+    "stage": "riding",
+    "time": 32.50000000000019
+  },
+  "before": {
+    "position": "-301.23284672154114,12.08,112.67460753107534",
+    "time": 30.20000000000016
+  },
+  "cityReturned": true,
+  "clockPreserved": true,
+  "sameDocument": true,
+  "terminalOpened": true
+}
