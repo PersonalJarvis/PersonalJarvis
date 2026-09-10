@@ -48,7 +48,7 @@ jobs:
         run: python -m pytest tests/contract/test_browser_live.py tests/contract/test_browser_contract.py tests/contract/test_browser_desktop_mcp.py tests/unit/society/test_browser.py tests/unit/society/test_browser_install.py tests/unit/society/test_approvals.py tests/unit/agent_chat/test_jarvis_identity.py tests/unit/agent_chat/test_agent_chat_ladders.py tests/unit/brain/test_tool_gateway.py -q --tb=short --junitxml=browser-results.xml
       - name: Preserve browser test evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
         with:
           name: browser-results-${{ matrix.os }}
           path: browser-results.xml
