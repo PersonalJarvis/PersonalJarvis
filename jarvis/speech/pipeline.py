@@ -3004,6 +3004,10 @@ class SpeechPipeline:
         # mid-utterance. Preambles are dropped, not parked — they are stale by
         # the time the user finishes. See ``_on_announcement`` + ``_set_turn_state``.
         self._deferred_announcements: list[AnnouncementRequested] = []
+        self._agent_reply_inflight: AnnouncementRequested | None = None
+        self._agent_reply_inflight_text = ""
+        self._agent_reply_retries: list[AnnouncementRequested] = []
+        self._agent_reply_retry_task: asyncio.Task[None] | None = None
         # Optional pre-rendered acknowledgement PCM, populated during warmup.
         self._ack_pcm: bytes = b""
         # Pre-rendered Task-Ack-Phrasen ("Sofort.", "Right away." …) als PCM-Cache.
@@ -3805,6 +3809,11 @@ class SpeechPipeline:
         ):
             self._last_answer_floor_monotonic = time.monotonic()
         self._turn_state = new_state
+        if new_state is TurnTakingState.IDLE:
+            retry = getattr(self, "_agent_reply_retry_task", None)
+            if retry is not None and retry is not asyncio.current_task():
+                retry.cancel()
+                await asyncio.gather(retry, return_exceptions=True)
         await self._transition(self._supervisor_state_for_turn(new_state))
         # Turn-boundary: the floor has cleared → flush any announcements that
         # were deferred while the user was speaking (AD-OE6 zero-silent-drop).
@@ -3818,6 +3827,9 @@ class SpeechPipeline:
             pending = self._deferred_announcements
             self._deferred_announcements = []
             for event in pending:
+                if new_state is TurnTakingState.IDLE and self._is_agent_reply(event):
+                    self._defer_agent_reply(event)
+                    continue
                 asyncio.create_task(
                     self._on_announcement(event), name="deferred-announcement"
                 )
@@ -4805,20 +4817,96 @@ class SpeechPipeline:
                 log.warning("cron skill announcement failed: %s", exc)
         log.info("Cron skill '%s' executed via brain turn", skill.name)
 
+    @staticmethod
+    def _is_agent_reply(event: AnnouncementRequested) -> bool:
+        return event.source_layer == "society.lead" and event.kind in _READBACK_KINDS
+
+    def _agent_reply_needs_session(self) -> bool:
+        hangup = getattr(self, "_hangup_event", None)
+        return bool(
+            getattr(self, "_muted", False)
+            or (hangup is not None and hangup.is_set())
+            or getattr(self, "_turn_state", TurnTakingState.IDLE) is TurnTakingState.IDLE
+            or getattr(self, "_voice_engine_transitioning", False)
+        )
+
+    def _defer_agent_reply(self, event: AnnouncementRequested) -> None:
+        pending = getattr(self, "_deferred_announcements", None)
+        if pending is None:
+            pending = self._deferred_announcements = []
+        if event not in pending:
+            pending.append(event)
+
+    def _settle_agent_reply(self, *, completed: bool) -> None:
+        """Only a drained speaker queue confirms a realtime agent readback."""
+        event = getattr(self, "_agent_reply_inflight", None)
+        self._agent_reply_inflight = None
+        self._agent_reply_inflight_text = ""
+        if event is not None and not completed:
+            retries = getattr(self, "_agent_reply_retries", None)
+            if retries is None:
+                retries = self._agent_reply_retries = []
+            if event not in retries:
+                retries.append(event)
+            log.info("Agent reply interrupted; retained for the next voice session")
+
+    def _restore_agent_replies(self) -> None:
+        """Rejoin the existing floor-aware queue when a new call starts."""
+        for event in getattr(self, "_agent_reply_retries", []):
+            self._defer_agent_reply(event)
+        self._agent_reply_retries = []
+        pending = getattr(self, "_deferred_announcements", None)
+        if pending:
+            pending.sort(key=lambda event: event.timestamp_ns)
+
+    def _retry_agent_reply_after_boundary(self) -> None:
+        """Let the live wrapper finish resetting after the speaker drains."""
+        previous = getattr(self, "_agent_reply_retry_task", None)
+        if previous is not None and not previous.done():
+            return
+        if self._agent_reply_needs_session():
+            return
+        self._agent_reply_retry_task = asyncio.create_task(
+            self._retry_pending_agent_replies(), name="agent-reply-boundary"
+        )
+
+    async def _retry_pending_agent_replies(self) -> None:
+        while True:
+            # No provider request is made while its wrapper reports busy.
+            # This closes the gap between the desktop's LISTENING callback
+            # and the provider wrapper clearing its completed turn state.
+            await asyncio.sleep(0.1)
+            if (
+                self._agent_reply_needs_session()
+                or self._turn_state is not TurnTakingState.LISTENING
+                or getattr(self, "_agent_reply_inflight", None) is not None
+            ):
+                return
+            event = next((event for event in self._deferred_announcements
+                          if self._is_agent_reply(event)), None)
+            if event is None:
+                return
+            self._deferred_announcements.remove(event)
+            try:
+                await self._on_announcement(event)
+            except asyncio.CancelledError:
+                self._defer_agent_reply(event)
+                raise
+            except Exception:
+                self._defer_agent_reply(event)
+                log.warning("Agent reply retry failed; retained for a later turn", exc_info=True)
+                return
+
     async def _on_announcement(self, event: AnnouncementRequested) -> None:
-        """TTS-Bypass-Handler (CL-13): spricht sofort, ohne Brain-Pfad.
+        """Deliver a readback through the live voice or the classic TTS path.
 
-        Bei ``priority="interrupt"`` wird laufendes Audio-Playback via
-        ``AudioPlayer.stop()`` abgebrochen (Barge-in-aequivalent).
-
-        Nutzt ``synthesize()`` + ``player.play_chunks()`` — denselben Pfad wie
-        die normale Antwort-Ausgabe. Frueher stand hier ``self._tts.speak(...)``;
-        das war ein Phantom-Call, da ``GeminiFlashTTS`` nur ``synthesize()``
-        exponiert. Der stumme ``AttributeError`` machte Sub-Agent-Announcements
-        unhoerbar (Silent-Failure, entdeckt 2026-04-23).
+        Agent replies wait for an open call. Interrupt-priority announcements
+        retain the existing player-stop behavior. Classic playback uses
+        synthesize() and play_chunks(), the same path as ordinary answers.
         """
         event_kind = getattr(event, "kind", None)
         is_readback = event_kind in _READBACK_KINDS
+        is_agent_reply = self._is_agent_reply(event)
         if is_readback:
             # Muting controls audio, not conversational memory. A mission that
             # finishes while muted must still be available to the next follow-up.
@@ -4836,6 +4924,13 @@ class SpeechPipeline:
                         "Realtime announcement context mirror failed",
                         exc_info=True,
                     )
+        if is_agent_reply:
+            if event == getattr(self, "_agent_reply_inflight", None):
+                return
+            if self._agent_reply_needs_session():
+                self._defer_agent_reply(event)
+                log.info("Agent reply retained until an unmuted voice session is available")
+                return
         if getattr(self, "_muted", False):
             log.debug("Announcement suppressed — voice muted: %r", event.text)
             return
@@ -4949,7 +5044,10 @@ class SpeechPipeline:
                 return
             # Completion/readback owes the user information → park it and flush
             # at the next turn-boundary (AD-OE6 zero-silent-drop).
-            self._deferred_announcements.append(event)
+            if is_agent_reply:
+                self._defer_agent_reply(event)
+            else:
+                self._deferred_announcements.append(event)
             log.info(
                 "Announcement deferred — user holds the floor: %r",
                 event.text[:80],
@@ -5158,12 +5256,19 @@ class SpeechPipeline:
                     event.text[:80],
                 )
                 return
-            self._deferred_announcements.append(event)
+            if is_agent_reply:
+                self._defer_agent_reply(event)
+                self._retry_agent_reply_after_boundary()
+            else:
+                self._deferred_announcements.append(event)
             log.info(
                 "Announcement deferred — a live realtime call owns the "
                 "voice: %r",
                 event.text[:80],
             )
+            return
+        if is_agent_reply and self._agent_reply_needs_session():
+            self._defer_agent_reply(event)
             return
         # Re-check the hangup gate at the moment of SPEAKING, not only at
         # arrival: the user can hang up during the seconds between the two
@@ -5206,6 +5311,7 @@ class SpeechPipeline:
         if animate:
             await self._transition("SPEAKING")
         self._assistant_work_count = getattr(self, "_assistant_work_count", 0) + 1
+        agent_reply_completed = False
         try:
             # Drive the TTS pin from the SAME resolved language as the scrub,
             # not from event.language again — a None/auto tag here used to send
@@ -5218,7 +5324,7 @@ class SpeechPipeline:
                 chunks = self._tts.synthesize(scrubbed.cleaned, language_code=lang_code)
             except TypeError:
                 chunks = self._tts.synthesize(scrubbed.cleaned)
-            if is_preamble:
+            if is_preamble or is_agent_reply:
                 # Staleness gate evaluated by the player right before it writes
                 # audio: if the answer has started speaking by the time the
                 # preamble's synthesis + play-lock wait completes, drop it so it
@@ -5231,7 +5337,9 @@ class SpeechPipeline:
                     playback_result = await self._player.play_chunks(
                         chunks,
                         should_play=lambda: (
-                            getattr(self, "_turn_state", TurnTakingState.IDLE)
+                            not self._agent_reply_needs_session()
+                            if is_agent_reply
+                            else getattr(self, "_turn_state", TurnTakingState.IDLE)
                             is not TurnTakingState.JARVIS_SPEAKING
                         ),
                     )
@@ -5239,7 +5347,10 @@ class SpeechPipeline:
                     playback_result = await self._player.play_chunks(chunks)
             else:
                 playback_result = await self._player.play_chunks(chunks)
-            if self._playback_confirmed(playback_result):
+            agent_reply_completed = self._playback_confirmed(playback_result) and (
+                not is_agent_reply or not self._agent_reply_needs_session()
+            )
+            if agent_reply_completed:
                 self._emit_spoken(
                     scrubbed.cleaned,
                     ann_lang,
@@ -5247,8 +5358,10 @@ class SpeechPipeline:
                     getattr(event, "detail", None),
                 )
         except Exception as exc:  # noqa: BLE001
-            log.warning("Announcement-Speak fehlgeschlagen: %s", exc)
+            log.warning("Announcement playback failed: %s", exc)
         finally:
+            if is_agent_reply and not agent_reply_completed:
+                self._defer_agent_reply(event)
             self._assistant_work_count -= 1
             self._last_announcement_spoken_monotonic = time.monotonic()
             if animate:
@@ -5286,6 +5399,14 @@ class SpeechPipeline:
         deliver = getattr(session, "deliver_announcement", None)
         if not callable(deliver):
             return False
+        agent_reply = self._is_agent_reply(event)
+        if agent_reply:
+            if getattr(self, "_agent_reply_inflight", None) is not None:
+                return False
+            # Register before transport I/O so fast playback cannot race acceptance.
+            self._agent_reply_inflight = event
+            self._agent_reply_inflight_text = text
+        accepted = False
         try:
             accepted = bool(
                 await deliver(
@@ -5300,6 +5421,10 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001 -- classic path is load-bearing
             log.warning("Realtime announcement handoff failed: %s", exc)
             return False
+        finally:
+            if agent_reply and not accepted and self._agent_reply_inflight is event:
+                self._agent_reply_inflight = None
+                self._agent_reply_inflight_text = ""
         if accepted:
             log.info(
                 "Announcement handed to active realtime provider %s: %r",
@@ -8514,6 +8639,7 @@ class SpeechPipeline:
             self._last_announcement_spoken_monotonic = None
             self._previous_turn_state = None
             self._current_voice_session_id = session_id
+            self._restore_agent_replies()
             self._active_voice_mode = self._configured_voice_mode()
             self._active_realtime_provider = ""
             self._active_realtime_model = ""
@@ -9376,10 +9502,12 @@ class SpeechPipeline:
                     "at": time.time(),
                 }
             elif kind == "tts_cancel":
+                self._settle_agent_reply(completed=False)
                 _close_output_segment(preserve_echo_tail=False)
                 await _cancel_output_playback()
                 await self._set_turn_state(TurnTakingState.LISTENING)
             elif kind == "hangup":
+                self._settle_agent_reply(completed=False)
                 semantic_turn_committed = True
                 _close_output_segment(preserve_echo_tail=False)
                 await _cancel_output_playback()
@@ -9389,8 +9517,12 @@ class SpeechPipeline:
                     recover()
             elif kind == "turn_complete":
                 semantic_turn_committed = True
-                await playback.finish_turn()
+                playback_completed = await playback.finish_turn()
                 interrupted_during_drain = not speaking
+                self._settle_agent_reply(completed=bool(
+                    playback_completed and not interrupted_during_drain
+                    and not self._agent_reply_needs_session()
+                ))
                 _close_output_segment(
                     preserve_echo_tail=not interrupted_during_drain,
                 )
@@ -9554,6 +9686,11 @@ class SpeechPipeline:
                             if surface_playback_task is active_surface_task:
                                 surface_playback_task = None
                         if self._playback_confirmed(playback_result):
+                            if (
+                                cleaned == getattr(self, "_agent_reply_inflight_text", "")
+                                and not self._agent_reply_needs_session()
+                            ):
+                                self._settle_agent_reply(completed=True)
                             self._emit_spoken(
                                 cleaned,
                                 language,
@@ -9971,6 +10108,7 @@ class SpeechPipeline:
             return HANGUP_ERROR
         finally:
             if getattr(self, "_active_realtime_handle", None) is session:
+                self._settle_agent_reply(completed=False)
                 self._active_realtime_handle = None
             # Invalidate even when synthesis is paused before child-task
             # creation; terminal teardown must own that pre-playback window too.
