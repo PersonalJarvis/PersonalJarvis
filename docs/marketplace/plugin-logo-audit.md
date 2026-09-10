@@ -63,4 +63,25 @@ The table records the state observed before correction and the local artwork now
 
 Source presence alone is insufficient. Acceptance requires the committed main source, the served bundle, and the actual desktop window to agree: modal presentation, category filters, all 46 local logo mappings, and visible original artwork for the named Microsoft and Google services. The regression test `test_plugin_frontend_delivery.py` follows the reachable chunk graph from index.html, so an orphaned new chunk beside an old entry does not pass.
 
-Live desktop verification is recorded after deployment; provider-account authentication is outside this visual change. No credentials, accounts or provider permissions are changed by the logo correction.
+## Verified delivery
+
+At verification, the live server and committed main bundle both referenced `index-Dn9pjjla.js`.
+All 419 transitively reachable build files pass the Git delivery consistency
+check. All 46 catalog logos occur in the reachable production logo map. The
+actual artwork was also compared: canonical SVG content or PNG bytes for every
+logo match the original source assets, including assets embedded as data URLs.
+The seven separately emitted brand images were fetched from the live server
+and matched byte-for-byte; the served entry assets also match the local build.
+
+The actual Personal Jarvis desktop window's accessibility tree now reports a
+Plugins dialog, its search field and recommendation filters, rather than the
+old four-column table. This was checked without mouse or keyboard input.
+Occluded-window screenshots that showed a different foreground application
+were not used as evidence. The modal's layout and light/dark presentation were
+verified during the preceding UI implementation; this correction changes the
+artwork and its delivery, not that layout.
+
+The complete logo resolver test passes for all 46 catalog entries plus the
+reported regression cases. Provider-account authentication is outside this
+visual change. No credentials, accounts or provider permissions were changed
+by the logo correction.
