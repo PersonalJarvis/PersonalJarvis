@@ -133,6 +133,7 @@ class TaskRunner:
         owned_agent_runner: Callable[[str, tuple[str, ...], str, Any], Awaitable[str | None]]
         | None = None,
         workflow_services: Any = None,
+        owned_action_guard: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
     ) -> None:
         self._store = store
         self._bus = bus
@@ -148,6 +149,7 @@ class TaskRunner:
         self._result_sink = result_sink
         self._owned_agent_runner = owned_agent_runner
         self._workflow_services = workflow_services
+        self._owned_action_guard = owned_action_guard
 
     # ------------------------------------------------------------------
 
@@ -294,6 +296,11 @@ class TaskRunner:
         elif action.kind == "workflow":
             import json
 
+            tags = tuple(str(tag) for tag in spec.tags)
+            if any(tag.startswith("agent:") for tag in tags):
+                if self._owned_action_guard is None:
+                    raise RuntimeError("The routine owner's action guard is unavailable")
+                await self._owned_action_guard(tags)
             services = self._workflow_services() if self._workflow_services else (None, None)
             row = await services[0].get_workflow(str(action.workflow_id)) if services[0] else None
             if row is None or not row.get("enabled") or services[1] is None:

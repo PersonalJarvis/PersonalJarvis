@@ -3372,6 +3372,7 @@ class WebServer:
             auto_approver=auto_approver,
             result_sink=self._society_routine_result,
             owned_agent_runner=self._run_society_routine,
+            owned_action_guard=self._guard_society_routine_action,
             workflow_services=workflow_services,
         )
         scheduler = TaskScheduler(
@@ -3582,6 +3583,17 @@ class WebServer:
             )
         except Exception:  # noqa: BLE001 — the task already recorded its result; delivery is best effort
             logger.warning("society: routine result not delivered to {}", agent_id, exc_info=True)
+
+    async def _guard_society_routine_action(self, tags: tuple[str, ...]) -> None:
+        from jarvis.society.routine_runner import guard_owned_routine
+        from jarvis.society.runtime import current_runtime
+
+        runtime = current_runtime()
+        if runtime is None:
+            runtime = self._build_society_runtime()
+            self.app.state.society = runtime
+            await runtime.ensure_started()
+        await guard_owned_routine(runtime, tags)
 
     async def _run_society_routine(
         self, task_id: str, tags: tuple[str, ...], prompt: str, cancel: Any

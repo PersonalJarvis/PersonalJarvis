@@ -70,9 +70,7 @@ async def finish(scheduler):
 def test_form_large_integer_does_not_overflow_float_validation():
     from jarvis.tasks.source_schema import validate_form
 
-    form = SourceSettings(
-        kind="form", form_fields={"count": {"label": "Count", "kind": "number"}}
-    )
+    form = SourceSettings(kind="form", form_fields={"count": {"label": "Count", "kind": "number"}})
     validate_form(form, {"count": 10**400})
     with pytest.raises(ValueError):
         validate_form(form, {"count": float("inf")})
@@ -418,3 +416,68 @@ async def test_native_workflow_dispatch_receives_trusted_ancestry(stack):
     assert calls[0][1]["input_data"] == {"value": 7}
     assert calls[0][2] == ("task:" + tid,)
     assert current_trigger_path.get() == ()
+
+
+@pytest.mark.parametrize(
+    "owner_state,halted,with_guard,allowed",
+    [
+        ("active", False, True, True),
+        ("paused", False, True, False),
+        ("active", True, True, False),
+        ("active", False, False, False),
+    ],
+)
+async def test_owned_workflow_dispatch_honors_live_owner_state(
+    stack, owner_state, halted, with_guard, allowed
+):
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from jarvis.society.routine_runner import guard_owned_routine
+
+    store, scheduler, _ = stack
+    calls = []
+
+    class Workflows:
+        async def get_workflow(self, workflow_id):
+            return {"id": workflow_id, "enabled": True}
+
+        async def trigger(self, workflow_id, **kwargs):
+            calls.append(workflow_id)
+            return "child-run"
+
+    class Roster:
+        async def get(self, agent_id):
+            return SimpleNamespace(state=owner_state)
+
+    class State:
+        async def kill_switch(self):
+            return halted
+
+    runtime = SimpleNamespace(roster=Roster(), store=State())
+
+    async def guard(tags):
+        await guard_owned_routine(runtime, tags)
+
+    workflows = Workflows()
+    scheduler._workflow_services = lambda: (workflows, workflows)
+    scheduler.attach_runner(
+        TaskRunner(
+            store,
+            EventBus(),
+            workflow_services=lambda: (workflows, workflows),
+            owned_action_guard=guard if with_guard else None,
+        )
+    )
+    tid = await scheduler.schedule(
+        TaskSpec(
+            title="Owned workflow",
+            trigger=source("manual"),
+            action=WorkflowAction(workflow_id=uuid4()),
+            tags=("society", "agent:owner"),
+        )
+    )
+    await scheduler.invoke_source(tid, {}, "owner-check", mode="manual")
+    await finish(scheduler)
+    assert bool(calls) is allowed
+    assert bool((await store.get(tid))["last_error"]) is not allowed

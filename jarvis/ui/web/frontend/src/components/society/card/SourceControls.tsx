@@ -5,6 +5,10 @@ import { useLocaleChunk, useT } from "@/i18n";
 type Source = { kind: string; form_fields?: Record<string, { label: string; kind: string; required: boolean; choices: string[] }> };
 
 export function SourceControls({ taskId, source }: { taskId: string; source: Source }) {
+  return <SourceInputs key={`${taskId}:${JSON.stringify(source)}`} taskId={taskId} source={source} />;
+}
+
+function SourceInputs({ taskId, source }: { taskId: string; source: Source }) {
   const t = useT();
   useLocaleChunk("society");
   const cache = useQueryClient();
