@@ -1,7 +1,8 @@
 # Future city implementation plan
 
 Prepared: 2026-09-09. Intended start: 2026-09-10, Europe/Berlin.
-Status: ready for implementation kickoff; no city implementation or visual reference approved yet.
+Status: reference implementation in progress; no visual reference approved yet.
+The accepted [2026-09-10 standard](standard.md) supersedes earlier shortened-travel suggestions below. See [implementation evidence and remaining work](evidence/implementation-review.md) before continuing.
 Planning artifact tier: T1. Implementation tiers are assigned below.
 
 ## Objective

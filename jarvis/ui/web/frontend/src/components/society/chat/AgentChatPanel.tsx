@@ -1,3 +1,4 @@
+import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
 import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBubble";
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
@@ -109,7 +110,11 @@ export function itemsForOpenSession(
   return sessionId !== null && sessionId === activeSessionId ? items : [];
 }
 
-export function AgentChatPanel({ agent, roster }: AgentChatPanelProps) {
+export function AgentChatPanel(props: AgentChatPanelProps) {
+  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: props.agent.name }}><AgentChatPanelContent {...props} /></PairConversationBoundary>;
+}
+
+function AgentChatPanelContent({ agent, roster }: AgentChatPanelProps) {
   if (agent.tier === "lead") {
     return (
       <AgentChatStoreProvider store={useAgentChatStore}>

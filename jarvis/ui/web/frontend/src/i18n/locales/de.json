@@ -602,6 +602,12 @@
     "background_hint": "Die App zeichnet standardmäßig auf einer einfarbigen Fläche. Wähle unten ein Bild, um es als Hintergrund zu nutzen; „Einfarbig“ bringt die schlichte Fläche zurück."
   },
   "agent_chat": {
+    "pair_open": "Agenten-Chat öffnen",
+    "pair_close": "Chat schließen",
+    "pair_read_only": "Dieser Chat ist schreibgeschützt. Hier können nur die Agenten schreiben.",
+    "pair_loading": "Chatverlauf wird geladen…",
+    "pair_error": "Der Chatverlauf konnte nicht geladen werden. Erneuter Versuch läuft automatisch.",
+    "pair_empty": "Noch keine Nachrichten zwischen diesen Agenten.",
     "internal_message": "Interne Nachricht",
     "internal_expand": "Ganze Nachricht zeigen",
     "internal_collapse": "Weniger anzeigen",

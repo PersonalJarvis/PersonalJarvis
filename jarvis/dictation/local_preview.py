@@ -48,6 +48,7 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -116,6 +117,40 @@ def _child_python() -> str:
     raise RuntimeError(f"no python interpreter beside {exe}")
 
 
+def _close_worker_process(proc: subprocess.Popen[bytes]) -> None:
+    """Kill, reap and close pipes. Runs only on a cleanup/caller worker thread."""
+    try:
+        proc.kill()
+    except Exception as exc:  # noqa: BLE001 — an already-dead worker is the goal state
+        log.debug("Preview worker kill skipped: %s", exc)
+    try:
+        wait = getattr(proc, "wait", None)
+        if callable(wait):
+            wait(timeout=3.0)
+    except Exception as exc:  # noqa: BLE001 — never wait forever on teardown
+        log.warning("Preview worker did not exit after kill: %s", exc)
+        return
+    for stream in (proc.stdin, proc.stdout):
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception as exc:  # noqa: BLE001 — already-closed pipe is harmless
+                log.debug("Preview worker pipe close skipped: %s", exc)
+
+
+def _release_abandoned_worker(proc: subprocess.Popen[bytes]) -> None:
+    """Do not let garbage collection block the voice/UI loop on pipe teardown."""
+    try:
+        threading.Thread(
+            target=_close_worker_process,
+            args=(proc,),
+            name="dictation-worker-reap",
+            daemon=True,
+        ).start()
+    except RuntimeError:
+        log.exception("Could not schedule abandoned dictation worker cleanup")
+
+
 class _WorkerModel:
     """faster-whisper-shaped proxy whose decodes run in the preview worker.
 
@@ -130,6 +165,15 @@ class _WorkerModel:
         self._proc = proc
         self.device = device
         self.compute = compute
+        # Provider switches discard the owner without necessarily calling close.
+        # Popen can retain a live child in its global _active list, including
+        # its open stdin pipe: neither GC nor the child's EOF loop then frees
+        # the native model. Retain only the process here, never a bound method
+        # of self. Active transcribe calls keep self alive until they finish.
+        self._cleanup = weakref.finalize(self, _release_abandoned_worker, proc)
+        # No new threads during interpreter shutdown. Parent pipe closure is
+        # the worker's existing EOF/exit path at process shutdown.
+        self._cleanup.atexit = False  # type: ignore[misc]  # Writable property despite finalize's slots.
 
     def transcribe(
         self,
@@ -175,23 +219,8 @@ class _WorkerModel:
 
     def close(self) -> None:
         """Kill and reap the worker. Blocking: callers must keep this off-loop."""
-        try:
-            self._proc.kill()
-        except Exception as exc:  # noqa: BLE001 — an already-dead worker is the goal state
-            log.debug("Preview worker kill skipped: %s", exc)
-        try:
-            wait = getattr(self._proc, "wait", None)
-            if callable(wait):
-                wait(timeout=3.0)
-        except Exception as exc:  # noqa: BLE001 — never wait forever on teardown
-            log.warning("Preview worker did not exit after kill: %s", exc)
-            return
-        for stream in (self._proc.stdin, self._proc.stdout):
-            if stream is not None:
-                try:
-                    stream.close()
-                except Exception as exc:  # noqa: BLE001 — already-closed pipe is harmless
-                    log.debug("Preview worker pipe close skipped: %s", exc)
+        if self._cleanup.detach() is not None:
+            _close_worker_process(self._proc)
 
 
 def _spawn_worker_model(model_name: str, *, compute: str | None = None) -> _WorkerModel | None:

@@ -2,9 +2,50 @@
   "schema": 1,
   "study": "city-realism-study",
   "brief": "brief.md",
-  "assets": [],
-  "runtime_evidence": [],
-  "technical_report": "",
+  "assets": [
+    {
+      "id": "station",
+      "kind": "building",
+      "source": "source/city-reference.blend",
+      "collection": "Station",
+      "export": "exports/station.glb"
+    },
+    {
+      "id": "building",
+      "kind": "building",
+      "source": "source/city-reference.blend",
+      "collection": "Building",
+      "export": "exports/building.glb"
+    },
+    {
+      "id": "train",
+      "kind": "prop",
+      "source": "source/city-reference.blend",
+      "collection": "Train",
+      "export": "exports/train.glb"
+    },
+    {
+      "id": "tree",
+      "kind": "prop",
+      "source": "source/city-reference.blend",
+      "collection": "Tree",
+      "export": "exports/tree.glb"
+    },
+    {
+      "id": "citizen",
+      "kind": "character",
+      "source": "source/city-reference.blend",
+      "collection": "Citizen",
+      "export": "exports/citizen.glb"
+    }
+  ],
+  "runtime_evidence": [
+    "evidence/near-light.png",
+    "evidence/overview-light.png",
+    "evidence/overview-night-dark.png",
+    "evidence/runtime-checks.json"
+  ],
+  "technical_report": "evidence/implementation-review.md",
   "approval": {
     "status": "pending",
     "record": "review.md",

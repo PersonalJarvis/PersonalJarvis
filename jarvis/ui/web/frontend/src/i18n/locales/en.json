@@ -602,6 +602,12 @@
     "background_hint": "The app paints on a plain colour by default. Pick a picture below to use it as your wallpaper; “Solid colour” brings the plain ground back."
   },
   "agent_chat": {
+    "pair_open": "Open agent conversation",
+    "pair_close": "Close chat",
+    "pair_read_only": "This chat is read-only. Only the agents can write here.",
+    "pair_loading": "Loading conversation…",
+    "pair_error": "Could not load the conversation. Retrying automatically.",
+    "pair_empty": "No messages between these agents yet.",
     "internal_message": "Internal message",
     "internal_expand": "Show the full message",
     "internal_collapse": "Show less",
