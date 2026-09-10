@@ -84,7 +84,7 @@ async def test_turn_uses_one_stream_and_drains_in_order():
 
     await playback.send_binary(b"\x01\x00" * 8)
     await playback.send_binary(b"\x02\x00" * 8)
-    await playback.finish_turn()
+    assert await playback.finish_turn() is True
 
     assert [chunk.pcm for chunk in player.chunks] == [
         b"\x01\x00" * 8,
@@ -151,7 +151,7 @@ async def test_cancel_can_interrupt_a_turn_already_draining() -> None:
     await asyncio.sleep(0)
 
     await playback.cancel()
-    await drain
+    assert await drain is False
 
     assert player.stopped == 1
     assert player.chunks == []
@@ -178,7 +178,7 @@ async def test_cancel_during_drain_treats_stopped_stream_as_expected() -> None:
     await asyncio.sleep(0)
 
     await playback.cancel()
-    await drain
+    assert await drain is False
 
     assert player.stopped == 1
 
@@ -195,6 +195,21 @@ async def test_finish_turn_still_surfaces_an_unrelated_playback_failure() -> Non
 
     with pytest.raises(RuntimeError, match="output device disappeared"):
         await playback.finish_turn()
+
+
+@pytest.mark.asyncio
+async def test_finish_turn_does_not_confirm_missing_or_timed_out_audio() -> None:
+    class StalledPlayer(FakePlayer):
+        async def play_chunks(self, chunks) -> None:
+            await asyncio.Event().wait()
+
+    player = StalledPlayer()
+    playback = DesktopRealtimePlayback(player)
+    assert await playback.finish_turn() is False
+    await playback.send_binary(b"\x01\x00" * 8)
+    playback._finish_timeout_s = 0.01
+    assert await playback.finish_turn() is False
+    assert player.stopped == 1
 
 
 @pytest.mark.asyncio

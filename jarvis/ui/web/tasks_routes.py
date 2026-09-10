@@ -182,10 +182,13 @@ async def add_template(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     store = _require_store(request)
     scheduler = _optional_scheduler(request)
-    if scheduler is not None:
-        task_id = await scheduler.schedule(spec)
-    else:
-        task_id = await store.insert(spec)
+    try:
+        if scheduler is not None:
+            task_id = await scheduler.schedule(spec)
+        else:
+            task_id = await store.insert(spec)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     return {"id": task_id}
 
 

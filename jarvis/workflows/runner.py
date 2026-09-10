@@ -15,6 +15,7 @@ Design principles:
    ``WorkflowStepCompleted``, ``WorkflowCompleted``). The UI listens for
    these and renders live updates.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -101,6 +102,7 @@ class FailureAnnouncer:
 # Protocol stubs for dependency injection
 # ----------------------------------------------------------------------
 
+
 class _BrainLike(Protocol):
     async def __call__(self, prompt: str) -> str: ...
 
@@ -116,6 +118,7 @@ class _ToolExecutorLike(Protocol):
 # ----------------------------------------------------------------------
 # Live view onto a BrainManager's tools
 # ----------------------------------------------------------------------
+
 
 class BrainToolSurface:
     """Live view of the brain's tool registry AND its ToolExecutor.
@@ -154,15 +157,14 @@ class BrainToolSurface:
     async def execute(self, tool: Any, args: dict[str, Any], **kwargs: Any) -> Any:
         executor = getattr(self._brain_ref(), "_tool_executor_ref", None)
         if executor is None:
-            raise RuntimeError(
-                "No ToolExecutor available — the brain is still starting up"
-            )
+            raise RuntimeError("No ToolExecutor available — the brain is still starting up")
         return await executor.execute(tool, args, **kwargs)
 
 
 # ----------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------
+
 
 class WorkflowRunner:
     """Executor for WorkflowDefs — one instance per app, many parallel runs."""
@@ -205,6 +207,17 @@ class WorkflowRunner:
     # Public API
     # ------------------------------------------------------------------
 
+    async def announce_activation(self, workflow_id: str, enabled: bool) -> None:
+        from jarvis.core.events import WorkflowActivationChanged
+
+        await self._bus.publish(
+            WorkflowActivationChanged(
+                workflow_id=workflow_id,
+                enabled=enabled,
+                source_layer="workflows.definition",
+            )
+        )
+
     async def trigger(
         self,
         workflow_id: str,
@@ -221,15 +234,25 @@ class WorkflowRunner:
         wf = await self._store.get_def(workflow_id)
         if wf is None:
             raise KeyError(f"Workflow {workflow_id} not found")
+        from jarvis.core.protocols import current_trigger_path
+
+        marker = "workflow:" + workflow_id
+        path = current_trigger_path.get()
+        if marker in path or len(path) >= 16:
+            raise ValueError("Workflow dependency cycle detected")
         run_id = await self._store.create_run(
             workflow_id,
             trigger=trigger_reason,
             input_data=input_data,
         )
-        asyncio.create_task(
-            self._run_workflow(wf, run_id, trigger_reason, input_data or {}),
-            name=f"workflow-{wf.name}-{run_id[:8]}",
-        )
+        token = current_trigger_path.set(path + (marker,))
+        try:
+            asyncio.create_task(
+                self._run_workflow(wf, run_id, trigger_reason, input_data or {}),
+                name=f"workflow-{wf.name}-{run_id[:8]}",
+            )
+        finally:
+            current_trigger_path.reset(token)
         return run_id
 
     # ------------------------------------------------------------------
@@ -286,7 +309,10 @@ class WorkflowRunner:
                 duration_ms = int((time.perf_counter() - step_start) * 1000)
                 error_text = f"{type(exc).__name__}: {exc}"
                 await self._store.finish_step(
-                    run_id, idx, success=False, error=error_text,
+                    run_id,
+                    idx,
+                    success=False,
+                    error=error_text,
                 )
                 await self._bus.publish(
                     WorkflowStepCompleted(
@@ -307,15 +333,17 @@ class WorkflowRunner:
                 # the plain ordinal stands in for it.
                 failed_step_label = getattr(step, "label", "") or ""
                 failed_reason = str(exc).strip()
-                log.warning("Workflow %s step %d failed: %s",
-                            wf.name, idx, error_text)
+                log.warning("Workflow %s step %d failed: %s", wf.name, idx, error_text)
                 break
 
             duration_ms = int((time.perf_counter() - step_start) * 1000)
             step_outputs[f"step_{idx}"] = output
             step_outputs["prev"] = output
             await self._store.finish_step(
-                run_id, idx, success=True, output=output,
+                run_id,
+                idx,
+                success=True,
+                output=output,
             )
             await self._bus.publish(
                 WorkflowStepCompleted(
@@ -351,7 +379,10 @@ class WorkflowRunner:
             self._failures.clear(str(wf.id))
         else:
             await self._announce_failure(
-                wf, failed_step_index, failed_step_label, failed_reason,
+                wf,
+                failed_step_index,
+                failed_step_label,
+                failed_reason,
             )
 
     async def _announce_failure(
@@ -378,19 +409,27 @@ class WorkflowRunner:
             return
         lang = resolve_ambient_language()
         where = step_label or action_phrase(
-            "workflow_step_ordinal", lang, n=step_index,
+            "workflow_step_ordinal",
+            lang,
+            n=step_index,
         )
         # The gate that keeps opaque tokens out of speech — a bare "exit 1", a
         # numeric blob or internal diagnostics degrade to the reasonless line.
         speakable = extract_speakable_reason(reason)
         if speakable:
             text = action_phrase(
-                "workflow_step_failed_reason", lang,
-                name=wf.name, step=where, reason=speakable[:_SPOKEN_REASON_MAX],
+                "workflow_step_failed_reason",
+                lang,
+                name=wf.name,
+                step=where,
+                reason=speakable[:_SPOKEN_REASON_MAX],
             )
         else:
             text = action_phrase(
-                "workflow_step_failed", lang, name=wf.name, step=where,
+                "workflow_step_failed",
+                lang,
+                name=wf.name,
+                step=where,
             )
         await self._bus.publish(
             AnnouncementRequested(
@@ -426,12 +465,13 @@ class WorkflowRunner:
         raise RuntimeError(f"Unknown step kind: {step.kind}")
 
     async def _run_brain_prompt(
-        self, step: Any, outputs: dict[str, str], input_data: dict[str, Any],
+        self,
+        step: Any,
+        outputs: dict[str, str],
+        input_data: dict[str, Any],
     ) -> str:
         if self._brain is None:
-            raise RuntimeError(
-                "No brain available — workflow requires a BrainManager"
-            )
+            raise RuntimeError("No brain available — workflow requires a BrainManager")
         prompt = _expand_template(step.prompt, outputs, input_data)
         reply = await _run_isolated_or_call(self._brain, step, prompt)
         # Cap at the user-defined max_output_chars
@@ -441,7 +481,10 @@ class WorkflowRunner:
         return reply
 
     async def _run_harness(
-        self, step: Any, outputs: dict[str, str], input_data: dict[str, Any],
+        self,
+        step: Any,
+        outputs: dict[str, str],
+        input_data: dict[str, Any],
     ) -> str:
         if self._harness is None:
             raise RuntimeError("No HarnessManager available")
@@ -466,13 +509,14 @@ class WorkflowRunner:
                 break
         full = "".join(stdout_chunks).strip()
         if final_exit != 0:
-            raise RuntimeError(
-                f"Harness '{step.harness}' exit_code={final_exit}: {full[-400:]}"
-            )
+            raise RuntimeError(f"Harness '{step.harness}' exit_code={final_exit}: {full[-400:]}")
         return full
 
     async def _run_speak(
-        self, step: Any, outputs: dict[str, str], input_data: dict[str, Any],
+        self,
+        step: Any,
+        outputs: dict[str, str],
+        input_data: dict[str, Any],
     ) -> str:
         text = _expand_template(step.text, outputs, input_data)
         await self._bus.publish(
@@ -486,7 +530,10 @@ class WorkflowRunner:
         return text
 
     async def _run_tool_call(
-        self, step: Any, outputs: dict[str, str], input_data: dict[str, Any],
+        self,
+        step: Any,
+        outputs: dict[str, str],
+        input_data: dict[str, Any],
     ) -> str:
         if self._tools is None or self._executor is None:
             raise RuntimeError("Tool registry/executor not available")
@@ -511,7 +558,9 @@ class WorkflowRunner:
                 expanded_args[k] = v
 
         result = await self._executor.execute(
-            tool, expanded_args, user_utterance=f"<workflow:{step.tool_name}>",
+            tool,
+            expanded_args,
+            user_utterance=f"<workflow:{step.tool_name}>",
         )
         success = bool(getattr(result, "success", False))
         if not success:
@@ -525,7 +574,10 @@ class WorkflowRunner:
         return str(payload)
 
     async def _run_shell_cmd(
-        self, step: Any, outputs: dict[str, str], input_data: dict[str, Any],
+        self,
+        step: Any,
+        outputs: dict[str, str],
+        input_data: dict[str, Any],
     ) -> str:
         """Starts a subprocess with a timeout + output cap.
 
@@ -546,8 +598,9 @@ class WorkflowRunner:
             argv = shlex.split(cmd_expanded, posix=False)
         except ValueError as exc:
             raise RuntimeError(f"Shell command parsing failed: {exc}") from exc
-        argv = [a[1:-1] if len(a) >= 2 and a[0] == a[-1] and a[0] in ('"', "'")
-                else a for a in argv]
+        argv = [
+            a[1:-1] if len(a) >= 2 and a[0] == a[-1] and a[0] in ('"', "'") else a for a in argv
+        ]
         if not argv:
             raise RuntimeError("Empty shell command")
 
@@ -562,7 +615,8 @@ class WorkflowRunner:
         )
         try:
             stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=step.timeout_s,
+                proc.communicate(),
+                timeout=step.timeout_s,
             )
         except TimeoutError as exc:
             with contextlib.suppress(ProcessLookupError):
@@ -575,8 +629,7 @@ class WorkflowRunner:
         stderr = (stderr_b or b"").decode("utf-8", errors="replace")
         if proc.returncode != 0:
             raise RuntimeError(
-                f"Shell command exit_code={proc.returncode}: "
-                f"{stderr[-400:] or stdout[-400:]}"
+                f"Shell command exit_code={proc.returncode}: {stderr[-400:] or stdout[-400:]}"
             )
         cap = step.max_output_chars
         output = stdout.strip()
@@ -585,7 +638,10 @@ class WorkflowRunner:
         return output
 
     async def _run_telegram_send(
-        self, step: Any, outputs: dict[str, str], input_data: dict[str, Any],
+        self,
+        step: Any,
+        outputs: dict[str, str],
+        input_data: dict[str, Any],
     ) -> str:
         """POST to the Telegram Bot API. Token + default chat ID come from config."""
         from jarvis.core.config import get_secret, load_config
@@ -643,9 +699,7 @@ class WorkflowRunner:
                 detail = r.json().get("description") or r.text[:200]
             except Exception:  # noqa: BLE001
                 detail = r.text[:200]
-            raise RuntimeError(
-                f"Telegram HTTP {r.status_code}: {detail}"
-            )
+            raise RuntimeError(f"Telegram HTTP {r.status_code}: {detail}")
         return f"sent to chat_id={chat_id} ({len(text)} characters)"
 
 
@@ -657,17 +711,20 @@ _TEMPLATE_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
 
 
 def _expand_template(
-    s: str, outputs: dict[str, str], input_data: dict[str, Any],
+    s: str,
+    outputs: dict[str, str],
+    input_data: dict[str, Any],
 ) -> str:
     """Expands ``{{prev.output}}`` / ``{{step_N.output}}`` / ``{{input.X}}``.
 
     Unknown placeholders stay literal — so the user quickly notices
     during debugging if they made a typo.
     """
+
     def repl(m: re.Match[str]) -> str:
         token = m.group(1).strip()
         if token.startswith("input."):
-            key = token[len("input."):]
+            key = token[len("input.") :]
             v = input_data.get(key, "")
             return str(v)
         if "." in token:
@@ -717,6 +774,5 @@ async def _maybe_await_brain(brain: Any, prompt: str) -> str:
         except TypeError:
             pass
     raise RuntimeError(
-        "Brain is not directly callable — only BrainManager-compatible "
-        "providers are supported"
+        "Brain is not directly callable — only BrainManager-compatible providers are supported"
     )

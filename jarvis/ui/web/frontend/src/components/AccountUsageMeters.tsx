@@ -134,9 +134,12 @@ function Meter({ window: usageWindow, now }: { window: UsageWindow; now: number 
             PERCENT_CLASS[severity],
           )}
         >
-          {Math.round(percent)}%
+          {Math.round(percent)}% {t("agent_accounts.usage.used")}
         </span>
       </div>
+      <p className="text-right text-micro tabular-nums text-muted-foreground">
+        {Math.round(100 - percent)}% {t("agent_accounts.usage.remaining")}
+      </p>
       <div
         role="progressbar"
         aria-label={label}

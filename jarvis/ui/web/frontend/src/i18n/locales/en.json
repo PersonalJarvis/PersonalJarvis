@@ -1224,6 +1224,8 @@
     "add_community": "From the community marketplace",
     "add_marketplace": "Open the Marketplace",
     "filter_label": "Show",
+    "filter_recommended": "Recommended",
+    "added": "Added",
     "filter_all": "All",
     "filter_installed": "Installed",
     "filter_attention": "Needs attention",
@@ -4224,6 +4226,8 @@
     }
   },
   "agent_accounts": {
+    "not_signed_in": "not signed in",
+    "single_google_login": "Uses the Google subscription connected under API Keys. Additional Google logins cannot be switched here yet.",
     "title": "Your subscriptions",
     "hint": "several logins per CLI",
     "description": "Hold more than one plan for the same coding CLI? Register each one here and switch without signing out — every login stays valid side by side. The tick marks the account NEW terminals open on; terminals that are already running keep the account they were started with.",
@@ -4240,6 +4244,8 @@
     "remove": "Remove",
     "usage": {
       "title": "Plan usage",
+      "used": "used",
+      "remaining": "remaining",
       "refresh": "Refresh",
       "live": "live",
       "cached": "from cache",
@@ -4253,7 +4259,7 @@
         "other": "Limit"
       },
       "state": {
-        "unsupported": "This seat has no plan limit to show.",
+        "unsupported": "Plan usage is not available for this provider here.",
         "unavailable": "Usage is not readable right now — it comes back on its own."
       }
     },
@@ -5549,6 +5555,22 @@
     "done": "Done"
   },
   "work_trace": {
+    "integration_used": "Used {service}",
+    "activity_command": "Ran commands",
+    "activity_edit": "Edited files",
+    "activity_write": "Created files",
+    "activity_read": "Read files",
+    "activity_list": "Listed files",
+    "activity_search": "Searched files",
+    "activity_tools": "Used tools",
+    "live_integration_used": "Using {service}",
+    "live_activity_command": "Running commands",
+    "live_activity_edit": "Editing files",
+    "live_activity_write": "Creating files",
+    "live_activity_read": "Reading files",
+    "live_activity_list": "Listing files",
+    "live_activity_search": "Searching files",
+    "live_activity_tools": "Using tools",
     "thought": "Thought",
     "thinking_for": "Thinking for {duration}",
     "thought_for": "Thought for {duration}",

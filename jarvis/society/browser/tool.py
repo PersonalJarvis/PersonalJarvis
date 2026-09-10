@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 from typing import Any, Final
 
 from jarvis.core.protocols import ToolResult
@@ -29,6 +30,26 @@ __all__ = ["BROWSER_TOOL_NAME", "BrowserTool", "task_needs_approval"]
 
 BROWSER_TOOL_NAME: Final[str] = "society_browser"
 CAPABILITY_ID: Final[str] = "core:browser"
+
+
+def lead_browser_tools(session: Any = None, *, read_only: bool = False) -> dict[str, Any]:
+    """The Jarvis root chat drives the same browser shown on the lead's card."""
+    from ..runtime import current_runtime
+
+    runtime = current_runtime()
+    if runtime is None:
+        return {}
+    pick = (session.provider, session.model) if session is not None else None
+    return {
+        BROWSER_TOOL_NAME: BrowserTool(
+            runtime,
+            runtime.lead_id,
+            runtime.browser,
+            model_pick=pick,
+            read_only=read_only or getattr(session, "permission_mode", "") in ("plan", "read-only"),
+        )
+    }
+
 
 _ASK_VERBS: Final[re.Pattern[str]] = re.compile(
     r"\b(send|submit|post|publish|tweet|reply|buy|purchase|order|pay|checkout|delete|remove|"
@@ -66,6 +87,11 @@ class BrowserTool:
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
+            "files": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Explicit workspace files the task may upload.",
+            },
             "task": {"type": "string", "description": "What to do and what to bring back."},
             "url": {"type": "string", "description": "Where to start (optional)."},
             "max_steps": {
@@ -77,12 +103,28 @@ class BrowserTool:
     }
     is_action_tool: bool = True
 
-    def __init__(self, runtime: Any, agent_id: str, jobs: BrowserJobs) -> None:
+    def __init__(
+        self,
+        runtime: Any,
+        agent_id: str,
+        jobs: BrowserJobs,
+        *,
+        model_pick: tuple[str, str] | None = None,
+        read_only: bool = False,
+    ) -> None:
         self._runtime = runtime
         self._agent_id = agent_id
         self._jobs = jobs
+        self._model_pick = model_pick
+        self._read_only = read_only
+        if read_only:
+            self.risk_tier = "safe"
+            self.is_action_tool = False
+            self.description = "Read-only agent browser: navigate, inspect and extract website content. Form input, clicks, uploads and file writes are blocked in this mode."
 
     def risk_tier_for_args(self, args: dict[str, Any]) -> str | None:
+        if self._jobs._python is None:
+            return None  # The persistent runner proposes each actual action separately.
         return "ask" if task_needs_approval(str(args.get("task") or "")) else None
 
     def describe_args(self, args: dict[str, Any]) -> dict[str, str] | None:
@@ -98,11 +140,17 @@ class BrowserTool:
         caller = await rt.roster.get(self._agent_id)
         if caller is None or caller.state is not AgentState.ACTIVE:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "caller is not an active agent")
+        if self._model_pick is not None:
+            caller = replace(caller, provider=self._model_pick[0], model=self._model_pick[1])
         if await rt.store.kill_switch():
             return _failure(FailureReason.KILL_SWITCH, "the society is halted")
         task = str(args.get("task") or "").strip()
         if not task:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "task is required")
+        if self._jobs._python is None:
+            from .bridge import execute_live
+
+            return await execute_live(rt, caller, self._jobs, args, ctx, read_only=self._read_only)
         if not self._jobs.is_installed():
             return _failure(
                 FailureReason.BLOCKED_BY_POLICY,

@@ -37,15 +37,72 @@
       "source": "source/city-reference.blend",
       "collection": "Citizen",
       "export": "exports/citizen.glb"
+    },
+    {
+      "id": "central",
+      "kind": "building",
+      "source": "source/city-reference.blend",
+      "collection": "Central",
+      "export": "exports/central.glb"
+    },
+    {
+      "id": "knowledge",
+      "kind": "building",
+      "source": "source/city-reference.blend",
+      "collection": "Knowledge",
+      "export": "exports/knowledge.glb"
+    },
+    {
+      "id": "fabrication",
+      "kind": "building",
+      "source": "source/city-reference.blend",
+      "collection": "Fabrication",
+      "export": "exports/fabrication.glb"
+    },
+    {
+      "id": "communications",
+      "kind": "building",
+      "source": "source/city-reference.blend",
+      "collection": "Communications",
+      "export": "exports/communications.glb"
+    },
+    {
+      "id": "skyline-office",
+      "kind": "building",
+      "source": "source/city-reference.blend",
+      "collection": "SkylineOffice",
+      "export": "exports/skyline-office.glb"
+    },
+    {
+      "id": "skyline-tower",
+      "kind": "building",
+      "source": "source/city-reference.blend",
+      "collection": "SkylineTower",
+      "export": "exports/skyline-tower.glb"
+    },
+    {
+      "id": "skyline-residence",
+      "kind": "building",
+      "source": "source/city-reference.blend",
+      "collection": "SkylineResidence",
+      "export": "exports/skyline-residence.glb"
+    },
+    {
+      "id": "streetlamp",
+      "kind": "prop",
+      "source": "source/city-reference.blend",
+      "collection": "Streetlamp",
+      "export": "exports/streetlamp.glb"
     }
   ],
   "runtime_evidence": [
-    "evidence/near-light.png",
-    "evidence/overview-light.png",
-    "evidence/overview-night-dark.png",
-    "evidence/runtime-checks.json"
+    "evidence/city-v2/terminal-working.png",
+    "evidence/city-v2/terminal-work.webm",
+    "evidence/city-v2/metro-ride.webm",
+    "evidence/city-v2/journey-stages.json",
+    "evidence/city-v2/workspace-roundtrip.json"
   ],
-  "technical_report": "evidence/implementation-review.md",
+  "technical_report": "evidence/city-integration-review.md",
   "approval": {
     "status": "pending",
     "record": "review.md",

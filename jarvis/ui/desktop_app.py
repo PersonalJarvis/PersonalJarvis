@@ -1974,6 +1974,17 @@ class DesktopApp:
                 brain = brain_holder["brain"]
                 return str(getattr(brain, "conversation_language", "")) if brain else ""
 
+            def seed_history(self, turns: Any) -> None:
+                brain = brain_holder["brain"]
+                if brain is None:
+                    raise RuntimeError("Brain is still starting; cannot resume conversation")
+                brain.seed_history(turns)
+
+            def take_voice_history_seed(self) -> Any:
+                brain = brain_holder["brain"]
+                take = getattr(brain, "take_voice_history_seed", None)
+                return take() if callable(take) else ()
+
             # Realtime direct mode builds its tool bridge from these two
             # attributes at session construction; delegate through to the
             # real brain so a session opened after boot sees the full tool

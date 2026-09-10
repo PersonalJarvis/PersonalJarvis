@@ -1,5 +1,5 @@
 import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
-import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBubble";
+import { AgentMessageActivity, ChatActivity, RoutineActivity, routineTask } from "./ChatActivity";
 import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
@@ -75,12 +75,10 @@ import {
 const STAMP_GAP_MS = 30 * 60_000;
 
 /**
- * The chat owns six eighths of the agent card, which is far wider than a line
- * of prose should ever be. Transcript and composer share this one measure so
- * the column reads like a chat instead of a stretched log; the panes, borders
- * and scrollbars still span the full width.
+ * Messages use the full conversation lane; each bubble limits its own prose
+ * width. The composer follows the lane so replies read left to right.
  */
-const CHAT_MEASURE = "mx-auto w-full max-w-[820px]";
+const CHAT_MEASURE = "mx-auto w-full min-w-0";
 
 /** The line appended to a message that names an agent; Jarvis delegates on it. */
 const DELEGATE_MARK = "[to jarvis]";
@@ -227,17 +225,11 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col"
+      className="flex h-full min-h-0 flex-col bg-background"
       data-testid="society-chat"
       data-session-id={sessionId ?? ""}
       data-session-ready={sessionReady ? "true" : "false"}
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
-        {agent.provider ? <ProviderLogo providerId={agent.provider} label={agent.providerLabel} size="sm" /> : null}
-        <span className="truncate text-foreground">{agent.providerLabel || t("society.chat.model_default")}</span>
-        {agent.model ? <span className="truncate font-mono">{agent.model}</span> : null}
-        {agent.effort ? <span className="ml-auto rounded-full border border-border px-2 py-0.5">{agent.effort}</span> : null}
-      </div>
       <Transcript key={`${sessionId ?? agent.agentId}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
       {lastError && sessionReady ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
@@ -371,7 +363,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col" data-testid="society-chat" data-mode="chat">
+    <div className="flex h-full min-h-0 flex-col bg-background" data-testid="society-chat" data-mode="chat">
       {header}
       <Transcript key={`${activeSessionId ?? ""}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
       {lastError ? (
@@ -640,21 +632,17 @@ export function Transcript({
   let lastStamp = 0;
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={rootRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3" data-testid="society-transcript">
-        <div ref={contentRef} className={cn(CHAT_MEASURE, "flex flex-col gap-2")}>
+      <div ref={rootRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6" data-testid="society-transcript">
+        <div ref={contentRef} className={cn(CHAT_MEASURE, "flex flex-col gap-3")}>
         {items.map((item) => {
-          const ts = item.type === "user" || item.type === "internal" ? item.tsMs : item.type === "turn" ? item.startedMs : 0;
+          const ts = item.type === "turn" ? item.startedMs : item.tsMs;
           const stamp = ts && ts - lastStamp > STAMP_GAP_MS ? ts : 0;
           if (stamp) lastStamp = ts;
           return (
             <div key={item.id} data-chat-item={item.id} className="flex flex-col gap-2">
               {stamp ? <TimeStamp ms={stamp} /> : null}
               {item.type === "internal" ? (
-                <InternalMessageBubble
-                  item={item}
-                  sender={roster.find((a) => a.agentId === item.message.sender_id) ?? null}
-                  recipient={item.outgoing ? roster.find((a) => a.agentId === item.outgoing?.recipientId) : agent}
-                />
+                <AgentMessageActivity item={item} roster={roster} />
               ) : item.type === "user" ? (
                 <UserBubble item={item} />
               ) : item.type === "turn" ? (
@@ -684,7 +672,7 @@ function TimeStamp({ ms }: { ms: number }) {
   const today = new Date().toDateString() === date.toDateString();
   const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   const day = today ? t("society.chat.today") : date.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
-  return <p className="my-1 text-center text-xs text-muted-foreground">{`${day} ${time}`}</p>;
+  return <p className="my-4 text-center text-[11px] text-muted-foreground">{`${day} ${time}`}</p>;
 }
 
 /**
@@ -703,10 +691,9 @@ function NoticeLine({ item }: { item: NoticeItem }) {
         )
       : item.agentName;
   return (
-    <div className="flex max-w-[85%] flex-col gap-0.5 self-start rounded-2xl rounded-bl-md border border-border bg-card px-3.5 py-2 text-xs">
-      {headline ? <p className="font-medium text-foreground">{headline}</p> : null}
-      {item.text ? <ChatMarkdown text={item.text} className="leading-relaxed text-muted-foreground" /> : null}
-    </div>
+    <ChatActivity label={headline || item.text.split("\n")[0]} failed={item.status === "blocked" || item.resolved === "failed"}>
+      {item.text ? <ChatMarkdown text={item.text} className="leading-relaxed" /> : null}
+    </ChatActivity>
   );
 }
 
@@ -785,6 +772,12 @@ function ProposalCard({ item }: { item: NoticeItem }) {
         : item.resolved
           ? t("society.chat.proposal_failed")
           : "";
+  if (item.resolved && item.resolved !== "failed") return <ChatActivity
+    label={<>{resolvedLabel} · {kind ? t(`society.chat.proposal_kind_${kind}`) : ""} · {summary}</>}>
+    <p className="whitespace-pre-wrap">{detail || summary}</p>
+    {reason ? <p className="mt-2">{reason}</p> : null}
+    {outcome ? <p className="mt-2">{outcome}</p> : null}
+  </ChatActivity>;
   return (
     <div
       className={cn(
@@ -884,9 +877,11 @@ export function UserBubble({ item }: { item: UserItem }) {
   const choices = messageChoices(item);
   const text = visibleUserText(item.text);
   if (item.origin === "control") return <div className="self-start px-1 py-2 text-xs text-muted-foreground">{t("slash.control_turn")}{item.attachments.map((file) => <span key={file.name} className="ml-2">{file.name}</span>)}</div>;
+  const task = routineTask(item.text);
+  if (task !== null && item.attachments.length === 0) return <RoutineActivity task={task} original={item.text} />;
   return (
-    <div className="flex max-w-[85%] flex-col items-end gap-1 self-end">
-      <div className="rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-sm leading-relaxed text-foreground">
+    <div className="flex min-w-0 max-w-[min(85%,42rem)] flex-col items-end gap-1 self-end">
+      <div className="min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">
         <MessageWithChips text={text} choices={choices} />
       </div>
       {item.attachments.length > 0 ? (
@@ -909,7 +904,7 @@ function TurnBubble({
   item: TurnItem;
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
-  return <TurnTrace turn={item} onDecide={onDecide} renderText={(text) => <Prose text={text} />} />;
+  return <TurnTrace turn={item} conversation onDecide={onDecide} renderText={(text) => <Prose text={text} />} />;
 }
 
 /**
@@ -930,10 +925,10 @@ function Prose({ text, muted }: { text: string; muted?: boolean }) {
         "prose-headings:my-2 prose-headings:text-[1em] prose-headings:font-semibold prose-headings:text-foreground",
         "prose-strong:font-semibold prose-strong:text-foreground",
         "prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5",
-        "prose-a:text-foreground prose-a:underline prose-a:underline-offset-2",
+        "prose-a:text-primary prose-a:underline prose-a:underline-offset-2",
         "prose-code:rounded prose-code:bg-secondary prose-code:px-1 prose-code:py-0.5 prose-code:font-mono",
         "prose-code:text-[0.9em] prose-code:font-normal prose-code:before:hidden prose-code:after:hidden",
-        "prose-pre:my-2 prose-pre:rounded-xl prose-pre:bg-secondary prose-pre:p-3 prose-pre:text-xs",
+        "prose-pre:my-2 prose-pre:rounded-xl prose-pre:bg-background prose-pre:p-3 prose-pre:text-xs prose-pre:text-foreground",
         "prose-hr:my-3 prose-blockquote:border-l-2 prose-blockquote:pl-3 prose-blockquote:not-italic",
       )}
     >
@@ -1005,10 +1000,10 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       .finally(() => { if (current) setCodingLoading(false); });
     return () => { current = false; };
   }, [mentionOpen, codingRetry]);
-  const capabilities = useSocietyCapabilities();
+  const capabilities = useSocietyCapabilities(true, mentionOpen);
   const catalog = useMemo(
-    () => buildMentionCatalog(mentionable, capabilities.data ?? [], codingAgents),
-    [mentionable, capabilities.data, codingAgents],
+    () => buildMentionCatalog(mentionable, capabilities.data ?? [], codingAgents, capabilities.plugins ?? []),
+    [mentionable, capabilities.data, codingAgents, capabilities.plugins],
   );
   const codingSelections = useMemo(() => codingMentionsInText(value, catalog), [value, catalog]);
   useEffect(() => { if (!codingSelections.length) setCodingFolder(""); }, [codingSelections.length]);
@@ -1057,7 +1052,19 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     const text = draftText;
     if (await commands.execute(text)) return;
     if (!text || busy && !commands.canSteer || modelSaving) return;
-    const named = mentionsInText(text, catalog);
+    const chosenIds = new Set((draft?.choices ?? []).map((row) => row.id));
+    const chosen = [...chosenIds].map((id) => catalog.find((item) => item.key === id));
+    if (chosen.some((item) => !item || !item.connected)) {
+      setProblem(t("common.error_generic"));
+      return;
+    }
+    // Chips hold stable catalog IDs, even if new entries have changed short tags.
+    const chosenTags = new Set((draft?.choices ?? []).map((row) => choiceToken(row).toLowerCase()));
+    const unselectedText = text.replace(/(^|\s)(@[^\s@]+)/g, (whole, space: string, token: string) =>
+      chosenTags.has(token.toLowerCase()) ? space : whole,
+    );
+    const named = mentionsInText(unselectedText, catalog);
+    named.pinIds = [...new Set([...named.pinIds, ...chosen.flatMap((item) => item?.pinIds ?? [])])];
     const lines: string[] = [];
     if (named.agents.length > 0 && surface === "society") {
       const teammates = named.agents.map((a) => `${JSON.stringify(a.name)} (id ${JSON.stringify(a.agentId)})`).join(", ");
@@ -1093,13 +1100,14 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     }
   };
 
-  const pickerOpen = Boolean(mention) && (matches.length > 0 || (mention?.query.length ?? 0) > 0 || capabilities.isLoading || codingLoading);
+  const pickerOpen = mentionOpen;
 
   return (
-    <div className="shrink-0 border-t border-border px-3 pb-3 pt-2">
+    <div className="shrink-0 px-4 pb-4 pt-2 sm:px-6">
       <div className={CHAT_MEASURE}><ChatCommandPanel control={commands} /></div>
       {problem ? <p className="mb-1 px-1 text-xs text-destructive">{problem}</p> : null}
       {mentionOpen && codingError ? <button type="button" className="mb-1 text-xs text-destructive underline" onClick={() => setCodingRetry((n) => n + 1)}>{t("society.chat.coding_retry")}</button> : null}
+      {mentionOpen && capabilities.inventoryError ? <button type="button" className="mb-1 text-xs text-destructive underline" onClick={capabilities.retryInventory}>{t("common.retry")}</button> : null}
       <div className={CHAT_MEASURE}>
         <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
       </div>
@@ -1117,7 +1125,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         ref={composerRef}
         className={cn(
           CHAT_MEASURE,
-          "relative flex items-end gap-1 rounded-[22px] border border-border bg-background px-1.5 py-1",
+          "relative flex items-end gap-1 rounded-[24px] border border-border bg-secondary px-2 py-1.5 focus-within:border-border-strong",
           attachments.dragging && "border-border-strong",
           // The whole composer reads as armed while the mic is open, not just
           // the 32px button someone has to go looking for.

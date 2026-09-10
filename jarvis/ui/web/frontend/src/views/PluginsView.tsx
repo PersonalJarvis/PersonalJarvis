@@ -54,6 +54,7 @@ import { MarketplaceBadge } from "@/components/MarketplaceBadge";
 import { openExternalUrl } from "@/lib/openExternal";
 import { robustCopy } from "@/lib/clipboard";
 import { PRODUCT_NAME } from "@/lib/branding";
+import { bundledPluginLogo as bundledLogo } from "@/lib/pluginLogos";
 
 // ---------------------------------------------------------------------------
 // Wire types — mirror the JSON shape served by /api/marketplace/plugins.
@@ -64,6 +65,7 @@ type AuthMode =
   | "pat_paste"
   | "hosted_mcp_oauth_dcr"
   | "oauth_pkce_loopback"
+  | "local"
   | "hosted_mcp_allowlist";
 
 type PluginStatus = "not_connected" | "connected" | "needs_reauth" | "error";
@@ -273,16 +275,6 @@ function adapt(p: CatalogPlugin): Plugin {
 // Tier 2 is what makes the store look intentional before every brand mark has
 // been sourced: a coloured tile with a white glyph reads as a product decision,
 // a black glyph on a white square reads as a placeholder.
-const BUNDLED_BRAND_LOGOS = import.meta.glob("../assets/brands/*.svg", {
-  eager: true,
-  query: "?url",
-  import: "default",
-}) as Record<string, string>;
-
-function bundledLogo(pluginId: string): string | undefined {
-  return BUNDLED_BRAND_LOGOS[`../assets/brands/${pluginId}.svg`];
-}
-
 const DEFAULT_BRAND_TILE = "#3F3F46";
 
 function brandTile(p: { logoColor?: string }): string {
@@ -341,6 +333,7 @@ async function fetchCatalog(): Promise<CatalogResponse> {
 }
 
 const AUTH_LABELS: Record<AuthMode, string> = {
+  local: "Local device",
   oauth_device_flow: "Device Flow",
   pat_paste: "Access Token",
   hosted_mcp_oauth_dcr: "One-Click",
@@ -386,6 +379,11 @@ function oauthClientFamily(
 
 // Where the user creates/manages their own OAuth client per family.
 const OAUTH_CLIENT_CONSOLE: Record<string, string> = {
+  microsoft: "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+  x: "https://developer.x.com/portal/dashboard",
+  linkedin: "https://www.linkedin.com/developers/apps",
+  zoom: "https://marketplace.zoom.us/develop/create",
+  salesforce: "https://help.salesforce.com/s/articleView?id=sf.external_client_apps.htm&type=5",
   google: "https://console.cloud.google.com/auth/clients",
   slack: "https://api.slack.com/apps",
   asana: "https://app.asana.com/0/my-apps",
@@ -406,6 +404,8 @@ const OAUTH_CLIENT_ID_PLACEHOLDER: Record<string, string> = {
 // box captioned "optional for some providers", which leaves the reader to
 // guess whether they are one of them.
 const OAUTH_NO_SECRET_NEEDED: Record<string, string> = {
+  microsoft: "not needed for a public/native app",
+  x: "not needed for a Native App",
   spotify: "not needed — leave this empty",
   google: "usually not needed",
 };
@@ -488,14 +488,19 @@ export function matchesStatus(plugin: Plugin, status: StatusFilterId): boolean {
   }
 }
 
-export type ListFilter = "all" | "installed" | "attention";
+export type ListFilter = "all" | "installed" | "attention" | "recommended";
 
-export function PluginsView() {
+const WINDOW_CATEGORY_ORDER = [
+  "Calendar & Mail", "Files & Photos", "Knowledge & Reading", "Messaging",
+  "Lists & Tasks", "Developer", "Media & Creativity", "Home & Devices",
+];
+
+export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
   const qc = useQueryClient();
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const [view, setView] = useState<"list" | "community">("list");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [listFilter, setListFilter] = useState<ListFilter>("all");
+  const [listFilter, setListFilter] = useState<ListFilter>(inDialog ? "recommended" : "all");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -580,7 +585,7 @@ export function PluginsView() {
       return res.json() as Promise<{
         flow_id: string;
         plugin_id: string;
-        kind: "browser_redirect" | "device_flow";
+        kind: "browser_redirect" | "device_flow" | "local";
         open_url: string | null;
         expires_at_ms: number | null;
       }>;
@@ -610,6 +615,10 @@ export function PluginsView() {
   const startOAuthFlow = async (p: Plugin): Promise<boolean> => {
     try {
       const r = await oauthStart.mutateAsync(p.id);
+      if (r.kind === "local") {
+        await qc.invalidateQueries({ queryKey: ["marketplace-plugins"] });
+        return true;
+      }
       if (r.kind === "device_flow") {
         // GitHub-style: show the user_code in a dedicated dialog,
         // pre-open the verification URL with code embedded if present.
@@ -690,6 +699,7 @@ export function PluginsView() {
     }
     if (
       p.authMode === "hosted_mcp_oauth_dcr" ||
+      p.authMode === "local" ||
       p.authMode === "oauth_device_flow"
     ) {
       await startOAuthFlow(p);
@@ -748,19 +758,23 @@ export function PluginsView() {
 
   const visible = useMemo(() => {
     const base =
-      listFilter === "installed"
+      listFilter === "recommended"
+        ? allPlugins.filter((p) => p.featured || p.status === "connected")
+        : listFilter === "installed"
         ? installed
         : listFilter === "attention"
           ? attentionPlugins
           : allPlugins;
-    const ranked = [...base].sort(
-      (a, b) => categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category),
+    const order = inDialog ? [...WINDOW_CATEGORY_ORDER, ...categoryOrder] : categoryOrder;
+    const ranked = [...base].sort((a, b) =>
+      order.indexOf(a.category) - order.indexOf(b.category)
+      || (inDialog ? a.name.localeCompare(b.name) : 0),
     );
     return ranked.filter((p) => {
       if (filter !== "all" && p.category !== filter) return false;
       return matchesQuery(p, query);
     });
-  }, [listFilter, query, filter, allPlugins, installed, attentionPlugins, categoryOrder]);
+  }, [listFilter, query, filter, allPlugins, installed, attentionPlugins, categoryOrder, inDialog]);
 
   const filtersActive = query.trim() !== "" || filter !== "all";
   const resetFilters = () => {
@@ -875,9 +889,11 @@ export function PluginsView() {
 
   const shell = (content: React.ReactNode) => (
     <div className="flex h-full min-h-0 flex-col bg-transparent">
-      <ScrollArea className="flex-1">
-        <div className="mx-auto w-full max-w-4xl px-8 py-6">{content}</div>
-      </ScrollArea>
+      {inDialog && view === "list" && !selectedId ? content : (
+        <ScrollArea className="flex-1">
+          <div className={cn("mx-auto w-full max-w-4xl px-8 py-6", inDialog && "pt-12")}>{content}</div>
+        </ScrollArea>
+      )}
       {dialogs}
     </div>
   );
@@ -923,6 +939,24 @@ export function PluginsView() {
           n: allPlugins.length,
           connected: connectedCount,
         });
+
+  if (inDialog) {
+    return shell(
+      <PluginWindowCatalog
+        plugins={visible} installed={installed} total={allPlugins.length}
+        listFilter={listFilter} onListFilter={(value) => { setListFilter(value); setFilter("all"); }}
+        query={query} onQuery={(value) => { setQuery(value); if (value.trim()) setListFilter("all"); }}
+        category={filter} categories={categoryOrder}
+        onCategory={(value) => { setFilter(value); setListFilter("all"); }}
+        loading={isLoading} error={error instanceof Error ? error.message : null}
+        refreshing={isFetching} onRefresh={() => void refetch()}
+        onBrowse={() => setView("community")} onUpload={() => setUploadOpen(true)}
+        onOpen={setSelectedId} onConnect={handleConnect} onDisconnect={handleDisconnect}
+        onReset={() => { resetFilters(); setListFilter("all"); }}
+        attention={attentionPlugins.length} subtitle={subtitle}
+      />,
+    );
+  }
 
   return shell(
     <>
@@ -1070,6 +1104,135 @@ export function PluginsView() {
       </div>
     </>,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Window catalog: larger original marks, readable descriptions and category groups.
+// The connection state and all actions are shared with the full detail view.
+// ---------------------------------------------------------------------------
+
+function PluginWindowCatalog({
+  plugins, installed, total, listFilter, onListFilter, query, onQuery,
+  category, categories, onCategory, loading, error, refreshing, onRefresh,
+  onBrowse, onUpload, onOpen, onConnect, onDisconnect, onReset, attention, subtitle,
+}: {
+  plugins: Plugin[]; installed: Plugin[]; total: number; listFilter: ListFilter;
+  onListFilter: (value: ListFilter) => void; query: string; onQuery: (value: string) => void;
+  category: string; categories: string[]; onCategory: (value: string) => void;
+  loading: boolean; error: string | null; refreshing: boolean; onRefresh: () => void;
+  onBrowse: () => void; onUpload: () => void; onOpen: (id: string) => void;
+  onReset: () => void; attention: number; subtitle: string;
+} & ConnectHandlers) {
+  const tabs: { id: ListFilter; label: string; count?: number }[] = [
+    { id: "all", label: translate("plugins_view.filter_all"), count: total },
+    { id: "recommended", label: translate("plugins_view.filter_recommended") },
+    { id: "installed", label: translate("plugins_view.filter_installed"), count: installed.length },
+    ...(attention ? [{ id: "attention" as const, label: translate("plugins_view.filter_attention"), count: attention }] : []),
+  ];
+  const grouped = listFilter === "all" && !query.trim() && category === "all";
+  const heading = query.trim()
+    ? fill(translate("plugins_view.matches"), { n: plugins.length })
+    : category !== "all" ? category : tabs.find((tab) => tab.id === listFilter)?.label;
+  return (
+    <>
+      <div className="shrink-0 px-5 pb-4 pt-7 sm:px-7">
+        <div className="flex items-center gap-3 pr-9">
+          <h2 className="text-lg font-semibold tracking-tight text-foreground-strong">{translate("plugins_view.title")}</h2>
+          <div className="ml-auto flex items-center gap-1">
+            <IconButton label={translate("plugins_view.refresh")} onClick={onRefresh} busy={refreshing}>
+              <RefreshCw className="h-3.5 w-3.5" />
+            </IconButton>
+            <SoftButton onClick={onBrowse}>{translate("plugins_view.browse")}</SoftButton>
+            <IconButton label={translate("plugins_view.add_upload")} onClick={onUpload}>
+              <Plus className="h-4 w-4" />
+            </IconButton>
+          </div>
+        </div>
+        <p className="sr-only">{subtitle}</p>
+        <button type="button" onClick={() => onListFilter("installed")}
+          className="my-4 flex max-w-full items-center gap-3 rounded-lg py-1 text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {installed.length > 0 && <span className="flex -space-x-2" aria-hidden>
+            {installed.slice(0, 4).map((plugin) => <BrandTile key={plugin.id} plugin={plugin} size="sm" />)}
+          </span>}
+          <span>{installed.length} {translate("plugins_view.filter_installed").toLocaleLowerCase()}</span>
+          <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+        </button>
+        <label className="flex h-10 items-center gap-2 rounded-xl border border-border/70 bg-secondary px-3 text-muted-foreground focus-within:ring-2 focus-within:ring-ring">
+          <Search className="h-4 w-4 shrink-0" aria-hidden />
+          <input type="search" value={query} onChange={(event) => onQuery(event.target.value)}
+            placeholder={translate("plugins_view.search_placeholder")} aria-label={translate("plugins_view.search_placeholder")}
+            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground" />
+        </label>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div role="tablist" aria-label={translate("plugins_view.filter_label")} className="flex flex-wrap gap-1.5">
+            {tabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={listFilter === tab.id && category === "all"}
+              onClick={() => onListFilter(tab.id)}
+              className={cn("rounded-full px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                listFilter === tab.id && category === "all" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground")}>
+              {tab.label}{tab.count !== undefined && <span className="ml-1.5 opacity-65">{tab.count}</span>}
+            </button>)}
+          </div>
+          <BrandedSelect value={category} onValueChange={onCategory}
+            ariaLabel={translate("plugins_view.col_category")}
+            className="h-8 w-auto max-w-full rounded-full bg-secondary px-3 text-xs"
+            options={[{ value: "all", label: translate("plugins_view.all_categories") },
+              ...[...categories].sort((a, b) => WINDOW_CATEGORY_ORDER.indexOf(a) - WINDOW_CATEGORY_ORDER.indexOf(b)).map((name) => ({ value: name, label: name }))]} />
+        </div>
+      </div>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="px-4 pb-6 sm:px-6">
+          {error && <div role="alert" className="rounded-xl bg-secondary p-4 text-sm text-destructive">{error}</div>}
+          {loading && <p role="status" className="p-4 text-sm text-muted-foreground">{translate("plugins_view.loading")}</p>}
+          {!error && !loading && <>
+            {!grouped && <h3 className="px-2 pb-3 pt-2 text-sm font-semibold text-foreground-strong">{heading}</h3>}
+            <ul aria-label={translate("plugins_view.title")}>
+              {plugins.map((plugin, index) => <li key={plugin.id}>
+                {grouped && (index === 0 || plugins[index - 1].category !== plugin.category) &&
+                  <h3 className={cn("px-2 pb-2 text-sm font-semibold text-foreground-strong", index ? "pt-5" : "pt-2")}>{plugin.category}</h3>}
+                <div className="group flex min-h-[76px] items-center gap-3 rounded-xl px-2 py-3 hover:bg-secondary/70">
+                  <button type="button" onClick={() => onOpen(plugin.id)} aria-label={plugin.name}
+                    className="flex min-w-0 flex-1 items-center gap-3.5 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <BrandTile plugin={plugin} size="window" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[15px] font-medium leading-6 text-foreground-strong">{plugin.name}</span>
+                      <span className="block truncate text-[13px] leading-5 text-muted-foreground" title={plugin.description}>{plugin.description}</span>
+                      {plugin.status === "needs_reauth" && <span className="block text-xs text-warning"><ReauthExplanation plugin={plugin} inline /></span>}
+                    </span>
+                  </button>
+                  <WindowConnectButton plugin={plugin} onConnect={onConnect} onDisconnect={onDisconnect} />
+                </div>
+              </li>)}
+            </ul>
+            {plugins.length === 0 && <div className="py-12 text-center text-sm text-muted-foreground">
+              <p>{translate("plugins_view.no_hits")}</p>
+              <button type="button" onClick={onReset} className="mt-3 underline underline-offset-4">{translate("plugins_view.show_all")}</button>
+            </div>}
+          </>}
+        </div>
+      </ScrollArea>
+    </>
+  );
+}
+
+function WindowConnectButton({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & ConnectHandlers) {
+  const [busy, setBusy] = useState(false);
+  const connected = plugin.status === "connected";
+  const reconnect = plugin.status === "needs_reauth" || plugin.status === "error";
+  const act = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (connected) await onDisconnect(plugin.id);
+      else await onConnect(plugin);
+    } finally { setBusy(false); }
+  };
+  return <button type="button" disabled={busy} onClick={() => void act()}
+    aria-label={translate(connected ? "plugins_view.disconnect" : reconnect ? "plugins_view.reconnect" : "plugins_view.connect")}
+    className={cn("flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+      connected ? "text-muted-foreground hover:bg-secondary" : "bg-secondary text-foreground hover:bg-accent-soft")}>
+    {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : connected ? <Check className="h-3.5 w-3.5 text-success" /> : reconnect ? <RotateCw className="h-3.5 w-3.5" /> : null}
+    {translate(connected ? "plugins_view.added" : reconnect ? "plugins_view.reconnect" : "plugins_view.add")}
+  </button>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1477,7 +1640,7 @@ interface ConnectHandlers {
   onDisconnect: (id: string) => void;
 }
 
-export function BrandTile({ plugin, size = "md" }: { plugin: Plugin; size?: "sm" | "md" }) {
+export function BrandTile({ plugin, size = "md" }: { plugin: Plugin; size?: "sm" | "md" | "window" }) {
   const [failed, setFailed] = useState(false);
   const tile = brandTile(plugin);
   const fullColour = isFullColourMark(plugin);
@@ -1488,14 +1651,12 @@ export function BrandTile({ plugin, size = "md" }: { plugin: Plugin; size?: "sm"
     <div
       className={cn(
         "grid shrink-0 place-items-center overflow-hidden rounded-lg border",
-        small ? "h-7 w-7 rounded-md" : "h-10 w-10",
-        // A bundled mark sits on a dark plate, not a white one: a row of white
-        // squares reads as pasted-in on this UI. The plate is a touch lighter
-        // than the card so the mark still has something to sit on. Brands whose
-        // own logo is near-black ship a light variant for exactly this case —
-        // see LOGOS.md; without one, a dark mark would vanish here.
+        small ? "h-7 w-7 rounded-md" : size === "window" ? "h-12 w-12 rounded-xl" : "h-10 w-10",
+        // White app-icon tiles follow the reference in either interface theme.
+        // Existing white monochrome marks are inverted below, keeping their
+        // original geometry legible without recolouring multicolour artwork.
         fullColour && !showMonogram
-          ? "bg-secondary"
+          ? "bg-[hsl(var(--plugin-icon-surface))]"
           : "border-border/60",
       )}
       style={fullColour && !showMonogram ? undefined : { backgroundColor: tile }}
@@ -1512,7 +1673,8 @@ export function BrandTile({ plugin, size = "md" }: { plugin: Plugin; size?: "sm"
           src={resolveLogoUrl(plugin)}
           alt=""
           className={cn(
-            fullColour ? (small ? "h-5 w-5" : "h-7 w-7") : small ? "h-3.5 w-3.5" : "h-5 w-5",
+            fullColour ? (small ? "h-5 w-5" : size === "window" ? "h-9 w-9" : "h-7 w-7") : small ? "h-3.5 w-3.5" : size === "window" ? "h-8 w-8" : "h-5 w-5",
+            ["github", "vercel", "notion", "cal_com"].includes(plugin.id) && "invert",
           )}
           loading="lazy"
           onError={() => setFailed(true)}
@@ -2205,13 +2367,7 @@ export function PkceConnectDialog({
     >
       <div className="relative w-full max-w-md overflow-hidden rounded-lg bg-popover shadow-float">
         <header className="flex items-center gap-3 border-b border-border px-5 py-4">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-white">
-            <img
-              src={resolveLogoUrl(plugin)}
-              alt=""
-              className={cn(plugin.logoUrl ? "h-7 w-7" : "h-5 w-5")}
-            />
-          </div>
+          <BrandTile plugin={plugin} />
           <div className="min-w-0">
             <h2
               id="pkce-connect-title"
@@ -2417,13 +2573,7 @@ function DisconnectConfirmDialog({
       <div className="relative w-full max-w-sm overflow-hidden rounded-lg bg-popover shadow-float">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-white">
-              <img
-                src={resolveLogoUrl(plugin)}
-                alt=""
-                className={cn(plugin.logoUrl ? "h-7 w-7" : "h-5 w-5")}
-              />
-            </div>
+            <BrandTile plugin={plugin} />
             <div>
               <h2
                 id="disconnect-dialog-title"
@@ -2560,13 +2710,7 @@ export function PatConnectDialog({
       <div className="relative w-full max-w-md overflow-hidden rounded-lg bg-popover shadow-float">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-white">
-              <img
-                src={resolveLogoUrl(plugin)}
-                alt=""
-                className={cn(plugin.logoUrl ? "h-7 w-7" : "h-5 w-5")}
-              />
-            </div>
+            <BrandTile plugin={plugin} />
             <div>
               <h2
                 id="pat-dialog-title"

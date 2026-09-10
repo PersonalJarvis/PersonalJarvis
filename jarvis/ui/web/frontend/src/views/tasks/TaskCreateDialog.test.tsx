@@ -153,4 +153,22 @@ describe("TaskCreateDialog", () => {
     fireEvent.change(boxes[1], { target: { value: "Y" } });
     expect(saveBtn.disabled).toBe(false);
   });
+  it("submits the selected source after the trigger editor changes", async () => {
+    const posted: Record<string, unknown>[] = [];
+    installFetch((body) => posted.push(body));
+    renderDialog();
+    await screen.findByText("Gmail");
+    const boxes = screen.getAllByRole("textbox");
+    fireEvent.change(boxes[0], { target: { value: "New event" } });
+    fireEvent.change(boxes[1], { target: { value: "Handle incoming events" } });
+    fireEvent.click(await screen.findByText("All triggers"));
+    fireEvent.click(screen.getByTestId("routine-trigger-group"));
+    fireEvent.click(await screen.findByRole("option", { name: "API" }));
+    fireEvent.click(screen.getByTestId("agent-routines-kind"));
+    fireEvent.click(await screen.findByRole("option", { name: "MCP" }));
+    fireEvent.click(screen.getByText("Create"));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].trigger).toEqual({ type: "source", source: { kind: "mcp" }, conditions: {} });
+  });
+
 });

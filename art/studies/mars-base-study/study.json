@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "study": "mars-base-study",
+  "brief": "brief.md",
+  "assets": [
+    {
+      "id": "terrain-blockout",
+      "kind": "terrain",
+      "source": "source/mars-map.blend",
+      "collection": "MarsMap",
+      "export": "exports/terrain-blockout.glb"
+    }
+  ],
+  "runtime_evidence": [],
+  "technical_report": "evidence/terrain-review.md",
+  "approval": {
+    "status": "pending",
+    "record": "review.md",
+    "evidence_sha256": ""
+  }
+}

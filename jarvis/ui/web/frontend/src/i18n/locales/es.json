@@ -1224,6 +1224,8 @@
     "add_community": "Desde el marketplace de la comunidad",
     "add_marketplace": "Abrir el Marketplace",
     "filter_label": "Mostrar",
+    "filter_recommended": "Recomendados",
+    "added": "Añadido",
     "filter_all": "Todos",
     "filter_installed": "Instalados",
     "filter_attention": "Requieren atención",
@@ -4191,6 +4193,8 @@
     }
   },
   "agent_accounts": {
+    "not_signed_in": "sin sesión iniciada",
+    "single_google_login": "Utiliza la suscripción de Google conectada en API Keys. Todavía no se puede alternar entre otras cuentas de Google aquí.",
     "title": "Tus suscripciones",
     "hint": "varios inicios de sesión por CLI",
     "description": "¿Tienes más de un plan para la misma CLI de programación? Registra cada uno aquí y cambia sin cerrar sesión: todos los accesos siguen siendo válidos a la vez. La marca indica la cuenta con la que se abren los terminales NUEVOS; los terminales en curso conservan la cuenta con la que se iniciaron.",
@@ -4220,9 +4224,11 @@
         "other": "Límite"
       },
       "state": {
-        "unsupported": "Esta cuenta no tiene un límite de plan que mostrar.",
+        "unsupported": "Los datos de uso de este proveedor no están disponibles aquí.",
         "unavailable": "El uso no se puede leer ahora mismo — volverá por sí solo."
-      }
+      },
+      "used": "utilizado",
+      "remaining": "restante"
     },
     "flow": {
       "starting": "Iniciando el inicio de sesión…",
@@ -5516,6 +5522,22 @@
     "done": "Listo"
   },
   "work_trace": {
+    "integration_used": "Usó {service}",
+    "activity_command": "Ejecutó comandos",
+    "activity_edit": "Editó archivos",
+    "activity_write": "Creó archivos",
+    "activity_read": "Leyó archivos",
+    "activity_list": "Listó archivos",
+    "activity_search": "Buscó archivos",
+    "activity_tools": "Usó herramientas",
+    "live_integration_used": "Usando {service}",
+    "live_activity_command": "Ejecutando comandos",
+    "live_activity_edit": "Editando archivos",
+    "live_activity_write": "Creando archivos",
+    "live_activity_read": "Leyendo archivos",
+    "live_activity_list": "Listando archivos",
+    "live_activity_search": "Buscando archivos",
+    "live_activity_tools": "Usando herramientas",
     "thought": "Razonamiento",
     "thinking_for": "Pensando durante {duration}",
     "thought_for": "Pensó durante {duration}",

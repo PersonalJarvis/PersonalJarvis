@@ -8,7 +8,7 @@
  * browsing; typing a tool name unfolds the individual tools.
  */
 
-import { marketplacePluginId, pluginFamily } from "@/lib/pluginFamilies";
+import { PLUGIN_FAMILIES, marketplacePluginId, pluginFamily } from "@/lib/pluginFamilies";
 
 import type { Capability, SocietyAgent } from "../data";
 import type { AgentStatus } from "@/lib/agenticIdeApi";
@@ -59,8 +59,12 @@ const KIND_GROUP: Record<string, MentionGroup> = {
   core: "tools",
 };
 
-const BROWSE_LIMIT = 80;
-const SEARCH_LIMIT = 60;
+export interface MentionPlugin {
+  id: string;
+  display_name: string;
+  description: string;
+  native_tool?: string | null;
+}
 
 function kindOf(cap: Capability): MentionKind {
   const prefix = cap.id.split(":")[0];
@@ -87,12 +91,18 @@ function mcpServer(id: string): string {
 
 function takeValue(wanted: string, fallback: string, taken: Set<string>): string {
   const tryOne = (candidate: string): string | null => {
+    candidate = candidate.trim().replace(/\s+/g, "-");
     const key = candidate.toLowerCase();
     if (!candidate || taken.has(key)) return null;
     taken.add(key);
     return candidate;
   };
-  return tryOne(wanted) ?? tryOne(fallback) ?? fallback;
+  const value = tryOne(wanted) ?? tryOne(fallback);
+  if (value) return value;
+  for (let suffix = 2; ; suffix += 1) {
+    const unique = tryOne(`${fallback}-${suffix}`);
+    if (unique) return unique;
+  }
 }
 
 function searchBlob(parts: Array<string | undefined | null>): string {
@@ -149,6 +159,7 @@ export function buildMentionCatalog(
   agents: readonly SocietyAgent[],
   capabilities: readonly Capability[],
   codingAgents: readonly AgentStatus[] = [],
+  plugins: readonly MentionPlugin[] = [],
 ): MentionItem[] {
   const taken = new Set<string>();
   const items: MentionItem[] = [];
@@ -186,9 +197,29 @@ export function buildMentionCatalog(
   const families = new Map<string, Capability[]>();
   const mcpByServer = new Map<string, Capability[]>();
   const rest: Capability[] = [];
+  const livePlugins = new Map(plugins.map((plugin) => [plugin.id, plugin]));
+  const familyIds = new Set([...PLUGIN_FAMILIES.map((plugin) => plugin.id), ...livePlugins.keys()]);
+  const familyFor = (cap: Capability): string | undefined => {
+    const kind = kindOf(cap);
+    const name = capabilityName(cap.id);
+    if (kind === "cli" || kind === "core") return undefined;
+    if (kind === "skill" && !name.startsWith("plugin-")) return undefined;
+    const identity = kind === "mcp" ? mcpServer(cap.id) : kind === "skill" ? name.slice(7) : name;
+    // Only an exact owner identity can fold a row, never a tool/skill's prose or suffix.
+    const owner = [...familyIds].find((id) => id === identity || id.replace(/_/g, "-") === identity);
+    if (owner) return owner;
+    const native = plugins.find((plugin) => plugin.native_tool === (cap.tool_name || name));
+    if (kind === "plugin" && native) return native.id;
+    const seeded = marketplacePluginId(identity);
+    const family = seeded ? pluginFamily(seeded) : undefined;
+    return family && [family.id, family.tag, "plugin-" + family.id].includes(identity) ? family.id : undefined;
+  };
+  const seenCapabilities = new Set<string>();
   for (const cap of capabilities) {
+    if (seenCapabilities.has(cap.id)) continue;
+    seenCapabilities.add(cap.id);
     if (cap.id === "core:coding-session" && codingAgents.length) continue;
-    const familyId = marketplacePluginId(cap.id) || marketplacePluginId(cap.tool_name || "");
+    const familyId = familyFor(cap);
     if (familyId) {
       const bucket = families.get(familyId);
       if (bucket) bucket.push(cap);
@@ -210,20 +241,27 @@ export function buildMentionCatalog(
     }
   }
 
+  for (const plugin of plugins) {
+    if (!families.has(plugin.id)) families.set(plugin.id, []);
+  }
   for (const [familyId, members] of families) {
     const family = pluginFamily(familyId);
+    const installed = livePlugins.get(familyId);
     const live = members.filter((cap) => kindOf(cap) !== "skill");
     const connected = live.some((cap) => cap.connected);
     const representative =
-      members.find((cap) => kindOf(cap) === "plugin") ?? live[0] ?? members[0];
+      members.find((cap) => kindOf(cap) === "plugin") ?? live[0] ?? members[0] ?? {
+        id: `plugin:${familyId}`, kind: "plugin", label: installed?.display_name ?? familyId,
+        one_liner: installed?.description ?? "", connected: false, risk_tier: "monitor", tool_name: "",
+      };
     const tag = family?.tag ?? familyId.replace(/_/g, "-");
     const value = takeValue(tag, `plugin:${familyId}`, taken);
     const item = capabilityItem(representative, value, {
       key: `plugin:${familyId}`,
       detail: false,
       pinIds: members.map((cap) => cap.id),
-      label: family?.displayName ?? representative.label,
-      hint: family?.description || representative.one_liner,
+      label: installed?.display_name ?? family?.displayName ?? representative.label,
+      hint: installed?.description || family?.description || representative.one_liner,
       toolName: familyId,
       connected,
     });
@@ -307,7 +345,8 @@ function scoreItem(item: MentionItem, q: string): number | null {
 export function filterMentions(items: readonly MentionItem[], query: string): MentionItem[] {
   const q = query.trim().toLowerCase();
   if (!q) {
-    return items.filter((item) => !item.detail && (item.connected || item.kind === "coding")).slice(0, BROWSE_LIMIT);
+    return groupMentions(items.filter((item) => !item.detail && (item.connected || item.kind === "coding")))
+      .flatMap((group) => group.items);
   }
   const ranked: { score: number; index: number; item: MentionItem }[] = [];
   items.forEach((item, index) => {
@@ -316,7 +355,7 @@ export function filterMentions(items: readonly MentionItem[], query: string): Me
     ranked.push({ score, index, item });
   });
   ranked.sort((a, b) => a.score - b.score || a.index - b.index);
-  return ranked.slice(0, SEARCH_LIMIT).map((r) => r.item);
+  return groupMentions(ranked.map((r) => r.item)).flatMap((group) => group.items);
 }
 
 export function groupMentions(

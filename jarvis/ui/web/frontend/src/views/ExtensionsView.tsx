@@ -49,7 +49,7 @@ const AREAS = [
 
 type AreaId = (typeof AREAS)[number]["id"];
 
-export function ExtensionsView() {
+export function ExtensionsView({ area }: { area?: AreaId } = {}) {
   const t = useT();
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
@@ -57,7 +57,7 @@ export function ExtensionsView() {
 
   // The router only mounts us for skills/plugins/mcps; any other value is
   // unexpected — fall back to Skills defensively.
-  const current: AreaId = AREAS.some((a) => a.id === active) ? (active as AreaId) : "skills";
+  const current: AreaId = area ?? (AREAS.some((a) => a.id === active) ? (active as AreaId) : "skills");
 
   return (
     <div className="flex h-full min-h-0">

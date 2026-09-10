@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import type { ProviderOption } from "@/store/agentChat";
 import type { SocietyProviderRow } from "@/lib/societyApi";
-import { isFreeOpenCodeModel, modelEffort, modelSeats } from "./modelChoices";
+import { isFreeOpenCodeModel, modelEffort, modelSeats, visibleModels } from "./modelChoices";
 
 const option = (overrides: Partial<ProviderOption> = {}): ProviderOption => ({
   id: "cli", label: "CLI", family: "cli", runner: "grok-cli", connected: false,
@@ -40,4 +40,19 @@ test("free model detection does not infer price from labels, size or unrelated a
   for (const id of ["opencode/gpt-5-nano", "other/big-pickle", "opencode/freedom", "opencode/free-preview-paid"]) {
     expect(isFreeOpenCodeModel({ id, label: "Free model" })).toBe(false);
   }
+});
+
+test.each(["claude-cli", "codex-cli", "cursor-cli", "opencode-cli", "kimi-cli", "glm-cli", "grok-cli", "agy-cli", "dsh-cli"] as const)(
+  "%s stays selectable when its own model catalog is unavailable", (runner) => {
+    const [seat] = modelSeats([option({ runner, connected: true, curated_models: [], default_model: "" })], [], {}, "Use default");
+    expect(seat.provider.curated_models).toEqual([{ id: "", label: "Use default" }]);
+    expect(visibleModels(seat, seat.provider.curated_models, false, "")).toEqual(seat.provider.curated_models);
+  },
+);
+
+test("the default model never authorizes a disconnected, missing, or API seat", () => {
+  expect(modelSeats([option({ curated_models: [] })], [], {})).toEqual([]);
+  expect(modelSeats([option({ cli_installed: false, curated_models: [] })], accounts, {})).toEqual([]);
+  const [seat] = modelSeats([option({ runner: "api", cli_installed: null, connected: true, curated_models: [] })], [], {});
+  expect(seat.provider.curated_models).toEqual([]);
 });

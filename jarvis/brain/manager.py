@@ -8984,6 +8984,10 @@ class BrainManager:
         The tools used here are intentionally hidden from ``self._tools`` so
         they never appear in the router LLM schema.
         """
+        if _TURN_OVERRIDE.get() is not None:
+            # Scoped chats must use their selected tools and approval context,
+            # not the voice shortcut's global desktop/browser tool set.
+            return None
         local_cfg = getattr(self._config, "local_action", None)
         if local_cfg is not None and not getattr(local_cfg, "enabled", True):
             return None
@@ -12911,6 +12915,7 @@ class BrainManager:
 
     def clear_history(self) -> None:
         self._history = []
+        self.__dict__.pop("_voice_history_seed", None)
 
     def drop_last_turn(self, expected_user_text: str) -> bool:
         """Remove the most recent (user, assistant) pair when its user message
@@ -12988,6 +12993,18 @@ class BrainManager:
                 else BrainMessage(role=role, content=content)
             )
         self._history = seeded[-self._HISTORY_MAX :]
+        # Explicit archive selection also seeds the next duplex call. Ordinary
+        # generated turns never fill this slot: unrelated calls must stay fresh.
+        self._voice_history_seed = tuple(self._history)
+
+    def take_voice_history_seed(self) -> tuple[BrainMessage, ...]:
+        """Consume an explicit resume once, retaining the text brain's history.
+
+        A single dict pop transfers ownership even when desktop session setup
+        runs on a worker thread. Reconnects reuse the receiving call's copy.
+        """
+        history: tuple[BrainMessage, ...] = self.__dict__.pop("_voice_history_seed", ())
+        return history
 
     # ------------------------------------------------------------------
     # Live reload for the CLI tool registry (CLI integration, task 2)

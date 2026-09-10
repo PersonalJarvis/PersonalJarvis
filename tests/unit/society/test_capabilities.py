@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from jarvis.society.capabilities import (
     NEVER_GRANTED,
     CapabilityKind,
@@ -85,6 +87,17 @@ def test_catalog_marks_disconnected_and_sorts_them_last():
         ("plugin:spotify", True),
         ("plugin:gmail", False),
     ]
+
+
+@pytest.mark.parametrize("state", ["active", "validated", "draft", "disabled", "unknown"])
+@pytest.mark.parametrize("plain_state", [False, True])
+def test_catalog_includes_all_usable_skill_states(state, plain_state):
+    skill = _skill("installed-skill", state=state)
+    if plain_state:
+        skill.state = state
+    rows = build_catalog({}, [skill])
+    expected = ["skill:installed-skill"] if state in {"active", "validated"} else []
+    assert [row.id for row in rows] == expected
 
 
 def test_select_tools_all_mode_focus_first_denies_out():

@@ -15,11 +15,11 @@ listed here and want it removed, open an issue and it will be taken out.
 > not add the file: leave it to the fallback, which draws the vendor's glyph on
 > their brand colour instead.
 
-Marks sit on a **dark plate**, matching the rest of the interface. A brand
-whose own logo is near-black (GitHub, Vercel, Notion) therefore uses the
-**light variant its vendor publishes for exactly this purpose** — swapping to
-one of those is still the original mark, while recolouring one ourselves
-would not be.
+The plugin window presents original marks on consistent **white icon tiles**
+in both themes, following the supplied marketplace reference. The larger rows
+use 48-pixel tiles with 36-pixel artwork. The bundled white monochrome GitHub,
+Vercel, Notion and Cal.com glyphs use CSS inversion on these tiles; multicolour
+artwork keeps its original colours. X, AWS and AMD render directly in black.
 
 ## How the store picks a mark
 
@@ -93,9 +93,51 @@ we could not obtain. Record it below with `own work` as the legal basis.
 | vercel | svgl `vercel_dark.svg` (the light variant, for dark backgrounds) | MIT | 2026-07-25 |
 | youtube_music | svgl `youtube_music.svg` | MIT | 2026-08-18 |
 
-### Deliberately not bundled
+### Local delivery
 
-| plugin_id | Why |
-|---|---|
-| stripe | Publishes no square full-colour icon. Its real app icon **is** a white "S" on the brand purple, so the fallback is the faithful rendering and a bundled wordmark would be less accurate. |
-| cloudflare | Same: the real app icon is the white cloud on brand orange. |
+Every built-in plugin now has local original artwork. Community plugins may
+still supply their own logo URL. No built-in depends on the Simple Icons CDN.
+
+## Service connector expansion (2026-09-10)
+
+| Plugin | Source | Drawing license | Date |
+|---|---|---|---|
+| outlook | [Vendor original](https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/Outlook-Icon-FY26) | Vendor artwork; nominative identification only | 2026-09-10 |
+| teams | [Vendor original](https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/Teams-Icon-FY26) | Vendor artwork; nominative identification only | 2026-09-10 |
+| sharepoint | [Original mark](https://cdn.jsdelivr.net/gh/pheralb/svgl@main/static/library/microsoft-sharepoint.svg) | MIT; nominative use | 2026-09-10 |
+| onenote | [Vendor original](https://www.microsoft.com/content/dam/microsoft/bade/images/icons/en-us/m365-app-icons-fy26/OneNote-Icon-FY26.svg) | Vendor artwork; nominative identification only | 2026-09-10 |
+| microsoft_todo | [Original mark](https://cdn.jsdelivr.net/gh/pheralb/svgl@main/static/library/microsoft-todo.svg) | MIT; nominative use | 2026-09-10 |
+| azure | [Vendor original](https://learn.microsoft.com/en-us/azure/media/index/azure.svg) | Vendor artwork; nominative identification only | 2026-09-10 |
+| google_cloud | [Vendor original](https://www.gstatic.com/cgc/supercloud_favicon.ico) | Vendor artwork; nominative identification only | 2026-09-10 |
+| gitlab | [Original mark](https://cdn.jsdelivr.net/gh/gilbarbara/logos@main/logos/gitlab-icon.svg) | CC0-1.0; nominative use | 2026-09-10 |
+| x | [Original X mark](https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/x.svg) | CC0-1.0; monochrome, white icon tile | 2026-09-10 |
+| linkedin | [Original mark](https://cdn.jsdelivr.net/gh/gilbarbara/logos@main/logos/linkedin-icon.svg) | CC0-1.0; nominative use | 2026-09-10 |
+| youtube_studio | [Original mark](https://cdn.jsdelivr.net/gh/gilbarbara/logos@main/logos/youtube-icon.svg) | CC0-1.0; nominative use | 2026-09-10 |
+| hubspot | [Original mark](https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/hubspot.svg) | CC0-1.0; nominative use | 2026-09-10 |
+| apollo | [Original mark](https://cdn.jsdelivr.net/gh/pheralb/svgl@main/static/library/apollo-io.svg) | MIT; nominative use | 2026-09-10 |
+| salesforce | [Original mark](https://cdn.jsdelivr.net/gh/gilbarbara/logos@main/logos/salesforce.svg) | CC0-1.0; nominative use | 2026-09-10 |
+| granola | [Original mark](https://cdn.jsdelivr.net/gh/pheralb/svgl@main/static/library/granola-light.svg) | MIT; nominative use | 2026-09-10 |
+| zoom | [Original mark](https://cdn.jsdelivr.net/gh/gilbarbara/logos@main/logos/zoom-icon.svg) | CC0-1.0; nominative use | 2026-09-10 |
+| amd_gpu | [Original mark](https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/amd.svg) | CC0-1.0; nominative use | 2026-09-10 |
+| onedrive | [Vendor original](https://www.microsoft.com/content/dam/microsoft/bade/images/icons/en-us/m365-app-icons-fy26/OneDrive-Icon-FY26.svg) | Vendor artwork; nominative identification only | 2026-09-10 |
+| aws | Simple Icons amazonwebservices.svg; shared with [CLI marks](../clis/LOGOS.md) | CC0-1.0; monochrome, white icon tile | 2026-09-10 |
+| meta | [Original mark](https://cdn.jsdelivr.net/gh/gilbarbara/logos@main/logos/meta-icon.svg) | CC0-1.0; unchanged artwork inside square viewport | 2026-09-10 |
+| figma | [Original mark](https://cdn.jsdelivr.net/gh/pheralb/svgl@main/static/library/figma.svg) | MIT; unchanged artwork inside square viewport | 2026-09-10 |
+| agentmail | [Vendor original](https://www.agentmail.to/favicon.ico) | Vendor artwork; nominative identification only | 2026-09-10 |
+
+| stripe | [Vendor original](https://images.stripeassets.com/fzn2n1nzq965/1hgcBNd12BfT9VLgbId7By/01d91920114b124fb4cf6d448f9f06eb/favicon.svg) | Vendor artwork; nominative identification only | 2026-09-10 |
+| cloudflare | [Vendor original](https://www.cloudflare.com/favicon.ico) | Vendor artwork; nominative identification only | 2026-09-10 |
+
+The `x` and `aws` marks use the monochrome [Simple Icons](https://github.com/simple-icons/simple-icons) variants (CC0-1.0) on white icon tiles. HubSpot uses its published orange. The X mark is the current X symbol, not the retired Twitter bird.
+
+## Trace integration mark
+
+`chrome.svg`: Google Chrome, from https://cdn.simpleicons.org/googlechrome (Simple Icons, CC0 1.0). Used to identify Chrome tool activity; the trademark belongs to Google.
+
+
+
+Google Cloud, Cloudflare and AgentMail PNG files are lossless extractions of the largest image in the vendor ICO containers. Their artwork was not redrawn, recoloured or resized. Microsoft FY26 and Azure SVG files are byte-for-byte vendor originals.
+
+| Plugin | Source | Drawing license | Date |
+|---|---|---|---|
+| chrome | https://cdn.simpleicons.org/googlechrome | CC0-1.0; Chrome trace identification | 2026-09-10 |

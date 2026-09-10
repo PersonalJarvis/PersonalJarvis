@@ -67,6 +67,7 @@ function json(body: unknown, status = 200) {
 describe("JarvisHistoryRail", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useHomeStore.setState({ voiceSelectionPending: false, voiceSwitchStopping: false });
     useHomeStore.getState().resetTranscript();
     Element.prototype.scrollIntoView = vi.fn();
     vi.stubGlobal("WebSocket", FakeSocket);
@@ -105,6 +106,7 @@ describe("JarvisHistoryRail", () => {
       messages: [],
       activeThreadId: null,
       activeKind: "text",
+      voiceState: "idle",
     });
   });
 
@@ -145,6 +147,7 @@ describe("JarvisHistoryRail", () => {
     await screen.findByTestId("jarvis-history-voice-row");
     vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }));
     fireEvent.click(screen.getByTestId("jarvis-history-voice-row"));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
     await act(async () => {
       useHomeStore.getState().ingest("VoiceSessionEnded", { hangup_reason: "hotkey" }, 5);
       finish(json({ kind: "voice", id: "voice-1", messages: [{ role: "user", text: "Stale archive", ts_ms: 1 }] }));
@@ -152,6 +155,25 @@ describe("JarvisHistoryRail", () => {
     await waitFor(() => expect((screen.getByTestId("jarvis-history-voice-row")).getAttribute("data-active")).toBeNull());
     expect(useHomeStore.getState().transcript).toEqual([]);
     expect(useEventStore.getState().messages).toEqual([]);
+  });
+
+  test("switching archives ends the active call before resuming and keeps the selected context", async () => {
+    useEventStore.setState({ voiceState: "listening" });
+    render(<JarvisHistoryRail />);
+    fireEvent.click(await screen.findByTestId("jarvis-history-voice-row"));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/voice/hangup", { method: "POST", cache: "no-store" }));
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/resume"))).toBe(false);
+    expect(useHomeStore.getState().voiceSelectionPending).toBe(true);
+    await act(async () => {
+      useHomeStore.getState().ingest("VoiceSessionEnded", { hangup_reason: "hotkey" }, 3);
+      useEventStore.getState().setVoice("idle");
+    });
+    await waitFor(() => expect(useHomeStore.getState().transcript.map((line) => line.text)).toEqual([
+      "Previous spoken question", "Previous spoken answer",
+    ]));
+    expect(useEventStore.getState().activeThreadId).toBe("voice-1");
+    expect(useHomeStore.getState().freshVoicePending).toBe(false);
+    expect(useHomeStore.getState().voiceSelectionPending).toBe(false);
   });
 
   test("the new button clears whatever is open", async () => {

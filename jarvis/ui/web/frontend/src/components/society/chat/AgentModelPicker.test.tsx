@@ -93,6 +93,35 @@ test("an idle open menu schedules no animation loop and batches layout changes",
   expect(requestFrame).toHaveBeenCalledTimes(1);
 });
 
+test("reopening reuses prepared model rows without exposing a closed menu to accessibility", async () => {
+  mount(); const input = await open();
+  const prepared = screen.getByTitle("openai-small");
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByTitle("openai-small")).toBe(prepared);
+  fireEvent.click(screen.getByRole("button", { name: "Model" }));
+  expect(screen.getByRole("menu", { name: "Model" })).toBeTruthy();
+  expect(screen.getByTitle("openai-small")).toBe(prepared);
+});
+
+test("opening uses geometry prepared before the click", async () => {
+  mount();
+  await waitFor(() => expect(screen.getByTitle("openai-small")).toBeTruthy());
+  const trigger = screen.getByRole("button", { name: "Model" });
+  const measure = vi.spyOn(trigger, "getBoundingClientRect");
+  try {
+    fireEvent.click(trigger);
+    expect(screen.getByRole("menu", { name: "Model" })).toBeTruthy();
+    expect(measure).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Search models" }), { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(trigger);
+    expect(measure).not.toHaveBeenCalled();
+  } finally {
+    measure.mockRestore();
+  }
+});
+
 test("freshly disconnected credentials supersede a display snapshot", async () => {
   writeModelMenuSnapshot({ version: 1, savedAt: Date.now(),
     catalog: { providers: [provider("openai")], default_cwd: "", shell: "" },
@@ -337,4 +366,15 @@ test("hidden OpenCode models remain selectable through search and a reopened men
   fireEvent.change(reopened, { target: { value: "opencode large" } });
   fireEvent.click(screen.getByTitle("opencode-large"));
   await waitFor(() => expect(posts[0]).toEqual({ provider: "opencode", model: "opencode-large", effort: "high", account_id: "" }));
+});
+
+test.each([
+  ["kimi", "kimi-cli"], ["cursor", "cursor-cli"], ["opencode", "opencode-cli"],
+  ["glm", "glm-cli"], ["deepseek-harness", "dsh-cli"],
+] as const)("%s can use its CLI account without a published model list", async (id, runner) => {
+  extraProviders = [provider(id, { runner, cli_installed: true, curated_models: [], default_model: "", effort_levels: [], default_effort: "" })];
+  mount(); await open();
+  const group = screen.getByRole("group", { name: id });
+  fireEvent.click(within(group).getByRole("menuitemradio", { name: /Default model/ }));
+  await waitFor(() => expect(posts[0]).toEqual({ provider: id, model: "", effort: "", account_id: "" }));
 });

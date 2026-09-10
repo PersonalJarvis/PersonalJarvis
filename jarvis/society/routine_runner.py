@@ -9,9 +9,8 @@ from .chat_binding import ensure_session
 from .routines import agent_id_from_tags
 
 
-async def run_owned_routine(
-    runtime: Any, task_id: str, tags: tuple[str, ...], prompt: str, cancel_token: Any = None
-) -> str | None:
+async def guard_owned_routine(runtime: Any, tags: tuple[str, ...]) -> Any:
+    """Check live owner availability for both chat and native workflow actions."""
     agent_id = agent_id_from_tags(tags)
     if agent_id is None:
         return None
@@ -20,12 +19,23 @@ async def run_owned_routine(
     agent = await runtime.roster.get(agent_id)
     if agent is None or str(agent.state) != "active":
         raise RuntimeError("The routine owner is unavailable or paused")
+    return agent
+
+
+async def run_owned_routine(
+    runtime: Any, task_id: str, tags: tuple[str, ...], prompt: str, cancel_token: Any = None
+) -> str | None:
+    agent = await guard_owned_routine(runtime, tags)
+    if agent is None:
+        return None
     service = runtime.chat_service()
     if service is None:
         raise RuntimeError("The canonical chat service is unavailable")
     session = ensure_session(service, runtime.config(), agent)
     if service.is_running(session.session_id):
-        raise RuntimeError("The routine owner is busy; retry this scheduled run later")
+        from jarvis.core.protocols import RoutineDeferred
+
+        raise RoutineDeferred("The routine owner is busy; waiting for the current turn")
     # Legacy tasks contain an identity snapshot. The live briefing owns identity now.
     _, separator, original = prompt.partition("\nRoutine:\n")
     task = original if separator else prompt

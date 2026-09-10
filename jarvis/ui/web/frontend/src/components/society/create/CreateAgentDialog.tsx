@@ -52,13 +52,13 @@ import { joinProviderOptions } from "@/store/agentChat";
 import {
   accountChoice,
   accountHint,
-  brainSeats,
   defaultSeat,
   effortsFor,
   modelsFor,
   type BrainKind,
   type BrainSeat,
 } from "./brainPicker";
+import { modelSeats } from "../chat/modelChoices";
 import { useCreateAgent, type PermissionCeiling } from "../data";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
 import {
@@ -194,16 +194,17 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   // failure): a join over a catalog without the credential rows would call
   // every API seat unconnected, list the local rows alone, and the default
   // pick would land on one of them before the keys arrive.
+  const defaultModelLabel = t("agent_chat.model_default");
   const seats = useMemo<BrainSeat[]>(() => {
     const providers = catalog.data?.providers ?? [];
     if (!providers.length || !connections.data || !societyProviders.data || !keylessModels.data) return [];
-    return brainSeats(
+    return modelSeats(
       joinProviderOptions(providers, connections.data),
       societyProviders.data,
       liveModels,
-      new Set(connections.data.map((c) => c.jarvis)),
+      defaultModelLabel,
     );
-  }, [catalog.data, connections.data, societyProviders.data, keylessModels.data, liveModels]);
+  }, [catalog.data, connections.data, societyProviders.data, keylessModels.data, liveModels, defaultModelLabel]);
   const seat = seats.find((s) => s.provider.id === providerId) ?? null;
   const accounts = accountChoice(seat);
   const efforts = effortsFor(seat, model);

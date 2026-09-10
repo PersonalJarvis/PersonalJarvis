@@ -74,6 +74,37 @@ function cap(over: Partial<Capability> & Pick<Capability, "id">): Capability {
 }
 
 describe("buildMentionCatalog", () => {
+  it("keeps installed but disconnected community plugins searchable", () => {
+    const catalog = buildMentionCatalog([], [], [], [{ id: "todo_fox", display_name: "Todo Fox", description: "Tasks" }]);
+    expect(filterMentions(catalog, "")).toEqual([]);
+    expect(filterMentions(catalog, "todo")[0]).toMatchObject({ connected: false, pinIds: [], label: "Todo Fox" });
+  });
+  it("loads a newly installed community plugin from the live catalog", () => {
+    const items = buildMentionCatalog([], [cap({ id: "plugin:todo_fox_tool" })], [], [
+      { id: "todo_fox", display_name: "Todo Fox", description: "Tasks", native_tool: "todo_fox_tool" },
+    ]);
+    expect(filterMentions(items, "")).toEqual([expect.objectContaining({
+      key: "plugin:todo_fox", label: "Todo Fox", pinIds: ["plugin:todo_fox_tool"],
+    })]);
+  });
+
+  it("does not hide independent skills or CLIs whose names mention a plugin", () => {
+    const items = buildMentionCatalog([], [
+      cap({ id: "skill:github-review" }), cap({ id: "cli:github" }),
+      cap({ id: "mcp:research/github_search" }),
+    ]);
+    expect(items.map((item) => item.kind)).toEqual(["skill", "cli", "mcp"]);
+  });
+
+  it("allocates distinct tags even when both preferred tags are already taken", () => {
+    const items = buildMentionCatalog([
+      agent({ agentId: "one", name: "gmail" }),
+      agent({ agentId: "two", name: "plugin:gmail" }),
+      agent({ agentId: "three", name: "Research Assistant" }),
+    ], [cap({ id: "plugin:gmail" })]);
+    expect(new Set(items.map((item) => item.value.toLowerCase())).size).toBe(items.length);
+    expect(items.every((item) => !/\s/.test(item.value))).toBe(true);
+  });
   it("tags a plugin as @gmail, not @plugin:gmail", () => {
     const items = buildMentionCatalog([], [cap({ id: "plugin:gmail", label: "gmail" })]);
     expect(items).toEqual([
@@ -172,6 +203,18 @@ describe("buildMentionCatalog", () => {
 });
 
 describe("filterMentions", () => {
+  it("keeps all browse and search results in large catalogs", () => {
+    const items = buildMentionCatalog([], Array.from({ length: 125 }, (_, i) => cap({ id: `skill:daily-${i}` })));
+    expect(filterMentions(items, "")).toHaveLength(125);
+    expect(filterMentions(items, "daily")).toHaveLength(125);
+  });
+
+  it("returns the same order the grouped picker displays for keyboard selection", () => {
+    const items = buildMentionCatalog([], [cap({ id: "core:search-web" }), cap({ id: "cli:gh" }),
+      cap({ id: "mcp:sentry/search" }), cap({ id: "skill:brief" })]);
+    const matches = filterMentions(items, "");
+    expect(matches.map((item) => item.key)).toEqual(groupMentions(matches).flatMap((group) => group.items.map((item) => item.key)));
+  });
   const items = buildMentionCatalog(
     [agent({ agentId: "scout", name: "Scout", title: "Research" })],
     [
@@ -188,7 +231,7 @@ describe("filterMentions", () => {
 
   it("on a bare @ lists connected browse rows, not disconnected plugins or MCP tools", () => {
     const values = filterMentions(items, "").map((i) => i.value);
-    expect(values).toEqual(["Scout", "gmail", "github", "search-web", "gh", "sentry"]);
+    expect(values).toEqual(["Scout", "gmail", "github", "sentry", "gh", "search-web"]);
     expect(values).not.toContain("notion");
     expect(values).not.toContain("github/create_issue");
     expect(values).not.toContain("sentry/create_issue");

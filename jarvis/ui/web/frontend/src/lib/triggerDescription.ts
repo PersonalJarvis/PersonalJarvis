@@ -27,8 +27,13 @@ export function describeTrigger(trigger: unknown, t: (key: string) => string = (
   if (!trigger || typeof trigger !== "object") return "";
   const raw = trigger as Record<string, unknown>;
   const kind = String(raw.kind ?? raw.type ?? "");
+  if (kind === "source") {
+    const source = raw.source as { kind: string; topic?: string; path?: string; upstream_id?: string };
+    return [t("society.triggers.kinds." + source.kind), source.topic || source.path || source.upstream_id].filter(Boolean).join(" · ");
+  }
+  if (kind === "cron") return `${String(raw.expression)} · ${String(raw.timezone)}`;
   if (kind === "webhook" || kind === "event_hook") {
-    const label = kind === "webhook" ? "Webhook" : t("society.hooks.event_hook") + " · " + String(raw.event_name ?? "");
+    const label = kind === "webhook" ? (raw.provider && raw.provider !== "generic" ? String(raw.provider) : "Webhook") : t("society.hooks.event_hook") + " · " + String(raw.event_name ?? "");
     const conditions = raw.conditions && typeof raw.conditions === "object" ? Object.entries(raw.conditions).map(([field, value]) => `${field} = ${JSON.stringify(value)}`).join(", ") : "";
     return conditions ? `${label} · ${conditions}` : label;
   }

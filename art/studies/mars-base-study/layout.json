@@ -1,0 +1,225 @@
+{
+  "schema": 1,
+  "units": "metres",
+  "stage": "terrain-and-circulation-blockout",
+  "bounds": {
+    "minX": -320,
+    "maxX": 330,
+    "minZ": -245,
+    "maxZ": 245
+  },
+  "terrainBounds": {
+    "minX": -800,
+    "maxX": 800,
+    "minZ": -640,
+    "maxZ": 640
+  },
+  "nodes": [
+    {
+      "id": "command",
+      "position": [
+        -72,
+        12,
+        -20
+      ],
+      "radius": 22,
+      "label": "01 / COMMAND",
+      "role": "Mission coordination",
+      "placeId": "meeting"
+    },
+    {
+      "id": "junction",
+      "position": [
+        -15,
+        10,
+        8
+      ],
+      "radius": 4
+    },
+    {
+      "id": "terminal",
+      "position": [
+        20,
+        8,
+        70
+      ],
+      "radius": 24,
+      "label": "02 / COMPUTE",
+      "role": "Terminal workstations",
+      "placeId": "hub:cli"
+    },
+    {
+      "id": "habitat",
+      "position": [
+        -100,
+        6,
+        100
+      ],
+      "radius": 32,
+      "label": "03 / HABITAT",
+      "role": "Common habitat and biosphere"
+    },
+    {
+      "id": "research",
+      "position": [
+        -175,
+        18,
+        -70
+      ],
+      "radius": 22,
+      "label": "04 / RESEARCH",
+      "role": "Knowledge and archive",
+      "placeId": "archive"
+    },
+    {
+      "id": "bridge-west",
+      "position": [
+        20,
+        12,
+        -50
+      ],
+      "radius": 5
+    },
+    {
+      "id": "bridge-east",
+      "position": [
+        100,
+        12,
+        -50
+      ],
+      "radius": 5
+    },
+    {
+      "id": "workshop",
+      "position": [
+        145,
+        6,
+        95
+      ],
+      "radius": 24,
+      "label": "05 / WORKSHOP",
+      "role": "Skills, tools and fabrication",
+      "placeId": "skills"
+    },
+    {
+      "id": "ridge-turn-a",
+      "position": [
+        170,
+        16,
+        -80
+      ],
+      "radius": 4
+    },
+    {
+      "id": "ridge-turn-b",
+      "position": [
+        110,
+        20,
+        -140
+      ],
+      "radius": 4
+    },
+    {
+      "id": "comms",
+      "position": [
+        190,
+        26,
+        -180
+      ],
+      "radius": 18,
+      "label": "06 / COMMS",
+      "role": "External connections and communication",
+      "placeId": "mcp"
+    },
+    {
+      "id": "landing",
+      "position": [
+        255,
+        2,
+        185
+      ],
+      "radius": 34,
+      "label": "07 / LOGISTICS",
+      "role": "Arrival and rover staging"
+    }
+  ],
+  "links": [
+    {
+      "id": "command-spine",
+      "a": "command",
+      "b": "junction",
+      "kind": "ground",
+      "width": 6
+    },
+    {
+      "id": "compute-approach",
+      "a": "junction",
+      "b": "terminal",
+      "kind": "ground",
+      "width": 6
+    },
+    {
+      "id": "habitat-approach",
+      "a": "junction",
+      "b": "habitat",
+      "kind": "ground",
+      "width": 6
+    },
+    {
+      "id": "research-approach",
+      "a": "command",
+      "b": "research",
+      "kind": "ground",
+      "width": 6
+    },
+    {
+      "id": "bridge-approach",
+      "a": "junction",
+      "b": "bridge-west",
+      "kind": "ground",
+      "width": 6
+    },
+    {
+      "id": "ravine-crossing",
+      "a": "bridge-west",
+      "b": "bridge-east",
+      "kind": "bridge",
+      "width": 6
+    },
+    {
+      "id": "workshop-approach",
+      "a": "bridge-east",
+      "b": "workshop",
+      "kind": "ground",
+      "width": 6
+    },
+    {
+      "id": "ridge-ascent-a",
+      "a": "bridge-east",
+      "b": "ridge-turn-a",
+      "kind": "ground",
+      "width": 6
+    },
+    {
+      "id": "ridge-ascent-b",
+      "a": "ridge-turn-a",
+      "b": "ridge-turn-b",
+      "kind": "ground",
+      "width": 6
+    },
+    {
+      "id": "ridge-ascent-c",
+      "a": "ridge-turn-b",
+      "b": "comms",
+      "kind": "ground",
+      "width": 6
+    },
+    {
+      "id": "logistics-road",
+      "a": "workshop",
+      "b": "landing",
+      "kind": "ground",
+      "width": 8
+    }
+  ]
+}

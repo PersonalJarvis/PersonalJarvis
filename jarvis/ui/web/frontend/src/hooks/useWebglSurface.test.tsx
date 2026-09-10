@@ -10,7 +10,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
-import { useRef } from "react";
+import { StrictMode, useRef } from "react";
 
 import { MAX_CONTEXT_RECOVERIES, useWebglSurface } from "@/hooks/useWebglSurface";
 import { isWebglLost, reportWebglLost } from "@/lib/graphDimension";
@@ -46,6 +46,22 @@ function Surface({ canvas }: { canvas: HTMLCanvasElement }) {
   );
 }
 
+/** Mirrors a renderer that replaces its canvas when the recovery key changes. */
+function ReplacingSurface({ canvases }: { canvases: HTMLCanvasElement[] }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const { generation } = useWebglSurface(hostRef);
+  return (
+    <div
+      ref={(node) => {
+        hostRef.current = node;
+        if (node) node.replaceChildren(canvases[generation]);
+      }}
+      data-testid="host"
+      data-generation={generation}
+    />
+  );
+}
+
 /** Fire the event the browser fires when it takes a context away. */
 function dropContext(canvas: HTMLCanvasElement): Event {
   const event = new Event("webglcontextlost", { cancelable: true });
@@ -69,7 +85,48 @@ describe("useWebglSurface", () => {
 
     view.unmount();
 
-    expect(loseContext).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(loseContext).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the live context during StrictMode effect replay and releases it on unmount", async () => {
+    const { canvas, loseContext } = fakeCanvas();
+    const view = render(
+      <StrictMode>
+        <Surface canvas={canvas} />
+      </StrictMode>,
+    );
+
+    // Let any deferred destruction run: replay must have reclaimed this canvas.
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    expect(loseContext).not.toHaveBeenCalled();
+    expect(dropContext(canvas).defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(view.getByTestId("host").dataset.generation).toBe("1");
+    });
+    expect(loseContext).not.toHaveBeenCalled();
+
+    view.unmount();
+    await waitFor(() => expect(loseContext).toHaveBeenCalledTimes(1));
+  });
+
+  it("releases only the retired canvas when context recovery mounts its replacement", async () => {
+    const retired = fakeCanvas();
+    const replacement = fakeCanvas();
+    const view = render(
+      <StrictMode>
+        <ReplacingSurface canvases={[retired.canvas, replacement.canvas]} />
+      </StrictMode>,
+    );
+
+    dropContext(retired.canvas);
+    await waitFor(() => expect(retired.loseContext).toHaveBeenCalledTimes(1));
+    expect(view.getByTestId("host").firstChild).toBe(replacement.canvas);
+    expect(replacement.loseContext).not.toHaveBeenCalled();
+
+    view.unmount();
+    await waitFor(() => expect(replacement.loseContext).toHaveBeenCalledTimes(1));
   });
 
   it("survives a lost context: prevents the default and rebuilds the scene", async () => {

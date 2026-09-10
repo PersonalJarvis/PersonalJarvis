@@ -238,6 +238,37 @@ def test_the_mcp_route_reads_the_session_header_and_ignores_junk():
     assert mcp_server_routes.session_ref({"headers": [(b"x-jarvis-chat-session", b"../x")]}) is None
 
 
+@pytest.mark.parametrize("value", ["society:nala", "society:gmail-agent", "sess-1", "0123abcd"])
+def test_session_header_preserves_canonical_chat_scopes(value):
+    assert (
+        mcp_server_routes.session_ref({"headers": [(b"x-jarvis-chat-session", value.encode())]})
+        == value
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "society:",
+        "society:../nala",
+        "society:nala:other",
+        "other:nala",
+        "society:nala\r\nx-evil: yes",
+        "society:-nala",
+        "society:" + "a" * 121,
+        "é",
+        "a" * 65,
+    ],
+)
+def test_session_header_rejects_malformed_scopes(value):
+    assert (
+        mcp_server_routes.session_ref(
+            {"headers": [(b"x-jarvis-chat-session", value.encode("latin-1"))]}
+        )
+        is None
+    )
+
+
 def test_the_tool_server_names_the_chats_card_for_a_session_request():
     assert server.approval_snapshot() == {}
     token = server.CHAT_SESSION_REF.set("sess-9")

@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from starlette.requests import HTTPConnection
 
 from jarvis.society.events import MsgType
 from jarvis.society.failure_reasons import FailureReason, retry_action
@@ -33,7 +34,7 @@ router = APIRouter(prefix="/api/society", tags=["society"])
 # ------------------------------------------------------------------ runtime
 
 
-async def _runtime(request: Request) -> SocietyRuntime:
+async def _runtime(request: HTTPConnection) -> SocietyRuntime:
     state = request.app.state
     runtime = getattr(state, "society", None)
     if runtime is None:
@@ -774,7 +775,12 @@ async def create_agent_routine(
         )
     except (ValueError, KeyError) as exc:
         raise HTTPException(422, f"invalid routine: {exc}") from exc
-    task_id = await create_routine(store, getattr(request.app.state, "task_scheduler", None), spec)
+    try:
+        task_id = await create_routine(
+            store, getattr(request.app.state, "task_scheduler", None), spec
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     return {"id": task_id, "title": spec.title, "tags": list(spec.tags)}
 
 

@@ -19,6 +19,8 @@ interface HomeStore {
   jarvisCardMode: "voice" | "chat";
   setJarvisCardMode: (mode: "voice" | "chat") => void;
   freshVoicePending: boolean;
+  voiceSelectionPending: boolean;
+  voiceSwitchStopping: boolean;
   surface: HomeSurface;
   setSurface: (surface: HomeSurface) => void;
   /** What was said and answered, oldest first (lib/homeTranscript.ts). */
@@ -79,6 +81,8 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
   jarvisCardMode: "voice",
   setJarvisCardMode: (jarvisCardMode) => set({ jarvisCardMode }),
   freshVoicePending: false,
+  voiceSelectionPending: false,
+  voiceSwitchStopping: false,
   surface: readHomeSurface(),
   setSurface: (surface) => {
     writeHomeSurface(surface);
@@ -93,7 +97,7 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
       // empty lane; the completed conversation remains in the history rail.
       if (reason !== "realtime_fallback" && reason !== "desktop_fallback") {
         const events = useEventStore.getState();
-        if (events.activeKind === "voice") {
+        if (events.activeKind === "voice" && !get().voiceSwitchStopping) {
           events.setActiveConversation("voice", null);
           events.setMessages([]);
           events.seedThinkingTraces({});
@@ -101,7 +105,11 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
         events.setTranscription("", true);
         // Remember this even while the card is closed. Returning to Jarvis
         // must not restore the last archive selection or the typed surface.
-        set({ transcript: [], liveReply: "", jarvisCardMode: "voice", freshVoicePending: true });
+        set({
+          transcript: [], liveReply: "", jarvisCardMode: "voice",
+          freshVoicePending: !get().voiceSwitchStopping,
+          voiceSelectionPending: get().voiceSwitchStopping && get().voiceSelectionPending,
+        });
         return;
       }
     }

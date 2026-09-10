@@ -18,6 +18,8 @@ from uuid import UUID
 from .chat_turn import ChatCompletion as ChatCompletion
 from .chat_turn import ChatTurn as ChatTurn
 from .chat_turn import current_chat_turn as current_chat_turn
+from .trigger_context import RoutineDeferred as RoutineDeferred
+from .trigger_context import current_trigger_path as current_trigger_path
 
 
 class ChatControlAdapter(Protocol):

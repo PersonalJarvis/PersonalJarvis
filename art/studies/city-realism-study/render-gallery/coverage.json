@@ -1,0 +1,3138 @@
+{
+  "study/station": {
+    "source": "art/studies/city-realism-study/exports/station.glb",
+    "source_sha256": "fe7fbe6e00ae5c08b19d95dce22dcc58fb21075f4ae6d724e4e15b6ab1b1e979",
+    "render": "render-gallery/study/station.png",
+    "render_sha256": "d035e285e48d7cf70beb6fd4bfe9d4758ec44d6cd1919274865e556f7dfc5038",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 9,
+    "triangles": 14536,
+    "materials": 9,
+    "dimensions_blender_xyz": [
+      44.5,
+      15.600000381469727,
+      8.25
+    ],
+    "bounds_runtime": {
+      "min": [
+        -22.25,
+        -0.6000000238418579,
+        0.19999980926513672
+      ],
+      "max": [
+        22.25,
+        7.650000095367432,
+        15.800000190734863
+      ]
+    }
+  },
+  "study/building": {
+    "source": "art/studies/city-realism-study/exports/building.glb",
+    "source_sha256": "4fab74bc4ca91b54e39847380744ad291203cfaeb27f0ec6089f32232b07bfab",
+    "render": "render-gallery/study/building.png",
+    "render_sha256": "a68b55d6f3ca46a212049a808f758e875640df30a785df3772755571170e053f",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 14,
+    "triangles": 81624,
+    "materials": 14,
+    "dimensions_blender_xyz": [
+      48.20000076293945,
+      43.69999694824219,
+      28.350000381469727
+    ],
+    "bounds_runtime": {
+      "min": [
+        -24.100000381469727,
+        -0.4399999976158142,
+        -22.599998474121094
+      ],
+      "max": [
+        24.100000381469727,
+        27.90999984741211,
+        21.100000381469727
+      ]
+    },
+    "detail_render": "render-gallery/study/building-detail.png",
+    "detail_render_sha256": "1e7992087687cd169cffc4eff2445a0199ba7e5e3d6b0fbf922f719b905d4eac"
+  },
+  "study/train": {
+    "source": "art/studies/city-realism-study/exports/train.glb",
+    "source_sha256": "087c846063ebd2282a392de9be436b3abb78bf659df843e75bf51ee14dff9384",
+    "render": "render-gallery/study/train.png",
+    "render_sha256": "4c12fdbd43fbe2a00f3c33fc19bb26d9df001151fd59320af5f598a3c40efba4",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 14,
+    "triangles": 14644,
+    "materials": 8,
+    "dimensions_blender_xyz": [
+      20.839767456054688,
+      5.102499961853027,
+      5.230000019073486
+    ],
+    "bounds_runtime": {
+      "min": [
+        -10.419883728027344,
+        -1.119999885559082,
+        -2.5250000953674316
+      ],
+      "max": [
+        10.419883728027344,
+        4.110000133514404,
+        2.5774998664855957
+      ]
+    },
+    "detail_render": "render-gallery/study/train-detail.png",
+    "detail_render_sha256": "04dd7e43bd388347407319fa82d31213428e4bcd36f44ee67b6da4dac7b71c53"
+  },
+  "study/tree": {
+    "source": "art/studies/city-realism-study/exports/tree.glb",
+    "source_sha256": "01ec75edf28610506c5d9900463da4606c7e2ca7a94501c5ecabbc2c01791ae6",
+    "render": "render-gallery/study/tree.png",
+    "render_sha256": "c53e767699ea0497b661f84950c397ba14097cd24202edf32c4199c6afdc138d",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 3,
+    "triangles": 1260,
+    "materials": 3,
+    "dimensions_blender_xyz": [
+      5.423808574676514,
+      5.0,
+      7.700872421264648
+    ],
+    "bounds_runtime": {
+      "min": [
+        -2.6167984008789062,
+        -0.0008728076936677098,
+        -2.5
+      ],
+      "max": [
+        2.8070101737976074,
+        7.699999809265137,
+        2.5
+      ]
+    }
+  },
+  "study/citizen": {
+    "source": "art/studies/city-realism-study/exports/citizen.glb",
+    "source_sha256": "09063a93729f4c92251ca9815cc6a302418ca72678850d18deeff86d9a8f00d9",
+    "render": "render-gallery/study/citizen.png",
+    "render_sha256": "def6dca67ba3bf751872d19ddb3e753fc682b06b4115d6d293e531841eacebae",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 16,
+    "triangles": 1632,
+    "materials": 4,
+    "dimensions_blender_xyz": [
+      0.6819999814033508,
+      0.9399999976158142,
+      1.774999976158142
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.3409999907016754,
+        0.0,
+        -0.4300000071525574
+      ],
+      "max": [
+        0.3409999907016754,
+        1.774999976158142,
+        0.5099999904632568
+      ]
+    }
+  },
+  "legacy/biped-android": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-android.glb",
+    "source_sha256": "e41053d204c755d17ab7cbb79cc29eb9625c52fa00f533ed437bc99a84537d37",
+    "render": "render-gallery/legacy/biped-android.png",
+    "render_sha256": "7153daa006c6b0bc8d88eb665133bf99c3d805a7fda5cbe8039b0c0eae638f69",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 324,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      1.7979998588562012,
+      0.8350000381469727,
+      2.390000104904175
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990000486373901,
+        -1.2081957834197965e-07,
+        -0.3999999761581421
+      ],
+      "max": [
+        0.8989998698234558,
+        2.3899998664855957,
+        0.4350000321865082
+      ]
+    }
+  },
+  "legacy/biped-athlete": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-athlete.glb",
+    "source_sha256": "c3cba8be9a3e1df37bcf61b974884779b3e0d37306b24c07b74941df03a727b3",
+    "render": "render-gallery/legacy/biped-athlete.png",
+    "render_sha256": "20384c85a4f4c2e3ac247be6f65d0f1e8a065f847c26ed812778e59e98ecaf7a",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 360,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.7979998588562012,
+      0.875,
+      2.1800003051757812
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990000486373901,
+        -1.2081957834197965e-07,
+        -0.429999977350235
+      ],
+      "max": [
+        0.8989998698234558,
+        2.180000066757202,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/biped-barbarian": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-barbarian.glb",
+    "source_sha256": "116dbc1ef88db0c7c4775b0b133ab9b676ed7eb5776cdb2a396e081c9663d879",
+    "render": "render-gallery/legacy/biped-barbarian.png",
+    "render_sha256": "9bb233449d0f89f0c222f3fd4d9747422038a5db758442d74d9ee4adfc18b3ea",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 4045,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.324254035949707,
+      0.9859032034873962,
+      2.17353892326355
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.654268205165863,
+        -0.0008217655122280121,
+        -0.4598711133003235
+      ],
+      "max": [
+        0.669985830783844,
+        2.1727170944213867,
+        0.5260320901870728
+      ]
+    }
+  },
+  "legacy/biped-blockhead": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-blockhead.glb",
+    "source_sha256": "5b121c93276b7982acac55fed211404b7139610d961e2c791be0c6a01b38c4a2",
+    "render": "render-gallery/legacy/biped-blockhead.png",
+    "render_sha256": "ae874c79ac1f89b4818c8d67d2509d96e055743bce499dff002fab58a7bb6b4e",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 324,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      1.7979999780654907,
+      0.8450000286102295,
+      2.1500003337860107
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990001082420349,
+        -1.2081957834197965e-07,
+        -0.3999999761581421
+      ],
+      "max": [
+        0.8989998698234558,
+        2.1500000953674316,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/biped-casual": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-casual.glb",
+    "source_sha256": "96717f434be541cee3c27d1a4fa6a63f4a369993836933dfa65e2e95f857f13e",
+    "render": "render-gallery/legacy/biped-casual.png",
+    "render_sha256": "c712903d54ff9e55e8a3c312b8e7d5c4ed6c6314913ce87972b4f52c86ebd53a",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 396,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.7979998588562012,
+      0.9449999928474426,
+      2.1800003051757812
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990000486373901,
+        -1.2081957834197965e-07,
+        -0.4999999701976776
+      ],
+      "max": [
+        0.8989998698234558,
+        2.180000066757202,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/biped-chibi": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-chibi.glb",
+    "source_sha256": "f2c4824f99f5fba0961cb40ff6f20624804f59f63d9a817631508659bd2c10e1",
+    "render": "render-gallery/legacy/biped-chibi.png",
+    "render_sha256": "c695a04b1b8031a630ffa4c33a2e325a941dcceeb6eb126a7fca6131a5fc41bc",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 348,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.7979999780654907,
+      0.875,
+      2.1800003051757812
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990001082420349,
+        -1.2081957834197965e-07,
+        -0.429999977350235
+      ],
+      "max": [
+        0.8989998698234558,
+        2.180000066757202,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/biped-clips": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-clips.glb",
+    "source_sha256": "b909e2263bacfddbadba5aa38b1725bea1614c450baba14d8c386d1bbe2bce3a",
+    "render": "render-gallery/legacy/biped-clips.png",
+    "render_sha256": "3a2044fa286492af4972ec895d7a30db3a68cd476a52048d4c8181023712fe83",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "animation library; skeleton visualization",
+    "meshes": 0,
+    "triangles": 0,
+    "materials": 0,
+    "dimensions_blender_xyz": [
+      1.7980351448059082,
+      0.2966762185096741,
+      1.4923008680343628
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990175724029541,
+        -2.2216419814924393e-09,
+        -0.034633487462997437
+      ],
+      "max": [
+        0.8990175724029541,
+        1.4923008680343628,
+        0.26204273104667664
+      ]
+    }
+  },
+  "legacy/biped-dwarf": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-dwarf.glb",
+    "source_sha256": "715dcc96214cc620c6ef219f7ee6117c5d928b88d2b7f35f3b920abba9a6397d",
+    "render": "render-gallery/legacy/biped-dwarf.png",
+    "render_sha256": "6c08901f6f7209e4c9fc30e524b6d750b50368967a49b58749dcd816c6f32a57",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 360,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.7979999780654907,
+      0.875,
+      2.1800003051757812
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990001082420349,
+        -1.2081957834197965e-07,
+        -0.429999977350235
+      ],
+      "max": [
+        0.8989998698234558,
+        2.180000066757202,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/biped-elf": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-elf.glb",
+    "source_sha256": "bf64a41ece95413c2b0bba29447f018880d7c74a4eab0a6e560c98b1f246be6a",
+    "render": "render-gallery/legacy/biped-elf.png",
+    "render_sha256": "33e248fc2ec7f49f30d899a6f51fb8ee4594b548be1daaf80d6649c0ed6b57e2",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 396,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.7979998588562012,
+      0.875,
+      2.1800003051757812
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990000486373901,
+        -1.2081957834197965e-07,
+        -0.429999977350235
+      ],
+      "max": [
+        0.8989998698234558,
+        2.180000066757202,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/biped-knight": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-knight.glb",
+    "source_sha256": "d2e49385401c3007dbe012db31389b7f92c6049a9ef38d81c970b73344772f05",
+    "render": "render-gallery/legacy/biped-knight.png",
+    "render_sha256": "fee24b7f78c55bed339703632364705d7f5bba02cb7eb073d5218091af03a851",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 4148,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.3206104040145874,
+      1.016739845275879,
+      2.301762819290161
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.6515781879425049,
+        -0.0008547800243832171,
+        -0.48509493470191956
+      ],
+      "max": [
+        0.6690322160720825,
+        2.300908088684082,
+        0.531644880771637
+      ]
+    }
+  },
+  "legacy/biped-mage": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-mage.glb",
+    "source_sha256": "523de757f1bb6d7857b59e5b8a232f234a465f773f4f419ed34adbadfd7b5012",
+    "render": "render-gallery/legacy/biped-mage.png",
+    "render_sha256": "08871863e527c021272ec4cc2564e836f1ee8c3fbc810a84448ae68aec2a8017",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 4029,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.3515396118164062,
+      1.2674272060394287,
+      2.1900126934051514
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.6701499223709106,
+        -0.0009343175333924592,
+        -0.7479751706123352
+      ],
+      "max": [
+        0.6813896894454956,
+        2.1890783309936523,
+        0.5194520950317383
+      ]
+    }
+  },
+  "legacy/biped-medic": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-medic.glb",
+    "source_sha256": "70c799b27888a5fad42aeb40187c2584821defd76e9dbd6faee7b8299849c607",
+    "render": "render-gallery/legacy/biped-medic.png",
+    "render_sha256": "c8c1c875e2b5955475ab25d4b32b27abebac0bb41c3a08f6e3715a0120d1bfe7",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 396,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.7979998588562012,
+      0.875,
+      2.1800003051757812
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990000486373901,
+        -1.2081957834197965e-07,
+        -0.429999977350235
+      ],
+      "max": [
+        0.8989998698234558,
+        2.180000066757202,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/biped-monk": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-monk.glb",
+    "source_sha256": "bc2e0d8a17e40858d628a27e3c9911a7495d380ef87e4a1776edb89a72dec3dd",
+    "render": "render-gallery/legacy/biped-monk.png",
+    "render_sha256": "49497d0b9b6087bc225390b4bce11c082890ac08131e0fb1e4f18a52a3c7c2c2",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 336,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      1.7979998588562012,
+      0.9449999928474426,
+      2.1500003337860107
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990000486373901,
+        -1.2081957834197965e-07,
+        -0.4999999701976776
+      ],
+      "max": [
+        0.8989998698234558,
+        2.1500000953674316,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/biped-office": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-office.glb",
+    "source_sha256": "d0f244cfd7ed1ae36bd394bd3e0d648571e6af6a0b69aab839dccc44350f0f1b",
+    "render": "render-gallery/legacy/biped-office.png",
+    "render_sha256": "4276164152886504a6a955d7119dbfdb879288236630450427aa5a36656cd039",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 372,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.7979998588562012,
+      0.875,
+      2.1800003051757812
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990000486373901,
+        -1.2081957834197965e-07,
+        -0.429999977350235
+      ],
+      "max": [
+        0.8989998698234558,
+        2.180000066757202,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/biped-pilot": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-pilot.glb",
+    "source_sha256": "62ed4e8fc80fa5e3cbb054a58342bffc6c8efd7d43e67955c8af698e27a4561e",
+    "render": "render-gallery/legacy/biped-pilot.png",
+    "render_sha256": "e93b8ea872f404ce3263b1a1e762ab0d9a0ff7ab8ba4b510455d84067ed64efa",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 288,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      1.7979998588562012,
+      0.8350000381469727,
+      2.1500003337860107
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990000486373901,
+        -1.2081957834197965e-07,
+        -0.3999999761581421
+      ],
+      "max": [
+        0.8989998698234558,
+        2.1500000953674316,
+        0.4350000321865082
+      ]
+    }
+  },
+  "legacy/biped-rogue": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-rogue.glb",
+    "source_sha256": "6b788e69533a4af50f6a3c6d7f8970cc761c6495fb207f5aa80666ba0fc1791a",
+    "render": "render-gallery/legacy/biped-rogue.png",
+    "render_sha256": "2f93e0585cccea5b880ee5ec6cc86218c638459e3b984ff7d7a848d4a9930d45",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 4263,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.3206305503845215,
+      1.0156928300857544,
+      2.1742427349090576
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.6515875458717346,
+        -0.0008642300381325185,
+        -0.49623987078666687
+      ],
+      "max": [
+        0.6690430641174316,
+        2.1733784675598145,
+        0.5194529891014099
+      ]
+    }
+  },
+  "legacy/biped-scientist": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-scientist.glb",
+    "source_sha256": "af53cbeddcda7caf05dbb928c0bb173dd520698bdda54808e6f90631af7e867f",
+    "render": "render-gallery/legacy/biped-scientist.png",
+    "render_sha256": "ad0ace7efa61205f175c6b2428d3cd95264ff9f7ae5144c39295ee78c4bd8482",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 420,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.7979998588562012,
+      0.8799999952316284,
+      2.1800003051757812
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990000486373901,
+        -1.2081957834197965e-07,
+        -0.429999977350235
+      ],
+      "max": [
+        0.8989998698234558,
+        2.180000066757202,
+        0.45000001788139343
+      ]
+    }
+  },
+  "legacy/biped-toon": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-toon.glb",
+    "source_sha256": "c998dca5bc7dc8626be729ea33ead2c6591cf1a7cbc125e3020b4fd73c59814e",
+    "render": "render-gallery/legacy/biped-toon.png",
+    "render_sha256": "1012da2a74670e31ab28c01d3e4890a0e0fbdd5204582c4e67adaecd43ebb9df",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 348,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.7979998588562012,
+      0.875,
+      2.1800003051757812
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990000486373901,
+        -1.2081957834197965e-07,
+        -0.429999977350235
+      ],
+      "max": [
+        0.8989998698234558,
+        2.180000066757202,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/biped-trooper": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-trooper.glb",
+    "source_sha256": "4ac782e7fd49930e4a27f1b773b2ea0c68965d33718e0a67eb62affe4d6b9dd7",
+    "render": "render-gallery/legacy/biped-trooper.png",
+    "render_sha256": "739c72d172556ad60f2f5196e297dcddc49edfc42317b484f709119b7f92cc32",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 288,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      1.7979999780654907,
+      0.8350000381469727,
+      2.1500003337860107
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990001082420349,
+        -1.2081957834197965e-07,
+        -0.3999999761581421
+      ],
+      "max": [
+        0.8989998698234558,
+        2.1500000953674316,
+        0.4350000321865082
+      ]
+    }
+  },
+  "legacy/biped-worker": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/biped-worker.glb",
+    "source_sha256": "ea743a14826d6254734e9e1fdf89609c971fbfb56eef1439d986beb4c0938cd1",
+    "render": "render-gallery/legacy/biped-worker.png",
+    "render_sha256": "2781df65402894053a009c89ae750c4637fd3e30f8617590b665dd33655c685b",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 396,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.7979999780654907,
+      0.875,
+      2.1800003051757812
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.8990001082420349,
+        -1.2081957834197965e-07,
+        -0.429999977350235
+      ],
+      "max": [
+        0.8989998698234558,
+        2.180000066757202,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/back-backpack": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/back-backpack.glb",
+    "source_sha256": "7f4f09b95132e1a7c718ff88527f817da38e3436977ed8d1fa00c87bfbb4b0a1",
+    "render": "render-gallery/legacy/back-backpack.png",
+    "render_sha256": "6131b8ddc7b0a48b219e79701c5a209dd3ab18254851a3d6a355a8eac9180915",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 48,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.5,
+      0.6599999666213989,
+      0.320900022983551
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.25,
+        0.9125999808311462,
+        -0.429999977350235
+      ],
+      "max": [
+        0.25,
+        1.2335000038146973,
+        0.23000001907348633
+      ]
+    }
+  },
+  "legacy/back-cloak": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/back-cloak.glb",
+    "source_sha256": "1322a9a6752e045d323d8dacb5ae5de05728054781356d3b4b67287772d39a45",
+    "render": "render-gallery/legacy/back-cloak.png",
+    "render_sha256": "6a4d224a49e270b1ea68417d604441a5a391e24b9657304d357bddb8adffd4a9",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.800000011920929,
+      0.4999999701976776,
+      1.0878000259399414
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.4000000059604645,
+        0.1856999397277832,
+        -0.25999996066093445
+      ],
+      "max": [
+        0.4000000059604645,
+        1.2734999656677246,
+        0.24000000953674316
+      ]
+    }
+  },
+  "legacy/back-fur-cape": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/back-fur-cape.glb",
+    "source_sha256": "bc2bf3285a9d3ce5eff8879ea3a4ae8edd89abb946f6b631a1c0d49b3a355a50",
+    "render": "render-gallery/legacy/back-fur-cape.png",
+    "render_sha256": "b016ee6396f53b5a323d6c0ea3516f33bacd7342a2a36ef512575a8a5317babd",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 78,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.9707568287849426,
+      0.3425888419151306,
+      1.1447787284851074
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.4853696823120117,
+        0.09119468182325363,
+        -0.3860939145088196
+      ],
+      "max": [
+        0.4853871464729309,
+        1.2359733581542969,
+        -0.04350506141781807
+      ]
+    }
+  },
+  "legacy/back-jetpack": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/back-jetpack.glb",
+    "source_sha256": "bea14b156172c07354cbb1a7c267e867f01822d060b7351c45d1b3250b1cb308",
+    "render": "render-gallery/legacy/back-jetpack.png",
+    "render_sha256": "3f9bb65f6e17e8ca7f3566e8ead3e960b494661382c4a7282903a0fc899080a7",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 60,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.4399999976158142,
+      0.6499999761581421,
+      0.40090006589889526
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.2199999988079071,
+        0.832599937915802,
+        -0.41999998688697815
+      ],
+      "max": [
+        0.2199999988079071,
+        1.2335000038146973,
+        0.23000001907348633
+      ]
+    }
+  },
+  "legacy/back-knight-cape": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/back-knight-cape.glb",
+    "source_sha256": "cbd9fe572faf74ded8605aeb6002fa15af889cf815066f94f26d0895a60ab277",
+    "render": "render-gallery/legacy/back-knight-cape.png",
+    "render_sha256": "32bbfba695181ad9ff06ce32b028f884d7c6151adec2380c9c0901ba94897ef1",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 84,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.9707568287849426,
+      0.3425888419151306,
+      1.1419450044631958
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.4853677749633789,
+        0.09404604882001877,
+        -0.3860939145088196
+      ],
+      "max": [
+        0.4853890538215637,
+        1.2359910011291504,
+        -0.04350506141781807
+      ]
+    }
+  },
+  "legacy/back-mage-cape": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/back-mage-cape.glb",
+    "source_sha256": "575f36f179e6f19547985b30790582b5c1575796523eaa13d927cfdd5c1751b0",
+    "render": "render-gallery/legacy/back-mage-cape.png",
+    "render_sha256": "3989b8d3473f9fabbd5ec431eb5a012221b72cdada6c4d66893c00b707eb2ae9",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 84,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.9707568287849426,
+      0.342588871717453,
+      1.1808936595916748
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.4853677749633789,
+        0.05507975071668625,
+        -0.3860938847064972
+      ],
+      "max": [
+        0.4853890538215637,
+        1.2359733581542969,
+        -0.04350501671433449
+      ]
+    }
+  },
+  "legacy/back-quiver": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/back-quiver.glb",
+    "source_sha256": "26fd76be9d9fa589cc6523c757ff5489bd7123846b5c10b42d410e130f84367c",
+    "render": "render-gallery/legacy/back-quiver.png",
+    "render_sha256": "d584fe92de2e7a9316b2995247beab72f0dbc99c11612efeaf7f1995db45d208",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.5400000214576721,
+      0.5699999928474426,
+      0.8058999180793762
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.23999999463558197,
+        0.5975999236106873,
+        -0.3399999737739563
+      ],
+      "max": [
+        0.30000001192092896,
+        1.4034998416900635,
+        0.23000000417232513
+      ]
+    }
+  },
+  "legacy/back-rogue-cape": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/back-rogue-cape.glb",
+    "source_sha256": "b33435cf28bd5ffc9379858df2059131494e7eab9f5472b4e4d9b2abb8179730",
+    "render": "render-gallery/legacy/back-rogue-cape.png",
+    "render_sha256": "4b6cfe8a8888773e5324c380ad484b5974d6797361acaa700f158a0689a7a349",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 84,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.9707568287849426,
+      0.3425888419151306,
+      1.1419448852539062
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.4853677749633789,
+        0.0940285250544548,
+        -0.38609376549720764
+      ],
+      "max": [
+        0.4853890538215637,
+        1.2359733581542969,
+        -0.04350491240620613
+      ]
+    }
+  },
+  "legacy/back-satchel": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/back-satchel.glb",
+    "source_sha256": "d4c010721cfed7aa43dd767a30f8148c0d6c53bd0aa1c2747703f7c49071a33e",
+    "render": "render-gallery/legacy/back-satchel.png",
+    "render_sha256": "40f36726f72c0c4c7fc2c5269687d7aba9a92c43c82ab2b0b6628e0885fed200",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.5699999928474426,
+      0.47999998927116394,
+      0.685900092124939
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.1599999964237213,
+        0.5575999021530151,
+        -0.23999997973442078
+      ],
+      "max": [
+        0.4099999964237213,
+        1.243499994277954,
+        0.24000000953674316
+      ]
+    }
+  },
+  "legacy/belt-sash-broad": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/belt-sash-broad.glb",
+    "source_sha256": "b18b71fe8e68f1526b0b7ad31561f01adce1fbd456a24aa119d437fe2ff1c7f5",
+    "render": "render-gallery/legacy/belt-sash-broad.png",
+    "render_sha256": "2cdb1580d9cff5ca0ba5861bbb40e742bf8a6ecd7a958d517a649b2862ee4f4d",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.8999999761581421,
+      0.6299999952316284,
+      0.3119000196456909
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.44999998807907104,
+        0.30570000410079956,
+        -0.3100000023841858
+      ],
+      "max": [
+        0.44999998807907104,
+        0.6176000237464905,
+        0.3199999928474426
+      ]
+    }
+  },
+  "legacy/belt-sash": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/belt-sash.glb",
+    "source_sha256": "3991f2776d15e011a49906af284676c0961f7ef570006d9b9f91841b0ccd4d6f",
+    "render": "render-gallery/legacy/belt-sash.png",
+    "render_sha256": "323da02ff671cbbe88182b5ec88ebcc570ccfb361d5da226aeb0574ed367a360",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.6700000166893005,
+      0.4599999785423279,
+      0.3119000196456909
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.33500000834465027,
+        0.30570000410079956,
+        -0.22499997913837433
+      ],
+      "max": [
+        0.33500000834465027,
+        0.6176000237464905,
+        0.23500001430511475
+      ]
+    }
+  },
+  "legacy/belt-toolbelt-broad": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/belt-toolbelt-broad.glb",
+    "source_sha256": "91f162ec597c975b582337559d237e05991901d413b48d8954f24abe8e9e7230",
+    "render": "render-gallery/legacy/belt-toolbelt-broad.png",
+    "render_sha256": "8ea1be833cd8d47b8cc99ca955c8c589ad7b25add98ba90d85ff08449f514c6e",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.8999999761581421,
+      0.6399999856948853,
+      0.21000003814697266
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.44999998807907104,
+        0.397599995136261,
+        -0.3100000023841858
+      ],
+      "max": [
+        0.44999998807907104,
+        0.6076000332832336,
+        0.33000001311302185
+      ]
+    }
+  },
+  "legacy/belt-toolbelt": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/belt-toolbelt.glb",
+    "source_sha256": "e8a11e04a60fbc0c5b7edefdbcdffed1724b9baaa33b2153554124222594fbac",
+    "render": "render-gallery/legacy/belt-toolbelt.png",
+    "render_sha256": "736a5c072cd4e1bc2d2f48e41b3393575b349dece54ecafc5d4d418b2beea5f8",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.6700000166893005,
+      0.4699999988079071,
+      0.21000003814697266
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.33500000834465027,
+        0.397599995136261,
+        -0.22499997913837433
+      ],
+      "max": [
+        0.33500000834465027,
+        0.6076000332832336,
+        0.24500001966953278
+      ]
+    }
+  },
+  "legacy/face_extra-glasses": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/face_extra-glasses.glb",
+    "source_sha256": "ff1e78f5acd1aa61033c06c9b085833ac9709f9e6eed1f55f20b9def5714faf8",
+    "render": "render-gallery/legacy/face_extra-glasses.png",
+    "render_sha256": "fe91791e12ecaf350f58027dbf311a179fe62e8227f3a90ba3404f64adbbd31a",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 132,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.8640000224113464,
+      0.4449999928474426,
+      0.20000016689300537
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.4320000112056732,
+        1.71999990940094,
+        3.080567978486215e-08
+      ],
+      "max": [
+        0.4320000112056732,
+        1.9200000762939453,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/face_extra-respirator": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/face_extra-respirator.glb",
+    "source_sha256": "6496476a11345b2d7b4031ccbc92b2ce3597bdf0166480cbebe8eb38b030b24f",
+    "render": "render-gallery/legacy/face_extra-respirator.png",
+    "render_sha256": "c1ce314a0087fb84d37d29d856480b0eaf82406e5104436a42ce07b902360234",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.8799999952316284,
+      0.9399999380111694,
+      0.2999999523162842
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.4399999976158142,
+        1.4900000095367432,
+        -0.41999995708465576
+      ],
+      "max": [
+        0.4399999976158142,
+        1.7899999618530273,
+        0.5199999809265137
+      ]
+    }
+  },
+  "legacy/face_extra-shades": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/face_extra-shades.glb",
+    "source_sha256": "cbdeba4e0fbbd1a9e9de4642e20fa4df207c5cc8f107fe0271b8e690ddb7bc8d",
+    "render": "render-gallery/legacy/face_extra-shades.png",
+    "render_sha256": "1ba5615512b6a1cef16a83a4926efe8fbd4c9a343f1f2ca3989e63c77382c6f0",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.8600000143051147,
+      0.034999966621398926,
+      0.19000005722045898
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.4300000071525574,
+        1.7200000286102295,
+        0.4200000464916229
+      ],
+      "max": [
+        0.4300000071525574,
+        1.9100000858306885,
+        0.45500001311302185
+      ]
+    }
+  },
+  "legacy/hand_l-clipboard": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_l-clipboard.glb",
+    "source_sha256": "36177593f493d518268f105c2cbc105597b3a9779cd9cad89a5f9c30bcb87201",
+    "render": "render-gallery/legacy/hand_l-clipboard.png",
+    "render_sha256": "59937ba3ca6db0258a0576004393a87bc660689b6b6a35cc6cde3027248063f1",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.09000003337860107,
+      0.36000001430511475,
+      0.4599999785423279
+    ],
+    "bounds_runtime": {
+      "min": [
+        0.8430998921394348,
+        0.8093000054359436,
+        0.08000000566244125
+      ],
+      "max": [
+        0.9330999255180359,
+        1.2692999839782715,
+        0.4400000274181366
+      ]
+    }
+  },
+  "legacy/hand_l-lantern": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_l-lantern.glb",
+    "source_sha256": "5c873af6f1b6fda1d483709e2df60be1f58ebdc6eb0b2155f6a2da7087b9fdd8",
+    "render": "render-gallery/legacy/hand_l-lantern.png",
+    "render_sha256": "0771e003205c3714250efc6605c00f1573a561ba15440b6debc97ebbb1625c31",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.15999996662139893,
+      0.1599999964237213,
+      0.3599998354911804
+    ],
+    "bounds_runtime": {
+      "min": [
+        0.8030999302864075,
+        0.7493000626564026,
+        0.15000003576278687
+      ],
+      "max": [
+        0.9630998969078064,
+        1.109299898147583,
+        0.3100000321865082
+      ]
+    }
+  },
+  "legacy/hand_l-round-shield": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_l-round-shield.glb",
+    "source_sha256": "b5595bc24507b7e5f76400ee5b56633eeeb470f2fa78d566f3d0a850d082a894",
+    "render": "render-gallery/legacy/hand_l-round-shield.png",
+    "render_sha256": "591ee52f072f67cb5670095f180fcedda70a974051e9246ec70b85aa299eeeeb",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 284,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.8826068639755249,
+      0.8826069831848145,
+      0.331945538520813
+    ],
+    "bounds_runtime": {
+      "min": [
+        0.44183194637298584,
+        1.0603779554367065,
+        -0.4243062436580658
+      ],
+      "max": [
+        1.3244388103485107,
+        1.3923234939575195,
+        0.45830070972442627
+      ]
+    }
+  },
+  "legacy/hand_l-spellbook": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_l-spellbook.glb",
+    "source_sha256": "d6163f7301fd29aa23ccf9478e8300dbefeb500608dd763064baa9467f3f52a4",
+    "render": "render-gallery/legacy/hand_l-spellbook.png",
+    "render_sha256": "19867c7dd9d53a626f7ee173a82320cf47f158cd2e3d1d726c6ce24c3841d8ed",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 292,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.29302287101745605,
+      0.427144855260849,
+      0.5749997496604919
+    ],
+    "bounds_runtime": {
+      "min": [
+        0.7366211414337158,
+        0.7617610096931458,
+        0.05426901951432228
+      ],
+      "max": [
+        1.0296440124511719,
+        1.3367607593536377,
+        0.481413871049881
+      ]
+    }
+  },
+  "legacy/hand_l-tablet": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_l-tablet.glb",
+    "source_sha256": "16be5191863d4374635376109d230e1c93796e983eed087c91c743ca6c6a0c14",
+    "render": "render-gallery/legacy/hand_l-tablet.png",
+    "render_sha256": "3bbebddf3ee6a5f0cd570fbd68da5d6f4565ce5b8492e81c8bfaae4d57811a0d",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.09000003337860107,
+      0.3799999952316284,
+      0.5199999213218689
+    ],
+    "bounds_runtime": {
+      "min": [
+        0.8430998921394348,
+        0.7793000340461731,
+        0.08000003546476364
+      ],
+      "max": [
+        0.9330999255180359,
+        1.299299955368042,
+        0.46000003814697266
+      ]
+    }
+  },
+  "legacy/hand_l-wooden-shield": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_l-wooden-shield.glb",
+    "source_sha256": "f921a8bec0163657db915faf6a1cd84744a70768c9eee3aaaf467c63a2d3966e",
+    "render": "render-gallery/legacy/hand_l-wooden-shield.png",
+    "render_sha256": "6c8fcf60c9ce741f530b13c2d2fbd064d5be231b45c733ba5bf64fc7c42507a6",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 284,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.8826068043708801,
+      0.8826069831848145,
+      0.331945538520813
+    ],
+    "bounds_runtime": {
+      "min": [
+        0.4418262839317322,
+        1.0603779554367065,
+        -0.4243062436580658
+      ],
+      "max": [
+        1.3244330883026123,
+        1.3923234939575195,
+        0.45830070972442627
+      ]
+    }
+  },
+  "legacy/hand_r-axe": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_r-axe.glb",
+    "source_sha256": "efb1d3ced15965f1a6f7214c2e89eb4ccd54103a07c0b0bf866eac0168fbe9b6",
+    "render": "render-gallery/legacy/hand_r-axe.png",
+    "render_sha256": "25292703b2836cfd6f090d2c99d040de44a9e54c15bfbbf3ff6a06c5255660d8",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 274,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.7143201231956482,
+      1.2444223165512085,
+      0.18496185541152954
+    ],
+    "bounds_runtime": {
+      "min": [
+        -1.471989393234253,
+        0.9567787051200867,
+        -0.2397395372390747
+      ],
+      "max": [
+        -0.7576692700386047,
+        1.1417405605316162,
+        1.0046827793121338
+      ]
+    }
+  },
+  "legacy/hand_r-broom": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_r-broom.glb",
+    "source_sha256": "b49ca2576b44b8dd35de31dc65db933b184e54414324458840c01217c2363e92",
+    "render": "render-gallery/legacy/hand_r-broom.png",
+    "render_sha256": "7c9701f7daeced7971344f66fe53db5778b208696c9b0e19a2cb1ae07d510a8d",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.14000004529953003,
+      1.1599998474121094,
+      0.1400001049041748
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.9531001448631287,
+        0.9792996644973755,
+        -0.8599997162818909
+      ],
+      "max": [
+        -0.8131000995635986,
+        1.1192997694015503,
+        0.3000001311302185
+      ]
+    }
+  },
+  "legacy/hand_r-knife": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_r-knife.glb",
+    "source_sha256": "cf812361f3f37d80d60ca859ef19353cbf2372cac517db887f70248a12e56599",
+    "render": "render-gallery/legacy/hand_r-knife.png",
+    "render_sha256": "e7f091dc045e4283d9d5cc6afe00ac119d7e2b6e0f5928fb3083c7d74dbd032d",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 172,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.25929737091064453,
+      1.205845594406128,
+      0.1517411470413208
+    ],
+    "bounds_runtime": {
+      "min": [
+        -1.003298282623291,
+        0.973389744758606,
+        -0.2249097228050232
+      ],
+      "max": [
+        -0.7440009117126465,
+        1.1251308917999268,
+        0.9809359312057495
+      ]
+    }
+  },
+  "legacy/hand_r-mug": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_r-mug.glb",
+    "source_sha256": "d6a515ff942819fa4d289bd0cd487d9fde1276654c2d5be0873890639d99c76d",
+    "render": "render-gallery/legacy/hand_r-mug.png",
+    "render_sha256": "ec115fd7d0c6f2abda0f0987d532a776014ae60fc7905218a5f03b5b773caa3d",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 426,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.5342331528663635,
+      0.5483657121658325,
+      0.3959590196609497
+    ],
+    "bounds_runtime": {
+      "min": [
+        -1.3816771507263184,
+        0.851280927658081,
+        -0.2544829249382019
+      ],
+      "max": [
+        -0.8474439978599548,
+        1.2472399473190308,
+        0.293882817029953
+      ]
+    }
+  },
+  "legacy/hand_r-scanner": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_r-scanner.glb",
+    "source_sha256": "6dde6fcd3dc4707c508dae016ae23a0d0bc07c82b018030b1193493eee899e0e",
+    "render": "render-gallery/legacy/hand_r-scanner.png",
+    "render_sha256": "72d8cafc5ed78a6063e514f76dbd6874b2c5acd4108e1a7f49346a00d2997a2f",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.12000006437301636,
+      0.43999993801116943,
+      0.1199999451637268
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.943099856376648,
+        0.9892998337745667,
+        -0.01999986730515957
+      ],
+      "max": [
+        -0.8230997920036316,
+        1.1092997789382935,
+        0.4200000762939453
+      ]
+    }
+  },
+  "legacy/hand_r-staff": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_r-staff.glb",
+    "source_sha256": "bc3204e2fe7bc0731c89ed949a0794622ac7e3ea7bd8c782fa6f29bb3d827492",
+    "render": "render-gallery/legacy/hand_r-staff.png",
+    "render_sha256": "e93e1a4d6e8d5a4b8644c0958b52a90a707c3a84224fc1eb549b8be9105d3e86",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 440,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.5762093663215637,
+      2.1546990871429443,
+      0.2923451066017151
+    ],
+    "bounds_runtime": {
+      "min": [
+        -1.128499984741211,
+        0.9030876755714417,
+        -0.9004448056221008
+      ],
+      "max": [
+        -0.5522906184196472,
+        1.1954327821731567,
+        1.2542543411254883
+      ]
+    }
+  },
+  "legacy/hand_r-sword": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_r-sword.glb",
+    "source_sha256": "9eba560a68bc649303d5d4897b35c97719ebb20aa8e590118a79c60d43ef526b",
+    "render": "render-gallery/legacy/hand_r-sword.png",
+    "render_sha256": "0d912d21847e1f48e31a443901c87caff706d4b4842057fd861e99e9babc02a8",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 300,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.503444254398346,
+      1.7752611637115479,
+      0.13063353300094604
+    ],
+    "bounds_runtime": {
+      "min": [
+        -1.1348509788513184,
+        0.983943521976471,
+        -0.33245614171028137
+      ],
+      "max": [
+        -0.6314067244529724,
+        1.114577054977417,
+        1.4428050518035889
+      ]
+    }
+  },
+  "legacy/hand_r-torch": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_r-torch.glb",
+    "source_sha256": "fc790efe372931228b876d160a6ffd6c31b049dccacfec7d695688c44ec2a78f",
+    "render": "render-gallery/legacy/hand_r-torch.png",
+    "render_sha256": "87d25218ef882d2ae0064e70c0010e5693434c2b00eb60691a792113ff800c21",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.12000000476837158,
+      0.5999999642372131,
+      0.1199999451637268
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.9430997967720032,
+        0.9892998337745667,
+        -0.09999985247850418
+      ],
+      "max": [
+        -0.8230997920036316,
+        1.1092997789382935,
+        0.5000001192092896
+      ]
+    }
+  },
+  "legacy/hand_r-wrench": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/hand_r-wrench.glb",
+    "source_sha256": "3ff1d0cd2b772014a7abaada2c1f09a6cb59e859d6438cba3e7f753120a2c64f",
+    "render": "render-gallery/legacy/hand_r-wrench.png",
+    "render_sha256": "d0a65dda30313ebbd0675ed144a8bdfd655f6528ab492e3bdd29b1dff988f233",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.09000009298324585,
+      0.4400000274181366,
+      0.14000004529953003
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.9280998706817627,
+        0.9792998433113098,
+        -0.05999987572431564
+      ],
+      "max": [
+        -0.8380997776985168,
+        1.1192998886108398,
+        0.38000014424324036
+      ]
+    }
+  },
+  "legacy/headgear-beanie": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/headgear-beanie.glb",
+    "source_sha256": "7f5593da905d953fa795db1ea0da08919d7be06cb126349f36d336ba39fd5eda",
+    "render": "render-gallery/legacy/headgear-beanie.png",
+    "render_sha256": "345d078b116ab6f06094141feabfd26a10913dc9d171f1888a8d1ced75af92c1",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.9300000071525574,
+      0.8899999856948853,
+      0.4799998998641968
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.4650000035762787,
+        1.790000081062317,
+        -0.44499996304512024
+      ],
+      "max": [
+        0.4650000035762787,
+        2.2699999809265137,
+        0.445000022649765
+      ]
+    }
+  },
+  "legacy/headgear-cap": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/headgear-cap.glb",
+    "source_sha256": "56596e61ede095889df236ce498968b3d8e7c49c51690275d0fedec9c58d88fe",
+    "render": "render-gallery/legacy/headgear-cap.png",
+    "render_sha256": "d9baf950bcae750d5930023dd8ca9fff4a362f4aaa6d5ea25d6e3aee3718dddd",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 48,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.9100000262260437,
+      1.1050000190734863,
+      0.4099999666213989
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.45500001311302185,
+        1.850000023841858,
+        -0.4349999725818634
+      ],
+      "max": [
+        0.45500001311302185,
+        2.259999990463257,
+        0.6700000762939453
+      ]
+    }
+  },
+  "legacy/headgear-crown": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/headgear-crown.glb",
+    "source_sha256": "6dba514f3ee277bdc28c7755847aa65ab006882bd0c2876f43c0283beea3c68b",
+    "render": "render-gallery/legacy/headgear-crown.png",
+    "render_sha256": "26809cd3f100cf29a1da46f6b31608b113e95f6fef6953fd5f8d8a856f51c5f3",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 60,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.8999999761581421,
+      0.8700000047683716,
+      0.25
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.44999998807907104,
+        2.009999990463257,
+        -0.429999977350235
+      ],
+      "max": [
+        0.44999998807907104,
+        2.259999990463257,
+        0.4400000274181366
+      ]
+    }
+  },
+  "legacy/headgear-hardhat": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/headgear-hardhat.glb",
+    "source_sha256": "48688bb4c1b1d8f25ef8ff8ac038ace5fe6d7903eee1f4e712aa9a15e10b56bb",
+    "render": "render-gallery/legacy/headgear-hardhat.png",
+    "render_sha256": "8e1c8907f81f98364a7cbf4cf96cd709fced182b2f1555d118d79634e1fbc052",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.9599999785423279,
+      1.0,
+      0.36000001430511475
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.47999998927116394,
+        1.8899999856948853,
+        -0.4599999785423279
+      ],
+      "max": [
+        0.47999998927116394,
+        2.25,
+        0.5400000810623169
+      ]
+    }
+  },
+  "legacy/headgear-headset": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/headgear-headset.glb",
+    "source_sha256": "c8318541f3cb0af50c63c4d825fd0437e73a42cd71948c6c4c6e752f320c1b46",
+    "render": "render-gallery/legacy/headgear-headset.png",
+    "render_sha256": "884f51485d3b3ec611e435e71a03bfe648d500da1b6bfa464603947c041373c9",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 48,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.9599999785423279,
+      0.6200000047683716,
+      0.38999998569488525
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.47999998927116394,
+        1.8100000619888306,
+        -0.1199999675154686
+      ],
+      "max": [
+        0.47999998927116394,
+        2.200000047683716,
+        0.5000000596046448
+      ]
+    }
+  },
+  "legacy/headgear-horned-hat": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/headgear-horned-hat.glb",
+    "source_sha256": "25340a1c58af3e0e997e29111736ac3c4deb69cdae77db7c243c2824d15c0938",
+    "render": "render-gallery/legacy/headgear-horned-hat.png",
+    "render_sha256": "26e1c20aea9c22b31dd2cd9912d07ef0470871fb00c7e4fc15c9352ecb2ae82d",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 654,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      1.1090655326843262,
+      1.2638992071151733,
+      1.0174624919891357
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.5545327663421631,
+        1.3803117275238037,
+        -0.5253047347068787
+      ],
+      "max": [
+        0.5545327663421631,
+        2.3977742195129395,
+        0.7385944724082947
+      ]
+    }
+  },
+  "legacy/headgear-knight-helmet": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/headgear-knight-helmet.glb",
+    "source_sha256": "13fc89386cd477b1c2e373096fb4a6f9acec6421a02f03198e5864566de2dea2",
+    "render": "render-gallery/legacy/headgear-knight-helmet.png",
+    "render_sha256": "9539a8aa9b56542849278f0e0760928edc36950449769be4082bb4b8664cd65f",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 480,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      1.1389944553375244,
+      1.253619909286499,
+      1.3558804988861084
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.569496750831604,
+        1.1106717586517334,
+        -0.5421848297119141
+      ],
+      "max": [
+        0.5694977045059204,
+        2.466552257537842,
+        0.7114351391792297
+      ]
+    }
+  },
+  "legacy/headgear-mage-hat": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/headgear-mage-hat.glb",
+    "source_sha256": "b4607620aeec39912c1ea6efe294773cf39b980c3813986667dad7f314e04448",
+    "render": "render-gallery/legacy/headgear-mage-hat.png",
+    "render_sha256": "8f434e0700e6e41291ef28d6713881a593678a7e87bdccaebd51cb071f084395",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 396,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      2.0929083824157715,
+      2.0396108627319336,
+      1.3370130062103271
+    ],
+    "bounds_runtime": {
+      "min": [
+        -1.0464541912078857,
+        1.3786349296569824,
+        -1.0171500444412231
+      ],
+      "max": [
+        1.0464543104171753,
+        2.7156479358673096,
+        1.0224608182907104
+      ]
+    }
+  },
+  "legacy/headgear-space-helmet": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/headgear-space-helmet.glb",
+    "source_sha256": "ce22ffc54941c3677d82044aae84af9784977a6dfe88d855f4da185205e58b02",
+    "render": "render-gallery/legacy/headgear-space-helmet.png",
+    "render_sha256": "0a0fccbf13764d33b2d8a154f7023c3f497dbbd1469c6eed502d810fc2a831c0",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.9800000190734863,
+      0.9450000524520874,
+      0.8600000143051147
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.49000000953674316,
+        1.350000023841858,
+        -0.4699999690055847
+      ],
+      "max": [
+        0.49000000953674316,
+        2.2100000381469727,
+        0.4750000536441803
+      ]
+    }
+  },
+  "legacy/headgear-top-hat": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/headgear-top-hat.glb",
+    "source_sha256": "9effd9d5c051a945f46190f40f0008c74da5a811ba6259d96cfda8a5e35a2bec",
+    "render": "render-gallery/legacy/headgear-top-hat.png",
+    "render_sha256": "e68108c839b4deeae560d7d0f64984081f37457db009faac2833065298eeb5dd",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      1.159999966621399,
+      1.1200000047683716,
+      0.40000009536743164
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.5799999833106995,
+        2.0899999141693115,
+        -0.559999942779541
+      ],
+      "max": [
+        0.5799999833106995,
+        2.490000009536743,
+        0.5600000619888306
+      ]
+    }
+  },
+  "legacy/torso_over-apron-broad": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/torso_over-apron-broad.glb",
+    "source_sha256": "e66ef30e822ab2f5af6d65c0c6603862ba97b55da576b3f79b86cb190bb945a4",
+    "render": "render-gallery/legacy/torso_over-apron-broad.png",
+    "render_sha256": "4084e0a35e8b8f635a8f50e2cfedf1ddac2d0f38094ce367ccefa948b4aca804",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.8999999761581421,
+      0.6200000047683716,
+      0.8677998781204224
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.44999998807907104,
+        0.2256999909877777,
+        -0.3099999725818634
+      ],
+      "max": [
+        0.44999998807907104,
+        1.0934998989105225,
+        0.3100000321865082
+      ]
+    }
+  },
+  "legacy/torso_over-apron": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/torso_over-apron.glb",
+    "source_sha256": "ad87cb1855ea986570d8851c055f1382908246cd1389674c9649cde6d56907c2",
+    "render": "render-gallery/legacy/torso_over-apron.png",
+    "render_sha256": "80a71e13251280de9a4a81c8d24c51e49954312361774238cd281bfc287a9ea3",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.6700000166893005,
+      0.44999998807907104,
+      0.8677998781204224
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.33500000834465027,
+        0.2256999909877777,
+        -0.22499997913837433
+      ],
+      "max": [
+        0.33500000834465027,
+        1.0934998989105225,
+        0.22500000894069672
+      ]
+    }
+  },
+  "legacy/torso_over-plate-broad": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/torso_over-plate-broad.glb",
+    "source_sha256": "4354f0b89e3e2a3a8b178933721325f87760cf7614a248a356a3c92411d4eb35",
+    "render": "render-gallery/legacy/torso_over-plate-broad.png",
+    "render_sha256": "840ca436edcc460edd2afce6a60363850e62c7240f56d5227a391b5c7487d271",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 60,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.9000000357627869,
+      0.6499999761581421,
+      0.12090003490447998
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.45000001788139343,
+        0.9525998830795288,
+        -0.3099999725818634
+      ],
+      "max": [
+        0.45000001788139343,
+        1.0734999179840088,
+        0.3400000333786011
+      ]
+    }
+  },
+  "legacy/torso_over-plate": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/torso_over-plate.glb",
+    "source_sha256": "de97a409b38cafdd6bd0c5b7c0019457cf0238debda393be1f63bde77d20359b",
+    "render": "render-gallery/legacy/torso_over-plate.png",
+    "render_sha256": "3e234e215bb6c1c6272f12edec26f3b6a941033005dbadd638e06cb96b53c2f8",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 60,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.6700000166893005,
+      0.48000001907348633,
+      0.12090003490447998
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.33500000834465027,
+        0.9525998830795288,
+        -0.22499997913837433
+      ],
+      "max": [
+        0.33500000834465027,
+        1.0734999179840088,
+        0.2550000250339508
+      ]
+    }
+  },
+  "legacy/torso_over-vest-broad": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/torso_over-vest-broad.glb",
+    "source_sha256": "965841f07884c67745074077c0df93277c13802ba28a25c46ccdc679ab41ad20",
+    "render": "render-gallery/legacy/torso_over-vest-broad.png",
+    "render_sha256": "9fd64814ee077fbe99cf20bdf58da0bc059928bea8826a89ad979ceb8d0f9cde",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.8999999761581421,
+      0.6200000047683716,
+      0.41589999198913574
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.44999998807907104,
+        0.657599925994873,
+        -0.3100000023841858
+      ],
+      "max": [
+        0.44999998807907104,
+        1.0734999179840088,
+        0.3100000321865082
+      ]
+    }
+  },
+  "legacy/torso_over-vest": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/biped/torso_over-vest.glb",
+    "source_sha256": "559f3883ccc18a3cd08366d0b284771e6418945b296ee1e06808046a650a6fa1",
+    "render": "render-gallery/legacy/torso_over-vest.png",
+    "render_sha256": "f21c1dd9b6cabd8547965d7e083c56414b84293233576415bb8a451ab3fc8969",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.6700000166893005,
+      0.44999998807907104,
+      0.41589999198913574
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.33500000834465027,
+        0.657599925994873,
+        -0.22499997913837433
+      ],
+      "max": [
+        0.33500000834465027,
+        1.0734999179840088,
+        0.22500000894069672
+      ]
+    }
+  },
+  "legacy/back-blanket": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/quadruped/back-blanket.glb",
+    "source_sha256": "ca2aac7ae290a16636f53b9cd5361838924f80bb980437b7c42613e0ba9b1e90",
+    "render": "render-gallery/legacy/back-blanket.png",
+    "render_sha256": "ef0797f0aca6311d8c05e6d49f270c534a741865c2e903d59e6eb77fcbf31e1d",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.3799999952316284,
+      0.46999993920326233,
+      0.2699999213218689
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.1899999976158142,
+        0.2900000810623169,
+        -0.14000001549720764
+      ],
+      "max": [
+        0.1899999976158142,
+        0.5600000023841858,
+        0.3299999237060547
+      ]
+    }
+  },
+  "legacy/back-saddlebag": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/quadruped/back-saddlebag.glb",
+    "source_sha256": "c26b1e49b52f07f9d2ade50eb662e60bfd95cf9880f4ae372729b588241247b3",
+    "render": "render-gallery/legacy/back-saddlebag.png",
+    "render_sha256": "cc9d366ed76b4a8b6e5e290f625293dfab4028bb2109708d0e2bea3e056509ec",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.4000000059604645,
+      0.23999996483325958,
+      0.2699998915195465
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.20000000298023224,
+        0.28000006079673767,
+        -0.020000027492642403
+      ],
+      "max": [
+        0.20000000298023224,
+        0.5499999523162842,
+        0.21999993920326233
+      ]
+    }
+  },
+  "legacy/collar-band": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/quadruped/collar-band.glb",
+    "source_sha256": "3c2d6f3b250e33d16a9eeae4880fe9cd6e6b722c0384b3f3cb1bf08c49fc3e18",
+    "render": "render-gallery/legacy/collar-band.png",
+    "render_sha256": "399d3ecb2dbe6c8a89dc97bc897ccf4f0983670c1128eebad4552b670c64d4b5",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.2160000056028366,
+      0.09000000357627869,
+      0.22999992966651917
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.1080000028014183,
+        0.4100000560283661,
+        0.3299998641014099
+      ],
+      "max": [
+        0.1080000028014183,
+        0.6399999856948853,
+        0.4199998676776886
+      ]
+    }
+  },
+  "legacy/collar-bandana": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/quadruped/collar-bandana.glb",
+    "source_sha256": "91e231e18cf36de980e870296b565903e91dce416447e5ad3c10b6add9a97a2d",
+    "render": "render-gallery/legacy/collar-bandana.png",
+    "render_sha256": "646345591c6e35da45e6b400ddfc760999b4ce7fbeda329460a5f4f3c3c5e176",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.2160000056028366,
+      0.1199999749660492,
+      0.26999998092651367
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.1080000028014183,
+        0.37000012397766113,
+        0.3299998641014099
+      ],
+      "max": [
+        0.1080000028014183,
+        0.6400001049041748,
+        0.4499998390674591
+      ]
+    }
+  },
+  "legacy/collar-scarf": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/quadruped/collar-scarf.glb",
+    "source_sha256": "844250094ca56b482f7094a2430aeace49af99cb69bf67d93f967197cf113e59",
+    "render": "render-gallery/legacy/collar-scarf.png",
+    "render_sha256": "0c25b2b6c7f87e7f962f56ca8ece384b716e5038285fdb54565469a82a6303c1",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.2240000069141388,
+      0.12000000476837158,
+      0.38999998569488525
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.1120000034570694,
+        0.2600001096725464,
+        0.3199998438358307
+      ],
+      "max": [
+        0.1120000034570694,
+        0.6500000953674316,
+        0.43999984860420227
+      ]
+    }
+  },
+  "legacy/headgear-antlers": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/quadruped/headgear-antlers.glb",
+    "source_sha256": "4faa7211a2d740e5b16d2808920f2c7728fbd2384948823e6cfc24c1dc635f65",
+    "render": "render-gallery/legacy/headgear-antlers.png",
+    "render_sha256": "ef14bf243f2bbdcc2a6df77eb075c8bbfad7e24dbb6f60315a55efcc3cebc519",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 48,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.3100000023841858,
+      0.04000005125999451,
+      0.3299998641014099
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.1550000011920929,
+        0.7299999594688416,
+        0.4299997389316559
+      ],
+      "max": [
+        0.1550000011920929,
+        1.0599998235702515,
+        0.4699997901916504
+      ]
+    }
+  },
+  "legacy/headgear-pet-cap": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/quadruped/headgear-pet-cap.glb",
+    "source_sha256": "ef21ee05033f75532a1990ac896a4ff5030aabfd056f3ea8b22029849fe7dc7d",
+    "render": "render-gallery/legacy/headgear-pet-cap.png",
+    "render_sha256": "261dc611179a8e3128c7ee0ae9f6f06aec9ad9408cae1dbee1d161a4088da573",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 24,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.20999999344348907,
+      0.3399999439716339,
+      0.07999998331069946
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.10499999672174454,
+        0.7099999785423279,
+        0.3899998366832733
+      ],
+      "max": [
+        0.10499999672174454,
+        0.7899999618530273,
+        0.7299997806549072
+      ]
+    }
+  },
+  "legacy/tail_extra-bow": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/parts/quadruped/tail_extra-bow.glb",
+    "source_sha256": "1b15f5c1daaed3e1bf56a8296cd8c8bb32e047f7f06cd29faca51b1984b60cd6",
+    "render": "render-gallery/legacy/tail_extra-bow.png",
+    "render_sha256": "f8673012f76821a2a2ff2203d86b30b6fb8e4d9dbbaa38f5914df48f260a8405",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 36,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.25599998235702515,
+      0.0700000524520874,
+      0.12999996542930603
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.12799999117851257,
+        0.35499995946884155,
+        -0.6400001049041748
+      ],
+      "max": [
+        0.12799999117851257,
+        0.4849999248981476,
+        -0.5700000524520874
+      ]
+    }
+  },
+  "legacy/quadruped-bear": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/quadruped-bear.glb",
+    "source_sha256": "db1974688c4b2ee85c52ff09eb4397eda825f555e52269e2620a0d0245b0a22d",
+    "render": "render-gallery/legacy/quadruped-bear.png",
+    "render_sha256": "1c000cdf34a331eabe359e34c16d8cc01d1c9b2fe9e59145fa5b104ae66ba944",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 396,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.3540000021457672,
+      1.3019999265670776,
+      0.7599999308586121
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.1770000010728836,
+        3.182888264063877e-08,
+        -0.6400001049041748
+      ],
+      "max": [
+        0.1770000010728836,
+        0.7599999904632568,
+        0.6619998216629028
+      ]
+    }
+  },
+  "legacy/quadruped-cat": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/quadruped-cat.glb",
+    "source_sha256": "27fea64b064eee92d4a0a0e92068e3c4050b5d094c4b0220c904114b8bc45d4c",
+    "render": "render-gallery/legacy/quadruped-cat.png",
+    "render_sha256": "be8596f22be213e31d4da8d3573fa032ef180b9e269f6f8210d7c57d0a0d5861",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 396,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.3059999644756317,
+      1.5819997787475586,
+      0.800000011920929
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.15299998223781586,
+        3.9696693932000926e-08,
+        -0.8999999761581421
+      ],
+      "max": [
+        0.15299998223781586,
+        0.8000000715255737,
+        0.6819998025894165
+      ]
+    }
+  },
+  "legacy/quadruped-clips": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/quadruped-clips.glb",
+    "source_sha256": "6c4e11617740dbac81b989bf93f62a136dd893fe4fb869cfc025b37935cf48d7",
+    "render": "render-gallery/legacy/quadruped-clips.png",
+    "render_sha256": "72b3c3cf017e0c15dc4d1b7228252013d3dd0d641cda199630efd58974216e92",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "animation library; skeleton visualization",
+    "meshes": 0,
+    "triangles": 0,
+    "materials": 0,
+    "dimensions_blender_xyz": [
+      0.26363810896873474,
+      1.4308418035507202,
+      0.8952239751815796
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.13181905448436737,
+        -0.04879103600978851,
+        -0.7742757797241211
+      ],
+      "max": [
+        0.13181905448436737,
+        0.8464329242706299,
+        0.6565660238265991
+      ]
+    }
+  },
+  "legacy/quadruped-dog": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/quadruped-dog.glb",
+    "source_sha256": "48b1ed1ec6fddcd2acebcd58e8058e47679eb041ba0e163e5962caba28cee727",
+    "render": "render-gallery/legacy/quadruped-dog.png",
+    "render_sha256": "4d942fe125bf624441bf036d0ffdc70ad4497f2ae6245ec1fc5b9c1e9f8b433c",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 396,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.32399997115135193,
+      1.5019997358322144,
+      0.7799999117851257
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.16199998557567596,
+        3.6746268250453795e-08,
+        -0.7799999713897705
+      ],
+      "max": [
+        0.16199998557567596,
+        0.7799999713897705,
+        0.7219997644424438
+      ]
+    }
+  },
+  "legacy/quadruped-fox": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/quadruped-fox.glb",
+    "source_sha256": "6cb378d5f531f92b09cb8ed02878a8b53793f835e1d6c2528bb664d35602a573",
+    "render": "render-gallery/legacy/quadruped-fox.png",
+    "render_sha256": "2a9bd7d04aed7c63b3c54cb8383c492d357a74cc5e4b917944f037079d918b8f",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 396,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.3160000145435333,
+      1.6019997596740723,
+      0.8799998760223389
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.15800000727176666,
+        3.805757131658538e-08,
+        -0.8600000143051147
+      ],
+      "max": [
+        0.15800000727176666,
+        0.8799999356269836,
+        0.7419997453689575
+      ]
+    }
+  },
+  "legacy/quadruped-rabbit": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/quadruped-rabbit.glb",
+    "source_sha256": "eb30269aa160bd6c1a4452e060aa280eec95e49d2013cc15b16025fb3feb8d26",
+    "render": "render-gallery/legacy/quadruped-rabbit.png",
+    "render_sha256": "180c565c6e7b0b3a4fc86d76108c8ea01e28cbbfbb3c8a8e769ea5fb148deea1",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 396,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.3099999725818634,
+      1.281999945640564,
+      1.059999942779541
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.1549999862909317,
+        3.904104417529197e-08,
+        -0.6400001049041748
+      ],
+      "max": [
+        0.1549999862909317,
+        1.059999942779541,
+        0.6419998407363892
+      ]
+    }
+  },
+  "legacy/quadruped-wolf": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/quadruped-wolf.glb",
+    "source_sha256": "25cab956cce7f84f8f0335d67bbd1022d9726c132e55c0482b5893052a73f992",
+    "render": "render-gallery/legacy/quadruped-wolf.png",
+    "render_sha256": "82f602dcb38bc7f6f322f7ec12c749749f09c76c25c03a90bf802d5e7c34995f",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 396,
+    "materials": 1,
+    "dimensions_blender_xyz": [
+      0.3279999792575836,
+      1.6219996213912964,
+      0.85999995470047
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.1639999896287918,
+        3.6090611388317484e-08,
+        -0.8399999141693115
+      ],
+      "max": [
+        0.1639999896287918,
+        0.8600000143051147,
+        0.7819997072219849
+      ]
+    }
+  },
+  "legacy/spirit-gigi": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/figures/spirit-gigi.glb",
+    "source_sha256": "3ff544b97cdeeb50ff7c0bec45f6d8f843b292633e291d745f644deb8cb910b5",
+    "render": "render-gallery/legacy/spirit-gigi.png",
+    "render_sha256": "50546055bd5a3f1a77d042f8899f44b730a28876b2b70735641d7e62db7a6c2d",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 1,
+    "triangles": 3540,
+    "materials": 2,
+    "dimensions_blender_xyz": [
+      1.9619531631469727,
+      0.3700000047683716,
+      1.8967252969741821
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.9809765815734863,
+        0.12327464669942856,
+        -0.17000000178813934
+      ],
+      "max": [
+        0.9809765815734863,
+        2.0199999809265137,
+        0.20000000298023224
+      ]
+    }
+  },
+  "legacy/agent-foundry": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/agent-foundry.glb",
+    "source_sha256": "8a34923ebfef4e0e61e4b874f89932af8d7b55b468e5a9a5030824e131e90ffa",
+    "render": "render-gallery/legacy/agent-foundry.png",
+    "render_sha256": "e36c9c6c8961cfdb7c04c128f8f57315bfe6c9f7eb5dd620ece5034e118dea52",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 124,
+    "triangles": 16752,
+    "materials": 19,
+    "dimensions_blender_xyz": [
+      21.799999237060547,
+      21.599998474121094,
+      17.80000114440918
+    ],
+    "bounds_runtime": {
+      "min": [
+        -10.899999618530273,
+        0.0,
+        -7.399999618530273
+      ],
+      "max": [
+        10.899999618530273,
+        17.80000114440918,
+        14.199999809265137
+      ]
+    }
+  },
+  "legacy/control-room": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/control-room.glb",
+    "source_sha256": "1cca4e201a03278858aa5e354c76f28900818bbae03657e11b1ab60e18aacab9",
+    "render": "render-gallery/legacy/control-room.png",
+    "render_sha256": "26a32bcf5186954355a2ca03b47f807561ca1ae7e6dc3bcfcafcad0e4931a90b",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 71,
+    "triangles": 9424,
+    "materials": 15,
+    "dimensions_blender_xyz": [
+      14.199999809265137,
+      12.411680221557617,
+      10.595632553100586
+    ],
+    "bounds_runtime": {
+      "min": [
+        -7.099999904632568,
+        0.0,
+        -5.099999904632568
+      ],
+      "max": [
+        7.099999904632568,
+        10.595632553100586,
+        7.311680316925049
+      ]
+    }
+  },
+  "legacy/gallery-hall": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/gallery-hall.glb",
+    "source_sha256": "85fe6c9d546d32ac869b65360ff78be4ac5eef838eadbd1b216794d8de9be893",
+    "render": "render-gallery/legacy/gallery-hall.png",
+    "render_sha256": "02e424ca95e7a99ec186528783123b8c256eec1b04c3d99a85a5af902c69cc32",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 38,
+    "triangles": 5744,
+    "materials": 16,
+    "dimensions_blender_xyz": [
+      14.300000190734863,
+      14.05000114440918,
+      8.0
+    ],
+    "bounds_runtime": {
+      "min": [
+        -7.150000095367432,
+        0.0,
+        -5.150000095367432
+      ],
+      "max": [
+        7.150000095367432,
+        8.0,
+        8.90000057220459
+      ]
+    }
+  },
+  "legacy/memory-house": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/memory-house.glb",
+    "source_sha256": "b0b5a409f8fe994f918c2b58b83ada3ee6203cfa4fbc7a01178b3e7b0096306c",
+    "render": "render-gallery/legacy/memory-house.png",
+    "render_sha256": "2217e6e5d4e064340f2f3791434789a75c7814621b957a0ebbc59854f2529ee7",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 59,
+    "triangles": 4584,
+    "materials": 12,
+    "dimensions_blender_xyz": [
+      16.899999618530273,
+      14.971025466918945,
+      14.399999618530273
+    ],
+    "bounds_runtime": {
+      "min": [
+        -8.449999809265137,
+        0.0,
+        -6.671025276184082
+      ],
+      "max": [
+        8.449999809265137,
+        14.399999618530273,
+        8.300000190734863
+      ]
+    }
+  },
+  "legacy/model-boilerhouse": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/model-boilerhouse.glb",
+    "source_sha256": "73c7b6b956d6042c801802889dd1f4a841969795be49530b87de20f72c83f5fa",
+    "render": "render-gallery/legacy/model-boilerhouse.png",
+    "render_sha256": "bf39c1c248d50126a0866d40ef7f54c3d3f1f56932b4c4c627c8268a6924d7ab",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 37,
+    "triangles": 6628,
+    "materials": 16,
+    "dimensions_blender_xyz": [
+      10.300000190734863,
+      12.949999809265137,
+      14.149999618530273
+    ],
+    "bounds_runtime": {
+      "min": [
+        -5.150000095367432,
+        0.0,
+        -5.150000095367432
+      ],
+      "max": [
+        5.150000095367432,
+        14.149999618530273,
+        7.799999713897705
+      ]
+    }
+  },
+  "legacy/observatory": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/observatory.glb",
+    "source_sha256": "964745086f9a7cccb9e9b38d890c5f369e0982a86eca58196ad17c1b6ccdde0d",
+    "render": "render-gallery/legacy/observatory.png",
+    "render_sha256": "ee354898a7960c1615b7c15a027ad25f13b0055badf7390a07308377e815b9cc",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 47,
+    "triangles": 9054,
+    "materials": 17,
+    "dimensions_blender_xyz": [
+      9.800000190734863,
+      10.85711669921875,
+      13.269546508789062
+    ],
+    "bounds_runtime": {
+      "min": [
+        -4.900000095367432,
+        0.0,
+        -4.900000095367432
+      ],
+      "max": [
+        4.900000095367432,
+        13.269546508789062,
+        5.95711612701416
+      ]
+    }
+  },
+  "legacy/plugin-docks": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/plugin-docks.glb",
+    "source_sha256": "35a67e28d0f47ccd141bbf9b9048e14f116937683089ed8ac5dae39a14fc61a0",
+    "render": "render-gallery/legacy/plugin-docks.png",
+    "render_sha256": "85f0f8024db4c3ff75d094480db769aace87502177874c559c650486fecd3637",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 95,
+    "triangles": 9092,
+    "materials": 23,
+    "dimensions_blender_xyz": [
+      17.0,
+      13.399999618530273,
+      9.350000381469727
+    ],
+    "bounds_runtime": {
+      "min": [
+        -8.5,
+        0.0,
+        -5.5
+      ],
+      "max": [
+        8.5,
+        9.350000381469727,
+        7.900000095367432
+      ]
+    }
+  },
+  "legacy/relay-tower": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/relay-tower.glb",
+    "source_sha256": "3bdab36f72420a4b2e6de321f55264ea0b4e9b00424ab69bf7c5e4a6aa5738a6",
+    "render": "render-gallery/legacy/relay-tower.png",
+    "render_sha256": "dfea8553956c28e8cbad81f8dcdd83514b74d5104071a7e7bd6d37a258518484",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 20,
+    "triangles": 3488,
+    "materials": 12,
+    "dimensions_blender_xyz": [
+      9.800000190734863,
+      11.899999618530273,
+      20.100000381469727
+    ],
+    "bounds_runtime": {
+      "min": [
+        -4.900000095367432,
+        -1.0125589255949308e-07,
+        -4.900000095367432
+      ],
+      "max": [
+        4.900000095367432,
+        20.100000381469727,
+        7.0
+      ]
+    }
+  },
+  "legacy/signal-office": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/signal-office.glb",
+    "source_sha256": "1bdd243dac3bba3c062123bc758ade698038fe996ca15c48c743ef120ca88dcf",
+    "render": "render-gallery/legacy/signal-office.png",
+    "render_sha256": "bbfdd5dda1ba514995170fb6a46b34c94431016e717cda678d0a9d41cefe4377",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 49,
+    "triangles": 6464,
+    "materials": 18,
+    "dimensions_blender_xyz": [
+      14.399999618530273,
+      12.574999809265137,
+      13.050000190734863
+    ],
+    "bounds_runtime": {
+      "min": [
+        -7.199999809265137,
+        0.0,
+        -5.199999809265137
+      ],
+      "max": [
+        7.199999809265137,
+        13.050000190734863,
+        7.375
+      ]
+    }
+  },
+  "legacy/skill-forge": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/skill-forge.glb",
+    "source_sha256": "37c81a464ab0727e804ee265f408332a94f9796143838b1786a1c01ecaf9a725",
+    "render": "render-gallery/legacy/skill-forge.png",
+    "render_sha256": "5e4fc4a698d3b2afe166884a92e813b7e7e067f5249c3639fa5bc8bf22ab7d27",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 32,
+    "triangles": 4528,
+    "materials": 16,
+    "dimensions_blender_xyz": [
+      14.0,
+      13.100000381469727,
+      12.050000190734863
+    ],
+    "bounds_runtime": {
+      "min": [
+        -7.0,
+        0.0,
+        -5.5
+      ],
+      "max": [
+        7.0,
+        12.050000190734863,
+        7.599999904632568
+      ]
+    }
+  },
+  "legacy/terminal-cantina": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/terminal-cantina.glb",
+    "source_sha256": "d26fc8b290f736b8b236dccd415614d2f2a3da94f934a22463e999e79b64523d",
+    "render": "render-gallery/legacy/terminal-cantina.png",
+    "render_sha256": "08fd9628e7a6517ae84687f029e80b4b22edc62bad12bb801dc96ca993add962",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 46,
+    "triangles": 4792,
+    "materials": 15,
+    "dimensions_blender_xyz": [
+      14.300000190734863,
+      11.300000190734863,
+      6.5
+    ],
+    "bounds_runtime": {
+      "min": [
+        -7.150000095367432,
+        0.0,
+        -4.900000095367432
+      ],
+      "max": [
+        7.150000095367432,
+        6.5,
+        6.400000095367432
+      ]
+    }
+  },
+  "legacy/town-hall": {
+    "source": "jarvis/ui/web/frontend/src/assets/society/world/kit/town-hall.glb",
+    "source_sha256": "6057a33719b33b421671082c82c59911501685448ca8040d83a1501d376c60fa",
+    "render": "render-gallery/legacy/town-hall.png",
+    "render_sha256": "13d40e7343772a5c06917869d7f653c73d3791b8b5daa7ae3ce0b3330dd493dd",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 52,
+    "triangles": 7772,
+    "materials": 12,
+    "dimensions_blender_xyz": [
+      14.5,
+      13.719999313354492,
+      16.200000762939453
+    ],
+    "bounds_runtime": {
+      "min": [
+        -7.25,
+        0.0,
+        -5.25
+      ],
+      "max": [
+        7.25,
+        16.200000762939453,
+        8.469999313354492
+      ]
+    }
+  },
+  "study/central": {
+    "source": "art/studies/city-realism-study/exports/central.glb",
+    "source_sha256": "d73e5ba65858d25e8835f44e7f08633fb9966c9aa75cf4b20892acafb3c5b78b",
+    "render": "render-gallery/study/central.png",
+    "render_sha256": "ec46a6c2cf51030e7185bb4bc9d314e73ab14b792a80dbd864d5c636c1a4c2bf",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 12,
+    "triangles": 27168,
+    "materials": 12,
+    "dimensions_blender_xyz": [
+      48.20000076293945,
+      43.69999694824219,
+      28.350000381469727
+    ],
+    "bounds_runtime": {
+      "min": [
+        -24.100000381469727,
+        -0.4399999976158142,
+        -22.599998474121094
+      ],
+      "max": [
+        24.100000381469727,
+        27.90999984741211,
+        21.100000381469727
+      ]
+    }
+  },
+  "study/knowledge": {
+    "source": "art/studies/city-realism-study/exports/knowledge.glb",
+    "source_sha256": "01f98466e9760effd91def2d6d30fa7e27d086684c63e528d28f80ea474fa059",
+    "render": "render-gallery/study/knowledge.png",
+    "render_sha256": "861329b15f9b8acd97761bd5439ea74acec5508bcece603718aa49c538a6577e",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 12,
+    "triangles": 29956,
+    "materials": 12,
+    "dimensions_blender_xyz": [
+      48.20000076293945,
+      43.69999694824219,
+      40.439998626708984
+    ],
+    "bounds_runtime": {
+      "min": [
+        -24.100000381469727,
+        -0.4399999976158142,
+        -22.599998474121094
+      ],
+      "max": [
+        24.100000381469727,
+        40.0,
+        21.100000381469727
+      ]
+    }
+  },
+  "study/fabrication": {
+    "source": "art/studies/city-realism-study/exports/fabrication.glb",
+    "source_sha256": "22616467438bb9eedbedf9ef118db76fa12a94b76ae3a4686285ead5c4dfa67f",
+    "render": "render-gallery/study/fabrication.png",
+    "render_sha256": "9fbe09e1024a17a866275743c59d49fe452812a1efbb14d3c4f5bc9d29b30c3f",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 12,
+    "triangles": 30112,
+    "materials": 12,
+    "dimensions_blender_xyz": [
+      48.20000076293945,
+      43.69999694824219,
+      35.939998626708984
+    ],
+    "bounds_runtime": {
+      "min": [
+        -24.100000381469727,
+        -0.4399999976158142,
+        -22.599998474121094
+      ],
+      "max": [
+        24.100000381469727,
+        35.5,
+        21.100000381469727
+      ]
+    }
+  },
+  "study/communications": {
+    "source": "art/studies/city-realism-study/exports/communications.glb",
+    "source_sha256": "fc64d684ec57f67f33eb2c840101d577b9d88fdb811d7e39852fec4baecbdcd2",
+    "render": "render-gallery/study/communications.png",
+    "render_sha256": "0fe61bfcff40eda5b8c17d6866fd4629e57fd65924b92ba5566730d222bfaf6a",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 12,
+    "triangles": 32720,
+    "materials": 12,
+    "dimensions_blender_xyz": [
+      48.20000076293945,
+      43.69999694824219,
+      65.44000244140625
+    ],
+    "bounds_runtime": {
+      "min": [
+        -24.100000381469727,
+        -0.4399999976158142,
+        -22.599998474121094
+      ],
+      "max": [
+        24.100000381469727,
+        65.0,
+        21.100000381469727
+      ]
+    }
+  },
+  "study/skyline-office": {
+    "source": "art/studies/city-realism-study/exports/skyline-office.glb",
+    "source_sha256": "7970a3fff4764fe9f45622400fd4e33ec77af3fe8a6e6ebded868a61aaafd020",
+    "render": "render-gallery/study/skyline-office.png",
+    "render_sha256": "aa3a882347f129e172a081458a2fb938b0740d7b5da4ef22955482a20546b4f1",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 3,
+    "triangles": 288,
+    "materials": 3,
+    "dimensions_blender_xyz": [
+      28.0,
+      26.0,
+      36.80000305175781
+    ],
+    "bounds_runtime": {
+      "min": [
+        -14.0,
+        0.0,
+        -13.0
+      ],
+      "max": [
+        14.0,
+        36.80000305175781,
+        13.0
+      ]
+    }
+  },
+  "study/skyline-tower": {
+    "source": "art/studies/city-realism-study/exports/skyline-tower.glb",
+    "source_sha256": "b6148b86175133edbf55b6e1861e6b67ce796ea7c9f0fab4ead4c4ce9169a58f",
+    "render": "render-gallery/study/skyline-tower.png",
+    "render_sha256": "fffbaa37fb1515bbc3ba555431e2568b3136598534782ae022b1a195bf0fb59b",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 3,
+    "triangles": 408,
+    "materials": 3,
+    "dimensions_blender_xyz": [
+      26.0,
+      26.0,
+      86.80000305175781
+    ],
+    "bounds_runtime": {
+      "min": [
+        -13.0,
+        0.0,
+        -13.0
+      ],
+      "max": [
+        13.0,
+        86.80000305175781,
+        13.0
+      ]
+    }
+  },
+  "study/skyline-residence": {
+    "source": "art/studies/city-realism-study/exports/skyline-residence.glb",
+    "source_sha256": "ca5b7bb7b7140d58243d231f266916411439b901a058cb953f1fc9cbf47797c3",
+    "render": "render-gallery/study/skyline-residence.png",
+    "render_sha256": "55234754345d223abc3b29d336e9718b3cadf268c68984cc6e34ff809c66a603",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 3,
+    "triangles": 636,
+    "materials": 3,
+    "dimensions_blender_xyz": [
+      36.0,
+      28.25,
+      24.799999237060547
+    ],
+    "bounds_runtime": {
+      "min": [
+        -18.0,
+        0.0,
+        -15.25
+      ],
+      "max": [
+        18.0,
+        24.799999237060547,
+        13.0
+      ]
+    }
+  },
+  "study/streetlamp": {
+    "source": "art/studies/city-realism-study/exports/streetlamp.glb",
+    "source_sha256": "e8914cc2303f93a0b1fc6434faa878f1c954e87b055cc62ebe8b1b81e63bc65c",
+    "render": "render-gallery/study/streetlamp.png",
+    "render_sha256": "5a13bf7a9f7b93bccd70fe7dafed00dd8960680d605b123b34c71b9e6e69034a",
+    "renderer": "5.0.1 EEVEE",
+    "status": "rendered; human visual approval pending",
+    "visualization": "asset geometry",
+    "meshes": 3,
+    "triangles": 636,
+    "materials": 3,
+    "dimensions_blender_xyz": [
+      2.419999837875366,
+      0.6399999856948853,
+      7.356991767883301
+    ],
+    "bounds_runtime": {
+      "min": [
+        -0.3199999928474426,
+        0.0,
+        -0.3199999928474426
+      ],
+      "max": [
+        2.0999999046325684,
+        7.356991767883301,
+        0.3199999928474426
+      ]
+    }
+  }
+}

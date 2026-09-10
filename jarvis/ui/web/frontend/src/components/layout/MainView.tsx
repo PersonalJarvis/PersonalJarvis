@@ -100,8 +100,11 @@ const ApiKeysView = lazyView(() =>
 const LocalModelsView = lazyView(() =>
   import("@/views/LocalModelsView").then((m) => ({ default: m.LocalModelsView })),
 );
-const ExtensionsView = lazyView(() =>
+const ExtensionsView = lazyPropView<{ area?: "skills" | "plugins" | "mcps" }>(() =>
   import("@/views/ExtensionsView").then((m) => ({ default: m.ExtensionsView })),
+);
+const PluginsDialog = lazyPropView<{ onClose: () => void }>(() =>
+  import("@/views/PluginsDialog").then((m) => ({ default: m.PluginsDialog })),
 );
 // The prop type is named rather than inferred: inferring it from the loader's
 // return value is circular (the loader's contextual type is what depends on it),
@@ -410,6 +413,11 @@ export function MainView() {
   const setActive = useEventStore((s) => s.setActiveSection);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
+  const [backgroundSection, setBackgroundSection] = useState(
+    active === "plugins" ? "chats" : active,
+  );
+  if (active !== "plugins" && backgroundSection !== active) setBackgroundSection(active);
+  const displayed = active === "plugins" ? backgroundSection : active;
 
   useIdleViewPrefetch();
 
@@ -426,7 +434,7 @@ export function MainView() {
     detachedViews.some((v) => (CODING_SECTION_IDS as readonly string[]).includes(v));
 
   const stickyActive =
-    (CODING_SECTION_IDS as readonly string[]).includes(active) && !codingDetached;
+    (CODING_SECTION_IDS as readonly string[]).includes(displayed) && !codingDetached;
   const [stickyMounted, setStickyMounted] = useState(stickyActive);
   useEffect(() => {
     if (stickyActive) setStickyMounted(true);
@@ -437,8 +445,8 @@ export function MainView() {
     if (codingDetached) setStickyMounted(false);
   }, [codingDetached]);
 
-  if (codingDetached && (CODING_SECTION_IDS as readonly string[]).includes(active)) {
-    return <DetachedViewPlaceholder view={active} />;
+  if (codingDetached && (CODING_SECTION_IDS as readonly string[]).includes(displayed) && active !== "plugins") {
+    return <DetachedViewPlaceholder view={displayed} />;
   }
 
   return (
@@ -472,14 +480,23 @@ export function MainView() {
       )}
       {!stickyActive && (
         <ViewErrorBoundary
-          viewName={active}
-          resetKey={active}
+          viewName={displayed}
+          resetKey={displayed}
           onRecover={() => setActive("chats")}
         >
           {/* Keyed on the active section so switching away from a still-loading
               view cannot leave the previous section's fallback on screen. */}
-          <Suspense key={active} fallback={<ViewLoadingFallback />}>
-            <SwitchOnActiveSection active={active} />
+          <Suspense key={displayed} fallback={<ViewLoadingFallback />}>
+            {codingDetached && (CODING_SECTION_IDS as readonly string[]).includes(displayed)
+              ? <DetachedViewPlaceholder view={displayed} />
+              : <SwitchOnActiveSection active={displayed} />}
+          </Suspense>
+        </ViewErrorBoundary>
+      )}
+      {active === "plugins" && (
+        <ViewErrorBoundary viewName="plugins" resetKey="plugins" onRecover={() => setActive(backgroundSection)}>
+          <Suspense fallback={null}>
+            <PluginsDialog onClose={() => setActive(backgroundSection)} />
           </Suspense>
         </ViewErrorBoundary>
       )}
@@ -498,7 +515,7 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "skills":
     case "plugins":
     case "mcps":
-      return <ExtensionsView />;
+      return <ExtensionsView area={active} />;
     // CLIs list + CLI Test Hub are merged behind the "CLIs" entry.
     case "clis":
     case "cli-test-hub":

@@ -87,6 +87,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         PROPOSE_TOOL_NAME,
         "society_conversation_recall",
         "society_routines",
+        "society_invoke_routine",
         *FOLDER,
     }
     assert "RunCommand" not in own
@@ -106,6 +107,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         PROPOSE_TOOL_NAME,
         "society_conversation_recall",
         "society_routines",
+        "society_invoke_routine",
         *FOLDER,
     }
     assert set(picked[: len(own_names)]) == own_names
@@ -153,7 +155,8 @@ async def test_briefing_is_deterministic_and_complete(rt: SocietyRuntime):
     assert a == b
     assert "## Standing instructions" in a and "external mail only after approval" in a
     assert "Reach for these first:\n- gmail (plugin:gmail): Read and send mail." in a
-    assert "Also available" in a and "built-in: coding-session, search-web, wiki-ingest, wiki-recall" in a
+    assert "Also available" in a
+    assert all(name in a for name in ("browser", "coding-session", "search-web", "wiki-ingest", "wiki-recall"))
     assert "spawn-worker" not in a
     assert f"Capability epoch: {capability_epoch(catalog)}" in a
     assert "## The Jarvis ecosystem" in a and "society_message_agent" in a

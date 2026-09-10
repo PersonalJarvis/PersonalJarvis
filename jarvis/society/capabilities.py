@@ -2,7 +2,7 @@
 
 Plugins (``jarvis.tool`` entry points, marketplace included), connected CLIs
 (``cli_<name>`` tools), MCP servers (``<server>/<tool>`` adapters), skills
-(``active`` lifecycle only) and the built-in core tools all already exist in
+(``active`` and ``validated`` lifecycle states) and the built-in core tools all already exist in
 their own registries. This module is a read-only view that gives each of
 them one id (``plugin:gmail``, ``cli:gh``, ``mcp:github/create_issue``,
 ``skill:daily-brief``, ``core:search-web``) so a roster row can grant, focus
@@ -143,6 +143,8 @@ class CapabilityRow:
 
 def capability_id_for_tool(tool_name: str) -> str | None:
     """The catalog id of a brain tool name; ``None`` for never-granted tools."""
+    if tool_name in {"society_browser", "society_browser_action"}:
+        return "core:browser"
     if tool_name in NEVER_GRANTED:
         return None
     if tool_name.startswith("cli_"):
@@ -156,6 +158,8 @@ def capability_id_for_tool(tool_name: str) -> str | None:
 
 def tool_name_for_capability(capability_id: str) -> str | None:
     """Inverse of :func:`capability_id_for_tool`; ``None`` for skills."""
+    if capability_id == "core:browser":
+        return "society_browser"
     kind, _, rest = capability_id.partition(":")
     if kind == "cli":
         return f"cli_{rest}"
@@ -197,9 +201,10 @@ def _skill_fields(skill: Any) -> tuple[str, str, str]:
 
 
 def _skill_is_active(skill: Any) -> bool:
+    # Match SkillRegistry.list_active(): validation makes installed skills usable.
     state = getattr(skill, "state", None)
     value = getattr(state, "value", state)
-    return str(value).lower() == "active"
+    return str(value).lower() in {"active", "validated"}
 
 
 def build_catalog(
@@ -222,6 +227,8 @@ def build_catalog(
             continue
         kind = CapabilityKind(cap_id.split(":", 1)[0])
         aliases: tuple[str, ...] = ()
+        if cap_id == "core:browser":
+            aliases = ("browser", "browser-use", "browser_use")
         if kind is CapabilityKind.MCP:
             server = name.split("/", 1)[0]
             aliases = (server,)

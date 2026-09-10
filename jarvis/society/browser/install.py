@@ -1,310 +1,366 @@
-"""One-click install of the managed browser environment.
-
-Modeled on ``jarvis/realtime/local_server/install.py``: preflight → venv →
-pinned package → Chromium → smoke probe → marker, in a daemon thread, with a
-poll-shaped :func:`snapshot`. Never on the boot path; readiness is
-:func:`is_installed` (fail-closed: the marker is written last).
-
-Interpreter choice: browser-use declares ``>=3.11`` and no 3.14 wheel
-classifier, so the venv prefers a 3.11–3.13 interpreter — ``uv`` can fetch
-one — and falls back to the app's own Python only when nothing else exists.
-"""
+"""Managed browser installer with a real render check and atomic readiness."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
-import shutil
+import platform
 import subprocess
 import sys
 import threading
 import time
-from collections import deque
-from dataclasses import dataclass, field
+import uuid
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 log = logging.getLogger(__name__)
-
-__all__ = [
-    "BROWSER_USE_VERSION",
-    "install_root",
-    "is_installed",
-    "runner_path",
-    "snapshot",
-    "start_install",
-    "venv_python",
-]
-
-BROWSER_USE_VERSION: Final[str] = "0.13.8"
-_MARKER: Final[str] = "installed.json"
-_PREFERRED_PYTHONS: Final[tuple[str, ...]] = ("3.13", "3.12", "3.11")
-_STEP_TIMEOUT_S: Final[int] = 900
+BROWSER_USE_VERSION = "0.13.10"
+PLAYWRIGHT_VERSION = "1.62.0"
+PROTOCOL_VERSION = 2
+_LOCK = threading.RLock()
+_STATES: dict[str, dict[str, Any]] = {}
+_THREADS: dict[str, threading.Thread] = {}
 
 
 def install_root(data_dir: Path | None = None) -> Path:
     if data_dir is None:
-        from jarvis.core import config as core_config
+        from jarvis.core.config import DATA_DIR
 
-        data_dir = core_config.DATA_DIR
-    return Path(data_dir) / "society" / "browser"
-
-
-def _venv_dir(data_dir: Path | None = None) -> Path:
-    return install_root(data_dir) / "venv"
-
-
-def venv_python(data_dir: Path | None = None) -> Path:
-    venv = _venv_dir(data_dir)
-    if os.name == "nt":
-        return venv / "Scripts" / "python.exe"
-    return venv / "bin" / "python"
+        data_dir = DATA_DIR
+    return (Path(data_dir) / "society" / "browser").resolve()
 
 
 def runner_path() -> Path:
-    return Path(__file__).with_name("runner.py")
+    return Path(__file__).with_name("live_runner.py")
 
 
-def _marker(data_dir: Path | None = None) -> Path:
-    return install_root(data_dir) / _MARKER
+def requirements_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "assets" / "browser" / "requirements.lock"
+
+
+def managed_python_request(system: str, machine: str) -> str:
+    # Windows supports x64 emulation on ARM. Some crypto dependencies have no
+    # Windows ARM wheels, so keep that ABI boundary in the isolated helper.
+    if system == "win32" and machine.lower() in {"arm64", "aarch64"}:
+        return "cpython-3.12-windows-x86_64-none"
+    return "3.12"
+
+
+def _manifest(data_dir: Path | None = None) -> dict[str, Any]:
+    try:
+        row = json.loads((install_root(data_dir) / "installed.json").read_text("utf-8"))
+        return row if isinstance(row, dict) else {}
+    except (OSError, ValueError):
+        # Missing or incomplete manifests mean not installed and trigger repair.
+        return {}
+
+
+def _path(data_dir: Path | None, field: str, default: str) -> Path:
+    root = install_root(data_dir)
+    path = (root / str(_manifest(data_dir).get(field, default))).resolve()
+    return path if path.is_relative_to(root) else root / default
+
+
+def venv_python(data_dir: Path | None = None) -> Path:
+    return _path(data_dir, "runtime", "venv") / (
+        "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    )
+
+
+def browser_executable(data_dir: Path | None = None) -> Path:
+    return _path(data_dir, "executable", "missing-browser")
+
+
+def _lock_digests() -> tuple[str, str]:
+    """Dependency identity is independent of Git's platform line endings."""
+    content = requirements_path().read_bytes().replace(b"\r\n", b"\n")
+    return (
+        hashlib.sha256(content).hexdigest(),
+        hashlib.sha256(content.replace(b"\n", b"\r\n")).hexdigest(),
+    )
 
 
 def is_installed(data_dir: Path | None = None) -> bool:
-    marker = _marker(data_dir)
-    if not marker.is_file() or not venv_python(data_dir).is_file():
-        return False
+    row = _manifest(data_dir)
     try:
-        payload = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        digests = _lock_digests()
+    except OSError:
+        # A missing lock cannot attest a usable installation.
         return False
-    return str(payload.get("browser_use")) == BROWSER_USE_VERSION
+    return bool(
+        row.get("browser_use") == BROWSER_USE_VERSION
+        and row.get("playwright") == PLAYWRIGHT_VERSION
+        and row.get("protocol") == PROTOCOL_VERSION
+        and row.get("verified")
+        and row.get("lock_sha256") in digests
+        and venv_python(data_dir).is_file()
+        and browser_executable(data_dir).is_file()
+    )
 
 
-# ------------------------------------------------------------------ state
+def worker_env(data_dir: Path | None = None, *, for_installer: bool = False) -> dict[str, str]:
+    # Inference credentials stay in the parent. The browser and its children
+    # do not need account tokens, SSH agents or package-index credentials.
+    inherited = {
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        "WINDIR",
+        "COMSPEC",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PROGRAMW6432",
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TZ",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR",
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+    }
+    env = {name: value for name, value in os.environ.items() if name.upper() in inherited}
+    if for_installer:
+        env.update(
+            {
+                name: value
+                for name, value in os.environ.items()
+                if name.upper().startswith(("PIP_", "UV_"))
+                or name.upper() in {"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY"}
+            }
+        )
+    env.update(
+        {
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            "PYTHON_DOTENV_DISABLED": "1",
+            "ANONYMIZED_TELEMETRY": "false",
+            "BROWSER_USE_DISABLE_EXTENSIONS": "1",
+            "BROWSER_USE_LOGGING_LEVEL": "error",
+            "BROWSER_USE_SETUP_LOGGING": "false",
+            "PLAYWRIGHT_BROWSERS_PATH": str(install_root(data_dir) / "browsers"),
+        }
+    )
+    return env
 
 
-@dataclass
-class _State:
-    phase: str = "idle"
-    percent: int = 0
-    detail: str = ""
-    error: str = ""
-    started_at: float = 0.0
-    finished_at: float = 0.0
-    log_tail: deque[str] = field(default_factory=lambda: deque(maxlen=30))
-    thread: threading.Thread | None = None
-
-
-_STATE = _State()
-_LOCK = threading.Lock()
-
-
-def _set(phase: str, percent: int, detail: str = "") -> None:
+def _set(data_dir: Path | None, **values: Any) -> None:
     with _LOCK:
-        _STATE.phase = phase
-        _STATE.percent = percent
-        if detail:
-            _STATE.detail = detail
-            _STATE.log_tail.append(detail)
-
-
-def _fail(message: str) -> None:
-    log.error("society browser install: %s", message)
-    with _LOCK:
-        _STATE.phase = "error"
-        _STATE.error = message
-        _STATE.finished_at = time.time()
-
-
-def _reset_for_tests() -> None:
-    with _LOCK:
-        _STATE.phase = "idle"
-        _STATE.percent = 0
-        _STATE.detail = ""
-        _STATE.error = ""
-        _STATE.started_at = 0.0
-        _STATE.finished_at = 0.0
-        _STATE.log_tail.clear()
-        _STATE.thread = None
+        _STATES.setdefault(str(install_root(data_dir)), {}).update(values)
 
 
 def snapshot(data_dir: Path | None = None) -> dict[str, Any]:
+    root = install_root(data_dir)
     with _LOCK:
-        return {
-            "installed": is_installed(data_dir),
-            "phase": _STATE.phase,
-            "percent": _STATE.percent,
-            "detail": _STATE.detail,
-            "error": _STATE.error,
-            "running": _STATE.thread is not None and _STATE.thread.is_alive(),
-            "log_tail": list(_STATE.log_tail),
-            "browser_use": BROWSER_USE_VERSION,
-            "root": str(install_root(data_dir)),
-        }
+        row = dict(_STATES.get(str(root), {}))
+        thread = _THREADS.get(str(root))
+    return {
+        "installed": is_installed(data_dir),
+        "phase": row.get("phase", "idle"),
+        "percent": row.get("percent", 0),
+        "detail": row.get("detail", ""),
+        "error": row.get("error", ""),
+        "running": bool(thread and thread.is_alive()),
+        "browser_use": BROWSER_USE_VERSION,
+        "root": str(root),
+        "log_tail": [],
+        "retry_at": row.get("retry_at", 0),
+    }
 
 
-# ------------------------------------------------------------------ steps
+def _run(cmd: list[str], *, env: dict[str, str], timeout: float = 900) -> str:
+    from jarvis.core.process_tree import make_process_tree
 
-
-def _run(cmd: list[str], *, timeout: int, cwd: Path | None = None) -> None:
-    env = dict(os.environ)
-    env.setdefault("PYTHONIOENCODING", "utf-8")
-    popen_kwargs: dict[str, Any] = {}
-    if os.name != "nt":
-        popen_kwargs["start_new_session"] = True
-    proc = subprocess.Popen(  # noqa: S603 — fixed argv, no shell
+    tree = make_process_tree("browser-install")
+    process_options: dict[str, Any] = {"start_new_session": True} if os.name != "nt" else {}
+    proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         encoding="utf-8",
         errors="replace",
-        cwd=str(cwd) if cwd else None,
         env=env,
         creationflags=NO_WINDOW_CREATIONFLAGS,
-        **popen_kwargs,
+        **process_options,
     )
-
-    def _pump() -> None:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            line = line.rstrip()
-            if line:
-                with _LOCK:
-                    _STATE.detail = line[:200]
-                    _STATE.log_tail.append(line[:200])
-
-    pump = threading.Thread(target=_pump, name="society-browser-install-pump", daemon=True)
-    pump.start()
     try:
-        code = proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        raise TimeoutError(f"step timed out after {timeout}s: {' '.join(cmd[:3])}…") from None
-    pump.join(timeout=10)
-    if code != 0:
-        raise RuntimeError(f"step failed (exit {code}): {' '.join(cmd[:3])}…")
+        tree.assign(proc.pid)
+        output, _ = proc.communicate(timeout=timeout)
+        if proc.returncode:
+            raise RuntimeError(f"Browser setup failed: {output[-1800:]}")
+        return output
+    finally:
+        tree.close()
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
 
 
-def _create_venv(venv: Path) -> str:
-    """Create the venv; returns a one-line description of the interpreter used."""
-    uv = shutil.which("uv")
-    if uv:
-        for version in _PREFERRED_PYTHONS:
-            try:
-                _run([uv, "venv", "--python", version, str(venv)], timeout=_STEP_TIMEOUT_S)
-                return f"uv venv (python {version})"
-            except (RuntimeError, TimeoutError) as exc:
-                log.info("society browser install: uv venv %s failed: %s", version, exc)
-                continue
-    if sys.version_info >= (3, 14):
-        log.warning(
-            "society browser install: no 3.11-3.13 interpreter found; using the app's "
-            "Python %s (browser-use declares no 3.14 wheel classifier)",
-            sys.version.split()[0],
-        )
-    _run([sys.executable, "-m", "venv", str(venv)], timeout=_STEP_TIMEOUT_S)
-    return f"venv on {sys.executable}"
+def ensure_installed(
+    data_dir: Path | None = None, *, repair: bool = False, system_dependencies: bool = False
+) -> dict[str, Any]:
+    """Blocking installer for background threads and the normal installer."""
+    from filelock import FileLock
+
+    root = install_root(data_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(root / "install.lock"), timeout=960):
+        if is_installed(data_dir) and not repair:
+            return snapshot(data_dir)
+        env = worker_env(data_dir, for_installer=True)
+        runtime = root / "runtimes" / uuid.uuid4().hex
+        runtime.parent.mkdir(exist_ok=True)
+        _set(data_dir, phase="installing", percent=5, error="", detail="Preparing browser runtime")
+        try:
+            request = managed_python_request(sys.platform, platform.machine())
+            if (
+                not getattr(sys, "frozen", False)
+                and (3, 11) <= sys.version_info[:2] < (3, 14)
+                and request == "3.12"
+            ):
+                _run([sys.executable, "-m", "venv", str(runtime)], env=env)
+            else:
+                from .bootstrap import ensure_uv
+
+                uv = ensure_uv(root / "bootstrap")
+                _run([uv, "venv", "--python", request, str(runtime)], env=env)
+            python = runtime / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            _run([str(python), "-m", "ensurepip", "--upgrade"], env=env)
+            # ensurepip may seed a pip whose marker parser treats kernel
+            # releases as PEP-440 versions ("2025Server", "...-azure").
+            _run(
+                [
+                    str(python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--upgrade",
+                    "--require-hashes",
+                    "-r",
+                    str(requirements_path().with_name("bootstrap.lock")),
+                ],
+                env=env,
+            )
+            _set(data_dir, percent=20, detail="Installing Browser-Use and browser components")
+            _run(
+                [
+                    str(python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "--require-hashes",
+                    "-r",
+                    str(requirements_path()),
+                ],
+                env=env,
+            )
+            _set(data_dir, percent=60, detail="Downloading the managed browser")
+            if system_dependencies and sys.platform.startswith("linux"):
+                _run([str(python), "-m", "playwright", "install-deps", "chromium"], env=env)
+            _run([str(python), "-m", "playwright", "install", "chromium", "--no-shell"], env=env)
+            _set(
+                data_dir,
+                phase="verifying",
+                percent=90,
+                detail="Checking browser rendering and input",
+            )
+            output = _run(
+                [str(python), str(runner_path()), "--probe"],
+                env=worker_env(data_dir),
+                timeout=120,
+            )
+            lines = [
+                json.loads(line)
+                for line in output.splitlines()
+                if line.startswith('{"kind": "probe"')
+            ]
+            if not lines or not lines[-1].get("ok"):
+                raise RuntimeError(f"Browser render check failed: {output[-1500:]}")
+            probe = lines[-1]
+            executable = Path(probe["executable"]).resolve()
+            if not executable.is_relative_to(root):
+                raise RuntimeError("Browser verification used an unmanaged executable")
+            manifest = {
+                "browser_use": BROWSER_USE_VERSION,
+                "playwright": PLAYWRIGHT_VERSION,
+                "protocol": PROTOCOL_VERSION,
+                "runtime": runtime.relative_to(root).as_posix(),
+                "executable": executable.relative_to(root).as_posix(),
+                "verified": True,
+                "lock_sha256": _lock_digests()[0],
+                "verified_at": time.time(),
+                "browser_version": probe["version"],
+                "packages": probe.get("packages", []),
+            }
+            temporary = root / f"installed-{uuid.uuid4().hex}.json"
+            temporary.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            os.replace(temporary, root / "installed.json")
+            _set(data_dir, phase="done", percent=100, detail="Browser ready", error="", retry_at=0)
+        except Exception as exc:
+            log.exception("Managed browser setup failed")
+            _set(
+                data_dir,
+                phase="error",
+                error=str(exc),
+                detail="Browser setup needs repair",
+                retry_at=time.time() + 60,
+            )
+            raise
+    return snapshot(data_dir)
 
 
-def _run_install(data_dir: Path | None) -> None:
-    try:
-        root = install_root(data_dir)
-        root.mkdir(parents=True, exist_ok=True)
-        venv = _venv_dir(data_dir)
-        python = venv_python(data_dir)
-        _set("venv", 5, "creating the browser environment")
-        if not python.is_file():
-            how = _create_venv(venv)
-            _set("venv", 20, how)
-        _set("package", 25, f"installing browser-use {BROWSER_USE_VERSION}")
-        _run(
-            [
-                str(python),
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "-q",
-                f"browser-use[cli]=={BROWSER_USE_VERSION}",
-            ],
-            timeout=_STEP_TIMEOUT_S,
-        )
-        _set("chromium", 60, "downloading Chromium (once per machine)")
-        _install_chromium(python, venv)
-        _set("probe", 90, "checking the environment")
-        _probe(python)
-        _marker(data_dir).write_text(
-            json.dumps(
-                {"browser_use": BROWSER_USE_VERSION, "python": str(python), "at": time.time()}
-            ),
-            encoding="utf-8",
-        )
-        _set("done", 100, "browser environment ready")
-        with _LOCK:
-            _STATE.finished_at = time.time()
-    except (RuntimeError, TimeoutError, OSError) as exc:
-        _fail(str(exc))
-
-
-def _install_chromium(python: Path, venv: Path) -> None:
-    """``browser-use install`` fetches the bundled Chromium; older layouts
-    fall back to the module form. A missing CLI is not fatal: the first
-    headless run downloads on demand."""
-    bindir = venv / ("Scripts" if os.name == "nt" else "bin")
-    cli = bindir / ("browser-use.exe" if os.name == "nt" else "browser-use")
-    if cli.is_file():
-        _run([str(cli), "install"], timeout=_STEP_TIMEOUT_S)
-        return
-    try:
-        _run([str(python), "-m", "browser_use", "install"], timeout=_STEP_TIMEOUT_S)
-    except RuntimeError as exc:
-        log.info(
-            "society browser install: no install CLI, Chromium downloads on first run: %s",
-            exc,
-        )
-
-
-def _probe(python: Path) -> None:
-    proc = subprocess.run(  # noqa: S603 — fixed argv
-        [str(python), str(runner_path())],
-        input='{"mode": "probe"}\n',
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=120,
-        creationflags=NO_WINDOW_CREATIONFLAGS,
-        check=False,
-    )
-    last = (proc.stdout or "").strip().splitlines()
-    if not last:
-        raise RuntimeError(f"probe produced no answer: {(proc.stderr or '')[-300:]}")
-    try:
-        payload = json.loads(last[-1])
-    except ValueError as exc:
-        raise RuntimeError(f"probe answered garbage: {last[-1][:200]}") from exc
-    if not payload.get("ok"):
-        raise RuntimeError(f"probe failed: {payload.get('error', '?')}")
-    _set("probe", 95, f"browser-use {payload.get('version', '?')} answers")
-
-
-def start_install(data_dir: Path | None = None) -> tuple[bool, str]:
+def start_install(data_dir: Path | None = None, *, repair: bool = False) -> tuple[bool, str]:
+    key = str(install_root(data_dir))
     with _LOCK:
-        if _STATE.thread is not None and _STATE.thread.is_alive():
-            return False, "an install is already running"
-        _STATE.phase = "preflight"
-        _STATE.percent = 0
-        _STATE.error = ""
-        _STATE.detail = ""
-        _STATE.started_at = time.time()
-        _STATE.finished_at = 0.0
-        thread = threading.Thread(
-            target=_run_install, name="society-browser-install", args=(data_dir,), daemon=True
-        )
-        _STATE.thread = thread
-    thread.start()
-    return True, "install started"
+        thread = _THREADS.get(key)
+        if thread and thread.is_alive():
+            return False, "setup already running"
+        if is_installed(data_dir) and not repair:
+            return False, "browser ready"
+        if _STATES.get(key, {}).get("retry_at", 0) > time.time() and not repair:
+            return False, "waiting to retry browser setup"
+
+        def work() -> None:
+            try:
+                ensure_installed(data_dir, repair=repair)
+            except Exception:
+                log.debug("Background setup failed; state carries the error", exc_info=True)
+
+        thread = threading.Thread(target=work, name="browser-setup", daemon=True)
+        _THREADS[key] = thread
+        _set(data_dir, phase="checking", error="", percent=0)
+        thread.start()
+    return True, "setup started"
+
+
+def _reset_for_tests() -> None:
+    with _LOCK:
+        _STATES.clear()
+        _THREADS.clear()
+
+
+if __name__ == "__main__":
+    print(json.dumps(ensure_installed(system_dependencies="--system-deps" in sys.argv)))

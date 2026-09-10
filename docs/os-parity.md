@@ -1,5 +1,21 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+**Managed agent browser, 2026-09-10:** The Browser-Use environment and browser
+are provisioned per host with one shared installer. The live viewport uses
+CDP pixels over the authenticated app WebSocket, including on headless Linux;
+manual login uses the same streamed surface rather than an OS-specific window.
+Windows native and a real python:3.11-slim browser render probe passed locally.
+The browser-runtime CI passed real installation and browser contracts on
+Linux x64/ARM64, Windows x64/ARM64, and macOS Intel/Apple Silicon
+([run](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/34451340158)).
+Windows ARM uses the managed x64 helper under emulation. Desktop UI validation
+was performed in Chrome on Windows; UI checks on other hosts are not implied.
+The normal Linux installer and container build provision browser system
+libraries before the non-root app starts. API-key and subscription model
+adapters share the browser protocol; text-only models use DOM observations.
+See [managed browser](browser-use.md) for exact versions and test boundaries.
+
+
 ## Routine hooks (2026-09-09)
 
 Webhook ingress, named integration events and their durable task inbox use the
@@ -442,6 +458,27 @@ status parity. Realtime confirmation/echo cases use fakes with no microphone
 or provider account. Native macOS execution and a fresh single-key live-provider
 run remain release validation requirements; running this portable contract on
 one operating system does not establish those results.
+
+## Routine trigger sources (2026-09-10, T3)
+
+Human, time, API, provider callbacks, streams, file polling and workflow chains
+share the same Python/SQLite implementation on Windows, macOS and headless Linux.
+The catalogue probes optional protocol clients without importing or connecting
+them. Missing clients and unreachable services have explicit in-app states.
+No Win32 event hook or other native watcher is required. File access remains
+subject to each host's permissions and available paths.
+
+Windows contract tests cover all seven groups, DST, source lifecycle, typed
+forms, queue durability, provider signatures and trusted workflow ancestry.
+Real Kafka, RabbitMQ, MQTT and Redis instances passed admission/acknowledgement
+checks. A fresh `python:3.11-slim` container installed the built wheel and all
+base dependencies, then used one Gemini key for actual model-driven chat creation
+and canonical agent-chat execution of a manually submitted routine. A duplicate
+input was suppressed. Provider account subscriptions were not created.
+Chrome checks cover the shared editor in light and dark mode. Native macOS
+execution and provider-account provisioning remain unverified; portable contract
+coverage is not a claim of physical hardware testing.
+See [source configuration and delivery limits](trigger-sources.md).
 
 ## Chat slash commands and persistent goals (2026-09-10)
 

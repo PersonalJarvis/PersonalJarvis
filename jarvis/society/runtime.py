@@ -420,9 +420,11 @@ class SocietyRuntime:
         return self._coding_sessions
 
     def catalog(self) -> list[CapabilityRow]:
+        from .browser.tool import BrowserTool
         from .coding_tool import CodingSessionTool
 
         tools = dict(self._get_tools() or {})
+        tools[BrowserTool.name] = BrowserTool(self, "", self.browser)
         tools[CodingSessionTool.name] = CodingSessionTool(self, "")
         try:
             skills = list(self._get_skills() or [])

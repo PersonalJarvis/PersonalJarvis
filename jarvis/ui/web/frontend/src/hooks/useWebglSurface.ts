@@ -78,6 +78,7 @@ export function useWebglSurface(
 ): WebglSurface {
   const [generation, setGeneration] = useState(0);
   const recoveriesRef = useRef(0);
+  const pendingReleasesRef = useRef(new Map<HTMLCanvasElement, number>());
 
   useEffect(() => {
     const host = hostRef.current;
@@ -126,6 +127,13 @@ export function useWebglSurface(
         if (attempts++ < MAX_ATTACH_FRAMES) frame = requestAnimationFrame(attach);
         return;
       }
+      // StrictMode replays effects on the same live canvas. Reclaim it before
+      // deferred cleanup can lose the context the renderer is still using.
+      const pendingRelease = pendingReleasesRef.current.get(canvas);
+      if (pendingRelease !== undefined) {
+        window.clearTimeout(pendingRelease);
+        pendingReleasesRef.current.delete(canvas);
+      }
       canvas.addEventListener("webglcontextlost", onLost);
       canvas.addEventListener("webglcontextrestored", onRestored);
     };
@@ -147,7 +155,15 @@ export function useWebglSurface(
       // graph ref here would reach the NEXT scene, because React commits a
       // rebuilt child BEFORE it runs this cleanup — that mistake left the
       // rebuilt map paused and black (2026-08-21).
-      releaseWebglContext(canvas);
+      // React's development effect replay is not a real unmount. Give the next
+      // setup one task to reclaim this exact canvas, while retired canvases and
+      // actual unmounts still hand their contexts back to the browser.
+      const retiredCanvas = canvas;
+      const pendingReleases = pendingReleasesRef.current;
+      pendingReleases.set(retiredCanvas, window.setTimeout(() => {
+        pendingReleases.delete(retiredCanvas);
+        releaseWebglContext(retiredCanvas);
+      }, 0));
     };
   }, [generation, hostRef]);
 

@@ -494,7 +494,7 @@ class DesktopRealtimePlayback:
             0.0, float(resume_without_prebuffer_s)
         )
         self._queue: asyncio.Queue[AudioChunk | None] | None = None
-        self._task: asyncio.Task[None] | None = None
+        self._task: asyncio.Task[bool | None] | None = None
         self._closed = False
         self._last_finish_at = 0.0
 
@@ -552,13 +552,15 @@ class DesktopRealtimePlayback:
             raise RuntimeError("Cannot change realtime sample rate during playback")
         self._sample_rate = rate
 
-    async def finish_turn(self) -> None:
+    async def finish_turn(self) -> bool:
+        """Confirm only a turn that drained without cancellation or timeout."""
         queue, task = self._queue, self._task
         if queue is None or task is None:
-            return
+            return False
         await queue.put(None)
         try:
-            await asyncio.wait_for(task, timeout=self._finish_timeout_s)
+            result = await asyncio.wait_for(task, timeout=self._finish_timeout_s)
+            return result is not False and self._task is task
         except TimeoutError:
             self._player.stop()
             task.cancel()
@@ -590,6 +592,8 @@ class DesktopRealtimePlayback:
                 # NOT stamp this, so the next (genuinely new) reply rebuilds
                 # its jitter reserve.
                 self._last_finish_at = time.monotonic()
+
+        return False
 
     async def cancel(self) -> None:
         queue, task = self._detach()
@@ -629,7 +633,7 @@ class DesktopRealtimePlayback:
         await self.cancel()
 
     @staticmethod
-    def _observe_playback_result(task: asyncio.Task[None]) -> None:
+    def _observe_playback_result(task: asyncio.Task[bool | None]) -> None:
         if task.cancelled():
             return
         try:
@@ -641,7 +645,7 @@ class DesktopRealtimePlayback:
 
     def _detach(
         self,
-    ) -> tuple[asyncio.Queue[AudioChunk | None] | None, asyncio.Task[None] | None]:
+    ) -> tuple[asyncio.Queue[AudioChunk | None] | None, asyncio.Task[bool | None] | None]:
         queue, task = self._queue, self._task
         self._queue = None
         self._task = None

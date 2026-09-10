@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { useT } from "@/i18n";
 import { requestVoiceCall, requestVoiceHangup } from "@/lib/voiceApi";
 import { useEventStore, type VoiceState } from "@/store/events";
+import { useHomeStore } from "@/store/home";
 
 /**
  * Whether the next voice-control press should end the current conversation.
@@ -28,7 +29,9 @@ export function useVoiceCall() {
   const t = useT();
   const voiceState = (useEventStore((store) => store.voiceState) ?? "idle") as VoiceState;
   const pushToast = useEventStore((store) => store.pushToast);
-  const [busy, setBusy] = useState(false);
+  const [requestBusy, setBusy] = useState(false);
+  const selectionPending = useHomeStore((s) => s.voiceSelectionPending);
+  const busy = requestBusy || selectionPending;
   const active = isVoiceActive(voiceState);
 
   const toggleCall = useCallback(async () => {

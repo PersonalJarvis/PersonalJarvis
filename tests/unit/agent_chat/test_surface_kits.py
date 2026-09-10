@@ -109,7 +109,9 @@ async def test_kit_payload_builds_the_kit_tools_and_the_briefing(
     assert tools is not None and set(tools) == {"probe_read"}
     assert extra == "BRIEFING"
 
-    none_tools, none_extra = await kit_payload(_session("jarvis"), _Brain())
+    jarvis_tools, jarvis_extra = await kit_payload(_session("jarvis"), _Brain())
+    assert jarvis_tools is not None and "Read" in jarvis_tools and jarvis_extra == ""
+    none_tools, none_extra = await kit_payload(_session("agent"), _Brain())
     assert none_tools is None and none_extra == ""
 
 

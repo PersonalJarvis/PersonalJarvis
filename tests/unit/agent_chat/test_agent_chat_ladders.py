@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,6 +22,35 @@ from jarvis.agent_chat.runner_cli import (
 from jarvis.plugins.brain._anthropic_base import _is_reasoning_model, reasoning_kwargs
 
 # ------------------------------------------------------------ permissions
+
+
+async def test_agy_cold_chat_resolves_catalog_before_building_command(tmp_path, monkeypatch):
+    seen = []
+
+    def catalog():
+        seen.append("catalog")
+        return []
+
+    def planner(**kwargs):
+        assert seen == ["catalog"]
+        assert kwargs["effort"] == "high"
+        raise runner_cli.CliUnavailable("stop before process launch")
+
+    monkeypatch.setattr(runner_cli, "read_agy_models", catalog)
+    monkeypatch.setitem(runner_cli._PLANNERS, "agy-cli", planner)
+    handle = SimpleNamespace(
+        session=SimpleNamespace(
+            session_id="society:nala",
+            cwd=str(tmp_path),
+            provider="antigravity",
+            model="new-model",
+            effort="high",
+            permission_mode="plan",
+        )
+    )
+    result = await runner_cli._run_cli_once(handle, "Read a page", "agy-cli", None)
+    assert result.status == "error"
+    assert result.error == "stop before process launch"
 
 
 def test_every_runner_has_a_ladder_with_its_default_on_it():

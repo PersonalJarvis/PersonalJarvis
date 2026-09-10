@@ -41,7 +41,7 @@ async def _ask(runtime: Any, agent: Any, prompt: str) -> dict[str, Any] | None:
     from .chat_binding import pair_for
 
     provider_name, model, _ = pair_for(runtime.config(), agent)
-    secret = get_jarvis_agent_secret(provider_name)
+    secret = await asyncio.to_thread(get_jarvis_agent_secret, provider_name)
     with override_provider_secrets({provider_name: secret} if secret else {}):
 
         def candidates():
@@ -68,7 +68,14 @@ async def _ask(runtime: Any, agent: Any, prompt: str) -> dict[str, Any] | None:
                         log.info("society: fallback review provider unavailable", exc_info=True)
 
         seen = set()
-        for provider in candidates():
+        providers = candidates()
+        while True:
+            # Provider construction may read catalogs, credentials and local
+            # models. Never run that synchronous work on the desktop event loop.
+            # next(..., None) also avoids propagating StopIteration into a Future.
+            provider = await asyncio.to_thread(next, providers, None)
+            if provider is None:
+                break
             identity = (getattr(provider, "name", ""), str(getattr(provider, "_model", "")))
             if identity in seen:
                 continue

@@ -10,7 +10,7 @@ Simple, two paths:
    wildcard subscriber on the bus and dispatches every event class that an
    ``on_event`` task has recorded as its ``event_selector``.
 
-**No** cron semantics, **no** APScheduler, **no** second thread.
+Cron and calendar rules share the time heap. Listener lifecycles use independent asyncio tasks.
 Everything runs on the main async loop — that is deliberate (ADR-0005).
 
 The scheduler uses a ``CancelToken`` as its top-level abort condition
@@ -29,8 +29,16 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from jarvis.core.bus import EventBus
-from jarvis.core.events import Event, TaskScheduled
+from jarvis.core.events import (
+    Event,
+    TaskCompleted,
+    TaskFailed,
+    TaskScheduled,
+    WorkflowActivationChanged,
+    WorkflowCompleted,
+)
 from jarvis.core.misfire import is_missed, late_by_s
+from jarvis.core.protocols import RoutineDeferred, current_trigger_path
 from jarvis.tasks.hook_events import RoutineEventReceived
 from jarvis.tasks.schema import PAUSABLE_TRIGGER_TYPES, TERMINAL_STATES, TaskSpec
 
@@ -92,10 +100,16 @@ class TaskScheduler:
         store: TaskStore,
         bus: EventBus,
         runner: _Dispatchable | TaskRunner | None = None,
+        *,
+        workflow_services: Any = None,
     ) -> None:
+        from .source_runtime import SourceSupervisor
+
+        self.sources = SourceSupervisor(store, self.receive_hook)
         self._store = store
         self._bus = bus
         self._runner = runner
+        self._workflow_services = workflow_services
         # Heap entries: (due_at_ns, task_id). task_id as str is
         # comparable — heapq only uses it as a tiebreaker for identical
         # due_at_ns values.
@@ -104,6 +118,7 @@ class TaskScheduler:
         # On-event tasks — map event class name → set of task_ids.
         # The wildcard subscriber checks the event class against this index.
         self._hook_running: set[str] = set()
+        self._hook_retry_at: dict[str, float] = {}
         self._event_dispatch_lock = asyncio.Lock()
         self._on_event_index: dict[str, set[str]] = {}
         self._bound = False
@@ -141,10 +156,12 @@ class TaskScheduler:
 
     async def schedule(self, spec: TaskSpec, *, trace_id: str | None = None) -> str:
         """Persists the spec, adds it to the heap/event index, wakes the loop."""
+        await self._validate_source(spec)
         task_id = await self._store.insert(spec, trace_id=trace_id)
-        self._register_in_memory(spec, task_id)
-        # TaskScheduled event for transparency (the UI lists it)
-        due_at_ns = self._due_at_ns_for(spec)
+        row = await self._store.get(task_id)
+        due_at_ns = row.get("due_at_ns") if row is not None else self._due_at_ns_for(spec)
+        self._register_in_memory(spec, task_id, stored_due_at_ns=due_at_ns)
+        # The event, heap and database must agree even across a clock boundary.
         await self._bus.publish(
             TaskScheduled(
                 task_id=task_id,
@@ -157,8 +174,121 @@ class TaskScheduler:
         self._wakeup.set()
         return task_id
 
+    async def _validate_source(self, spec: TaskSpec) -> None:
+        if spec.action.kind == "workflow":
+            services = self._workflow_services() if self._workflow_services else (None, None)
+            if (
+                services[0] is None
+                or services[1] is None
+                or await services[0].get_workflow(str(spec.action.workflow_id)) is None
+            ):
+                raise ValueError("Destination workflow is unavailable")
+        if spec.trigger.type != "source" or spec.trigger.source.kind != "workflow":
+            return
+        source = spec.trigger.source
+        if source.upstream_kind == "workflow":
+            services = self._workflow_services() if self._workflow_services else (None, None)
+            if services[0] is None or await services[0].get_workflow(source.upstream_id) is None:
+                raise ValueError("Upstream workflow is unavailable")
+            return
+        cursor = source.upstream_id
+        visited = {str(spec.id)}
+        while cursor:
+            if cursor in visited:
+                raise ValueError("Workflow dependencies must not contain a cycle")
+            visited.add(cursor)
+            upstream = await self._store.get_spec(cursor)
+            if upstream is None:
+                raise ValueError("Upstream routine does not exist")
+            trigger = upstream.trigger
+            cursor = (
+                trigger.source.upstream_id
+                if trigger.type == "source"
+                and trigger.source.kind == "workflow"
+                and trigger.source.upstream_kind == "task"
+                else ""
+            )
+
+    async def invoke_source(
+        self, task_id: str, payload: dict[str, Any], delivery_id: str, *, mode: str
+    ) -> str:
+        from .source_schema import validate_form
+
+        spec = await self._store.get_spec(task_id)
+        if spec is None or spec.trigger.type != "source" or spec.trigger.source.kind != mode:
+            raise ValueError("This routine does not accept that invocation mode")
+        if mode == "form":
+            validate_form(spec.trigger.source, payload)
+        return await self.receive_hook(task_id, payload, delivery_id, source="source")
+
+    async def _chain_event(self, event: Event) -> None:
+        if isinstance(event, (TaskCompleted, TaskFailed, TaskScheduled)):
+            kind, upstream = "task", event.task_id
+            phase = (
+                "activated"
+                if isinstance(event, TaskScheduled)
+                else "failed"
+                if isinstance(event, TaskFailed)
+                else "succeeded"
+            )
+        elif isinstance(event, (WorkflowCompleted, WorkflowActivationChanged)):
+            kind, upstream = "workflow", event.workflow_id
+            if isinstance(event, WorkflowActivationChanged) and not event.enabled:
+                return
+            phase = (
+                "activated"
+                if isinstance(event, WorkflowActivationChanged)
+                else "succeeded"
+                if event.success
+                else "failed"
+            )
+        else:
+            return
+        targets = tuple(self._on_event_index.get(f"chain:{kind}:{upstream}:{phase}", ()))
+        if not targets:
+            return
+        path = current_trigger_path.get()
+        marker = kind + ":" + upstream
+        if marker not in path:
+            path = path + (marker,)
+        output = ""
+        output_ref = f"/api/tasks/{upstream}" if kind == "task" else f"/api/workflows/{upstream}"
+        if kind == "task" and phase != "activated":
+            results = await self._store.latest_agent_results([upstream], max_chars=16001)
+            output = str(results.get(upstream, ""))
+        elif isinstance(event, WorkflowCompleted) and self._workflow_services:
+            services = self._workflow_services()
+            if services[0] is not None:
+                run = await services[0].get_run(event.run_id)
+                steps = (run or {}).get("steps") or []
+                output = str(steps[-1].get("output", "")) if steps else ""
+                output_ref = f"/api/workflows/runs/{event.run_id}"
+        payload = {
+            "upstream_id": upstream,
+            "status": phase,
+            "output": output[:16000],
+            "output_truncated": len(output) > 16000,
+            "output_ref": output_ref,
+            "error": getattr(event, "error", None),
+        }
+        for task_id in targets:
+            try:
+                status = await self.receive_hook(
+                    task_id, payload, str(event.trace_id), source="source", lineage=path
+                )
+            except ValueError:
+                status = "payload_invalid"
+            if status not in {"queued", "duplicate", "filtered"}:
+                await self._store.sources.status(task_id, "blocked", status)
+
     async def receive_hook(
-        self, task_id: str, payload: dict[str, Any], delivery_id: str, *, source: str = "webhook"
+        self,
+        task_id: str,
+        payload: dict[str, Any],
+        delivery_id: str,
+        *,
+        source: str = "webhook",
+        lineage: tuple[str, ...] = (),
     ) -> str:
         """Persist an authenticated delivery; the scheduler owns its execution."""
         if self._runner is None:
@@ -166,11 +296,13 @@ class TaskScheduler:
         spec = await self._store.get_spec(task_id)
         if (
             spec is None
-            or spec.trigger.type not in ("webhook", "event_hook")
+            or spec.trigger.type not in ("webhook", "event_hook", "source")
             or spec.trigger.type != source
         ):
             return "not_found"
-        status = await self._store.hooks.accept(task_id, delivery_id, payload, spec.trigger)
+        status = await self._store.hooks.accept(
+            task_id, delivery_id, payload, spec.trigger, lineage
+        )
         if status == "queued":
             self._wakeup.set()
         return status
@@ -206,8 +338,11 @@ class TaskScheduler:
             return
         for row in await self._store.hooks.pending():
             tid = str(row["task_id"])
+            if self._hook_retry_at.get(tid, 0) > time.monotonic():
+                continue
             if tid in self._hook_running or tid in self._running_tokens:
                 continue
+            self._hook_retry_at.pop(tid, None)
             self._hook_running.add(tid)
             task = asyncio.create_task(self._run_hook(row), name=f"routine-hook-{tid}")
             self._runner_tasks.add(task)
@@ -224,7 +359,12 @@ class TaskScheduler:
                 tid, "log", {"event": "hook_started", "delivery_id": delivery}
             )
             await self._safe_run(
-                tid, {"hook_payload": row["payload_json"], "hook_delivery_id": delivery}
+                tid,
+                {
+                    "hook_payload": row["payload_json"],
+                    "hook_delivery_id": delivery,
+                    "__trigger_path": json.loads(row.get("lineage_json") or "[]"),
+                },
             )
             current = await self._store.get(tid)
             failed = (
@@ -234,7 +374,7 @@ class TaskScheduler:
             )
             await self._store.hooks.mark(tid, delivery, "failed" if failed else "done")
             spec = await self._store.get_spec(tid)
-            if spec is not None and spec.trigger.type in ("webhook", "event_hook"):
+            if spec is not None and spec.trigger.type in ("webhook", "event_hook", "source"):
                 total, pending = await self._store.hooks.counts(tid)
                 if (
                     spec.trigger.max_firings is not None
@@ -244,6 +384,9 @@ class TaskScheduler:
                     and current["state"] == "scheduled"
                 ):
                     await self._store.update_state(tid, "completed")
+        except RoutineDeferred:
+            await self._store.hooks.mark(tid, delivery, "pending")
+            self._hook_retry_at[tid] = time.monotonic() + 2
         except asyncio.CancelledError:
             await self._store.hooks.mark(tid, delivery, "interrupted")
             raise
@@ -281,6 +424,8 @@ class TaskScheduler:
         spec = await self._store.get_spec(task_id)
         if spec is None:
             raise TaskNotFound(task_id)
+        if spec.trigger.type == "source":
+            raise TaskStateConflict("Use the configured trigger input for this routine")
         if spec.trigger.type in ("after_delay", "at_time"):
             self._remove_from_memory(task_id)
         restore_state = "paused" if state == "paused" else None
@@ -342,16 +487,19 @@ class TaskScheduler:
             raise TaskNotFound(task_id)
         if spec.trigger.type not in PAUSABLE_TRIGGER_TYPES:
             raise TaskStateConflict("Routine updates require a recurring trigger")
+        await self._validate_source(spec)
         was_paused = current["state"] == "paused"
         await self.pause(task_id)
         try:
             await self._store.replace_spec(task_id, spec)
         finally:
             if not was_paused:
-                await self.resume(task_id)
+                await self.resume(task_id, notify_activation=False)
         await self._store.append_step(task_id, "log", {"event": "updated"})
 
-    async def resume(self, task_id: str, *, now_ns: int | None = None) -> int | None:
+    async def resume(
+        self, task_id: str, *, now_ns: int | None = None, notify_activation: bool = True
+    ) -> int | None:
         """Switch a paused task back on and re-register it for its NEXT
         occurrence. Returns the new ``due_at_ns`` (``None`` for ``on_event``).
 
@@ -370,17 +518,23 @@ class TaskScheduler:
             raise TaskNotFound(task_id)
         now = time.time_ns() if now_ns is None else now_ns
         due: int | None = None
-        if spec.trigger.type in ("every", "calendar"):
+        if spec.trigger.type in ("every", "calendar", "cron"):
             due = next_every_due_ns(spec, now)
             await self._store.set_next_due(task_id, due)
         await self._store.update_state(task_id, "scheduled")
         await self._store.append_step(task_id, "log", {"event": "resumed"})
         self._register_in_memory(spec, task_id, stored_due_at_ns=due)
+        if notify_activation:
+            await self._bus.publish(
+                TaskScheduled(task_id=task_id, trigger_type=spec.trigger.type, title=spec.title)
+            )
         self._wakeup.set()
         return due
 
     def _remove_from_memory(self, task_id: str) -> None:
         """Drop a task from the heap, the event index and the known set."""
+        self.sources.cancel(task_id)
+        self._hook_retry_at.pop(task_id, None)
         self._heap = [(due, tid) for (due, tid) in self._heap if tid != task_id]
         heapq.heapify(self._heap)
         for ids in self._on_event_index.values():
@@ -444,6 +598,7 @@ class TaskScheduler:
         the spec lives in the DB, and we don't want to block in this handler.
         Hence: the handler enqueues, and the runner checks.
         """
+        await self._chain_event(event)
         if isinstance(event, RoutineEventReceived):
             if event.source_layer != "tasks.hooks.accepted":
                 await self._enqueue_hook_event(event)
@@ -528,7 +683,7 @@ class TaskScheduler:
                 continue
             stored_due = row.get("due_at_ns")
             if (
-                spec.trigger.type in ("every", "calendar")
+                spec.trigger.type in ("every", "calendar", "cron")
                 and stored_due is not None
                 and is_missed(int(stored_due), now_ns)
             ):
@@ -606,6 +761,21 @@ class TaskScheduler:
                 else parse_iso_timestamp_to_ns(trig.iso_timestamp)
             )
             heapq.heappush(self._heap, (due, task_id))
+        elif trig.type == "cron":
+            due = (
+                stored_due_at_ns
+                if stored_due_at_ns is not None
+                else next_every_due_ns(spec, time.time_ns())
+            )
+            heapq.heappush(self._heap, (due, task_id))
+        elif trig.type == "source":
+            if trig.source.kind == "workflow":
+                key = (
+                    f"chain:{trig.source.upstream_kind}:{trig.source.upstream_id}:"
+                    f"{trig.source.when}"
+                )
+                self._on_event_index.setdefault(key, set()).add(task_id)
+            self.sources.start(spec)
         elif trig.type == "calendar":
             due = (
                 stored_due_at_ns
@@ -637,6 +807,8 @@ class TaskScheduler:
                 return parse_iso_timestamp_to_ns(trig.iso_timestamp)
             except ValueError:
                 return None
+        if trig.type == "cron":
+            return next_every_due_ns(spec, time.time_ns())
         if trig.type == "calendar":
             return next_every_due_ns(spec, time.time_ns())
         if trig.type == "every":
@@ -678,6 +850,9 @@ class TaskScheduler:
                 timeout = max(0.05, (self._heap[0][0] - now_ns) / 1e9)
             else:
                 timeout = None
+            if self._hook_retry_at:
+                retry_in = max(0.1, min(self._hook_retry_at.values()) - time.monotonic())
+                timeout = retry_in if timeout is None else min(timeout, retry_in)
             try:
                 if timeout is None:
                     await self._wakeup.wait()
@@ -699,7 +874,7 @@ class TaskScheduler:
             due, tid = heapq.heappop(self._heap)
             self._known.discard(tid)
             spec = await self._store.get_spec(tid)
-            if spec is not None and spec.trigger.type in ("every", "calendar"):
+            if spec is not None and spec.trigger.type in ("every", "calendar", "cron"):
                 if is_missed(due, now_ns):
                     # The process lived but did not tick (machine asleep,
                     # loop blocked): same rule as at boot — skip, never
@@ -758,22 +933,28 @@ class TaskScheduler:
 
         token = CancelToken()
         self._running_tokens[task_id] = token
+        path = tuple((trigger_event or {}).get("__trigger_path") or current_trigger_path.get())
+        context_token = current_trigger_path.set(path + ("task:" + task_id,))
         try:
             await self._runner.run(  # type: ignore[union-attr]
                 task_id,
                 token,
                 trigger_event=trigger_event,
             )
+        except RoutineDeferred:
+            raise
         except Exception as exc:  # noqa: BLE001
             log.exception("TaskRunner crashed task=%s: %s", task_id, exc)
         finally:
             self._running_tokens.pop(task_id, None)
+            current_trigger_path.reset(context_token)
 
     async def shutdown(self) -> None:
         """Waits for runner tasks to finish (with a timeout).
 
         The caller must stop the loop first.
         """
+        await self.sources.close()
         tasks = list(self._runner_tasks)
         if not tasks:
             return
@@ -794,6 +975,10 @@ def next_every_due_ns(spec: TaskSpec, now_ns: int) -> int:
     A malformed ``start_at`` degrades to the unanchored rule.
     """
     trig = spec.trigger
+    if trig.type == "cron":
+        from .cron_schedule import next_cron_ns
+
+        return next_cron_ns(trig.expression, trig.timezone, now_ns)
     if trig.type == "calendar":
         from .calendar import next_calendar_due_ns
 

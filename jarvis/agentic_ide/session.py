@@ -792,8 +792,13 @@ def agent_argv(agent: str) -> tuple[str, ...] | None:
         ensure_cli_paths()
     except Exception:  # noqa: BLE001, S110 - PATH augmentation is best-effort
         pass
-    exe = shutil.which(binary)
-    if exe is None:
+    if agent == "cursor":
+        from jarvis.workspace.cursor_cli import resolve_cursor_binary
+
+        exe = resolve_cursor_binary()
+    else:
+        exe = shutil.which(binary)
+    if exe is None and agent != "cursor":
         for alias in spec.binary_aliases:
             exe = shutil.which(alias)
             if exe is not None:

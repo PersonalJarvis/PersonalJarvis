@@ -1,3 +1,4 @@
+import { DEFAULT_MANUAL_SOURCE, type SourceSettings } from "@/lib/sourceTypes";
 /**
  * Pure mapping from the create-form draft to the backend TaskSpec payload.
  *
@@ -28,7 +29,8 @@ export interface TaskDraft {
   title: string;
   prompt: string;
   // Top-level: a time-based schedule vs. an event-driven When-Then rule.
-  triggerMode: "schedule" | "event";
+  triggerMode: "schedule" | "event" | "source";
+  sourceTrigger?: TaskTrigger;
   scheduleMode: "once" | "recurring";
   onceMode: "delay" | "at_time";
   delaySeconds: number;
@@ -48,6 +50,8 @@ export interface TaskDraft {
 export interface HookOptions { conditions?: Record<string, string | number | boolean | null>; max_firings?: number | null; cooldown_seconds?: number; }
 
 export type TaskTrigger =
+  | ({ type: "source"; source: SourceSettings } & HookOptions)
+  | { type: "cron"; expression: string; timezone: string }
   | ({ type: "webhook" } & HookOptions)
   | ({ type: "event_hook"; event_name: string } & HookOptions)
   | { type: "after_delay"; delay_seconds: number }
@@ -177,6 +181,7 @@ export function buildEventTrigger(draft: TaskDraft): TaskTrigger {
 }
 
 export function buildTrigger(draft: TaskDraft, _now: Date = new Date()): TaskTrigger {
+  if (draft.triggerMode === "source") return draft.sourceTrigger ?? { type: "source", source: DEFAULT_MANUAL_SOURCE };
   if (draft.triggerMode === "event") {
     return buildEventTrigger(draft);
   }

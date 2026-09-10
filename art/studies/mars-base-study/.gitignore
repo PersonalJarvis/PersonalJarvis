@@ -1,0 +1,4 @@
+# Keep editable source and curated evidence; omit machine logs and Blender backups.
+*.blend1
+*.blend2
+evidence/*.log

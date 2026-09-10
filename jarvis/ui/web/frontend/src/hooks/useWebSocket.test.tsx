@@ -343,6 +343,17 @@ describe("useWebSocket VoiceBootStatus handling", () => {
 
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["docs"] });
   });
+
+  it.each(["MarketplaceItemInstalled", "SkillRegistryReloaded", "BrainToolsChanged"])(
+    "refreshes open capability pickers after %s", async (eventName) => {
+      const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+      render(<Harness />);
+      await Promise.resolve();
+      MockWebSocket.last!.deliver(envelope(eventName, { kind: "skill" }));
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["society", "capabilities"] });
+      invalidate.mockRestore();
+    },
+  );
 });
 
 describe("useWebSocket connection state (welcome-gated + warming)", () => {
