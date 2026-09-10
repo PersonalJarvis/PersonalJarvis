@@ -57,7 +57,7 @@ MAX_REFERENCES = 128
 _EXT = "|".join(re.escape(ext[1:]) for ext in MEDIA_TYPES)
 _LINK = re.compile(r"(!?\[[^\]\n]*\]\()(<[^>\n]+>|[^)\n]+)(\))")
 _RAW = re.compile(
-    rf"(?<![^\s\"'`(=])(?:https?://|file:///|[A-Za-z]:[/\\]|\./|/)[^\s<>\"'`]+?\.(?:{_EXT})(?:\?[^\s<>\"'`)]+)?(?=$|[\s<>\"'`)])",
+    rf"(?<![^\s\"'`(=<])(?:https?://|file:///|[A-Za-z]:[/\\]|\./|/)[^\s<>\"'`]+?\.(?:{_EXT})(?:\?[^\s<>\"'`)]+)?(?=$|[\s<>\"'`)])",
     re.I,
 )
 _BARE = re.compile(rf"(?<![\w:/\\])(?:[\w.-]+[/\\])*[\w.-]+\.(?:{_EXT})(?=$|[\s\"'`),])", re.I)
@@ -253,6 +253,9 @@ class MediaNormalizer:
             return raw
 
     def text(self, text: str) -> str:
+        stripped = text.strip()
+        if stripped.startswith("<") and stripped.endswith(">") and media_type(stripped[1:-1]):
+            return self.reference(stripped[1:-1])
         if text.strip().startswith("data:") and media_type(text.strip()):
             return self.reference(text.strip())
         # Code examples are not output receipts. Do not expose a file merely
@@ -285,11 +288,13 @@ class MediaNormalizer:
             parts[i] = part
         return "".join(parts)
 
-    def structured(self, value: Any, depth: int = 0, inherited_hint: str = "") -> Any:
+    def structured(
+        self, value: Any, depth: int = 0, inherited_hint: str = "", scan_text: bool = False
+    ) -> Any:
         if depth > 12:
             return value
         if isinstance(value, list):
-            return [self.structured(item, depth + 1, inherited_hint) for item in value]
+            return [self.structured(item, depth + 1, inherited_hint, scan_text) for item in value]
         if isinstance(value, dict):
             result = dict(value)
             hint = str(
@@ -354,10 +359,28 @@ class MediaNormalizer:
                         "audio": "audio/mpeg",
                     }.get(key, hint if key in {"source", "resource", "result"} else "")
                     if key != "data" or not isinstance(child, str):
-                        result[key] = self.structured(child, depth + 1, child_hint)
+                        result[key] = self.structured(
+                            child,
+                            depth + 1,
+                            child_hint,
+                            key
+                            in {
+                                "text",
+                                "output",
+                                "outputs",
+                                "content",
+                                "result",
+                                "data",
+                                "artifacts",
+                                "files",
+                                "media",
+                            },
+                        )
             return result
         if isinstance(value, str):
-            return self.reference(value, inherited_hint) if inherited_hint else self.text(value)
+            if inherited_hint:
+                return self.reference(value, inherited_hint)
+            return self.text(value) if scan_text else value
         return value
 
 
@@ -407,7 +430,7 @@ def normalize_media_event(
             parsed = json.loads(value) if value.lstrip().startswith(("{", "[")) else None
         except ValueError:
             parsed = None
-        processed = normalizer.structured(parsed) if parsed is not None else None
+        processed = normalizer.structured(parsed, scan_text=True) if parsed is not None else None
         rewritten = (
             json.dumps(processed, ensure_ascii=False)
             if parsed is not None
@@ -422,7 +445,7 @@ def normalize_media_event(
         ):
             rewritten = content_markdown(content, normalizer.receipts)
     else:
-        rewritten = json.dumps(normalizer.structured(value), ensure_ascii=False)
+        rewritten = json.dumps(normalizer.structured(value, scan_text=True), ensure_ascii=False)
     result = [{**event, "payload": {**payload, field: rewritten}}]
     # Explicit Markdown in assistant prose is already rendered in place.
     inline = (
