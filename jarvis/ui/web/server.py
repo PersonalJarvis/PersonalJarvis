@@ -1073,9 +1073,8 @@ class WebServer:
             """
             return {"ready": bool(getattr(self, "_voice_ready", False))}
 
-        @app.get("/api/jarvis-agent/status")
-        async def jarvis_agent_status() -> dict[str, Any]:
-            """Jarvis-Agent bridge status for the settings view (Welle 3).
+        async def _jarvis_agent_status_snapshot() -> dict[str, Any]:
+            """Jarvis-Agent bridge status for the settings view (Wave 3).
 
             Read-only snapshot:
 
@@ -1099,6 +1098,11 @@ class WebServer:
             The endpoint returns NO secrets — only a boolean for whether a key is set.
             """
             import shutil
+
+            from .agent_status import subscription_statuses
+
+            codex_bin = getattr(getattr(cfg, "codex", None), "binary_path", "") or None
+            auth_statuses = await subscription_statuses(codex_bin)
 
             oc_cfg = cfg.harness.jarvis_agent
             router_primary = (cfg.brain.primary or "").lower()
@@ -1214,12 +1218,11 @@ class WebServer:
                 # expired state for older Linux/Windows installs.
                 if mapping.jarvis == "claude-api":
                     try:
-                        from jarvis.claude_auth import ClaudeAuthService
                         from jarvis.claude_credentials import (
                             freshest_claude_oauth,
                         )
 
-                        auth_status = await asyncio.to_thread(ClaudeAuthService().status)
+                        auth_status = auth_statuses["claude"]
                         oauth_connected = bool(
                             auth_status.connected and auth_status.mode == "subscription"
                         )
@@ -1301,14 +1304,7 @@ class WebServer:
             # subagent row. Backed by the ChatGPT subscription (OAuth) OR an
             # OpenAI API key — "key_set" is true when either is present.
             try:
-                from jarvis.codex_auth import CodexAuthService
-
-                codex_bin = getattr(getattr(cfg, "codex", None), "binary_path", "") or None
-                # Off the event loop like the Claude probe above: it spawns the
-                # CLI binary, and on the loop that few-hundred-millisecond pause
-                # froze the realtime voice socket into an audible mid-sentence
-                # hole (forensic 2026-07-27).
-                codex_status = await asyncio.to_thread(CodexAuthService(codex_bin).status)
+                codex_status = auth_statuses["codex"]
                 codex_connected = codex_status.connected
                 codex_installed = codex_status.installed
             except Exception:  # noqa: BLE001
@@ -1361,12 +1357,10 @@ class WebServer:
             antigravity_status = None
             try:
                 from jarvis.google_cli.auth_service import (
-                    GoogleCliAuthService,
                     antigravity_provider_ready,
                 )
 
-                # Off the event loop for the same reason as the Codex probe.
-                antigravity_status = await asyncio.to_thread(GoogleCliAuthService().status)
+                antigravity_status = auth_statuses["google"]
                 antigravity_connected = (
                     antigravity_status.connected and antigravity_status.mode == "oauth-personal"
                 )
@@ -1424,11 +1418,10 @@ class WebServer:
             grok_build_status = None
             try:
                 from jarvis.grok_build_auth import (
-                    GrokBuildAuthService,
                     grok_build_provider_ready,
                 )
 
-                grok_build_status = await asyncio.to_thread(GrokBuildAuthService().status)
+                grok_build_status = auth_statuses["grok"]
                 grok_build_connected = (
                     grok_build_status.connected and grok_build_status.mode == "subscription"
                 )
@@ -1482,6 +1475,21 @@ class WebServer:
                 "model_resolved": model_resolved,
                 "mapping": mapping_rows,
             }
+
+        pending_agent_status: asyncio.Task[dict[str, Any]] | None = None
+
+        @app.get("/api/jarvis-agent/status")
+        async def jarvis_agent_status() -> dict[str, Any]:
+            """Read bridge configuration and provider credential readiness without secrets."""
+            nonlocal pending_agent_status
+            from .agent_status import observe_status_result
+
+            # Several windows ask together. Share only unfinished work so a new
+            # read after a login or config change still gets a fresh snapshot.
+            if pending_agent_status is None or pending_agent_status.done():
+                pending_agent_status = asyncio.create_task(_jarvis_agent_status_snapshot())
+                pending_agent_status.add_done_callback(observe_status_result)
+            return await asyncio.shield(pending_agent_status)
 
         @app.get("/api/memory/facts")
         async def get_memory_facts() -> dict[str, Any]:
