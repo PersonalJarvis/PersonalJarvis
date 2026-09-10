@@ -136,6 +136,10 @@ def _which(*names: str) -> str | None:
 
 def cli_installed(runner: str) -> bool:
     """Whether ``runner``'s binary resolves from here (False for an unknown runner)."""
+    if runner == "cursor-cli":
+        from jarvis.workspace.cursor_cli import resolve_cursor_binary
+
+        return resolve_cursor_binary() is not None
     return _which(*CLI_BINARIES.get(runner, ())) is not None
 
 
@@ -207,7 +211,9 @@ def dsh_argv_prefix() -> list[str]:
 
 
 def cursor_argv_prefix() -> list[str]:
-    binary = _which(*CLI_BINARIES["cursor-cli"])
+    from jarvis.workspace.cursor_cli import resolve_cursor_binary
+
+    binary = resolve_cursor_binary()
     if not binary:
         raise CliUnavailable("Cursor CLI (agent) is not installed or not on PATH.")
     return [binary]

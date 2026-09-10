@@ -23,11 +23,11 @@ export function isFreeOpenCodeModel(model: CuratedModel): boolean {
 /** Search reveals matching hidden entries without changing the saved fold state. */
 export function visibleModels(seat: BrainSeat, models: CuratedModel[], expanded: boolean, search: string): CuratedModel[] {
   if (expanded || search.trim() || !collapsibleModels(seat)) return models;
-  return seat.provider.runner === "opencode-cli" ? models.filter(isFreeOpenCodeModel) : [];
+  return seat.provider.runner === "opencode-cli" ? models.filter((model) => model.id === "" || isFreeOpenCodeModel(model)) : [];
 }
 
 /** CLI-owned credentials need no duplicate account entry in the app. */
-export function modelSeats(options: ProviderOption[], providers: SocietyProviderRow[], live: Record<string, CuratedModel[]>): BrainSeat[] {
+export function modelSeats(options: ProviderOption[], providers: SocietyProviderRow[], live: Record<string, CuratedModel[]>, defaultModelLabel = "Default model"): BrainSeat[] {
   const usable = options.map((option) => ({ ...option,
     connected: option.connected || (option.cli_installed === true && providers.some((row) => row.id === option.id && row.subscription && row.accounts.some((account) => account.connected))),
   }));
@@ -38,9 +38,16 @@ export function modelSeats(options: ProviderOption[], providers: SocietyProvider
   // The shared join rejects a known disconnected CLI and missing binaries.
   // Installed CLIs without an account reader (such as OpenCode) own their login.
   const known = new Set(usable.filter((option) => option.connected).map((option) => option.id));
-  return brainSeats(usable, providers, mergedLive, known).map((seat) => ({ ...seat, provider: { ...seat.provider,
-    curated_models: [...new Map(seat.provider.curated_models.map((model) => [model.id, model])).values()],
-  } }));
+  return brainSeats(usable, providers, mergedLive, known).map((seat) => {
+    const models = [...new Map(seat.provider.curated_models.map((model) => [model.id, model])).values()];
+    // The IDE can launch a CLI without a model override. Preserve that same
+    // choice when the vendor keeps its catalog private or its discovery fails.
+    // API/local seats still need their own model ids; an empty id is not one.
+    if (seat.kind === "subscription" && models.length === 0) {
+      models.push({ id: "", label: defaultModelLabel });
+    }
+    return { ...seat, provider: { ...seat.provider, curated_models: models } };
+  });
 }
 
 /** Display names only; availability and routing always come from the catalog. */

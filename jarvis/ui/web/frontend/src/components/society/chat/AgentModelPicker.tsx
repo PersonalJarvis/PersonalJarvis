@@ -40,7 +40,8 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   const chatCatalog = useAgentChat((state) => state.surface === "society" ? state.catalog : null);
   const chatConnections = useAgentChat((state) => state.connections);
   const { options, providers, live, loading, refreshing, failed, refresh: refreshData } = useModelMenuData(chatCatalog, chatConnections);
-  const seats = useMemo(() => modelSeats(options, providers ?? [], live), [options, providers, live]);
+  const defaultModelLabel = t("agent_chat.model_default");
+  const seats = useMemo(() => modelSeats(options, providers ?? [], live, defaultModelLabel), [options, providers, live, defaultModelLabel]);
   const currentAccount = (seat: BrainSeat) => accounts[seat.provider.id] ?? (agent.provider === seat.provider.id ? agent.accountId ?? "" : "");
   const preferredEffort = (seat: BrainSeat, model: CuratedModel) => modelEffort(seat, model.id, seat.provider.id === agent.provider ? agent.effort : seat.provider.default_effort);
   // useT returns a new function each render; memoize by its actual labels.

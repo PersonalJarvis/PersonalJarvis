@@ -338,3 +338,14 @@ test("hidden OpenCode models remain selectable through search and a reopened men
   fireEvent.click(screen.getByTitle("opencode-large"));
   await waitFor(() => expect(posts[0]).toEqual({ provider: "opencode", model: "opencode-large", effort: "high", account_id: "" }));
 });
+
+test.each([
+  ["kimi", "kimi-cli"], ["cursor", "cursor-cli"], ["opencode", "opencode-cli"],
+  ["glm", "glm-cli"], ["deepseek-harness", "dsh-cli"],
+] as const)("%s can use its CLI account without a published model list", async (id, runner) => {
+  extraProviders = [provider(id, { runner, cli_installed: true, curated_models: [], default_model: "", effort_levels: [], default_effort: "" })];
+  mount(); await open();
+  const group = screen.getByRole("group", { name: id });
+  fireEvent.click(within(group).getByRole("menuitemradio", { name: /Default model/ }));
+  await waitFor(() => expect(posts[0]).toEqual({ provider: id, model: "", effort: "", account_id: "" }));
+});

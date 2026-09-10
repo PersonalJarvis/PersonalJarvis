@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from jarvis.clis.prober import CliStatusProber
-from jarvis.clis.spec import AuthConfig, CliSpec, InstallMethods, RiskConfig
+from jarvis.clis.spec import AuthConfig, CliSpec, CliStatus, InstallMethods, RiskConfig
 from jarvis.terminal.shells import default_shell
 from jarvis.workspace.launch_picks import VALUE as picks_value
 from jarvis.workspace.launch_picks import LaunchPicks, RuntimePicks, flag_modes
@@ -1530,8 +1530,10 @@ async def _sweep_agents(prober: CliStatusProber) -> list[AgentInfo]:
     """
     registry = _registry()
     _augment_path()
-    specs = [a.spec for a in registry.values() if a.spec is not None]
+    specs = [a.spec for a in registry.values() if a.spec is not None and a.name != "cursor"]
     statuses = await prober.probe_all(specs) if specs else {}
+    if "cursor" in registry:
+        statuses["cursor"] = await _cursor_status()
     shell = default_shell()
     unspecced = [a for a in registry.values() if a.spec is None and a.is_coding_agent]
     found: dict[str, bool] = {}
@@ -1595,7 +1597,7 @@ def _agent_info(
     # drops is on PATH (Cursor's ``cursor-agent`` next to ``agent``). A probe
     # that only asked the documented name would list the entry as missing
     # while a pane of it would start.
-    if not installed and agent.binary_aliases:
+    if not installed and agent.binary_aliases and agent.name != "cursor":
         installed = any(_on_path(name) for name in agent.binary_aliases)
     return AgentInfo(
         name=agent.name,
@@ -1632,6 +1634,8 @@ async def recheck_agent(name: str) -> AgentInfo | None:
         return None
     invalidate_agent_detection()
     await asyncio.to_thread(_augment_path)
+    if name == "cursor":
+        return _agent_info(agent, status=await _cursor_status(), shell=None, on_path=False)
     if agent.spec is not None:
         status = await CliStatusProber().probe(agent.spec)
         return _agent_info(agent, status=status, shell=None, on_path=False)
@@ -1639,6 +1643,13 @@ async def recheck_agent(name: str) -> AgentInfo | None:
         on_path = await asyncio.to_thread(_on_path, agent.executable)
         return _agent_info(agent, status=None, shell=None, on_path=on_path)
     return _agent_info(agent, status=None, shell=default_shell(), on_path=False)
+
+
+async def _cursor_status() -> CliStatus:
+    from jarvis.workspace.cursor_cli import resolve_cursor_binary
+
+    binary = await asyncio.to_thread(resolve_cursor_binary)
+    return CliStatus(installed=binary is not None, binary_path=binary)
 
 
 def _build_pty_argv(command: str) -> tuple[str, ...] | None:
