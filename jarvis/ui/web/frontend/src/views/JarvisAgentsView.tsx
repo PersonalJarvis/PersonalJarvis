@@ -36,6 +36,7 @@ import { DepartureBoard } from "./sub-agents/DepartureBoard";
 import { AgentInsight } from "./sub-agents/AgentInsight";
 import { selectTaskRows } from "./sub-agents/rows";
 import { mergeBoardRows, HISTORY_LIMIT, normalizeTraceId } from "./sub-agents/missionRows";
+import { resolveAgentsMode, type AgentsMode } from "./sub-agents/agentsMode";
 import { fetchMissions } from "@/components/missions/api";
 import { useMissionWebSocket } from "@/components/missions/useMissionWebSocket";
 import { useMissionsStore } from "@/components/missions/store";
@@ -54,26 +55,24 @@ const RUN_PARAM = "run";
  * WebGL is absent. The world is a lazy chunk — three.js and the island never
  * load for someone who only ever reads the ledger.
  */
-type AgentsMode = "world" | "ledger" | "city";
 const MODE_KEY = "jarvis.agents.mode.v2";
 
 const WorldStage = lazy(() =>
   import("@/components/society/world/WorldStage").then((m) => ({ default: m.WorldStage })),
 );
-const CityStage = lazy(() =>
-  import("@/components/society/city/CityStage").then((m) => ({ default: m.CityStage })),
-);
-
 function readMode(): AgentsMode {
   if (!detectWebgl()) return "ledger";
   try {
     const raw = localStorage.getItem(MODE_KEY);
-    if (raw === "city" || raw === "world" || raw === "ledger") return raw;
-    if (localStorage.getItem("jarvis.agents.mode") === "ledger") return "ledger";
+    if (raw === "city") writeMode("world");
+    const legacy = raw === "city" || raw === "world" || raw === "ledger"
+      ? null
+      : localStorage.getItem("jarvis.agents.mode");
+    return resolveAgentsMode(raw, legacy, true);
   } catch {
     /* private mode: fall through to the default */
   }
-  return "city";
+  return "world";
 }
 
 function writeMode(mode: AgentsMode): void {
@@ -95,9 +94,8 @@ function ModeSwitch({ mode, onChange }: { mode: AgentsMode; onChange: (m: Agents
         onChange={onChange}
         label={t("society.world.mode_label")}
         options={[
-          { id: "city", label: t("society.city.mode") },
+          { id: "world", label: t("society.world.mode_world") },
           { id: "ledger", label: t("society.world.mode_ledger") },
-          { id: "world", label: t("society.city.legacy_mode") },
         ]}
       />
     </div>
@@ -259,10 +257,6 @@ export function JarvisAgentsView({ onSelectAgent, onSelectPlace }: JarvisAgentsV
   }
 
   const modeSwitch = <ModeSwitch mode={mode} onChange={switchMode} />;
-
-  if (mode === "city") {
-    return <Suspense fallback={<WorldLoading />}><CityStage topRight={modeSwitch} onOpenLedger={() => switchMode("ledger")} onSelectAgent={onSelectAgent} onSelectPlace={onSelectPlace} /></Suspense>;
-  }
 
   if (mode === "world") {
     return (
