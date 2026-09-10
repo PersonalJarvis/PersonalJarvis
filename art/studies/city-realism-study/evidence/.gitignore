@@ -1,0 +1,2 @@
+# Raw development logs can contain local paths; commit only curated evidence.
+*.log

@@ -3,6 +3,7 @@
 Date: 2026-09-09. Stage: brief and references. Tier: T1 research artifact only.
 
 Implementation kickoff for 2026-09-10: [work packages, acceptance matrix and start prompt](implementation-plan.md).
+The accepted [future city standard](standard.md) now requires fully physical journeys and takes precedence over earlier pacing experiments in this research record. Implementation status is recorded in [the review](evidence/implementation-review.md).
 
 ## Updated user direction: a future metropolis
 

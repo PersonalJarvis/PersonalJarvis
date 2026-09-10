@@ -54,11 +54,14 @@ const RUN_PARAM = "run";
  * WebGL is absent. The world is a lazy chunk — three.js and the island never
  * load for someone who only ever reads the ledger.
  */
-type AgentsMode = "world" | "ledger";
+type AgentsMode = "world" | "ledger" | "city";
 const MODE_KEY = "jarvis.agents.mode";
 
 const WorldStage = lazy(() =>
   import("@/components/society/world/WorldStage").then((m) => ({ default: m.WorldStage })),
+);
+const CityStage = lazy(() =>
+  import("@/components/society/city/CityStage").then((m) => ({ default: m.CityStage })),
 );
 
 function readMode(): AgentsMode {
@@ -72,6 +75,7 @@ function readMode(): AgentsMode {
 }
 
 function writeMode(mode: AgentsMode): void {
+  if (mode === "city") return; // Reference preview never replaces a saved production preference.
   try {
     localStorage.setItem(MODE_KEY, mode);
   } catch {
@@ -92,6 +96,7 @@ function ModeSwitch({ mode, onChange }: { mode: AgentsMode; onChange: (m: Agents
         options={[
           { id: "world", label: t("society.world.mode_world") },
           { id: "ledger", label: t("society.world.mode_ledger") },
+          { id: "city", label: t("society.city.mode") },
         ]}
       />
     </div>
@@ -253,6 +258,10 @@ export function JarvisAgentsView({ onSelectAgent, onSelectPlace }: JarvisAgentsV
   }
 
   const modeSwitch = <ModeSwitch mode={mode} onChange={switchMode} />;
+
+  if (mode === "city") {
+    return <Suspense fallback={<WorldLoading />}><CityStage topRight={modeSwitch} onOpenLedger={() => switchMode("ledger")} onSelectAgent={onSelectAgent} onSelectPlace={onSelectPlace} /></Suspense>;
+  }
 
   if (mode === "world") {
     return (

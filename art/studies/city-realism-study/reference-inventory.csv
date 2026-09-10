@@ -1,0 +1,6 @@
+asset,source,export,bytes,meshes,animations,status
+building,source/city-reference.blend,exports/building.glb,461480,60,0,reference preview; production rollout unapproved
+citizen,source/city-reference.blend,exports/citizen.glb,94236,12,6,reference preview; production rollout unapproved
+station,source/city-reference.blend,exports/station.glb,163700,21,0,reference preview; production rollout unapproved
+train,source/city-reference.blend,exports/train.glb,93292,12,0,reference preview; production rollout unapproved
+tree,source/city-reference.blend,exports/tree.glb,43236,5,0,reference preview; production rollout unapproved

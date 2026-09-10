@@ -1,0 +1,21 @@
+{
+  "date": "2026-09-10",
+  "surface": "Chrome using built app frontend",
+  "reducedMotion": {
+    "mediaChangeRecognized": true,
+    "simulationSecondsBefore": 18,
+    "simulationSecondsAfter": 18
+  },
+  "webglRecovery": {
+    "result": {
+      "type": "object",
+      "value": {
+        "lost": false,
+        "replaced": true
+      }
+    }
+  },
+  "observedDemoJourney": "West work location to east work location completed",
+  "hardware": "NVIDIA RTX 5070 Ti",
+  "integratedGpuAcceptance": "unverified"
+}
