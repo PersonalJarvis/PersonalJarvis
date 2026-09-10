@@ -1,0 +1,43 @@
+{
+  "duration": 85,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "shots": [
+    {
+      "id": "s01",
+      "file": "compositions/frames/01-tomorrow.html",
+      "duration": 6.4
+    },
+    {
+      "id": "s02",
+      "file": "compositions/frames/02-brief.html",
+      "duration": 4
+    },
+    {
+      "id": "s03",
+      "file": "compositions/frames/03-request.html",
+      "duration": 14.4
+    },
+    {
+      "id": "s04",
+      "file": "compositions/frames/04-handoff.html",
+      "duration": 19.2
+    },
+    {
+      "id": "s05",
+      "file": "compositions/frames/05-direction.html",
+      "duration": 17.6
+    },
+    {
+      "id": "s06",
+      "file": "compositions/frames/06-result.html",
+      "duration": 13.6
+    },
+    {
+      "id": "s07",
+      "file": "compositions/frames/07-agent-mode.html",
+      "duration": 9.8
+    }
+  ]
+}

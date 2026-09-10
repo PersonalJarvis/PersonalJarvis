@@ -1,0 +1,23 @@
+TITLE
+Meet Agent Mode — Your AI Team, One Shared Brief | Personal Jarvis
+
+DESCRIPTION
+A launch is coming up. The open issues, release checklist and welcome email all need attention.
+
+Give Jarvis the brief. Watch Scout ask Archivist for context, go directly to a specialist, and bring the findings back into one clear launch briefing.
+
+Your agents move the work forward. You keep the final call.
+
+Explore Personal Jarvis:
+https://github.com/PersonalJarvis/PersonalJarvis
+
+This is an illustrative product demonstration made with actual Personal Jarvis UI components and synthetic example data. Conversations are staged and timing is edited for clarity; the film is not a benchmark or a recording of live external-service execution.
+
+MUSIC
+"Cipher" by Kevin MacLeod (incompetech.com)
+https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100844
+Licensed under Creative Commons Attribution 4.0:
+https://creativecommons.org/licenses/by/4.0/
+Music has been excerpted, level-adjusted and faded for this video.
+
+#PersonalJarvis #AIAgents #AgentMode
