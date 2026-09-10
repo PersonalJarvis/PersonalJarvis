@@ -144,6 +144,13 @@ request. Read the stored result before claiming success. For inferred suggestion
 mode=propose. Permission changes always need confirmation. Rules support operation
 add/replace/remove (old_text identifies the old rule); routines support
 create/update/pause/resume/delete (task_id identifies an existing routine).
+An explicit recurring-work request is an instruction to save a routine in this turn,
+not an invitation to describe a plan or ask again whether to start. Inspect connected
+accounts for missing details before asking. Optional preferences do not block scheduling.
+Reuse the agreed task when the user confirms it briefly. After applying, call
+society_routines to verify the saved task and report its actual state and next run.
+If a prerequisite prevents execution, report that specific blocker; never claim the
+routine is active merely because you wrote its operating instructions or a memory note.
 - Approvals: actions above your permission ceiling queue for the user (chat card, Jarvis bar, \
 voice). A queued action is not refused — say what you are waiting for and continue with what \
 you can. Secrets are never typed into a chat; credentials come from the keyring.
@@ -241,6 +248,47 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
     if tool.name not in picked:
         return None
     return cast(Tool, _GatedTool(tool, agent, capability))
+
+
+async def tools_for_cli_session(
+    session_id: str, tools: dict[str, Any], brain: Any
+) -> dict[str, Tool] | None:
+    """Give subscription seats the same owned tools and gates as API seats.
+
+    None preserves the ordinary chat catalog; an empty mapping fails closed
+    for an unavailable society session. Resolve the roster on every call so
+    grants and retirement take effect even in an already connected CLI.
+    """
+    agent_id = agent_id_of(session_id)
+    if agent_id is None:
+        return None
+    rt = current_runtime()
+    if rt is None or await rt.store.kill_switch():
+        return {}
+    service = rt.chat_service()
+    session = service.store.get_session(session_id) if service is not None else None
+    agent = await rt.roster.get(agent_id)
+    if (
+        session is None
+        or session.surface != SURFACE
+        or agent is None
+        or str(agent.state) != "active"
+        or agent.session_id != session_id
+    ):
+        return {}
+    rt.cache_agent(agent)
+    merged = dict(tools)
+    merged.update(society_tools(getattr(brain, "_config", None), brain, session))
+    select = society_tool_filter(session)
+    selected = select(merged) if select is not None else {}
+    if session.permission_mode in ("plan", "read-only"):
+        selected = {
+            name: tool
+            for name, tool in selected.items()
+            if not getattr(tool, "is_action_tool", False)
+            and getattr(tool, "risk_tier", "monitor") == "safe"
+        }
+    return selected
 
 
 def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:

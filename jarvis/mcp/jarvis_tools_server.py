@@ -181,7 +181,7 @@ def build_server() -> Any:
 
     @server.call_tool()  # type: ignore[misc, no-untyped-call]
     async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[Any]:
-        from jarvis.core.protocols import SupervisorToolRequest
+        from jarvis.core.protocols import SupervisorToolRequest, current_chat_turn
 
         gateway = _gateway()
         if gateway is None:
@@ -196,15 +196,19 @@ def build_server() -> Any:
                     ),
                 )
             ]
-        request = SupervisorToolRequest(
-            trace_id=uuid4(),
-            origin=CHAT_ORIGIN,
-            user_utterance="",
-            rationale="agent chat tool call",
-            config_snapshot=approval_snapshot(),
-        )
         try:
-            result = await gateway.execute(name, dict(arguments or {}), request)
+            from jarvis.agent_chat.tool_context import restore_turn
+
+            with restore_turn(CHAT_SESSION_REF.get()):
+                turn = current_chat_turn.get()
+                request = SupervisorToolRequest(
+                    trace_id=uuid4(),
+                    origin=CHAT_ORIGIN,
+                    user_utterance=turn.user_text if turn else "",
+                    rationale="agent chat tool call",
+                    config_snapshot=approval_snapshot(),
+                )
+                result = await gateway.execute(name, dict(arguments or {}), request)
         except Exception as exc:  # noqa: BLE001 — a tool failure is data for the model, not a crash
             log.warning("jarvis MCP: %s raised", name, exc_info=True)
             return [
