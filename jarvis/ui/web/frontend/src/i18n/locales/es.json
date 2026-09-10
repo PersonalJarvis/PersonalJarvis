@@ -5123,7 +5123,11 @@
       "proposal_kind_approval_rule": "Reglas de aprobación",
       "proposal_kind_focus": "Herramientas a usar primero",
       "proposal_kind_team": "Compañeros de equipo",
-      "allow_always": "Permitir siempre"
+      "allow_always": "Permitir siempre",
+      "history_chats": "Chats",
+      "history_voice": "Voz",
+      "history_empty": "Nada aquí todavía",
+      "history_delete": "Eliminar"
     },
     "world": {
       "minimap_label": "Mapa de la isla",

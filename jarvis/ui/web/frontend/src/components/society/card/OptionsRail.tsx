@@ -1,7 +1,9 @@
 /**
  * The chat-face right column: this agent's browser screen, its routines, and
- * a tucked-away Retire control. Extracted from AgentCardOverlay so the overlay
- * stays the layout and this file owns what you can do to the agent.
+ * a tucked-away Retire control. On the lead's card only, the typed chats and
+ * the voice sessions join in, so a hung-up call is one click away. Extracted
+ * from AgentCardOverlay so the overlay stays the layout and this file owns
+ * what you can do to the agent.
  */
 import { useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
@@ -11,6 +13,7 @@ import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
 import { AgentBrowserPreview } from "./AgentBrowserPreview";
 import { AgentRoutinesList } from "./AgentRoutinesList";
+import { JarvisHistoryRail } from "../chat/JarvisHistoryRail";
 import { RetireButton } from "./RetireButton";
 
 export interface OptionsRailProps {
@@ -79,6 +82,7 @@ export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailPro
       </header>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-3 pb-3 pt-2">
         <AgentBrowserPreview agent={agent} />
+        {agent.tier === "lead" ? <JarvisHistoryRail /> : null}
         <AgentRoutinesList
           agentId={agent.agentId}
           sampleRoutines={sample ? agent.routines : undefined}

@@ -26,7 +26,7 @@ import { cn } from "@/lib/utils";
  * already in the lane — the same seeding the sidebar does when you open a
  * voice session while standing on that stage.
  */
-export function VoiceThreadStage() {
+export function VoiceThreadStage({ onContinueByVoice }: { onContinueByVoice?: () => void } = {}) {
   const t = useT();
   const messages = useEventStore((s) => s.messages);
   const activeThreadId = useEventStore((s) => s.activeThreadId);
@@ -46,6 +46,13 @@ export function VoiceThreadStage() {
   useLayoutEffect(follow, [follow, activeThreadId, messages.length]);
 
   const continueByVoice = () => {
+    // Inside the Jarvis agent card the caller owns the Voice | Chat half, so
+    // it takes over (seeding the lane and showing the voice stage itself);
+    // everywhere else this is the front page's own surface switch.
+    if (onContinueByVoice) {
+      onContinueByVoice();
+      return;
+    }
     seedTranscript(transcriptFromMessages(messages));
     setSurface("voice");
   };

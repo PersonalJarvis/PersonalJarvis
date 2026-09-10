@@ -20,7 +20,7 @@ import { InternalMessageBubble } from "@/components/agentchat/InternalMessageBub
  * the voice runs on the realtime tier (`[brain.realtime]`), which no text
  * runner can drive. The header says so while voice is showing.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -35,6 +35,10 @@ import { choiceToken } from "@/components/agentchat/composerChips";
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { DictationStatus } from "@/components/agentchat/DictationStatus";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
+import { useEventStore } from "@/store/events";
+import { useHomeStore } from "@/store/home";
+import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
+import { transcriptFromMessages } from "@/lib/homeTranscript";
 import type {
   NoticeItem,
   TimelineItem,
@@ -95,6 +99,40 @@ export interface AgentChatPanelProps {
  * front page's pickers.
  */
 export const useSocietyChatStore = createAgentChatStore("society");
+
+type JarvisCardMode = "chat" | "voice";
+
+/** Remembered for the app session, so a card reopened stays on the half you last used. */
+let lastJarvisCardMode: JarvisCardMode = "chat";
+const modeListeners = new Set<() => void>();
+
+export function getJarvisCardMode(): JarvisCardMode {
+  return lastJarvisCardMode;
+}
+
+/**
+ * Switch the lead card's Voice | Chat half from anywhere — the column's own
+ * switch and the history rail in the Options column share this, so opening a
+ * row there lands on the half that shows it.
+ */
+export function setJarvisCardMode(next: JarvisCardMode): void {
+  if (lastJarvisCardMode === next) return;
+  lastJarvisCardMode = next;
+  for (const notify of [...modeListeners]) notify();
+}
+
+/** The lead card's Voice | Chat half. */
+export function useJarvisCardMode(): JarvisCardMode {
+  return useSyncExternalStore(
+    (notify) => {
+      modeListeners.add(notify);
+      return () => {
+        modeListeners.delete(notify);
+      };
+    },
+    getJarvisCardMode,
+  );
+}
 
 /**
  * The transcript a specialist column may paint. One store serves every
@@ -240,14 +278,12 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
 function JarvisChat({ agent, roster }: AgentChatPanelProps) {
   const t = useT();
   const items = useAgentChat((s) => s.timeline.items);
-  const sessions = useAgentChat((s) => s.sessions);
   const activeSessionId = useAgentChat((s) => s.activeSessionId);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
   const draft = useAgentChat((s) => s.draft);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadSessions = useAgentChat((s) => s.loadSessions);
-  const openSession = useAgentChat((s) => s.openSession);
   const newChat = useAgentChat((s) => s.newChat);
   const send = useAgentChat((s) => s.send);
   const cancel = useAgentChat((s) => s.cancel);
@@ -269,53 +305,92 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
       .catch(() => undefined);
   }, [loadSessions]);
 
-  // The front page's current conversation, or the latest one when the card
-  // opens before the front page ever did.
-  useEffect(() => {
-    if (activeSessionId || sessions.length === 0) return;
-    openSession(sessions[0].session_id);
-  }, [activeSessionId, sessions, openSession]);
+  // A spoken thread opened from the history rail: read here, in the column
+  // the composer would otherwise own — the same sharing the front page's
+  // chat stage does (components/home/ChatStage).
+  const voiceThreadId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
+  const voiceMessages = useEventStore((s) => s.messages);
+  const setActiveConversation = useEventStore((s) => s.setActiveConversation);
+  const setMessages = useEventStore((s) => s.setMessages);
+  const seedTranscript = useHomeStore((s) => s.seedTranscript);
+
+  // A null session is an intentional fresh chat. Only an explicit history
+  // selection may open an older session; polling must not undo New chat.
 
   const mentionable = useMemo(() => roster.filter((a) => a.tier !== "lead"), [roster]);
 
   // Voice or typed — Jarvis' card only. The other agents have no voice: the
   // wake word, the realtime brain and the microphone belong to the lead.
-  const [mode, setMode] = useState<JarvisCardMode>(lastJarvisCardMode);
-  const pickMode = (next: JarvisCardMode) => {
-    lastJarvisCardMode = next;
-    setMode(next);
-  };
+  const mode = useJarvisCardMode();
+  const pickMode = setJarvisCardMode;
+
+  // A fresh page: no chat, no spoken thread — the composer below starts it.
+  const startFresh = useCallback(() => {
+    setActiveConversation("text", null);
+    setMessages([]);
+    newChat();
+  }, [newChat, setActiveConversation, setMessages]);
+
+  const continueByVoice = useCallback(() => {
+    seedTranscript(transcriptFromMessages(voiceMessages));
+    pickMode("voice");
+  }, [seedTranscript, voiceMessages]);
 
   if (mode === "voice") {
     return (
       <div className="flex h-full min-h-0 flex-col" data-testid="society-chat" data-mode="voice">
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-          <JarvisModeSwitch mode={mode} onPick={pickMode} />
+        <div className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-border px-3 py-2">
           <span className="min-w-0 truncate text-xs text-muted-foreground" title={t("society.chat.voice_note")}>
             {t("society.chat.voice_note")}
           </span>
+          <JarvisModeSwitch mode={mode} onPick={pickMode} />
+          <span aria-hidden />
         </div>
         <VoiceStage />
       </div>
     );
   }
 
-  return (
-    <div className="flex h-full min-h-0 flex-col" data-testid="society-chat" data-mode="chat">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-        <JarvisModeSwitch mode={mode} onPick={pickMode} />
+  const header = (
+    <div className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-border px-3 py-2">
+      <div className="flex min-w-0 items-center gap-2">
         <ModelPicker />
         <EffortPicker />
+      </div>
+      <JarvisModeSwitch mode={mode} onPick={pickMode} />
+      <div className="flex items-center justify-end">
         <button
           type="button"
-          onClick={newChat}
+          onClick={startFresh}
           title={t("society.chat.new_chat")}
           aria-label={t("society.chat.new_chat")}
-          className="ml-auto rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
         >
           <RotateCcw className="h-3.5 w-3.5" aria-hidden />
         </button>
       </div>
+    </div>
+  );
+
+  // A spoken thread from the history rail, read in place — no composer, like
+  // the front page: a recording is continued by speaking.
+  if (voiceThreadId && !activeSessionId) {
+    return (
+      <div
+        className="flex h-full min-h-0 flex-col"
+        data-testid="society-chat"
+        data-mode="chat"
+        data-thread={voiceThreadId}
+      >
+        {header}
+        <VoiceThreadStage onContinueByVoice={continueByVoice} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col" data-testid="society-chat" data-mode="chat">
+      {header}
       <Transcript items={items} agent={agent} roster={roster} onDecide={decide} />
       {lastError ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
@@ -339,11 +414,6 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
 // ---------------------------------------------------------------------------
 // voice | chat — the lead's card only
 // ---------------------------------------------------------------------------
-
-type JarvisCardMode = "chat" | "voice";
-
-/** Remembered for the app session, so a card reopened stays on the half you last used. */
-let lastJarvisCardMode: JarvisCardMode = "chat";
 
 /**
  * The same `Voice | Chat` idea as the sidebar's switch, scoped to the card:
