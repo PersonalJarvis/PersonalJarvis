@@ -42,7 +42,6 @@ import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 import { installDictationFocusTracker } from "@/lib/dictationTarget";
 import { SubscriptionRealtimeTransportBroker } from "@/components/voice/SubscriptionRealtimeTransportBroker";
-import { MascotGigi } from "@/components/MascotGigi";
 import { useDesktopWallpaper } from "@/hooks/useDesktopWallpaper";
 import { installWallpaperSync, useWallpaperStore } from "@/store/wallpaper";
 import { cn } from "@/lib/utils";
@@ -59,18 +58,15 @@ const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
  *
  * Which artwork is shown belongs to the user — see the Wallpaper section. The
  * picture that ships with the app remains the default, and the one every
- * failure path returns to. Gigi is a separate live layer on that ground, not
- * painted into the picture — and he only sits on Chats (`hideMascot` everywhere
- * else). Work sections were showing a second ghost in the empty corner, and
- * the mission deck's ring already owns that same spot (maintainer, 2026-08-19).
+ * failure path returns to. The artwork stays a pure scene with no mascot
+ * composited on top.
  */
-function DesktopWallpaper({ hideMascot = false }: { hideMascot?: boolean }) {
+function DesktopWallpaper() {
   const wallpaperUrl = useDesktopWallpaper();
-  const mascotOn = useWallpaperStore((state) => state.mascotOn);
   const background = useWallpaperStore((state) => state.background);
   // A flat theme colour is the default ground (lib/backgroundMode.ts): the
-  // picture, its veil and the mascot layer exist only once a wallpaper is
-  // switched on. index.css keys the readability floor on the same choice.
+  // picture and its veil exist only once a wallpaper is switched on.
+  // index.css keys the readability floor on the same choice.
   if (background !== "wallpaper") return null;
   return (
     <div
@@ -82,14 +78,6 @@ function DesktopWallpaper({ hideMascot = false }: { hideMascot?: boolean }) {
         className="jarvis-desktop-wallpaper absolute inset-0"
         style={{ backgroundImage: `url(${wallpaperUrl})` }}
       />
-      {mascotOn && !hideMascot ? (
-        <div
-          className="jarvis-desktop-wallpaper-mascot"
-          data-testid="jarvis-desktop-wallpaper-mascot"
-        >
-          <MascotGigi size={200} reactToVoice enableComments={false} />
-        </div>
-      ) : null}
       <div className="jarvis-desktop-wallpaper-veil absolute inset-0" />
     </div>
   );
@@ -312,17 +300,10 @@ export default function App() {
    * report through them) and the right-click edit menu (the desktop WebView
    * has no native context menu, so this is the only mouse-driven paste).
    */
-  /*
-   * Gigi belongs on the Chats ground only. Every other section was painting
-   * the same live ghost into empty corners (Tasks, Wiki, Profile, …). The
-   * wallpaper picture stays; only the mascot layer steps off.
-   */
-  const hideMascot = activeSection !== "chats";
-
   if (solo) {
     return (
       <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
-        <DesktopWallpaper hideMascot={hideMascot} />
+        <DesktopWallpaper />
         {brokerMounted && <SubscriptionRealtimeTransportBroker />}
         {/* No z-index on the stage column — see the shell below. */}
         <main className="relative flex min-w-0 flex-1 flex-col">
@@ -345,7 +326,7 @@ export default function App() {
   return (
     <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
-      <DesktopWallpaper hideMascot={hideMascot} />
+      <DesktopWallpaper />
 
       <Sidebar
         width={sidebar.size}

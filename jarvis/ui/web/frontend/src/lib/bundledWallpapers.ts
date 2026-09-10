@@ -124,8 +124,7 @@ export function bundledWallpaperUrl(id: string): string | null {
  * picture was chosen — and nothing on that screen could be read (maintainer
  * report 2026-08-18). The daylight courtyard is the same place in the light
  * mode's own register, so a mode without a pick of its own shows a picture
- * authored for it, never the other mode's. Gigi is not in these pictures —
- * he sits on top as a live layer (see store/wallpaper `mascotOn`).
+ * authored for it, never the other mode's. Gigi is not in these pictures.
  */
 export const DEFAULT_WALLPAPER_URLS: Readonly<Record<Theme, string>> = {
   dark: defaultOf("dark"),

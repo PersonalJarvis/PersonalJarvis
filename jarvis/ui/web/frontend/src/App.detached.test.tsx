@@ -61,9 +61,6 @@ vi.mock("@/components/CliConnectPoller", () => ({ CliConnectPoller: () => null }
 vi.mock("@/components/onboarding/OnboardingGate", () => ({
   OnboardingGate: () => null,
 }));
-vi.mock("@/components/MascotGigi", () => ({
-  MascotGigi: () => <div data-testid="mascot-gigi" />,
-}));
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
@@ -75,7 +72,7 @@ beforeEach(() => {
   // The ground is a flat colour by default (2026-08-23); these tests are
   // about the wallpaper layer, so they switch it on. The solid default has
   // its own test below.
-  useWallpaperStore.setState({ mascotOn: true, background: "wallpaper" });
+  useWallpaperStore.setState({ background: "wallpaper" });
 });
 
 afterEach(() => {
@@ -88,14 +85,13 @@ describe("App shell around detached coding views", () => {
     render(<App />);
 
     expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
-    expect(screen.getByTestId("jarvis-desktop-wallpaper-mascot")).toBeTruthy();
+    expect(screen.queryByTestId("jarvis-desktop-wallpaper-mascot")).toBeNull();
     expect(
       screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),
     ).toBe(true);
   });
 
-  it("hides the live mascot when the wallpaper layer is switched off", () => {
-    useWallpaperStore.setState({ mascotOn: false });
+  it("paints no mascot layer on top of the wallpaper", () => {
     render(<App />);
 
     expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
@@ -115,7 +111,7 @@ describe("App shell around detached coding views", () => {
     ).toBe(true);
   });
 
-  it("hides the live mascot on every section except Chats", () => {
+  it("shows the plain wallpaper with no mascot on every section", () => {
     useEventStore.setState({ activeSection: "tasks" });
     render(<App />);
 

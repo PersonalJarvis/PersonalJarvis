@@ -903,22 +903,6 @@ body {
     transform: scale(1.002);
   }
 
-  /*
-   * Live Gigi on the wallpaper. He is a layer, not pixels in the picture:
-   * the artwork stays a scene, and the mascot stays the real Gigi. Sits in
-   * the lower-left of the ground, past a typical nav column, in both modes.
-   */
-  .jarvis-desktop-wallpaper-mascot {
-    position: absolute;
-    left: clamp(20px, 22vw, 340px);
-    bottom: clamp(28px, 11vh, 104px);
-    z-index: 1;
-    /* --scrim-rgb is what a shadow is made of in either theme — black on the
-       dark ground, warm charcoal on paper — so one rule replaces the pair of
-       hardcoded shadows that used to live here. */
-    filter: drop-shadow(0 16px 28px rgb(var(--scrim-rgb) / 0.32));
-  }
-
   .jarvis-desktop-wallpaper-veil {
     background:
       linear-gradient(
