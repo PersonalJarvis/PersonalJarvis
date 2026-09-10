@@ -2,6 +2,7 @@
 
 The subprocess is faked; no real CLI or network is touched.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -84,7 +85,12 @@ def test_voice_mode_keeps_the_conversational_flattening():
 
 def test_cli_prompt_includes_standing_instructions_without_heavy_router_prompt():
     req = BrainRequest(
-        messages=(BrainMessage(role="user", content="Was ist das wertvollste Unternehmen?"),),  # i18n-allow: simulated German user utterance, content under test
+        messages=(
+            BrainMessage(
+                role="user",
+                content="Was ist das wertvollste Unternehmen?",  # i18n-allow
+            ),
+        ),
         system=_system_with_standing_instructions(),
     )
 
@@ -125,8 +131,14 @@ def test_cli_prompt_puts_current_empty_state_after_stale_history():
     req = BrainRequest(
         messages=(
             BrainMessage(role="user", content="Wasketup"),
-            BrainMessage(role="assistant", content="schef, alles laeuft."),  # i18n-allow: simulated German assistant reply, content under test
-            BrainMessage(role="user", content="Du musst das nicht mehr sagen."),  # i18n-allow: simulated German user utterance, content under test
+            BrainMessage(
+                role="assistant",
+                content="schef, alles laeuft.",  # i18n-allow
+            ),
+            BrainMessage(
+                role="user",
+                content="Du musst das nicht mehr sagen.",  # i18n-allow
+            ),
         ),
         system=_system_with_empty_standing_instructions(),
     )
@@ -176,7 +188,8 @@ class _FakeProc:
         self._stdout = stdout
         self._stderr = stderr
 
-    async def communicate(self) -> tuple[bytes, bytes]:
+    async def communicate(self, input=None) -> tuple[bytes, bytes]:  # noqa: A002 - subprocess API
+        self.input = input
         return self._stdout, self._stderr
 
     def kill(self) -> None:
@@ -189,7 +202,8 @@ class _FakeProc:
 @pytest.mark.asyncio
 async def test_complete_yields_answer(monkeypatch):
     monkeypatch.setattr(
-        agmod, "resolve_google_cli",
+        agmod,
+        "resolve_google_cli",
         lambda: GoogleCli(kind="gemini", argv_prefix=["gemini"]),
     )
 
@@ -228,7 +242,8 @@ async def test_argv_trusts_the_ephemeral_workdir(monkeypatch):
     sandbox policy is loaded.
     """
     monkeypatch.setattr(
-        agmod, "resolve_google_cli",
+        agmod,
+        "resolve_google_cli",
         lambda: GoogleCli(kind="gemini", argv_prefix=["gemini"]),
     )
     captured: dict[str, object] = {}
@@ -253,7 +268,8 @@ async def test_complete_scrubs_api_key_env(monkeypatch):
     """The child must not inherit GEMINI_API_KEY (so the subscription login wins)."""
     monkeypatch.setenv("GEMINI_API_KEY", "should-not-leak")
     monkeypatch.setattr(
-        agmod, "resolve_google_cli",
+        agmod,
+        "resolve_google_cli",
         lambda: GoogleCli(kind="gemini", argv_prefix=["gemini"]),
     )
     captured: dict[str, object] = {}
@@ -271,16 +287,17 @@ async def test_complete_scrubs_api_key_env(monkeypatch):
     assert "GEMINI_API_KEY" not in env
 
 
-def test_build_argv_agy_uses_print_and_model():
-    """agy 1.0.9 has --print/--model but NOT the gemini-CLI flags --approval-mode
-    / -o json / --skip-trust (forensic 2026-06-20, live `agy --help`)."""
+def test_build_argv_agy_uses_stdin_and_read_only_json():
+    """The current CLI reads stdin in print mode without a PTY."""
     from jarvis.plugins.brain.antigravity import _build_argv
 
     cli = GoogleCli(kind="agy", argv_prefix=["agy"])
     argv = _build_argv(cli, "hello", "gemini-3.1-pro-preview")
     assert argv[0] == "agy"
-    assert "--print" in argv
-    assert "hello" in argv
+    assert "--print" not in argv
+    assert "hello" not in argv
+    assert argv[argv.index("--output-format") + 1] == "json"
+    assert argv[argv.index("--mode") + 1] == "plan"
     assert "--model" in argv
     assert "gemini-3.1-pro-preview" in argv
     assert "--approval-mode" not in argv
@@ -299,47 +316,40 @@ def test_build_argv_gemini_keeps_skip_trust():
     assert "plan" in argv
 
 
-# ---- agy over ConPTY -------------------------------------------------------
-# agy is a TUI tool: a plain pipe yields 0 bytes (the brain then sees no answer).
-# It must be driven over a pseudo-terminal via pty_runner.run_cli_over_pty.
+# ---- agy with piped UTF-8 input -------------------------------------------
 
 
 def _agy_cli() -> GoogleCli:
     return GoogleCli(kind="agy", argv_prefix=["agy.exe"])
 
 
-def _fake_pty_result(text: str = "", *, error: str | None = None, timed_out: bool = False):
-    from jarvis.google_cli.pty_runner import PtyRunResult
-
-    return PtyRunResult(
-        text=text, raw=text, exit_status=0, timed_out=timed_out, error=error
-    )
-
-
 @pytest.mark.asyncio
-async def test_complete_agy_drives_pty_runner(monkeypatch):
-    """kind='agy' must go through the PTY runner, not create_subprocess_exec."""
-    monkeypatch.setattr(agmod, "resolve_google_cli", _agy_cli)
-    captured: dict[str, object] = {}
+@pytest.mark.parametrize("kind", ["agy", "gemini"])
+async def test_complete_sends_large_unicode_prompt_on_stdin(monkeypatch, kind):
+    monkeypatch.setattr(
+        agmod,
+        "resolve_google_cli",
+        lambda: GoogleCli(kind=kind, argv_prefix=[kind]),
+    )
+    captured = {}
+    proc = _FakeProc(b'{"response": "ok"}')
 
-    def _fake_run(argv, *, timeout_s, cwd=None, env=None, **kw):
-        captured["argv"] = list(argv)
-        return _fake_pty_result("Servus von agy!")
+    async def spawn(*argv, **kwargs):
+        captured["argv"] = argv
+        captured["cwd"] = kwargs["cwd"]
+        return proc
 
-    monkeypatch.setattr(agmod, "run_cli_over_pty", _fake_run)
-    # Guard: the pipe path must NOT be taken for agy.
-    async def _boom(*a, **k):
-        raise AssertionError("agy must not use create_subprocess_exec")
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
-
-    brain = AntigravityBrain()
-    chunks = [d async for d in brain.complete(_req())]
-    texts = "".join(d.content for d in chunks if d.content)
-    assert "Servus von agy!" in texts
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    text = "Evidence: \U0001f600\u00e9\n" * 60000
+    brain = AntigravityBrain(structured_prompts=True)
+    request = _req(text)
+    chunks = [d async for d in brain.complete(request)]
+    assert "".join(d.content or "" for d in chunks) == "ok"
+    assert proc.input.decode("utf-8") == brain._render_prompt(request)
+    assert len(proc.input) > 743147
+    assert sum(map(len, captured["argv"])) < 1000
+    assert not await asyncio.to_thread(Path(captured["cwd"]).exists)
     assert any(d.finish_reason == "stop" for d in chunks)
-    assert captured["argv"][0] == "agy.exe"
-    assert "--print" in captured["argv"]
 
 
 @pytest.mark.asyncio
@@ -349,11 +359,11 @@ async def test_complete_agy_drops_key_and_hardens_path(monkeypatch):
     monkeypatch.setattr(agmod, "resolve_google_cli", _agy_cli)
     captured: dict[str, object] = {}
 
-    def _fake_run(argv, *, timeout_s, cwd=None, env=None, **kw):
-        captured["env"] = env
-        return _fake_pty_result("ok")
+    async def _fake_exec(*argv, **kwargs):
+        captured["env"] = kwargs["env"]
+        return _FakeProc(b'{"response": "ok"}')
 
-    monkeypatch.setattr(agmod, "run_cli_over_pty", _fake_run)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
     brain = AntigravityBrain()
     async for _ in brain.complete(_req()):
         pass
@@ -435,11 +445,11 @@ async def test_complete_agy_redirects_home_to_isolated(monkeypatch, tmp_path):
     monkeypatch.setattr(agmod, "resolve_google_cli", _agy_cli)
     captured: dict[str, object] = {}
 
-    def _fake_run(argv, *, timeout_s, cwd=None, env=None, **kw):
-        captured["env"] = env
-        return _fake_pty_result("ok")
+    async def _fake_exec(*argv, **kwargs):
+        captured["env"] = kwargs["env"]
+        return _FakeProc(b'{"response": "ok"}')
 
-    monkeypatch.setattr(agmod, "run_cli_over_pty", _fake_run)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
     brain = AntigravityBrain()
     async for _ in brain.complete(_req()):
         pass
@@ -454,7 +464,11 @@ async def test_complete_agy_redirects_home_to_isolated(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_complete_agy_empty_answer_raises(monkeypatch):
     monkeypatch.setattr(agmod, "resolve_google_cli", _agy_cli)
-    monkeypatch.setattr(agmod, "run_cli_over_pty", lambda *a, **k: _fake_pty_result(""))
+
+    async def _fake_exec(*args, **kwargs):
+        return _FakeProc(b'{"response": ""}')
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
     brain = AntigravityBrain()
     with pytest.raises(RuntimeError):
         async for _ in brain.complete(_req()):
@@ -462,16 +476,15 @@ async def test_complete_agy_empty_answer_raises(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_complete_agy_pty_unavailable_raises(monkeypatch):
+async def test_complete_agy_spawn_failure_raises(monkeypatch):
     monkeypatch.setattr(agmod, "resolve_google_cli", _agy_cli)
-    monkeypatch.setattr(
-        agmod,
-        "run_cli_over_pty",
-        lambda *a, **k: _fake_pty_result("", error="No pseudo-terminal backend available"),
-    )
-    brain = AntigravityBrain()
-    with pytest.raises(RuntimeError):
-        async for _ in brain.complete(_req()):
+
+    async def spawn(*args, **kwargs):
+        raise OSError("CLI not available")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    with pytest.raises(RuntimeError, match="could not be launched"):
+        async for _ in AntigravityBrain().complete(_req()):
             pass
 
 
@@ -481,7 +494,70 @@ def test_cli_timeout_accepts_a_caller_budget() -> None:
     from jarvis.plugins.brain.antigravity import AntigravityBrain
 
     assert AntigravityBrain(cli_timeout_s=180.0)._cli_timeout_s == 180.0
-    assert (
-        AntigravityBrain()._cli_timeout_s
-        == antigravity_module._CLI_TIMEOUT_S
-    )
+    assert AntigravityBrain()._cli_timeout_s == antigravity_module._CLI_TIMEOUT_S
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_stalled_stdin_is_killed_on_timeout_or_cancellation(monkeypatch, cancel):
+    monkeypatch.setattr(agmod, "resolve_google_cli", _agy_cli)
+    started = asyncio.Event()
+
+    class StalledProc(_FakeProc):
+        pid = None
+
+        def __init__(self):
+            super().__init__(b"")
+            self.pid = None
+            self.killed = False
+            self.waited = False
+
+        async def communicate(self, input=None):  # noqa: A002 - subprocess API
+            started.set()
+            await asyncio.Event().wait()
+
+        def kill(self):
+            self.killed = True
+
+        async def wait(self):
+            self.waited = True
+            return -1
+
+    proc = StalledProc()
+
+    async def spawn(*args, **kwargs):
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+
+    async def run():
+        return [d async for d in AntigravityBrain(cli_timeout_s=0.1).complete(_req())]
+
+    task = asyncio.create_task(run())
+    await asyncio.wait_for(started.wait(), timeout=2)
+    if cancel:
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
+        await asyncio.wait_for(task, timeout=2)
+    assert proc.killed and proc.waited
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code,output",
+    [
+        (1, b'{"response":"failure text"}'),
+        (0, b'{"status":"ERROR","response":"failure text"}'),
+        (0, b'{"error":{"message":"failure"},"response":"failure text"}'),
+    ],
+)
+async def test_failed_cli_response_is_never_an_answer(monkeypatch, code, output):
+    monkeypatch.setattr(agmod, "resolve_google_cli", _agy_cli)
+
+    async def spawn(*args, **kwargs):
+        return _FakeProc(output, returncode=code)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    with pytest.raises(RuntimeError):
+        async for _ in AntigravityBrain().complete(_req()):
+            pass

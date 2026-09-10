@@ -14,6 +14,7 @@ Google ToS (hard): we only ever invoke the official binary. We never read the
 stored OAuth token to make our own HTTP request. The CLI is slow (the agent
 spins up per turn), so this is a deliberate, user-opted path — not the default.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -39,7 +40,7 @@ from jarvis.google_cli.isolated_home import (
     real_gemini_dir as _real_gemini_dir,
 )
 from jarvis.google_cli.isolated_home import redirect_home_env
-from jarvis.google_cli.pty_runner import repair_agy_path, run_cli_over_pty
+from jarvis.google_cli.pty_runner import repair_agy_path
 from jarvis.google_cli.resolver import GoogleCli, resolve_google_cli
 
 from .cli_prompt_context import (
@@ -154,29 +155,18 @@ def _agy_effort(req: BrainRequest | None) -> str:
 def _build_argv(
     cli: GoogleCli, prompt: str, model: str, effort: str = _DEFAULT_AGY_EFFORT
 ) -> list[str]:
-    """Build the headless argv for the resolved CLI — flags differ per binary.
+    """Build read-only JSON-output commands; the complete prompt travels on stdin.
 
-    * ``agy`` (Antigravity CLI): ``--print <prompt> --model <id> --effort <level>``.
-      It has neither ``--approval-mode`` nor ``-o json`` (live ``agy --help``
-      2026-06-20); output is plain text, which ``_parse_cli_answer`` handles via
-      its raw fallback. A read-only conversational answer needs no tool
-      permissions.
-
-      ``--effort`` is NOT optional next to ``--model``: a newer agy aborts with
-      ``invalid model selection (--model "..." --effort ""): ... requires
-      --effort`` and writes that line to stdout, where a caller happily reads it
-      as the answer (live 2026-07-26 — the Agentic IDE composer shipped it as a
-      composed prompt). Sending the pair is what keeps the model choice usable
-      at all on current agy.
-    * ``gemini`` (Gemini CLI): read-only ``--approval-mode plan`` + ``--skip-trust``
-      (so the throwaway workdir is trusted and the sandbox policy is not loaded —
-      forensic 2026-06-20) + ``-o json``.
+    Antigravity print mode activates on piped input without ``--print``.
+    Keeping input out of argv avoids both Windows and POSIX argument limits.
     """
     if cli.kind == "agy":
         return [
             *cli.argv_prefix,
-            "--print",
-            prompt,
+            "--output-format",
+            "json",
+            "--mode",
+            "plan",
             "--model",
             model,
             "--effort",
@@ -185,7 +175,7 @@ def _build_argv(
     return [
         *cli.argv_prefix,
         "-p",
-        prompt,
+        "Follow the instructions supplied on stdin.",
         "-m",
         model,
         "--approval-mode",
@@ -256,8 +246,8 @@ class AntigravityBrain:
     def can_call_tools(self) -> bool:
         """Runtime tool-calling capability (NOT the static ``supports_tools``).
 
-        Antigravity always drives the Google-subscription CLI (``agy`` over a PTY
-        or the Gemini CLI over a pipe) on a flattened prompt — it has no
+        Antigravity drives the Google-subscription CLI (``agy`` or Gemini) over
+        pipes with a flattened prompt — it has no
         chat-completions/function-calling path and drops every tool. The caller
         (``BrainManager``) uses this to delegate tool/Computer-Use turns to a
         tool-capable provider instead of letting the CLI silently no-op."""
@@ -279,20 +269,13 @@ class AntigravityBrain:
 
         prompt = self._render_prompt(req)
         argv = _build_argv(cli, prompt, self._model, _agy_effort(req))
-        # agy is a TUI tool: over a plain pipe it emits 0 bytes (the brain then
-        # sees "no answer"). It must be driven over a real pseudo-terminal. The
-        # Gemini CLI writes clean JSON to a pipe, so it keeps the fast path.
-        if cli.kind == "agy":
-            async for delta in self._complete_via_pty(argv, prompt):
-                yield delta
-        else:
-            async for delta in self._complete_via_pipe(argv, prompt):
-                yield delta
+        async for delta in self._complete_via_pipe(argv, prompt):
+            yield delta
 
     def _build_child_env(self, *, harden_path: bool) -> dict[str, str]:
         """Child env: drop API keys (subscription login wins), redirect HOME to an
-        isolated hook/mcp-free CLI home (the lag fix), and — for the agy/PTY case
-        on Windows — repair the PATH so agy's internal ``cmd.exe``/``npm`` spawns
+        isolated hook/mcp-free CLI home (the lag fix), and on Windows repair PATH
+        so agy's internal ``cmd.exe``/``npm`` spawns
         resolve even from a degraded launch env."""
         env = {k: v for k, v in os.environ.items() if k not in _DROP_ENV}
         if harden_path and sys.platform == "win32":
@@ -308,73 +291,13 @@ class AntigravityBrain:
             redirect_home_env(env, iso)
         return env
 
-    async def _complete_via_pty(
-        self, argv: list[str], prompt: str
-    ) -> AsyncIterator[BrainDelta]:
-        """Drive ``agy`` over a ConPTY/PTY (it has no usable pipe output)."""
+    async def _complete_via_pipe(self, argv: list[str], prompt: str) -> AsyncIterator[BrainDelta]:
+        """Drive the official Google CLI with UTF-8 stdin and JSON stdout."""
+        env = await asyncio.to_thread(self._build_child_env, harden_path=True)
         workdir = tempfile.mkdtemp(prefix="jarvis-antigravity-brain-")
-        env = self._build_child_env(harden_path=True)
-        loop = asyncio.get_running_loop()
-        log.info(
-            "AntigravityBrain(agy/PTY): driving %s (model=%s, prompt=%d chars)",
-            argv[0], self._model, len(prompt),
-        )
-        t0 = time.monotonic()
-        fut = loop.run_in_executor(
-            None,
-            lambda: run_cli_over_pty(
-                tuple(argv), timeout_s=self._cli_timeout_s, cwd=workdir, env=env
-            ),
-        )
-        try:
-            while not fut.done():
-                done, _ = await asyncio.wait({fut}, timeout=3.0)
-                if not done:
-                    # No-text progress tick keeps the caller's no-progress
-                    # deadline alive through the slow agent spin-up.
-                    yield BrainDelta(content="")
-            result = fut.result()
-        finally:
-            with suppress(OSError):
-                shutil.rmtree(workdir, ignore_errors=True)
-
-        elapsed = time.monotonic() - t0
-        if result.error:
-            log.warning("AntigravityBrain(agy/PTY) unavailable: %s", result.error)
-            raise RuntimeError(
-                f"Antigravity (Google login) is unavailable: {result.error}"
-            )
-        if result.timed_out:
-            log.warning(
-                "AntigravityBrain(agy/PTY): no answer within %.0fs",
-                self._cli_timeout_s,
-            )
-            raise RuntimeError(
-                "Antigravity (Google login) did not answer within "
-                f"{self._cli_timeout_s:.0f}s."
-            )
-        if not result.text:
-            log.warning(
-                "AntigravityBrain(agy/PTY): empty answer after %.1fs rc=%s",
-                elapsed, result.exit_status,
-            )
-            raise RuntimeError("Antigravity (Google login) returned no answer.")
-        log.info(
-            "AntigravityBrain(agy) turn ok: %d chars in %.1fs",
-            len(result.text), elapsed,
-        )
-        yield BrainDelta(content=result.text)
-        yield BrainDelta(finish_reason="stop")
-
-    async def _complete_via_pipe(
-        self, argv: list[str], prompt: str
-    ) -> AsyncIterator[BrainDelta]:
-        """Drive the Gemini CLI over pipes — it emits clean JSON on stdout."""
-        workdir = tempfile.mkdtemp(prefix="jarvis-antigravity-brain-")
-        env = self._build_child_env(harden_path=False)
         creationflags = NO_WINDOW_CREATIONFLAGS if sys.platform == "win32" else 0
         log.info(
-            "AntigravityBrain(gemini/pipe): spawning %s (model=%s, prompt=%d chars)",
+            "AntigravityBrain(pipe): spawning %s (model=%s, prompt=%d chars)",
             argv[0],
             self._model,
             len(prompt),
@@ -397,12 +320,9 @@ class AntigravityBrain:
             log.warning("AntigravityBrain: spawn failed: %s", exc)
             raise RuntimeError(f"Google CLI could not be launched: {exc}") from exc
 
-        # Close stdin empty — the whole prompt rides on ``-p``.
-        with suppress(Exception):
-            if proc.stdin is not None:
-                proc.stdin.close()
-
-        comm_task = asyncio.create_task(proc.communicate())
+        # communicate drains both output pipes while sending the full prompt;
+        # the same deadline covers a child that never consumes its input.
+        comm_task = asyncio.create_task(proc.communicate(input=prompt.encode("utf-8")))
         deadline = t0 + self._cli_timeout_s
         stdout_bytes = b""
         stderr_bytes = b""
@@ -414,7 +334,11 @@ class AntigravityBrain:
             if sys.platform == "win32" and isinstance(pid, int) and pid > 0:
                 with suppress(Exception):
                     killer = await asyncio.create_subprocess_exec(
-                        "taskkill", "/PID", str(pid), "/T", "/F",
+                        "taskkill",
+                        "/PID",
+                        str(pid),
+                        "/T",
+                        "/F",
                         stdout=asyncio.subprocess.DEVNULL,
                         stderr=asyncio.subprocess.DEVNULL,
                         creationflags=creationflags,
@@ -450,24 +374,37 @@ class AntigravityBrain:
                 self._cli_timeout_s,
             )
             raise RuntimeError(
-                "Antigravity (Google login) did not answer within "
-                f"{self._cli_timeout_s:.0f}s."
+                f"Antigravity (Google login) did not answer within {self._cli_timeout_s:.0f}s."
             ) from exc
         finally:
             with suppress(OSError):
                 shutil.rmtree(workdir, ignore_errors=True)
 
-        answer = _parse_cli_answer(stdout_bytes.decode("utf-8", errors="replace"))
+        if proc.returncode:
+            log.warning("AntigravityBrain: CLI exited with status %s", proc.returncode)
+            raise RuntimeError(f"Google CLI failed with exit status {proc.returncode}.")
+        decoded = stdout_bytes.decode("utf-8", errors="replace")
+        try:
+            envelope = json.loads(decoded)
+        except ValueError:
+            envelope = None  # The parser below supports older plain-text CLI output.
+        if isinstance(envelope, dict) and (
+            envelope.get("error") or envelope.get("status") in {"ERROR", "CANCELED", "CANCELLED"}
+        ):
+            log.warning("AntigravityBrain: CLI reported a failed result")
+            raise RuntimeError("Google CLI reported a failed result.")
+        answer = _parse_cli_answer(decoded)
         elapsed = time.monotonic() - t0
         if not answer:
             detail = stderr_bytes.decode("utf-8", errors="replace").strip()[:300]
             log.warning(
                 "AntigravityBrain: empty answer after %.1fs rc=%s detail=%s",
-                elapsed, proc.returncode, detail[:200],
+                elapsed,
+                proc.returncode,
+                detail[:200],
             )
             raise RuntimeError(
-                "Antigravity (Google login) returned no answer"
-                + (f": {detail}" if detail else ".")
+                "Antigravity (Google login) returned no answer" + (f": {detail}" if detail else ".")
             )
 
         log.info("AntigravityBrain turn ok: %d chars in %.1fs", len(answer), elapsed)
