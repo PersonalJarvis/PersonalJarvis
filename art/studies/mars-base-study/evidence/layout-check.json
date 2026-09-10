@@ -1,0 +1,71 @@
+{
+  "node_count": 12,
+  "link_count": 11,
+  "connected_nodes": 12,
+  "span": {
+    "x": 430,
+    "y": 24,
+    "z": 365
+  },
+  "max_grade": 0.08896438459286182,
+  "ground_length": 986.5974856898243,
+  "bridge_length": 80.0,
+  "terrain_issues": [],
+  "scope": "Sampled blockout geometry; runtime collision and traversal are unverified.",
+  "mesh_contact": {
+    "method": "BVH vertical rays against actual triangulated MarsBasin mesh",
+    "samples": 6150,
+    "tolerance_m": 0.05,
+    "max_deviation_m": 0.03079100623897446,
+    "worst_sample": {
+      "kind": "road_edge",
+      "id": "ridge-ascent-a",
+      "x": 164.27278755880795,
+      "z": -80.80938314200222,
+      "expected_y": 15.943696298448526,
+      "mesh_y": 15.9744873046875,
+      "deviation_m": 0.03079100623897446
+    },
+    "category_max_deviation_m": {
+      "road_edge": 0.03079100623897446,
+      "road_centre": 0.0004049145264168885,
+      "pad_centre": 0.0001220703125,
+      "pad_perimeter": 0.0167236328125,
+      "previous_contact_defect": 0.00016634187985786753,
+      "bridge_abutment": 0.0001220703125
+    },
+    "previous_defect_samples": [
+      {
+        "kind": "previous_contact_defect",
+        "id": "1",
+        "x": 114.85542,
+        "z": -130.90194,
+        "expected_y": 19.694657876870142,
+        "mesh_y": 19.69482421875,
+        "deviation_m": 0.00016634187985786753
+      },
+      {
+        "kind": "previous_contact_defect",
+        "id": "2",
+        "x": -149.67218,
+        "z": -54.37015,
+        "expected_y": 17.352234825833747,
+        "mesh_y": 17.3521728515625,
+        "deviation_m": 6.197427124732258e-05
+      }
+    ],
+    "misses": 0,
+    "violation_count": 0,
+    "violations": [],
+    "passed": true
+  },
+  "terrain_triangles": 91888,
+  "terrain_vertices": 46361,
+  "bridge_triangles": 228,
+  "export_triangles": 92116,
+  "ground_route_objects": 0,
+  "reserved_pad_objects": 0,
+  "export_collection": "MarsMap",
+  "runtime_verified": false,
+  "stage": "Blender terrain blockout; no final architecture or agent runtime"
+}

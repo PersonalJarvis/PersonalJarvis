@@ -1,5 +1,8 @@
 # Future city standard
 
+Superseded on 2026-09-10 by `../mars-base-study/brief.md` after visual rejection.
+Retained as history; it does not govern the new map's size or transit geometry.
+
 Accepted direction: 2026-09-10. This supersedes island assumptions and shortened-journey proposals in the earlier research brief and kickoff plan. It is a design/behavior specification, not a record of implementation completion or approval of a rendered reference.
 
 ## Shape, material and interface language
