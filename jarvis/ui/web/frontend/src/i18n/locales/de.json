@@ -1,5 +1,6 @@
 {
   "live": {
+    "open_browser": "Sprache im Browser öffnen",
     "loading": "Spracheinstellungen werden geladen…", "description": "Natürlich sprechen, Denkmodell selbst wählen und Jarvis-Tools nutzen — mit einem OpenAI-Key.",
     "key_required": "Verbinde unten deinen OpenAI-Key, um GPT-Live zu nutzen.", "voice_model": "Sprachmodell", "voice": "Stimme", "thinking_model": "Denkmodell",
     "choose_model": "Modell auswählen", "reasoning": "Denkaufwand", "model_default": "Modellstandard", "web_search": "Websuche",

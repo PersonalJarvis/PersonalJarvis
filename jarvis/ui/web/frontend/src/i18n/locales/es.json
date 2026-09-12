@@ -1,5 +1,6 @@
 {
   "live": {
+    "open_browser": "Abrir voz en el navegador",
     "loading": "Cargando ajustes de voz…", "description": "Conversación natural, tu modelo de razonamiento y las herramientas de Jarvis con una sola clave de OpenAI.",
     "key_required": "Conecta tu clave de OpenAI abajo para activar GPT-Live.", "voice_model": "Modelo de voz", "voice": "Voz", "thinking_model": "Modelo de razonamiento",
     "choose_model": "Selecciona un modelo", "reasoning": "Esfuerzo de razonamiento", "model_default": "Predeterminado del modelo", "web_search": "Búsqueda web",

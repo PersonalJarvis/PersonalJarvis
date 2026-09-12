@@ -326,3 +326,25 @@ async def test_local_manual_response_does_not_block_receiving_audio(ledger):
         await asyncio.wait_for(received.wait(), 2)
     finally:
         await session.end()
+
+
+@pytest.mark.asyncio
+async def test_browser_audio_releases_the_native_wake_microphone(monkeypatch):
+    from jarvis.realtime import factory
+    from jarvis.speech.pipeline import SpeechPipeline, _SessionInputBuffer
+
+    original = _SessionInputBuffer(capture=object())
+    pipeline = SpeechPipeline.__new__(SpeechPipeline)
+    pipeline._active_voice_mode = "realtime"
+    pipeline._ptt_mode = False
+    pipeline._wake_capture_released = asyncio.Event()
+    pipeline._wake_capture_released.set()
+
+    async def claim():
+        return original
+
+    pipeline._claim_wake_capture_for_session = claim
+    monkeypatch.setattr(factory, "realtime_browser_audio", lambda cfg: True)
+    async with pipeline._capture_first_session_input() as buffer:
+        assert original._closed
+        assert buffer.capture is None

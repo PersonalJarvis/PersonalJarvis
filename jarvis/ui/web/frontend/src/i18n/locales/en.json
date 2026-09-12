@@ -1,5 +1,6 @@
 {
   "live": {
+    "open_browser": "Open voice in your browser",
     "loading": "Loading voice setup…", "description": "Natural conversation, your chosen thinking model, and Jarvis tools — one OpenAI key.",
     "key_required": "Connect your OpenAI key below to enable GPT-Live.", "voice_model": "Voice model", "voice": "Voice", "thinking_model": "Thinking model",
     "choose_model": "Choose a model", "reasoning": "Reasoning effort", "model_default": "Model default", "web_search": "Web search",

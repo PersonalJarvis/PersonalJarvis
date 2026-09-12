@@ -354,6 +354,17 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     [],
   );
 
+  if (visible && controlOnly && state === "error") {
+    return (
+      <aside role="alert" className="fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-lg">
+        <p className="text-sm">{error || t("sidebar.realtime_error")}</p>
+        <a className="mt-3 block text-sm underline" href={window.location.origin} target="_blank" rel="noopener noreferrer">
+          {t("live.open_browser")}
+        </a>
+        <Button className="mt-3" variant="outline" onClick={() => void stop()}>{t("common.close")}</Button>
+      </aside>
+    );
+  }
   if (!visible || controlOnly) return null;
 
   const connected = state === "connected";

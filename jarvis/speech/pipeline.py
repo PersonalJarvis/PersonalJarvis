@@ -7627,7 +7627,24 @@ class SpeechPipeline:
         self,
     ) -> AsyncIterator[_SessionInputBuffer]:
         """Borrow the wake mic or open exactly one fallback session mic."""
+        from jarvis.realtime.factory import realtime_browser_audio
+
+        browser_media = (
+            not getattr(self, "_ptt_mode", False)
+            and getattr(self, "_active_voice_mode", None) == "realtime"
+            and realtime_browser_audio(getattr(self, "_config", None))
+        )
         buffer = await self._claim_wake_capture_for_session()
+        if browser_media:
+            if buffer is not None:
+                await buffer.close()
+                await self._wake_capture_released.wait()
+            browser_buffer = _SessionInputBuffer()
+            try:
+                yield browser_buffer
+            finally:
+                await browser_buffer.close()
+            return
         if buffer is not None:
             try:
                 yield buffer

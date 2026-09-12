@@ -15,6 +15,7 @@ const fakes = vi.hoisted(() => ({
   mode: "realtime",
   available: true,
   requiresWebRtcOffer: false,
+  browserAudio: false,
   connect: vi.fn(async () => undefined),
   disconnect: vi.fn(async () => undefined),
   supportIssue: null as
@@ -39,6 +40,7 @@ vi.mock("@/hooks/useVoiceMode", () => ({
     mode: fakes.mode,
     realtimeAvailable: fakes.available,
     requiresWebRtcOffer: fakes.requiresWebRtcOffer,
+    browserAudio: fakes.browserAudio,
     setMode: vi.fn(),
     isLoading: false,
     isSaving: false,
@@ -70,6 +72,7 @@ describe("BrowserRealtimeControl", () => {
     fakes.mode = "realtime";
     fakes.available = true;
     fakes.requiresWebRtcOffer = false;
+    fakes.browserAudio = false;
     fakes.connect.mockClear();
     fakes.disconnect.mockClear();
     fakes.supportIssue = null;
@@ -82,6 +85,17 @@ describe("BrowserRealtimeControl", () => {
       transcription: "",
       transcriptionFinal: true,
     });
+  });
+
+  it("offers a browser recovery link when the hidden media host cannot start", async () => {
+    fakes.browserAudio = true;
+    fakes.connect.mockRejectedValueOnce(new Error("Microphone unavailable"));
+    useEventStore.setState({ events: [{
+      id: "live-start-test", name: "BrowserVoiceRequested", ts: Date.now(),
+      payload: { action: "start" },
+    }] });
+    render(<BrowserRealtimeControl controlOnly />);
+    expect(await screen.findByRole("link", { name: "live.open_browser" })).toBeTruthy();
   });
 
   it("is hidden in the desktop shell to prevent a second microphone", () => {
@@ -123,7 +137,7 @@ describe("BrowserRealtimeControl", () => {
     fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
 
     await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
-    expect(fakes.options).toEqual({ requiresWebRtcOffer: true });
+    expect(fakes.options).toMatchObject({ requiresWebRtcOffer: true, browserAudio: false });
   });
 
   it("returns to thinking after an interim realtime sentence", async () => {
