@@ -1,0 +1,27 @@
+{
+  "kind": "public-editable-source-metadata-verification",
+  "field_classes_sanitized": {
+    "Image.filepath": 18,
+    "ImagePackedFile.filepath": 18,
+    "FileSelectParams.dir": 1,
+    "RenderData.pic": 1
+  },
+  "source_native_encoding": "uncompressed",
+  "profile_marker_families_checked": 4,
+  "raw_marker_occurrences": 0,
+  "serialized_content_marker_occurrences": 0,
+  "blender_reopen": {
+    "version": "5.0.1",
+    "portable_fields_validated": 38,
+    "export_meshes": 20,
+    "triangles": 211968,
+    "packed_material_images": 18
+  },
+  "source_bytes": 28882004,
+  "source_sha256": "3b81643faaa3802916794286eb3c5be4997bac092358476d3627dc961acb50be",
+  "glb_sha256": "c697b08e0b49ad462be7b2e32230183ebb5bb1c2956d21580dc71bd9e95c802e",
+  "glb_unchanged": true,
+  "geometry_changed": false,
+  "runtime_visual_approval": "pending",
+  "scope": "Paths were sanitized through Blender datablocks and reserialized; no source deletion or byte-concealing transformation."
+}

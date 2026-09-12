@@ -1,0 +1,1018 @@
+{
+  "schema_version": 1,
+  "world_id": "mars:ordinary",
+  "layout_version": 1,
+  "seed": 6901,
+  "units": "metres",
+  "axes": {
+    "up": "+Y",
+    "east": "+X",
+    "north": "-Z"
+  },
+  "reference_id": "ref-layout",
+  "status": "blockout",
+  "bounds": {
+    "min": [
+      -430,
+      -12,
+      -400
+    ],
+    "max": [
+      435,
+      180,
+      410
+    ]
+  },
+  "districts": [
+    {
+      "id": "central",
+      "name": "Central district",
+      "center": [
+        0,
+        48,
+        0
+      ],
+      "size": [
+        250,
+        210
+      ],
+      "landmark_height": 35,
+      "stage": "blockout",
+      "terrain": "plateau",
+      "access": "exterior",
+      "asset": null
+    },
+    {
+      "id": "foundry",
+      "name": "Agent Foundry",
+      "center": [
+        -30,
+        92,
+        -290
+      ],
+      "size": [
+        145,
+        135
+      ],
+      "landmark_height": 82,
+      "stage": "blockout",
+      "terrain": "plateau",
+      "access": "exterior",
+      "asset": null
+    },
+    {
+      "id": "mine",
+      "name": "The Mine",
+      "center": [
+        150,
+        80,
+        -260
+      ],
+      "size": [
+        155,
+        155
+      ],
+      "landmark_height": 20,
+      "stage": "blockout",
+      "terrain": "plateau",
+      "access": "exterior",
+      "asset": null
+    },
+    {
+      "id": "workshop",
+      "name": "Workshop",
+      "center": [
+        -230,
+        66,
+        -170
+      ],
+      "size": [
+        130,
+        115
+      ],
+      "landmark_height": 24,
+      "stage": "blockout",
+      "terrain": "plateau",
+      "access": "exterior",
+      "asset": null
+    },
+    {
+      "id": "water-extraction",
+      "name": "Water Extraction",
+      "center": [
+        -320,
+        42,
+        -10
+      ],
+      "size": [
+        130,
+        150
+      ],
+      "landmark_height": 22,
+      "stage": "blockout",
+      "terrain": "plateau",
+      "access": "exterior",
+      "asset": null
+    },
+    {
+      "id": "memory-house",
+      "name": "Memory House",
+      "center": [
+        240,
+        70,
+        -160
+      ],
+      "size": [
+        105,
+        100
+      ],
+      "landmark_height": 23,
+      "stage": "blockout",
+      "terrain": "plateau",
+      "access": "exterior",
+      "asset": null
+    },
+    {
+      "id": "harbor-gate",
+      "name": "Harbor Gate",
+      "center": [
+        -230,
+        25,
+        240
+      ],
+      "size": [
+        180,
+        145
+      ],
+      "landmark_height": 65,
+      "stage": "blockout",
+      "terrain": "plateau",
+      "access": "exterior",
+      "asset": null
+    },
+    {
+      "id": "gardens",
+      "name": "Gardens",
+      "center": [
+        80,
+        36,
+        300
+      ],
+      "size": [
+        210,
+        125
+      ],
+      "landmark_height": 20,
+      "stage": "blockout",
+      "terrain": "plateau",
+      "access": "exterior",
+      "asset": null
+    },
+    {
+      "id": "solar-field",
+      "name": "Solar Field",
+      "center": [
+        -25,
+        58,
+        -175
+      ],
+      "size": [
+        170,
+        85
+      ],
+      "landmark_height": 5,
+      "stage": "blockout",
+      "terrain": "plateau",
+      "access": "exterior",
+      "asset": null
+    },
+    {
+      "id": "communications-outpost",
+      "name": "Communications Outpost",
+      "center": [
+        320,
+        58,
+        50
+      ],
+      "size": [
+        120,
+        95
+      ],
+      "landmark_height": 62,
+      "stage": "blockout",
+      "terrain": "plateau",
+      "access": "exterior",
+      "asset": null
+    }
+  ],
+  "buildings": [
+    {
+      "id": "jarvis-hub",
+      "name": "Jarvis Hub",
+      "district_id": "central",
+      "position": [
+        0,
+        48,
+        0
+      ],
+      "size": [
+        36,
+        30,
+        36
+      ],
+      "checkpoint": "meeting",
+      "stage": "blockout",
+      "access": "planned-exterior",
+      "asset": null
+    },
+    {
+      "id": "terminal",
+      "name": "Terminal",
+      "district_id": "central",
+      "position": [
+        -64,
+        48,
+        -34
+      ],
+      "size": [
+        36,
+        12,
+        18
+      ],
+      "checkpoint": "hub:cli",
+      "stage": "blockout",
+      "access": "planned-exterior",
+      "asset": null
+    },
+    {
+      "id": "plugin-docks",
+      "name": "Plugin Docks",
+      "district_id": "central",
+      "position": [
+        64,
+        48,
+        -34
+      ],
+      "size": [
+        36,
+        12,
+        18
+      ],
+      "checkpoint": "hub:plugins",
+      "stage": "blockout",
+      "access": "planned-exterior",
+      "asset": null
+    },
+    {
+      "id": "control-room",
+      "name": "Control Room",
+      "district_id": "central",
+      "position": [
+        -72,
+        48,
+        10
+      ],
+      "size": [
+        24,
+        10,
+        18
+      ],
+      "checkpoint": "hub:desktop",
+      "stage": "blockout",
+      "access": "planned-exterior",
+      "asset": null
+    },
+    {
+      "id": "skill-forge",
+      "name": "Skill Forge",
+      "district_id": "central",
+      "position": [
+        72,
+        48,
+        10
+      ],
+      "size": [
+        24,
+        10,
+        18
+      ],
+      "checkpoint": "hub:skills",
+      "stage": "blockout",
+      "access": "planned-exterior",
+      "asset": null
+    },
+    {
+      "id": "signal-office",
+      "name": "Signal Office",
+      "district_id": "central",
+      "position": [
+        -45,
+        48,
+        61
+      ],
+      "size": [
+        24,
+        10,
+        18
+      ],
+      "checkpoint": "hub:comms",
+      "stage": "blockout",
+      "access": "planned-exterior",
+      "asset": null
+    },
+    {
+      "id": "gallery",
+      "name": "Gallery",
+      "district_id": "central",
+      "position": [
+        45,
+        48,
+        61
+      ],
+      "size": [
+        24,
+        10,
+        18
+      ],
+      "checkpoint": "gallery",
+      "stage": "blockout",
+      "access": "planned-exterior",
+      "asset": null
+    },
+    {
+      "id": "boiler-house",
+      "name": "Boiler House",
+      "district_id": "central",
+      "position": [
+        0,
+        48,
+        -76
+      ],
+      "size": [
+        36,
+        18,
+        24
+      ],
+      "checkpoint": "hub:models",
+      "stage": "blockout",
+      "access": "planned-exterior",
+      "asset": null
+    },
+    {
+      "id": "lookout",
+      "name": "The Lookout",
+      "district_id": "central",
+      "position": [
+        0,
+        48,
+        85
+      ],
+      "size": [
+        24,
+        14,
+        24
+      ],
+      "checkpoint": "idle",
+      "stage": "blockout",
+      "access": "planned-exterior",
+      "asset": null
+    },
+    {
+      "id": "communications-mast",
+      "name": "Communications mast",
+      "district_id": "communications-outpost",
+      "position": [
+        320,
+        58,
+        46
+      ],
+      "size": [
+        14,
+        62,
+        14
+      ],
+      "checkpoint": null,
+      "stage": "blockout",
+      "access": "exterior-only",
+      "asset": null
+    },
+    {
+      "id": "operations",
+      "name": "Outpost operations",
+      "district_id": "communications-outpost",
+      "position": [
+        294,
+        58,
+        64
+      ],
+      "size": [
+        20,
+        8,
+        14
+      ],
+      "checkpoint": "hub:comms",
+      "stage": "blockout",
+      "access": "required-interior",
+      "asset": null
+    },
+    {
+      "id": "radome-north",
+      "name": "North radome",
+      "district_id": "communications-outpost",
+      "position": [
+        298,
+        58,
+        21
+      ],
+      "size": [
+        18,
+        17,
+        18
+      ],
+      "checkpoint": null,
+      "stage": "blockout",
+      "access": "exterior-only",
+      "asset": null
+    },
+    {
+      "id": "radome-south",
+      "name": "South radome",
+      "district_id": "communications-outpost",
+      "position": [
+        351,
+        58,
+        69
+      ],
+      "size": [
+        22,
+        18,
+        22
+      ],
+      "checkpoint": null,
+      "stage": "blockout",
+      "access": "exterior-only",
+      "asset": null
+    },
+    {
+      "id": "dish-west",
+      "name": "Western dish",
+      "district_id": "communications-outpost",
+      "position": [
+        278,
+        58,
+        46
+      ],
+      "size": [
+        21,
+        24,
+        21
+      ],
+      "checkpoint": null,
+      "stage": "blockout",
+      "access": "exterior-only",
+      "asset": null
+    },
+    {
+      "id": "dish-east",
+      "name": "Eastern dish",
+      "district_id": "communications-outpost",
+      "position": [
+        351,
+        58,
+        21
+      ],
+      "size": [
+        25,
+        29,
+        25
+      ],
+      "checkpoint": null,
+      "stage": "blockout",
+      "access": "exterior-only",
+      "asset": null
+    },
+    {
+      "id": "service-east",
+      "name": "Outpost service building",
+      "district_id": "communications-outpost",
+      "position": [
+        363,
+        58,
+        45
+      ],
+      "size": [
+        12,
+        12,
+        12
+      ],
+      "checkpoint": null,
+      "stage": "blockout",
+      "access": "planned-exterior",
+      "asset": null
+    }
+  ],
+  "navigation": {
+    "version": 1,
+    "nodes": [
+      {
+        "id": "hub-east",
+        "position": [
+          125,
+          48,
+          40
+        ]
+      },
+      {
+        "id": "outpost-west",
+        "position": [
+          256,
+          58,
+          50
+        ]
+      },
+      {
+        "id": "outpost-arrival",
+        "position": [
+          268,
+          58,
+          68
+        ]
+      },
+      {
+        "id": "console-approach",
+        "position": [
+          294,
+          58,
+          75
+        ]
+      },
+      {
+        "id": "console",
+        "position": [
+          294,
+          58,
+          64
+        ]
+      },
+      {
+        "id": "outpost-south",
+        "position": [
+          325,
+          58,
+          96
+        ]
+      },
+      {
+        "id": "gardens-east",
+        "position": [
+          185,
+          36,
+          300
+        ]
+      },
+      {
+        "id": "hub-south",
+        "position": [
+          0,
+          48,
+          109
+        ]
+      },
+      {
+        "id": "gardens-north",
+        "position": [
+          80,
+          36,
+          234
+        ]
+      },
+      {
+        "id": "harbor-east",
+        "position": [
+          -137,
+          25,
+          240
+        ]
+      },
+      {
+        "id": "hub-west",
+        "position": [
+          -128,
+          48,
+          20
+        ]
+      },
+      {
+        "id": "water-east",
+        "position": [
+          -251,
+          42,
+          -10
+        ]
+      },
+      {
+        "id": "workshop-south",
+        "position": [
+          -230,
+          66,
+          -111
+        ]
+      },
+      {
+        "id": "hub-north",
+        "position": [
+          0,
+          48,
+          -110
+        ]
+      },
+      {
+        "id": "solar-south",
+        "position": [
+          -25,
+          58,
+          -129
+        ]
+      },
+      {
+        "id": "foundry-south",
+        "position": [
+          -30,
+          92,
+          -220
+        ]
+      },
+      {
+        "id": "mine-south",
+        "position": [
+          150,
+          80,
+          -180
+        ]
+      },
+      {
+        "id": "memory-west",
+        "position": [
+          185,
+          70,
+          -160
+        ]
+      },
+      {
+        "id": "central-northwest",
+        "position": [
+          -128,
+          48,
+          -110
+        ]
+      },
+      {
+        "id": "central-northeast",
+        "position": [
+          125,
+          48,
+          -110
+        ]
+      },
+      {
+        "id": "central-southeast",
+        "position": [
+          125,
+          48,
+          109
+        ]
+      },
+      {
+        "id": "central-southwest",
+        "position": [
+          -128,
+          48,
+          109
+        ]
+      }
+    ],
+    "edges": [
+      {
+        "id": "route-01",
+        "from": "hub-east",
+        "to": "outpost-west",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-02",
+        "from": "outpost-west",
+        "to": "outpost-arrival",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-03",
+        "from": "outpost-arrival",
+        "to": "console-approach",
+        "width": 4,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-04",
+        "from": "console-approach",
+        "to": "console",
+        "width": 2.4,
+        "kind": "interior",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-05",
+        "from": "outpost-arrival",
+        "to": "outpost-south",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-06",
+        "from": "outpost-south",
+        "to": "gardens-east",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-07",
+        "from": "hub-south",
+        "to": "gardens-north",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-08",
+        "from": "gardens-north",
+        "to": "gardens-east",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-09",
+        "from": "harbor-east",
+        "to": "gardens-north",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-10",
+        "from": "hub-west",
+        "to": "water-east",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-11",
+        "from": "hub-west",
+        "to": "workshop-south",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-12",
+        "from": "hub-north",
+        "to": "solar-south",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-13",
+        "from": "solar-south",
+        "to": "foundry-south",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-14",
+        "from": "foundry-south",
+        "to": "mine-south",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-15",
+        "from": "hub-east",
+        "to": "memory-west",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-16",
+        "from": "memory-west",
+        "to": "mine-south",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-17",
+        "from": "hub-west",
+        "to": "harbor-east",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-18",
+        "from": "hub-west",
+        "to": "central-northwest",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-19",
+        "from": "hub-north",
+        "to": "central-northeast",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-20",
+        "from": "hub-east",
+        "to": "central-southeast",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-21",
+        "from": "hub-south",
+        "to": "central-southwest",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-22",
+        "from": "central-northwest",
+        "to": "hub-north",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-23",
+        "from": "central-northeast",
+        "to": "hub-east",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-24",
+        "from": "central-southeast",
+        "to": "hub-south",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-25",
+        "from": "central-southwest",
+        "to": "hub-west",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      }
+    ]
+  },
+  "stations": [
+    {
+      "id": "communications-console",
+      "district_id": "communications-outpost",
+      "building_id": "operations",
+      "checkpoint": "hub:comms",
+      "capability": "communication-draft",
+      "capacity": 1,
+      "anchor": "console"
+    }
+  ],
+  "spawn": {
+    "position": [
+      268,
+      58,
+      68
+    ],
+    "yaw": 1.5707963267948966
+  },
+  "view": {
+    "near_inspection_m": 0.75,
+    "overview_padding": 1.15
+  }
+}

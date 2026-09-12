@@ -1,0 +1,141 @@
+{
+  "kind": "structural-export-evidence-only",
+  "iteration": 2,
+  "runtime_visual_approval": "pending",
+  "path": "exports/communications-outpost.glb",
+  "sha256": "c697b08e0b49ad462be7b2e32230183ebb5bb1c2956d21580dc71bd9e95c802e",
+  "bytes": 14571224,
+  "meshes": 20,
+  "materials": 20,
+  "triangles": 211968,
+  "local_runtime_bounds": {
+    "min": [
+      -195.43536376953125,
+      -63.18514633178711,
+      -49.922935485839844
+    ],
+    "max": [
+      63.38080978393555,
+      62,
+      51
+    ]
+  },
+  "world_translation": [
+    320,
+    58,
+    50
+  ],
+  "collider_nodes": 24,
+  "anchor_nodes": 15,
+  "animations": 0,
+  "external_resource_uris": [],
+  "extensions_used": [
+    "KHR_materials_transmission",
+    "KHR_materials_emissive_strength",
+    "KHR_materials_ior"
+  ],
+  "embedded_images": 17,
+  "primitives_with_vertex_tint": 13,
+  "materials_with_normal_maps": 13,
+  "materials_with_roughness_maps": 13,
+  "authored_material_sources": [
+    {
+      "path": "source/materials/ceramic-roughness.png",
+      "bytes": 11775,
+      "sha256": "5a9ea3734702f127415cbd8ab948b5c5329d73b0b80b7fbd2efd65deea77a358"
+    },
+    {
+      "path": "source/materials/ceramic-warm-roughness.png",
+      "bytes": 11711,
+      "sha256": "d5e6354692c7ce944be2711730f17c9af6323e93c7e0dc7fd9a016a658ad7d16"
+    },
+    {
+      "path": "source/materials/cliff-roughness.png",
+      "bytes": 10316,
+      "sha256": "274e42ad203e973d00dc678e0fb5960a6bd150d20bfbd48cc70c5611d92bebd0"
+    },
+    {
+      "path": "source/materials/concrete-roughness.png",
+      "bytes": 11784,
+      "sha256": "c148c194edd573c3d280b8409a2ff40adf6024ff79a779987dc1ab8a2c664136"
+    },
+    {
+      "path": "source/materials/dust-coated-roughness.png",
+      "bytes": 11708,
+      "sha256": "c2aefd2655000d9d30018e1ff492ff1adf6e82064118258b217123d1774776a7"
+    },
+    {
+      "path": "source/materials/gold-roughness.png",
+      "bytes": 12665,
+      "sha256": "5dfe4b6aa1aeef359a13653051420d837a5de6da5d0f2c1110004cbce6bc6e4d"
+    },
+    {
+      "path": "source/materials/metal-normal.png",
+      "bytes": 17613,
+      "sha256": "ce1c7a8757acc148042a6786ef7cceb0fd783f2828079f8c6bd59c8a095e6ca9"
+    },
+    {
+      "path": "source/materials/metal-roughness.png",
+      "bytes": 12647,
+      "sha256": "7b04446acaf7cdd3f6ecfd4af63c97e0357d75c3592bf4eec2764397011c27cf"
+    },
+    {
+      "path": "source/materials/mineral-normal.png",
+      "bytes": 35718,
+      "sha256": "2c8a039f8ec5568da6851a28133c7d91de9ca7c8bc970e8fa5e6fc4970fe0812"
+    },
+    {
+      "path": "source/materials/paint-normal.png",
+      "bytes": 18172,
+      "sha256": "0a2543ff677fb003409abbbfa246df2403e32e0aecc62a7bc3bd4a2dfdc5cb6b"
+    },
+    {
+      "path": "source/materials/painted-alloy-roughness.png",
+      "bytes": 11765,
+      "sha256": "ce70559dc00839c36ab3077ad7b2bcdb333af3832e45041c3b48b740a2c40542"
+    },
+    {
+      "path": "source/materials/paving-roughness.png",
+      "bytes": 11804,
+      "sha256": "6708c8e015895cdba3ebeb54b0a6e1fa828b215cb608d3efc6fa50505826093f"
+    },
+    {
+      "path": "source/materials/road-normal.png",
+      "bytes": 30211,
+      "sha256": "2c5bbc27414b7fb2c312941c59e0d30085059337759a189b9bd82e2df4ff4620"
+    },
+    {
+      "path": "source/materials/road-roughness.png",
+      "bytes": 11711,
+      "sha256": "7370ae8b6a575889f22453e05029df286cf78c45c30fb7d1efd21f244157720e"
+    },
+    {
+      "path": "source/materials/rock-highlight-roughness.png",
+      "bytes": 11798,
+      "sha256": "b454f9b519414928eb3b6b815aab16bee8806b590ffcafe562f23f14ed4a5ed2"
+    },
+    {
+      "path": "source/materials/rock-shadow-roughness.png",
+      "bytes": 8851,
+      "sha256": "b1c0471ea34ac62be6ca6d4f33fedec3e94d12878df30015713f88e20e39b942"
+    },
+    {
+      "path": "source/materials/roof-alloy-roughness.png",
+      "bytes": 12583,
+      "sha256": "211d07cc389750fa0ff6cbe76ad9b79f350dc0a8a9da0fff4db2972130a318b8"
+    },
+    {
+      "path": "source/materials/structure-roughness.png",
+      "bytes": 12597,
+      "sha256": "8fd5052509bd067a3c0593b303648926b82e8cae80fc79621ef3c351073fa01b"
+    }
+  ],
+  "numeric_material_validation": {
+    "colored_primitives": 13,
+    "linear_color_range": [
+      0.03191685676574707,
+      0.7687839865684509
+    ],
+    "uv_abs_max": 244.27207946777344
+  }
+}

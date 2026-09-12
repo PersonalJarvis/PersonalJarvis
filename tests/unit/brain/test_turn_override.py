@@ -49,6 +49,7 @@ def _seed(
 
 
 class _Tool:
+    description = "Test-only tool; no tool execution is expected."
     def __init__(self, name: str, risk_tier: str = "safe") -> None:
         self.name = name
         self.risk_tier = risk_tier
@@ -262,6 +263,96 @@ def test_receipt_usage_is_the_agent_chat_shape() -> None:
         finish_reason="ok",
     )
     assert receipt.usage() == {"input_tokens": 10, "output_tokens": 3, "cost_usd": 0.5}
+
+
+def test_guard_failure_is_separate_from_provider_finish_and_usage() -> None:
+    receipt = TurnReceipt()
+    receipt.record(
+        provider=PICK, model=PICK_MODEL, tokens_in=10, tokens_out=3,
+        cost_usd=0.5, finish_reason="stop",
+    )
+    receipt.mark_guard_failure("mandated_tool_unfulfilled")
+    receipt.mark_guard_failure("unbacked_action_claim")
+    assert receipt.guard_failure and receipt.failure_reason == "mandated_tool_unfulfilled"
+    assert receipt.finish_reason == "stop"
+    assert receipt.usage() == {"input_tokens": 10, "output_tokens": 3, "cost_usd": 0.5}
+    receipt.record(
+        provider=PICK, model=PICK_MODEL, tokens_in=2, tokens_out=1,
+        cost_usd=0, finish_reason="stop",
+    )
+    assert not receipt.guard_failure and receipt.failure_reason == ""
+
+
+@pytest.mark.asyncio
+async def test_missing_mandated_action_marks_the_typed_turn_failed() -> None:
+    mgr = _manager()
+    mgr._tools["run_shell"] = _Tool("run_shell", "ask")
+    scoped, _ = _seed(mgr, scoped_text="The requested folder is ready.")
+    override = TurnOverride(provider=PICK, model=PICK_MODEL)
+    reply = await mgr.generate(
+        "Create a folder named drafts on my desktop.",
+        use_history=False,
+        turn_override=override,
+    )
+    assert scoped.calls
+    assert reply != "The requested folder is ready."
+    assert override.receipt.guard_failure
+    assert override.receipt.failure_reason == "mandated_tool_unfulfilled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("answer", "failure"),
+    [
+        ("One moment, I'll check that and get back to you.", True),
+        ("I have sent the report.", True),
+        ("Let me check. The research station has three antennas.", False),
+    ],
+)
+async def test_full_action_fallback_differs_from_trimming_a_delivered_answer(
+    answer, failure
+) -> None:
+    mgr = _manager()
+    scoped, _ = _seed(mgr, scoped_text=answer)
+    override = TurnOverride(provider=PICK, model=PICK_MODEL)
+    reply = await mgr.generate(
+        "Tell me something interesting.", use_history=False, turn_override=override
+    )
+    assert scoped.calls
+    assert reply != answer
+    assert override.receipt.guard_failure is failure
+    if failure:
+        assert override.receipt.failure_reason == "unbacked_action_claim"
+    else:
+        assert "three antennas" in reply
+        assert override.receipt.failure_reason == ""
+
+
+@pytest.mark.asyncio
+async def test_fictional_draft_with_prohibited_actions_needs_no_shell_call() -> None:
+    # Exact bounded synthetic prompt from the Outpost reproduction. No "chat",
+    # "email" or "message" vocabulary can accidentally bypass the local gate.
+    prompt = (
+        "[assignment from the user]\n"
+        "Prepare a communication draft for review. Do not send or publish it.\n\n"
+        "Draft a 450-word internal update for an imaginary Mars research team about "
+        "preparing a communications outpost for its first test. Include a subject, "
+        "purpose, five practical checks, risks still to verify, and a clear next action. "
+        "This is a fictional draft for review only. Do not send, publish, browse, "
+        "run commands, or change files.\n"
+        "When you are done, end with a handoff: what is done, where the output is, "
+        "what evidence you used, what remains open, who should own the next step."
+    )
+    answer = "Subject: Fictional Outpost readiness. Purpose: prepare a cautious test plan."
+    mgr = _manager()
+    mgr._tools["run_shell"] = _Tool("run_shell", "ask")
+    scoped, _ = _seed(mgr, scoped_text=answer)
+    override = TurnOverride(provider=PICK, model=PICK_MODEL, tool_filter=lambda tools: {})
+    reply = await mgr.generate(prompt, use_history=False, turn_override=override)
+    assert scoped.calls
+    assert reply == answer
+    assert not override.receipt.guard_failure
+    assert not mgr._evidence_required_tool
 
 
 # ------------------------------------------------------------ system_extra

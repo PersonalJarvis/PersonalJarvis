@@ -174,9 +174,11 @@ def test_cancel_ends_the_turn(tmp_path: Path, scripted):
         svc = AgentChatService(AgentChatStore(":memory:"))
         session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
         q = svc.subscribe(session.session_id)
-        await svc.send(session.session_id, "go")
+        turn_id = await svc.send(session.session_id, "go")
         await _drain(q, "approval_required")
-        assert await svc.cancel(session.session_id)
+        assert not await svc.cancel(session.session_id, expected_turn_id="previous-turn")
+        assert svc.is_running(session.session_id)
+        assert await svc.cancel(session.session_id, expected_turn_id=turn_id)
         events = await _drain(q, "turn_finished")
         assert events[-1]["payload"]["status"] == "cancelled"
         assert not (tmp_path / "a").exists()

@@ -35,6 +35,7 @@ from jarvis.core.instance import current_instance
 from jarvis.core.process_utils import ensure_standard_streams
 
 if TYPE_CHECKING:
+    from jarvis.ui.desktop_background import BackgroundStatus
     from jarvis.ui.web.server import WebServer
 
 # The main window's title doubles as its focus handle
@@ -1483,6 +1484,11 @@ class DesktopApp:
         self._tray: Any = None
         self._user_requested_quit = False
         self._window_visible = False
+        from jarvis.ui.desktop_background import BackgroundSession  # noqa: PLC0415
+
+        self._background = BackgroundSession()
+        self._main_window_lock = threading.RLock()
+        self._webview_persistent_profile = False
         # Voice stack (pipeline + orb overlay) — optional, can be disabled via
         # ENV JARVIS_VOICE=0. Defaults to on, so "Hey Jarvis" works
         # out-of-the-box when `run.bat` starts the desktop app.
@@ -1507,6 +1513,168 @@ class DesktopApp:
     def is_window_visible(self) -> bool:
         """Return whether voice activation is allowed for the desktop UI."""
         return bool(self._window is not None and self._window_visible)
+
+    def get_background_status(self) -> BackgroundStatus:
+        """Report the current session's close policy without native GUI calls."""
+        from jarvis.ui.desktop_background import native_background_reason  # noqa: PLC0415
+
+        state = getattr(self, "_background", None)
+        window = getattr(self, "_window", None)
+        window_open = window is not None or bool(getattr(self, "_detached_windows", {}))
+        enabled = bool(state is not None and state.enabled and state.alive)
+        stopped = getattr(self, "_shutdown_done", False)
+        stopping = getattr(self, "_user_requested_quit", False)
+        reason = None
+        if stopped:
+            reason = "stopped"
+        elif stopping:
+            reason = "stopping"
+        elif getattr(self, "_main_window_closing", False):
+            reason = "window_closing"
+        elif not getattr(self, "_webview_persistent_profile", False):
+            reason = "persistent_profile_unavailable"
+        elif state is not None and state.backend_failed:
+            reason = "backend_unavailable"
+        elif not getattr(getattr(self, "_tray", None), "ready", False):
+            reason = "tray_unavailable"
+        else:
+            native_window = window or (state.keeper if state is not None else None)
+            if native_window is None:
+                native_window = next(iter(getattr(self, "_detached_windows", {}).values()), None)
+            reason = native_background_reason(native_window)
+        return {
+            "available": reason is None,
+            "reason": reason,
+            "enabled": enabled,
+            "mode": (
+                "stopped" if stopped else "stopping" if stopping
+                else "background" if enabled and not window_open else "foreground"
+            ),
+            "window_open": window_open,
+        }
+
+    def set_background_mode(self, enabled: bool) -> BackgroundStatus:
+        """Arm an explicit session opt-in; native work belongs off the async loop."""
+        from jarvis.ui.desktop_background import BackgroundSession  # noqa: PLC0415
+
+        state = getattr(self, "_background", None)
+        if state is None:
+            state = self._background = BackgroundSession()
+        if not state.transition.acquire(blocking=False):
+            return {**self.get_background_status(), "reason": "transition_in_progress"}
+        try:
+            status = self.get_background_status()
+            if enabled:
+                if not status["available"] or status["enabled"]:
+                    return status
+                if threading.current_thread() is threading.main_thread():
+                    return {**status, "reason": "worker_thread_required"}
+                if state.keeper is not None:
+                    self._destroy_background_keeper()
+                    if state.keeper is not None:
+                        return {
+                            **status, "available": False,
+                            "reason": "hidden_window_cleanup_failed",
+                        }
+                import webview  # noqa: PLC0415 — optional desktop dependency
+
+                keeper = webview.create_window(
+                    f"{WINDOW_TITLE} — Background",
+                    html="<!doctype html><html><head><title></title></head><body></body></html>",
+                    hidden=True, focus=False, width=1, height=1, min_size=(1, 1),
+                    frameless=True, resizable=False, confirm_close=False,
+                )
+                if keeper is None:
+                    return {**status, "available": False, "reason": "hidden_window_unavailable"}
+                state.keeper = keeper
+                keeper.events.closed += lambda: self._on_background_keeper_closed(keeper)
+                # No app URL, session token, JS broker, or subscriptions enter
+                # this window. The acknowledged native window only owns the GUI loop.
+                if not keeper.events.shown.wait(timeout=2.0):
+                    self._destroy_background_keeper()
+                    return {**status, "available": False, "reason": "hidden_window_not_ready"}
+                keeper.hide()
+                if self._user_requested_quit or self._shutdown_done or not self._tray.ready:
+                    self._destroy_background_keeper()
+                    return self.get_background_status()
+                state.enabled = True
+            elif state.enabled:
+                # Never remove the sole keeper before a real control surface
+                # exists again: disabling background must not become an accidental quit.
+                if getattr(self, "_main_window_closing", False):
+                    return {**status, "reason": "window_closing"}
+                self._ensure_main_window()
+                shown = getattr(getattr(self._window, "events", None), "shown", None)
+                if self._window is None or shown is None or not shown.wait(timeout=2.0):
+                    return {**self.get_background_status(), "reason": "reopen_failed"}
+                self._destroy_background_keeper()
+            self._sync_background_tray()
+            return self.get_background_status()
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).warning("Background mode transition failed", exc_info=True)
+            if not state.enabled:
+                self._destroy_background_keeper()
+            return {**self.get_background_status(), "reason": "background_transition_failed"}
+        finally:
+            state.transition.release()
+
+    def _background_keeps_running(self) -> bool:
+        state = getattr(self, "_background", None)
+        return bool(
+            state is not None and state.enabled and state.alive
+            and not state.backend_failed
+            and not getattr(self, "_user_requested_quit", False)
+            and not getattr(self, "_shutdown_done", False)
+            and getattr(getattr(self, "_tray", None), "ready", False)
+        )
+
+    def _destroy_background_keeper(self) -> None:
+        state = getattr(self, "_background", None)
+        if state is None:
+            return
+        if not state.keeper_lock.acquire(blocking=False):
+            return
+        try:
+            state.enabled = False
+            keeper, state.keeper = state.keeper, None
+            if keeper is not None:
+                try:
+                    keeper.destroy()
+                except Exception:  # noqa: BLE001
+                    # Retain ownership so an explicit quit retries the destroy.
+                    state.keeper = keeper
+                    logging.getLogger(__name__).warning(
+                        "Background keeper teardown failed", exc_info=True,
+                    )
+        finally:
+            state.keeper_lock.release()
+
+    def _on_background_keeper_closed(self, keeper: Any) -> None:
+        state = getattr(self, "_background", None)
+        if state is not None and state.keeper is keeper:
+            state.keeper = None
+            state.enabled = False
+            if self._window is None and not self._detached_windows:
+                self._user_requested_quit = True
+            self._sync_background_tray()
+
+    def _sync_background_tray(self) -> None:
+        tray = getattr(self, "_tray", None)
+        update = getattr(tray, "set_background_mode", None)
+        if callable(update):
+            status = self.get_background_status()
+            update(status["mode"] if status["enabled"] else None)
+
+    def _background_control_lost(self) -> None:
+        """Restore a real window after tray loss, or finish a bounded full quit."""
+        state = getattr(self, "_background", None)
+        if state is None or not state.enabled:
+            return
+        result = self.set_background_mode(False)
+        if result["enabled"]:
+            self._user_requested_quit = True
+            self._arm_force_exit(after_s=20.0)
+            self._destroy_all_windows()
 
     # ---- Backend thread ------------------------------------------------------
 
@@ -2912,6 +3080,26 @@ class DesktopApp:
             logger.debug("Backend loop ended as part of shutdown ({}).", reason)
             return
 
+        background = getattr(self, "_background", None)
+        if background is not None and background.keeper is not None:
+            background.backend_failed = True
+            tray = getattr(self, "_tray", None)
+            if tray is not None:
+                tray.set_error("Backend stopped")
+            # Recovery already owns its restart budget. A keeper must not turn
+            # the no-window failure branch into a permanent invisible process.
+            if self._window is None and not self._detached_windows:
+                logger.critical(
+                    "Backend stopped in background mode ({}); exiting the owned shell.", reason,
+                )
+                self._user_requested_quit = True
+                self._arm_force_exit(after_s=20.0)
+                threading.Thread(
+                    target=self._destroy_all_windows,
+                    name="jarvis-background-failed", daemon=True,
+                ).start()
+                return
+
         started = getattr(self, "_backend_serving_since", None)
         served_s = 0.0 if started is None else time.monotonic() - started
         logger.critical(
@@ -3387,7 +3575,9 @@ class DesktopApp:
         )
 
         window = getattr(self, "_window", None)
-        if window is None and not self._detached_windows:
+        if window is None and not self._detached_windows and not getattr(
+            getattr(self, "_background", None), "keeper", None
+        ):
             return (False, "no desktop window to restart")
         try:
             import jarvis as _jarvis
@@ -3464,7 +3654,9 @@ class DesktopApp:
         from jarvis.ui.relauncher import run_restart_quit_sequence
 
         window = getattr(self, "_window", None)
-        if window is None and not self._detached_windows:
+        if window is None and not self._detached_windows and not getattr(
+            getattr(self, "_background", None), "keeper", None
+        ):
             return False
 
         def _mark_quit() -> None:
@@ -4409,7 +4601,7 @@ class DesktopApp:
         @app.post("/api/window/focus", include_in_schema=False)
         async def _focus() -> dict[str, Any]:
             desktop = getattr(app.state, "desktop_app", None)
-            if desktop is None or desktop._window is None:
+            if desktop is None:
                 return {"ok": False, "reason": "no_window"}
             try:
                 # Off the event loop: pywebview window methods are thread-safe
@@ -4432,7 +4624,10 @@ class DesktopApp:
         the off-loop contract without a running server.
         """
         if self._window is None:
-            return {"ok": False, "reason": "no_window"}
+            if getattr(getattr(self, "_background", None), "keeper", None) is not None:
+                self._ensure_main_window()
+            if self._window is None:
+                return {"ok": False, "reason": "no_window"}
         self._window.show()
         self._window.restore()
         self._window_visible = True
@@ -4567,7 +4762,13 @@ class DesktopApp:
         self._detached_windows.pop(view, None)
         self._publish_detached_event_threadsafe(view, opened=False)
         if not self._detached_windows and self._window is None:
-            self._user_requested_quit = True
+            if not self._background_keeps_running():
+                self._user_requested_quit = True
+                threading.Thread(
+                    target=self._destroy_background_keeper,
+                    name="jarvis-final-window-close", daemon=True,
+                ).start()
+        self._sync_background_tray()
 
     def _inject_into_secondary(self, window: Any, view: str) -> None:
         """Prime a freshly loaded detached window — ``loaded`` hook.
@@ -4661,6 +4862,7 @@ class DesktopApp:
             except Exception:  # noqa: BLE001, S110
                 # Teardown best-effort: the window may already be gone.
                 pass
+        self._destroy_background_keeper()
 
     def _main_window_kwargs(self) -> dict[str, Any]:
         """The main window's ``create_window`` kwargs — one source of truth.
@@ -4707,14 +4909,30 @@ class DesktopApp:
         """
         self._window = None
         self._window_visible = False
+        self._main_window_closing = False
         # getattr: this hook is also exercised against the minimal fakes the
         # window-lifecycle tests build, which carry only the attributes the
         # contract under test needs.
         watchdog = getattr(self, "_blank_watchdog", None)
         if watchdog is not None:
             watchdog.detach()
+        self._sync_background_tray()
 
     def _ensure_main_window(self) -> None:
+        """Serialize concurrent tray, focus-route, and background-mode reopen requests."""
+        lock = getattr(self, "_main_window_lock", None)
+        if lock is None:
+            lock = self._main_window_lock = threading.RLock()
+        with lock:
+            if (
+                getattr(self, "_user_requested_quit", False)
+                or getattr(self, "_shutdown_done", False)
+            ):
+                return
+            self._ensure_main_window_unlocked()
+            self._sync_background_tray()
+
+    def _ensure_main_window_unlocked(self) -> None:
         """Show the main window, recreating it if it was closed — tray thread.
 
         With detached windows, closing main no longer quits; the tray "Open"
@@ -4734,6 +4952,7 @@ class DesktopApp:
                 WINDOW_TITLE, self._url(), **self._main_window_kwargs()
             )
             self._hook_main_window_lifecycle()
+            self._window.events.loaded += lambda w=self._window: self._inject_reopened_main(w)
             self._window_visible = True
             # A window reopened from the tray can arrive blank for exactly the
             # same reasons as the boot one, so it gets the same guard.
@@ -4755,6 +4974,19 @@ class DesktopApp:
             pass
 
     # ---- WebView hooks -------------------------------------------------------
+
+    def _inject_reopened_main(self, window: Any) -> None:
+        """Reopen with the shared cookie, without replaying the consumed boot token."""
+        broker_token = json.dumps(self.realtime_transport_broker_token)
+        try:
+            window.evaluate_js(
+                "window.__JARVIS_EMBEDDED_DESKTOP = true;"
+                "Object.defineProperty(window, '__JARVIS_REALTIME_BROKER_TOKEN', {"
+                f"value: {broker_token}, configurable: true, writable: false"
+                "});window.dispatchEvent(new Event('jarvis-token-ready'));"
+            )
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).warning("Reopened window bridge unavailable", exc_info=True)
 
     def _inject_token(self, window: Any) -> None:
         """Offer the one-time process token to the UI session exchange.
@@ -5238,6 +5470,9 @@ class DesktopApp:
         # it away with the process. Only when no directory can be written does
         # the shell fall back to that private mode, and says so.
         storage_dir = webview_storage_dir()
+        # Private WebViews clear shared cookies when another window is created.
+        # Background mode must not strand an authenticated user after reopening.
+        self._webview_persistent_profile = storage_dir is not None
         if storage_dir is None:
             from loguru import logger as _profile_logger
 
@@ -5469,6 +5704,9 @@ class DesktopApp:
         thread-safe, but a dedicated bridge thread makes the ownership
         explicit and allows for back-pressure/debounce later.
         """
+        bridge = getattr(self, "_tray_bridge_thread", None)
+        if bridge is not None and bridge.is_alive():
+            return
         from jarvis.ui.tray import JarvisState, JarvisTray
 
         tray = JarvisTray()
@@ -5483,8 +5721,12 @@ class DesktopApp:
                 try:
                     cmd = cmd_queue.get(timeout=0.5)
                 except queue.Empty:
-                    # The idle case of a polling loop, not a failure: no command
-                    # arrived within the tick, so check the shutdown flag again.
+                    # With every client closed, this bridge is the remaining
+                    # observer of tray loss. Reuse its idle tick so a keeper
+                    # cannot strand execution without an Open/Quit surface.
+                    background = getattr(self, "_background", None)
+                    if background is not None and background.enabled and not tray.ready:
+                        self._background_control_lost()
                     continue
                 action = cmd.action
                 if action == "open_ui":
@@ -5502,13 +5744,19 @@ class DesktopApp:
                     self._publish_kill_requested_threadsafe()
                 elif action == "quit":
                     self._user_requested_quit = True
+                    self._arm_force_exit(after_s=20.0)
                     # Detached windows too: webview.start() returns only once
                     # the LAST window closes, so a survivor would keep a
                     # quit-flagged process running headless.
                     self._destroy_all_windows()
                     return
+                elif action == "tray_unavailable":
+                    self._background_control_lost()
 
-        threading.Thread(target=_bridge_loop, name="jarvis-tray-bridge", daemon=True).start()
+        self._tray_bridge_thread = threading.Thread(
+            target=_bridge_loop, name="jarvis-tray-bridge", daemon=True,
+        )
+        self._tray_bridge_thread.start()
 
     def _publish_kill_requested_threadsafe(self) -> None:
         """Publish ``KillRequested(source="tray")`` from a non-async thread.
@@ -5556,6 +5804,8 @@ class DesktopApp:
 
     def _safe_window_show(self) -> None:
         if self._window is None:
+            if getattr(getattr(self, "_background", None), "keeper", None) is not None:
+                self._ensure_main_window()
             return
         try:
             self._window.show()
@@ -5607,35 +5857,26 @@ class DesktopApp:
             # the user sees an error page that never refreshes.
             logger.warning("Could not reload the stale window: {}", exc)
 
-    # ---- Window close (X) = minimise to tray + clear overlay ---------------
+    # ---- Window close: explicit quit unless the session opted into background ----
 
     def _on_window_closing(self) -> bool:
-        """pywebview ``closing`` callback: the X (close) fully QUITS Jarvis.
+        """Destroy the actual client window, preserving only an explicit opt-in.
 
-        User mandate (2026-07-01): closing the desktop window must tear
-        EVERYTHING down — tray icon, JarvisBar overlay, voice pipeline, backend
-        server, child subprocesses and the process itself — not merely hide to
-        tray. To keep Jarvis running in the background (so "Hey Jarvis" stays
-        live) the user MINIMISES the window instead of closing it.
-
-        ONE exception (detachable views, 2026-08-07): while a detached solo
-        window is open, the X closes ONLY the main window — the user split that
-        view off precisely to keep using it without the main app. The mandate's
-        real content ("nothing lingers once the user is done") moves to the
-        LAST window: ``webview.start()`` returns only when every window is
-        gone, and ``_on_detached_closed`` sets the quit flag when the final one
-        goes. With no detached windows this method is byte-identical to before.
-
-        We mark the quit and return ``True`` so pywebview destroys the window;
-        ``webview.start()`` then returns and :meth:`run_window_only` runs
-        :meth:`shutdown` (stops every surface) followed by a hard-exit backstop
-        that guarantees the process actually dies even if a native thread
-        (WebView2/Tk teardown, a wedged ctranslate2 transcribe — AP-24) would
-        otherwise keep it — and its tray icon — alive (forensic 2026-06-27: a
-        hung shutdown kept the old process ~30 min).
+        Default close still quits once the last real window closes. A session
+        that deliberately armed background mode keeps only its blank native
+        keeper and verified tray; the closed client's canvas and subscriptions
+        are released. Explicit Quit always overrides the background preference.
         """
-        if not self._detached_windows:
+        self._main_window_closing = True
+        if not self._detached_windows and not self._background_keeps_running():
             self._user_requested_quit = True
+            if getattr(getattr(self, "_background", None), "keeper", None) is not None:
+                # The closing event waits for us; native destruction must run
+                # after this callback releases the GUI thread.
+                threading.Thread(
+                    target=self._destroy_background_keeper,
+                    name="jarvis-background-close", daemon=True,
+                ).start()
         return True
 
     def _suppress_overlay_for_hidden_window(self) -> None:
@@ -5731,6 +5972,7 @@ class DesktopApp:
             return 0
         self._shutdown_done = True
         self._window_visible = False
+        self._destroy_background_keeper()
 
         # A shutting-down backend fails every health probe by design; without
         # this the guard would read the teardown as a blank-window incident and
@@ -5959,6 +6201,14 @@ class DesktopApp:
 
                 _logger.warning("Tray icon did not stop cleanly: {}", exc)
             self._tray = None
+
+        bridge = getattr(self, "_tray_bridge_thread", None)
+        if bridge is not None and bridge is not threading.current_thread():
+            bridge.join(timeout=2.0)
+            if bridge.is_alive():
+                logging.getLogger(__name__).warning(
+                    "Tray command bridge did not stop within two seconds",
+                )
 
         try:
             META_FILE_PATH.unlink(missing_ok=True)

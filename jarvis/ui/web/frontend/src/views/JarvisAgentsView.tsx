@@ -60,6 +60,16 @@ const MODE_KEY = "jarvis.agents.mode.v2";
 const WorldStage = lazy(() =>
   import("@/components/society/world/WorldStage").then((m) => ({ default: m.WorldStage })),
 );
+const MarsWorldStage = lazy(() =>
+  import("@/components/society/mars/MarsWorldStage").then((m) => ({ default: m.MarsWorldStage })),
+);
+const MarsStationPanel = lazy(() =>
+  import("@/components/society/mars/MarsStationPanel").then((m) => ({ default: m.MarsStationPanel })),
+);
+
+function readMarsPreview(): boolean {
+  return new URLSearchParams(window.location.search).get("world") === "mars";
+}
 function readMode(): AgentsMode {
   if (!detectWebgl()) return "ledger";
   try {
@@ -83,21 +93,36 @@ function writeMode(mode: AgentsMode): void {
   }
 }
 
-function ModeSwitch({ mode, onChange }: { mode: AgentsMode; onChange: (m: AgentsMode) => void }) {
+function ModeSwitch({ mode, onChange, mars, onMars, onStation }: {
+  mode: AgentsMode;
+  onChange: (m: AgentsMode) => void;
+  mars: boolean;
+  onMars: () => void;
+  onStation: () => void;
+}) {
   const t = useT();
   const ready = useLocaleChunk("society");
   if (!ready) return null;
   return (
-    <div className="rounded-md border border-border bg-popover p-0.5 shadow-float">
+    <div className="flex items-center gap-1 rounded-md border border-border bg-popover p-0.5 shadow-float">
       <SegmentedFilter<AgentsMode>
         value={mode}
         onChange={onChange}
         label={t("society.world.mode_label")}
         options={[
-          { id: "world", label: t("society.world.mode_world") },
+          { id: "world", label: t(mars ? "society.mars.colony" : "society.world.mode_world") },
           { id: "ledger", label: t("society.world.mode_ledger") },
         ]}
       />
+      <button
+        type="button"
+        className="rounded px-2 py-1 text-xs text-foreground hover:bg-accent focus-visible:outline focus-visible:outline-2"
+        aria-pressed={mars}
+        onClick={onMars}
+      >
+        {t(mars ? "society.mars.previous_world" : "society.mars.open_preview")}
+      </button>
+      {mars && mode === "ledger" && <button type="button" onClick={onStation} className="rounded px-2 py-1 text-xs text-foreground hover:bg-accent">{t("society.mars.station_title")}</button>}
     </div>
   );
 }
@@ -128,6 +153,18 @@ export function JarvisAgentsView({ onSelectAgent, onSelectPlace }: JarvisAgentsV
   // rather than a node so the page follows the row through live updates.
   const [openTraceId, setOpenTraceId] = useState<string | null>(null);
   const [mode, setMode] = useState<AgentsMode>(readMode);
+  const [marsPreview, setMarsPreview] = useState(readMarsPreview);
+  const [stationOpen, setStationOpen] = useState(false);
+  const openStation = useCallback(() => setStationOpen(true), []);
+  const switchMarsPreview = useCallback(() => {
+    const next = !marsPreview;
+    setMarsPreview(next);
+    const url = new URL(window.location.href);
+    if (next) url.searchParams.set("world", "mars");
+    else url.searchParams.delete("world");
+    window.history.replaceState(window.history.state, "", url);
+    setMode(detectWebgl() ? "world" : "ledger");
+  }, [marsPreview]);
   const switchMode = useCallback((next: AgentsMode) => {
     writeMode(next);
     setMode(next);
@@ -256,24 +293,35 @@ export function JarvisAgentsView({ onSelectAgent, onSelectPlace }: JarvisAgentsV
     );
   }
 
-  const modeSwitch = <ModeSwitch mode={mode} onChange={switchMode} />;
+  const modeSwitch = (
+    <ModeSwitch mode={mode} onChange={switchMode} mars={marsPreview} onMars={switchMarsPreview} onStation={openStation} />
+  );
 
   if (mode === "world") {
     return (
       <div className="h-full min-h-0">
         <Suspense fallback={<WorldLoading />}>
+          {marsPreview ? <MarsWorldStage
+            topRight={modeSwitch}
+            onOpenLedger={() => switchMode("ledger")}
+            onSelectAgent={onSelectAgent}
+            onOpenStation={openStation}
+            stationPanel={stationOpen ? <MarsStationPanel onClose={() => setStationOpen(false)} onOpenAgent={onSelectAgent} /> : undefined}
+          /> : (
           <WorldStage
             topRight={modeSwitch}
             onOpenLedger={() => switchMode("ledger")}
             onSelectAgent={onSelectAgent}
             onSelectPlace={onSelectPlace}
           />
+          )}
         </Suspense>
       </div>
     );
   }
 
   return (
+    <div className="relative h-full min-h-0">
     <DepartureBoard
       agents={nodesList}
       snapshotError={snapshotError}
@@ -282,5 +330,9 @@ export function JarvisAgentsView({ onSelectAgent, onSelectPlace }: JarvisAgentsV
       onOpen={onOpen}
       headerActions={modeSwitch}
     />
+    {marsPreview && stationOpen && <div className="absolute right-4 top-16 z-20 max-h-[calc(100%-5rem)] w-[min(24rem,calc(100%-2rem))] overflow-auto" data-mars-ui>
+      <Suspense fallback={null}><MarsStationPanel onClose={() => setStationOpen(false)} onOpenAgent={onSelectAgent} /></Suspense>
+    </div>}
+    </div>
   );
 }

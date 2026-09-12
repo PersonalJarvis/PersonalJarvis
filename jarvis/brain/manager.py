@@ -98,7 +98,7 @@ from jarvis.voice.action_phrases import (
 )
 from jarvis.voice.contextual_readback import render_readback
 
-from .action_honesty import replace_unbacked_action_claim
+from .action_honesty import has_unbacked_action_claim, replace_unbacked_action_claim
 from .assistant_name import (
     DEFAULT_ASSISTANT_NAME,
     resolve_assistant_name,
@@ -12475,8 +12475,11 @@ class BrainManager:
                     self._evidence_required_is_write,
                 )
                 response_text = _replacement
+                if turn_override is not None:
+                    turn_override.receipt.mark_guard_failure("mandated_tool_unfulfilled")
 
         execution_evidence = set(_turn_executed)
+        full_action_fallback = not execution_evidence and has_unbacked_action_claim(response_text)
         honest_response = replace_unbacked_action_claim(
             response_text,
             executed_tools=execution_evidence,
@@ -12487,6 +12490,8 @@ class BrainManager:
                 "Blocked a model action promise with no execution evidence."
             )
             response_text = honest_response
+            if full_action_fallback and turn_override is not None:
+                turn_override.receipt.mark_guard_failure("unbacked_action_claim")
 
         # 4. History + Events
         if use_history:
