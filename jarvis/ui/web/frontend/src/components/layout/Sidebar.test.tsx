@@ -140,11 +140,8 @@ describe("Sidebar voice header", () => {
   });
 });
 
-/*
- * "+ New" starts a conversation of the KIND on screen. Standing on the voice
- * stage and being thrown onto the chat page was the reported bug: the button
- * looked like it did nothing you asked for.
- */
+// New chat must let users choose either surface without changing the current
+// conversation until they make a choice.
 describe("Sidebar new-conversation button", () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -175,12 +172,16 @@ describe("Sidebar new-conversation button", () => {
     useEventStore.setState({ conversations: [], messages: [], activeThreadId: null });
   });
 
-  test("New chat opens typed chat even from the voice stage", async () => {
+  test("offers both kinds and opens typed chat from the voice stage", async () => {
     useHomeStore.setState({ surface: "voice", transcript: [] });
     renderSidebar();
     const button = screen.getByTestId("sidebar-new-chat");
     expect(button.textContent).toContain("New chat");
     await act(async () => { button.click(); await Promise.resolve(); });
+    expect(useHomeStore.getState().surface).toBe("voice");
+    expect(useEventStore.getState().activeThreadId).toBe("old-voice-thread");
+    expect(screen.getByTestId("new-voice-chat")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("new-text-chat"));
     expect(useHomeStore.getState().surface).toBe("chat");
     expect(useEventStore.getState().activeSection).toBe("chats");
   });
@@ -197,10 +198,40 @@ describe("Sidebar new-conversation button", () => {
       button.click();
       await Promise.resolve();
     });
+    fireEvent.click(screen.getByTestId("new-text-chat"));
 
     expect(useHomeStore.getState().surface).toBe("chat");
     const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
     expect(calls.some((c) => String(c[0]) === "/api/chats/voice/new")).toBe(false);
+  });
+
+  test("opens a fresh voice chat from the chat surface", async () => {
+    useHomeStore.setState({ surface: "chat", transcript: [], liveReply: "Previous reply" });
+    renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-new-chat"));
+    await act(async () => { fireEvent.click(screen.getByTestId("new-voice-chat")); });
+    expect(fetch).toHaveBeenCalledWith("/api/chats/voice/new", { method: "POST" });
+    expect(useHomeStore.getState().surface).toBe("voice");
+    expect(useHomeStore.getState().liveReply).toBe("");
+    expect(useEventStore.getState().activeSection).toBe("chats");
+    expect(useEventStore.getState().activeKind).toBe("voice");
+    expect(useEventStore.getState().activeThreadId).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  test("keeps the current conversation if creating a voice chat fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      String(url) === "/api/chats/voice/new"
+        ? new Response("", { status: 503 })
+        : new Response(JSON.stringify([]), { status: 200 }),
+    ));
+    useHomeStore.setState({ surface: "chat", transcript: [] });
+    renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-new-chat"));
+    await act(async () => { fireEvent.click(screen.getByTestId("new-voice-chat")); });
+    expect(useHomeStore.getState().surface).toBe("chat");
+    expect(useEventStore.getState().activeThreadId).toBe("old-voice-thread");
+    expect(screen.getByRole("dialog")).toBeTruthy();
   });
 });
 
@@ -722,7 +753,7 @@ describe("compact sidebar navigation", () => {
 
   test("keeps core destinations above visible recent chats", () => {
     renderSidebar();
-    for (const id of ["agents", "chats", "tasks", "plugins", "marketplace"]) {
+    for (const id of ["agents", "dictation", "tasks", "plugins", "marketplace"]) {
       expect(screen.getByTestId(`nav-row-${id}`)).toBeTruthy();
     }
     expect(screen.getByTestId("recent-chats")).toBeTruthy();
@@ -734,10 +765,11 @@ describe("compact sidebar navigation", () => {
     useHomeStore.setState({ surface: "chat" });
     renderSidebar();
     expect(screen.queryByTestId("nav-row-visualization")).toBeNull();
-    fireEvent.click(screen.getByTestId("nav-row-chats"));
-    expect(useHomeStore.getState().surface).toBe("voice");
-    expect(useEventStore.getState().activeSection).toBe("chats");
+    fireEvent.click(screen.getByTestId("nav-row-dictation"));
+    expect(useHomeStore.getState().surface).toBe("chat");
+    expect(useEventStore.getState().activeSection).toBe("dictation");
     fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
+    expect(screen.getAllByTestId("nav-row-dictation")).toHaveLength(1);
     fireEvent.click(screen.getByTestId("nav-row-visualization"));
     expect(useEventStore.getState().activeSection).toBe("visualization");
   });

@@ -1,5 +1,6 @@
 import {
   Loader2,
+  MessageSquare,
   Mic,
   ChevronDown,
   ChevronRight,
@@ -37,6 +38,8 @@ import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
 import { useAppInstance } from "@/hooks/useAppInstance";
 import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
+import * as Dialog from "@radix-ui/react-dialog";
+import { startNewVoiceRun } from "@/lib/chatsApi";
 
 /*
  * Why `clsx` and not `cn` on the rows below.
@@ -180,10 +183,7 @@ export function Sidebar({
   // confused; the default app shows nothing here.
   const appInstance = useAppInstance();
   const devTag = appInstance?.isDev ? appInstance.name.toUpperCase() : null;
-  // "+ New" starts a new conversation of the KIND you are looking at: on the
-  // chat surface an empty agent chat, on the voice stage a fresh voice run.
-  // Sending someone standing in Voice to the chat page is what the one button
-  // used to do, and it read as the button being broken.
+  // New chat offers both conversation types independently of the current view.
   const { newChat } = useConversations();
   const newAgentChat = useAgentChatStore((s) => s.newChat);
   const setSurface = useHomeStore((s) => s.setSurface);
@@ -230,6 +230,9 @@ export function Sidebar({
   const [toolsOpen, setToolsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [newChatOpen, setNewChatOpen] = useState(false);
+  const [startingVoice, setStartingVoice] = useState(false);
+  const startingVoiceRef = useRef(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const profileButtonRef = useRef<HTMLButtonElement>(null);
   const identity = usePublishIdentity();
@@ -259,6 +262,31 @@ export function Sidebar({
     newAgentChat();
     setSurface("chat");
     setActive("chats");
+    setNewChatOpen(false);
+  };
+  const startVoiceChat = async () => {
+    if (startingVoiceRef.current) return;
+    startingVoiceRef.current = true;
+    setStartingVoice(true);
+    try {
+      await startNewVoiceRun();
+      newAgentChat();
+      const events = useEventStore.getState();
+      events.setActiveConversation("voice", null);
+      events.setMessages([]);
+      events.seedThinkingTraces({});
+      events.setTranscription("", true);
+      useHomeStore.getState().resetTranscript();
+      useHomeStore.setState({ freshVoicePending: false });
+      setSurface("voice");
+      setActive("chats");
+      setNewChatOpen(false);
+    } catch {
+      useEventStore.getState().pushToast("error", `${t("sidebar.new_voice_chat")}: ${t("voice_state.error")}`);
+    } finally {
+      startingVoiceRef.current = false;
+      setStartingVoice(false);
+    }
   };
   // Shared readiness derivation (same source the banner + chat empty-state use).
   const { connected, voiceWarming, bootWarming, warming } = useVoiceReadiness();
@@ -359,8 +387,9 @@ export function Sidebar({
   const findItem = (id: string) => allItems.find((item) => item.id === id)!;
   const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis", "agentic-ide"];
   const toolItems = toolIds.map(findItem);
-  const profileItems = [...NAV_GROUPS[3], ...NAV_GROUPS[4], ...NAV_FOOTER_ITEMS];
-  const primaryIds = ["chats", "agents", "tasks", "plugins", "marketplace"];
+  const primaryIds = ["chats", "agents", "dictation", "tasks", "plugins", "marketplace"];
+  const profileItems = [...NAV_GROUPS[3], ...NAV_GROUPS[4], ...NAV_FOOTER_ITEMS]
+    .filter((item) => !primaryIds.includes(item.id));
   const assignedIds = new Set([...primaryIds, ...toolIds, ...profileItems.map((item) => item.id)]);
   const moreItems = [...toolItems, ...allItems.filter((item) => !assignedIds.has(item.id))];
   const rowClass = "flex min-h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -509,15 +538,30 @@ export function Sidebar({
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
         <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
           <ul className="space-y-1">
-            <li><button type="button" onClick={startNewChat} data-testid="sidebar-new-chat"
+            <li><Dialog.Root open={newChatOpen} onOpenChange={(open) => { if (!startingVoiceRef.current) setNewChatOpen(open); }}>
+              <Dialog.Trigger asChild><button type="button" data-testid="sidebar-new-chat"
               aria-label={t("sidebar.new_chat")} title={t("sidebar.new_chat")} className={rowClass}>
               <Plus aria-hidden className="h-4 w-4 shrink-0" />
               {!railed && <span>{t("sidebar.new_chat")}</span>}
-            </button></li>
+              </button></Dialog.Trigger>
+              <Dialog.Portal>
+                <Dialog.Overlay className="fixed inset-0 z-[80] bg-background/80 backdrop-blur-sm" />
+                <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[90] w-[min(360px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl">
+                  <Dialog.Title className="mb-4 text-lg font-semibold">{t("sidebar.new_chat")}</Dialog.Title>
+                  <div className="space-y-2">
+                    <button type="button" data-testid="new-text-chat" disabled={startingVoice} onClick={startNewChat} className={cn(rowClass, "border border-border py-3 disabled:opacity-50")}>
+                      <MessageSquare aria-hidden className="h-5 w-5" />{t("sidebar.surface_chat")}
+                    </button>
+                    <button type="button" data-testid="new-voice-chat" disabled={startingVoice} onClick={() => void startVoiceChat()} className={cn(rowClass, "border border-border py-3 disabled:opacity-50")}>
+                      {startingVoice ? <Loader2 aria-hidden className="h-5 w-5 animate-spin" /> : <Mic aria-hidden className="h-5 w-5" />}{t("sidebar.new_voice_chat")}
+                    </button>
+                  </div>
+                  <Dialog.Close disabled={startingVoice} className={cn(rowClass, "mt-3 justify-center disabled:opacity-50")}>{t("common.cancel")}</Dialog.Close>
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root></li>
             {renderRow(findItem("agents"))}
-            <NavRow item={{ ...findItem("chats"), icon: Mic }} label="Jarvis Voice" compact={railed}
-              active={active === "chats" && surface === "voice"}
-              onClick={() => { setSurface("voice"); setActive("chats"); }} />
+            {renderRow(findItem("dictation"))}
           </ul>
           <button type="button" onClick={() => { setToolsOpen(!toolsOpen); setMoreOpen(false); }}
             aria-expanded={toolsOpen} aria-controls="sidebar-tools" title={t("sidebar.jarvis_tools")}
