@@ -70,6 +70,12 @@ class NativeWindow:
         u.PostMessageW.restype = wintypes.BOOL
         u.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
         u.ClientToScreen.restype = wintypes.BOOL
+        u.ScreenToClient.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+        u.ScreenToClient.restype = wintypes.BOOL
+        u.ChildWindowFromPointEx.argtypes = [wintypes.HWND, wintypes.POINT, wintypes.UINT]
+        u.ChildWindowFromPointEx.restype = wintypes.HWND
+        u.IsChild.argtypes = [wintypes.HWND, wintypes.HWND]
+        u.IsChild.restype = wintypes.BOOL
         u.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
         u.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
 
@@ -100,6 +106,7 @@ class NativeWindow:
             self.hwnd = max(candidates)[1]
         if not self.hwnd:
             raise RuntimeError("The owned Chrome window is unavailable")
+        self.input_hwnd = self.hwnd
         capture = WindowsCapture(
             window_hwnd=self.hwnd,
             cursor_capture=False,
@@ -169,10 +176,95 @@ class NativeWindow:
         u.GetWindowTextW(self.hwnd, title, len(title))
         return title.value
 
+    def brand(self, icon_path: str) -> bool:
+        """Mark the taskbar button with the Jarvis icon; never delay first pixels."""
+        from uuid import UUID
+
+        c, w, u = self.ctypes, self.wintypes, self.user32
+        ole = c.WinDLL("ole32")
+        ole.CoInitializeEx.argtypes = [c.c_void_p, w.DWORD]
+        ole.CoInitializeEx.restype = c.c_long
+        ole.CoCreateInstance.argtypes = [
+            c.c_void_p,
+            c.c_void_p,
+            w.DWORD,
+            c.c_void_p,
+            c.POINTER(c.c_void_p),
+        ]
+        ole.CoCreateInstance.restype = c.c_long
+        ole.CoUninitialize.argtypes = []
+        u.LoadImageW.argtypes = [w.HINSTANCE, w.LPCWSTR, w.UINT, c.c_int, c.c_int, w.UINT]
+        u.LoadImageW.restype = w.HANDLE
+        u.DestroyIcon.argtypes = [w.HICON]
+        u.DestroyIcon.restype = w.BOOL
+        initialized = ole.CoInitializeEx(None, 2)
+        pointer = c.c_void_p()
+        icon = None
+        try:
+            self._check_owner()
+            clsid = c.create_string_buffer(UUID("56fdf344-fd6d-11d0-958a-006097c9a090").bytes_le)
+            iid = c.create_string_buffer(UUID("ea1afb91-9e28-4b86-90e9-9e9f8a5eefaf").bytes_le)
+            if ole.CoCreateInstance(clsid, None, 1, iid, c.byref(pointer)) < 0:
+                raise RuntimeError("Taskbar icon interface is unavailable")
+            table = c.cast(pointer, c.POINTER(c.POINTER(c.c_void_p))).contents
+            initialize = c.WINFUNCTYPE(c.c_long, c.c_void_p)(table[3])
+            overlay = c.WINFUNCTYPE(c.c_long, c.c_void_p, w.HWND, w.HICON, w.LPCWSTR)(table[18])
+            if initialize(pointer) < 0:
+                raise RuntimeError("Taskbar icon initialization failed")
+            icon = u.LoadImageW(None, icon_path, 1, 16, 16, 0x10)
+            if not icon:
+                raise RuntimeError("Jarvis browser icon could not be loaded")
+            if overlay(pointer, self.hwnd, icon, "Jarvis Browser") < 0:
+                raise RuntimeError("Jarvis browser badge could not be applied")
+            return True
+        except Exception:
+            log.warning("Jarvis browser badge unavailable", exc_info=True)
+            return False
+        finally:
+            if icon:
+                u.DestroyIcon(icon)
+            if pointer:
+                table = c.cast(pointer, c.POINTER(c.POINTER(c.c_void_p))).contents
+                c.WINFUNCTYPE(w.ULONG, c.c_void_p)(table[2])(pointer)
+            if initialized in (0, 1):
+                ole.CoUninitialize()
+
     def post(self, message: int, key: int, value: int = 1) -> None:
+        self.post_to(self.hwnd, message, key, value)
+
+    def post_to(self, target: int, message: int, key: int, value: int = 1) -> None:
         self._check_owner()
-        if not self.user32.PostMessageW(self.hwnd, message, key, value):
+        owner = self.wintypes.DWORD()
+        self.user32.GetWindowThreadProcessId(target, self.ctypes.byref(owner))
+        if owner.value != self.pid or (
+            target != self.hwnd and not self.user32.IsChild(self.hwnd, target)
+        ):
+            raise RuntimeError("Chrome input target is no longer available")
+        if not self.user32.PostMessageW(target, message, key, value):
             raise RuntimeError("Chrome could not receive this input")
+
+    def click_target(self, x: int, y: int) -> tuple[int, int, int]:
+        """Map captured frame pixels to the owned native widget under the point."""
+        c, w, u = self.ctypes, self.wintypes, self.user32
+        bounds = w.RECT()
+        dwm = c.WinDLL("dwmapi")
+        dwm.DwmGetWindowAttribute.argtypes = [w.HWND, w.DWORD, c.c_void_p, w.DWORD]
+        dwm.DwmGetWindowAttribute.restype = c.c_long
+        if dwm.DwmGetWindowAttribute(self.hwnd, 9, c.byref(bounds), c.sizeof(bounds)):
+            raise RuntimeError("Chrome frame geometry is unavailable")
+        screen_x, screen_y = bounds.left + x, bounds.top + y
+        target = self.hwnd
+        for _ in range(16):
+            point = w.POINT(screen_x, screen_y)
+            if not u.ScreenToClient(target, c.byref(point)):
+                raise RuntimeError("Chrome input coordinates are unavailable")
+            # Chromium's render host can be transparent for composition while
+            # still being the native keyboard/mouse input target.
+            child = u.ChildWindowFromPointEx(target, point, 3)
+            if not child or child == target:
+                return target, point.x, point.y
+            target = int(child)
+        raise RuntimeError("Chrome input widget nesting is invalid")
 
     def shortcut(self, key: int, modifiers: list[int]) -> None:
         """Apply modifiers to Chrome's input queue, never to the physical keyboard."""
@@ -180,7 +272,7 @@ class NativeWindow:
         kernel = c.WinDLL("kernel32", use_last_error=True)
         kernel.GetCurrentThreadId.restype = w.DWORD
         current = kernel.GetCurrentThreadId()
-        target = u.GetWindowThreadProcessId(self.hwnd, None)
+        target = u.GetWindowThreadProcessId(self.input_hwnd, None)
         u.AttachThreadInput.argtypes = [w.DWORD, w.DWORD, w.BOOL]
         u.AttachThreadInput.restype = w.BOOL
         u.GetKeyboardState.argtypes = [c.POINTER(w.BYTE)]
@@ -209,7 +301,7 @@ class NativeWindow:
             result = c.c_size_t()
             for message, bits in ((0x100, 1), (0x101, 0xC0000001)):
                 if not u.SendMessageTimeoutW(
-                    self.hwnd, message, key, bits, 3, 200, c.byref(result)
+                    self.input_hwnd, message, key, bits, 3, 200, c.byref(result)
                 ):
                     raise RuntimeError("Chrome did not respond to the keyboard shortcut")
         finally:
@@ -225,19 +317,24 @@ class NativeWindow:
             # Deliver focus to Chrome's widget without changing OS foreground
             # focus; otherwise its background omnibox can discard typed text.
             self.post(0x6, 1, 0)
-            self.post(0x7, 0, 0)
             if op == "click":
                 x, y = int(args["x"]), int(args["y"])
                 frame = self.frame()
                 if not frame or not (0 <= x < frame["width"] and 0 <= y < frame["height"]):
                     raise ValueError("Click is outside the Chrome window")
-                self.post(0x200, 0, (y << 16) | (x & 0xFFFF))
-                self.post(0x201, 1, (y << 16) | (x & 0xFFFF))
-                self.post(0x202, 0, (y << 16) | (x & 0xFFFF))
+                target, x, y = self.click_target(x, y)
+                self.input_hwnd = target
+                self.post_to(target, 0x7, 0, 0)
+                self.post_to(target, 0x200, 0, (y << 16) | (x & 0xFFFF))
+                self.post_to(target, 0x201, 1, (y << 16) | (x & 0xFFFF))
+                self.post_to(target, 0x202, 0, (y << 16) | (x & 0xFFFF))
             elif op == "text":
+                self.post_to(self.input_hwnd, 0x7, 0, 0)
                 encoded = str(args["text"]).encode("utf-16-le")
                 for i in range(0, len(encoded), 2):
-                    self.post(0x102, int.from_bytes(encoded[i : i + 2], "little"))
+                    self.post_to(
+                        self.input_hwnd, 0x102, int.from_bytes(encoded[i : i + 2], "little")
+                    )
             elif op == "key":
                 # Chromium's chrome/app/chrome_command_ids.h: dispatch the
                 # native browser commands without a shared modifier-key state.
@@ -250,6 +347,8 @@ class NativeWindow:
                     "Control+Shift+Tab": 34017,
                 }
                 if args["key"] in commands:
+                    self.input_hwnd = self.hwnd
+                    self.post(0x7, 0, 0)
                     self.post(0x111, commands[args["key"]], 0)
                     return
                 keys = {
@@ -280,8 +379,8 @@ class NativeWindow:
                 if len(parts) > 1:
                     self.shortcut(key, [modifiers[part] for part in parts[:-1]])
                 else:
-                    self.post(0x100, key)
-                    self.post(0x101, key, 0xC0000001)
+                    self.post_to(self.input_hwnd, 0x100, key)
+                    self.post_to(self.input_hwnd, 0x101, key, 0xC0000001)
             elif op == "scroll":
                 delta = max(-1200, min(1200, int(-float(args.get("dy", 0)))))
                 point = self.wintypes.POINT(200, 200)

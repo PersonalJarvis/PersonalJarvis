@@ -299,6 +299,9 @@ class LiveSessions:
                         "profile_dir": str(folder / "browser-profile"),
                         "workspace": str(folder / "workspace"),
                         "executable": str(install.browser_executable(self.data_dir)),
+                        "icon_path": str(
+                            Path(__file__).parents[2] / "assets" / "icons" / "jarvis.ico"
+                        ),
                         "allowed_domains": list(agent.browser_allowed_domains),
                         "cdp_url": self.cdp_url
                         if str(getattr(agent, "browser_mode", "own")) == "attach"

@@ -25,6 +25,9 @@ export function useBrowserView(agentId: string) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const socket = useRef<WebSocket | null>(null);
   const [state, setState] = useState<BrowserViewState>(empty);
+  const manual = useRef(false);
+  const claiming = useRef(false);
+  const inputs = useRef<Array<{ op: string; args: Record<string, unknown> }>>([]);
   useEffect(() => {
     let disposed = false;
     let attempt = 0;
@@ -36,7 +39,9 @@ export function useBrowserView(agentId: string) {
     let lastLiveEvent = Date.now();
     let renderedFrames = 0;
     let latestFrame: { data: string; sequence: number; timestamp: number } | null = null;
-    const abort = new AbortController();
+    manual.current = false;
+    claiming.current = false;
+    inputs.current = [];
     setState(empty);
     const clearCanvas = () => {
       const el = canvas.current;
@@ -114,6 +119,14 @@ export function useBrowserView(agentId: string) {
               setState((s) => ({ ...s, manual: event.manual, running: event.running,
                 url: event.url, target: event.target, tabs: event.tabs ?? [], fullWindow: Boolean(event.full_window) }));
             } else if (event.kind === "control") {
+              if (typeof event.manual === "boolean") manual.current = event.manual;
+              if (claiming.current && (event.manual === true || !event.ok)) {
+                claiming.current = false;
+                const queued = inputs.current.splice(0);
+                if (event.ok && event.manual === true && ws.readyState === WebSocket.OPEN) {
+                  for (const input of queued) ws.send(JSON.stringify(input));
+                }
+              }
               setState((s) => ({ ...s, controlPending: false, error: event.ok ? "" : event.error,
                 manual: typeof event.manual === "boolean" ? event.manual : s.manual }));
             } else if (event.kind === "control_pending") {
@@ -136,6 +149,9 @@ export function useBrowserView(agentId: string) {
         ws.onclose = () => {
           if (disposed || socket.current !== ws) return;
           epoch++;
+          manual.current = false;
+          claiming.current = false;
+          inputs.current = [];
           setState((s) => ({ ...s, connected: false, manual: false, controlPending: false }));
           cancelConnect = requestConnect(() => void connect(), jitteredDelay(attempt++));
         };
@@ -147,13 +163,9 @@ export function useBrowserView(agentId: string) {
         cancelConnect = requestConnect(() => void connect(), jitteredDelay(attempt++));
       }
     };
-    void fetch("/api/society/agents/" + encodeURIComponent(agentId) + "/browser/session",
-      { method: "POST", signal: abort.signal }).then((response) => {
-        if (!response.ok) throw new Error("Browser setup " + response.status);
-        if (!disposed) cancelConnect = requestConnect(() => void connect());
-      }).catch((error) => {
-        if (!disposed) setState((s) => ({ ...s, error: String(error) }));
-      });
+    // subscribe() already provisions the runtime. Do not block first pixels
+    // behind a redundant setup request and a second roster/runtime lookup.
+    cancelConnect = requestConnect(() => void connect());
     // Static pages still send state heartbeats. A silent transport is not Live.
     const watchdog = setInterval(() => {
       if (socket.current?.readyState === WebSocket.OPEN && Date.now() - lastLiveEvent > 7500) {
@@ -164,7 +176,9 @@ export function useBrowserView(agentId: string) {
     return () => {
       disposed = true;
       epoch++;
-      abort.abort();
+      manual.current = false;
+      claiming.current = false;
+      inputs.current = [];
       clearInterval(watchdog);
       cancelConnect();
       const ws = socket.current;
@@ -183,6 +197,28 @@ export function useBrowserView(agentId: string) {
       return;
     }
     if (socket.current?.readyState !== WebSocket.OPEN) return;
+    if (["click", "scroll", "text", "key"].includes(op) && !manual.current) {
+      if (inputs.current.length >= 128) {
+        setState((s) => ({ ...s, error: "Waiting for browser control; input queue is full" }));
+        return;
+      }
+      inputs.current.push({ op, args });
+      if (!claiming.current) {
+        claiming.current = true;
+        setState((s) => ({ ...s, controlPending: true }));
+        socket.current.send(JSON.stringify({ op: "takeover", args: { enabled: true } }));
+      }
+      return;
+    }
+    if (op === "takeover" && args.enabled === false) {
+      inputs.current = [];
+      claiming.current = false;
+      manual.current = false;
+    } else if (op === "takeover" && args.enabled === true) {
+      if (claiming.current) return;
+      claiming.current = true;
+      setState((s) => ({ ...s, controlPending: true }));
+    }
     socket.current.send(JSON.stringify({ op, args }));
   }, [agentId]);
   const approve = useCallback(async (allow: boolean) => {

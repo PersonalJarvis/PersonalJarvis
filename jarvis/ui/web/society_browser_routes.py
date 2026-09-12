@@ -138,6 +138,8 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
     write_lock = asyncio.Lock()
 
     async def send(value: dict) -> None:
+        if "manual" in value and session is not None:
+            value = {**value, "manual": session.control_owner == owner}
         async with write_lock:
             async with asyncio.timeout(10):
                 await websocket.send_json(value)
