@@ -99,6 +99,77 @@ def test_override_keeps_connection_details_but_not_presentation(monkeypatch, tmp
     clear_cache()
 
 
+def test_slack_scopes_cover_channel_listing_and_canvas_drafts() -> None:
+    slack = _seed().by_id("slack")
+    assert slack is not None
+    assert {
+        "channels:read",
+        "groups:read",
+        "im:read",
+        "mpim:read",
+        "canvases:read",
+        "canvases:write",
+    } <= set(slack.auth.scopes)
+
+
+@pytest.mark.parametrize("custom", [None, "scopes", "client", "redirect", "server"])
+def test_slack_scope_upgrade_preserves_custom_auth_and_disk(monkeypatch, tmp_path, custom) -> None:
+    clear_cache()
+    seed = json.loads(catalog_data._PACKAGE_SEED_PATH.read_text(encoding="utf-8"))
+    plugin = next(item for item in seed["plugins"] if item["id"] == "slack")
+    plugin["auth"] = {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://slack.com/oauth/v2/authorize",
+        "token_url": "https://slack.com/api/oauth.v2.access",
+        "revocation_url": "https://slack.com/api/auth.revoke",
+        "client_id": "REPLACE_WITH_JARVIS_SLACK_APP_CLIENT_ID",
+        "callback_port": 3118,
+        "scopes": [
+            "chat:write",
+            "users:read",
+            "users:read.email",
+            "search:read.public",
+            "search:read.private",
+            "search:read.im",
+            "search:read.mpim",
+            "channels:history",
+            "groups:history",
+            "im:history",
+            "mpim:history",
+        ],
+        "user_scopes_only": True,
+        "refresh_supported": True,
+        "refresh_token_ttl_days": 30,
+    }
+    if custom == "scopes":
+        plugin["auth"]["scopes"] = ["chat:write"]
+    elif custom == "client":
+        plugin["auth"]["client_id"] = "custom-client"
+    elif custom == "redirect":
+        plugin["auth"]["callback_port"] = 3999
+    elif custom == "server":
+        plugin["mcp_server"]["url"] = "https://custom.example.test/mcp"
+    override = tmp_path / "plugin_catalog.json"
+    content = json.dumps({"version": 1, "schema_version": "old", "plugins": [plugin]})
+    override.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(catalog_data, "_DEFAULT_CATALOG_PATH", override)
+
+    slack = load_catalog().by_id("slack")
+
+    assert slack is not None
+    if custom:
+        from jarvis.marketplace.catalog import PluginCatalog
+
+        expected = PluginCatalog.model_validate(json.loads(content)).by_id("slack")
+        assert slack.auth == expected.auth
+        assert slack.mcp_server == expected.mcp_server
+    else:
+        assert "canvases:write" in slack.auth.scopes
+        assert "channels:read" in slack.auth.scopes
+    assert override.read_text(encoding="utf-8") == content
+    clear_cache()
+
+
 def test_stale_override_still_receives_plugins_added_to_the_seed(monkeypatch, tmp_path) -> None:
     """A new seed connector must reach installs that already have a data/ override.
 

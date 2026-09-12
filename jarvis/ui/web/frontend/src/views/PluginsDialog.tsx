@@ -8,9 +8,16 @@ import { McpsView } from "@/views/McpsView";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 /** The catalog floats over the user's current work; nested setup stays inside. */
-export function PluginsDialog({ onClose }: { onClose: () => void }) {
+export type PluginArea = "plugins" | "mcps" | "skills";
+
+export function PluginsDialog({ onClose, area = "plugins", onAreaChange }: {
+  onClose: () => void;
+  area?: PluginArea;
+  onAreaChange?: (area: PluginArea) => void;
+}) {
   const t = useT();
   const content = useRef<HTMLDivElement>(null);
+  const opener = useRef(document.activeElement);
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>
@@ -19,6 +26,20 @@ export function PluginsDialog({ onClose }: { onClose: () => void }) {
           data-testid="plugin-catalog-dialog"
           ref={content}
           aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            const previous = opener.current;
+            const target = previous instanceof HTMLElement && previous.isConnected && previous !== document.body
+              ? previous
+              : document.querySelector<HTMLElement>('[data-testid="nav-row-plugins"]')
+                ?? document.querySelector<HTMLElement>("main");
+            if (!target) return;
+            // This route-driven dialog has no Radix Trigger to restore focus to.
+            event.preventDefault();
+            const needsTabIndex = target.tagName === "MAIN" && !target.hasAttribute("tabindex");
+            if (needsTabIndex) target.setAttribute("tabindex", "-1");
+            target.focus({ preventScroll: true });
+            if (needsTabIndex) target.removeAttribute("tabindex");
+          }}
           onInteractOutside={(event) => {
             if (content.current?.querySelector('[aria-modal="true"]')) event.preventDefault();
           }}
@@ -34,11 +55,11 @@ export function PluginsDialog({ onClose }: { onClose: () => void }) {
               <X className="h-4 w-4" aria-hidden />
             </button>
           </Dialog.Close>
-          <Tabs defaultValue="plugins" className="flex min-h-0 flex-1 flex-col">
+          <Tabs defaultValue={area} value={onAreaChange ? area : undefined} onValueChange={(value) => onAreaChange?.(value as PluginArea)} className="flex min-h-0 flex-1 flex-col">
             <TabsList aria-label={t("nav.extensions")} className="mx-6 mb-2 mt-4 w-fit shrink-0 self-start">
-              <TabsTrigger value="skills">{t("nav.skills")}</TabsTrigger>
               <TabsTrigger value="plugins">{t("nav.plugins")}</TabsTrigger>
               <TabsTrigger value="mcps">{t("nav.mcps")}</TabsTrigger>
+              <TabsTrigger value="skills">{t("nav.skills")}</TabsTrigger>
             </TabsList>
             <TabsContent value="skills" className="mt-0 min-h-0 flex-1 overflow-hidden"><SkillsView /></TabsContent>
             <TabsContent value="plugins" className="mt-0 min-h-0 flex-1 overflow-hidden"><PluginsView inDialog /></TabsContent>

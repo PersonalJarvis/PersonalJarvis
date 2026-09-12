@@ -147,6 +147,22 @@ _LEGACY_PAT_AUTH_DIGESTS = {
     "stripe": "e19610b1b59a59ffe1e231e8d5adda082437eebb59cec1c2df215470c742dde4",
 }
 
+# Full shipped Slack auth block before channel listing and Canvas permissions.
+# Never widen a user's custom scopes, client, redirect, or server configuration.
+_LEGACY_SLACK_AUTH_DIGEST = "7222ece276d51c75bcdf6f8f0dc28412674950ef21301975b7870a73340c1de2"
+
+
+def _has_obsolete_slack_scopes(plugin: dict, seed_plugin: dict) -> bool:
+    auth = plugin.get("auth")
+    if plugin.get("id") != "slack" or not isinstance(auth, dict):
+        return False
+    digest = hashlib.sha256(
+        json.dumps(auth, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return digest == _LEGACY_SLACK_AUTH_DIGEST and plugin.get("mcp_server") == seed_plugin.get(
+        "mcp_server"
+    )
+
 
 def _has_obsolete_builtin_auth(plugin: dict, seed_plugin: dict) -> bool:
     auth = plugin.get("auth")
@@ -209,7 +225,10 @@ def _merge_with_seed(override: object, seed: object) -> object:
             merged_plugins.append(plugin)  # a purely local entry
             continue
         reconciled = dict(seed_plugin)
-        if not _has_obsolete_builtin_auth(plugin, seed_plugin):
+        if not (
+            _has_obsolete_builtin_auth(plugin, seed_plugin)
+            or _has_obsolete_slack_scopes(plugin, seed_plugin)
+        ):
             for field in _OVERRIDE_OWNED_FIELDS:
                 if field in plugin:
                     reconciled[field] = plugin[field]

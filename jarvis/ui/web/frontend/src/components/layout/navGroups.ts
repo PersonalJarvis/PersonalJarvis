@@ -125,11 +125,10 @@ export const NAV_GROUPS: NavItem[][] = [
   // 1) Workspace — what the user builds with and reads back.
   [
     { id: "agents", labelKey: "nav.agents", icon: Users },
-    // Skills & Plugins — Skills + Plugins + MCPs behind one tab switch. The id
-    // "skills" is the default landing (Skills tab); matchIds keeps the row
-    // highlighted for any of the fronted sections.
+    // The compact catalog opens on Plugins; direct section navigation selects
+    // its corresponding tab and keeps this shared row highlighted.
     {
-      id: "skills",
+      id: "plugins",
       labelKey: "nav.extensions",
       icon: Boxes,
       matchIds: ["skills", "plugins", "mcps"],

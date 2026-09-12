@@ -451,15 +451,15 @@ describe("Sidebar plugin reconnect indicator", () => {
     pluginAttentionMock.needsReconnect = false;
   });
 
-  test("shows an amber dot on Skills & Tools when a plugin needs reconnect", () => {
+  test("shows an amber dot on Plugins, MCPs & Skills when a plugin needs reconnect", () => {
     // A revoked / expired plugin must be visible app-wide, not only on the
     // Plugins page — the sidebar carries an amber dot on the row that fronts
-    // Plugins ("Skills & Tools", id "skills").
+    // Plugins ("Plugins, MCPs & Skills", id "plugins").
     pluginAttentionMock.needsReconnect = true;
 
     renderSidebar();
 
-    expect(screen.getByTestId("nav-warn-skills")).toBeTruthy();
+    expect(screen.getByTestId("nav-warn-plugins")).toBeTruthy();
   });
 
   test("no amber dot when every plugin is healthy", () => {
@@ -467,7 +467,7 @@ describe("Sidebar plugin reconnect indicator", () => {
 
     renderSidebar();
 
-    expect(screen.queryByTestId("nav-warn-skills")).toBeNull();
+    expect(screen.queryByTestId("nav-warn-plugins")).toBeNull();
   });
 });
 

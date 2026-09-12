@@ -203,12 +203,12 @@
     {
       "plugin_id": "slack",
       "result": "BLOCKED",
-      "config_fingerprint": "08473808291e74433e704897132081f86e058dae9bfeb339bab1bc097435ccc7",
+      "config_fingerprint": "b63622e53686a82209b37ee568201a59eab8feb3334371c770a17939d4e622ff",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Slack\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Repeated live Plugins UI inspection showed the four channel enumeration scopes and two Canvas scopes in plugin.json; Connect still displays publisher setup pending.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
@@ -578,9 +578,10 @@
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "2026-09-12: a read-only request submitted in Jarvis Chat executed google_drive action=list_files, max_results=1. The persisted tool_result reports is_error=false, duration_ms=571 and one returned file. This used the existing grant, not a newly verified authorization.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
         },
         "reconnect": {
           "status": "BLOCKED",
@@ -594,7 +595,7 @@
         }
       },
       "blocker": {
-        "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+        "reason": "Full clean-state authorization, disconnect/reconnect, restart persistence and fresh-install validation remain unverified. A real read-only action succeeded with the existing grant.",
         "owner": "Provider account holder",
         "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect Google Drive\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"

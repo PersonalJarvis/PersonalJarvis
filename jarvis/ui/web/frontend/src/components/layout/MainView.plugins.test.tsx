@@ -29,21 +29,30 @@ it("opens a bounded dialog while preserving the current draft and restores that 
   expect((screen.getByLabelText("Unsent message") as HTMLInputElement).value).toBe("Keep this draft");
 });
 
-it("does not replace Skills behind the dialog when the shared navigation state changes", async () => {
-  useEventStore.setState({ activeSection: "skills" });
+it("routes Skills and MCPs into the same dialog and keeps the original background", async () => {
   render(<MainView />);
-  const search = await screen.findByLabelText("Skill search");
-  fireEvent.change(search, { target: { value: "remembered search" } });
-  act(() => useEventStore.getState().setActiveSection("plugins"));
-  await screen.findByRole("dialog");
-  expect(screen.getByLabelText("Skill search")).toBe(search);
+  const draft = screen.getByLabelText("Unsent message");
+  draft.focus();
+  act(() => useEventStore.getState().setActiveSection("skills"));
+  await screen.findByLabelText("Skill search");
+  const dialog = screen.getByRole("dialog");
+  expect(screen.getByRole("tab", { name: "Skills" }).getAttribute("aria-selected")).toBe("true");
+  act(() => useEventStore.getState().setActiveSection("mcps"));
+  await screen.findByText("MCP content");
+  expect(screen.getByRole("dialog")).toBe(dialog);
+  expect(screen.getByRole("tab", { name: "MCPs" }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Plugins", "MCPs", "Skills"]);
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "Plugins" }), { button: 0, ctrlKey: false });
+  await screen.findByText("Catalog true");
+  expect(useEventStore.getState().activeSection).toBe("plugins");
+  expect(screen.getByLabelText("Unsent message")).toBe(draft);
   fireEvent.keyDown(document, { key: "Escape" });
-  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("skills"));
-  expect((screen.getByLabelText("Skill search") as HTMLInputElement).value).toBe("remembered search");
+  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("chats"));
+  await waitFor(() => expect(document.activeElement).toBe(draft));
 });
 
-it("provides a home background and a working close action for direct plugin navigation", async () => {
-  useEventStore.setState({ activeSection: "plugins" });
+it.each(["plugins", "mcps", "skills"] as const)("provides a home background and close action for direct %s navigation", async (activeSection) => {
+  useEventStore.setState({ activeSection });
   render(<MainView />);
   await screen.findByRole("dialog");
   fireEvent.click(screen.getByRole("button", { name: "Close" }));

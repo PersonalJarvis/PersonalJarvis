@@ -721,7 +721,7 @@ export function Sidebar({
                       alert={item.id === "apikeys" ? apikeysHasError : false}
                       alertTitle={t("sidebar.apikeys_alert")}
                       warn={
-                        item.id === "skills"
+                        item.id === "plugins"
                           ? pluginsNeedReconnect
                           : item.id === "local-models"
                             ? localModelsNeedAttention
@@ -732,13 +732,10 @@ export function Sidebar({
                           ? localModelsHealth?.detail || localModelsHealth?.reason || undefined
                           : pluginWarnTitle
                       }
-                      // A plugin problem sends the "Skills & Tools" row straight into
-                      // the Plugins tab (where the banner + jump button are), so one
-                      // click lands on the fix instead of the default Skills tab.
                       onClick={() => {
                         setSectionsShown(false);
                         setActive(
-                          item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
+                          item.id,
                         );
                       }}
                     >

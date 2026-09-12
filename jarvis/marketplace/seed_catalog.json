@@ -160,7 +160,13 @@
           "channels:history",
           "groups:history",
           "im:history",
-          "mpim:history"
+          "mpim:history",
+          "channels:read",
+          "groups:read",
+          "im:read",
+          "mpim:read",
+          "canvases:read",
+          "canvases:write"
         ],
         "user_scopes_only": true,
         "refresh_supported": true,

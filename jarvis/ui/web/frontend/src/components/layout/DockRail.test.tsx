@@ -165,23 +165,36 @@ describe("DockRail", () => {
     );
   });
 
-  test("a plugin that needs a reconnect lights Skills amber and sends the click to Plugins", () => {
+  test("a plugin that needs a reconnect marks the catalog amber and opens Plugins", () => {
     pluginAttentionMock.needsReconnect = true;
     renderRail();
-    const pip = screen.getByTestId("nav-warn-skills");
+    const pip = screen.getByTestId("nav-warn-plugins");
     expect(pip.getAttribute("aria-label")).toContain("Cloudflare");
     act(() => {
-      fireEvent.click(screen.getByTestId("nav-row-skills"));
+      fireEvent.click(screen.getByTestId("nav-row-plugins"));
     });
     expect(useEventStore.getState().activeSection).toBe("plugins");
   });
 
-  test("no amber pip when every plugin is healthy, and Skills lands on Skills", () => {
+  test.each(["hover", "focus"] as const)("shows the plugin reconnect hint on %s", (interaction) => {
+    pluginAttentionMock.needsReconnect = true;
     renderRail();
-    expect(screen.queryByTestId("nav-warn-skills")).toBeNull();
+    if (interaction === "hover") {
+      moveTo(screen.getByTestId("dock-rail"), centreOf(ITEMS.findIndex((item) => item.id === "plugins")));
+    } else {
+      fireEvent.focus(screen.getByTestId("nav-row-plugins"));
+    }
+    const label = screen.getByTestId("dock-label");
+    expect(label.textContent).toContain("Cloudflare");
+    expect(label.textContent).toContain("reconnect");
+  });
+
+  test("healthy catalog has no amber pip and defaults to Plugins", () => {
+    renderRail();
+    expect(screen.queryByTestId("nav-warn-plugins")).toBeNull();
     act(() => {
-      fireEvent.click(screen.getByTestId("nav-row-skills"));
+      fireEvent.click(screen.getByTestId("nav-row-plugins"));
     });
-    expect(useEventStore.getState().activeSection).toBe("skills");
+    expect(useEventStore.getState().activeSection).toBe("plugins");
   });
 });

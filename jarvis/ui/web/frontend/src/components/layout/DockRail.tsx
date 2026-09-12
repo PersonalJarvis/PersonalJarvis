@@ -32,7 +32,7 @@ import { useT } from "@/i18n";
  * icons back to a plain list. The list is the sidebar's own `NAV_GROUPS` — one
  * source, so a section added there appears here without anyone remembering to
  * add it twice (AP-4). The attention signals are shared too: a provider error
- * lights API Keys red, a plugin that needs a reconnect lights Skills amber, and
+ * lights API Keys red, a plugin that needs a reconnect lights Plugins amber, and
  * clicking Skills while a plugin needs attention lands on the Plugins tab, the
  * same shortcut the expanded sidebar takes.
  *
@@ -222,7 +222,7 @@ export function DockRail({ className }: { className?: string }) {
   const hoveredHint =
     hoveredItem?.id === "apikeys" && apikeysError
       ? t("sidebar.apikeys_alert")
-      : hoveredItem?.id === "skills" && pluginsNeedReconnect
+      : hoveredItem?.id === "plugins" && pluginsNeedReconnect
         ? pluginWarnHint
         : null;
 
@@ -252,15 +252,12 @@ export function DockRail({ className }: { className?: string }) {
               live={item.id === "chats" && conversations.length > 0}
               alert={item.id === "apikeys" && apikeysError}
               alertTitle={t("sidebar.apikeys_alert")}
-              warn={item.id === "skills" && pluginsNeedReconnect}
+              warn={item.id === "plugins" && pluginsNeedReconnect}
               warnTitle={pluginWarnHint}
               groupBreak={groupBreaks.has(i)}
-              // A plugin problem sends the Skills icon straight into the
-              // Plugins tab (where the banner + jump button are), so one click
-              // lands on the fix instead of the default Skills tab.
               onSelect={() =>
                 setActiveSection(
-                  item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
+                  item.id,
                 )
               }
               onFocus={() => setHoveredSlot(i)}

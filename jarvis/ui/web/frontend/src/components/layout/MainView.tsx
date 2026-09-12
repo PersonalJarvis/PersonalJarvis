@@ -100,10 +100,11 @@ const ApiKeysView = lazyView(() =>
 const LocalModelsView = lazyView(() =>
   import("@/views/LocalModelsView").then((m) => ({ default: m.LocalModelsView })),
 );
-const ExtensionsView = lazyPropView<{ area?: "skills" | "plugins" | "mcps" }>(() =>
-  import("@/views/ExtensionsView").then((m) => ({ default: m.ExtensionsView })),
-);
-const PluginsDialog = lazyPropView<{ onClose: () => void }>(() =>
+type PluginArea = "plugins" | "mcps" | "skills";
+const isPluginArea = (section: string): section is PluginArea =>
+  section === "plugins" || section === "mcps" || section === "skills";
+
+const PluginsDialog = lazyPropView<{ onClose: () => void; area: PluginArea; onAreaChange: (area: PluginArea) => void }>(() =>
   import("@/views/PluginsDialog").then((m) => ({ default: m.PluginsDialog })),
 );
 // The prop type is named rather than inferred: inferring it from the loader's
@@ -414,10 +415,10 @@ export function MainView() {
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
   const [backgroundSection, setBackgroundSection] = useState(
-    active === "plugins" ? "chats" : active,
+    isPluginArea(active) ? "chats" : active,
   );
-  if (active !== "plugins" && backgroundSection !== active) setBackgroundSection(active);
-  const displayed = active === "plugins" ? backgroundSection : active;
+  if (!isPluginArea(active) && backgroundSection !== active) setBackgroundSection(active);
+  const displayed = isPluginArea(active) ? backgroundSection : active;
 
   useIdleViewPrefetch();
 
@@ -445,7 +446,7 @@ export function MainView() {
     if (codingDetached) setStickyMounted(false);
   }, [codingDetached]);
 
-  if (codingDetached && (CODING_SECTION_IDS as readonly string[]).includes(displayed) && active !== "plugins") {
+  if (codingDetached && (CODING_SECTION_IDS as readonly string[]).includes(displayed) && !isPluginArea(active)) {
     return <DetachedViewPlaceholder view={displayed} />;
   }
 
@@ -493,10 +494,10 @@ export function MainView() {
           </Suspense>
         </ViewErrorBoundary>
       )}
-      {active === "plugins" && (
+      {isPluginArea(active) && (
         <ViewErrorBoundary viewName="plugins" resetKey="plugins" onRecover={() => setActive(backgroundSection)}>
           <Suspense fallback={null}>
-            <PluginsDialog onClose={() => setActive(backgroundSection)} />
+            <PluginsDialog area={active} onAreaChange={setActive} onClose={() => setActive(backgroundSection)} />
           </Suspense>
         </ViewErrorBoundary>
       )}
@@ -510,12 +511,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <ChatsSurface />;
     case "agents":
       return <SocietyView />;
-    // Skills + Plugins + MCPs are merged behind the "Skills & Tools" entry with
-    // an in-view tab switcher; the active id doubles as the tab state.
-    case "skills":
-    case "plugins":
-    case "mcps":
-      return <ExtensionsView area={active} />;
     // CLIs list + CLI Test Hub are merged behind the "CLIs" entry.
     case "clis":
     case "cli-test-hub":
