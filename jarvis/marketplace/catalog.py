@@ -50,6 +50,12 @@ class PatPasteAuth(_BaseAuth):
     mode: Literal["pat_paste"]
     token_creation_url: str
     token_prefix: str
+    # Additional accepted token prefixes (e.g. GitHub fine-grained PATs start
+    # with ``github_pat_`` while classic tokens start with ``ghp_``). The
+    # primary ``token_prefix`` above stays the canonical one; this list only
+    # widens the format pre-check so valid provider-issued tokens are not
+    # rejected before validation. Empty by default (no behaviour change).
+    token_prefixes: list[str] = Field(default_factory=list)
     validation_endpoint: str
     instruction_md: str
     # Set for self-hosted services: the user supplies the address, so
@@ -60,7 +66,15 @@ class PatPasteAuth(_BaseAuth):
     #   bearer        -> Authorization: Bearer <token>  (GitHub/Vercel/Supabase)
     #   bot           -> Authorization: Bot <token>      (Discord)
     #   telegram_path -> token spliced into the URL {token}, no header; body ok==true
-    auth_scheme: Literal["bearer", "bot", "telegram_path"] = "bearer"
+    auth_scheme: Literal["bearer", "bot", "telegram_path", "figma"] = "bearer"
+
+
+class InstanceBrowserAuth(_BaseAuth):
+    """Browser approval against a user-owned instance, without app registration."""
+
+    mode: Literal["instance_browser"]
+    protocol: Literal["home_assistant"] = "home_assistant"
+    instance_url: InstanceUrlSpec
 
 
 class OAuthDeviceFlowAuth(_BaseAuth):
@@ -82,6 +96,7 @@ class HostedMcpOAuthDcrAuth(_BaseAuth):
     access_token_ttl_seconds: int | None = None
     refresh_supported: bool = False
     capabilities: list[str] = Field(default_factory=list)
+    scopes: list[str] | None = None
 
 
 class OAuthPkceLoopbackAuth(_BaseAuth):
@@ -103,6 +118,7 @@ class OAuthPkceLoopbackAuth(_BaseAuth):
     # Google desktop clients need access_type=offline + prompt=consent to
     # return a refresh token.
     offline_access: bool = False
+    client_auth_method: Literal["client_secret_post", "client_secret_basic"] = "client_secret_post"
 
 
 class HostedMcpAllowlistAuth(_BaseAuth):
@@ -111,12 +127,20 @@ class HostedMcpAllowlistAuth(_BaseAuth):
     application_url: str | None = None
 
 
+class LocalAuth(_BaseAuth):
+    """Enable a local connector only after its capability probe succeeds."""
+
+    mode: Literal["local"]
+
+
 AuthConfig = Annotated[
     PatPasteAuth
+    | InstanceBrowserAuth
     | OAuthDeviceFlowAuth
     | HostedMcpOAuthDcrAuth
     | OAuthPkceLoopbackAuth
-    | HostedMcpAllowlistAuth,
+    | HostedMcpAllowlistAuth
+    | LocalAuth,
     Field(discriminator="mode"),
 ]
 
@@ -191,6 +215,37 @@ class PluginSpec(_BaseAuth):
     # helper AND the frontend, where a missing entry silently removed the
     # "use your own OAuth client" affordance.
     oauth_client_family: str | None = None
+    # Browser-auth standard (see docs/marketplace/browser-auth-standard.md).
+    # `browser_flow` names the standard-path flow the normal user takes:
+    #   "dcr"            — hosted MCP + Dynamic Client Registration (no static
+    #                      client at all; the reference standard path)
+    #   "publisher_pkce" — Authorization Code + PKCE loopback against the
+    #                      publisher-provisioned shared client
+    #   "device"         — official provider device flow (short-lived user
+    #                      code only, never a self-made API token)
+    #   "hosted"         — server-side OAuth via the hosted callback
+    #   "local"          — no account needed (capability probe instead)
+    #   "manual_token"   — provider offers no browser flow; pasting a
+    #                      provider-issued key is the only official way (does
+    #                      NOT satisfy the standard — honest fallback label)
+    # `publisher_managed` promises the publisher ships/registers the client,
+    # so no end-user developer setup is needed. `verification_hook` names the
+    # side-effect-free check run before "Connected" is shown. All optional so
+    # every already-shipped entry stays valid; the CI contract gate
+    # (scripts/ci/check_plugin_auth_contract.py) requires them for new
+    # auth-bearing plugins.
+    browser_flow: str | None = None
+    publisher_managed: bool = False
+    verification_hook: str | None = None
+    # Expert fallback when the primary browser flow has no publisher client
+    # yet: a PAT block the dialog offers ONLY as a collapsed alternative
+    # ("paste a token instead"). PAT-only by design — a browser primary with
+    # a browser fallback is a contradiction, and two browser flows would need
+    # two callbacks. Lets an OAuth-capable plugin ship its browser flow as
+    # the default while the previously working token path keeps working until
+    # the publisher registration lands. None = no fallback (previous
+    # behaviour verbatim).
+    fallback_auth: PatPasteAuth | None = None
     auth: AuthConfig
     # Installer/transport metadata for the eventual MCP-spawn wave. The route
     # layer does not consume this today, but the catalog already carries it,

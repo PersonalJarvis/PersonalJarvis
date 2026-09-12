@@ -6,9 +6,12 @@ empty there (a cloud-first violation). So `load_catalog` reads the user-editable
 `data/` override when present, else the tracked `seed_catalog.json` shipped in
 the package.
 """
+
 from __future__ import annotations
 
 import json
+
+import pytest
 
 from jarvis.marketplace import catalog_data
 from jarvis.marketplace.catalog_data import clear_cache, load_catalog
@@ -49,16 +52,12 @@ def test_developer_connectors_use_hosted_mcp_without_local_runtimes() -> None:
     assert github is not None and github.mcp_server == {
         "transport": "http",
         "url": "https://api.githubcopilot.com/mcp/",
-        "auth_header_template": (
-            "Authorization: Bearer $plugin_github_access_token"
-        ),
+        "auth_header_template": ("Authorization: Bearer $plugin_github_access_token"),
     }
     assert supabase is not None and supabase.mcp_server == {
         "transport": "http",
         "url": "https://mcp.supabase.com/mcp?read_only=true",
-        "auth_header_template": (
-            "Authorization: Bearer $plugin_supabase_access_token"
-        ),
+        "auth_header_template": ("Authorization: Bearer $plugin_supabase_access_token"),
     }
 
 
@@ -71,9 +70,7 @@ def test_falls_back_to_seed_when_no_data_override(monkeypatch, tmp_path) -> None
     clear_cache()
 
 
-def test_override_keeps_connection_details_but_not_presentation(
-    monkeypatch, tmp_path
-) -> None:
+def test_override_keeps_connection_details_but_not_presentation(monkeypatch, tmp_path) -> None:
     """The user's own OAuth client survives; the product's own copy does not.
 
     A local catalog may legitimately carry a user's own OAuth client id. It
@@ -102,9 +99,7 @@ def test_override_keeps_connection_details_but_not_presentation(
     clear_cache()
 
 
-def test_stale_override_still_receives_plugins_added_to_the_seed(
-    monkeypatch, tmp_path
-) -> None:
+def test_stale_override_still_receives_plugins_added_to_the_seed(monkeypatch, tmp_path) -> None:
     """A new seed connector must reach installs that already have a data/ override.
 
     Before the merge the override replaced the seed wholesale, so a plugin
@@ -151,9 +146,7 @@ def test_default_override_migrates_only_exact_obsolete_mcp_launchers(
             "GITHUB_PERSONAL_ACCESS_TOKEN",
             "ghcr.io/github/github-mcp-server",
         ],
-        "env_template": {
-            "GITHUB_PERSONAL_ACCESS_TOKEN": "$plugin_github_access_token"
-        },
+        "env_template": {"GITHUB_PERSONAL_ACCESS_TOKEN": "$plugin_github_access_token"},
     }
     supabase["mcp_server"] = {
         "transport": "stdio",
@@ -191,9 +184,7 @@ def test_default_override_migrates_only_exact_obsolete_oauth_discovery(
     canva["auth"]["discovery_url"] = custom
     override = tmp_path / "plugin_catalog.json"
     override.write_text(
-        json.dumps(
-            {"version": 1, "schema_version": "old", "plugins": [clickup, canva]}
-        ),
+        json.dumps({"version": 1, "schema_version": "old", "plugins": [clickup, canva]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(catalog_data, "_DEFAULT_CATALOG_PATH", override)
@@ -217,8 +208,7 @@ def test_seed_dcr_connectors_begin_at_protected_resource_metadata() -> None:
         "higgsfield": "https://mcp.higgsfield.ai/.well-known/oauth-protected-resource/mcp",
     }
     assert {
-        plugin_id: catalog.by_id(plugin_id).auth.discovery_url
-        for plugin_id in expected
+        plugin_id: catalog.by_id(plugin_id).auth.discovery_url for plugin_id in expected
     } == expected
 
 
@@ -228,20 +218,60 @@ def _seed():
     return load_catalog(catalog_data._PACKAGE_SEED_PATH)
 
 
-def test_stripe_is_pat_paste_with_stdio_mcp() -> None:
-    # Stripe's hosted-MCP DCR OAuth bounced real users to the dashboard (no
-    # consent); switched to the official restricted-key path which connects
-    # reliably.
-    spec = _seed().by_id("stripe")
+@pytest.mark.parametrize("plugin_id", ["vercel", "supabase", "stripe"])
+def test_developer_browser_oauth_uses_official_hosted_mcp(plugin_id) -> None:
+    spec = _seed().by_id(plugin_id)
     assert spec is not None
-    assert spec.display_name == "Stripe"  # must match the COMING_SOON label
-    assert spec.auth.mode == "pat_paste"
-    assert spec.auth.validation_endpoint == "https://api.stripe.com/v1/balance"
+    assert spec.auth.mode == "hosted_mcp_oauth_dcr"
+    assert spec.auth.refresh_supported
+    assert spec.fallback_auth.mode == "pat_paste"
     assert spec.mcp_server is not None
-    # Restricted key used as a Bearer token against the hosted MCP (bypasses
-    # the OAuth client-allowlist, Node-free) — not the deprecated --tools stdio.
     assert spec.mcp_server["transport"] == "http"
-    assert spec.mcp_server["url"] == "https://mcp.stripe.com"
+    assert spec.mcp_server["url"] == spec.auth.mcp_url
+
+
+@pytest.mark.parametrize("plugin_id", ["github", "vercel", "supabase", "stripe"])
+@pytest.mark.parametrize("custom", [None, "auth", "mcp"])
+def test_legacy_pat_override_migrates_only_unchanged_builtin(
+    monkeypatch, tmp_path, plugin_id, custom
+) -> None:
+    clear_cache()
+    seed = json.loads(catalog_data._PACKAGE_SEED_PATH.read_text(encoding="utf-8"))
+    plugin = next(item for item in seed["plugins"] if item["id"] == plugin_id)
+    plugin["auth"] = dict(plugin["fallback_auth"])
+    if plugin_id == "github":
+        plugin["auth"].pop("token_prefixes", None)
+        plugin["auth"]["instruction_md"] = (
+            "1. The link below opens GitHub with the right scopes "
+            "(repo, workflow, read:user) already ticked.\n"
+            "2. Pick an expiration (90 days is a sensible default), then click 'Generate token'.\n"
+            "3. Copy the token (shown only once) and paste it below.\n"
+            "4. If your repos sit behind SAML SSO, click 'Configure SSO' "
+            "next to the new token after creation."
+        )
+    if plugin_id == "vercel":
+        plugin.pop("mcp_server", None)
+    if custom == "auth":
+        plugin["auth"]["validation_endpoint"] = "https://custom.example.test/user"
+    if custom == "mcp":
+        plugin["mcp_server"] = {"transport": "http", "url": "https://custom.example.test/mcp"}
+    override = tmp_path / "plugin_catalog.json"
+    content = json.dumps({"version": 1, "schema_version": "old", "plugins": [plugin]})
+    override.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(catalog_data, "_DEFAULT_CATALOG_PATH", override)
+    result = load_catalog().by_id(plugin_id)
+    if custom:
+        assert result.auth.mode == "pat_paste"
+        if custom == "auth":
+            assert result.auth.validation_endpoint == "https://custom.example.test/user"
+        else:
+            assert result.mcp_server["url"] == "https://custom.example.test/mcp"
+    else:
+        assert result.auth.mode == (
+            "oauth_device_flow" if plugin_id == "github" else "hosted_mcp_oauth_dcr"
+        )
+    assert override.read_text(encoding="utf-8") == content
+    clear_cache()
 
 
 def test_cloudflare_is_dcr_one_click_with_http_mcp() -> None:
@@ -349,9 +379,5 @@ def test_youtube_music_joins_the_google_client_family_as_native_tool() -> None:
     assert spec.native_tool == "youtube_music"
     assert spec.mcp_server is None
     assert spec.longevity == "provider_limited"
-    ports = [
-        p.auth.callback_port
-        for p in _seed().plugins
-        if getattr(p.auth, "callback_port", 0)
-    ]
+    ports = [p.auth.callback_port for p in _seed().plugins if getattr(p.auth, "callback_port", 0)]
     assert ports.count(spec.auth.callback_port) == 1

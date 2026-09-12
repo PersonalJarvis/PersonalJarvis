@@ -3,6 +3,7 @@
 GET /api/marketplace/oauth/callback?code=&state=&error= delivers the captured
 redirect to the waiting HostedCallbackServer via deliver_callback.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,9 +32,7 @@ def _clean():
 def _client() -> httpx.AsyncClient:
     app = FastAPI()
     app.include_router(router)
-    return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 
 @pytest.mark.asyncio
@@ -74,3 +73,22 @@ async def test_callback_route_provider_error_is_400() -> None:
     assert resp.status_code == 400
     with pytest.raises(RuntimeError, match="access_denied"):
         await srv.await_callback()
+
+
+@pytest.mark.asyncio
+async def test_callback_provider_error_never_reflects_untrusted_content() -> None:
+    srv = HostedCallbackServer(expected_state="safe", base_url="https://x.test")
+    await srv.start()
+    async with _client() as client:
+        response = await client.get(
+            "/api/marketplace/oauth/callback",
+            params={
+                "state": "safe",
+                "error": "<script>credential-secret</script>",
+            },
+        )
+    assert response.status_code == 400
+    assert "credential-secret" not in response.text
+    with pytest.raises(RuntimeError) as failure:
+        await srv.await_callback()
+    assert "credential-secret" not in str(failure.value)

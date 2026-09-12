@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -33,16 +34,12 @@ _PORTABLE_MCP_MIGRATIONS: dict[str, tuple[dict[str, object], dict[str, object]]]
                 "GITHUB_PERSONAL_ACCESS_TOKEN",
                 "ghcr.io/github/github-mcp-server",
             ],
-            "env_template": {
-                "GITHUB_PERSONAL_ACCESS_TOKEN": "$plugin_github_access_token"
-            },
+            "env_template": {"GITHUB_PERSONAL_ACCESS_TOKEN": "$plugin_github_access_token"},
         },
         {
             "transport": "http",
             "url": "https://api.githubcopilot.com/mcp/",
-            "auth_header_template": (
-                "Authorization: Bearer $plugin_github_access_token"
-            ),
+            "auth_header_template": ("Authorization: Bearer $plugin_github_access_token"),
         },
     ),
     "supabase": (
@@ -61,9 +58,7 @@ _PORTABLE_MCP_MIGRATIONS: dict[str, tuple[dict[str, object], dict[str, object]]]
         {
             "transport": "http",
             "url": "https://mcp.supabase.com/mcp?read_only=true",
-            "auth_header_template": (
-                "Authorization: Bearer $plugin_supabase_access_token"
-            ),
+            "auth_header_template": ("Authorization: Bearer $plugin_supabase_access_token"),
         },
     ),
 }
@@ -141,6 +136,36 @@ def _migrate_obsolete_oauth_discovery(raw: object) -> object:
 # taxonomy or logo change would land only on fresh installs.
 _OVERRIDE_OWNED_FIELDS: tuple[str, ...] = ("auth", "mcp_server")
 
+# Fingerprints of the complete PAT auth blocks shipped before browser login.
+# Exact matching (including help text and endpoints) deliberately refuses to
+# reinterpret custom credentials or self-hosted configurations as package data.
+_LEGACY_PAT_AUTH_DIGESTS = {
+    "home_assistant": "9167ac7a5c4d39b87e2a863cb2c71e2e4b4541b24b83626bbe86d393fa99d4b2",
+    "github": "f7111c4bba8d16205ac3b2ff41f255b0cee0f3a3c86e4138e9b56b60054465fc",
+    "vercel": "f7588c19421659a8cd22765c3015e76c96b59194b68c26b24a8346590f9bfe04",
+    "supabase": "6ef753e23618090c7ff4e388d86a1fe91e5a4c78ce5a522963a248c3d4ee19d6",
+    "stripe": "e19610b1b59a59ffe1e231e8d5adda082437eebb59cec1c2df215470c742dde4",
+}
+
+
+def _has_obsolete_builtin_auth(plugin: dict, seed_plugin: dict) -> bool:
+    auth = plugin.get("auth")
+    if not isinstance(auth, dict) or auth.get("mode") != "pat_paste":
+        return False
+    plugin_id = str(plugin.get("id", ""))
+    expected = _LEGACY_PAT_AUTH_DIGESTS.get(plugin_id)
+    if expected is None:
+        return False
+    digest = hashlib.sha256(
+        json.dumps(auth, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if digest != expected:
+        return False
+    # A user may have retained the original auth while choosing another MCP
+    # server. Do not replace that pairing. Vercel previously had no MCP server.
+    previous_mcp = None if plugin_id == "vercel" else seed_plugin.get("mcp_server")
+    return plugin.get("mcp_server") == previous_mcp
+
 
 def _merge_with_seed(override: object, seed: object) -> object:
     """Reconcile a user's `data/` catalog with the shipped package seed.
@@ -184,9 +209,10 @@ def _merge_with_seed(override: object, seed: object) -> object:
             merged_plugins.append(plugin)  # a purely local entry
             continue
         reconciled = dict(seed_plugin)
-        for field in _OVERRIDE_OWNED_FIELDS:
-            if field in plugin:
-                reconciled[field] = plugin[field]
+        if not _has_obsolete_builtin_auth(plugin, seed_plugin):
+            for field in _OVERRIDE_OWNED_FIELDS:
+                if field in plugin:
+                    reconciled[field] = plugin[field]
         merged_plugins.append(reconciled)
 
     merged_plugins.extend(

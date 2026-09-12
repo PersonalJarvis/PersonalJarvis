@@ -1,0 +1,48 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "google-cloud",
+  "version": "1.0.0",
+  "description": "Search projects and storage; inspect billing accounts and query billing exports",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Google Cloud",
+      "category": "Developer",
+      "logo_slug": "googlecloud",
+      "logo_color": "4285F4",
+      "featured": false,
+      "longevity": "provider_limited",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "https://www.googleapis.com/auth/cloud-platform.read-only",
+          "https://www.googleapis.com/auth/bigquery"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true,
+        "offline_access": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "google_cloud"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_google_cloud_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Use your Google desktop OAuth client. Enable Cloud Resource Manager, Storage, Cloud Billing and BigQuery APIs. Actual spend requires an existing BigQuery billing export, dataset read access and permission to run queries. Query processing can incur charges; specify maximumBytesBilled.",
+      "oauth_client_family": "google",
+      "longevity_note": "Google OAuth apps in Testing may lose refresh access after seven days; production apps follow account policy."
+    }
+  }
+}

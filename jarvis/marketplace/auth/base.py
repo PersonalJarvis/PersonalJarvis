@@ -58,6 +58,46 @@ class FlowResult:
     tokens: Tokens | None
     error: str | None
     extra: dict[str, Any] = field(default_factory=dict)
+    # Machine-readable outcome for the connect dialog. One of the ERROR_*
+    # codes below, or None on success. Lets the UI render "denied",
+    # "admin approval needed", "timed out", "try again" instead of raw
+    # provider text. Additive: older callers leave it None.
+    error_code: str | None = None
+
+
+# Machine-readable connect-flow outcomes (backend → dialog). Persisted or
+# shown strings must use these codes; provider raw bodies must never reach
+# storage or the UI (they can echo a token back).
+ERROR_DENIED = "denied"
+"""The user (or their admin) refused the authorization at the provider."""
+ERROR_TIMEOUT = "timeout"
+"""The user did not approve in time."""
+ERROR_PROVIDER_UNREACHABLE = "provider_unreachable"
+"""The provider endpoint could not be reached or answered unusably."""
+ERROR_PORT_IN_USE = "port_in_use"
+"""The loopback callback port is occupied by another process."""
+ERROR_MISCONFIGURED = "misconfigured"
+"""Publisher client missing/placeholder — admin provisioning required."""
+ERROR_UNKNOWN = "unknown"
+"""Anything else; retry may help."""
+
+
+def sanitize_provider_error(detail: str, *, limit: int = 160) -> str:
+    """Normalize untrusted bodies without retaining any provider-supplied text.
+
+    Redaction cannot recognize arbitrary credentials or personal information.
+    Only fixed product messages may cross the provider error boundary.
+    """
+    lowered = detail.lower()
+    if "access_denied" in lowered:
+        message = "Authorization was declined. Try again when access is approved."
+    elif "invalid_client" in lowered or "unauthorized_client" in lowered:
+        message = "invalid_client: The provider does not accept this app registration."
+    elif "invalid_grant" in lowered:
+        message = "Authorization expired or was revoked. Connect again."
+    else:
+        message = "provider request failed"
+    return message[:max(0, limit)]
 
 
 class AuthHandler(Protocol):

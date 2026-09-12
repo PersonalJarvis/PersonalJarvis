@@ -1,5 +1,20 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Service connectors (2026-09-10, T3)
+
+The 21 cloud-service additions use the same HTTP/OAuth code on Windows, macOS
+and Linux, with optional credentials entered through Plugins. REST bridges have
+no vendor SDK or native-library dependency; worker bridges use the running Python
+interpreter. The new local AMD connector probes AMD SMI before enabling and
+reports missing or unsupported telemetry explicitly. Linux hosts with supported
+AMD SMI can return device data; native Windows/macOS have no telemetry backend
+in this connector. None of these integrations runs a device probe at boot.
+
+Contract evidence: `tests/contract/test_service_connectors.py`; AMD absence is
+tested for all three platform values, and HTTP requests use fake transports.
+Real account consent and live AMD hardware remain separate acceptance steps.
+See [coverage and provider limits](marketplace/service-connector-coverage.md).
+
 **Managed agent browser, 2026-09-10:** The Browser-Use environment and browser
 are provisioned per host with one shared installer. The live viewport uses
 CDP pixels over the authenticated app WebSocket, including on headless Linux;
@@ -519,3 +534,32 @@ CLI access: `jarvis sessions control SESSION` reads state; `jarvis sessions
 command SESSION goal --arguments "..." --request-id ID --yes` submits a durable
 command. Reuse the request id after an uncertain response. The dynamic
 `jarvis api agent-chat` group exposes the same mounted endpoints.
+
+## Plugin browser authorization (RUB-94)
+
+| Capability | Windows | macOS | Linux / headless |
+| --- | --- | --- | --- |
+| Device, PKCE and DCR login | System browser and loopback callback | Same portable implementation | Loopback, or configured HTTPS hosted callback |
+| Home Assistant login | Instance address and browser approval | Same | Same; reachable instance required |
+| Credential lifecycle | Platform vault with encrypted fallback | Platform vault with encrypted fallback | Platform vault with encrypted fallback |
+| AMD telemetry | Intentionally unavailable | Intentionally unavailable | Compatible AMD hardware and supported AMD SMI required |
+
+Optional AMD availability is exposed before Connect. No native inference or GPU
+library is imported for catalog listing. Empty, invalid and unavailable telemetry
+never becomes a zero reading. Driver/tool installation is a host prerequisite;
+this change does not claim that an unsupported operating system gains telemetry.
+
+Portable contracts exercise all three OS availability outcomes, actual ephemeral
+loopback binding and cleanup, confidential/public DCR credentials, Home Assistant
+callback/resource verification, cancellation and safe errors. The macOS/Linux
+availability cells are emulated on the audit host, not physical-device evidence.
+The live Windows browser observations and outstanding provider/installation
+requirements are recorded in `marketplace/plugin-auth-audit.md` and its JSON
+companion. No fresh-install or provider PASS may be inferred from unit tests.
+
+OAuth completion verifies resource access before storing and publishing a new
+connection. Failed reconnects preserve the previous stored grant; a newly issued
+provider authorization may remain at the provider because revoking it could also
+invalidate a shared existing grant. Users can revoke it in the provider's app
+settings. The release audit separately requires a real safe action, disconnect,
+reconnect and persistence after restart.

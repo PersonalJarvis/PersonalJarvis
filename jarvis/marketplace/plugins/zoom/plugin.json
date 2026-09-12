@@ -1,0 +1,49 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "zoom",
+  "version": "1.0.0",
+  "description": "Create meetings and find cloud recordings and transcript links",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Zoom",
+      "category": "Messaging",
+      "logo_slug": "zoom",
+      "logo_color": "2D8CFF",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://zoom.us/oauth/authorize",
+        "token_url": "https://zoom.us/oauth/token",
+        "revocation_url": "https://zoom.us/oauth/revoke",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "meeting:read:list_meetings",
+          "meeting:write:meeting",
+          "cloud_recording:read:list_user_recordings"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true,
+        "client_auth_method": "client_secret_basic"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "zoom"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_zoom_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create a user-managed Zoom General App with the listed granular scopes. Add http://127.0.0.1:43891/oauth/callback and enter client ID and client secret. Cloud transcripts require recording and transcription to have been enabled. Creating a meeting returns its join link; it does not start the desktop application.",
+      "oauth_client_family": "zoom"
+    }
+  }
+}

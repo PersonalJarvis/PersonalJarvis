@@ -65,6 +65,7 @@ type AuthMode =
   | "pat_paste"
   | "hosted_mcp_oauth_dcr"
   | "oauth_pkce_loopback"
+  | "instance_browser"
   | "local"
   | "hosted_mcp_allowlist";
 
@@ -130,8 +131,14 @@ interface CatalogPlugin {
   oauth_client_family?: string | null;
   oauth_client_configured?: boolean;
   auth: { mode: AuthMode; [key: string]: unknown };
+  /** Expert token fallback for a browser-primary plugin (dual-mode).
+   *  Present only until the publisher OAuth client is provisioned. */
+  fallback_auth?: { mode: AuthMode; [key: string]: unknown } | null;
+  /** Browser-standard state for PKCE/device plugins (additive). */
+  auth_standard?: { ready: boolean; source: string; fallback: boolean } | null;
   status: PluginStatus;
   live_callable?: boolean;
+  unavailable_reason?: string | null;
   /** Why the connection is flagged, and since when. Only set while
    *  `status === "needs_reauth"`; `null` when it died before Jarvis recorded
    *  reasons. Never carries provider error text. */
@@ -198,6 +205,8 @@ interface PatPasteAuthDetail {
   mode: "pat_paste";
   token_creation_url: string;
   token_prefix: string;
+  /** Extra accepted prefixes (e.g. GitHub fine-grained `github_pat_`). */
+  token_prefixes?: string[];
   instruction_md: string;
   /** Present for self-hosted services (Home Assistant, Jellyfin, Nextcloud…):
    *  the server address is the user's own, so the catalog can only describe
@@ -224,12 +233,20 @@ export interface Plugin {
   status: PluginStatus;
   featured?: boolean;
   liveCallable?: boolean;
+  unavailableReason?: string;
   longevity: Longevity;
   longevityNote?: string;
   oauthClientFamily?: string;
   reauthReason?: ReauthReason | string;
   reauthAt?: string;
   oauthClientConfigured: boolean;
+  /** Expert token fallback (browser-primary plugins only). */
+  fallbackAuth?: PatPasteAuthDetail | null;
+  /** True when the browser flow can start with no user setup. Optional so
+   *  older fixtures keep compiling; undefined means "not browser-ready". */
+  browserReady?: boolean;
+  /** Honest banner shown when the token dialog opens as a fallback. */
+  fallbackNotice?: string | null;
   /** True for a plugin installed from the community marketplace. */
   fromMarketplace: boolean;
   /** True for a plugin the owner uploaded here — no registry, no review. */
@@ -252,12 +269,18 @@ function adapt(p: CatalogPlugin): Plugin {
     status: p.status,
     featured: p.featured ?? false,
     liveCallable: p.live_callable ?? false,
+    unavailableReason: p.unavailable_reason ?? undefined,
     longevity: p.longevity ?? "self_renewing",
     longevityNote: p.longevity_note ?? undefined,
     oauthClientFamily: p.oauth_client_family ?? undefined,
     reauthReason: p.reauth_reason ?? undefined,
     reauthAt: p.reauth_at ?? undefined,
     oauthClientConfigured: p.oauth_client_configured ?? false,
+    fallbackAuth:
+      p.fallback_auth != null && typeof p.fallback_auth === "object"
+        ? (p.fallback_auth as unknown as PatPasteAuthDetail)
+        : null,
+    browserReady: p.auth_standard?.ready ?? p.oauth_client_configured ?? false,
     fromMarketplace: p.source === "community",
     selfUploaded: p.source === "local",
     publisher: p.publisher ?? undefined,
@@ -333,6 +356,7 @@ async function fetchCatalog(): Promise<CatalogResponse> {
 }
 
 const AUTH_LABELS: Record<AuthMode, string> = {
+  instance_browser: "Browser Login",
   local: "Local device",
   oauth_device_flow: "Device Flow",
   pat_paste: "Access Token",
@@ -341,7 +365,7 @@ const AUTH_LABELS: Record<AuthMode, string> = {
   hosted_mcp_allowlist: "Allowlist",
 };
 
-// PKCE plugins that ship a placeholder OAuth client: a downloader supplies their
+// Provider families supporting an optional expert OAuth client override: use their
 // OWN production client here (the durable fix for provider-side refresh-token
 // expiry — e.g. Google revokes a "Testing" app's token after 7 days). The Google
 // family shares ONE client pair; slack and asana each have their own. Mirrors
@@ -364,6 +388,10 @@ const OAUTH_FAMILY_LABEL: Record<string, string> = {
   asana: "Asana",
   microsoft: "Microsoft",
   spotify: "Spotify",
+  github: "GitHub",
+  gitlab: "GitLab",
+  figma: "Figma",
+  hubspot: "HubSpot",
 };
 
 function oauthClientFamily(
@@ -388,6 +416,10 @@ const OAUTH_CLIENT_CONSOLE: Record<string, string> = {
   slack: "https://api.slack.com/apps",
   asana: "https://app.asana.com/0/my-apps",
   spotify: "https://developer.spotify.com/dashboard",
+  github: "https://github.com/settings/applications/new",
+  gitlab: "https://gitlab.com/-/profile/applications",
+  figma: "https://www.figma.com/developers/apps",
+  hubspot: "https://developers.hubspot.com/",
 };
 
 // What a client id actually looks like, per provider. The field used to show
@@ -398,6 +430,10 @@ const OAUTH_CLIENT_ID_PLACEHOLDER: Record<string, string> = {
   spotify: "32-character id from the app's settings",
   slack: "1234567890123.1234567890123",
   asana: "1234567890123456",
+  github: "Iv1.… from the OAuth App settings",
+  gitlab: "64-character application id",
+  figma: "client id from the app's settings",
+  hubspot: "UUID from the app's Auth settings",
 };
 
 // Providers whose PKCE flow needs no secret at all. Saying so beats an empty
@@ -408,6 +444,9 @@ const OAUTH_NO_SECRET_NEEDED: Record<string, string> = {
   x: "not needed for a Native App",
   spotify: "not needed — leave this empty",
   google: "usually not needed",
+  github: "not needed — leave this empty",
+  gitlab: "usually not needed",
+  figma: "usually not needed",
 };
 
 /** The redirect URI the provider must have registered for the login to work.
@@ -506,7 +545,9 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterId>("all");
   const [connectingPlugin, setConnectingPlugin] = useState<Plugin | null>(null);
-  // PKCE plugin awaiting the pre-connect dialog (own-client + keep-connected hint).
+  const [instancePlugin, setInstancePlugin] = useState<Plugin | null>(null);
+  // Browser plugin awaiting publisher readiness or an optional expert override.
+  const [connectFailure, setConnectFailure] = useState<string | null>(null);
   const [pkceSetupPlugin, setPkceSetupPlugin] = useState<Plugin | null>(null);
   // Plugin awaiting a "really disconnect?" confirmation. Removing a plugin is
   // destructive (tokens dropped, brain tools re-expanded), so it must ask first.
@@ -573,14 +614,16 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
   // OAuth-redirect flow (DCR): kick off /connect/start, open URL in browser,
   // long-poll /connect/poll until done.
   const oauthStart = useMutation({
-    mutationFn: async (pluginId: string) => {
+    mutationFn: async ({ pluginId, instanceUrl }: { pluginId: string; instanceUrl?: string }) => {
       const res = await fetch(
         `/api/marketplace/plugins/${pluginId}/connect/start`,
-        { method: "POST" },
+        instanceUrl
+          ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ instance_url: instanceUrl }) }
+          : { method: "POST" },
       );
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-        throw new Error(err.detail || `start failed (HTTP ${res.status})`);
+        throw new Error(err.error_code ?? "unknown");
       }
       return res.json() as Promise<{
         flow_id: string;
@@ -612,9 +655,10 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
   // Kick off the real OAuth handshake: /connect/start, open the URL, then the
   // dialog long-polls /connect/poll. Shared by the DCR/device path (called
   // directly) and the PKCE path (called by the pre-connect dialog's Continue).
-  const startOAuthFlow = async (p: Plugin): Promise<boolean> => {
+  const startOAuthFlow = async (p: Plugin, instanceUrl?: string): Promise<boolean> => {
+    setConnectFailure(null);
     try {
-      const r = await oauthStart.mutateAsync(p.id);
+      const r = await oauthStart.mutateAsync({ pluginId: p.id, instanceUrl });
       if (r.kind === "local") {
         await qc.invalidateQueries({ queryKey: ["marketplace-plugins"] });
         return true;
@@ -629,7 +673,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         }).verification_uri_complete;
         const userCode = (r as unknown as { user_code?: string }).user_code;
         if (!verifyUrl || !userCode) {
-          alert("Backend returned an incomplete device-flow session.");
+          setConnectFailure("The sign-in session could not be created. Please try again.");
           return false;
         }
         // Auto-open the pre-filled verify URL if available; user lands
@@ -649,7 +693,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         return true;
       }
       if (!r.open_url) {
-        alert("Backend returned no open_url — connect aborted.");
+        setConnectFailure("The sign-in page is unavailable. Please try again.");
         return false;
       }
       void openExternalUrl(r.open_url);
@@ -661,11 +705,15 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
       });
       return true;
     } catch (e) {
-      alert(
-        `Could not start ${p.name} connect flow: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
+      const code = e instanceof Error ? e.message : "connect_failed";
+      const messages: Record<string, string> = {
+        denied: "Sign-in was declined. You can try again when ready.",
+        timeout: "Sign-in timed out. Please try again.",
+        provider_unreachable: "The provider could not be reached. Please try again later.",
+        port_in_use: "The sign-in callback is busy. Close the other sign-in attempt and try again.",
+        misconfigured: "Browser sign-in is pending publisher setup. No developer setup is required from you.",
+      };
+      setConnectFailure(messages[code] ?? `Could not connect ${p.name}. Please try again. If this continues, check the service availability.`);
       return false;
     }
   };
@@ -684,16 +732,34 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
       });
   };
 
+  /** Open the expert token fallback for a browser-primary plugin. The
+   *  browser flow stays the default everywhere else; this is only the
+   *  collapsed alternative while the publisher client is pending. */
+  const openFallback = (p: Plugin, notice?: string) => {
+    if (!p.fallbackAuth) return;
+    setConnectingPlugin({
+      ...p,
+      authMode: "pat_paste",
+      authConfig: { ...p.fallbackAuth, mode: "pat_paste" },
+      fallbackNotice:
+        notice ??
+        "Browser login needs the publisher client, which isn't provisioned yet — you can connect with a token meanwhile.",
+    });
+  };
+
   const handleConnect = async (p: Plugin) => {
+    setConnectFailure(null);
+    if (p.unavailableReason) return;
+    if (p.authMode === "instance_browser") {
+      setInstancePlugin(p);
+      return;
+    }
     if (p.authMode === "pat_paste") {
       setConnectingPlugin(p);
       return;
     }
-    if (p.authMode === "oauth_pkce_loopback") {
-      // PKCE plugins ship a placeholder client — show the pre-connect dialog so
-      // the user can supply their OWN production OAuth client (the durable fix
-      // for the 7-day expiry) and sees the keep-connected hint, before the
-      // browser sign-in actually starts.
+    if (p.authMode === "oauth_pkce_loopback" ||
+      (p.authMode === "oauth_device_flow" && !p.browserReady)) {
       setPkceSetupPlugin(p);
       return;
     }
@@ -706,10 +772,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
       return;
     }
     // hosted_mcp_allowlist (Vercel v2) — needs cloud proxy, deferred.
-    alert(
-      `Connecting via "${AUTH_LABELS[p.authMode]}" needs a cloud proxy that ` +
-        `isn't deployed yet. Coming in the Vercel-Cloud-Proxy wave.`,
-    );
+    setConnectFailure("This connection is pending publisher setup. Please try again when browser sign-in is available.");
   };
 
   const allPlugins = useMemo<Plugin[]>(
@@ -792,6 +855,15 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
 
   const dialogs = (
     <>
+      {connectFailure && (
+        <div role="alertdialog" aria-modal="true" aria-label="Connection unavailable" className="fixed inset-0 z-[60] flex items-center justify-center bg-scrim/70">
+          <div className="max-w-md rounded-lg bg-popover p-5 text-sm text-foreground shadow-float">
+            <h2 className="font-semibold">Connection unavailable</h2>
+            <p className="mt-2">{connectFailure}</p>
+            <button type="button" onClick={() => setConnectFailure(null)} className="mt-4 rounded-md border border-border px-3 py-1.5">Close</button>
+          </div>
+        </div>
+      )}
       <PluginUploadDialog
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
@@ -804,6 +876,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
       {connectingPlugin && (
         <PatConnectDialog
           plugin={connectingPlugin}
+          notice={connectingPlugin.fallbackNotice ?? null}
           onClose={() => {
             setConnectingPlugin(null);
             connectMutation.reset();
@@ -825,11 +898,31 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         />
       )}
 
+      {instancePlugin && (
+        <InstanceBrowserDialog
+          plugin={instancePlugin}
+          isPending={oauthStart.isPending}
+          onClose={() => setInstancePlugin(null)}
+          onSubmit={async (url) => {
+            if (await startOAuthFlow(instancePlugin, url)) setInstancePlugin(null);
+          }}
+        />
+      )}
+
       {pkceSetupPlugin && (
         <PkceConnectDialog
           plugin={pkceSetupPlugin}
           onClose={() => setPkceSetupPlugin(null)}
           onProceed={() => startOAuthFlow(pkceSetupPlugin)}
+          onUseFallback={
+            pkceSetupPlugin.fallbackAuth
+              ? () => {
+                  const cur = pkceSetupPlugin;
+                  setPkceSetupPlugin(null);
+                  openFallback(cur);
+                }
+              : null
+          }
         />
       )}
 
@@ -1196,6 +1289,7 @@ function PluginWindowCatalog({
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[15px] font-medium leading-6 text-foreground-strong">{plugin.name}</span>
                       <span className="block truncate text-[13px] leading-5 text-muted-foreground" title={plugin.description}>{plugin.description}</span>
+                      {plugin.unavailableReason && <span className="block text-xs text-muted-foreground" title={plugin.unavailableReason}>Unsupported on this device</span>}
                       {plugin.status === "needs_reauth" && <span className="block text-xs text-warning"><ReauthExplanation plugin={plugin} inline /></span>}
                     </span>
                   </button>
@@ -1226,7 +1320,7 @@ function WindowConnectButton({ plugin, onConnect, onDisconnect }: { plugin: Plug
       else await onConnect(plugin);
     } finally { setBusy(false); }
   };
-  return <button type="button" disabled={busy} onClick={() => void act()}
+  return <button type="button" disabled={busy || Boolean(plugin.unavailableReason)} title={plugin.unavailableReason} onClick={() => void act()}
     aria-label={translate(connected ? "plugins_view.disconnect" : reconnect ? "plugins_view.reconnect" : "plugins_view.connect")}
     className={cn("flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
       connected ? "text-muted-foreground hover:bg-secondary" : "bg-secondary text-foreground hover:bg-accent-soft")}>
@@ -1253,6 +1347,7 @@ function statusTone(status: PluginStatus): "ok" | "off" | "warn" | "error" {
 }
 
 function statusLabel(plugin: Plugin): string {
+  if (plugin.unavailableReason) return "Unsupported on this device";
   switch (plugin.status) {
     case "connected":
       return plugin.liveCallable
@@ -1383,6 +1478,7 @@ function PluginTableRow({
       <Cell align="right" stop>
         <ConnectIconButton
           status={plugin.status}
+          unavailableReason={plugin.unavailableReason}
           onConnect={() => onConnect(plugin)}
           onDisconnect={() => onDisconnect(plugin.id)}
         />
@@ -1468,15 +1564,21 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
         actions={
           <>
             {connected ? (
+              <>
               <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-secondary px-3 text-xs font-medium text-foreground-strong">
                 <Check className="h-3.5 w-3.5" />
                 {translate("plugins_view.status_connected")}
               </span>
+              <SoftButton onClick={() => void run()} disabled={busy || Boolean(plugin.unavailableReason)}>
+                {translate("plugins_view.reconnect")}
+              </SoftButton>
+              </>
             ) : (
               <button
                 type="button"
                 onClick={() => void run()}
-                disabled={busy}
+                disabled={busy || Boolean(plugin.unavailableReason)}
+                title={plugin.unavailableReason}
                 aria-busy={busy}
                 className={cn(
                   "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
@@ -1510,6 +1612,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
         }
       />
 
+      {plugin.unavailableReason && <p className="mt-3 text-sm text-muted-foreground">{plugin.unavailableReason}</p>}
       {plugin.status === "needs_reauth" ? (
         <div className="mt-4 rounded-md bg-secondary px-3 py-2.5 text-xs">
           <ReauthExplanation plugin={plugin} />
@@ -1547,7 +1650,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
                 value: family
                   ? plugin.oauthClientConfigured
                     ? fill(translate("plugins_view.oauth_client_own"), { family: family.label })
-                    : fill(translate("plugins_view.oauth_client_placeholder"), { family: family.label })
+                    : "Browser sign-in is pending publisher setup. No developer setup is required from you."
                   : null,
               },
               { label: translate("plugins_view.fact_publisher"), value: plugin.publisher ?? null },
@@ -1787,6 +1890,7 @@ export function ConnectIconButton({
   onConnect,
   onDisconnect,
   busy: busyFromRow,
+  unavailableReason,
 }: {
   status: PluginStatus;
   onConnect: () => void | Promise<void>;
@@ -1794,6 +1898,7 @@ export function ConnectIconButton({
   /** Set when the surrounding card owns the lock, so a flow started by clicking
    *  the card still spins this button. */
   busy?: boolean;
+  unavailableReason?: string;
 }) {
   const lock = useConnectLock(onConnect);
   const busy = busyFromRow ?? lock.busy;
@@ -1831,14 +1936,14 @@ export function ConnectIconButton({
       <button
         type="button"
         onClick={handleClick}
-        disabled={busy}
+        disabled={busy || Boolean(unavailableReason)}
         aria-busy={busy}
         className={cn(
           "grid h-7 w-7 shrink-0 place-items-center rounded-full bg-secondary text-foreground transition-all hover:bg-popover group-hover:scale-105",
           busy && "cursor-not-allowed opacity-60 group-hover:scale-100",
         )}
         aria-label="Reconnect plugin"
-        title="Reconnect"
+        title={unavailableReason ?? "Reconnect"}
       >
         {busy ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1853,12 +1958,13 @@ export function ConnectIconButton({
     <button
       type="button"
       onClick={handleClick}
-      disabled={busy}
+      disabled={busy || Boolean(unavailableReason)}
       aria-busy={busy}
       className={cn(
         "grid h-7 w-7 shrink-0 place-items-center rounded-full border border-border bg-background text-muted-foreground transition-all hover:border-border-strong hover:bg-secondary hover:text-foreground-strong group-hover:scale-105",
         busy && "cursor-not-allowed opacity-60 hover:bg-secondary hover:text-muted-foreground group-hover:scale-100",
       )}
+      title={unavailableReason}
       aria-label="Connect plugin"
     >
       {busy ? (
@@ -2295,16 +2401,18 @@ export function PkceConnectDialog({
   plugin,
   onClose,
   onProceed,
+  onUseFallback,
 }: {
   plugin: Plugin;
   onClose: () => void;
   onProceed: () => boolean | void | Promise<boolean | void>;
+  /** Expert token fallback (browser-primary plugins only). */
+  onUseFallback?: (() => void) | null;
 }) {
   const fam = oauthClientFamily(plugin);
-  const isGoogle = fam?.family === "google";
-  const clientRequired = Boolean(fam && !plugin.oauthClientConfigured);
+  const clientRequired = !(plugin.browserReady ?? plugin.oauthClientConfigured);
   const redirectUri = loopbackRedirectUri(plugin);
-  const [showClient, setShowClient] = useState(clientRequired);
+  const [showClient, setShowClient] = useState(false);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2348,7 +2456,7 @@ export function PkceConnectDialog({
       const proceeded = await onProceed();
       if (proceeded !== false) onClose();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr("Could not save the connection settings. Please try again.");
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -2376,55 +2484,28 @@ export function PkceConnectDialog({
               Connect {plugin.name}
             </h2>
             <p className="text-micro text-muted-foreground">
-              You'll sign in with your {fam?.label ?? "provider"} account in the
-              browser.
+              {clientRequired ? "Browser sign-in is not available yet." : `You'll sign in with your ${fam?.label ?? "provider"} account in the browser.`}
             </p>
           </div>
         </header>
 
         <div className="space-y-3 px-5 py-4">
-          {isGoogle && (
-            <div className="rounded-md bg-secondary px-3 py-2.5 text-micro ">
-              <p className="font-medium text-foreground">
-                Keep it connected permanently
-              </p>
-              <p className="mt-1 text-foreground">
-                Google drops the connection every 7 days while your OAuth app is
-                in "Testing". Publish your app to <strong>In production</strong>{" "}
-                (it can stay unverified for personal use) so it never expires.
-              </p>
-              <a
-                href="https://console.cloud.google.com/auth/audience"
-                target="_blank"
-                rel="noreferrer"
-                className="mt-1.5 inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-2 hover:text-foreground"
-              >
-                Open Google Cloud Console <ExternalLink className="h-3 w-3" />
-              </a>
-            </div>
-          )}
+          {clientRequired && <p className="rounded-md bg-secondary px-3 py-2 text-micro text-foreground">Browser sign-in is pending publisher setup. No developer account or client registration is required from you.</p>}
 
           {fam && (
             <div>
-              {clientRequired && (
-                <p className="mb-2 rounded-md bg-secondary px-3 py-2 text-micro text-foreground">
-                  This installation has no {fam.label} OAuth client yet. Add
-                  your own Client ID below before browser sign-in can start.
-                </p>
-              )}
               <button
                 type="button"
                 onClick={() => setShowClient((v) => !v)}
+                aria-expanded={showClient}
                 className="text-micro font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
-                {clientRequired
-                  ? "OAuth client setup required"
-                  : "Use your own OAuth client (advanced)"}
+                Use your own OAuth client (advanced)
               </button>
               {showClient && (
                 <div className="mt-2 space-y-2">
                   <p className="text-micro text-muted-foreground">
-                    {clientRequired ? "Required. " : "Optional. "}Paste a client
+                    Optional expert override. Paste a client
                     from your own {fam.label}{" "}
                     {OAUTH_CLIENT_CONSOLE[fam.family] && (
                       <a
@@ -2505,6 +2586,24 @@ export function PkceConnectDialog({
             <div className="rounded-md bg-secondary px-3 py-2 text-xs text-destructive">
               {err}
             </div>
+          )}
+          {onUseFallback && plugin.fallbackAuth && (
+            <details className="rounded-md border border-border px-3 py-2.5 text-micro text-muted-foreground">
+              <summary className="cursor-pointer">Expert token alternative</summary>
+              <p>
+                The shared browser login isn't provisioned yet. You can
+                connect with a provider token meanwhile — the browser flow
+                stays the default and takes over automatically once ready.
+              </p>
+              <button
+                type="button"
+                onClick={onUseFallback}
+                disabled={busy}
+                className="mt-1.5 font-medium text-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-60"
+              >
+                Paste a token instead
+              </button>
+            </details>
           )}
         </div>
 
@@ -2650,14 +2749,57 @@ function DisconnectConfirmDialog({
 // only them. Other plugins never show the field.
 const OWNER_LOCK_PLUGIN_IDS = new Set(["telegram", "discord"]);
 
+function InstanceBrowserDialog({ plugin, isPending, onClose, onSubmit }: {
+  plugin: Plugin;
+  isPending: boolean;
+  onClose: () => void;
+  onSubmit: (url: string) => Promise<void>;
+}) {
+  const [address, setAddress] = useState("");
+  let valid = false;
+  try {
+    const url = new URL(address.trim());
+    valid = ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+  } catch {
+    // An incomplete address is expected while the user types.
+  }
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !isPending) onClose();
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [isPending, onClose]);
+  return (
+    <div role="dialog" aria-modal="true" aria-labelledby="instance-browser-title" className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 backdrop-blur-sm">
+      <form className="w-full max-w-md space-y-4 rounded-lg bg-popover p-5 text-foreground shadow-float" onSubmit={(event) => {
+        event.preventDefault();
+        if (valid && !isPending) void onSubmit(address.trim());
+      }}>
+        <h2 id="instance-browser-title" className="font-semibold">Connect {plugin.name}</h2>
+        <p className="text-sm text-muted-foreground">Enter your instance address, then sign in and approve access in your browser.</p>
+        <label className="block text-sm" htmlFor="instance-browser-address">Instance address</label>
+        <input id="instance-browser-address" type="url" autoFocus required value={address} disabled={isPending} onChange={(event) => setAddress(event.target.value)} placeholder="http://homeassistant.local:8123" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+        <div className="flex justify-end gap-2">
+          <button type="button" disabled={isPending} onClick={onClose} className="rounded-md border border-border px-3 py-2 text-sm">Cancel</button>
+          <button type="submit" disabled={!valid || isPending} className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50">{isPending ? "Opening browser…" : "Continue in browser"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export function PatConnectDialog({
   plugin,
+  notice,
   onClose,
   onSubmit,
   isPending,
   errorMessage,
 }: {
   plugin: Plugin;
+  /** Honest banner when opened as a fallback (browser login pending). */
+  notice?: string | null;
   onClose: () => void;
   onSubmit: (
     token: string,
@@ -2673,8 +2815,16 @@ export function PatConnectDialog({
   const ownerLock = OWNER_LOCK_PLUGIN_IDS.has(plugin.id);
   const auth = plugin.authConfig as unknown as PatPasteAuthDetail;
   const instanceField = auth.instance_url ?? null;
-  const expectedPrefix = auth.token_prefix ?? "";
-  const prefixOk = !expectedPrefix || token.trim().startsWith(`${expectedPrefix}_`);
+  const expectedPrefixes = [
+    auth.token_prefix ?? "",
+    ...(auth.token_prefixes ?? []),
+  ].filter((p) => p.length > 0);
+  // Same rule as the backend pre-check (`startswith`), so the dialog never
+  // rejects a token the server would accept (e.g. `github_pat_…`, whose
+  // prefix already ends in an underscore).
+  const prefixOk =
+    expectedPrefixes.length === 0 ||
+    expectedPrefixes.some((p) => token.trim().startsWith(p));
   const userIdTrimmed = userId.trim();
   const userIdOk = !ownerLock || userIdTrimmed === "" || /^\d+$/.test(userIdTrimmed);
   const parsedUserId =
@@ -2735,6 +2885,11 @@ export function PatConnectDialog({
         </header>
 
         <div className="space-y-5 px-5 py-5">
+          {notice && (
+            <p className="rounded-md bg-secondary px-3 py-2 text-micro text-foreground">
+              {notice}
+            </p>
+          )}
           <Step
             num={1}
             title={`Generate a token at ${plugin.name}`}
@@ -2790,15 +2945,17 @@ export function PatConnectDialog({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && canSubmit) submit();
               }}
-              placeholder={expectedPrefix ? `${expectedPrefix}_…` : "Token"}
+              placeholder={
+                expectedPrefixes.length > 0 ? `${expectedPrefixes.join(" or ")}…` : "Token"
+              }
               className="mt-2 w-full rounded-md bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-faint-foreground focus:border-border-strong focus:outline-none focus:ring-2 focus:ring-border-strong/30"
               autoFocus
               disabled={isPending}
             />
-            {token && expectedPrefix && !prefixOk && (
+            {token && expectedPrefixes.length > 0 && !prefixOk && (
               <p className="mt-1.5 text-micro text-foreground">
                 Should start with{" "}
-                <span className="font-mono">{expectedPrefix}_</span>
+                <span className="font-mono">{expectedPrefixes.join(" or ")}</span>
               </p>
             )}
           </Step>

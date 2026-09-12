@@ -71,7 +71,15 @@ def _capture_background_tasks(monkeypatch):
     return captured
 
 
-async def _start_and_drain(monkeypatch, capture_background_tasks) -> tuple[str, str]:
+async def _start_and_drain(
+    monkeypatch, capture_background_tasks, *, verification_error=False
+) -> tuple[str, str]:
+    async def verified(spec, tokens):
+        if verification_error:
+            raise mr.ConnectionVerificationError("Provider resource access was denied.")
+        return None
+
+    monkeypatch.setattr(mr, "verify_connection", verified)
     spec = _pkce_spec("real-client-id.apps.example")
     monkeypatch.setattr(mr, "load_catalog", lambda: _Catalog([spec]))
     monkeypatch.setattr(
@@ -121,20 +129,39 @@ async def test_connect_poll_reports_connected_when_save_succeeds(
 
 
 @pytest.mark.asyncio
+async def test_failed_resource_verification_never_saves_or_reports_connected(
+    monkeypatch, _capture_background_tasks
+):
+    saved = []
+    monkeypatch.setattr(mr.TokenStore, "save", lambda *args: saved.append(args))
+    plugin_id, flow_id = await _start_and_drain(
+        monkeypatch, _capture_background_tasks, verification_error=True
+    )
+    result = await mr.connect_poll(plugin_id, flow_id)
+    assert result["state"] == "error"
+    assert result["error"] == "Provider resource access was denied."
+    assert saved == []
+
+
+@pytest.mark.asyncio
 async def test_cancelled_reconnect_does_not_replace_needs_reauth_grant(
     monkeypatch, _capture_background_tasks
 ) -> None:
     release = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    finish_cleanup = asyncio.Event()
 
     class _DelayedPkceHandler(_StubPkceHandler):
         async def await_completion(self, session: AuthSession) -> FlowResult:
             await release.wait()
             return FlowResult(tokens=Tokens(access="replacement"), error=None)
 
+        async def cancel(self, session: AuthSession) -> None:
+            cleanup_started.set()
+            await finish_cleanup.wait()
+
     spec = _pkce_spec("real-client-id.apps.example")
-    store: dict[str, Tokens] = {
-        spec.id: Tokens(access="expired", needs_reauth=True)
-    }
+    store: dict[str, Tokens] = {spec.id: Tokens(access="expired", needs_reauth=True)}
 
     class _Store:
         def save(self, plugin_id: str, tokens: Tokens) -> None:
@@ -149,11 +176,15 @@ async def test_cancelled_reconnect_does_not_replace_needs_reauth_grant(
     monkeypatch.setattr(mr, "TokenStore", _Store)
 
     session = await mr.connect_start(spec.id, BackgroundTasks())
-    result = await mr.cancel_connect(spec.id, session["flow_id"])
+    cancel_task = asyncio.create_task(mr.cancel_connect(spec.id, session["flow_id"]))
+    await cleanup_started.wait()
     release.set()
-    for task in _capture_background_tasks:
-        await task
+    for task in list(_capture_background_tasks):
+        if task is not cancel_task:
+            await task
 
+    finish_cleanup.set()
+    result = await cancel_task
     assert result["state"] == "cancelled"
     assert store[spec.id].access == "expired"
     assert store[spec.id].needs_reauth is True

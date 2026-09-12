@@ -1,0 +1,57 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "figma",
+  "version": "1.0.0",
+  "description": "Find team projects and design files; read design content and comments",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Figma",
+      "category": "Media & Creativity",
+      "logo_slug": "figma",
+      "logo_color": "F24E1E",
+      "featured": false,
+      "longevity": "self_renewing",
+      "oauth_client_family": "figma",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://www.figma.com/oauth",
+        "token_url": "https://www.figma.com/api/oauth/token",
+        "client_id": "REPLACE_WITH_JARVIS_FIGMA_CLIENT_ID",
+        "callback_port": 3127,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "current_user:read",
+          "projects:read",
+          "file_content:read",
+          "file_comments:read"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "fallback_auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://www.figma.com/settings",
+        "token_prefix": "",
+        "validation_endpoint": "https://api.figma.com/v1/me",
+        "instruction_md": "Generate a Figma personal access token with current_user:read, projects:read, file_content:read and file_comments:read. Paste it here. Team IDs and file keys can be copied from Figma URLs.",
+        "auth_scheme": "figma"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "figma"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_figma_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Connect signs you in at Figma in the browser — no token to copy. Uses the Figma REST API so design comments are available as well as file content. If the publisher OAuth app is not provisioned yet, the dialog offers the token fallback instead. Read access and rate limits follow your Figma seat and plan.",
+      "longevity_note": "Browser login renews automatically. Pasted tokens expire on the date chosen when you create them."
+    }
+  }
+}

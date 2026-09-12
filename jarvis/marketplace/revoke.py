@@ -75,24 +75,34 @@ async def revoke_tokens(
     client_id = tokens.extra.get("client_id")
     if client_id:
         body["client_id"] = client_id
-    client_secret = tokens.extra.get("client_secret")
-    if client_secret:
-        body["client_secret"] = client_secret
-
     try:
+        from jarvis.marketplace.auth.oauth_dcr import apply_client_auth
+
+        auth = None
+        client_secret = tokens.extra.get("client_secret")
+        if client_id:
+            auth = apply_client_auth(
+                body,
+                client_id,
+                client_secret,
+                tokens.extra.get(
+                    "token_endpoint_auth_method", "client_secret_post" if client_secret else "none"
+                ),
+            )
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(_TIMEOUT_SECONDS), transport=transport
         ) as client:
             response = await client.post(
                 endpoint,
                 data=body,
+                auth=auth,
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
                     "User-Agent": "Personal-Jarvis/1.0",
                 },
             )
-    except Exception as exc:  # noqa: BLE001 - the local disconnect still stands
-        log.info("plugin %s revocation could not be delivered: %s", spec.id, exc)
+    except Exception:  # noqa: BLE001 - the local disconnect still stands
+        log.info("plugin %s revocation could not be delivered", spec.id)
         return "failed"
 
     # RFC 7009 §2.2: a server returns 200 for a successful revocation AND for a
@@ -101,9 +111,8 @@ async def revoke_tokens(
     if response.status_code in (200, 204):
         return "revoked"
     log.info(
-        "plugin %s revocation refused: HTTP %s %s",
+        "plugin %s revocation refused: HTTP %s",
         spec.id,
         response.status_code,
-        response.text[:120],
     )
     return "failed"

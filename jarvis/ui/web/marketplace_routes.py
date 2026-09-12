@@ -46,6 +46,7 @@ from jarvis.core.http_guard import InsecureRedirect, https_only_async
 from jarvis.core.process_utils import resolve_executable
 from jarvis.core.uploads import UploadRejected, stage_upload
 from jarvis.marketplace.auth import (
+    ERROR_UNKNOWN,
     DcrConfig,
     DeviceFlowConfig,
     DeviceFlowHandler,
@@ -54,16 +55,22 @@ from jarvis.marketplace.auth import (
     PkceLoopbackConfig,
     PkceLoopbackHandler,
     get_registry,
+    sanitize_provider_error,
 )
 from jarvis.marketplace.catalog import (
     CATEGORY_ORDER,
     HostedMcpOAuthDcrAuth,
+    InstanceBrowserAuth,
     OAuthDeviceFlowAuth,
     OAuthPkceLoopbackAuth,
     PatPasteAuth,
 )
 from jarvis.marketplace.catalog_data import load_catalog
 from jarvis.marketplace.channel_runtime import apply_channel_live
+from jarvis.marketplace.connection_verification import (
+    ConnectionVerificationError,
+    verify_connection,
+)
 from jarvis.marketplace.discord_connect import (
     on_discord_connected,
     on_discord_disconnected,
@@ -192,6 +199,63 @@ def _build_dcr_handler(plugin_id: str, auth: HostedMcpOAuthDcrAuth) -> HostedMcp
     )
 
 
+def pat_prefix_ok(auth: PatPasteAuth, token: str) -> bool:
+    """True when a pasted token matches the catalog's accepted prefixes.
+
+    The primary ``token_prefix`` plus any ``token_prefixes`` extras (e.g.
+    GitHub classic ``ghp_`` + fine-grained ``github_pat_``). An entry with
+    no prefix configured accepts anything — validation then happens against
+    the provider endpoint.
+    """
+    accepted = [auth.token_prefix, *getattr(auth, "token_prefixes", [])]
+    accepted = [p for p in accepted if p]
+    if not accepted:
+        return True
+    return token.startswith(tuple(accepted))
+
+
+def _pat_block(spec: Any) -> PatPasteAuth | None:
+    """The PAT block a paste connects with: primary first, expert fallback.
+
+    Dual-mode plugins (browser primary + ``fallback_auth``) keep their
+    previously working token path reachable through this endpoint while the
+    publisher client is still pending.
+    """
+    auth = getattr(spec, "auth", None)
+    if isinstance(auth, PatPasteAuth):
+        return auth
+    fallback = getattr(spec, "fallback_auth", None)
+    return fallback if isinstance(fallback, PatPasteAuth) else None
+
+
+def _auth_standard_payload(spec: Any) -> dict[str, Any] | None:
+    """Additive browser-standard state for PKCE/device plugins.
+
+    ``{"ready": bool, "source": publisher|own|catalog|missing,
+    "fallback": bool}`` — the dialog needs WHERE the client comes from and
+    whether a token fallback exists. ``None`` for modes without a browser
+    flow. Client ids/secrets never leave the backend.
+    """
+    from jarvis.marketplace.catalog import OAuthDeviceFlowAuth
+
+    auth = getattr(spec, "auth", None)
+    if not isinstance(auth, (OAuthPkceLoopbackAuth, OAuthDeviceFlowAuth)):
+        return None
+    try:
+        from jarvis.marketplace.publisher_clients import resolve_publisher_client
+
+        _, _, source = resolve_publisher_client(
+            spec.id, auth.client_id, getattr(auth, "client_secret", None)
+        )
+    except Exception:  # noqa: BLE001 — status must never break listing
+        source = "missing"
+    return {
+        "ready": source in ("publisher", "catalog", "own"),
+        "source": source,
+        "fallback": isinstance(getattr(spec, "fallback_auth", None), PatPasteAuth),
+    }
+
+
 def _make_validator(transport: httpx.AsyncBaseTransport | None = None):
     """Build a token validator that branches on the catalog's ``auth_scheme``.
 
@@ -211,6 +275,9 @@ def _make_validator(transport: httpx.AsyncBaseTransport | None = None):
         elif scheme == "bot":
             url = auth.validation_endpoint
             headers["Authorization"] = f"Bot {token}"
+        elif scheme == "figma":
+            url = auth.validation_endpoint
+            headers["X-Figma-Token"] = token
         else:  # bearer
             url = auth.validation_endpoint
             headers["Authorization"] = f"Bearer {token}"
@@ -271,6 +338,17 @@ def _mcp_live(
         return True, None
     if transport == "stdio":
         install = mcp.get("install") or []
+        if status == "connected":
+            reg = _live_plugin_registry()
+            if reg is not None and reg.is_bootstrapped() and reg.live_tool_count(plugin_id) == 0:
+                return False, reg.last_connect_error(plugin_id) or "No tools loaded; reconnect"
+        if install[:3] == ["python", "-m", "jarvis.plugins.tool.connected_server"]:
+            return True, None  # Bundled in-process bridge needs no PATH launcher.
+        if install[:3] == ["python", "-m", "jarvis.marketplace.amd_mcp"]:
+            import shutil
+
+            available = shutil.which("amd-smi") is not None
+            return available, None if available else "AMD SMI is unavailable on this host"
         launcher = str(install[0]) if install else ""
         if launcher:
             resolved = resolve_executable(launcher)
@@ -301,6 +379,11 @@ async def list_plugins(response: Response) -> dict[str, Any]:
         item["last_refreshed"] = meta.last_refreshed
         item["reauth_reason"] = meta.reauth_reason
         item["reauth_at"] = meta.reauth_at
+        item["unavailable_reason"] = None
+        if spec.id == "amd_gpu" and spec.auth.mode == "local":
+            from jarvis.marketplace.amd_mcp import amd_unavailable_reason
+
+            item["unavailable_reason"] = amd_unavailable_reason()
         if isinstance(spec.auth, OAuthPkceLoopbackAuth):
             from jarvis.marketplace.connect_helpers import (
                 is_placeholder_client_id,
@@ -313,9 +396,19 @@ async def list_plugins(response: Response) -> dict[str, Any]:
             # Configuration state is safe to expose; the client id and secret
             # themselves never leave the backend. The dialog uses this to stop
             # placeholder-only installs before they launch a doomed OAuth tab.
-            item["oauth_client_configured"] = not is_placeholder_client_id(
-                effective_client_id
-            )
+            item["oauth_client_configured"] = not is_placeholder_client_id(effective_client_id)
+        # Browser-auth standard state: WHERE the client comes from, so the
+        # dialog can tell "publisher-provided, one click" apart from
+        # "expert override active" and "provisioning pending", plus whether
+        # a token fallback exists. Additive — older frontends keep reading
+        # `oauth_client_configured`.
+        standard = _auth_standard_payload(spec)
+        if standard is not None:
+            item["auth_standard"] = standard
+            if isinstance(spec.auth, OAuthDeviceFlowAuth):
+                item["oauth_client_configured"] = standard["ready"]
+        if isinstance(getattr(spec, "fallback_auth", None), PatPasteAuth):
+            item["fallback_auth"] = spec.fallback_auth.model_dump(mode="json")
         mcp = spec.mcp_server or {}
         mcp_live, runtime_missing = _mcp_live(mcp, plugin_id=spec.id, status=status)
         if runtime_missing:
@@ -369,7 +462,8 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
     if spec is None:
         raise HTTPException(status_code=404, detail=f"plugin {plugin_id!r} not in catalog")
 
-    if not isinstance(spec.auth, PatPasteAuth):
+    pat = _pat_block(spec)
+    if pat is None:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -379,17 +473,21 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
         )
 
     token = body.token.strip()
-    if spec.auth.token_prefix and not token.startswith(spec.auth.token_prefix):
+    if not pat_prefix_ok(pat, token):
+        accepted = [pat.token_prefix, *getattr(pat, "token_prefixes", [])]
+        # Prefixes already ending in "_" (e.g. "github_pat_") display as-is;
+        # bare ones (e.g. "ghp") display with the trailing underscore the
+        # provider format uses.
+        expected = " or ".join(f"'{p}'" if p.endswith("_") else f"'{p}_'" for p in accepted if p)
         raise HTTPException(
             status_code=400,
-            detail=f"token must start with '{spec.auth.token_prefix}_' "
-            f"(got first 4 chars: {token[:4]!r})",
+            detail=f"token must start with {expected} (got first 4 chars: {token[:4]!r})",
         )
 
     # Self-hosted services (Home Assistant, Jellyfin, ...) live at the user's
     # own address, which the catalog cannot know.
     instance_url: str | None = None
-    if spec.auth.instance_url is not None:
+    if pat.instance_url is not None:
         if not (body.instance_url or "").strip():
             raise HTTPException(
                 status_code=400,
@@ -401,18 +499,18 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     target = (
-        instance_url + spec.auth.instance_url.validation_path
-        if instance_url and spec.auth.instance_url
-        else spec.auth.validation_endpoint
+        instance_url + pat.instance_url.validation_path
+        if instance_url and pat.instance_url
+        else pat.validation_endpoint
     )
     try:
         # Only widen the call for self-hosted plugins. Every other caller (and
         # every injected test double) keeps the two-argument shape it has had
         # since the flow was written.
         ok, status = (
-            await _validate_token(spec.auth, token, instance_url)
+            await _validate_token(pat, token, instance_url)
             if instance_url
-            else await _validate_token(spec.auth, token)
+            else await _validate_token(pat, token)
         )
     except httpx.HTTPError as exc:
         raise HTTPException(
@@ -483,8 +581,16 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
 # ----------------------------------------------------------------------
 
 
+class BrowserConnectBody(BaseModel):
+    instance_url: str | None = None
+
+
 @router.post("/plugins/{plugin_id}/connect/start")
-async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str, Any]:
+async def connect_start(
+    plugin_id: str,
+    background: BackgroundTasks,
+    body: BrowserConnectBody | None = None,
+) -> dict[str, Any]:
     """Kick off an OAuth-redirect flow. Returns a session the UI renders.
 
     The handler runs `await_completion()` in a background task — the UI
@@ -495,27 +601,57 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
     if spec is None:
         raise HTTPException(status_code=404, detail=f"plugin {plugin_id!r} not in catalog")
 
-    if isinstance(spec.auth, HostedMcpOAuthDcrAuth):
+    if isinstance(spec.auth, InstanceBrowserAuth):
+        from jarvis.marketplace.auth.home_assistant import HomeAssistantHandler
+
+        if not isinstance(body, BrowserConnectBody) or not body.instance_url:
+            raise HTTPException(status_code=400, detail="Enter your Home Assistant address.")
+        try:
+            handler = HomeAssistantHandler(body.instance_url)
+        except InstanceUrlError:
+            raise HTTPException(
+                status_code=400, detail="Enter a valid Home Assistant address."
+            ) from None
+    elif isinstance(spec.auth, HostedMcpOAuthDcrAuth):
         handler = _build_dcr_handler(plugin_id, spec.auth)
+    elif spec.auth.mode == "local":
+        if plugin_id != "amd_gpu" or spec.source != "seed":
+            raise HTTPException(status_code=400, detail="Unknown local connector")
+        from jarvis.marketplace.amd_mcp import read_amd_status
+
+        try:
+            await asyncio.to_thread(read_amd_status)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        TokenStore().save(plugin_id, Tokens(access="local-enabled"))
+        _refresh_plugin_in_live_registry(plugin_id)
+        return {"kind": "local", "plugin_id": plugin_id, "state": "connected"}
     elif isinstance(spec.auth, OAuthDeviceFlowAuth):
         from jarvis.marketplace.connect_helpers import is_placeholder_client_id
+        from jarvis.marketplace.publisher_clients import resolve_publisher_client
 
-        if is_placeholder_client_id(spec.auth.client_id):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"oauth client not configured for plugin {plugin_id!r}: "
-                    "placeholder client_id in the catalog. Supply your own "
-                    "OAuth client first."
-                ),
+        device_client_id, _, _ = resolve_publisher_client(plugin_id, spec.auth.client_id, None)
+        if is_placeholder_client_id(device_client_id):
+            detail = (
+                f"oauth client not configured for plugin {plugin_id!r}: no "
+                "publisher-provisioned shared client is installed yet and "
+                "the shipped catalog carries only a placeholder client_id. "
+                "This is a provisioning task for the project, not setup "
+                "work for you — see the plugin's audit entry."
             )
+            if isinstance(getattr(spec, "fallback_auth", None), PatPasteAuth):
+                detail += (
+                    " Meanwhile you can connect with a provider-issued token "
+                    "via the dialog's token fallback."
+                )
+            raise HTTPException(status_code=409, detail=detail)
         handler = DeviceFlowHandler(
             DeviceFlowConfig(
                 plugin_id=plugin_id,
                 device_url=spec.auth.device_url,
                 verify_url=spec.auth.verify_url,
                 token_url=spec.auth.token_url,
-                client_id=spec.auth.client_id,
+                client_id=device_client_id,
                 scopes=list(spec.auth.scopes),
             )
         )
@@ -532,17 +668,21 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
             plugin_id, spec.auth.client_id, spec.auth.client_secret
         )
         if is_placeholder_client_id(_pkce_client_id):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"oauth client not configured for plugin {plugin_id!r}: the "
-                    "shipped catalog carries a placeholder client_id and no "
-                    "<family>_oauth_client_id secret is set. Open the connect "
-                    "dialog's 'Use your own OAuth client' section (or follow "
-                    "the plugin's setup hint) and paste your own client id — "
-                    "then retry."
-                ),
+            detail = (
+                f"oauth client not configured for plugin {plugin_id!r}: no "
+                "publisher-provisioned shared client is installed yet and "
+                "the shipped catalog carries only a placeholder client_id. "
+                "This is a provisioning task for the project, not setup "
+                "work for you — see the plugin's audit entry. Experts can "
+                "still use the dialog's 'Use your own OAuth client' "
+                "section with a self-registered app, then retry."
             )
+            if isinstance(getattr(spec, "fallback_auth", None), PatPasteAuth):
+                detail += (
+                    " Meanwhile you can connect with a provider-issued token "
+                    "via the dialog's token fallback."
+                )
+            raise HTTPException(status_code=409, detail=detail)
         handler = PkceLoopbackHandler(
             PkceLoopbackConfig(
                 plugin_id=plugin_id,
@@ -560,6 +700,7 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
                 callback_path=spec.auth.callback_path,
                 resource=spec.auth.resource,
                 offline_access=spec.auth.offline_access,
+                client_auth_method=spec.auth.client_auth_method,
             )
         )
     else:
@@ -575,10 +716,10 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
     try:
         session = await handler.start(spec)
     except Exception as exc:  # noqa: BLE001
-        log.warning("plugin %s connect/start failed: %s", plugin_id, exc)
+        log.warning("plugin %s connect/start failed (%s)", plugin_id, type(exc).__name__)
         raise HTTPException(
             status_code=502,
-            detail=f"connect-start failed: {exc}",
+            detail=sanitize_provider_error(str(exc)),
         ) from exc
 
     registry = get_registry()
@@ -594,9 +735,13 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
             try:
                 result = await handler.await_completion(session)
             except Exception as exc:  # noqa: BLE001
-                log.warning("plugin %s connect/await failed: %s", plugin_id, exc)
+                log.warning("plugin %s connect/await failed (%s)", plugin_id, type(exc).__name__)
                 if registry.get(session.flow_id) is slot:
-                    slot.result = FlowResult(tokens=None, error=str(exc))
+                    slot.result = FlowResult(
+                        tokens=None,
+                        error=sanitize_provider_error(str(exc)),
+                        error_code=ERROR_UNKNOWN,
+                    )
                 return
             # Closing the browser-login dialog is a real cancellation, not
             # merely a UI hide. Never let a late provider callback replace the
@@ -606,6 +751,16 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
                 log.info("plugin %s connect flow cancelled", plugin_id)
                 return
             if result.tokens is not None:
+                try:
+                    await verify_connection(spec, result.tokens)
+                except ConnectionVerificationError as exc:
+                    if registry.get(session.flow_id) is slot:
+                        slot.result = FlowResult(
+                            tokens=None, error=str(exc), error_code="provider_unreachable"
+                        )
+                    return
+                if registry.get(session.flow_id) is not slot:
+                    return
                 # Persist BEFORE publishing the result: connect_poll reads
                 # `slot.result` to decide "connected" vs "pending", so setting
                 # it before the save actually lands let a poll (or a crash
@@ -614,8 +769,12 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
                 try:
                     TokenStore().save(plugin_id, result.tokens)
                 except Exception as exc:  # noqa: BLE001
-                    log.warning("plugin %s token save failed: %s", plugin_id, exc)
-                    slot.result = FlowResult(tokens=None, error=f"token save failed: {exc}")
+                    log.warning("plugin %s token save failed (%s)", plugin_id, type(exc).__name__)
+                    slot.result = FlowResult(
+                        tokens=None,
+                        error="The connection could not be saved. Try again.",
+                        error_code=ERROR_UNKNOWN,
+                    )
                     return
                 _refresh_plugin_in_live_registry(plugin_id)
                 log.info("plugin %s connected via DCR", plugin_id)
@@ -645,6 +804,17 @@ async def cancel_connect(plugin_id: str, flow_id: str) -> dict[str, str]:
     if slot is not None and slot.session.plugin_id != plugin_id:
         raise HTTPException(status_code=404, detail="unknown flow_id for plugin")
     registry.drop(flow_id)
+    if slot is not None:
+        # Invalidate before awaiting cleanup: a late completion must not save
+        # tokens while the callback listener is still shutting down.
+        cancel = getattr(slot.handler, "cancel", None)
+        if callable(cancel):
+            try:
+                result = cancel(slot.session)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:  # noqa: BLE001 — cancel stays best-effort
+                log.debug("cancel handler cleanup failed for %s", plugin_id)
     return {"state": "cancelled", "flow_id": flow_id, "plugin_id": plugin_id}
 
 
@@ -655,6 +825,8 @@ async def connect_poll(plugin_id: str, flow_id: str) -> dict[str, Any]:
     slot = registry.get(flow_id)
     if slot is None:
         raise HTTPException(status_code=404, detail="unknown flow_id (or expired)")
+    if slot.session.plugin_id != plugin_id:
+        raise HTTPException(status_code=404, detail="unknown flow_id for plugin")
 
     if slot.result is None:
         return {"state": "pending", "flow_id": flow_id}
@@ -665,6 +837,7 @@ async def connect_poll(plugin_id: str, flow_id: str) -> dict[str, Any]:
             "state": "error",
             "flow_id": flow_id,
             "error": slot.result.error or "unknown",
+            "error_code": slot.result.error_code or "unknown",
         }
 
     registry.drop(flow_id)
@@ -691,6 +864,7 @@ async def oauth_callback(code: str = "", state: str = "", error: str = "") -> HT
         SUCCESS_HTML,
         deliver_callback,
     )
+    from jarvis.marketplace.oauth_callback_server import provider_callback_error
 
     delivered = deliver_callback(code=code, state=state, error=error or None)
     if not delivered:
@@ -699,7 +873,9 @@ async def oauth_callback(code: str = "", state: str = "", error: str = "") -> HT
             status_code=400,
         )
     if error:
-        return HTMLResponse(ERROR_HTML.format(reason=error), status_code=400)
+        return HTMLResponse(
+            ERROR_HTML.format(reason=provider_callback_error(error)), status_code=400
+        )
     if not code:
         return HTMLResponse(
             ERROR_HTML.format(reason="Missing authorization code."),
@@ -766,9 +942,7 @@ async def disconnect(plugin_id: str, request: Request) -> dict[str, Any]:
 # ----------------------------------------------------------------------
 
 
-def _community_payload(
-    index: Any, status: str
-) -> dict[str, Any]:
+def _community_payload(index: Any, status: str) -> dict[str, Any]:
     """Convert a fetched index into the wire shape the Plugins view renders.
 
     Every plugin entry is run through the SAME converter the install path
@@ -809,8 +983,7 @@ def _community_payload(
                 )
                 if spec.id != entry.name:
                     raise AgentPluginError(
-                        f"index name {entry.name!r} does not match manifest "
-                        f"name {spec.id!r}"
+                        f"index name {entry.name!r} does not match manifest name {spec.id!r}"
                     )
             except AgentPluginError as exc:
                 # Surfaced to the UI as an invalid entry carrying the reason.
@@ -821,14 +994,10 @@ def _community_payload(
             item["valid"] = True
             existing = installed_specs.get(spec.id)
             item["installed"] = existing is not None and existing.source == "community"
-            item["installed_version"] = (
-                existing.version if existing is not None else None
-            )
+            item["installed_version"] = existing.version if existing is not None else None
             # A community name colliding with a shipped plugin is never
             # installable — surfaced so the UI explains WHY the button is off.
-            item["seed_conflict"] = (
-                existing is not None and existing.source != "community"
-            )
+            item["seed_conflict"] = existing is not None and existing.source != "community"
             item["has_usage_card"] = bool(entry.usage_card)
             plugins.append(item)
 
@@ -861,9 +1030,7 @@ def _community_payload(
         # scan, and asking it once per published wallpaper would turn browsing
         # into an O(entries x installed) walk of the data directory.
         installed_sources = {
-            item.origin.source_id
-            for item in WallpaperUploads().list()
-            if item.origin is not None
+            item.origin.source_id for item in WallpaperUploads().list() if item.origin is not None
         }
         for paper in index.wallpapers:
             wallpapers.append(
@@ -1020,8 +1187,7 @@ def _mask_env_literals(block: dict[str, Any]) -> dict[str, Any]:
     env = out.get("env")
     if isinstance(env, dict):
         out["env"] = {
-            k: (v if isinstance(v, str) and v.startswith("$") else "••••••")
-            for k, v in env.items()
+            k: (v if isinstance(v, str) and v.startswith("$") else "••••••") for k, v in env.items()
         }
     return out
 
@@ -1305,9 +1471,7 @@ async def _install_community_skill(entry: Any, request: Request) -> dict[str, An
     }
 
 
-async def _download_image(
-    raw_url: str, limit_bytes: int, *, transport: Any = None
-) -> bytes:
+async def _download_image(raw_url: str, limit_bytes: int, *, transport: Any = None) -> bytes:
     """Fetch one image over https, refusing anything bigger than ``limit_bytes``.
 
     Streamed rather than read whole so an oversized (or endless) body is cut
@@ -1341,10 +1505,7 @@ async def _download_image(
                     if total > limit_bytes:
                         raise HTTPException(
                             status_code=400,
-                            detail=(
-                                "that image is larger than "
-                                f"{limit_bytes // (1024 * 1024)} MB"
-                            ),
+                            detail=(f"that image is larger than {limit_bytes // (1024 * 1024)} MB"),
                         )
                     chunks.append(chunk)
         except InsecureRedirect as exc:
@@ -1473,10 +1634,7 @@ def _install_by_name_404(item_id: str, index: Any) -> HTTPException:
     hint = f" Closest match: {close[0]!r}." if close else ""
     return HTTPException(
         status_code=404,
-        detail=(
-            f"Nothing named {item_id!r} is published in the community "
-            f"marketplace.{hint}"
-        ),
+        detail=(f"Nothing named {item_id!r} is published in the community marketplace.{hint}"),
     )
 
 
@@ -1542,14 +1700,11 @@ async def community_uninstall(plugin_id: str) -> dict[str, Any]:
 
     spec = load_catalog().by_id(plugin_id)
     if spec is None:
-        raise HTTPException(
-            status_code=404, detail=f"plugin {plugin_id!r} not in catalog"
-        )
+        raise HTTPException(status_code=404, detail=f"plugin {plugin_id!r} not in catalog")
     if spec.source != "community":
         raise HTTPException(
             status_code=409,
-            detail=f"{plugin_id!r} is a built-in plugin — disconnect it "
-            "instead of uninstalling",
+            detail=f"{plugin_id!r} is a built-in plugin — disconnect it instead of uninstalling",
         )
 
     # ALL local state changes happen before the first await: the provider
@@ -1614,8 +1769,7 @@ def _locate_plugin_manifests(staged_root: Path) -> dict[str, Path]:
         raise HTTPException(status_code=400, detail="No plugin.json found in the upload.")
     if len(found["plugin"]) > 1:
         listed = ", ".join(
-            str(path.relative_to(staged_root)).replace("\\", "/")
-            for path in found["plugin"][:5]
+            str(path.relative_to(staged_root)).replace("\\", "/") for path in found["plugin"][:5]
         )
         suffix = ", ..." if len(found["plugin"]) > 5 else ""
         raise HTTPException(

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "linkedin",
+  "version": "1.0.0",
+  "description": "Read your profile and publish posts; broader access requires partner approval",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "LinkedIn",
+      "category": "Media & Creativity",
+      "logo_slug": "linkedin",
+      "logo_color": "0A66C2",
+      "featured": false,
+      "longevity": "provider_limited",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://www.linkedin.com/oauth/v2/authorization",
+        "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "openid",
+          "profile",
+          "w_member_social"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": false
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "linkedin"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_linkedin_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create a LinkedIn developer app and enable Sign In with LinkedIn using OpenID Connect and Share on LinkedIn. Register the callback shown here. Personal messages, contact lists and general post reading are not available through the self-service API and are not exposed by this plugin.",
+      "oauth_client_family": "linkedin",
+      "longevity_note": "Standard LinkedIn access tokens expire; refresh tokens are restricted to approved partners. Reconnect when requested."
+    }
+  }
+}

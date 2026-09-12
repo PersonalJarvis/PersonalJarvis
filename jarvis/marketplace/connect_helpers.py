@@ -89,25 +89,24 @@ def resolve_pkce_client(
 ) -> tuple[str, str | None]:
     """Resolve the effective (client_id, client_secret) for a PKCE plugin.
 
-    Precedence: a `<family>_oauth_client_*` secret override wins over the catalog
-    value, so a downloader can supply their OWN production OAuth client without
-    editing the tracked catalog (which gets re-synced from the seed) or exporting
-    env vars. The Google family (gmail/drive/calendar) shares one `google_oauth_*`
-    pair; slack and asana each have their own. A plugin with no family mapping
-    keeps its real catalog client untouched. An unset/empty secret never displaces
-    the catalog value (``or`` fallback), so a placeholder catalog client still
-    builds a handler and the scheduler can honestly flag needs_reauth.
+    Precedence: expert ``<family>_oauth_client_*`` secret override first, then
+    the publisher-provisioned shared client (``publisher_<family>_oauth_*`` —
+    the standard path, set once by the project), then the catalog value, so a
+    downloader can still supply their OWN production OAuth client without
+    editing the tracked catalog (which gets re-synced from the seed) or
+    exporting env vars. The Google family (gmail/drive/calendar) shares one
+    `google_oauth_*` pair; slack and asana each have their own. A plugin with
+    no family mapping keeps its real catalog client untouched. An unset/empty
+    secret never displaces the catalog value (``or`` fallback), so a
+    placeholder catalog client still builds a handler and the scheduler can
+    honestly flag needs_reauth.
     """
-    family = oauth_client_family(plugin_id)
-    if family is None:
-        return catalog_client_id, catalog_client_secret
-    from jarvis.core.config import get_secret
+    from jarvis.marketplace.publisher_clients import resolve_publisher_client
 
-    cid = get_secret(f"{family}_oauth_client_id", f"{family.upper()}_OAUTH_CLIENT_ID")
-    csec = get_secret(
-        f"{family}_oauth_client_secret", f"{family.upper()}_OAUTH_CLIENT_SECRET"
+    client_id, client_secret, _source = resolve_publisher_client(
+        plugin_id, catalog_client_id, catalog_client_secret
     )
-    return (cid or catalog_client_id, csec or catalog_client_secret)
+    return client_id, client_secret
 
 
 def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
@@ -123,6 +122,7 @@ def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
     )
     from jarvis.marketplace.catalog import (
         HostedMcpOAuthDcrAuth,
+        InstanceBrowserAuth,
         OAuthDeviceFlowAuth,
         OAuthPkceLoopbackAuth,
     )
@@ -132,18 +132,21 @@ def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
     if spec is None:
         return None
     auth = spec.auth
+    if isinstance(auth, InstanceBrowserAuth):
+        from jarvis.marketplace.auth.home_assistant import HomeAssistantHandler
+
+        return HomeAssistantHandler()
     if isinstance(auth, HostedMcpOAuthDcrAuth):
-        return HostedMcpDcrHandler(
-            DcrConfig(plugin_id=plugin_id, discovery_url=auth.discovery_url)
-        )
+        return HostedMcpDcrHandler(DcrConfig(plugin_id=plugin_id, discovery_url=auth.discovery_url))
     if isinstance(auth, OAuthDeviceFlowAuth):
+        client_id, _ = resolve_pkce_client(plugin_id, auth.client_id, None)
         return DeviceFlowHandler(
             DeviceFlowConfig(
                 plugin_id=plugin_id,
                 device_url=auth.device_url,
                 verify_url=auth.verify_url,
                 token_url=auth.token_url,
-                client_id=auth.client_id,
+                client_id=client_id,
                 scopes=list(auth.scopes),
             )
         )
@@ -165,6 +168,7 @@ def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
                 callback_path=auth.callback_path,
                 resource=auth.resource,
                 offline_access=auth.offline_access,
+                client_auth_method=auth.client_auth_method,
             )
         )
     return None  # pat_paste / allowlist — no refreshable OAuth handler

@@ -206,7 +206,14 @@ async def test_refresh_legacy_public_client_binds_client_id_without_secret(
     assert tokens.extra == {
         "provider_hint": "google",
         "client_id": "public-client",
+        "token_endpoint_auth_method": "none",
     }
+    from jarvis.marketplace.catalog_data import load_catalog
+    from jarvis.marketplace.revoke import revoke_tokens
+
+    assert await revoke_tokens(load_catalog().by_id("google_drive"), tokens) == "revoked"
+    assert captured["data"]["token"] == OLD_REFRESH_TOKEN
+    assert "client_secret" not in captured["data"]
 
 
 @pytest.mark.asyncio

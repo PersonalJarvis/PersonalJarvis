@@ -10,21 +10,37 @@
       "logo_slug": "github",
       "logo_color": "24292E",
       "featured": true,
-      "longevity": "permanent",
-      "longevity_note": "Pick 'No expiration' when you create the token.",
+      "longevity": "self_renewing",
+      "oauth_client_family": "github",
       "auth": {
+        "mode": "oauth_device_flow",
+        "device_url": "https://github.com/login/device/code",
+        "verify_url": "https://github.com/login/device",
+        "token_url": "https://github.com/login/oauth/access_token",
+        "client_id": "REPLACE_WITH_JARVIS_GITHUB_CLIENT_ID",
+        "scopes": [
+          "repo",
+          "workflow",
+          "read:user"
+        ]
+      },
+      "fallback_auth": {
         "mode": "pat_paste",
         "token_creation_url": "https://github.com/settings/tokens/new?scopes=repo,workflow,read:user&description=Personal+Jarvis",
         "token_prefix": "ghp",
+        "token_prefixes": [
+          "github_pat_"
+        ],
         "validation_endpoint": "https://api.github.com/user",
-        "instruction_md": "1. The link below opens GitHub with the right scopes (repo, workflow, read:user) already ticked.\n2. Pick an expiration (90 days is a sensible default), then click 'Generate token'.\n3. Copy the token (shown only once) and paste it below.\n4. If your repos sit behind SAML SSO, click 'Configure SSO' next to the new token after creation."
+        "instruction_md": "1. The link below opens GitHub with the right scopes (repo, workflow, read:user) already ticked.\n2. Pick an expiration (90 days is a sensible default), then click 'Generate token'. Classic tokens start with ghp_, fine-grained tokens with github_pat_ — both work.\n3. Copy the token (shown only once) and paste it below.\n4. If your repos sit behind SAML SSO, click 'Configure SSO' next to the new token after creation."
       },
       "mcp_server": {
         "transport": "http",
         "url": "https://api.githubcopilot.com/mcp/",
         "auth_header_template": "Authorization: Bearer $plugin_github_access_token"
       },
-      "post_install_hint_md": "Uses GitHub's hosted MCP server, so Docker is not required. If you use SAML SSO, authorize the token at https://github.com/settings/tokens after connecting."
+      "post_install_hint_md": "Connect signs you in at GitHub in the browser — no token to copy. If the publisher device client is not provisioned yet, the dialog offers the token fallback instead. If you use SAML SSO, authorize the credential at https://github.com/settings/tokens after connecting.",
+      "longevity_note": "Browser login renews automatically. Pasted tokens expire as configured at creation."
     },
     {
       "id": "vercel",
@@ -34,17 +50,26 @@
       "logo_slug": "vercel",
       "logo_color": "000000",
       "featured": true,
-      "longevity": "permanent",
-      "longevity_note": "Pick 'No expiration' when you create the token.",
+      "longevity": "self_renewing",
       "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.vercel.com/.well-known/oauth-protected-resource",
+        "mcp_url": "https://mcp.vercel.com",
+        "refresh_supported": true
+      },
+      "fallback_auth": {
         "mode": "pat_paste",
         "token_creation_url": "https://vercel.com/account/tokens",
         "token_prefix": "vcp",
         "validation_endpoint": "https://api.vercel.com/v2/user",
         "instruction_md": "1. Click 'Create Token'\n2. Name: 'Personal Jarvis'\n3. Choose 'Full Account' or a specific team\n4. Copy the token (shown once)\n5. Paste below"
       },
-      "native_tool": "vercel",
-      "future_v2_note": "Apply for mcp.vercel.com client-allowlist; switch mode to hosted_mcp_allowlist when approved."
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.vercel.com",
+        "auth_header_template": "Authorization: Bearer $plugin_vercel_access_token"
+      },
+      "post_install_hint_md": "Sign in through the official provider browser page. Jarvis captures the callback and verifies the connection automatically."
     },
     {
       "id": "supabase",
@@ -54,20 +79,26 @@
       "logo_slug": "supabase",
       "logo_color": "3FCF8E",
       "featured": false,
-      "longevity": "permanent",
+      "longevity": "self_renewing",
       "auth": {
-        "mode": "pat_paste",
-        "token_creation_url": "https://supabase.com/dashboard/account/tokens",
-        "token_prefix": "sbp",
-        "validation_endpoint": "https://api.supabase.com/v1/projects",
-        "instruction_md": "1. Click 'Generate new token'\n2. Name: 'Personal Jarvis'\n3. Copy the token (shown once)"
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.supabase.com/.well-known/oauth-protected-resource/mcp",
+        "mcp_url": "https://mcp.supabase.com/mcp?read_only=true",
+        "refresh_supported": true
       },
       "mcp_server": {
         "transport": "http",
         "url": "https://mcp.supabase.com/mcp?read_only=true",
         "auth_header_template": "Authorization: Bearer $plugin_supabase_access_token"
       },
-      "post_install_hint_md": "Uses Supabase's hosted MCP server, so Node.js is not required. Read-only mode is enforced in the server URL."
+      "post_install_hint_md": "Sign in through the official provider browser page. Jarvis captures the callback and verifies the connection automatically. The hosted MCP endpoint uses read-only mode.",
+      "fallback_auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://supabase.com/dashboard/account/tokens",
+        "token_prefix": "sbp",
+        "validation_endpoint": "https://api.supabase.com/v1/projects",
+        "instruction_md": "1. Click 'Generate new token'\n2. Name: 'Personal Jarvis'\n3. Copy the token (shown once)"
+      }
     },
     {
       "id": "notion",
@@ -171,20 +202,26 @@
       "logo_slug": "stripe",
       "logo_color": "635BFF",
       "featured": false,
-      "longevity": "permanent",
+      "longevity": "self_renewing",
       "auth": {
-        "mode": "pat_paste",
-        "token_creation_url": "https://dashboard.stripe.com/apikeys",
-        "token_prefix": "",
-        "validation_endpoint": "https://api.stripe.com/v1/balance",
-        "instruction_md": "1. Open https://dashboard.stripe.com/apikeys and click 'Create restricted key'.\n2. Name it 'Personal Jarvis'. Set the resources Jarvis should read to 'Read' — at minimum 'Balance: Read', plus e.g. Customers, Products, Invoices, Subscriptions.\n3. Create the key and copy the value starting with 'rk_live_' (or 'rk_test_').\n4. Paste it below. A full secret key 'sk_' also works but grants full access — a restricted read key is safer."
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.stripe.com/.well-known/oauth-protected-resource",
+        "mcp_url": "https://mcp.stripe.com",
+        "refresh_supported": true
       },
       "mcp_server": {
         "transport": "http",
         "url": "https://mcp.stripe.com",
         "auth_header_template": "Authorization: Bearer ${plugin_stripe_access_token}"
       },
-      "post_install_hint_md": "Restricted key (rk_), validated against GET /v1/balance, sent as a Bearer token to Stripe's hosted MCP server — the documented path for non-OAuth clients (bypasses the OAuth client-allowlist; no Node needed). Read-only is controlled by the key's scope."
+      "post_install_hint_md": "Sign in through the official provider browser page. Jarvis captures the callback and verifies the connection automatically.",
+      "fallback_auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://dashboard.stripe.com/apikeys",
+        "token_prefix": "",
+        "validation_endpoint": "https://api.stripe.com/v1/balance",
+        "instruction_md": "1. Open https://dashboard.stripe.com/apikeys and click 'Create restricted key'.\n2. Name it 'Personal Jarvis'. Set the resources Jarvis should read to 'Read' — at minimum 'Balance: Read', plus e.g. Customers, Products, Invoices, Subscriptions.\n3. Create the key and copy the value starting with 'rk_live_' (or 'rk_test_').\n4. Paste it below. A full secret key 'sk_' also works but grants full access — a restricted read key is safer."
+      }
     },
     {
       "id": "cloudflare",
@@ -512,9 +549,21 @@
       "logo_slug": "homeassistant",
       "logo_color": "18BCF2",
       "featured": true,
-      "longevity": "permanent",
-      "longevity_note": "A Home Assistant long-lived access token is valid for ten years and is never renewed or rotated, so this connection needs no maintenance.",
+      "longevity": "self_renewing",
+      "longevity_note": "Browser approval renews automatically until access is revoked in Home Assistant.",
       "auth": {
+        "mode": "instance_browser",
+        "protocol": "home_assistant",
+        "instance_url": {
+          "label": "Your Home Assistant address",
+          "placeholder": "http://192.168.1.20:8123",
+          "validation_path": "/api/",
+          "help_md": "The address you use in your browser. Home Assistant runs on your home network, so a Jarvis on a different machine, behind a VPN or in a container may not reach it."
+        }
+      },
+      "native_tool": "home_assistant",
+      "post_install_hint_md": "Try “turn off the living room lights” or “is the garage door still open”. Acting on a device asks for confirmation first.",
+      "fallback_auth": {
         "mode": "pat_paste",
         "token_creation_url": "https://www.home-assistant.io/docs/authentication/#your-account-profile",
         "token_prefix": "",
@@ -527,8 +576,9 @@
           "help_md": "The address you use in your browser. Home Assistant runs on your home network, so a Jarvis on a different machine, behind a VPN or in a container may not reach it."
         }
       },
-      "native_tool": "home_assistant",
-      "post_install_hint_md": "Try “turn off the living room lights” or “is the garage door still open”. Acting on a device asks for confirmation first."
+      "browser_flow": "hosted",
+      "publisher_managed": true,
+      "verification_hook": "home_assistant_api"
     },
     {
       "id": "spotify",
@@ -618,6 +668,841 @@
         "auth_header_template": "Authorization: Bearer ${plugin_higgsfield_access_token}"
       },
       "post_install_hint_md": "Sign in with your Higgsfield account — there is no API key. Higgsfield requires an active paid plan for this connection. Every generation spends plan credits at the normal rate; Unlimited and free generations on higgsfield.ai do not apply here. There is no spend cap, so ask for the credit cost and wait for your OK before generating. Images usually finish in seconds; videos can take several minutes. Results also appear in your Higgsfield Assets."
+    },
+    {
+      "id": "outlook",
+      "display_name": "Outlook Mail & Calendar",
+      "description": "Read, send and reply to Outlook mail; read and manage Microsoft 365 calendar events",
+      "category": "Calendar & Mail",
+      "logo_slug": "outlook",
+      "logo_color": "0078D4",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "offline_access",
+          "User.Read",
+          "Mail.Read",
+          "Mail.Send",
+          "Calendars.ReadWrite"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "outlook"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_outlook_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration.  Permissions: offline_access, User.Read, Mail.Read, Mail.Send, Calendars.ReadWrite.",
+      "oauth_client_family": "microsoft"
+    },
+    {
+      "id": "onedrive",
+      "display_name": "OneDrive",
+      "description": "Search, upload and share files in your Microsoft OneDrive",
+      "category": "Files & Photos",
+      "logo_slug": "onedrive",
+      "logo_color": "0078D4",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "offline_access",
+          "User.Read",
+          "Files.ReadWrite"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "onedrive"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_onedrive_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration. Uploads through this connector support files up to 20 MiB; larger transfers use OneDrive. Permissions: offline_access, User.Read, Files.ReadWrite.",
+      "oauth_client_family": "microsoft"
+    },
+    {
+      "id": "teams",
+      "display_name": "Microsoft Teams",
+      "description": "Read and send chat messages; create meetings and get join links",
+      "category": "Messaging",
+      "logo_slug": "teams",
+      "logo_color": "0078D4",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "offline_access",
+          "User.Read",
+          "Chat.Read",
+          "ChatMessage.Send",
+          "OnlineMeetings.ReadWrite"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "teams"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_teams_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration. Work or school account required. Meeting creation returns a join link; it does not ring participants or open the Teams app. Permissions: offline_access, User.Read, Chat.Read, ChatMessage.Send, OnlineMeetings.ReadWrite.",
+      "oauth_client_family": "microsoft"
+    },
+    {
+      "id": "sharepoint",
+      "display_name": "SharePoint",
+      "description": "Search company sites, document libraries and list items",
+      "category": "Knowledge & Reading",
+      "logo_slug": "sharepoint",
+      "logo_color": "0078D4",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "offline_access",
+          "User.Read",
+          "Sites.Read.All",
+          "Files.Read.All"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "sharepoint"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_sharepoint_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration. Work or school account required. Access is limited to sites your account can read. Permissions: offline_access, User.Read, Sites.Read.All, Files.Read.All.",
+      "oauth_client_family": "microsoft"
+    },
+    {
+      "id": "onenote",
+      "display_name": "OneNote",
+      "description": "Read notebooks and pages; create and update notes",
+      "category": "Knowledge & Reading",
+      "logo_slug": "onenote",
+      "logo_color": "0078D4",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "offline_access",
+          "User.Read",
+          "Notes.ReadWrite"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "onenote"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_onenote_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration.  Permissions: offline_access, User.Read, Notes.ReadWrite.",
+      "oauth_client_family": "microsoft"
+    },
+    {
+      "id": "microsoft_todo",
+      "display_name": "Microsoft To Do",
+      "description": "Read task lists, create tasks and synchronize completion status",
+      "category": "Lists & Tasks",
+      "logo_slug": "microsofttodo",
+      "logo_color": "0078D4",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "offline_access",
+          "User.Read",
+          "Tasks.ReadWrite"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "microsoft_todo"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_microsoft_todo_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration.  Permissions: offline_access, User.Read, Tasks.ReadWrite.",
+      "oauth_client_family": "microsoft"
+    },
+    {
+      "id": "aws",
+      "display_name": "AWS",
+      "description": "Inspect cloud resources, storage and costs through the official AWS MCP server",
+      "category": "Developer",
+      "logo_slug": "aws",
+      "logo_color": "FF9900",
+      "featured": false,
+      "longevity": "provider_limited",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://aws-mcp.eu-central-1.api.aws/mcp",
+        "discovery_url": "https://aws-mcp.eu-central-1.api.aws/.well-known/oauth-protected-resource",
+        "refresh_supported": true,
+        "scopes": []
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://aws-mcp.eu-central-1.api.aws/mcp",
+        "auth_header_template": "Authorization: Bearer $plugin_aws_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Grant AWSMCPSignInOAuthAccessPolicy and the service permissions your queries need. This connects through the Frankfurt endpoint. OAuth supports one account per connection; IAM still controls every operation. Cost queries need Cost Explorer permissions.",
+      "longevity_note": "AWS access lasts one hour and refresh is limited to a session of up to 12 hours; then sign in again."
+    },
+    {
+      "id": "azure",
+      "display_name": "Microsoft Azure",
+      "description": "List subscriptions and resources; query actual Azure costs",
+      "category": "Developer",
+      "logo_slug": "azure",
+      "logo_color": "0089D6",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "offline_access",
+          "https://management.azure.com/user_impersonation"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "azure"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_azure_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration. Azure requires a work/school account, Azure Service Management delegated permission and Cost Management Reader or equivalent for billing.",
+      "oauth_client_family": "microsoft"
+    },
+    {
+      "id": "google_cloud",
+      "display_name": "Google Cloud",
+      "description": "Search projects and storage; inspect billing accounts and query billing exports",
+      "category": "Developer",
+      "logo_slug": "googlecloud",
+      "logo_color": "4285F4",
+      "featured": false,
+      "longevity": "provider_limited",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "https://www.googleapis.com/auth/cloud-platform.read-only",
+          "https://www.googleapis.com/auth/bigquery"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true,
+        "offline_access": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "google_cloud"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_google_cloud_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Use your Google desktop OAuth client. Enable Cloud Resource Manager, Storage, Cloud Billing and BigQuery APIs. Actual spend requires an existing BigQuery billing export, dataset read access and permission to run queries. Query processing can incur charges; specify maximumBytesBilled.",
+      "oauth_client_family": "google",
+      "longevity_note": "Google OAuth apps in Testing may lose refresh access after seven days; production apps follow account policy."
+    },
+    {
+      "id": "gitlab",
+      "display_name": "GitLab",
+      "description": "Find repositories, read and create issues, inspect and comment on merge requests",
+      "category": "Developer",
+      "logo_slug": "gitlab",
+      "logo_color": "FC6D26",
+      "featured": false,
+      "longevity": "self_renewing",
+      "oauth_client_family": "gitlab",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://gitlab.com/oauth/authorize",
+        "token_url": "https://gitlab.com/oauth/token",
+        "revocation_url": "https://gitlab.com/oauth/revoke",
+        "client_id": "REPLACE_WITH_JARVIS_GITLAB_CLIENT_ID",
+        "callback_port": 3126,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "api"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "fallback_auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://gitlab.com/-/user_settings/personal_access_tokens",
+        "token_prefix": "",
+        "validation_endpoint": "https://gitlab.com/api/v4/user",
+        "instruction_md": "Create a GitLab.com personal access token with api scope for issue creation/comments, or read_api for reads only. Paste it here. Token expiry follows your GitLab policy.",
+        "auth_scheme": "bearer"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "gitlab"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_gitlab_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Connect signs you in at GitLab.com in the browser — no token to copy. If the publisher OAuth client is not provisioned yet, the dialog offers the token fallback instead. Self-managed GitLab is not supported by this bundled connector.",
+      "longevity_note": "Browser login renews automatically. Pasted tokens expire on the date selected at creation."
+    },
+    {
+      "id": "agentmail",
+      "display_name": "AgentMail",
+      "description": "Give your agent an inbox: read, send and reply to messages",
+      "category": "Calendar & Mail",
+      "logo_slug": "agentmail",
+      "logo_color": "E9486C",
+      "featured": false,
+      "longevity": "permanent",
+      "auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://console.agentmail.to",
+        "token_prefix": "",
+        "validation_endpoint": "https://api.agentmail.to/v0/inboxes",
+        "instruction_md": "Create an API key in your own AgentMail console and paste it here. Existing skill credentials are not copied automatically.",
+        "auth_scheme": "bearer"
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.agentmail.to/mcp",
+        "auth_header_template": "Authorization: Bearer $plugin_agentmail_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Uses the official AgentMail MCP server with your API key. Select or create an inbox after connecting; sending uses that inbox, not your personal email account.",
+      "logo_url": "/plugin-assets/agentmail.ico"
+    },
+    {
+      "id": "x",
+      "display_name": "X (Twitter)",
+      "description": "Read posts and mentions; publish posts and replies",
+      "category": "Media & Creativity",
+      "logo_slug": "x",
+      "logo_color": "000000",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://x.com/i/oauth2/authorize",
+        "token_url": "https://api.x.com/2/oauth2/token",
+        "revocation_url": "https://api.x.com/2/oauth2/revoke",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "tweet.read",
+          "tweet.write",
+          "users.read",
+          "offline.access"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "x"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_x_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create a Native App with OAuth 2.0 in the X developer portal. Register http://127.0.0.1:43891/oauth/callback and enter the client ID here; leave the secret empty for a public client. Endpoint access and usage charges depend on your X API account.",
+      "oauth_client_family": "x"
+    },
+    {
+      "id": "linkedin",
+      "display_name": "LinkedIn",
+      "description": "Read your profile and publish posts; broader access requires partner approval",
+      "category": "Media & Creativity",
+      "logo_slug": "linkedin",
+      "logo_color": "0A66C2",
+      "featured": false,
+      "longevity": "provider_limited",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://www.linkedin.com/oauth/v2/authorization",
+        "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "openid",
+          "profile",
+          "w_member_social"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": false
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "linkedin"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_linkedin_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create a LinkedIn developer app and enable Sign In with LinkedIn using OpenID Connect and Share on LinkedIn. Register the callback shown here. Personal messages, contact lists and general post reading are not available through the self-service API and are not exposed by this plugin.",
+      "oauth_client_family": "linkedin",
+      "longevity_note": "Standard LinkedIn access tokens expire; refresh tokens are restricted to approved partners. Reconnect when requested."
+    },
+    {
+      "id": "meta",
+      "display_name": "Meta (Facebook & Instagram)",
+      "description": "Publish Facebook Page and Instagram professional content; read comments",
+      "category": "Media & Creativity",
+      "logo_slug": "meta",
+      "logo_color": "0866FF",
+      "featured": false,
+      "longevity": "provider_limited",
+      "auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://developers.facebook.com/tools/explorer/",
+        "token_prefix": "",
+        "validation_endpoint": "https://graph.facebook.com/v23.0/me",
+        "instruction_md": "Create a long-lived user token for your own Meta app. Request pages_show_list, pages_read_engagement, pages_manage_posts, instagram_basic and instagram_content_publish. App review may be required for other users. Paste the token here.",
+        "auth_scheme": "bearer"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "meta"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_meta_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Facebook Pages and Instagram Business/Creator accounts linked to a Page are supported. Personal Facebook feeds and personal Instagram accounts are not. Token expiry and app review are controlled by Meta.",
+      "longevity_note": "Long-lived user tokens normally expire after about 60 days; reconnect before expiry."
+    },
+    {
+      "id": "youtube_studio",
+      "display_name": "YouTube Studio",
+      "description": "Upload videos, read and reply to comments, and inspect channel analytics",
+      "category": "Media & Creativity",
+      "logo_slug": "youtubestudio",
+      "logo_color": "FF0000",
+      "featured": false,
+      "longevity": "provider_limited",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "https://www.googleapis.com/auth/youtube.force-ssl",
+          "https://www.googleapis.com/auth/youtube.upload",
+          "https://www.googleapis.com/auth/yt-analytics.readonly"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true,
+        "offline_access": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "youtube_studio"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_youtube_studio_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Enable YouTube Data API v3 and YouTube Analytics API in your Google project. Connect the account that owns the channel. Uploads default to private; unaudited API projects may be restricted to private uploads. This is separate from YouTube Music.",
+      "oauth_client_family": "google",
+      "longevity_note": "Google OAuth apps in Testing may require reauthorization after seven days."
+    },
+    {
+      "id": "hubspot",
+      "display_name": "HubSpot",
+      "description": "Search contacts and inspect companies and deals in your CRM",
+      "category": "Knowledge & Reading",
+      "logo_slug": "hubspot",
+      "logo_color": "FF7A59",
+      "featured": false,
+      "longevity": "self_renewing",
+      "oauth_client_family": "hubspot",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://app.hubspot.com/oauth/authorize",
+        "token_url": "https://api.hubapi.com/oauth/v1/token",
+        "client_id": "REPLACE_WITH_JARVIS_HUBSPOT_CLIENT_ID",
+        "callback_port": 3128,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "crm.objects.contacts.read",
+          "crm.objects.companies.read",
+          "crm.objects.deals.read"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "fallback_auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://app.hubspot.com/private-apps",
+        "token_prefix": "",
+        "validation_endpoint": "https://api.hubapi.com/crm/v3/objects/contacts?limit=1",
+        "instruction_md": "Create a private app with crm.objects.contacts.read, crm.objects.companies.read and crm.objects.deals.read. Paste its access token here.",
+        "auth_scheme": "bearer"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "hubspot"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_hubspot_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Connect signs you in at HubSpot in the browser with read access to contacts, companies and deals. If the publisher OAuth app is not provisioned yet, the dialog offers the private-app token fallback instead."
+    },
+    {
+      "id": "apollo",
+      "display_name": "Apollo.io",
+      "description": "Find companies and contacts through the official Apollo MCP server",
+      "category": "Knowledge & Reading",
+      "logo_slug": "apollo",
+      "logo_color": "FFC400",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.apollo.io/mcp",
+        "discovery_url": "https://mcp.apollo.io/.well-known/oauth-protected-resource",
+        "refresh_supported": true,
+        "scopes": [
+          "read_user_profile",
+          "mixed_people_api_search",
+          "mixed_companies_search",
+          "people_match",
+          "organizations_enrich"
+        ]
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.apollo.io/mcp",
+        "auth_header_template": "Authorization: Bearer $plugin_apollo_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Requires an Apollo account with access to the requested data. Enrichment consumes Apollo credits. Free accounts using a personal email may be restricted from search/enrichment. Follow Apollo requirements for model training settings."
+    },
+    {
+      "id": "salesforce",
+      "display_name": "Salesforce",
+      "description": "Read and manage CRM records through the official Salesforce MCP server",
+      "category": "Knowledge & Reading",
+      "logo_slug": "salesforce",
+      "logo_color": "00A1E0",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://login.salesforce.com/services/oauth2/authorize",
+        "token_url": "https://login.salesforce.com/services/oauth2/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "mcp_api",
+          "refresh_token"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://api.salesforce.com/platform/mcp/v1/platform/sobject-all",
+        "auth_header_template": "Authorization: Bearer $plugin_salesforce_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "An admin must activate the sobject-all hosted MCP server in your production Salesforce org. Create an External Client App with mcp_api and refresh_token, allow the displayed callback, and enter its client credentials here. Sandbox and custom MCP server URLs are not covered by this entry.",
+      "oauth_client_family": "salesforce"
+    },
+    {
+      "id": "granola",
+      "display_name": "Granola",
+      "description": "Search and read your meeting notes and transcripts",
+      "category": "Knowledge & Reading",
+      "logo_slug": "granola",
+      "logo_color": "A6CF8B",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.granola.ai/mcp",
+        "discovery_url": "https://mcp.granola.ai/.well-known/oauth-protected-resource",
+        "refresh_supported": true,
+        "scopes": [
+          "openid",
+          "email",
+          "profile",
+          "offline_access"
+        ]
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.granola.ai/mcp",
+        "auth_header_template": "Authorization: Bearer $plugin_granola_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in to the Granola account containing your meeting notes. Available notes and transcripts follow your account permissions and plan."
+    },
+    {
+      "id": "zoom",
+      "display_name": "Zoom",
+      "description": "Create meetings and find cloud recordings and transcript links",
+      "category": "Messaging",
+      "logo_slug": "zoom",
+      "logo_color": "2D8CFF",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://zoom.us/oauth/authorize",
+        "token_url": "https://zoom.us/oauth/token",
+        "revocation_url": "https://zoom.us/oauth/revoke",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "meeting:read:list_meetings",
+          "meeting:write:meeting",
+          "cloud_recording:read:list_user_recordings"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true,
+        "client_auth_method": "client_secret_basic"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "zoom"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_zoom_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create a user-managed Zoom General App with the listed granular scopes. Add http://127.0.0.1:43891/oauth/callback and enter client ID and client secret. Cloud transcripts require recording and transcription to have been enabled. Creating a meeting returns its join link; it does not start the desktop application.",
+      "oauth_client_family": "zoom"
+    },
+    {
+      "id": "figma",
+      "display_name": "Figma",
+      "description": "Find team projects and design files; read design content and comments",
+      "category": "Media & Creativity",
+      "logo_slug": "figma",
+      "logo_color": "F24E1E",
+      "featured": false,
+      "longevity": "self_renewing",
+      "oauth_client_family": "figma",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://www.figma.com/oauth",
+        "token_url": "https://www.figma.com/api/oauth/token",
+        "client_id": "REPLACE_WITH_JARVIS_FIGMA_CLIENT_ID",
+        "callback_port": 3127,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "current_user:read",
+          "projects:read",
+          "file_content:read",
+          "file_comments:read"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "fallback_auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://www.figma.com/settings",
+        "token_prefix": "",
+        "validation_endpoint": "https://api.figma.com/v1/me",
+        "instruction_md": "Generate a Figma personal access token with current_user:read, projects:read, file_content:read and file_comments:read. Paste it here. Team IDs and file keys can be copied from Figma URLs.",
+        "auth_scheme": "figma"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "figma"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_figma_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Connect signs you in at Figma in the browser — no token to copy. Uses the Figma REST API so design comments are available as well as file content. If the publisher OAuth app is not provisioned yet, the dialog offers the token fallback instead. Read access and rate limits follow your Figma seat and plan.",
+      "longevity_note": "Browser login renews automatically. Pasted tokens expire on the date chosen when you create them."
+    },
+    {
+      "id": "amd_gpu",
+      "display_name": "AMD GPU Status",
+      "description": "Read AMD GPU utilization, temperature and driver data through AMD SMI",
+      "category": "Home & Devices",
+      "logo_slug": "amd",
+      "logo_color": "ED1C24",
+      "longevity": "permanent",
+      "auth": {
+        "mode": "local"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.marketplace.amd_mcp"
+        ],
+        "env_template": {}
+      },
+      "post_install_hint_md": "Requires AMD SMI on a compatible AMD host. The connect button checks actual device data before enabling. Native Windows and macOS telemetry are unavailable; the base app remains usable without AMD tooling."
     }
   ]
 }

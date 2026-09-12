@@ -27,6 +27,14 @@ def test_path_issuer_insert_form_is_first():
     )
 
 
+def test_resource_scopes_do_not_request_issuer_admin_or_billing_access():
+    handler = HostedMcpDcrHandler(DcrConfig("todoist", "https://example.test/resource"))
+    handler._resource_scopes = ["data:read_write"]
+    assert handler._scopes_from_meta(
+        {"scopes_supported": ["data:read_write", "billing:read_write", "dev:app_console"]}
+    ) == "data:read_write"
+
+
 def test_path_issuer_keeps_append_as_fallback():
     c = _well_known_candidates("https://access.stripe.com/mcp")
     assert (

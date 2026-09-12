@@ -1,0 +1,36 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "granola",
+  "version": "1.0.0",
+  "description": "Search and read your meeting notes and transcripts",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Granola",
+      "category": "Knowledge & Reading",
+      "logo_slug": "granola",
+      "logo_color": "A6CF8B",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.granola.ai/mcp",
+        "discovery_url": "https://mcp.granola.ai/.well-known/oauth-protected-resource",
+        "refresh_supported": true,
+        "scopes": [
+          "openid",
+          "email",
+          "profile",
+          "offline_access"
+        ]
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.granola.ai/mcp",
+        "auth_header_template": "Authorization: Bearer $plugin_granola_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in to the Granola account containing your meeting notes. Available notes and transcripts follow your account permissions and plan."
+    }
+  }
+}

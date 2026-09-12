@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "outlook": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "-m",
+        "jarvis.plugins.tool.connected_server",
+        "outlook"
+      ]
+    }
+  }
+}

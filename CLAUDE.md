@@ -109,6 +109,19 @@ Two the gates catch but models still write: never swallow an exception without
 logging, re-raising, or saying why silence is right (AP-30), and never add a
 config field nothing reads (AP-31).
 
+Marketplace plugin auth follows the browser-auth standard
+(`docs/marketplace/browser-auth-standard.md`): a normal user connects with one
+browser approval and zero developer setup; the publisher provisions the shared
+OAuth client (`publisher_<family>_oauth_*` secrets), never the end user. A new
+auth-bearing plugin is not releasable while its default path needs pasted
+tokens, user-supplied client IDs/secrets, or self-registered developer apps —
+own-client stays an expert override only. Every catalog change keeps
+`docs/marketplace/plugin-auth-audit.md` and `scripts/ci/check_plugin_auth_contract.py`
+green; provider error bodies never reach logs, UI, or storage (AP-34).
+Keep `docs/marketplace/plugin-e2e-audit.json` backed by real browser evidence;
+new built-ins require PASS and release qualification uses the auth gate's
+`--require-e2e-pass` option. BLOCKED never means provider-verified or complete.
+
 The rest of the register, one line each, because code comments cite these
 numbers: never hardcode an Anthropic/Claude client (AP-6); keep awareness and
 wiki code off the voice critical path (AP-9); never put a key in `jarvis.toml`

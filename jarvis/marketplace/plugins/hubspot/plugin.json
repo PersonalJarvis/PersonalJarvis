@@ -1,0 +1,55 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "hubspot",
+  "version": "1.0.0",
+  "description": "Search contacts and inspect companies and deals in your CRM",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "HubSpot",
+      "category": "Knowledge & Reading",
+      "logo_slug": "hubspot",
+      "logo_color": "FF7A59",
+      "featured": false,
+      "longevity": "self_renewing",
+      "oauth_client_family": "hubspot",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://app.hubspot.com/oauth/authorize",
+        "token_url": "https://api.hubapi.com/oauth/v1/token",
+        "client_id": "REPLACE_WITH_JARVIS_HUBSPOT_CLIENT_ID",
+        "callback_port": 3128,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "crm.objects.contacts.read",
+          "crm.objects.companies.read",
+          "crm.objects.deals.read"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "fallback_auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://app.hubspot.com/private-apps",
+        "token_prefix": "",
+        "validation_endpoint": "https://api.hubapi.com/crm/v3/objects/contacts?limit=1",
+        "instruction_md": "Create a private app with crm.objects.contacts.read, crm.objects.companies.read and crm.objects.deals.read. Paste its access token here.",
+        "auth_scheme": "bearer"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "hubspot"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_hubspot_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Connect signs you in at HubSpot in the browser with read access to contacts, companies and deals. If the publisher OAuth app is not provisioned yet, the dialog offers the private-app token fallback instead."
+    }
+  }
+}

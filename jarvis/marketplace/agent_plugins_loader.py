@@ -533,6 +533,24 @@ def convert_manifest(
         )
     _reject_http_urls(auth, "auth")
 
+    # Expert token fallback for a browser-primary plugin (dual-mode). Same
+    # shape rules as the primary PAT block, but restricted to pat_paste: a
+    # browser primary with a browser fallback is a contradiction.
+    fallback_auth = extension.get("fallback_auth")
+    if fallback_auth is not None:
+        if not isinstance(fallback_auth, Mapping):
+            raise AgentPluginError(
+                'extensions["io.github.personaljarvis"].fallback_auth must be an object'
+            )
+        if fallback_auth.get("mode") != "pat_paste":
+            raise AgentPluginError("fallback_auth must use mode 'pat_paste'")
+        _reject_http_urls(fallback_auth, "fallback_auth")
+        fallback_auth = dict(fallback_auth)
+    if fallback_auth is not None and dict(auth).get("mode") == "pat_paste":
+        raise AgentPluginError(
+            "fallback_auth is redundant on a pat_paste-primary plugin"
+        )
+
     mcp_server = _convert_mcp_json(name, mcp_json, extension) if mcp_json is not None else None
 
     logo_url = extension.get("logo_url")
@@ -556,6 +574,7 @@ def convert_manifest(
                 "longevity_note": extension.get("longevity_note"),
                 "oauth_client_family": extension.get("oauth_client_family"),
                 "auth": dict(auth),
+                "fallback_auth": fallback_auth,
                 "mcp_server": mcp_server,
                 "post_install_hint_md": extension.get("post_install_hint_md"),
                 "source": "community",

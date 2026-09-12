@@ -1,0 +1,37 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "apollo",
+  "version": "1.0.0",
+  "description": "Find companies and contacts through the official Apollo MCP server",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Apollo.io",
+      "category": "Knowledge & Reading",
+      "logo_slug": "apollo",
+      "logo_color": "FFC400",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.apollo.io/mcp",
+        "discovery_url": "https://mcp.apollo.io/.well-known/oauth-protected-resource",
+        "refresh_supported": true,
+        "scopes": [
+          "read_user_profile",
+          "mixed_people_api_search",
+          "mixed_companies_search",
+          "people_match",
+          "organizations_enrich"
+        ]
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.apollo.io/mcp",
+        "auth_header_template": "Authorization: Bearer $plugin_apollo_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Requires an Apollo account with access to the requested data. Enrichment consumes Apollo credits. Free accounts using a personal email may be restricted from search/enrichment. Follow Apollo requirements for model training settings."
+    }
+  }
+}

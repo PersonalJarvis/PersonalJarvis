@@ -1,0 +1,29 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "amd-gpu",
+  "version": "1.0.0",
+  "description": "Read AMD GPU utilization, temperature and driver data through AMD SMI",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "AMD GPU Status",
+      "category": "Home & Devices",
+      "logo_slug": "amd",
+      "logo_color": "ED1C24",
+      "longevity": "permanent",
+      "auth": {
+        "mode": "local"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.marketplace.amd_mcp"
+        ],
+        "env_template": {}
+      },
+      "post_install_hint_md": "Requires AMD SMI on a compatible AMD host. The connect button checks actual device data before enabling. Native Windows and macOS telemetry are unavailable; the base app remains usable without AMD tooling."
+    }
+  }
+}

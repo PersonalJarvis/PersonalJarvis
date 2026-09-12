@@ -1,0 +1,32 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "aws",
+  "version": "1.0.0",
+  "description": "Inspect cloud resources, storage and costs through the official AWS MCP server",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "AWS",
+      "category": "Developer",
+      "logo_slug": "aws",
+      "logo_color": "FF9900",
+      "featured": false,
+      "longevity": "provider_limited",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://aws-mcp.eu-central-1.api.aws/mcp",
+        "discovery_url": "https://aws-mcp.eu-central-1.api.aws/.well-known/oauth-protected-resource",
+        "refresh_supported": true,
+        "scopes": []
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://aws-mcp.eu-central-1.api.aws/mcp",
+        "auth_header_template": "Authorization: Bearer $plugin_aws_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Grant AWSMCPSignInOAuthAccessPolicy and the service permissions your queries need. This connects through the Frankfurt endpoint. OAuth supports one account per connection; IAM still controls every operation. Cost queries need Cost Explorer permissions.",
+      "longevity_note": "AWS access lasts one hour and refresh is limited to a session of up to 12 hours; then sign in again."
+    }
+  }
+}

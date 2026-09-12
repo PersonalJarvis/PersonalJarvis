@@ -349,7 +349,9 @@ SECRETS: list[SecretSpec] = [
         env_fallback="INWORLD_API_KEY",
         label="Inworld API Key (premium low-latency TTS, multilingual)",
         help_url="https://platform.inworld.ai/",
-        required_for="TTS (Inworld — arena-#1 low-latency voice, DE/EN/ES; the recommended default)",
+        required_for=(
+            "TTS (Inworld — arena-#1 low-latency voice, DE/EN/ES; the recommended default)"
+        ),
         section="tts",
     ),
     SecretSpec(
@@ -503,6 +505,25 @@ SECRETS: list[SecretSpec] = [
         optional=True,
         prompt=False,
     ),
+    *[
+        SecretSpec(
+            key=f"{family}_oauth_client_{suffix}",
+            env_fallback=f"{family.upper()}_OAUTH_CLIENT_{suffix.upper()}",
+            label=f"{label} OAuth Client {suffix.title()}",
+            help_url=url,
+            required_for=f"Marketplace plugins ({label}) — your own OAuth client",
+            optional=True,
+            prompt=False,
+        )
+        for family, label, url in (
+            ("microsoft", "Microsoft", "https://entra.microsoft.com/"),
+            ("x", "X", "https://developer.x.com/portal/dashboard"),
+            ("linkedin", "LinkedIn", "https://www.linkedin.com/developers/apps"),
+            ("zoom", "Zoom", "https://marketplace.zoom.us/develop/create"),
+            ("salesforce", "Salesforce", "https://login.salesforce.com/"),
+        )
+        for suffix in ("id", "secret")
+    ],
     SecretSpec(
         key="spotify_oauth_client_secret",
         env_fallback="SPOTIFY_OAUTH_CLIENT_SECRET",
@@ -512,6 +533,62 @@ SECRETS: list[SecretSpec] = [
         optional=True,
         prompt=False,
     ),
+    # === Publisher-provisioned shared OAuth clients (browser-auth standard) ===
+    # Set ONCE by the project/distribution (env fallback PUBLISHER_*), used by
+    # every end user with zero manual setup. Resolved by
+    # `marketplace.publisher_clients.resolve_publisher_client` between the
+    # expert BYO override above and the catalog value. prompt=False: never
+    # asked in the wizard or the Plugins dialog; end users must never see
+    # these. Client secrets stay in the backend secret store only.
+    *[
+        SecretSpec(
+            key=f"publisher_{family}_oauth_client_{suffix}",
+            env_fallback=f"PUBLISHER_{family.upper()}_OAUTH_CLIENT_{suffix.upper()}",
+            label=f"Publisher {label} OAuth Client {suffix.title()} (shared)",
+            help_url=url,
+            required_for=f"Marketplace plugins ({label}) — publisher-provisioned shared client",
+            optional=True,
+            prompt=False,
+        )
+        for family, label, url in (
+            ("google", "Google", "https://console.cloud.google.com/auth/clients"),
+            ("slack", "Slack", "https://api.slack.com/apps"),
+            ("asana", "Asana", "https://app.asana.com/0/my-apps"),
+            ("spotify", "Spotify", "https://developer.spotify.com/dashboard"),
+            ("microsoft", "Microsoft", "https://entra.microsoft.com/"),
+            ("x", "X", "https://developer.x.com/portal/dashboard"),
+            ("linkedin", "LinkedIn", "https://www.linkedin.com/developers/apps"),
+            ("zoom", "Zoom", "https://marketplace.zoom.us/develop/create"),
+            ("salesforce", "Salesforce", "https://login.salesforce.com/"),
+        )
+        for suffix in ("id", "secret")
+    ],
+    # === Browser-primary plugins migrated from PAT (dual-mode) ===
+    # BYO expert override (first half) + publisher shared client (second
+    # half) for the families whose catalog entries now use a browser flow
+    # with a token fallback. Same prompt=False semantics as above.
+    *[
+        SecretSpec(
+            key=f"{prefix}{family}_oauth_client_{suffix}",
+            env_fallback=f"{env_prefix}{family.upper()}_OAUTH_CLIENT_{suffix.upper()}",
+            label=f"{label} OAuth Client {suffix.title()} ({kind})",
+            help_url=url,
+            required_for=f"Marketplace plugins ({label}) — {kind} OAuth client",
+            optional=True,
+            prompt=False,
+        )
+        for family, label, url in (
+            ("github", "GitHub", "https://github.com/settings/applications/new"),
+            ("gitlab", "GitLab", "https://gitlab.com/-/profile/applications"),
+            ("figma", "Figma", "https://www.figma.com/developers/apps"),
+            ("hubspot", "HubSpot", "https://app.hubspot.com/"),
+        )
+        for prefix, env_prefix, kind in (
+            ("", "", "your own"),
+            ("publisher_", "PUBLISHER_", "publisher-provisioned shared"),
+        )
+        for suffix in ("id", "secret")
+    ],
     SecretSpec(
         key="cohere_api_key",
         env_fallback="COHERE_API_KEY",
@@ -1225,7 +1302,8 @@ def run() -> int:
         new_hotkey = step_hotkey_check(default_hotkey="ctrl+right_alt+j")
         if new_hotkey != "ctrl+right_alt+j":
             _println(f"→ Hotkey '{new_hotkey}' noted — please enter it in jarvis.toml.")
-            # Persistence note: the wizard only writes the hotkey into the config actively in Phase 1
+            # Persistence note: the wizard only writes the hotkey into the
+            # config actively in Phase 1.
         step_wake_word_setup()
         step_dependency_check()
         step_jarvis_agent_harness_check()

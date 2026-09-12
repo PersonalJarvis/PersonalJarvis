@@ -5,7 +5,7 @@ The flow per RFC 8414 (auth-server discovery) + RFC 7591 (DCR) + RFC 7636 (PKCE)
 
   1. GET .well-known/oauth-protected-resource  → identifies auth server
   2. GET .well-known/oauth-authorization-server → registration_endpoint, etc
-  3. POST registration_endpoint  → ephemeral client_id (auth_method=none)
+  3. POST registration_endpoint → ephemeral client with negotiated authentication
   4. Build authorize URL with PKCE challenge, open in user's default browser
   5. User logs in → 302 to http://127.0.0.1:<port>/callback?code=…&state=…
   6. POST token_endpoint with code + verifier → access + refresh tokens
@@ -27,18 +27,23 @@ Pitfalls handled:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import quote_plus, urlencode, urlsplit, urlunsplit
 
 import httpx
 
 from jarvis.core.branding import OFFICIAL_REPO_URL, PRODUCT_NAME
 from jarvis.marketplace.auth.base import (
+    ERROR_DENIED,
+    ERROR_TIMEOUT,
+    ERROR_UNKNOWN,
     AuthSession,
     FlowResult,
     pkce_pair,
     random_state,
+    sanitize_provider_error,
     session_id,
 )
 from jarvis.marketplace.hosted_callback import (
@@ -80,11 +85,42 @@ class _PendingFlow:
     redirect_uri: str
     token_endpoint: str
     client_id: str
+    client_secret: str | None = field(default=None, repr=False)
+    token_endpoint_auth_method: str = "none"  # noqa: S105 - OAuth method, not a credential
     resource: str | None = None
     # RFC 7009 endpoint from discovery, persisted with the tokens so a later
     # disconnect can actually end the grant at the provider instead of only
     # deleting our local copy.
     revocation_endpoint: str | None = None
+
+
+@dataclass(frozen=True)
+class _RegisteredClient:
+    client_id: str
+    client_secret: str | None = field(default=None, repr=False)
+    auth_method: str = "none"
+
+
+def apply_client_auth(
+    body: dict[str, str], client_id: str, client_secret: str | None, method: str
+) -> httpx.BasicAuth | None:
+    """Apply OAuth client authentication without sending credentials twice."""
+    if not isinstance(method, str) or method not in {
+        "none",
+        "client_secret_basic",
+        "client_secret_post",
+    }:
+        raise RuntimeError("Unsupported OAuth client authentication; reconnect required")
+    if method != "none" and not client_secret:
+        raise RuntimeError("OAuth client secret is missing; reconnect required")
+    if method == "client_secret_basic":
+        body.pop("client_id", None)
+        # RFC 6749 section 2.3.1 requires form-encoding before HTTP Basic.
+        return httpx.BasicAuth(quote_plus(client_id), quote_plus(client_secret or ""))
+    body["client_id"] = client_id
+    if method == "client_secret_post":
+        body["client_secret"] = client_secret or ""
+    return None
 
 
 def _well_known_candidates(issuer: str) -> list[str]:
@@ -108,13 +144,15 @@ def _well_known_candidates(issuer: str) -> list[str]:
             out.append(url)
 
     # 1. RFC 8414 — well-known inserted between host and the issuer path.
-    _add(urlunsplit(
-        (parts.scheme, parts.netloc, "/.well-known/oauth-authorization-server" + path, "", "")
-    ))
+    _add(
+        urlunsplit(
+            (parts.scheme, parts.netloc, "/.well-known/oauth-authorization-server" + path, "", "")
+        )
+    )
     # 2. OpenID-Connect discovery insert variant.
-    _add(urlunsplit(
-        (parts.scheme, parts.netloc, "/.well-known/openid-configuration" + path, "", "")
-    ))
+    _add(
+        urlunsplit((parts.scheme, parts.netloc, "/.well-known/openid-configuration" + path, "", ""))
+    )
     # 3. Legacy append form (some non-compliant servers serve only here).
     _add(issuer.rstrip("/") + "/.well-known/oauth-authorization-server")
     return out
@@ -135,7 +173,7 @@ class HostedMcpDcrHandler:
     # yet; first-class concern for after the spike.
     # ------------------------------------------------------------------
 
-    async def _discover(self, client: httpx.AsyncClient) -> dict[str, str]:
+    async def _discover(self, client: httpx.AsyncClient) -> dict:
         """Returns the auth-server metadata dict. Fields used downstream:
         authorization_endpoint, token_endpoint, registration_endpoint.
 
@@ -144,6 +182,7 @@ class HostedMcpDcrHandler:
         ``resource`` parameter — Stripe's MCP authorize silently drops you on the
         dashboard (no consent) when it is missing."""
         self._discovered_resource: str | None = None
+        self._resource_scopes: list[str] | None = None
         # Step 1: protected-resource → tells us which auth server to ask.
         try:
             r = await client.get(self._config.discovery_url)
@@ -151,9 +190,7 @@ class HostedMcpDcrHandler:
             pr_meta = r.json()
         except httpx.HTTPError as exc:
             if not self._config.fallback_authorization_endpoint:
-                raise RuntimeError(
-                    f"protected-resource discovery failed: {exc}"
-                ) from exc
+                raise RuntimeError(f"protected-resource discovery failed: {exc}") from exc
             # Fallback: use catalog-provided endpoints; skip discovery.
             log.warning(
                 "%s: discovery unreachable, using fallback endpoints",
@@ -162,18 +199,20 @@ class HostedMcpDcrHandler:
             return {
                 "authorization_endpoint": self._config.fallback_authorization_endpoint,
                 "token_endpoint": self._config.fallback_token_endpoint or "",
-                "registration_endpoint": (
-                    self._config.fallback_registration_endpoint or ""
-                ),
+                "registration_endpoint": (self._config.fallback_registration_endpoint or ""),
             }
 
         auth_servers = pr_meta.get("authorization_servers") or []
         if not auth_servers:
             raise RuntimeError(
-                f"protected-resource has no authorization_servers: {pr_meta}"
+                "protected-resource has no authorization_servers "
+                f"(discovery: {sanitize_provider_error(str(pr_meta))})"
             )
         # RFC 9728 resource indicator — passed as the RFC 8707 `resource` param.
         self._discovered_resource = pr_meta.get("resource") or None
+        resource_scopes = pr_meta.get("scopes_supported")
+        if isinstance(resource_scopes, list) and all(isinstance(s, str) for s in resource_scopes):
+            self._resource_scopes = resource_scopes
 
         # Step 2: fetch the auth-server metadata. RFC 8414 puts the well-known
         # path BETWEEN host and the issuer's path, so an issuer with a path
@@ -205,26 +244,35 @@ class HostedMcpDcrHandler:
         client: httpx.AsyncClient,
         registration_endpoint: str,
         redirect_uri: str,
-    ) -> str:
-        """Returns a freshly-issued client_id."""
+        auth_method: str = "none",
+    ) -> _RegisteredClient:
+        """Return credentials only to the private per-flow state."""
         body = {
             "client_name": self._config.client_name,
             "client_uri": self._config.client_uri,
             "redirect_uris": [redirect_uri],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
-            "token_endpoint_auth_method": "none",  # public client, no secret
+            "token_endpoint_auth_method": auth_method,
         }
         r = await client.post(registration_endpoint, json=body)
         if r.status_code >= 400:
             raise RuntimeError(
-                f"DCR failed (HTTP {r.status_code}): {r.text[:200]}"
+                f"DCR failed (HTTP {r.status_code}): {sanitize_provider_error(r.text)}"
             )
         meta = r.json()
         cid = meta.get("client_id")
         if not cid:
-            raise RuntimeError(f"DCR response missing client_id: {meta}")
-        return cid
+            raise RuntimeError("DCR response missing client_id")
+        assigned_method = meta.get("token_endpoint_auth_method", auth_method)
+        secret = meta.get("client_secret") or None
+        if not isinstance(cid, str) or (secret is not None and not isinstance(secret, str)):
+            raise RuntimeError("DCR returned invalid client credentials")
+        # Validate before launching browser consent, without exposing provider metadata.
+        apply_client_auth({}, cid, secret, assigned_method)
+        return _RegisteredClient(
+            cid, secret if assigned_method != "none" else None, assigned_method
+        )
 
     # ------------------------------------------------------------------
     # AuthHandler protocol
@@ -248,25 +296,45 @@ class HostedMcpDcrHandler:
         await callback_server.start()
         redirect_uri = callback_server.redirect_uri
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            meta = await self._discover(client)
-            registration_endpoint = meta.get("registration_endpoint")
-            if not registration_endpoint:
-                # Fallback: some hosted MCPs publish DCR via a separate URL
-                # (e.g. baked into our catalog as a fallback override).
-                registration_endpoint = self._config.fallback_registration_endpoint
-            if not registration_endpoint:
-                await callback_server.stop()
-                raise RuntimeError(
-                    f"{self.plugin_id}: no registration_endpoint discovered"
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                meta = await self._discover(client)
+                registration_endpoint = meta.get("registration_endpoint")
+                if not registration_endpoint:
+                    # Fallback: some hosted MCPs publish DCR via a separate URL
+                    # (e.g. baked into our catalog as a fallback override).
+                    registration_endpoint = self._config.fallback_registration_endpoint
+                if not registration_endpoint:
+                    raise RuntimeError(f"{self.plugin_id}: no registration_endpoint discovered")
+                supported = meta.get("token_endpoint_auth_methods_supported", ["none"])
+                auth_method = next(
+                    (
+                        method
+                        for method in ("none", "client_secret_basic", "client_secret_post")
+                        if isinstance(supported, list) and method in supported
+                    ),
+                    None,
                 )
-            client_id = await self._register(
-                client, registration_endpoint, redirect_uri
-            )
+                if auth_method is None:
+                    raise RuntimeError(
+                        "Provider has no supported OAuth client authentication method"
+                    )
+                registered = await self._register(
+                    client, registration_endpoint, redirect_uri, auth_method
+                )
+                client_id = registered.client_id
+        except BaseException:
+            await callback_server.stop()
+            raise
 
         verifier, challenge = pkce_pair()
         sid = session_id()
-        scopes = self._scopes_from_meta(meta)
+        configured_scopes = getattr(getattr(plugin_spec, "auth", None), "scopes", None)
+        scopes = (
+            " ".join(configured_scopes)
+            if configured_scopes is not None
+            else self._scopes_from_meta(meta)
+        )
         params = {
             "response_type": "code",
             "client_id": client_id,
@@ -284,9 +352,7 @@ class HostedMcpDcrHandler:
             # to their dashboard instead of redirecting back to the loopback.
             params["resource"] = resource
         params["prompt"] = "consent"  # always show consent on first connect
-        authorize_url = (
-            meta["authorization_endpoint"] + "?" + urlencode(params, doseq=True)
-        )
+        authorize_url = meta["authorization_endpoint"] + "?" + urlencode(params, doseq=True)
 
         # Park the per-flow state until callback fires.
         self._pending[sid] = _PendingFlow(
@@ -297,6 +363,8 @@ class HostedMcpDcrHandler:
             redirect_uri=redirect_uri,
             token_endpoint=meta["token_endpoint"],
             client_id=client_id,
+            client_secret=registered.client_secret,
+            token_endpoint_auth_method=registered.auth_method,
             resource=resource,
             revocation_endpoint=meta.get("revocation_endpoint") or None,
         )
@@ -306,14 +374,15 @@ class HostedMcpDcrHandler:
             plugin_id=self.plugin_id,
             kind="browser_redirect",
             open_url=authorize_url,
-            expires_at_ms=int(
-                (datetime.now(UTC) + timedelta(minutes=15)).timestamp() * 1000
-            ),
+            expires_at_ms=int((datetime.now(UTC) + timedelta(minutes=15)).timestamp() * 1000),
         )
 
-    @staticmethod
-    def _scopes_from_meta(meta: dict[str, object]) -> str:
-        scopes = meta.get("scopes_supported")
+    def _scopes_from_meta(self, meta: Mapping[str, object]) -> str:
+        # An issuer can serve many applications. Its scopes include unrelated
+        # billing/admin rights; the MCP resource advertises its own scope set.
+        scopes = getattr(self, "_resource_scopes", None)
+        if scopes is None:
+            scopes = meta.get("scopes_supported")
         if isinstance(scopes, list) and scopes:
             return " ".join(str(s) for s in scopes)
         return ""
@@ -321,26 +390,60 @@ class HostedMcpDcrHandler:
     async def await_completion(self, session: AuthSession) -> FlowResult:
         pending = self._pending.get(session.flow_id)
         if pending is None:
-            return FlowResult(tokens=None, error="unknown flow_id")
+            return FlowResult(tokens=None, error="unknown flow_id", error_code=ERROR_UNKNOWN)
 
         try:
             result = await pending.callback_server.await_callback()
         except CallbackTimeoutError:
             await pending.callback_server.stop()
             self._pending.pop(session.flow_id, None)
-            return FlowResult(tokens=None, error="user did not approve in time")
+            return FlowResult(
+                tokens=None,
+                error="user did not approve in time",
+                error_code=ERROR_TIMEOUT,
+            )
         except Exception as exc:  # noqa: BLE001
             await pending.callback_server.stop()
             self._pending.pop(session.flow_id, None)
-            return FlowResult(tokens=None, error=f"callback error: {exc}")
+            message = str(exc).lower()
+            code = (
+                ERROR_DENIED
+                if ("access_denied" in message or "denied" in message)
+                else ERROR_UNKNOWN
+            )
+            return FlowResult(
+                tokens=None,
+                error=f"callback error: {sanitize_provider_error(str(exc))}",
+                error_code=code,
+            )
         finally:
             # Stop the listener — code is captured.
             await pending.callback_server.stop()
 
         # Token exchange.
-        tokens = await self._exchange(pending, code=result.code)
+        try:
+            tokens = await self._exchange(pending, code=result.code)
+        except RuntimeError as exc:
+            self._pending.pop(session.flow_id, None)
+            message = str(exc).lower()
+            code = (
+                ERROR_DENIED
+                if ("access_denied" in message or "denied" in message)
+                else ERROR_UNKNOWN
+            )
+            return FlowResult(tokens=None, error=str(exc), error_code=code)
         self._pending.pop(session.flow_id, None)
         return FlowResult(tokens=tokens, error=None)
+
+    async def cancel(self, session: AuthSession) -> None:
+        """Stop the pending callback listener so a cancelled dialog leaks no
+        socket and a late provider callback cannot complete the flow."""
+        pending = self._pending.pop(session.flow_id, None)
+        if pending is not None:
+            try:
+                await pending.callback_server.stop()
+            except Exception:  # noqa: BLE001 — cancel stays best-effort
+                log.debug("dcr cancel stop failed for %s", self.plugin_id)
 
     async def _exchange(self, pending: _PendingFlow, *, code: str) -> Tokens:
         body = {
@@ -352,21 +455,25 @@ class HostedMcpDcrHandler:
         }
         if pending.resource:
             body["resource"] = pending.resource
+        auth = apply_client_auth(
+            body, pending.client_id, pending.client_secret, pending.token_endpoint_auth_method
+        )
         timeout = httpx.Timeout(pending.config.timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(
                 pending.token_endpoint,
                 data=body,
+                auth=auth,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
         if r.status_code != 200:
             raise RuntimeError(
-                f"token exchange HTTP {r.status_code}: {r.text[:200]}"
+                f"token exchange HTTP {r.status_code}: {sanitize_provider_error(r.text)}"
             )
         payload = r.json()
         access = payload.get("access_token")
         if not access:
-            raise RuntimeError(f"token response missing access_token: {payload}")
+            raise RuntimeError("token response missing access_token")
         refresh = payload.get("refresh_token")
         expires_in = payload.get("expires_in")
         expires_at = (
@@ -387,6 +494,9 @@ class HostedMcpDcrHandler:
         # fresh DCR client here would get rejected with invalid_grant and the
         # scheduler would delete the (still-valid) token. See refresh().
         extra["client_id"] = pending.client_id
+        extra["token_endpoint_auth_method"] = pending.token_endpoint_auth_method
+        if pending.client_secret:
+            extra["client_secret"] = pending.client_secret
         extra["token_endpoint"] = pending.token_endpoint
         if pending.resource:
             extra["resource"] = pending.resource
@@ -420,8 +530,7 @@ class HostedMcpDcrHandler:
             # that may still be valid. Fail soft so the entry is kept; the user
             # reconnects once and the new token carries its client_id forever.
             raise RuntimeError(
-                "refresh: no stored client_id — reconnect required to heal "
-                "this connection"
+                "refresh: no stored client_id — reconnect required to heal this connection"
             )
         timeout = httpx.Timeout(self._config.timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -436,21 +545,26 @@ class HostedMcpDcrHandler:
             }
             if current.extra.get("resource"):
                 refresh_body["resource"] = current.extra["resource"]
+            auth = apply_client_auth(
+                refresh_body,
+                client_id,
+                current.extra.get("client_secret"),
+                current.extra.get("token_endpoint_auth_method", "none"),
+            )
             r = await client.post(
                 token_endpoint,
                 data=refresh_body,
+                auth=auth,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
         if r.status_code == 400 and "invalid_grant" in r.text:
             raise RuntimeError("revoked")
         if r.status_code != 200:
-            raise RuntimeError(
-                f"refresh HTTP {r.status_code}: {r.text[:200]}"
-            )
+            raise RuntimeError(f"refresh HTTP {r.status_code}: {sanitize_provider_error(r.text)}")
         payload = r.json()
         new_access = payload.get("access_token")
         if not new_access:
-            raise RuntimeError(f"refresh missing access_token: {payload}")
+            raise RuntimeError("refresh missing access_token")
         new_refresh = payload.get("refresh_token") or current.refresh
         expires_in = payload.get("expires_in")
         expires_at = (

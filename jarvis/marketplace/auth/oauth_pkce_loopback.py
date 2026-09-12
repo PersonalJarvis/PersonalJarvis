@@ -15,19 +15,27 @@ PKCE without DCR.
 
 from __future__ import annotations
 
+import base64
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from urllib.parse import urlencode
+from urllib.parse import quote_plus, urlencode
 
 import httpx
 
 from jarvis.marketplace.auth.base import (
+    ERROR_DENIED,
+    ERROR_MISCONFIGURED,
+    ERROR_PORT_IN_USE,
+    ERROR_PROVIDER_UNREACHABLE,
+    ERROR_TIMEOUT,
+    ERROR_UNKNOWN,
     AuthSession,
     FlowResult,
     pkce_pair,
     random_state,
+    sanitize_provider_error,
     session_id,
 )
 from jarvis.marketplace.hosted_callback import (
@@ -66,6 +74,29 @@ class PkceLoopbackConfig:
     # Google desktop/loopback clients only return a refresh token when the
     # authorize request carries `access_type=offline` + `prompt=consent`.
     offline_access: bool = False
+    client_auth_method: Literal["client_secret_post", "client_secret_basic"] = "client_secret_post"
+
+    def token_auth_method(self, secret: str | None) -> str:
+        """Honor X's endpoint contract, including legacy installed catalogs."""
+        if not secret:
+            return "none"
+        if self.token_url in (
+            "https://api.x.com/2/oauth2/token",
+            "https://api.twitter.com/2/oauth2/token",
+        ):
+            return "client_secret_basic"
+        return self.client_auth_method
+
+
+def _basic_token_header(client_id: str, secret: str | None, method: str) -> dict[str, str]:
+    if method != "client_secret_basic":
+        return {}
+    if not secret:
+        raise ValueError(
+            "This provider requires an OAuth client secret; set it in the Plugins dialog"
+        )
+    credentials = f"{quote_plus(client_id)}:{quote_plus(secret)}".encode()
+    return {"Authorization": "Basic " + base64.b64encode(credentials).decode("ascii")}
 
 
 @dataclass
@@ -74,6 +105,22 @@ class _PendingPkceFlow:
     callback_server: OAuthCallbackServer | HostedCallbackServer
     code_verifier: str
     redirect_uri: str
+
+
+def _classify_callback_error(exc: BaseException) -> str:
+    """Map a flow failure to a dialog-grade error code (no provider text)."""
+    msg = str(exc).lower()
+    if "access_denied" in msg or "denied" in msg or "consent" in msg:
+        return ERROR_DENIED
+    if "in use" in msg or "addrinuse" in msg or "eaddrinuse" in msg:
+        return ERROR_PORT_IN_USE
+    if "invalid_client" in msg or "not configured" in msg or "placeholder" in msg:
+        return ERROR_MISCONFIGURED
+    if "timeout" in msg or "timed out" in msg:
+        return ERROR_TIMEOUT
+    if "connect" in msg or "unreachable" in msg or "network" in msg:
+        return ERROR_PROVIDER_UNREACHABLE
+    return ERROR_UNKNOWN
 
 
 class PkceLoopbackHandler:
@@ -109,9 +156,7 @@ class PkceLoopbackHandler:
         verifier, challenge = pkce_pair()
         sid = session_id()
 
-        params = self._authorize_params(
-            redirect_uri=redirect_uri, state=state, challenge=challenge
-        )
+        params = self._authorize_params(redirect_uri=redirect_uri, state=state, challenge=challenge)
         url = self._config.authorization_url + "?" + urlencode(params, doseq=True)
 
         self._pending[sid] = _PendingPkceFlow(
@@ -125,14 +170,10 @@ class PkceLoopbackHandler:
             plugin_id=self.plugin_id,
             kind="browser_redirect",
             open_url=url,
-            expires_at_ms=int(
-                (datetime.now(UTC) + timedelta(minutes=5)).timestamp() * 1000
-            ),
+            expires_at_ms=int((datetime.now(UTC) + timedelta(minutes=5)).timestamp() * 1000),
         )
 
-    def _authorize_params(
-        self, *, redirect_uri: str, state: str, challenge: str
-    ) -> dict[str, str]:
+    def _authorize_params(self, *, redirect_uri: str, state: str, challenge: str) -> dict[str, str]:
         """Build the authorize query params. Extracted so the optional
         `resource` / `offline_access` extensions are unit-testable without
         binding a socket."""
@@ -157,17 +198,25 @@ class PkceLoopbackHandler:
     async def await_completion(self, session: AuthSession) -> FlowResult:
         pending = self._pending.get(session.flow_id)
         if pending is None:
-            return FlowResult(tokens=None, error="unknown flow_id")
+            return FlowResult(tokens=None, error="unknown flow_id", error_code=ERROR_UNKNOWN)
         try:
             cb = await pending.callback_server.await_callback()
         except CallbackTimeoutError:
             await pending.callback_server.stop()
             self._pending.pop(session.flow_id, None)
-            return FlowResult(tokens=None, error="user did not approve in time")
+            return FlowResult(
+                tokens=None,
+                error="user did not approve in time",
+                error_code=ERROR_TIMEOUT,
+            )
         except Exception as exc:  # noqa: BLE001
             await pending.callback_server.stop()
             self._pending.pop(session.flow_id, None)
-            return FlowResult(tokens=None, error=f"callback error: {exc}")
+            return FlowResult(
+                tokens=None,
+                error=f"callback error: {sanitize_provider_error(str(exc))}",
+                error_code=_classify_callback_error(exc),
+            )
         finally:
             await pending.callback_server.stop()
 
@@ -175,9 +224,23 @@ class PkceLoopbackHandler:
             tokens = await self._exchange(pending, code=cb.code)
             return FlowResult(tokens=tokens, error=None)
         except RuntimeError as exc:
-            return FlowResult(tokens=None, error=str(exc))
+            return FlowResult(
+                tokens=None,
+                error=str(exc),
+                error_code=_classify_callback_error(exc),
+            )
         finally:
             self._pending.pop(session.flow_id, None)
+
+    async def cancel(self, session: AuthSession) -> None:
+        """Stop the pending callback listener so a cancelled dialog leaks no
+        socket and a late provider callback cannot complete the flow."""
+        pending = self._pending.pop(session.flow_id, None)
+        if pending is not None:
+            try:
+                await pending.callback_server.stop()
+            except Exception:  # noqa: BLE001 — cancel stays best-effort
+                log.debug("pkce cancel stop failed for %s", self.plugin_id)
 
     async def _exchange(self, pending: _PendingPkceFlow, *, code: str) -> Tokens:
         body = {
@@ -187,7 +250,11 @@ class PkceLoopbackHandler:
             "grant_type": "authorization_code",
             "redirect_uri": pending.redirect_uri,
         }
-        if pending.config.client_secret:
+        if (
+            pending.config.client_secret
+            and pending.config.token_auth_method(pending.config.client_secret)
+            == "client_secret_post"
+        ):
             body["client_secret"] = pending.config.client_secret
         if pending.config.resource:
             body["resource"] = pending.config.resource
@@ -200,33 +267,30 @@ class PkceLoopbackHandler:
                     "Accept": "application/json",
                     "Content-Type": "application/x-www-form-urlencoded",
                     "User-Agent": "Personal-Jarvis/1.0",
+                    **_basic_token_header(
+                        pending.config.client_id,
+                        pending.config.client_secret,
+                        pending.config.token_auth_method(pending.config.client_secret),
+                    ),
                 },
             )
         if r.status_code != 200:
-            raise RuntimeError(
-                f"token exchange HTTP {r.status_code}: {r.text[:200]}"
-            )
+            detail = sanitize_provider_error(r.text)
+            raise RuntimeError(f"token exchange HTTP {r.status_code}: {detail}")
         payload = r.json()
         # Slack wraps success/failure in "ok" plus error codes; many other
         # providers return error inline. Handle both shapes.
         if payload.get("ok") is False:
-            raise RuntimeError(
-                f"token exchange failed: {payload.get('error', 'unknown')}"
-            )
+            err = sanitize_provider_error(str(payload.get("error", "unknown")))
+            raise RuntimeError(f"token exchange failed: {err}")
         # Slack's response nests the user token under `authed_user`.
-        access = (
-            payload.get("authed_user", {}).get("access_token")
-            or payload.get("access_token")
-        )
+        access = payload.get("authed_user", {}).get("access_token") or payload.get("access_token")
         if not access:
-            raise RuntimeError(f"token response missing access_token: {payload}")
-        refresh = (
-            payload.get("authed_user", {}).get("refresh_token")
-            or payload.get("refresh_token")
+            raise RuntimeError("token response missing access_token")
+        refresh = payload.get("authed_user", {}).get("refresh_token") or payload.get(
+            "refresh_token"
         )
-        expires_in = payload.get("authed_user", {}).get("expires_in") or payload.get(
-            "expires_in"
-        )
+        expires_in = payload.get("authed_user", {}).get("expires_in") or payload.get("expires_in")
         expires_at = (
             datetime.now(UTC) + timedelta(seconds=int(expires_in))
             if expires_in is not None
@@ -247,11 +311,12 @@ class PkceLoopbackHandler:
         # remain bound to their issuing client. Keeping the pair inside the same
         # protected token blob makes refresh independent of that drift.
         extra["client_id"] = pending.config.client_id
+        extra["token_endpoint_auth_method"] = pending.config.token_auth_method(
+            pending.config.client_secret
+        )
         if pending.config.client_secret:
             extra["client_secret"] = pending.config.client_secret
-        return Tokens(
-            access=access, refresh=refresh, expires_at=expires_at, extra=extra
-        )
+        return Tokens(access=access, refresh=refresh, expires_at=expires_at, extra=extra)
 
     async def refresh(self, current: Tokens) -> Tokens:
         if not current.refresh:
@@ -273,7 +338,10 @@ class PkceLoopbackHandler:
             "refresh_token": current.refresh,
             "client_id": client_id,
         }
-        if client_secret:
+        auth_method = current.extra.get(
+            "token_endpoint_auth_method"
+        ) or self._config.token_auth_method(client_secret)
+        if client_secret and auth_method == "client_secret_post":
             refresh_body["client_secret"] = client_secret
         if self._config.resource:
             refresh_body["resource"] = self._config.resource
@@ -285,20 +353,19 @@ class PkceLoopbackHandler:
                 headers={
                     "Accept": "application/json",
                     "Content-Type": "application/x-www-form-urlencoded",
+                    **_basic_token_header(client_id, client_secret, auth_method),
                 },
             )
         if r.status_code != 200:
-            raise RuntimeError(f"refresh HTTP {r.status_code}: {r.text[:200]}")
+            detail = sanitize_provider_error(r.text)
+            raise RuntimeError(f"refresh HTTP {r.status_code}: {detail}")
         payload = r.json()
         if payload.get("ok") is False:
             err = payload.get("error", "unknown")
             if err in ("invalid_grant", "token_revoked", "invalid_refresh_token"):
                 raise RuntimeError("revoked")
-            raise RuntimeError(f"refresh failed: {err}")
-        access = (
-            payload.get("authed_user", {}).get("access_token")
-            or payload.get("access_token")
-        )
+            raise RuntimeError(f"refresh failed: {sanitize_provider_error(str(err))}")
+        access = payload.get("authed_user", {}).get("access_token") or payload.get("access_token")
         if not access:
             raise RuntimeError("refresh missing access_token")
         new_refresh = (
@@ -306,15 +373,14 @@ class PkceLoopbackHandler:
             or payload.get("refresh_token")
             or current.refresh
         )
-        expires_in = payload.get("authed_user", {}).get("expires_in") or payload.get(
-            "expires_in"
-        )
+        expires_in = payload.get("authed_user", {}).get("expires_in") or payload.get("expires_in")
         expires_at = (
             datetime.now(UTC) + timedelta(seconds=int(expires_in))
             if expires_in is not None
             else None
         )
         extra = dict(current.extra)
+        extra["token_endpoint_auth_method"] = auth_method
         if not bound_client_id:
             # A successful legacy refresh proves which currently configured
             # client owns the grant. Persist that pair now so later config or

@@ -18,9 +18,11 @@ spec + token into a claude-cli `mcpServers` entry:
 
 User ``mcp.json`` servers can be merged in via ``extra_servers``.
 """
+
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 from jarvis.marketplace.catalog import PluginCatalog
@@ -49,12 +51,15 @@ def _stdio_entry(spec: dict[str, Any], repl: dict[str, str]) -> dict[str, Any] |
         return None
     command = _resolve_placeholders(str(install[0]), repl)
     args = [_resolve_placeholders(str(a), repl) for a in install[1:]]
+    if (
+        command == "python"
+        and args[:1] == ["-m"]
+        and args[1:2] in (["jarvis.plugins.tool.connected_server"], ["jarvis.marketplace.amd_mcp"])
+    ):
+        command = sys.executable
     entry: dict[str, Any] = {"command": command, "args": args}
     env_template = spec.get("env_template") or {}
-    env = {
-        str(k): _resolve_placeholders(str(v), repl)
-        for k, v in env_template.items()
-    }
+    env = {str(k): _resolve_placeholders(str(v), repl) for k, v in env_template.items()}
     if env:
         entry["env"] = env
     return entry
@@ -105,6 +110,13 @@ def assemble_claude_mcp_servers(
         transport = str(spec.get("transport") or "").lower()
         if transport == "stdio":
             entry = _stdio_entry(spec, repl)
+            if entry is not None and entry.get("args", [])[:2] == [
+                "-m",
+                "jarvis.plugins.tool.connected_server",
+            ]:
+                entry.setdefault("env", {})["JARVIS_CONNECTOR_AUTH_TYPE"] = (
+                    "oauth" if tokens.extra.get("client_id") else "pat"
+                )
         elif transport == "http":
             entry = _http_entry(spec, repl)
         else:

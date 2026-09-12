@@ -296,13 +296,10 @@ describe("PkceConnectDialog own-client + production hint", () => {
     oauthClientConfigured: true,
   } as unknown as Parameters<typeof PkceConnectDialog>[0]["plugin"];
 
-  it("shows the Google production hint with a console link", () => {
-    render(
-      <PkceConnectDialog plugin={gmail} onClose={() => {}} onProceed={() => {}} />,
-    );
-    expect(screen.getByText(/production/i)).toBeDefined();
-    const link = screen.getByRole("link", { name: /google cloud console/i });
-    expect((link as HTMLAnchorElement).href).toContain("console.cloud.google.com");
+  it("keeps developer setup collapsed for ordinary browser sign-in", () => {
+    render(<PkceConnectDialog plugin={gmail} onClose={() => {}} onProceed={() => {}} />);
+    expect(screen.queryByLabelText(/client id/i)).toBeNull();
+    expect(screen.queryByRole("link", { name: /google cloud console/i })).toBeNull();
   });
 
   it("proceeds without writing secrets when no client is entered", async () => {
@@ -359,12 +356,12 @@ describe("PkceConnectDialog own-client + production hint", () => {
       <PkceConnectDialog plugin={slack} onClose={() => {}} onProceed={() => {}} />,
     );
 
-    expect(screen.getByText(/has no Slack OAuth client yet/i)).toBeDefined();
+    expect(screen.getByText(/pending publisher setup/i)).toBeDefined();
     expect(
       (screen.getByRole("button", { name: /^continue$/i }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
-    expect(screen.getByLabelText(/client id/i)).toBeDefined();
+    expect(screen.queryByLabelText(/client id/i)).toBeNull();
   });
 });
 
@@ -626,6 +623,7 @@ describe("PluginsView publishes every supported connection path immediately", ()
         category: "Developer",
         logo_slug: "auth0",
         auth: { mode: "oauth_device_flow" },
+        oauth_client_configured: true,
         status: "not_connected",
         live_callable: false,
       },

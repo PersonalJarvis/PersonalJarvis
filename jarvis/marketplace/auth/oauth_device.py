@@ -20,8 +20,13 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from jarvis.marketplace.auth.base import (
+    ERROR_DENIED,
+    ERROR_PROVIDER_UNREACHABLE,
+    ERROR_TIMEOUT,
+    ERROR_UNKNOWN,
     AuthSession,
     FlowResult,
+    sanitize_provider_error,
     session_id,
 )
 from jarvis.marketplace.token_store import Tokens
@@ -46,6 +51,19 @@ class _PendingDeviceFlow:
     device_code: str
     interval: int
     expires_at: datetime
+    cancelled: bool = False
+
+
+def _classify_device_error(exc: BaseException) -> str:
+    """Map a device-flow failure to a dialog-grade error code."""
+    msg = str(exc).lower()
+    if "denied" in msg:
+        return ERROR_DENIED
+    if "expired" in msg or "too long" in msg:
+        return ERROR_TIMEOUT
+    if "unreachable" in msg or "network" in msg or "request failed" in msg:
+        return ERROR_PROVIDER_UNREACHABLE
+    return ERROR_UNKNOWN
 
 
 class DeviceFlowHandler:
@@ -78,13 +96,11 @@ class DeviceFlowHandler:
             raise RuntimeError(f"device_code request failed: {exc}") from exc
         if r.status_code != 200:
             raise RuntimeError(
-                f"device_code HTTP {r.status_code}: {r.text[:200]}"
+                f"device_code HTTP {r.status_code}: {sanitize_provider_error(r.text)}"
             )
         payload = r.json()
         if "device_code" not in payload or "user_code" not in payload:
-            raise RuntimeError(
-                f"device_code response missing required fields: {payload}"
-            )
+            raise RuntimeError("device_code response missing required fields")
 
         sid = session_id()
         interval = int(payload.get("interval", 5))
@@ -112,15 +128,27 @@ class DeviceFlowHandler:
     async def await_completion(self, session: AuthSession) -> FlowResult:
         pending = self._pending.get(session.flow_id)
         if pending is None:
-            return FlowResult(tokens=None, error="unknown flow_id")
+            return FlowResult(tokens=None, error="unknown flow_id", error_code=ERROR_UNKNOWN)
 
         try:
             tokens = await self._poll(pending)
             return FlowResult(tokens=tokens, error=None)
         except RuntimeError as exc:
-            return FlowResult(tokens=None, error=str(exc))
+            return FlowResult(
+                tokens=None,
+                error=str(exc),
+                error_code=_classify_device_error(exc),
+            )
         finally:
             self._pending.pop(session.flow_id, None)
+
+    async def cancel(self, session: AuthSession) -> None:
+        """Flag the pending device flow as cancelled and drop it, so the
+        polling loop below observes the flag on its next tick and stops
+        instead of polling until expiry."""
+        pending = self._pending.pop(session.flow_id, None)
+        if pending is not None:
+            pending.cancelled = True
 
     async def _poll(self, pending: _PendingDeviceFlow) -> Tokens:
         """Polls the token endpoint until success, denial, or expiry.
@@ -136,6 +164,8 @@ class DeviceFlowHandler:
 
         while datetime.now(UTC) < pending.expires_at:
             await asyncio.sleep(interval)
+            if pending.cancelled:
+                raise RuntimeError("connect cancelled")
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     r = await client.post(
@@ -158,7 +188,7 @@ class DeviceFlowHandler:
                 # GitHub returns 200 even on `authorization_pending`; a
                 # non-200 means a real protocol error.
                 raise RuntimeError(
-                    f"token poll HTTP {r.status_code}: {r.text[:200]}"
+                    f"token poll HTTP {r.status_code}: {sanitize_provider_error(r.text)}"
                 )
 
             payload = r.json()
@@ -171,7 +201,7 @@ class DeviceFlowHandler:
                     if expires_in is not None
                     else None
                 )
-                extra: dict[str, str] = {}
+                extra: dict[str, str] = {"client_id": pending.config.client_id}
                 if "scope" in payload:
                     extra["scope"] = payload["scope"]
                 if "token_type" in payload:
@@ -189,14 +219,12 @@ class DeviceFlowHandler:
                 interval += 5
                 continue
             if err == "expired_token":
-                raise RuntimeError(
-                    "device code expired — user took too long; please retry"
-                )
+                raise RuntimeError("device code expired — user took too long; please retry")
             if err == "access_denied":
                 raise RuntimeError("user denied authorization")
-            # Unknown error
+            # Unknown error (payload redacted — it can echo secrets back).
             raise RuntimeError(
-                f"unknown error from token endpoint: {payload!r}"
+                f"unknown error from token endpoint: {sanitize_provider_error(str(err))}"
             )
 
         raise RuntimeError("device code expired locally before user approved")
@@ -209,12 +237,15 @@ class DeviceFlowHandler:
         # GitHub device-flow refresh: same token endpoint, no client_secret
         # required (the killer feature of device flow).
         timeout = httpx.Timeout(self._config.timeout_seconds)
+        # Refresh grants remain bound to their issuing client even when the
+        # publisher registration or expert override changes afterwards.
+        client_id = current.extra.get("client_id") or self._config.client_id
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.post(
                     self._config.token_url,
                     data={
-                        "client_id": self._config.client_id,
+                        "client_id": client_id,
                         "grant_type": "refresh_token",
                         "refresh_token": current.refresh,
                     },
@@ -223,17 +254,17 @@ class DeviceFlowHandler:
                         "User-Agent": "Personal-Jarvis/1.0",
                     },
                 )
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"refresh request failed: {exc}") from exc
+        except httpx.HTTPError:
+            raise RuntimeError("refresh request failed: provider unavailable") from None
         payload = r.json()
         if r.status_code != 200 or payload.get("error"):
             err = payload.get("error", f"HTTP {r.status_code}")
             if err == "invalid_grant" or err == "bad_refresh_token":
                 raise RuntimeError("revoked")
-            raise RuntimeError(f"refresh failed: {err}")
+            raise RuntimeError(f"refresh failed: {sanitize_provider_error(str(err))}")
         access = payload.get("access_token")
         if not access:
-            raise RuntimeError(f"refresh response missing access_token: {payload}")
+            raise RuntimeError("refresh response missing access_token")
         expires_in = payload.get("expires_in")
         expires_at = (
             datetime.now(UTC) + timedelta(seconds=int(expires_in))
@@ -244,7 +275,7 @@ class DeviceFlowHandler:
             access=access,
             refresh=payload.get("refresh_token") or current.refresh,
             expires_at=expires_at,
-            extra=current.extra,
+            extra={**current.extra, "client_id": client_id},
         )
 
     @staticmethod

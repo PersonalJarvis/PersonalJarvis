@@ -79,4 +79,5 @@ async def test_connect_start_secret_override_beats_placeholder(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         await mr.connect_start(spec.id, BackgroundTasks())
     assert exc_info.value.status_code != 409
-    assert _StubPkceHandler._SENTINEL in str(exc_info.value.detail)
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "provider request failed"

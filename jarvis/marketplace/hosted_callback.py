@@ -28,6 +28,7 @@ from jarvis.marketplace.oauth_callback_server import (
     CallbackResult,
     CallbackTimeoutError,
     OAuthCallbackServer,
+    provider_callback_error,
 )
 
 log = logging.getLogger(__name__)
@@ -111,9 +112,7 @@ class HostedCallbackServer:
         try:
             return await asyncio.wait_for(self._future, timeout=self._timeout)
         except TimeoutError as exc:
-            raise CallbackTimeoutError(
-                f"no callback received within {self._timeout}s"
-            ) from exc
+            raise CallbackTimeoutError(f"no callback received within {self._timeout}s") from exc
         finally:
             _PENDING.pop(self._expected_state, None)
 
@@ -135,7 +134,7 @@ def deliver_callback(code: str, state: str, error: str | None = None) -> bool:
         log.warning("hosted oauth callback for unknown/expired state")
         return False
     if error:
-        srv._resolve(exc=RuntimeError(f"OAuth provider returned error: {error}"))
+        srv._resolve(exc=RuntimeError(provider_callback_error(error)))
     elif not code:
         srv._resolve(exc=RuntimeError("missing 'code' parameter"))
     else:

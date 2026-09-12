@@ -18,6 +18,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from jarvis.core.protocols import RiskTier
 from jarvis.marketplace.catalog import PluginCatalog, PluginSpec
 from jarvis.marketplace.catalog_data import load_catalog
 from jarvis.marketplace.plugin_mcp import plugin_to_mcp_server_spec
@@ -114,7 +115,7 @@ class PluginToolRegistry:
         token_store: TokenStore | None = None,
         client_factory: Callable[..., Any] | None = None,
         bus: Any = None,
-        default_risk_tier: str = "monitor",
+        default_risk_tier: RiskTier = "monitor",
         connect_timeout_s: float = _CONNECT_TIMEOUT_S_DEFAULT,
         refresh_handler_builder: Callable[[str], Any | None] | None = None,
     ) -> None:
@@ -205,6 +206,10 @@ class PluginToolRegistry:
     ) -> tuple[Any, list[dict[str, Any]]]:
         """Open one bounded client and clean up any failed attempt."""
         client = self._client_factory(server_spec, env_overrides=env_overrides)
+        from jarvis.marketplace.bundled_rest_client import BundledRestMcpClient
+
+        if isinstance(client, BundledRestMcpClient):
+            client.set_token_provider(lambda: self._store.load(server_spec.name))
         try:
             tool_defs = await asyncio.wait_for(
                 self._start_and_list(client), timeout=self._connect_timeout_s
@@ -343,7 +348,10 @@ class PluginToolRegistry:
         self._clients[plugin.id] = client
         self._last_errors.pop(plugin.id, None)
         for tool_def in tool_defs:
-            adapter = MCPToolAdapter(client, tool_def, risk_tier=self._risk_tier)
+            # A catalog may raise the approval floor, never lower it. New
+            # connectors that can publish or modify records opt into ask.
+            tier = "ask" if (plugin.mcp_server or {}).get("risk_tier") == "ask" else self._risk_tier
+            adapter = MCPToolAdapter(client, tool_def, risk_tier=tier)
             self._tools[adapter.name] = adapter
         try:
             from jarvis.core.capabilities import get_registry as _get_cap_registry
@@ -438,6 +446,10 @@ class PluginToolRegistry:
 
 
 def _default_client_factory(spec: Any, *, env_overrides: dict[str, str] | None = None) -> Any:
+    if spec.install_command[1:3] == ["-m", "jarvis.plugins.tool.connected_server"]:
+        from jarvis.marketplace.bundled_rest_client import BundledRestMcpClient
+
+        return BundledRestMcpClient(spec)
     from jarvis.mcp.client import MCPClient
 
     return MCPClient(spec, env_overrides=env_overrides)

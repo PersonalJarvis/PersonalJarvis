@@ -50,10 +50,10 @@ def test_http_plugin_builds_bearer_header() -> None:
     assert "${plugin_notion_access_token}" not in json.dumps(no)
 
 
-def test_rest_wrapper_plugin_is_skipped() -> None:
-    # vercel uses transport=rest_wrapper -> NOT a real MCP server -> skip
+def test_vercel_official_hosted_mcp_is_available() -> None:
     servers = assemble_claude_mcp_servers(load_catalog(), _store(vercel="vcp_SECRET"))
-    assert "vercel" not in servers
+    assert servers["vercel"]["type"] == "http"
+    assert servers["vercel"]["url"] == "https://mcp.vercel.com"
 
 
 def test_unconnected_plugin_is_skipped() -> None:

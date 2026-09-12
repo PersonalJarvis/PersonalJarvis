@@ -317,6 +317,11 @@ jobs:
             tests/unit/sessions/test_hangup_reason_parity.py \
             tests/unit/core/test_turn_language.py \
             -q -p no:cacheprovider
+      - name: Plugin auth contract (BLOCKING — browser-auth standard per plugin)
+        shell: bash
+        run: |
+          python scripts/ci/check_plugin_auth_contract.py
+          python -m pytest tests/contract/test_plugin_auth_standard.py tests/contract/test_connector_auth.py tests/contract/test_service_connectors.py tests/contract/test_plugin_availability.py tests/contract/test_home_assistant_browser_auth.py -q -p no:cacheprovider
 
   # jarvisctl control-CLI unit suite across the three supported desktops.
   # jarvisctl is a thin cross-platform HTTP client (paths via platformdirs,

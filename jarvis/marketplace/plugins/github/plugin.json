@@ -1,0 +1,45 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "github",
+  "version": "1.0.0",
+  "description": "Repos, issues, pull requests and Actions runs",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "GitHub",
+      "category": "Developer",
+      "logo_slug": "github",
+      "logo_color": "24292E",
+      "featured": true,
+      "longevity": "self_renewing",
+      "oauth_client_family": "github",
+      "auth": {
+        "mode": "oauth_device_flow",
+        "device_url": "https://github.com/login/device/code",
+        "verify_url": "https://github.com/login/device",
+        "token_url": "https://github.com/login/oauth/access_token",
+        "client_id": "REPLACE_WITH_JARVIS_GITHUB_CLIENT_ID",
+        "scopes": [
+          "repo",
+          "workflow",
+          "read:user"
+        ]
+      },
+      "fallback_auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://github.com/settings/tokens/new?scopes=repo,workflow,read:user&description=Personal+Jarvis",
+        "token_prefix": "ghp",
+        "token_prefixes": ["github_pat_"],
+        "validation_endpoint": "https://api.github.com/user",
+        "instruction_md": "1. The link below opens GitHub with the right scopes (repo, workflow, read:user) already ticked.\n2. Pick an expiration (90 days is a sensible default), then click 'Generate token'. Classic tokens start with ghp_, fine-grained tokens with github_pat_ — both work.\n3. Copy the token (shown only once) and paste it below.\n4. If your repos sit behind SAML SSO, click 'Configure SSO' next to the new token after creation."
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://api.githubcopilot.com/mcp/",
+        "auth_header_template": "Authorization: Bearer $plugin_github_access_token"
+      },
+      "post_install_hint_md": "Connect signs you in at GitHub in the browser — no token to copy. If the publisher device client is not provisioned yet, the dialog offers the token fallback instead. If you use SAML SSO, authorize the credential at https://github.com/settings/tokens after connecting.",
+      "longevity_note": "Browser login renews automatically. Pasted tokens expire as configured at creation."
+    }
+  }
+}

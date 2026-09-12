@@ -1,0 +1,2274 @@
+{
+  "schema_version": 1,
+  "issue": "RUB-94",
+  "observed_on": "2026-09-12",
+  "scope": "Real UI connection attempts on Windows; incomplete provider authorization and lifecycle verification.",
+  "plugins": [
+    {
+      "plugin_id": "github",
+      "result": "BLOCKED",
+      "config_fingerprint": "3110b4a0e8b6efb3807fd3f30b9efd2c9dec5dd7a810e6d4eb650ed08bed45f3",
+      "initial_state": "existing_connection_retained",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Existing connection retained; Reconnect opens publisher-pending dialog with expert fallback collapsed. Clean disconnect/reconnect blocked by missing publisher device client.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Existing connection retained; Reconnect opens publisher-pending dialog with expert fallback collapsed. Clean disconnect/reconnect blocked by missing publisher device client."
+      }
+    },
+    {
+      "plugin_id": "vercel",
+      "result": "BLOCKED",
+      "config_fingerprint": "584c3523ce9f6085713892802c0db379600ed5c8ef6a650a2b5240b5007c3b07",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect opened official vercel.com/oauth/authorize; provider sign-in required. No user token or client setup.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Connect opened official vercel.com/oauth/authorize; provider sign-in required. No user token or client setup.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Connect opened official vercel.com/oauth/authorize; provider sign-in required. No user token or client setup."
+      }
+    },
+    {
+      "plugin_id": "supabase",
+      "result": "BLOCKED",
+      "config_fingerprint": "867954a2d0c59235c7f54ae52a013380f82dc932c42e6f313631dae83ce5f0ae",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect opened supabase.com/dashboard/sign-in via provider DCR. Account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Connect opened supabase.com/dashboard/sign-in via provider DCR. Account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Connect opened supabase.com/dashboard/sign-in via provider DCR. Account sign-in required."
+      }
+    },
+    {
+      "plugin_id": "notion",
+      "result": "BLOCKED",
+      "config_fingerprint": "e22385975e3657b0aec408b1b3edfcc9270e806226631faa66fd9a3612d5b32b",
+      "initial_state": "existing_connection_retained",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Existing connection retained; Reconnect reached real Notion workspace consent. New grant awaits explicit user approval for workspace access.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Existing connection retained; Reconnect reached real Notion workspace consent. New grant awaits explicit user approval for workspace access.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+        "owner": "Provider account holder",
+        "next_action": "Approve the intended workspace or cloud resource grant, then verify callback, action, reconnect and restart.",
+        "evidence": "Existing connection retained; Reconnect reached real Notion workspace consent. New grant awaits explicit user approval for workspace access."
+      }
+    },
+    {
+      "plugin_id": "slack",
+      "result": "BLOCKED",
+      "config_fingerprint": "08473808291e74433e704897132081f86e058dae9bfeb339bab1bc097435ccc7",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Slack\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect Slack\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "linear",
+      "result": "BLOCKED",
+      "config_fingerprint": "c237f907a48bc9d152a2eb7ab282b46271b08ee206a1041d2380bb71070e0255",
+      "initial_state": "existing_connection_retained",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Existing connection retained; Reconnect reached official mcp.linear.app authorization page for Personal Jarvis.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Existing connection retained; Reconnect reached official mcp.linear.app authorization page for Personal Jarvis.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+        "owner": "Provider account holder",
+        "next_action": "Approve the intended workspace or cloud resource grant, then verify callback, action, reconnect and restart.",
+        "evidence": "Existing connection retained; Reconnect reached official mcp.linear.app authorization page for Personal Jarvis."
+      }
+    },
+    {
+      "plugin_id": "stripe",
+      "result": "BLOCKED",
+      "config_fingerprint": "f7dd03e28d4820e15f595a7cc0e650fb18012b95450e8fe1171eeef8d9dd627f",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect opened official dashboard.stripe.com/login. Provider account sign-in required; no manual token or client setup.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Connect opened official dashboard.stripe.com/login. Provider account sign-in required; no manual token or client setup.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Connect opened official dashboard.stripe.com/login. Provider account sign-in required; no manual token or client setup."
+      }
+    },
+    {
+      "plugin_id": "cloudflare",
+      "result": "BLOCKED",
+      "config_fingerprint": "a4a53bf9e203bbb2698ded52413376c0621af7eca3f305a4d413e7938fe2d842",
+      "initial_state": "existing_connection_retained",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Existing connection retained; Reconnect reached official workers-observability approval page for Personal Jarvis; private cloud resource access requires approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Existing connection retained; Reconnect reached official workers-observability approval page for Personal Jarvis; private cloud resource access requires approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+        "owner": "Provider account holder",
+        "next_action": "Approve the intended workspace or cloud resource grant, then verify callback, action, reconnect and restart.",
+        "evidence": "Existing connection retained; Reconnect reached official workers-observability approval page for Personal Jarvis; private cloud resource access requires approval."
+      }
+    },
+    {
+      "plugin_id": "discord",
+      "result": "BLOCKED",
+      "config_fingerprint": "34b6057247b861a45258b21ab59c98e60742a8316f78fdc1460eee8317d87e99",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Discord\n\nAccess token · Access Token\n\n1\nGenerate a token at Discord\n\n1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below, plus your numeric Discord user id (Developer Mode -> right-click yourself -> Copy User ID) so only you can command the bot.\n\nOpen Discord tokens\nCopy\n\nOr copy this link and open it in your browser yourself.\n\n2\nPaste the token below\n3\nLock the bot to you (recommended)\n\nOnly this user id can command the bot. Leave blank to let the first person who messages it claim access instead.\n\nCancel\nConnect",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Local channel bot credential is required; no replacement credential was supplied.",
+        "owner": "Provider account holder",
+        "next_action": "Provide an authorized test credential through onboarding, verify a real action and lifecycle, and retain the documented browser-standard exception.",
+        "evidence": "Connect Discord\n\nAccess token · Access Token\n\n1\nGenerate a token at Discord\n\n1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below, plus your numeric Discord user id (Developer Mode -> right-click yourself -> Copy User ID) so only you can command the bot.\n\nOpen Discord tokens\nCopy\n\nOr copy this link and open it in your browser yourself.\n\n2\nPaste the token below\n3\nLock the bot to you (recommended)\n\nOnly this user id can command the bot. Leave blank to let the first person who messages it claim access instead.\n\nCancel\nConnect"
+      },
+      "provider_exception": {
+        "reason": "This local channel uses a bot credential. OAuth bot installation does not replace that runtime credential; this is not a claim that Discord lacks OAuth.",
+        "source": "https://docs.discord.com/developers/platform/oauth2-and-permissions"
+      }
+    },
+    {
+      "plugin_id": "telegram",
+      "result": "BLOCKED",
+      "config_fingerprint": "91c398318bb47d6742fd3dc38bb0ab7d228902ddbac384d4048c1299ddec146b",
+      "initial_state": "existing_connection_retained",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Existing bot connection; Reconnect opened token onboarding. Official Bot API requires bot token; no replacement bot credential supplied, existing connection preserved.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Local channel bot credential is required; no replacement credential was supplied.",
+        "owner": "Provider account holder",
+        "next_action": "Provide an authorized test credential through onboarding, verify a real action and lifecycle, and retain the documented browser-standard exception.",
+        "evidence": "Existing bot connection; Reconnect opened token onboarding. Official Bot API requires bot token; no replacement bot credential supplied, existing connection preserved."
+      },
+      "provider_exception": {
+        "reason": "This connector uses the Telegram Bot API, whose requests require a bot token; this is not a claim about every Telegram login product.",
+        "source": "https://core.telegram.org/bots/api"
+      }
+    },
+    {
+      "plugin_id": "asana",
+      "result": "BLOCKED",
+      "config_fingerprint": "23b3527159b69f3c77d7dc5e84834650bbeff85e908a37026c1bde2920a65408",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Asana\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect Asana\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "google_drive",
+      "result": "BLOCKED",
+      "config_fingerprint": "70e68753d8cf52bffd77604fc1d339228111713121ab58badfca03c4795b1f36",
+      "initial_state": "existing_connection_retained",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Existing connection; Reconnect entry: Connect Google Drive\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+        "owner": "Provider account holder",
+        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "evidence": "Existing connection; Reconnect entry: Connect Google Drive\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "gmail",
+      "result": "BLOCKED",
+      "config_fingerprint": "8248fc2e3f48d3698882176757b87ea5d8df7ecf9b467adb60c69944642402fe",
+      "initial_state": "existing_connection_retained",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Existing connection; Reconnect entry: Connect Gmail\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+        "owner": "Provider account holder",
+        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "evidence": "Existing connection; Reconnect entry: Connect Gmail\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "google_calendar",
+      "result": "BLOCKED",
+      "config_fingerprint": "b9af783b64e8c2f903baffb6c5a1e68244d0eebff701fc29743e3f4c89d7b6db",
+      "initial_state": "existing_connection_retained",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Existing connection; Reconnect entry: Connect Google Calendar\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+        "owner": "Provider account holder",
+        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "evidence": "Existing connection; Reconnect entry: Connect Google Calendar\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "todoist",
+      "result": "BLOCKED",
+      "config_fingerprint": "2352afa1926cf9011653406b034bf682174a89eb2ceba3d974d5fe22f964a679",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Official app.todoist.com/auth/login reached from Connect; account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Official app.todoist.com/auth/login reached from Connect; account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Official app.todoist.com/auth/login reached from Connect; account sign-in required."
+      }
+    },
+    {
+      "plugin_id": "clickup",
+      "result": "BLOCKED",
+      "config_fingerprint": "3b87878f11a60eada4e35c46c403d0b4cbbc28681cfc63dc51c8d04615739183",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect reached app.clickup.com/api provider page; see provider state.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Connect reached app.clickup.com/api provider page; see provider state.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Connect reached app.clickup.com/api provider page; see provider state."
+      }
+    },
+    {
+      "plugin_id": "dropbox",
+      "result": "BLOCKED",
+      "config_fingerprint": "4011e71044920baaf2e86e871958888225b95773a36f767a7c9a18263abc8a04",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Add/Connect opened dropbox.com/oauth2/authorize. Real login form observed; account sign-in not supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Add/Connect opened dropbox.com/oauth2/authorize. Real login form observed; account sign-in not supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Add/Connect opened dropbox.com/oauth2/authorize. Real login form observed; account sign-in not supplied."
+      }
+    },
+    {
+      "plugin_id": "canva",
+      "result": "BLOCKED",
+      "config_fingerprint": "faf81d0908371923e5c6e77b93df43e567092a6d5451154aeba5fb647157af41",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Official canva.com login page reached from Connect; account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Official canva.com login page reached from Connect; account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Official canva.com login page reached from Connect; account sign-in required."
+      }
+    },
+    {
+      "plugin_id": "airtable",
+      "result": "BLOCKED",
+      "config_fingerprint": "532b569c875045e62e75af1e9e13633a30808078eecd3abc52145be2237a8220",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Add/Connect opened airtable.com/login. Real provider sign-in observed; account sign-in not supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Add/Connect opened airtable.com/login. Real provider sign-in observed; account sign-in not supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Add/Connect opened airtable.com/login. Real provider sign-in observed; account sign-in not supplied."
+      }
+    },
+    {
+      "plugin_id": "cal_com",
+      "result": "BLOCKED",
+      "config_fingerprint": "4f017680422def9d6827d3c269166fe0f94d93c3f01b601957fba9d4aa4c723c",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Add/Connect opened app.cal.com/auth/login. Real login form observed; account sign-in not supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Add/Connect opened app.cal.com/auth/login. Real login form observed; account sign-in not supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Add/Connect opened app.cal.com/auth/login. Real login form observed; account sign-in not supplied."
+      }
+    },
+    {
+      "plugin_id": "home_assistant",
+      "result": "BLOCKED",
+      "config_fingerprint": "9ce0305096af43726baf09d205facc13dd49d0df3bff7cb54b93c59ee08caf1f",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect opens address-only browser login dialog. No instance address or reachable Home Assistant host supplied; no token requested.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Address-only browser onboarding opened, but no reachable instance address was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Address-only browser onboarding opened, but no reachable instance address was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Address-only browser onboarding opened, but no reachable instance address was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Address-only browser onboarding opened, but no reachable instance address was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Address-only browser onboarding opened, but no reachable instance address was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Address-only browser onboarding opened, but no reachable instance address was supplied.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Address-only browser onboarding opened, but no reachable instance address was supplied.",
+        "owner": "Home Assistant administrator",
+        "next_action": "Supply the intended reachable instance and approve its browser login, then verify a real state read and lifecycle.",
+        "evidence": "Connect opens address-only browser login dialog. No instance address or reachable Home Assistant host supplied; no token requested."
+      }
+    },
+    {
+      "plugin_id": "spotify",
+      "result": "BLOCKED",
+      "config_fingerprint": "b0145e0b044993161c719284ea7b6a59e7a9a0adabeb393caef448880f24d8dd",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Spotify\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect Spotify\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "youtube_music",
+      "result": "BLOCKED",
+      "config_fingerprint": "bf658a854fa6ac203ae7f1a3d729960d17acf2ffbd2042ee3d9946e135ca4266",
+      "initial_state": "existing_connection_retained",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Existing connection; Reconnect entry: Connect YouTube Music\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+        "owner": "Provider account holder",
+        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "evidence": "Existing connection; Reconnect entry: Connect YouTube Music\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "higgsfield",
+      "result": "BLOCKED",
+      "config_fingerprint": "6eca005263b094210e34f7fb16ad641997fc371554baa1b0169c4e787332662f",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Real UI Connect retest reached the official Higgsfield sign-in page; its DOM was inspected. Requested scopes were openid email offline_access. The earlier invalid_scope callback did not recur; sign-in and authorization remain incomplete.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Real UI Connect retest reached the official Higgsfield sign-in page; its DOM was inspected. Requested scopes were openid email offline_access. The earlier invalid_scope callback did not recur; sign-in and authorization remain incomplete.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified after the scope-selection fix. Official provider sign-in page reached after the scope-selection fix; account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified after the scope-selection fix. Official provider sign-in page reached after the scope-selection fix; account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified after the scope-selection fix. Official provider sign-in page reached after the scope-selection fix; account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified after the scope-selection fix. Official provider sign-in page reached after the scope-selection fix; account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified after the scope-selection fix. Official provider sign-in page reached after the scope-selection fix; account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Official provider sign-in page reached after the scope-selection fix; account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify successful callback, a real plugin action, reconnect and restart.",
+        "evidence": "Real UI Connect retest reached the official Higgsfield sign-in page; its DOM was inspected. Requested scopes were openid email offline_access. The earlier invalid_scope callback did not recur; sign-in and authorization remain incomplete."
+      }
+    },
+    {
+      "plugin_id": "outlook",
+      "result": "BLOCKED",
+      "config_fingerprint": "f62f6f02ef99ee1e84486d9d82b055261bcd643be79600f3429a04f9130d33b5",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Outlook Mail & Calendar\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect Outlook Mail & Calendar\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "onedrive",
+      "result": "BLOCKED",
+      "config_fingerprint": "13cc3681f3ae2f8c0bc91ecd2dd8dd871a31bbf818d5c47b16b4e6aecc360d3c",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect OneDrive\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect OneDrive\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "teams",
+      "result": "BLOCKED",
+      "config_fingerprint": "9b0445f0926d2acf31ef022954f6408ea32d297ae261a9150716b5e75f6f48c1",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Microsoft Teams\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect Microsoft Teams\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "sharepoint",
+      "result": "BLOCKED",
+      "config_fingerprint": "a83bb0ba5fec52fd8b4ba8a7c89457bb30710d21ec3590f26721cf2a9ae9f05d",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect SharePoint\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect SharePoint\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "onenote",
+      "result": "BLOCKED",
+      "config_fingerprint": "97b21f67f9bd6dc96d264bdcd09a6150b0ecee95984ed35806bde0d7189cce67",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect OneNote\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect OneNote\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "microsoft_todo",
+      "result": "BLOCKED",
+      "config_fingerprint": "0816c3d151b264735d95dbd1058dac3a0c7b661c15ba8626fc57424dfb3cb370",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Microsoft To Do\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect Microsoft To Do\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "aws",
+      "result": "BLOCKED",
+      "config_fingerprint": "fbe371dc50e475c9e6b325bacb26e4c40d3e640813b0f6ce0d81c1c23545d985",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Official eu-central-1.signin.aws.amazon.com sign-in reached; AWS identity/account authorization required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Official eu-central-1.signin.aws.amazon.com sign-in reached; AWS identity/account authorization required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Official eu-central-1.signin.aws.amazon.com sign-in reached; AWS identity/account authorization required."
+      }
+    },
+    {
+      "plugin_id": "azure",
+      "result": "BLOCKED",
+      "config_fingerprint": "d57da86f7c38045a1c9c1da35ace5678d53a6aa9ed1d3c9affe4c67e36858cb1",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Microsoft Azure\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect Microsoft Azure\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "google_cloud",
+      "result": "BLOCKED",
+      "config_fingerprint": "63f2b782a1a1747b8688e1f09fbd6b8b4dff028d8e98419cf610a7c851049ddd",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Configured Google client launched accounts.google.com account chooser; consent/resource access not completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Configured Google client launched accounts.google.com account chooser; consent/resource access not completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Configured Google client launched accounts.google.com account chooser; consent/resource access not completed."
+      }
+    },
+    {
+      "plugin_id": "gitlab",
+      "result": "BLOCKED",
+      "config_fingerprint": "d42fd973539c25d088bee4c547360719577a0a614ad8335ea21c1b4837a8c265",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect GitLab\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect GitLab\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "agentmail",
+      "result": "BLOCKED",
+      "config_fingerprint": "30b91e464fec4fee94334fbe1abf4a993c08600eef3b9be24ad72a2875ff834b",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect AgentMail\n\nAccess token · Access Token\n\n1\nGenerate a token at AgentMail\n\nCreate an API key in your own AgentMail console and paste it here. Existing skill credentials are not copied automatically.\n\nOpen AgentMail tokens\nCopy\n\nOr copy this link and open it in your browser yourself.\n\n2\nPaste the token below\nCancel\nConnect",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. The UI requests an existing-account API key; no plugin credential was supplied and the browser standard remains unmet.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. The UI requests an existing-account API key; no plugin credential was supplied and the browser standard remains unmet.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. The UI requests an existing-account API key; no plugin credential was supplied and the browser standard remains unmet.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. The UI requests an existing-account API key; no plugin credential was supplied and the browser standard remains unmet.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. The UI requests an existing-account API key; no plugin credential was supplied and the browser standard remains unmet.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. The UI requests an existing-account API key; no plugin credential was supplied and the browser standard remains unmet.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "The UI requests an existing-account API key; no plugin credential was supplied and the browser standard remains unmet.",
+        "owner": "Provider account holder",
+        "next_action": "Provide an authorized test credential through onboarding, verify a real action and lifecycle, and retain the documented browser-standard exception.",
+        "evidence": "Connect AgentMail\n\nAccess token · Access Token\n\n1\nGenerate a token at AgentMail\n\nCreate an API key in your own AgentMail console and paste it here. Existing skill credentials are not copied automatically.\n\nOpen AgentMail tokens\nCopy\n\nOr copy this link and open it in your browser yourself.\n\n2\nPaste the token below\nCancel\nConnect"
+      },
+      "provider_exception": {
+        "reason": "The documented integration uses an API key from the existing account console; no browser flow is established by that documentation.",
+        "source": "https://docs.agentmail.to/quickstart"
+      }
+    },
+    {
+      "plugin_id": "x",
+      "result": "BLOCKED",
+      "config_fingerprint": "3be5fed49f51d06b571dc7ce80fd64d41b84726fe7a060e3a6ebd0d7a11c0940",
+      "initial_state": "existing_connection_retained",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Existing connection; Reconnect entry: Connect X (Twitter)\n\nYou'll sign in with your X account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+        "owner": "Provider account holder",
+        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "evidence": "Existing connection; Reconnect entry: Connect X (Twitter)\n\nYou'll sign in with your X account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "linkedin",
+      "result": "BLOCKED",
+      "config_fingerprint": "264038d8498cb624f42a53ff148ff7a33e88d55456daa1f715f39e1d69648a53",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect LinkedIn\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect LinkedIn\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "meta",
+      "result": "BLOCKED",
+      "config_fingerprint": "6e3ac480076fa13d6a0e90500308404b558a2cb0b8deb722a324eba0f8008048",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Meta (Facebook & Instagram)\n\nAccess token · Access Token\n\n1\nGenerate a token at Meta (Facebook & Instagram)\n\nCreate a long-lived user token for your own Meta app. Request pages_show_list, pages_read_engagement, pages_manage_posts, instagram_basic and instagram_content_publish. App review may be required for other users. Paste the token here.\n\nOpen Meta (Facebook & Instagram) tokens\nCopy\n\nOr copy this link and open it in your browser yourself.\n\n2\nPaste the token below\nCancel\nConnect",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Current UI still requires a token. Publisher confidential HTTPS OAuth broker and app review are missing; Meta does offer OAuth.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Current UI still requires a token. Publisher confidential HTTPS OAuth broker and app review are missing; Meta does offer OAuth.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Current UI still requires a token. Publisher confidential HTTPS OAuth broker and app review are missing; Meta does offer OAuth.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Current UI still requires a token. Publisher confidential HTTPS OAuth broker and app review are missing; Meta does offer OAuth.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Current UI still requires a token. Publisher confidential HTTPS OAuth broker and app review are missing; Meta does offer OAuth.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Current UI still requires a token. Publisher confidential HTTPS OAuth broker and app review are missing; Meta does offer OAuth.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Current UI still requires a token. Publisher confidential HTTPS OAuth broker and app review are missing; Meta does offer OAuth.",
+        "owner": "Project publisher",
+        "next_action": "Provision the reviewed publisher app and confidential HTTPS broker, implement the browser default, then test Graph access and lifecycle.",
+        "evidence": "Connect Meta (Facebook & Instagram)\n\nAccess token · Access Token\n\n1\nGenerate a token at Meta (Facebook & Instagram)\n\nCreate a long-lived user token for your own Meta app. Request pages_show_list, pages_read_engagement, pages_manage_posts, instagram_basic and instagram_content_publish. App review may be required for other users. Paste the token here.\n\nOpen Meta (Facebook & Instagram) tokens\nCopy\n\nOr copy this link and open it in your browser yourself.\n\n2\nPaste the token below\nCancel\nConnect"
+      }
+    },
+    {
+      "plugin_id": "youtube_studio",
+      "result": "BLOCKED",
+      "config_fingerprint": "24fc4e26c962f57d0df0cb3889f3b40fd8e498d6b6d6be54f2dac0fc4262e817",
+      "initial_state": "existing_connection_retained",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Existing connection; Reconnect entry: Connect YouTube Studio\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+        "owner": "Provider account holder",
+        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "evidence": "Existing connection; Reconnect entry: Connect YouTube Studio\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "hubspot",
+      "result": "BLOCKED",
+      "config_fingerprint": "7a9f9067b33b02a86ee94e53def88d6f8c7a1102c28f83177fa81912fc0669b4",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect HubSpot\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect HubSpot\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "apollo",
+      "result": "BLOCKED",
+      "config_fingerprint": "2e283fde4a91c896e5acd54fb64937ffe9ec503da177d1f65df00d2477d42feb",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Official app.apollo.io login reached; provider account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Official app.apollo.io login reached; provider account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Official app.apollo.io login reached; provider account sign-in required."
+      }
+    },
+    {
+      "plugin_id": "salesforce",
+      "result": "BLOCKED",
+      "config_fingerprint": "eb9374d8384d04ea3914a5d5da6a5686a3970feb5e1bab287cfdaeb3a7ab478f",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Salesforce\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect Salesforce\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "granola",
+      "result": "BLOCKED",
+      "config_fingerprint": "b492fc6ad8d1ee27ecefe7bba86f56d84ecfc370fba277b8aa844cd6a40398b6",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Official mcp-auth.granola.ai sign-in reached from real Connect; account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Official mcp-auth.granola.ai sign-in reached from real Connect; account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Official mcp-auth.granola.ai sign-in reached from real Connect; account sign-in required."
+      }
+    },
+    {
+      "plugin_id": "zoom",
+      "result": "BLOCKED",
+      "config_fingerprint": "ca691c87a94730a5e8d8c5ba9e06b34e27f233912a5c6f23a84972f385b740c3",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Zoom\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect Zoom\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "figma",
+      "result": "BLOCKED",
+      "config_fingerprint": "b644ba3d27855621fda403804c65157d0a46496e5eaa232d8f241ad6110a96cb",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Connect Figma\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "owner": "Project publisher",
+        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "evidence": "Connect Figma\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue"
+      }
+    },
+    {
+      "plugin_id": "amd_gpu",
+      "result": "BLOCKED",
+      "config_fingerprint": "176b23334c1d06c2304fb0661ba33d8cb0c4fe951dc6815db32c44050e136b81",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Plugins\nSkills\nPlugins\nMCPs\nPlugins\nAMD GPU Status\n\nUnsupported on this device\n· Home & Devices\n\nConnect\n\nAMD GPU telemetry is unavailable on this operating system. This connector requires a compatible Linux AMD host with AMD SMI.\n\nRead AMD GPU utilization, temperature and driver data through AMD SMI\n\nStatus\nUnsupported on this device\nSign-in\nLocal device\nConnection\nStays connected\n—\n0 files\namd_gpu\nLoading…",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+        "owner": "Hardware test operator",
+        "next_action": "Run the no-login connection and real telemetry read on a supported Linux AMD host, then verify lifecycle.",
+        "evidence": "Plugins\nSkills\nPlugins\nMCPs\nPlugins\nAMD GPU Status\n\nUnsupported on this device\n· Home & Devices\n\nConnect\n\nAMD GPU telemetry is unavailable on this operating system. This connector requires a compatible Linux AMD host with AMD SMI.\n\nRead AMD GPU utilization, temperature and driver data through AMD SMI\n\nStatus\nUnsupported on this device\nSign-in\nLocal device\nConnection\nStays connected\n—\n0 files\namd_gpu\nLoading…"
+      }
+    }
+  ]
+}

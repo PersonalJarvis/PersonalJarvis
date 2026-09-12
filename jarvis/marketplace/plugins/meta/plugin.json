@@ -1,0 +1,40 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "meta",
+  "version": "1.0.0",
+  "description": "Publish Facebook Page and Instagram professional content; read comments",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Meta (Facebook & Instagram)",
+      "category": "Media & Creativity",
+      "logo_slug": "meta",
+      "logo_color": "0866FF",
+      "featured": false,
+      "longevity": "provider_limited",
+      "auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://developers.facebook.com/tools/explorer/",
+        "token_prefix": "",
+        "validation_endpoint": "https://graph.facebook.com/v23.0/me",
+        "instruction_md": "Create a long-lived user token for your own Meta app. Request pages_show_list, pages_read_engagement, pages_manage_posts, instagram_basic and instagram_content_publish. App review may be required for other users. Paste the token here.",
+        "auth_scheme": "bearer"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "meta"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_meta_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Facebook Pages and Instagram Business/Creator accounts linked to a Page are supported. Personal Facebook feeds and personal Instagram accounts are not. Token expiry and app review are controlled by Meta.",
+      "longevity_note": "Long-lived user tokens normally expire after about 60 days; reconnect before expiry."
+    }
+  }
+}

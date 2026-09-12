@@ -1,0 +1,33 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "agentmail",
+  "version": "1.0.0",
+  "description": "Give your agent an inbox: read, send and reply to messages",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "AgentMail",
+      "category": "Calendar & Mail",
+      "logo_slug": "agentmail",
+      "logo_color": "E9486C",
+      "featured": false,
+      "longevity": "permanent",
+      "auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://console.agentmail.to",
+        "token_prefix": "",
+        "validation_endpoint": "https://api.agentmail.to/v0/inboxes",
+        "instruction_md": "Create an API key in your own AgentMail console and paste it here. Existing skill credentials are not copied automatically.",
+        "auth_scheme": "bearer"
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.agentmail.to/mcp",
+        "auth_header_template": "Authorization: Bearer $plugin_agentmail_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Uses the official AgentMail MCP server with your API key. Select or create an inbox after connecting; sending uses that inbox, not your personal email account.",
+      "logo_url": "/plugin-assets/agentmail.ico"
+    }
+  }
+}

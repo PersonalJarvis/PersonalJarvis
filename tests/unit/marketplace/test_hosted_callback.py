@@ -7,6 +7,7 @@ OAuth ``state`` and ``deliver_callback`` (called by that route) hands the
 captured code to the waiting flow. ``make_callback_server`` selects hosted vs
 loopback by config so redirect handlers swap one construction line only.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -39,6 +40,7 @@ def _clean_state():
 
 # --------------------------------------------------------------- redirect_uri
 
+
 def test_redirect_uri_uses_hosted_base() -> None:
     srv = HostedCallbackServer(expected_state="abc", base_url="https://jarvis.example.com/")
     assert srv.redirect_uri == "https://jarvis.example.com/api/marketplace/oauth/callback"
@@ -52,6 +54,7 @@ def test_empty_state_or_base_rejected() -> None:
 
 
 # ------------------------------------------------------------ deliver_callback
+
 
 @pytest.mark.asyncio
 async def test_deliver_callback_resolves_await() -> None:
@@ -96,9 +99,7 @@ async def test_deliver_missing_code_sets_exception() -> None:
 
 @pytest.mark.asyncio
 async def test_await_callback_times_out() -> None:
-    srv = HostedCallbackServer(
-        expected_state="tos", base_url="https://x.test", timeout_seconds=0.1
-    )
+    srv = HostedCallbackServer(expected_state="tos", base_url="https://x.test", timeout_seconds=0.1)
     await srv.start()
     with pytest.raises(CallbackTimeoutError):
         await srv.await_callback()
@@ -125,6 +126,7 @@ async def test_await_deregisters_after_success() -> None:
 
 
 # --------------------------------------------------------------------- factory
+
 
 def test_factory_returns_loopback_when_no_base_url() -> None:
     srv = make_callback_server("st", timeout_seconds=10)
@@ -154,3 +156,54 @@ def test_loopback_empty_callback_path_registers_root_route() -> None:
     srv = OAuthCallbackServer(expected_state="st", callback_path="", port=3120)
     app = srv._build_app()  # noqa: SLF001
     assert any(getattr(route, "path", None) == "/" for route in app.routes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("port", [None, 0])
+async def test_loopback_ephemeral_port_is_reachable_and_released(port) -> None:
+    import socket
+
+    import httpx
+
+    srv = OAuthCallbackServer(expected_state="ephemeral", port=port)
+    await srv.start()
+    bound_port = srv.port
+    try:
+        assert bound_port > 0
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                srv.redirect_uri, params={"state": "ephemeral", "code": "ok"}
+            )
+        assert response.status_code == 200
+        assert (await srv.await_callback()).code == "ok"
+    finally:
+        await srv.stop()
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", bound_port))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["valid", "wrong"])
+async def test_loopback_provider_error_is_sanitized_and_state_checked(state) -> None:
+    import httpx
+
+    srv = OAuthCallbackServer(expected_state="valid")
+    srv._future = asyncio.get_running_loop().create_future()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=srv._build_app()), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            "/callback",
+            params={
+                "state": state,
+                "error": "<script>secret</script>",
+                "error_description": "credential-secret",
+            },
+        )
+    assert response.status_code == 400
+    assert "secret" not in response.text
+    with pytest.raises(RuntimeError) as failure:
+        await srv.await_callback()
+    assert "secret" not in str(failure.value)
+    if state == "wrong":
+        assert "state mismatch" in str(failure.value)

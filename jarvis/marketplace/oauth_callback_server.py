@@ -55,10 +55,11 @@ class CallbackTimeoutError(TimeoutError):
     pass
 
 
-def _pick_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+def provider_callback_error(error: str) -> str:
+    """Only expose known protocol codes, never provider-controlled descriptions."""
+    if error == "access_denied":
+        return "Authorization was denied (access_denied)."
+    return "The provider could not authorize this connection. Please try again."
 
 
 class OAuthCallbackServer:
@@ -94,6 +95,7 @@ class OAuthCallbackServer:
         self._future: asyncio.Future[CallbackResult] | None = None
         self._server: uvicorn.Server | None = None
         self._serve_task: asyncio.Task[None] | None = None
+        self._socket: socket.socket | None = None
 
     @property
     def port(self) -> int:
@@ -109,11 +111,18 @@ class OAuthCallbackServer:
         if self._server is not None:
             raise RuntimeError("already started")
 
-        if self._port is None:
-            self._port = _pick_free_port()
-        # else: caller passed a fixed port (e.g. Slack's 3118) — uvicorn
-        # will throw EADDRINUSE if something else holds it; the auth
-        # handler should surface a clean error to the user.
+        # Retain the bound socket so another process cannot steal an ephemeral
+        # port between selection and uvicorn startup. Port zero requests the
+        # OS-selected port, which must also appear in the redirect URI.
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            listener.bind(("127.0.0.1", self._port or 0))
+            listener.setblocking(False)
+        except BaseException:
+            listener.close()
+            raise
+        self._socket = listener
+        self._port = listener.getsockname()[1]
         self._future = asyncio.get_running_loop().create_future()
 
         config = uvicorn.Config(
@@ -128,15 +137,21 @@ class OAuthCallbackServer:
         self._server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
 
         self._serve_task = asyncio.create_task(
-            self._server.serve(), name=f"oauth-callback:{self._port}"
+            self._server.serve(sockets=[listener]), name=f"oauth-callback:{self._port}"
         )
 
-        # Wait until uvicorn is bound and listening.
-        for _ in range(50):
-            if self._server.started:
-                return
-            await asyncio.sleep(0.1)
-        raise RuntimeError("uvicorn failed to start within 5 seconds")
+        try:
+            for _ in range(50):
+                if self._server.started:
+                    return
+                if self._serve_task.done():
+                    await self._serve_task
+                    raise RuntimeError("callback listener stopped during startup")
+                await asyncio.sleep(0.1)
+            raise RuntimeError("uvicorn failed to start within 5 seconds")
+        except BaseException:
+            await self.stop()
+            raise
 
     async def await_callback(self) -> CallbackResult:
         if self._future is None:
@@ -144,18 +159,27 @@ class OAuthCallbackServer:
         try:
             return await asyncio.wait_for(self._future, timeout=self._timeout)
         except TimeoutError as exc:
-            raise CallbackTimeoutError(
-                f"no callback received within {self._timeout}s"
-            ) from exc
+            raise CallbackTimeoutError(f"no callback received within {self._timeout}s") from exc
 
     async def stop(self) -> None:
         if self._server is not None:
             self._server.should_exit = True
-        if self._serve_task is not None:
-            with suppress(asyncio.CancelledError):
-                await asyncio.wait_for(self._serve_task, timeout=5.0)
+        try:
+            if self._serve_task is not None:
+                with suppress(asyncio.CancelledError):
+                    await asyncio.wait_for(self._serve_task, timeout=5.0)
+        finally:
             self._serve_task = None
-        self._server = None
+            self._server = None
+            if self._socket is not None:
+                self._socket.close()
+                self._socket = None
+            if self._future is not None:
+                if not self._future.done():
+                    self._future.cancel()
+                elif not self._future.cancelled():
+                    # Retrieve abandoned failures to avoid unhandled-future logs.
+                    self._future.exception()
 
     def _build_app(self) -> FastAPI:
         app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -172,21 +196,17 @@ class OAuthCallbackServer:
             if future is None or future.done():
                 return HTMLResponse(_SUCCESS_HTML)
 
-            if error:
-                desc = params.get("error_description") or error
-                future.set_exception(
-                    RuntimeError(f"OAuth provider returned error: {desc}")
-                )
-                return HTMLResponse(_ERROR_HTML.format(reason=desc), status_code=400)
-
             if state != self._expected_state:
-                future.set_exception(
-                    RuntimeError("state mismatch — possible CSRF; aborted")
-                )
+                future.set_exception(RuntimeError("state mismatch — possible CSRF; aborted"))
                 return HTMLResponse(
                     _ERROR_HTML.format(reason="State parameter mismatch."),
                     status_code=400,
                 )
+
+            if error:
+                reason = provider_callback_error(error)
+                future.set_exception(RuntimeError(reason))
+                return HTMLResponse(_ERROR_HTML.format(reason=reason), status_code=400)
 
             if not code:
                 future.set_exception(RuntimeError("missing 'code' parameter"))

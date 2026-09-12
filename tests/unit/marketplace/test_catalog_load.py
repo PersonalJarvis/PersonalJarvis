@@ -33,6 +33,8 @@ def test_every_plugin_has_a_resolvable_auth_block() -> None:
         "hosted_mcp_oauth_dcr",
         "oauth_pkce_loopback",
         "hosted_mcp_allowlist",
+        "local",
+        "instance_browser",
     }
     for plugin in catalog.plugins:
         assert plugin.id, "plugin without id"

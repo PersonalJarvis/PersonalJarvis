@@ -1,0 +1,49 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "youtube-studio",
+  "version": "1.0.0",
+  "description": "Upload videos, read and reply to comments, and inspect channel analytics",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "YouTube Studio",
+      "category": "Media & Creativity",
+      "logo_slug": "youtubestudio",
+      "logo_color": "FF0000",
+      "featured": false,
+      "longevity": "provider_limited",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "https://www.googleapis.com/auth/youtube.force-ssl",
+          "https://www.googleapis.com/auth/youtube.upload",
+          "https://www.googleapis.com/auth/yt-analytics.readonly"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true,
+        "offline_access": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "youtube_studio"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_youtube_studio_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Enable YouTube Data API v3 and YouTube Analytics API in your Google project. Connect the account that owns the channel. Uploads default to private; unaudited API projects may be restricted to private uploads. This is separate from YouTube Music.",
+      "oauth_client_family": "google",
+      "longevity_note": "Google OAuth apps in Testing may require reauthorization after seven days."
+    }
+  }
+}

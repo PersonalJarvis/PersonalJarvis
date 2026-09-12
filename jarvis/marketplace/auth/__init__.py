@@ -1,6 +1,12 @@
 """Auth handlers for the redirect-based connect flow."""
 
 from jarvis.marketplace.auth.base import (
+    ERROR_DENIED,
+    ERROR_MISCONFIGURED,
+    ERROR_PORT_IN_USE,
+    ERROR_PROVIDER_UNREACHABLE,
+    ERROR_TIMEOUT,
+    ERROR_UNKNOWN,
     AuthHandler,
     AuthSession,
     FlowRegistry,
@@ -10,6 +16,7 @@ from jarvis.marketplace.auth.base import (
     now_ms,
     pkce_pair,
     random_state,
+    sanitize_provider_error,
     session_id,
 )
 from jarvis.marketplace.auth.oauth_dcr import DcrConfig, HostedMcpDcrHandler
@@ -28,6 +35,12 @@ __all__ = [
     "DcrConfig",
     "DeviceFlowConfig",
     "DeviceFlowHandler",
+    "ERROR_DENIED",
+    "ERROR_MISCONFIGURED",
+    "ERROR_PORT_IN_USE",
+    "ERROR_PROVIDER_UNREACHABLE",
+    "ERROR_TIMEOUT",
+    "ERROR_UNKNOWN",
     "FlowRegistry",
     "FlowResult",
     "HostedMcpDcrHandler",
@@ -38,5 +51,6 @@ __all__ = [
     "now_ms",
     "pkce_pair",
     "random_state",
+    "sanitize_provider_error",
     "session_id",
 ]

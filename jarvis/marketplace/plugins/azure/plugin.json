@@ -1,0 +1,46 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "azure",
+  "version": "1.0.0",
+  "description": "List subscriptions and resources; query actual Azure costs",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Microsoft Azure",
+      "category": "Developer",
+      "logo_slug": "azure",
+      "logo_color": "0089D6",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "offline_access",
+          "https://management.azure.com/user_impersonation"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "azure"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_azure_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration. Azure requires a work/school account, Azure Service Management delegated permission and Cost Management Reader or equivalent for billing.",
+      "oauth_client_family": "microsoft"
+    }
+  }
+}

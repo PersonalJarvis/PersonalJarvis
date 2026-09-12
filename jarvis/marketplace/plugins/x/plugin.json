@@ -1,0 +1,49 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "x",
+  "version": "1.0.0",
+  "description": "Read posts and mentions; publish posts and replies",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "X (Twitter)",
+      "category": "Media & Creativity",
+      "logo_slug": "x",
+      "logo_color": "000000",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://x.com/i/oauth2/authorize",
+        "token_url": "https://api.x.com/2/oauth2/token",
+        "revocation_url": "https://api.x.com/2/oauth2/revoke",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "tweet.read",
+          "tweet.write",
+          "users.read",
+          "offline.access"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "x"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_x_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Create a Native App with OAuth 2.0 in the X developer portal. Register http://127.0.0.1:43891/oauth/callback and enter the client ID here; leave the secret empty for a public client. Endpoint access and usage charges depend on your X API account.",
+      "oauth_client_family": "x"
+    }
+  }
+}

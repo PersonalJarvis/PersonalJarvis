@@ -3,11 +3,12 @@
 callback works — this is the headless-VPS path. With no public base URL the
 handler falls back to the loopback callback (desktop).
 """
+
 from __future__ import annotations
 
 import pytest
 
-from jarvis.marketplace.auth.oauth_dcr import DcrConfig, HostedMcpDcrHandler
+from jarvis.marketplace.auth.oauth_dcr import DcrConfig, HostedMcpDcrHandler, _RegisteredClient
 from jarvis.marketplace.hosted_callback import _PENDING, set_public_callback_base_url
 
 HOSTED = "https://jarvis.example.com"
@@ -33,9 +34,9 @@ def _patch_network(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
             "registration_endpoint": "https://auth.example/register",
         }
 
-    async def _fake_register(self, client, registration_endpoint, redirect_uri):  # noqa: ANN001
+    async def _fake_register(self, client, registration_endpoint, redirect_uri, auth_method):  # noqa: ANN001
         captured["redirect_uri"] = redirect_uri
-        return "client-xyz"
+        return _RegisteredClient("client-xyz")
 
     monkeypatch.setattr(HostedMcpDcrHandler, "_discover", _fake_discover)
     monkeypatch.setattr(HostedMcpDcrHandler, "_register", _fake_register)

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "gitlab",
+  "version": "1.0.0",
+  "description": "Find repositories, read and create issues, inspect and comment on merge requests",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "GitLab",
+      "category": "Developer",
+      "logo_slug": "gitlab",
+      "logo_color": "FC6D26",
+      "featured": false,
+      "longevity": "self_renewing",
+      "oauth_client_family": "gitlab",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://gitlab.com/oauth/authorize",
+        "token_url": "https://gitlab.com/oauth/token",
+        "revocation_url": "https://gitlab.com/oauth/revoke",
+        "client_id": "REPLACE_WITH_JARVIS_GITLAB_CLIENT_ID",
+        "callback_port": 3126,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "api"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "fallback_auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://gitlab.com/-/user_settings/personal_access_tokens",
+        "token_prefix": "",
+        "validation_endpoint": "https://gitlab.com/api/v4/user",
+        "instruction_md": "Create a GitLab.com personal access token with api scope for issue creation/comments, or read_api for reads only. Paste it here. Token expiry follows your GitLab policy.",
+        "auth_scheme": "bearer"
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": [
+          "python",
+          "-m",
+          "jarvis.plugins.tool.connected_server",
+          "gitlab"
+        ],
+        "env_template": {
+          "JARVIS_CONNECTOR_TOKEN": "$plugin_gitlab_access_token"
+        },
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Connect signs you in at GitLab.com in the browser — no token to copy. If the publisher OAuth client is not provisioned yet, the dialog offers the token fallback instead. Self-managed GitLab is not supported by this bundled connector.",
+      "longevity_note": "Browser login renews automatically. Pasted tokens expire on the date selected at creation."
+    }
+  }
+}
