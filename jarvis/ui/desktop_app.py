@@ -3568,6 +3568,7 @@ class DesktopApp:
         from loguru import logger
 
         from jarvis.ui.relauncher import (
+            desktop_launch_args,
             detached_creationflags,
             fresh_user_env,
             run_restart_quit_sequence,
@@ -3589,6 +3590,7 @@ class DesktopApp:
                 "jarvis.ui.relauncher",
                 str(os.getpid()),
                 repo_root,
+                *desktop_launch_args(),
             ]
             if drop_elevation:
                 from jarvis.platform.deescalate import spawn_unelevated
