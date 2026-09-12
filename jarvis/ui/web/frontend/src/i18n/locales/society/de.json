@@ -19,6 +19,11 @@
       "legacy": "Ältere Ausführung: Ergebnis vorhanden; Abschlussstatus wurde nicht aufgezeichnet."
     },
     "mars": {
+      "gigi_focus": "Gigi fokussieren",
+      "gigi_recall": "Gigi herbeirufen",
+      "gigi_hide": "Gigi ausblenden",
+      "gigi_show": "Gigi einblenden",
+      "gigi_unavailable": "Gigi-Modell nicht verfügbar",
       "background_unavailable": "Hintergrundbetrieb ist in dieser Umgebung nicht verfügbar. Lass das Fenster offen oder nutze den Headless-Server.",
       "headless_background": "Backend läuft ohne Fenster",
       "background_on": "Hintergrundmodus an",

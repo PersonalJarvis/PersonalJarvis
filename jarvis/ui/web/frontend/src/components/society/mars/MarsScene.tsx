@@ -5,13 +5,15 @@ import { Group, Mesh, Object3D, PerspectiveCamera, Vector3 } from "three";
 import { useT } from "@/i18n";
 import { roadOrientation } from "./roadGeometry";
 import { OutpostReference } from "./OutpostReference";
+import { GigiCompanion } from "../companion/GigiCompanion";
+import type { AssistantPresentation } from "../companion/kinematics";
 import type { OrbitControls as OrbitControlsInstance } from "three-stdlib";
 import { advancePlayer, createPlayer } from "./controller";
 import { bindPlayerInput, NO_INPUT } from "./input";
 import { avoidCameraCollision, fitWorldBounds, MAX_POLAR, MIN_POLAR } from "./camera";
 import {
   BUILDING_COLLIDERS, createTerrainGeometry, OUTPOST, outpostBounds, PLAYER_SPAWN,
-  ROADS, terrainHeight, WORLD, WORLD_BOUNDS, type Collider, type Road, type Vec3,
+  ROADS, terrainHeight, surfaceHeight, WORLD, WORLD_BOUNDS, type Collider, type Road, type Vec3,
 } from "./world";
 
 export type CameraMode = "overview" | "outpost" | "orbit" | "player";
@@ -25,6 +27,13 @@ export interface MarsSceneProps {
   onOrbit: () => void;
   onOpenStation?: () => void;
   reset: number;
+  gigiVisible?: boolean;
+  gigiFocus?: number;
+  gigiRecall?: number;
+  reducedMotion?: boolean;
+  gigiPresentation?: AssistantPresentation;
+  onOpenAssistant?: () => void;
+  onFocusGigi?: () => void;
 }
 
 function ColliderMesh({ collider, onClick }: { collider: Collider; onClick?: (event: ThreeEvent<MouseEvent>) => void }) {
@@ -115,7 +124,11 @@ function ColonyBlockout({ onSelect, outpostReady }: { onSelect: (id: string) => 
   );
 }
 
-export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, onOrbit, onOpenStation, reset }: MarsSceneProps) {
+export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, onOrbit, onOpenStation, reset,
+  gigiVisible = true, gigiFocus = 0, gigiRecall = 0, reducedMotion = false,
+  gigiPresentation, onOpenAssistant, onFocusGigi }: MarsSceneProps) {
+  const t = useT();
+  const gigiPosition = useRef<Vec3 | null>(null);
   const sunTarget = useMemo(() => {
     const target = new Object3D(); target.position.set(320, 58, 50); return target;
   }, []);
@@ -133,6 +146,16 @@ export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, o
   const { camera, size, invalidate, gl } = useThree();
   const orbitYaw = useRef(0.7);
   const followHeight = useRef(2.15);
+
+  useEffect(() => {
+    const position = gigiPosition.current;
+    if (!gigiFocus || !position || !controls.current) return;
+    const target: Vec3 = [position[0], position[1] + 0.2, position[2]];
+    const desired: Vec3 = [position[0] - 1.05, position[1] + 0.6, position[2] + 1.8];
+    camera.position.fromArray(avoidCameraCollision(target, desired));
+    controls.current.target.fromArray(target);
+    controls.current.update(); invalidate();
+  }, [gigiFocus, camera, invalidate]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -209,6 +232,7 @@ export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, o
         host.dataset.marsDrawCalls = String(gl.info.render.calls);
         host.dataset.marsTriangles = String(gl.info.render.triangles);
         host.dataset.marsCamera = camera.position.toArray().map((v) => v.toFixed(2)).join(",");
+        host.dataset.gigiPosition = gigiPosition.current?.map((v) => v.toFixed(3)).join(",") ?? "pending";
       }
     }
     // Reduced-motion scenes redraw only for deliberate input, gravity or camera interaction.
@@ -223,6 +247,12 @@ export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, o
       <directionalLight target={sunTarget} position={[OUTPOST.center[0] - 140, 230, 180]} intensity={neutral ? 2 : 3.4} color={neutral ? "#ffffff" : "#ffdfb0"} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-left={-170} shadow-camera-right={170} shadow-camera-top={170} shadow-camera-bottom={-170} shadow-camera-near={1} shadow-camera-far={650} shadow-normalBias={0.06} />
       <ColonyBlockout onSelect={onSelect} outpostReady={outpostReady} />
       <OutpostReference onSelect={onSelect} onReady={referenceReady} />
+      {onOpenAssistant && onFocusGigi && <GigiCompanion player={player}
+        colliders={BUILDING_COLLIDERS} getGround={surfaceHeight} awake={awake}
+        reducedMotion={reducedMotion} visible={gigiVisible} presentation={gigiPresentation}
+        recallSequence={gigiRecall} positionRef={gigiPosition}
+        onOpenAssistant={onOpenAssistant} onFocus={onFocusGigi}
+        markerLabel={t("society.mars.gigi_focus")} unavailableLabel={t("society.mars.gigi_unavailable")} />}
       <group ref={figure} position={PLAYER_SPAWN}>
         <mesh position={[0, 0.9, 0]} castShadow><capsuleGeometry args={[0.32, 1.15, 5, 12]} /><meshStandardMaterial color="#f0c75c" roughness={0.8} /></mesh>
         <mesh position={[0, 1.25, 0.31]}><boxGeometry args={[0.32, 0.15, 0.1]} /><meshStandardMaterial color="#393a38" /></mesh>

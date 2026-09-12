@@ -19,6 +19,11 @@
       "legacy": "Ejecución anterior: resultado disponible; no se registró el estado final."
     },
     "mars": {
+      "gigi_focus": "Enfocar a Gigi",
+      "gigi_recall": "Llamar a Gigi",
+      "gigi_hide": "Ocultar a Gigi",
+      "gigi_show": "Mostrar a Gigi",
+      "gigi_unavailable": "Modelo de Gigi no disponible",
       "background_unavailable": "El modo en segundo plano no está disponible aquí. Mantén la ventana abierta o usa el servidor sin interfaz.",
       "headless_background": "Servidor activo sin ventana",
       "background_on": "Modo en segundo plano activo",

@@ -19,6 +19,11 @@
       "legacy": "Older execution: result available; final status was not recorded."
     },
     "mars": {
+      "gigi_focus": "Focus Gigi",
+      "gigi_recall": "Recall Gigi",
+      "gigi_hide": "Hide Gigi",
+      "gigi_show": "Show Gigi",
+      "gigi_unavailable": "Gigi model unavailable",
       "background_unavailable": "Background mode is unavailable in this environment. Keep the window open or use the headless server.",
       "headless_background": "Backend running without a window",
       "background_on": "Background mode on",
