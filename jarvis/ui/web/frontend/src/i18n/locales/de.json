@@ -479,6 +479,12 @@
     "indicator_label": "Sprachstatus"
   },
   "sidebar": {
+    "extensions_label": "Plugins / Skills / MCP",
+    "pinned": "Angeheftet",
+    "recent": "Letzte",
+    "pin_chat": "Chat anheften",
+    "unpin_chat": "Chat lösen",
+
     "jarvis_tools": "Jarvis Tools",
     "scheduled": "Geplant",
     "more": "Mehr",

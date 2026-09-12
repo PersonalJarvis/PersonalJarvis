@@ -479,6 +479,12 @@
     "indicator_label": "Estado de voz"
   },
   "sidebar": {
+    "extensions_label": "Plugins / Skills / MCP",
+    "pinned": "Fijados",
+    "recent": "Recientes",
+    "pin_chat": "Fijar chat",
+    "unpin_chat": "Desfijar chat",
+
     "jarvis_tools": "Herramientas Jarvis",
     "scheduled": "Programado",
     "more": "Más",

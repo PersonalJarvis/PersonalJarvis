@@ -133,9 +133,9 @@ describe("Sidebar voice header", () => {
     expect(screen.queryByText("auflegen")).toBeNull();
   });
 
-  test("carries the Voice | Chat switch and a New chat button", () => {
+  test("starts with New chat without duplicate voice controls", () => {
     renderSidebar();
-    expect(screen.getByTestId("home-surface-switch")).toBeTruthy();
+    expect(screen.queryByTestId("home-surface-switch")).toBeNull();
     expect(screen.getByTestId("sidebar-new-chat")).toBeTruthy();
   });
 });
@@ -175,27 +175,14 @@ describe("Sidebar new-conversation button", () => {
     useEventStore.setState({ conversations: [], messages: [], activeThreadId: null });
   });
 
-  test("on the voice stage it starts a voice run and stays on Voice", async () => {
-    useHomeStore.setState({
-      surface: "voice",
-      transcript: [{ id: "l1", who: "user", text: "hello", ts: 1 }],
-    });
-
+  test("New chat opens typed chat even from the voice stage", async () => {
+    useHomeStore.setState({ surface: "voice", transcript: [] });
     renderSidebar();
     const button = screen.getByTestId("sidebar-new-chat");
-    expect(button.textContent).toContain("New voice chat");
-
-    await act(async () => {
-      button.click();
-      await Promise.resolve();
-    });
-
-    expect(useHomeStore.getState().surface).toBe("voice");
-    expect(useHomeStore.getState().transcript).toEqual([]);
-    // The open voice thread is dropped so the next spoken turn is its own.
-    expect(useEventStore.getState().activeThreadId).toBeNull();
-    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-    expect(calls.some((c) => String(c[0]) === "/api/chats/voice/new")).toBe(true);
+    expect(button.textContent).toContain("New chat");
+    await act(async () => { button.click(); await Promise.resolve(); });
+    expect(useHomeStore.getState().surface).toBe("chat");
+    expect(useEventStore.getState().activeSection).toBe("chats");
   });
 
   test("on the chat surface it still opens an empty chat", async () => {
@@ -618,9 +605,7 @@ describe("Sidebar icon rail", () => {
 
     const sidebar = screen.getByTestId("sidebar");
     expect(sidebar.querySelector(".jarvis-shell-surface")).toBeNull();
-    expect(screen.getByTestId("nav-row-chats").classList).toContain(
-      "jarvis-nav-active",
-    );
+    expect(screen.getByTestId("sidebar-new-chat")).toBeTruthy();
   });
 
   test("keeps the wake-word hint and realtime control off the rail", () => {
@@ -636,7 +621,7 @@ describe("Sidebar icon rail", () => {
 
     expect(screen.queryByText("auflegen")).toBeNull();
     // …and the navigation, which is the reason the rail exists, is still there.
-    expect(screen.getByTestId("nav-row-chats")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-new-chat")).toBeTruthy();
   });
 });
 
@@ -783,7 +768,7 @@ describe("compact sidebar navigation", () => {
     fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
     fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
     for (const item of [...NAV_GROUPS.flat(), ...NAV_FOOTER_ITEMS]) {
-      expect(screen.getByTestId(`nav-row-${item.id}`)).toBeTruthy();
+      expect(screen.getByTestId(item.id === "chats" ? "sidebar-new-chat" : `nav-row-${item.id}`)).toBeTruthy();
     }
   });
 });

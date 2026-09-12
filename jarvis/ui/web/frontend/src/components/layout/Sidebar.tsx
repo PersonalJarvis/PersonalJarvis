@@ -27,8 +27,6 @@ import { clsx } from "clsx";
 import { cn } from "@/lib/utils";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
-import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
-import { SurfaceSwitch } from "@/components/home/SurfaceSwitch";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
@@ -185,7 +183,7 @@ export function Sidebar({
   // chat surface an empty agent chat, on the voice stage a fresh voice run.
   // Sending someone standing in Voice to the chat page is what the one button
   // used to do, and it read as the button being broken.
-  const { newChat, newVoiceRun } = useConversations();
+  const { newChat } = useConversations();
   const newAgentChat = useAgentChatStore((s) => s.newChat);
   const setSurface = useHomeStore((s) => s.setSurface);
   // The front page's nav row names the face the switch picked (Voice / Chat),
@@ -255,24 +253,12 @@ export function Sidebar({
       document.removeEventListener("keydown", escape);
     };
   }, [profileOpen]);
-  const resetTranscript = useHomeStore((s) => s.resetTranscript);
-  // On the voice stage: clear the lane, drop the open voice thread and let the
-  // backend forget the one it was seeded with. We stay on Voice and the mic
-  // stays shut — the next wake word (or orb click) opens the new session.
-  const startNewVoice = () => {
-    resetTranscript();
-    void newVoiceRun();
-    setActive("chats");
-  };
-  // On the chat surface: an empty agent chat. The voice thread is cleared as
-  // well so a reopened voice session does not linger behind the fresh page.
   const startNewChat = () => {
     newChat();
     newAgentChat();
     setSurface("chat");
     setActive("chats");
   };
-  const onVoiceSurface = surface === "voice";
   // Shared readiness derivation (same source the banner + chat empty-state use).
   const { connected, voiceWarming, bootWarming, warming } = useVoiceReadiness();
 
@@ -516,33 +502,17 @@ export function Sidebar({
             </button>
           )}
         </div>
-        {!railed && !chatFace && (
-          <>
-            {/* The front page's one switch (maintainer sketch, 2026-08-23):
-                Voice or Chat. The live transcript that used to sit here moved
-                onto the voice stage itself, where it has the room to be read.
-                Hidden while the IDE's chats own the column: two switches with
-                "Chat" on both halves are two questions nobody asked. */}
-            <SurfaceSwitch className="mt-3" />
-            {/* A full-width outline button: the one action this column offers. */}
-            <button
-              type="button"
-              onClick={onVoiceSurface ? startNewVoice : startNewChat}
-              data-testid="sidebar-new-chat"
-              className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-md border border-border-strong px-3 text-base font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
-            >
-              <Plus aria-hidden className="h-4 w-4 shrink-0" />
-              {onVoiceSurface ? t("sidebar.new_voice_chat") : t("sidebar.new_chat")}
-            </button>
-            <BrowserRealtimeControl />
-          </>
-        )}
+
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
         <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
           <ul className="space-y-1">
-            {renderRow(findItem("chats"))}
+            <li><button type="button" onClick={startNewChat} data-testid="sidebar-new-chat"
+              aria-label={t("sidebar.new_chat")} title={t("sidebar.new_chat")} className={rowClass}>
+              <Plus aria-hidden className="h-4 w-4 shrink-0" />
+              {!railed && <span>{t("sidebar.new_chat")}</span>}
+            </button></li>
             {renderRow(findItem("agents"))}
             {renderRow(findItem("visualization"))}
           </ul>
@@ -557,7 +527,7 @@ export function Sidebar({
           </ul>}
           <ul className="space-y-1">
             {renderRow({ ...findItem("tasks"), labelKey: "sidebar.scheduled" })}
-            {renderRow({ ...findItem("plugins"), labelKey: "nav.plugins" })}
+            {renderRow({ ...findItem("plugins"), labelKey: "sidebar.extensions_label" })}
           </ul>
           <button type="button" onClick={() => { setMoreOpen(!moreOpen); setToolsOpen(false); }} aria-expanded={moreOpen}
             aria-controls="sidebar-more" title={t("sidebar.more")} data-testid="sidebar-more-toggle" className={rowClass}>
@@ -567,7 +537,6 @@ export function Sidebar({
           {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => renderRow(item))}</ul>}
         </nav>
         {!railed && <section className="mt-4 px-2 pb-3" aria-label={t("sidebar.recent_chats")}>
-          <h2 className="px-3 pb-2 text-sm font-medium text-muted-foreground">{t("sidebar.recent_chats")}</h2>
           {chatFace ? <WorkspaceChats /> : <RecentChats />}
         </section>}
       </div>

@@ -32,6 +32,7 @@ async function flush() {
 
 describe("RecentChats", () => {
   beforeEach(() => {
+    localStorage.removeItem("jarvis.sidebar.pinned-chats.v1");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) =>
@@ -76,6 +77,20 @@ describe("RecentChats", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("pins a chat without duplicating it and remembers the pin", async () => {
+    const view = render(<RecentChats />);
+    fireEvent.click(screen.getByRole("button", { name: "Pin chat: Agent chat" }));
+    expect(screen.getByTestId("pinned-chats").textContent).toContain("Agent chat");
+    expect(screen.getAllByTitle("Agent chat")).toHaveLength(1);
+    view.unmount();
+    render(<RecentChats />);
+    expect(screen.getByTestId("pinned-chats").textContent).toContain("Agent chat");
+    fireEvent.click(screen.getByRole("button", { name: "Unpin chat: Agent chat" }));
+    expect(screen.queryByTestId("pinned-chats")).toBeNull();
+    expect(screen.getAllByTitle("Agent chat")).toHaveLength(1);
+    await flush();
   });
 
   it("keeps a voice session on the voice surface and loads its words into the lane", async () => {
