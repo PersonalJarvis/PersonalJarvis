@@ -7,6 +7,7 @@ import { roadOrientation } from "./roadGeometry";
 import { OutpostReference } from "./OutpostReference";
 import { GigiCompanion } from "../companion/GigiCompanion";
 import type { AssistantPresentation } from "../companion/kinematics";
+import { usePendingCompanionFocus } from "../companion/usePendingCompanionFocus";
 import type { OrbitControls as OrbitControlsInstance } from "three-stdlib";
 import { advancePlayer, createPlayer } from "./controller";
 import { bindPlayerInput, NO_INPUT } from "./input";
@@ -129,6 +130,8 @@ export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, o
   gigiPresentation, onOpenAssistant, onFocusGigi }: MarsSceneProps) {
   const t = useT();
   const gigiPosition = useRef<Vec3 | null>(null);
+  const [gigiPoseVersion, setGigiPoseVersion] = useState(0);
+  const gigiPositionReady = useCallback(() => setGigiPoseVersion((value) => value + 1), []);
   const sunTarget = useMemo(() => {
     const target = new Object3D(); target.position.set(320, 58, 50); return target;
   }, []);
@@ -147,15 +150,16 @@ export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, o
   const orbitYaw = useRef(0.7);
   const followHeight = useRef(2.15);
 
-  useEffect(() => {
-    const position = gigiPosition.current;
-    if (!gigiFocus || !position || !controls.current) return;
+  const applyGigiFocus = useCallback((position: Vec3) => {
+    if (!controls.current) return false;
     const target: Vec3 = [position[0], position[1] + 0.2, position[2]];
     const desired: Vec3 = [position[0] - 1.05, position[1] + 0.6, position[2] + 1.8];
     camera.position.fromArray(avoidCameraCollision(target, desired));
     controls.current.target.fromArray(target);
     controls.current.update(); invalidate();
-  }, [gigiFocus, camera, invalidate]);
+    return true;
+  }, [camera, invalidate]);
+  usePendingCompanionFocus(gigiFocus, gigiPosition, gigiPoseVersion, applyGigiFocus);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -250,7 +254,7 @@ export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, o
       {onOpenAssistant && onFocusGigi && <GigiCompanion player={player}
         colliders={BUILDING_COLLIDERS} getGround={surfaceHeight} awake={awake}
         reducedMotion={reducedMotion} visible={gigiVisible} presentation={gigiPresentation}
-        recallSequence={gigiRecall} positionRef={gigiPosition}
+        recallSequence={gigiRecall} positionRef={gigiPosition} onPositionReady={gigiPositionReady}
         onOpenAssistant={onOpenAssistant} onFocus={onFocusGigi}
         markerLabel={t("society.mars.gigi_focus")} unavailableLabel={t("society.mars.gigi_unavailable")} />}
       <group ref={figure} position={PLAYER_SPAWN}>
