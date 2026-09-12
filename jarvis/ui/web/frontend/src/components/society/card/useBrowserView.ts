@@ -58,7 +58,7 @@ export function useBrowserView(agentId: string) {
           // Read-only diagnostics for end-to-end stream acceptance and support.
           el.dataset.browserFrameAgeMs = String(Math.max(0, Date.now() - frame.timestamp * 1000));
           el.dataset.browserRenderedFrames = String(++renderedFrames);
-          setState((s) => s.ready ? s : { ...s, ready: true });
+          setState((s) => s.ready ? s : { ...s, ready: true, error: "" });
         }
         decodeBusy = false;
         decodeFrame();
@@ -80,9 +80,8 @@ export function useBrowserView(agentId: string) {
           (ticket ? "?ticket=" + encodeURIComponent(ticket) : ""));
         socket.current = ws;
         ws.onopen = () => {
-          attempt = 0;
           lastLiveEvent = Date.now();
-          setState((s) => ({ ...s, connected: true, error: "" }));
+          setState((s) => ({ ...s, connected: true, ready: false }));
         };
         ws.onmessage = (message) => {
           if (disposed || socket.current !== ws) return;
@@ -92,6 +91,7 @@ export function useBrowserView(agentId: string) {
               if (typeof event.data !== "string" || typeof event.sequence !== "number") return;
               if (!Number.isFinite(event.timestamp)) return;
               lastLiveEvent = Date.now();
+              attempt = 0;
               if (event.generation !== generation) {
                 generation = event.generation;
                 lastSequence = -1;
@@ -101,6 +101,10 @@ export function useBrowserView(agentId: string) {
               lastSequence = event.sequence;
               latestFrame = event;
               decodeFrame();
+            } else if (event.kind === "starting") {
+              lastLiveEvent = Date.now();
+            } else if (event.kind === "error") {
+              setState((s) => ({ ...s, ready: false, error: event.error }));
             } else if (event.kind === "state") {
               lastLiveEvent = Date.now();
               setState((s) => ({ ...s, manual: event.manual, running: event.running,

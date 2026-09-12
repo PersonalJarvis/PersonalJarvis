@@ -53,3 +53,27 @@ test("static page heartbeats preserve a healthy connection without new images", 
   expect(hook.result.current.state.connected).toBe(true);
   expect(Socket.current.close).not.toHaveBeenCalled();
 });
+
+test("cold browser startup stays connected until pixels are available", async () => {
+  const hook = await mount();
+  for (let n = 0; n < 50; n++) {
+    act(() => {
+      vi.advanceTimersByTime(2000);
+      Socket.current.onmessage?.({ data: JSON.stringify({ kind: "starting" }) });
+    });
+  }
+  expect(hook.result.current.state.connected).toBe(true);
+  expect(hook.result.current.state.ready).toBe(false);
+  expect(Socket.current.close).not.toHaveBeenCalled();
+});
+
+test("startup failure remains visible while reconnecting", async () => {
+  const hook = await mount();
+  act(() => {
+    Socket.current.onmessage?.({ data: JSON.stringify({ kind: "error", error: "Browser startup failed" }) });
+    Socket.current.close();
+    Socket.current.onopen?.();
+  });
+  expect(hook.result.current.state.error).toBe("Browser startup failed");
+  expect(hook.result.current.state.ready).toBe(false);
+});

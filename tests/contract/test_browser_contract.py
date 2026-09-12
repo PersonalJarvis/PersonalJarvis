@@ -21,6 +21,56 @@ def test_browser_capability_roundtrip():
     assert "browser-use" in rows[0].aliases
 
 
+async def test_cold_browser_start_emits_progress_until_subscription_ready():
+    import asyncio
+    from jarvis.ui.web.society_browser_routes import _subscribe_with_progress
+
+    ready = asyncio.Event()
+    messages = []
+    subscription = (object(), object())
+
+    async def subscribe(_):
+        await ready.wait()
+        return subscription
+
+    async def send(event):
+        messages.append(event)
+        if len(messages) == 2:
+            ready.set()
+
+    result = await asyncio.wait_for(
+        _subscribe_with_progress(SimpleNamespace(subscribe=subscribe), object(), send), 4
+    )
+    assert result is subscription
+    assert messages == [{"kind": "starting"}, {"kind": "starting"}]
+
+
+async def test_starting_viewer_transport_failure_cancels_subscription():
+    import asyncio
+    from jarvis.ui.web.society_browser_routes import _subscribe_with_progress
+
+    cancelled = asyncio.Event()
+    sends = 0
+
+    async def subscribe(_):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    async def send(_):
+        nonlocal sends
+        sends += 1
+        if sends == 2:
+            raise ConnectionError("Viewer disconnected")
+
+    with pytest.raises(ConnectionError):
+        await asyncio.wait_for(
+            _subscribe_with_progress(SimpleNamespace(subscribe=subscribe), object(), send), 4
+        )
+    assert cancelled.is_set()
+
+
 async def test_stopped_browser_turn_cannot_retry_but_new_user_turn_can(tmp_path):
     from jarvis.society.browser.live import LiveSessions
     from jarvis.society.browser.bridge import execute_live

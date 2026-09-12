@@ -32,6 +32,25 @@ OPERATIONS = {
 }
 
 
+async def _subscribe_with_progress(live: Any, agent: Any, send: Any) -> Any:
+    """Keep the viewer alive during provisioning and cold Chromium startup."""
+    await send({"kind": "starting"})
+    task = asyncio.create_task(live.subscribe(agent))
+    try:
+        while not task.done():
+            done, _ = await asyncio.wait({task}, timeout=2)
+            if not done:
+                await send({"kind": "starting"})
+        return await task
+    except BaseException:
+        task.cancel()
+        result = (await asyncio.gather(task, return_exceptions=True))[0]
+        if isinstance(result, tuple):
+            session, queue = result
+            await live.unsubscribe(session, queue, "")
+        raise
+
+
 def validate_control(value: Any) -> tuple[str, dict]:
     if not isinstance(value, dict) or value.get("op") not in OPERATIONS:
         raise ValueError("Unsupported browser control")
@@ -124,7 +143,7 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
                 await websocket.send_json(value)
 
     try:
-        session, queue = await live.subscribe(agent)
+        session, queue = await _subscribe_with_progress(live, agent, send)
 
         async def frames() -> None:
             while True:
@@ -172,6 +191,13 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
     except Exception:
         log.debug("Browser view disconnected for %s", agent_id, exc_info=True)
         with contextlib.suppress(Exception):
+            if session is None:
+                await send(
+                    {
+                        "kind": "error",
+                        "error": "Browser startup failed. Retry or repair the installation.",
+                    }
+                )
             await websocket.close(code=1011)
     finally:
         for task in (receive, pending):

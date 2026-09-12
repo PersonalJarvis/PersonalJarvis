@@ -98,7 +98,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
         {state.ready && !state.connected && <div className="absolute bottom-2 rounded bg-background/90 px-2 py-1 text-xs">{status}</div>}
       </div>
       <div className="mt-2 flex flex-wrap justify-center gap-1">
-        <button className={buttonClass} disabled={!state.connected || state.controlPending}
+        <button className={buttonClass} disabled={!state.connected || !state.ready || state.controlPending}
           onClick={() => { setExpanded(true); control("takeover", { enabled: !state.manual }); }}>
           {t(state.manual ? "society.browser_live.return_control" : "society.browser_live.take_control")}
         </button>

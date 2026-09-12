@@ -96,6 +96,23 @@ async def test_live_pixels_change_between_tasks_and_sessions_stay_open(live, sit
         await live.close()
 
 
+async def test_second_viewer_receives_static_page_without_new_browser(live):
+    agent = SimpleNamespace(agent_id="static", model="", browser_allowed_domains=[])
+    try:
+        session, first = await live.subscribe(agent)
+        while (await asyncio.wait_for(first.get(), 5))["kind"] != "frame":
+            pass  # Drain initial state before attaching the second viewer.
+        await asyncio.sleep(1)
+        same, second = await live.subscribe(agent)
+        assert same is session
+        while (await asyncio.wait_for(second.get(), 5))["kind"] != "frame":
+            pass  # State can precede the first image for a new viewer.
+        assert len(live.sessions) == 1
+        assert len(session.subscribers) == 2
+    finally:
+        await live.close()
+
+
 async def test_takeover_pauses_and_resumes_the_same_browser_job(live, site):
     import json
     import contextvars

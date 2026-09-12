@@ -449,6 +449,18 @@ class Worker:
             )
         if op == "subscribe":
             self.viewers = bool(args.get("enabled"))
+            if self.viewers and self.page and not self.page.is_closed():
+                # A second viewer may join an unchanged page whose screencast
+                # has nothing new to emit. Give it current pixels immediately.
+                captured_at = time.time()
+                blob = await self.page.screenshot(type="jpeg", quality=65, timeout=5000)
+                self.latest = {
+                    "data": base64.b64encode(blob).decode(),
+                    "timestamp": captured_at,
+                    "target": self.target,
+                    "width": 1280,
+                    "height": 800,
+                }
             return {}
         if op == "cancel":
             if self.job and not self.job.done():
