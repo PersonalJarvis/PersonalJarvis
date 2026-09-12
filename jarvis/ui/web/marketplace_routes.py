@@ -754,6 +754,7 @@ async def connect_start(
                 try:
                     await verify_connection(spec, result.tokens)
                 except ConnectionVerificationError as exc:
+                    log.info("plugin %s resource verification failed", plugin_id)
                     if registry.get(session.flow_id) is slot:
                         slot.result = FlowResult(
                             tokens=None, error=str(exc), error_code="provider_unreachable"
