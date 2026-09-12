@@ -42,14 +42,28 @@ stdlib only (cloud-first €5-VPS doctrine: must run on a bare python:3.11-slim)
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # A SHA placeholder of all zeros means "the remote has nothing yet" (a brand-new
 # branch) — see the git pre-push hook stdin contract.
 _ALL_ZERO_RE = re.compile(r"^0+$")
+
+# Reviewed public endpoints, deliberately independent of mutable catalog data.
+# A new HTTP manifest requires reviewing its exact endpoint here: opaque URL
+# paths can carry capability credentials even when ordinary secret regexes miss them.
+_PUBLIC_CATALOG_MCP_URLS = {
+    "agentmail": "https://mcp.agentmail.to/mcp",
+    "apollo": "https://mcp.apollo.io/mcp",
+    "aws": "https://aws-mcp.eu-central-1.api.aws/mcp",
+    "github": "https://api.githubcopilot.com/mcp/",
+    "granola": "https://mcp.granola.ai/mcp",
+    "salesforce": "https://api.salesforce.com/platform/mcp/v1/platform/sobject-all",
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -93,15 +107,83 @@ def offenders_from_log(log_text: str, private_emails: set[str]) -> list[dict]:
         if author_email.lower() in private_emails:
             offenders.append({"sha": sha, "email": author_email, "role": "author"})
         if committer_email.lower() in private_emails:
-            offenders.append(
-                {"sha": sha, "email": committer_email, "role": "committer"}
-            )
+            offenders.append({"sha": sha, "email": committer_email, "role": "committer"})
     return offenders
 
 
 def forbidden_file(name: str, forbidden: set[str]) -> bool:
     """True iff the basename is a forbidden secret file (e.g. .env, jarvis.toml)."""
     return name in forbidden
+
+
+def is_public_catalog_mcp(rel: str, text: str) -> bool:
+    """Recognize only credential-free catalog manifests, using a strict schema subset.
+
+    This exempts the filename only; callers must still scan the original text
+    for secret patterns. Personal MCP configuration is never exempted.
+    """
+    match = re.fullmatch(r"jarvis/marketplace/plugins/([a-z0-9]+(?:-[a-z0-9]+)*)/mcp\.json", rel)
+    if match is None:
+        return False
+    plugin_id = match.group(1)
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate manifest key")
+            result[key] = value
+        return result
+
+    try:
+        manifest = json.loads(text, object_pairs_hook=unique_object)
+        if not isinstance(manifest, dict) or set(manifest) != {"$schema", "mcpServers"}:
+            return False
+        if manifest["$schema"] != "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json":
+            return False
+        servers = manifest["mcpServers"]
+        if not isinstance(servers, dict) or len(servers) != 1:
+            return False
+        name, server = next(iter(servers.items()))
+        if name.replace("_", "-") != plugin_id or not isinstance(server, dict):
+            return False
+        if server.get("type") == "streamable-http":
+            if set(server) != {"type", "url"} or not isinstance(server["url"], str):
+                return False
+            url = server["url"]
+            if url != _PUBLIC_CATALOG_MCP_URLS.get(plugin_id):
+                return False
+            if any(char.isspace() or ord(char) < 32 for char in url):
+                return False
+            parts = urlsplit(url)
+            return bool(
+                parts.scheme == "https"
+                and parts.hostname
+                and parts.username is None
+                and parts.password is None
+                and "?" not in url
+                and "#" not in url
+                and "\\" not in url
+                and parts.port in (None, 443)
+            )
+        if set(server) != {"type", "command", "args"}:
+            return False
+        if server["type"] != "stdio" or server["command"] != "python":
+            return False
+        expected = ["-m", "jarvis.plugins.tool.connected_server", plugin_id.replace("-", "_")]
+        return server["args"] == expected or (
+            plugin_id == "amd-gpu" and server["args"] == ["-m", "jarvis.marketplace.amd_mcp"]
+        )
+    except (ValueError, TypeError, RecursionError):
+        # Malformed or ambiguous JSON/URLs remain forbidden, without echoing content.
+        return False
+
+
+def forbidden_pushed_file(rel: str, text: str, forbidden: set[str]) -> bool:
+    """Apply the basename denylist with the narrow public catalog exception."""
+    return forbidden_file(rel.rsplit("/", 1)[-1], forbidden) and not (
+        is_public_catalog_mcp(rel, text)
+    )
 
 
 def scan_text_for_secrets(
@@ -163,8 +245,7 @@ def load_private_emails() -> set[str]:
     """
     try:
         out = subprocess.run(
-            ["git", "-C", str(_repo_root()),
-             "config", "--get-all", "privacy.private-email"],
+            ["git", "-C", str(_repo_root()), "config", "--get-all", "privacy.private-email"],
             check=False,
             capture_output=True,
         ).stdout.decode("utf-8", "surrogateescape")
@@ -210,21 +291,15 @@ def load_secret_scanner(repo_root: Path) -> tuple[dict | None, set, set]:
     and layer 3 (CI) is the backstop.
     """
     try:
-        gate_dir = (
-            repo_root / "scripts" / "ci" / "privacy_gate"
-        )
+        gate_dir = repo_root / "scripts" / "ci" / "privacy_gate"
         script = gate_dir / "scripts" / "strip_and_scan.py"
-        spec = importlib.util.spec_from_file_location(
-            "ship_strip_and_scan", script
-        )
+        spec = importlib.util.spec_from_file_location("ship_strip_and_scan", script)
         if spec is None or spec.loader is None:
             return None, set(), set()
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
-        compiled = {
-            name: re.compile(p) for name, p in module.SECRET_PATTERNS.items()
-        }
+        compiled = {name: re.compile(p) for name, p in module.SECRET_PATTERNS.items()}
         forbidden = set(module.FORBIDDEN_BASENAMES)
         allowlist = module._load_allowlist(gate_dir)
         return compiled, forbidden, allowlist
@@ -235,10 +310,7 @@ def load_secret_scanner(repo_root: Path) -> tuple[dict | None, set, set]:
             file=sys.stderr,
         )
         try:
-            compiled = {
-                name: re.compile(p)
-                for name, p in _FALLBACK_SECRET_PATTERNS.items()
-            }
+            compiled = {name: re.compile(p) for name, p in _FALLBACK_SECRET_PATTERNS.items()}
         except re.error as bad:  # pragma: no cover - only a bug in this file
             print(
                 f"privacy-pre-push: WARNING built-in secret patterns are broken "
@@ -249,9 +321,7 @@ def load_secret_scanner(repo_root: Path) -> tuple[dict | None, set, set]:
         return compiled, set(_FALLBACK_FORBIDDEN_BASENAMES), set()
 
 
-def resolve_base(
-    remote_sha: str, local_sha: str, fallback_base: str = "origin/main"
-) -> str:
+def resolve_base(remote_sha: str, local_sha: str, fallback_base: str = "origin/main") -> str:
     """Pick the diff base: the remote sha, or ``fallback_base`` for a new ref.
 
     `local_sha` is accepted for symmetry / future use; an all-zero remote sha
@@ -431,17 +501,13 @@ def main(argv: list[str], stdin) -> int:
                     files = []
 
                 for rel, text in files:
-                    basename = rel.rsplit("/", 1)[-1]
-                    if forbidden_file(basename, forbidden):
+                    if forbidden_pushed_file(rel, text, forbidden):
                         blocked = True
                         print(
-                            f"\nPUSH BLOCKED: forbidden secret file in push: "
-                            f"{rel}",
+                            f"\nPUSH BLOCKED: forbidden secret file in push: {rel}",
                             file=sys.stderr,
                         )
-                    secrets = scan_text_for_secrets(
-                        rel, text, compiled, allowlist
-                    )
+                    secrets = scan_text_for_secrets(rel, text, compiled, allowlist)
                     if secrets:
                         blocked = True
                         for s in secrets:

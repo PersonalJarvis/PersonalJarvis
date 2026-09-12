@@ -19,6 +19,7 @@ cannot itself leak a credential into a public build log.
 Usage:
     python scripts/ci/privacy_scan_ci.py --base <ref> [--head <ref>]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -63,22 +64,19 @@ def main(argv: list[str]) -> int:
             files = gate.pushed_text_files(args.base, args.head)
         except Exception as exc:
             print(
-                f"privacy-ci: ERROR could not diff {args.base}..{args.head} "
-                f"({exc!r}).",
+                f"privacy-ci: ERROR could not diff {args.base}..{args.head} ({exc!r}).",
                 file=sys.stderr,
             )
             return 1
         for rel, text in files:
-            basename = rel.rsplit("/", 1)[-1]
-            if gate.forbidden_file(basename, forbidden):
+            if gate.forbidden_pushed_file(rel, text, forbidden):
                 blocked = True
                 print(f"PRIVACY-CI BLOCK: forbidden secret file: {rel}", file=sys.stderr)
             for finding in gate.scan_text_for_secrets(rel, text, compiled, allowlist):
                 blocked = True
                 # Never echo the secret value into the (potentially public) log.
                 print(
-                    f"PRIVACY-CI BLOCK: secret ({finding['pattern']}) in "
-                    f"{finding['path']}",
+                    f"PRIVACY-CI BLOCK: secret ({finding['pattern']}) in {finding['path']}",
                     file=sys.stderr,
                 )
 
@@ -86,21 +84,17 @@ def main(argv: list[str]) -> int:
     private_emails = _private_emails_from_env()
     if private_emails:
         try:
-            log = gate._git(
-                "log", "--format=%H%x09%ae%x09%ce", f"{args.base}..{args.head}"
-            )
+            log = gate._git("log", "--format=%H%x09%ae%x09%ce", f"{args.base}..{args.head}")
         except Exception as exc:
             print(
-                f"privacy-ci: ERROR could not read git log "
-                f"({exc!r}).",
+                f"privacy-ci: ERROR could not read git log ({exc!r}).",
                 file=sys.stderr,
             )
             return 1
         for off in gate.offenders_from_log(log, private_emails):
             blocked = True
             print(
-                f"PRIVACY-CI BLOCK: private maintainer email on {off['sha'][:12]} "
-                f"({off['role']})",
+                f"PRIVACY-CI BLOCK: private maintainer email on {off['sha'][:12]} ({off['role']})",
                 file=sys.stderr,
             )
     else:
@@ -116,10 +110,7 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 1
-    print(
-        "privacy-ci: OK — no secrets / forbidden files / private-email commits "
-        "in the diff."
-    )
+    print("privacy-ci: OK — no secrets / forbidden files / private-email commits in the diff.")
     return 0
 
 
