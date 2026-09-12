@@ -15,6 +15,29 @@ tested for all three platform values, and HTTP requests use fake transports.
 Real account consent and live AMD hardware remain separate acceptance steps.
 See [coverage and provider limits](marketplace/service-connector-coverage.md).
 
+## Mars world reference foundation (2026-09-12, in progress)
+
+The new Mars namespace uses a packaged metre/Y-up definition and the existing
+React/Three client on Windows, macOS and Linux. Rendering is optional and gated
+by the shared WebGL capability probe; Ledger/status remains accessible without
+it. Authoring uses Blender only in development. No native graphics or authoring
+dependency enters the Python definition or station interfaces.
+
+The implementation is T3 and unfinished. Windows native close/reopen and
+clientless task progress are verified: 213 observations recorded an active
+real draft after main-window destruction, followed by completion and an
+authenticated reopen under the same backend. The default close policy remains
+Quit unless the user enables background mode for that session. This mode needs
+persistent WebView storage and verified native tray registration. The blank
+keeper has no application URL; browser-dependent voice is not kept alive.
+
+Native tray registration is currently proved on Windows only. Other desktop
+backends report background mode unavailable while ordinary windows and the
+headless server remain usable. Native macOS/Linux WebViews, integrated-GPU
+performance and a clean single-key/headless installation remain unverified.
+Tests with fakes do not establish those device or provider results.
+See [the Mars runtime](agent-society/mars-runtime.md) for current support boundaries.
+
 **Managed agent browser, 2026-09-10:** The Browser-Use environment and browser
 are provisioned per host with one shared installer. The live viewport uses
 CDP pixels over the authenticated app WebSocket, including on headless Linux;

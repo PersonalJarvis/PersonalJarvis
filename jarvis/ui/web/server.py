@@ -586,6 +586,9 @@ class WebServer:
 
         set_society_factory(self._build_society_runtime)
         app.include_router(society_router)
+        from .mars_routes import router as mars_router
+
+        app.include_router(mars_router)
         app.include_router(society_browser_router)
         app.include_router(society_figure_router)
         app.include_router(drop_router)
@@ -3738,6 +3741,15 @@ class WebServer:
             await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
             self._browser_prepare_task = None
         society = getattr(self.app.state, "society", None)
+        mars_task = getattr(self.app.state, "mars_station_task", None)
+        if mars_task is not None:
+            mars_task.cancel()
+            await asyncio.gather(mars_task, return_exceptions=True)
+            self.app.state.mars_station_task = None
+        mars_station = getattr(self.app.state, "mars_station", None)
+        if mars_station is not None:
+            await mars_station.close()
+            self.app.state.mars_station = None
         if society is not None:
             await society.browser.close()
         self._mic_level_sessions.clear()

@@ -474,6 +474,7 @@ class SocietyRuntime:
             turn_id = await svc.send(
                 session.session_id,
                 frame_assignment(env),
+                **({"read_only": True} if env.payload.get("read_only") is True else {}),
                 **(
                     {"direct_user": False}
                     if getattr(svc, "supports_turn_completion", False)

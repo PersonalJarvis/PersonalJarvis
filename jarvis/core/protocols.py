@@ -710,3 +710,29 @@ class CodingSessionGateway(Protocol):
     async def run(self, args: dict[str, Any]) -> dict[str, Any]:
         """Discover, open, send, or read using explicit persistent IDE identities."""
         ...
+
+
+class MarsStationExecutor(Protocol):
+    """Trusted task boundary; world movement and animation grant no authority."""
+
+    async def authorize(self, *, agent_id: str, capability_id: str) -> None:
+        """Validate the actual agent and supported capability before accepting work."""
+        ...
+
+    async def dispatch(
+        self, *, agent_id: str, command_id: str, trace_id: str, draft: str
+    ) -> dict[str, Any]:
+        """Dispatch once through existing authorized execution, returning durable references."""
+        ...
+
+    async def inspect(
+        self, *, agent_id: str, command_id: str, trace_id: str, task_ref: str | None
+    ) -> dict[str, Any]:
+        """Reconcile authoritative task state without repeating an external effect."""
+        ...
+
+    async def cancel(
+        self, *, agent_id: str, command_id: str, trace_id: str, task_ref: str | None
+    ) -> dict[str, Any]:
+        """Request cancellation through the owning task service, then report its state."""
+        ...

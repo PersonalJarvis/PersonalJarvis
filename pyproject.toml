@@ -842,6 +842,7 @@ jarvis = [
     "brain/JARVIS_PERSONA.md",
     "skills/safe_imports.txt",
     "core/review/verdict_schema.json",
+    "society/mars/definition.json",
     # Seed catalogs (CLI tools / skills / marketplace plugins) — named
     # explicitly rather than a repo-wide "**/*.json" glob, which would also
     # sweep in jarvis/ui/web/frontend's SOURCE config (package.json,
