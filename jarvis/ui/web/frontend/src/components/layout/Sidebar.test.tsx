@@ -722,12 +722,24 @@ describe("compact sidebar navigation", () => {
 
   test("keeps core destinations above visible recent chats", () => {
     renderSidebar();
-    for (const id of ["agents", "visualization", "tasks", "plugins", "marketplace"]) {
+    for (const id of ["agents", "chats", "tasks", "plugins", "marketplace"]) {
       expect(screen.getByTestId(`nav-row-${id}`)).toBeTruthy();
     }
     expect(screen.getByTestId("recent-chats")).toBeTruthy();
     expect(screen.queryByTestId("nav-row-wallpaper")).toBeNull();
     expect(screen.queryByTestId("nav-row-memory")).toBeNull();
+  });
+
+  test("opens Jarvis Voice directly and keeps artifacts under More", () => {
+    useHomeStore.setState({ surface: "chat" });
+    renderSidebar();
+    expect(screen.queryByTestId("nav-row-visualization")).toBeNull();
+    fireEvent.click(screen.getByTestId("nav-row-chats"));
+    expect(useHomeStore.getState().surface).toBe("voice");
+    expect(useEventStore.getState().activeSection).toBe("chats");
+    fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
+    fireEvent.click(screen.getByTestId("nav-row-visualization"));
+    expect(useEventStore.getState().activeSection).toBe("visualization");
   });
 
   test("expands tools through More without duplicating rows", () => {

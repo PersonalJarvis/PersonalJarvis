@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { RecentChats } from "@/components/home/RecentChats";
+import { RecentChats, compactChatTitle } from "@/components/home/RecentChats";
 import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore, type ConversationSummary } from "@/store/events";
 import { useHomeStore } from "@/store/home";
@@ -163,5 +163,15 @@ describe("RecentChats", () => {
     const rows = screen.getAllByTestId("all-chats-row");
     expect(rows).toHaveLength(1);
     expect(rows[0].getAttribute("data-kind")).toBe("voice");
+  });
+});
+
+describe("compact chat labels", () => {
+  it("leaves a short title readable and bounds long prompt-like titles", () => {
+    expect(compactChatTitle("Review agent routines")).toBe("Review agent routines");
+    const compact = compactChatTitle("Verify the GitHub marketplace plugin with one read-only request and report the results");
+    expect(Array.from(compact).length).toBeLessThanOrEqual(43);
+    expect(compact.endsWith("…")).toBe(true);
+    expect(compact.split(" ").length).toBeLessThanOrEqual(6);
   });
 });

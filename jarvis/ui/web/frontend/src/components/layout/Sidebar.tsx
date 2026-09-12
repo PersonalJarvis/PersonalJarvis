@@ -1,5 +1,6 @@
 import {
   Loader2,
+  Mic,
   ChevronDown,
   ChevronRight,
   Folder,
@@ -359,7 +360,7 @@ export function Sidebar({
   const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis", "agentic-ide"];
   const toolItems = toolIds.map(findItem);
   const profileItems = [...NAV_GROUPS[3], ...NAV_GROUPS[4], ...NAV_FOOTER_ITEMS];
-  const primaryIds = ["chats", "agents", "visualization", "tasks", "plugins", "marketplace"];
+  const primaryIds = ["chats", "agents", "tasks", "plugins", "marketplace"];
   const assignedIds = new Set([...primaryIds, ...toolIds, ...profileItems.map((item) => item.id)]);
   const moreItems = [...toolItems, ...allItems.filter((item) => !assignedIds.has(item.id))];
   const rowClass = "flex min-h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -514,7 +515,9 @@ export function Sidebar({
               {!railed && <span>{t("sidebar.new_chat")}</span>}
             </button></li>
             {renderRow(findItem("agents"))}
-            {renderRow(findItem("visualization"))}
+            <NavRow item={{ ...findItem("chats"), icon: Mic }} label="Jarvis Voice" compact={railed}
+              active={active === "chats" && surface === "voice"}
+              onClick={() => { setSurface("voice"); setActive("chats"); }} />
           </ul>
           <button type="button" onClick={() => { setToolsOpen(!toolsOpen); setMoreOpen(false); }}
             aria-expanded={toolsOpen} aria-controls="sidebar-tools" title={t("sidebar.jarvis_tools")}

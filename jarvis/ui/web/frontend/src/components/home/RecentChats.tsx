@@ -56,7 +56,7 @@ export function RecentChats() {
       <div data-testid="recent-chats" className="pb-1 pt-0.5">
         {pinnedRows.length > 0 && <section data-testid="pinned-chats" className="mb-6">
           <h2 className="px-3 pb-2 text-sm font-medium text-muted-foreground">{t("sidebar.pinned")}</h2>
-          <ul className="space-y-1">{pinnedRows.map((row) => <ChatRowItem key={rowKey(row)} row={row}
+          <ul className="space-y-0.5">{pinnedRows.map((row) => <ChatRowItem key={rowKey(row)} row={row}
             active={isActive(row)} pinned onPin={() => togglePin(row)} onOpen={() => openRow(row)}
             onDelete={row.kind === "agent" ? () => remove(row) : undefined} />)}</ul>
         </section>}
@@ -66,7 +66,7 @@ export function RecentChats() {
             {t("sidebar.no_chats")}
           </p>
         ) : (
-          <ul className="space-y-1">
+          <ul className="space-y-0.5">
             {shown.map((row) => (
               <ChatRowItem
                 key={`${row.kind}-${row.id}`}
@@ -117,7 +117,7 @@ export function RecentChats() {
 
 /** "Show all" and "See all chats": the two quiet rows that close the list. */
 const TAIL_ROW = cn(
-  "flex h-10 w-full items-center gap-2 rounded-md px-3 text-left transition-colors",
+  "flex h-7 w-full items-center gap-2 rounded-md px-3 text-left transition-colors",
   "text-muted-foreground hover:bg-secondary hover:text-foreground",
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 );
@@ -128,6 +128,20 @@ function Count({ n }: { n: number }) {
       +{n}
     </span>
   );
+}
+
+/** Keep the full title for hover and accessibility; only shorten the visible label. */
+export function compactChatTitle(title: string): string {
+  const normalized = title.trim().replace(/\s+/g, " ");
+  const words = normalized.split(" ");
+  const candidate = words.slice(0, 6).join(" ");
+  const characters = Array.from(candidate);
+  if (characters.length <= 42 && words.length <= 6) return normalized;
+  let short = characters.slice(0, 42).join("");
+  if (characters.length > 42 && short.lastIndexOf(" ") >= 20) {
+    short = short.slice(0, short.lastIndexOf(" "));
+  }
+  return `${short.trimEnd()}…`;
 }
 
 function ChatRowItem({
@@ -153,10 +167,11 @@ function ChatRowItem({
         type="button"
         onClick={onOpen}
         title={title}
+        aria-label={title}
         data-testid="recent-chat-row"
         data-kind={row.kind}
         className={cn(
-          "flex h-10 w-full items-center gap-2 rounded-md px-3 text-left transition-colors group-hover:pr-16 group-focus-within:pr-16",
+          "flex h-7 w-full items-center gap-2 rounded-md px-3 text-left transition-colors group-hover:pr-16 group-focus-within:pr-16",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           // The open one wears the same accent edge as the active nav row, so
           // "where am I" is said in one voice all the way down the column.
@@ -164,7 +179,7 @@ function ChatRowItem({
         )}
       >
         {pinned && <MessageSquare aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />}
-        <span className="min-w-0 flex-1 truncate text-base text-foreground">{title}</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] leading-5 text-foreground">{compactChatTitle(title)}</span>
 
       </button>
       <button type="button" onClick={onPin} title={t(pinned ? "sidebar.unpin_chat" : "sidebar.pin_chat")}
