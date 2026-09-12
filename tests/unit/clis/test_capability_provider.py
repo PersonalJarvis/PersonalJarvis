@@ -1,6 +1,8 @@
 """Capability provider: CliSpec.capabilities -> CapabilityRegistry (AD-CLI1..3)."""
 from dataclasses import replace
 
+import pytest
+
 from jarvis.clis.capability_provider import (
     DOMAIN_VOCAB,
     PLUGIN_CLI_OVERLAP,
@@ -258,6 +260,53 @@ def test_suppress_keeps_plugin_when_cli_absent():
 
 def test_suppress_defensive_on_bad_input():
     assert suppress_plugin_tools_covered_by_cli(None) is None  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("plugin_id,cli_name", PLUGIN_CLI_OVERLAP.items())
+@pytest.mark.parametrize(
+    "user_text",
+    [
+        "Use {plugin}/get_me",
+        "Use `{plugin}/get_me`.",
+        "Use '{plugin}/get_me'.",
+        "Use the {plugin} plugin",
+        "Use MCP: {plugin}",
+    ],
+)
+def test_explicit_plugin_vehicle_survives_cli_precedence(plugin_id, cli_name, user_text):
+    plugin_tool = f"{plugin_id}/get_me"
+    tools = {
+        f"cli_{cli_name}": FakeTool(f"cli_{cli_name}"),
+        plugin_tool: FakeTool(plugin_tool),
+        plugin_id: FakeTool(plugin_id),
+    }
+    assert suppress_plugin_tools_covered_by_cli(
+        tools, user_text.format(plugin=plugin_id)
+    ) == tools
+
+
+@pytest.mark.parametrize(
+    "user_text",
+    [
+        "Show my GitHub profile",
+        "Use the Stripe plugin and show GitHub issues",
+        "Use notgithub/get_me",
+        "Use github-tools/get_me",
+        "Review https://example.test/github/project",
+        "Fix src/github/client.py using gh",
+        "Review https://example.test/github/get_me",
+        "Fix src/github/get_me using gh",
+        "Fix github/get_me.py using gh",
+        "Fix github/client.py using gh",
+        r"Fix src\github/get_me using gh",
+    ],
+)
+def test_generic_or_other_vehicle_request_keeps_cli_precedence(user_text):
+    tools = {
+        "cli_gh": FakeTool("cli_gh"),
+        "github/get_me": FakeTool("github/get_me"),
+    }
+    assert set(suppress_plugin_tools_covered_by_cli(tools, user_text)) == {"cli_gh"}
 
 
 def test_overlap_map_is_nonempty_dict():

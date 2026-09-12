@@ -27,3 +27,14 @@ def test_method_keeps_plugin_when_cli_absent():
     mgr = _mgr()
     tools = {"github/list_prs": SimpleNamespace(name="github/list_prs")}
     assert mgr._suppress_plugins_covered_by_cli(tools) == tools
+
+
+def test_method_keeps_explicit_plugin_request_when_cli_present():
+    mgr = _mgr()
+    tools = {
+        "cli_gh": SimpleNamespace(name="cli_gh"),
+        "github/get_me": SimpleNamespace(name="github/get_me"),
+    }
+    assert mgr._suppress_plugins_covered_by_cli(
+        tools, "Use github/get_me through the GitHub plugin."
+    ) == tools

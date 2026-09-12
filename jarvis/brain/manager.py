@@ -7089,13 +7089,13 @@ class BrainManager:
             return tools
 
     def _suppress_plugins_covered_by_cli(
-        self, tools: dict[str, Tool]
+        self, tools: dict[str, Tool], user_text: str = ""
     ) -> dict[str, Tool]:
         """Hide plugin/native tools whose CLI counterpart is connected (req 4).
 
         A CLI runs a local subprocess and is cheaper than a plugin's MCP/API
         hop, so when a CLI for a service is active its plugin is removed from the
-        turn's tool surface (fallback only). Defensive: returns the tools
+        turn's tool surface unless explicitly requested. Defensive: returns the tools
         unchanged on any fault (never blind the brain on the voice path).
         """
         try:
@@ -7103,7 +7103,7 @@ class BrainManager:
                 suppress_plugin_tools_covered_by_cli,
             )
 
-            return suppress_plugin_tools_covered_by_cli(tools)
+            return suppress_plugin_tools_covered_by_cli(tools, user_text)
         except Exception:  # noqa: BLE001
             log.debug("plugin-CLI suppression failed; full tool set", exc_info=True)
             return tools
@@ -11899,7 +11899,7 @@ class BrainManager:
                 # utterance (progressive disclosure), then hide any plugin whose
                 # CLI counterpart is connected (req 4: CLI > plugin fallback).
                 else self._suppress_plugins_covered_by_cli(
-                    self._apply_plugin_relevance(routing_text, self._tools)
+                    self._apply_plugin_relevance(routing_text, self._tools), routing_text
                 )
             )
             # Skill inline-injected (AD-S4): drop run-skill so a weak model

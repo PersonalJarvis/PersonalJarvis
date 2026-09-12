@@ -10,6 +10,7 @@ must never propagate into the caller (registry lifecycle or voice path).
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -186,17 +187,49 @@ PLUGIN_CLI_OVERLAP: dict[str, str] = {
 }
 
 
-def suppress_plugin_tools_covered_by_cli(tools: dict[str, Any]) -> dict[str, Any]:
+def _explicit_plugin_request(
+    user_text: str, plugin_id: str, tools: Mapping[str, Any]
+) -> bool:
+    """Recognize a named plugin/MCP vehicle, not a generic service request."""
+    name = re.escape(plugin_id)
+    # A URL or source path mentioning a service is not a vehicle request.
+    start = r"(?<![\w/\\:.-])"
+    boundary = rf"{start}{name}"
+    vehicle = r"(?:marketplace[\s-]+)?(?:plugin|mcp)(?:[\s-]+tool)?"
+    for tool_name in tools:
+        if tool_name.startswith(f"{plugin_id}/") and re.search(
+            rf"{start}{re.escape(tool_name)}(?![\w/\\-]|\.\w)",
+            user_text,
+            re.IGNORECASE,
+        ):
+            return True
+    return bool(
+        re.search(
+            rf"{boundary}[\s-]+{vehicle}\b|"
+            rf"\b{vehicle}[\s:-]+{name}(?![\w-])",
+            user_text,
+            re.IGNORECASE,
+        )
+    )
+
+
+def suppress_plugin_tools_covered_by_cli(
+    tools: dict[str, Any], user_text: str = ""
+) -> dict[str, Any]:
     """Drop plugin/native tools whose CLI counterpart is connected this turn.
 
     For each overlap entry whose ``cli_<name>`` is present in ``tools``, removes
     the namespaced ``<plugin_id>/*`` tools and the exact native ``<plugin_id>``
-    tool. Defensive: returns ``tools`` unchanged on any fault.
+    tool, unless the user explicitly names that plugin/MCP vehicle or its tool
+    namespace. Generic service requests keep CLI precedence. Defensive: returns
+    ``tools`` unchanged on any fault.
     """
     try:
         present_clis = {n for n in tools if n.startswith(TOOL_NAME_PREFIX)}
         drop: set[str] = set()
         for plugin_id, cli_name in PLUGIN_CLI_OVERLAP.items():
+            if _explicit_plugin_request(user_text, plugin_id, tools):
+                continue
             if f"{TOOL_NAME_PREFIX}{cli_name}" not in present_clis:
                 continue
             prefix = f"{plugin_id}/"
