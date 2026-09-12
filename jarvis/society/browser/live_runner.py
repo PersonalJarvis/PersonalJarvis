@@ -551,14 +551,14 @@ class Worker:
                 self.manual = True
             else:
                 if self.native and self.manual:
-                    from browser_use.browser.events import (
-                        SwitchTabEvent,  # type: ignore[import-not-found]
-                    )
+                    from browser_use.browser import events  # type: ignore[import-not-found]
 
                     await self.focused()
                     target = next((t for t, p in self.tabs.items() if p is self.page), "")
                     if target:
-                        await self.browser.event_bus.dispatch(SwitchTabEvent(target_id=target))
+                        await self.browser.event_bus.dispatch(
+                            events.SwitchTabEvent(target_id=target)
+                        )
                 self.manual = False
                 self.agent_gate.set()
             return {"manual": self.manual}
