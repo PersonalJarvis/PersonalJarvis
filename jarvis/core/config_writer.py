@@ -140,7 +140,9 @@ def set_brain_primary(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _sync_brain_primary_drift_soll(name)  # i18n-allow
 
 
-def set_worker_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+def set_worker_provider(
+    name: str, *, path: Path = DEFAULT_CONFIG_FILE, previous_provider: str | None = None
+) -> str:
     """Set ``[brain.worker] provider`` (the Heavy-Task Jarvis-Agent provider)
     across all persistence layers.
 
@@ -160,7 +162,7 @@ def set_worker_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     2 + 3 are best-effort cloud-first enhancements: graceful no-op on a headless
     Linux VPS and never raise out of this function nor break the TOML write.
 
-    NB: this writes only ``provider``. The fallback chain
+    A different provider clears the previous provider's model override. The fallback chain
     (``fallback_provider`` etc.) is left untouched, mirroring how the brain
     switch leaves ``[brain]`` siblings alone.
 
@@ -168,9 +170,11 @@ def set_worker_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     rename. The old name is preserved as a back-compat alias below.
     """
     # Layer 1 — universal, runs on every platform. May raise FileNotFoundError.
-    _patch_worker_provider_toml(path, name)
+    model = _patch_worker_provider_toml(path, name, previous_provider=previous_provider)
     # Layers 2 + 3 — best-effort, never raise.
     _sync_worker_provider_drift_soll(name)  # i18n-allow
+    _sync_worker_model_drift_soll(model)  # i18n-allow
+    return model
 
 
 # Back-compat alias — callers that imported set_sub_jarvis_provider still work.
@@ -2606,7 +2610,28 @@ def _patch_table(
         _atomic_write(path, out)
 
 
-def _patch_worker_provider_toml(path: Path, name: str) -> None:
+def worker_provider_changed(previous: str | None, selected: str | None) -> bool:
+    """Compare worker identities without treating transport aliases as switches."""
+    from jarvis.missions.worker_runtime.provider_map import (
+        CODEX_SUBAGENT_SLUGS,
+        GROK_BUILD_SUBAGENT_SLUGS,
+        canonical_worker_provider,
+    )
+
+    def identity(value: str | None) -> str | None:
+        canonical = canonical_worker_provider(value)
+        if canonical in CODEX_SUBAGENT_SLUGS:
+            return "openai-codex"
+        if canonical in GROK_BUILD_SUBAGENT_SLUGS:
+            return "grok-build"
+        return canonical
+
+    return identity(previous) != identity(selected)
+
+
+def _patch_worker_provider_toml(
+    path: Path, name: str, *, previous_provider: str | None = None
+) -> str:
     """Set ``[brain.worker] provider = name`` in the TOML.
 
     Unlike :func:`_patch_table`, this walks the NESTED ``brain`` -> ``worker``
@@ -2637,12 +2662,26 @@ def _patch_worker_provider_toml(path: Path, name: str) -> None:
         if sub is None:
             sub = tomlkit.table()
             brain["worker"] = sub
+        effective_provider = os.environ.get(
+            _WORKER_PROVIDER_ENV,
+            os.environ.get("JARVIS__BRAIN__SUB_JARVIS__PROVIDER", sub.get("provider", "")),
+        )
+        model = os.environ.get(
+            _WORKER_MODEL_ENV,
+            os.environ.get("JARVIS__BRAIN__SUB_JARVIS__MODEL", str(sub.get("model", ""))),
+        )
+        if worker_provider_changed(effective_provider, name) or (
+            previous_provider is not None and worker_provider_changed(previous_provider, name)
+        ):
+            model = ""
         sub["provider"] = name
+        sub["model"] = model
 
         out = tomlkit.dumps(doc)
         if had_bom:
             out = _BOM + out
         _atomic_write(path, out)
+        return model
 
 
 def _patch_realtime_provider_toml(path: Path, name: str, *, key: str = "provider") -> None:
@@ -3026,6 +3065,8 @@ def _sync_worker_provider_drift_soll(name: str) -> None:  # i18n-allow
 
     try:
         _set_user_env_var(_WORKER_PROVIDER_ENV, name)
+        if "JARVIS__BRAIN__SUB_JARVIS__PROVIDER" in os.environ:
+            _set_user_env_var("JARVIS__BRAIN__SUB_JARVIS__PROVIDER", name)
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
         log.warning(
             "Could not sync %s to the User environment: %s",
@@ -3076,6 +3117,10 @@ def _sync_worker_model_drift_soll(model: str) -> None:  # i18n-allow
 
     try:
         _set_user_env_var(_WORKER_MODEL_ENV, model)
+        # The loader migrates a nonempty legacy value over an empty modern value.
+        # Keep an existing legacy override aligned, including an explicit reset.
+        if "JARVIS__BRAIN__SUB_JARVIS__MODEL" in os.environ:
+            _set_user_env_var("JARVIS__BRAIN__SUB_JARVIS__MODEL", model)
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
         log.warning(
             "Could not sync %s to the User environment: %s",

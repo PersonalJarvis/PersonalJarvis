@@ -28,6 +28,7 @@ to talk back over the same HTTP anyway, one hop later.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from contextvars import ContextVar
@@ -88,14 +89,47 @@ _WITHHELD: Final[frozenset[str]] = frozenset(
     }
 )
 
-#: MCP requires tool names to match ``[a-zA-Z0-9_-]{1,128}``. Jarvis names
-#: already do; anything else is dropped rather than silently renamed, because a
-#: renamed tool is a tool the model cannot be told about in a prompt.
+#: Native names stay unchanged. Imported MCP names use server/tool internally;
+#: only this outgoing transport projects them to a portable wire name.
 _NAME_OK = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 
 
 def _usable_name(name: str) -> bool:
     return bool(name) and len(name) <= 128 and set(name) <= _NAME_OK
+
+
+def _wire_name(name: str) -> str | None:
+    if _usable_name(name):
+        return name
+    parts = name.split("/")
+    if len(parts) != 2 or not all(_usable_name(part) for part in parts):
+        return None
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
+    return f"{name.replace('/', '_')[:47]}_{digest}"
+
+
+def _wire_catalog(entries: list[Any]) -> dict[str, Any]:
+    """Reject ambiguous aliases instead of routing a call to the wrong tool."""
+    result: dict[str, Any] = {}
+    collisions: set[str] = set()
+    for entry in entries:
+        canonical = str(entry.name)
+        wire = _wire_name(canonical)
+        if wire is None or canonical in _WITHHELD or wire in collisions:
+            continue
+        if wire in result:
+            del result[wire]
+            collisions.add(wire)
+            continue
+        result[wire] = entry
+    return result
+
+
+async def _session_wire_catalog() -> dict[str, Any]:
+    session_id = CHAT_SESSION_REF.get()
+    scoped = getattr(_gateway(), "session_catalog", None)
+    entries = list(await scoped(session_id)) if session_id and callable(scoped) else offered_tools()
+    return _wire_catalog(entries)
 
 
 def _gateway() -> Any | None:
@@ -117,7 +151,7 @@ def offered_tools() -> list[Any]:
     return [
         entry
         for entry in catalog
-        if _usable_name(str(entry.name)) and str(entry.name) not in _WITHHELD
+        if _wire_name(str(entry.name)) is not None and str(entry.name) not in _WITHHELD
     ]
 
 
@@ -154,23 +188,18 @@ def build_server() -> Any:
     @server.list_tools()  # type: ignore[misc, no-untyped-call]
     async def _list_tools() -> list[Any]:
         tools: list[Any] = []
-        entries = offered_tools()
-        session_id = CHAT_SESSION_REF.get()
-        scoped = getattr(_gateway(), "session_catalog", None)
-        if session_id and callable(scoped):
-            entries = [
-                entry
-                for entry in await scoped(session_id)
-                if _usable_name(str(entry.name)) and str(entry.name) not in _WITHHELD
-            ]
-        for entry in entries:
+        for wire, entry in (await _session_wire_catalog()).items():
             schema = entry.input_schema
             if not isinstance(schema, dict) or not schema:
                 schema = {"type": "object", "properties": {}}
             tools.append(
                 types.Tool(
-                    name=str(entry.name),
-                    description=str(entry.description or entry.name),
+                    name=wire,
+                    description=(
+                        f"[{entry.name}] {entry.description or entry.name}"
+                        if wire != entry.name
+                        else str(entry.description or entry.name)
+                    ),
                     inputSchema=schema,
                     annotations=types.ToolAnnotations(
                         readOnlyHint=entry.risk_tier == "safe" and not entry.is_action_tool,
@@ -199,6 +228,12 @@ def build_server() -> Any:
         try:
             from jarvis.agent_chat.tool_context import restore_turn
 
+            entry = (await _session_wire_catalog()).get(name)
+            if entry is None:
+                return [
+                    types.TextContent(type="text", text="Tool is no longer available in this chat.")
+                ]
+            name = str(entry.name)
             with restore_turn(CHAT_SESSION_REF.get()):
                 turn = current_chat_turn.get()
                 request = SupervisorToolRequest(

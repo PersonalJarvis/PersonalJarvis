@@ -933,15 +933,23 @@ def _complete_agent_switch(
     mission, so a successful persisted switch is live without restarting the
     app. An explicit non-persistent switch remains an in-memory preview only.
     """
-    persisted = (
-        _persist(lambda: _import_writer().set_worker_provider(provider)) if persist else False
-    )
+    selected_model = None
+
+    def save_selection() -> None:
+        nonlocal selected_model
+        selected_model = _import_writer().set_worker_provider(provider, previous_provider=old)
+
+    persisted = _persist(save_selection) if persist else False
     if persist and not persisted:
         return {
             "ok": False,
             "error_kind": "persist_failed",
             "error": "The mission-worker provider could not be saved.",
         }
+    if isinstance(selected_model, str):
+        _set_in_memory(cfg, ["brain", "worker", "model"], selected_model)
+    elif _import_writer().worker_provider_changed(old, provider):
+        _set_in_memory(cfg, ["brain", "worker", "model"], "")
     _set_in_memory(cfg, ["brain", "worker", "provider"], provider)
     return {
         "ok": True,
