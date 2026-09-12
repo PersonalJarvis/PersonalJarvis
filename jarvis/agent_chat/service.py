@@ -659,9 +659,12 @@ class AgentChatService:
         run.task = asyncio.create_task(_body(), name=f"agent-chat-{turn_id[:8]}")
         return turn_id
 
-    async def cancel(self, session_id: str) -> bool:
+    async def cancel(self, session_id: str, *, expected_turn_id: str | None = None) -> bool:
         run = self._running.get(session_id)
         if run is None or run.task is None or run.task.done():
+            return False
+        # A resumed station must never cancel a newer unrelated conversation turn.
+        if expected_turn_id is not None and run.turn_id != expected_turn_id:
             return False
         run.cancel.set()
         for aid in self.pending_approvals(session_id):

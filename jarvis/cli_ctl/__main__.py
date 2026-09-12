@@ -1,12 +1,15 @@
 """jarvisctl entry point. Real commands are wired in here."""
+
 from __future__ import annotations
 
 import logging
 import os
 import sys
+from typing import Any
 
 import click
 import typer
+from typer.core import TyperGroup
 
 # Windows defaults to cp1252; force UTF-8 so non-ASCII help/output is intact.
 try:  # reconfigure exists on TextIO in 3.7+; guard for exotic stdio wrappers
@@ -47,8 +50,38 @@ from jarvis.cli_ctl.commands import telephony as telephony_cmd
 from jarvis.cli_ctl.commands import wiki as wiki_cmd
 from jarvis.cli_ctl.commands import workflows as workflows_cmd
 
+
+class _CompatibleRootGroup(TyperGroup):
+    """Honor external Click command exits under Typer's vendored Click root.
+
+    Dynamic commands use the declared Click dependency. Newer Typer versions
+    vendor a separate exception family, so nested help/errors otherwise escape
+    the root handler as tracebacks. Older shared-Click Typer versions simply
+    finish inside the parent handler and never reach this compatibility boundary.
+    """
+
+    def main(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return super().main(*args, **kwargs)
+        except click.exceptions.Exit as exc:
+            if not kwargs.get("standalone_mode", True):
+                return exc.exit_code
+            raise SystemExit(exc.exit_code) from None
+        except click.ClickException as exc:
+            if not kwargs.get("standalone_mode", True):
+                raise
+            exc.show()
+            raise SystemExit(exc.exit_code) from None
+        except click.Abort:
+            if not kwargs.get("standalone_mode", True):
+                raise
+            click.echo("Aborted!", err=True)
+            raise SystemExit(1) from None
+
+
 app = typer.Typer(
     name="jarvisctl",
+    cls=_CompatibleRootGroup,
     no_args_is_help=True,
     add_completion=True,
     help="Control a running Personal Jarvis instance from the terminal.",
@@ -67,7 +100,9 @@ def _root(
         None, "--url", help="Override the Jarvis base URL (e.g. http://host:port)."
     ),
     key: str | None = typer.Option(
-        None, "--key", hide_input=True,
+        None,
+        "--key",
+        hide_input=True,
         help="Override the control API key (Bearer token) for this call only.",
     ),
 ) -> None:
@@ -174,6 +209,18 @@ def _first_subcommand(argv: list[str]) -> str | None:
     return None
 
 
+def _root_options(root: click.Group, argv: list[str]) -> tuple[dict[str, object], str | None]:
+    """Parse root options without running Click/Typer parameter or command callbacks.
+
+    The root callback runs only after the dynamic command tree must exist.
+    Click's option parser already handles split/equal values, ``--`` and root
+    option boundaries; raw token scanning cannot safely supply credentials.
+    """
+    context = root.context_class(root)
+    values, remaining, _ = root.make_parser(context).parse_args(list(argv))
+    return values, remaining[0] if remaining else None
+
+
 def build_root_command(argv: list[str] | None = None) -> click.Group:
     """Return the Click root: the Typer app plus the grafted dynamic `api` group.
 
@@ -186,14 +233,26 @@ def build_root_command(argv: list[str] | None = None) -> click.Group:
     if argv is None:
         argv = sys.argv[1:]
     root: click.Group = typer.main.get_command(app)
-    wants_api = not _in_completion() and _first_subcommand(argv) == "api"
     try:
+        options, command = _root_options(root, argv)
+        wants_api = not _in_completion() and not options.get("help") and command == "api"
+        # Construction must not read STATE: it may still describe a previous
+        # invocation in an embedded CLI or CliRunner process. The real root
+        # callback will set STATE later for actual command execution.
+        profile = _config.resolve_profile()
+        url_option, key_option = options.get("url"), options.get("key")
+        selected_url = (
+            url_option if isinstance(url_option, str) and url_option else profile.base_url
+        )
+        selected_key = (
+            key_option if isinstance(key_option, str) and key_option else profile.control_key
+        )
         if wants_api:
-            with make_client() as client:
+            with JarvisClient(base_url=selected_url, control_key=selected_key) as client:
                 spec = openapi_cache.load_spec(client)
         else:
-            # cache-only: ttl effectively infinite, no fetch attempt
-            spec, _ = openapi_cache._read_cache()
+            # Cache-only for this origin: TTL effectively infinite, no fetch attempt.
+            spec, _ = openapi_cache._read_cache(base_url=selected_url)
         if spec:
             from jarvis.cli_ctl.dynamic import build_api_group
 
@@ -206,13 +265,16 @@ def build_root_command(argv: list[str] | None = None) -> click.Group:
 
             click.echo(
                 "The dynamic `api` command group is unavailable (no cached "
-                "schema yet). " + doctor.unreachable_message(None),
+                "schema yet). "
+                + doctor.unreachable_message(openapi_cache.server_origin(selected_url)),
                 err=True,
             )
     except Exception as exc:  # noqa: S110 - static surface must work if dynamic build fails
         # The static surface must always work even if the dynamic build fails;
         # log at DEBUG so a missing `api` group stays diagnosable.
-        logging.getLogger(__name__).debug("dynamic api group unavailable: %s", exc)
+        # Parser/client exceptions may contain option values or a credential-bearing
+        # URL. Preserve the failure class, never credentials or remote response text.
+        logging.getLogger(__name__).debug("dynamic api group unavailable (%s)", type(exc).__name__)
     return root
 
 
