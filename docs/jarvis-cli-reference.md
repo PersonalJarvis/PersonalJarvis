@@ -114,6 +114,12 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 ## local-models
 
+- `jarvis local-models assistant benchmarks --refresh --provider` — Read the benchmark data used by the assistant.
+- `jarvis local-models assistant diagnose --provider` — Start a guided diagnostic conversation.
+- `jarvis local-models assistant health --provider` — Read the selected provider's local-model health.
+- `jarvis local-models assistant session --provider` — Read the existing assistant session and its readiness.
+- `jarvis local-models assistant setup --provider` — Start the existing guided setup conversation.
+- `jarvis local-models assistant test --role --provider` — Run the setup test for all roles or the selected roles.
 - `jarvis local-models catalog recommended --provider` — The curated shortlist ranked for this machine, with its review date.
 - `jarvis local-models catalog search <query> --sort --capability --limit --provider` — Browse the library; offline is reported as a sentence, not a failure.
 - `jarvis local-models catalog tags <name> --provider` — Every tag of one library model with size, quantization, context and fit.

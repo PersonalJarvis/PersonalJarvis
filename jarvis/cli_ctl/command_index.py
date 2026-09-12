@@ -77,6 +77,8 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
     "tasks": ("list", "get <id>", "create", "cancel <id>", "delete <id>"),
     "workflows": ("list", "show <id>", "create", "run <id>", "delete <id>", "run-history"),
     "sessions": (
+        "command",
+        "control",
         "list",
         "latest-turn",
         "show <id>",
@@ -96,6 +98,7 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
     "contacts": ("list", "show <name>", "add", "edit <name>", "delete <name>", "import", "export"),
     "board": ("summary", "heatmap", "records", "achievements", "bio", "bio-regenerate", "profile"),
     "docs": ("list", "tree", 'search "<query>"', "show <path>"),
+    "costs": ("summary", "entries", "rates"),
     "system": ("restart", "audio-devices", "status"),
     "auth": ("login", "status", "logout"),
     "clis": (
@@ -121,8 +124,14 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
         'message <name> "<text>"',
     ),
     "frontier": ("pending", "ack"),
-    "ide": ("rename-terminal", "close-terminals"),
+    "ide": ("rename-terminal", "close-terminals", "archive-terminal"),
     "local-models": (
+        "assistant setup",
+        "assistant diagnose",
+        "assistant test",
+        "assistant benchmarks",
+        "assistant health",
+        "assistant session",
         "roles list",
         "roles set <chat|tools_screen|deep|embedding> <model>",
         "models list",

@@ -430,3 +430,61 @@ def server_env_guide(
     """Copyable per-OS commands for the server's environment variables."""
     params = {"os": os_name.strip()} if os_name.strip() else None
     invoke.run("GET", f"{_base(provider)}/server/env-guide", params=params)
+
+
+assistant_app = typer.Typer(no_args_is_help=True, help="Guided local-model setup and diagnostics.")
+app.add_typer(assistant_app, name="assistant")
+_ASSISTANT_ROLES = typer.Option(None, "--role", help="Role to test; may be repeated.")
+
+
+@assistant_app.command("setup")
+def assistant_setup(provider: str = _PROVIDER) -> None:
+    """Start the existing guided setup conversation."""
+    invoke.run("POST", f"{_base(provider)}/assistant/run", body={"mode": "setup"}, dangerous=False)
+
+
+@assistant_app.command("diagnose")
+def assistant_diagnose(provider: str = _PROVIDER) -> None:
+    """Start a guided diagnostic conversation."""
+    invoke.run(
+        "POST", f"{_base(provider)}/assistant/run", body={"mode": "diagnose"}, dangerous=False
+    )
+
+
+@assistant_app.command("test")
+def assistant_test(
+    role: list[str] | None = _ASSISTANT_ROLES,
+    provider: str = _PROVIDER,
+) -> None:
+    """Run the setup test for all roles or the selected roles."""
+    invoke.run(
+        "POST",
+        f"{_base(provider)}/assistant/test",
+        body={"roles": role} if role else None,
+        dangerous=False,
+    )
+
+
+@assistant_app.command("benchmarks")
+def assistant_benchmarks(
+    refresh: bool = typer.Option(False, "--refresh", help="Refresh benchmark data."),
+    provider: str = _PROVIDER,
+) -> None:
+    """Read the benchmark data used by the assistant."""
+    invoke.run(
+        "GET",
+        f"{_base(provider)}/assistant/benchmarks",
+        params={"refresh": "1"} if refresh else None,
+    )
+
+
+@assistant_app.command("health")
+def assistant_health(provider: str = _PROVIDER) -> None:
+    """Read the selected provider's local-model health."""
+    invoke.run("GET", f"{_base(provider)}/assistant/health")
+
+
+@assistant_app.command("session")
+def assistant_session(provider: str = _PROVIDER) -> None:
+    """Read the existing assistant session and its readiness."""
+    invoke.run("GET", f"{_base(provider)}/assistant/session")
