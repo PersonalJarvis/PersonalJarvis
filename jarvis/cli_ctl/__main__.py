@@ -283,4 +283,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # Static commands import this canonical module for request/output state.
+    # Executing a separate __main__ instance would lose explicit URL/key flags.
+    from jarvis.cli_ctl.__main__ import main as canonical_main
+
+    canonical_main()
