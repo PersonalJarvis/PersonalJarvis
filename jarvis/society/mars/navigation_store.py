@@ -25,6 +25,7 @@ from .navigation_models import (
     NavigationSnapshot,
     NavigationState,
 )
+from .sqlite_transaction import atomic_transaction
 
 _IDENTITY = TypeAdapter(Identity)
 _SCHEMA = """
@@ -119,13 +120,8 @@ class MarsNavigationStore:
             if self._conn is None:
                 raise StationError("navigation_not_started", 503)
             conn = self._conn
-            await conn.execute("BEGIN IMMEDIATE")
-            try:
+            async with atomic_transaction(conn):
                 yield conn
-                await conn.commit()
-            except BaseException:
-                await conn.rollback()
-                raise
 
     @staticmethod
     async def _one(conn: aiosqlite.Connection, sql: str, args: tuple = ()):

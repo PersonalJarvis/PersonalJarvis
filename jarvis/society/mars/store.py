@@ -32,6 +32,7 @@ from .models import (
     StationSnapshot,
     reject_draft_credentials,
 )
+from .sqlite_transaction import atomic_transaction
 
 _IDENTITY = TypeAdapter(Identity)
 
@@ -95,13 +96,8 @@ class MarsStore:
                     "INSERT OR IGNORE INTO mars_station(station_id) VALUES (?)", (STATION_ID,)
                 )
                 # Taking ownership fences old callbacks, but never blindly re-dispatches work.
-                await conn.execute("BEGIN IMMEDIATE")
-                try:
+                async with atomic_transaction(conn):
                     await self._interrupt_owned(conn, "process_interrupted")
-                    await conn.commit()
-                except BaseException:
-                    await conn.rollback()
-                    raise
                 self._conn, self._owner = conn, owner
             except BaseException:
                 if conn is not None:
@@ -126,13 +122,8 @@ class MarsStore:
             conn = self._conn
             if conn is None:
                 raise StationError("world_not_started", 503)
-            await conn.execute("BEGIN IMMEDIATE")
-            try:
+            async with atomic_transaction(conn):
                 yield conn
-                await conn.commit()
-            except BaseException:
-                await conn.rollback()
-                raise
 
     @staticmethod
     async def _one(conn: aiosqlite.Connection, sql: str, args: tuple = ()):

@@ -70,13 +70,16 @@ class NavigationGraph:
             self.edges[edge.id] = edge
             self.adjacent[start].append((end, edge))
             self.adjacent[end].append((start, edge))
-        self.stations = {row["id"]: row["anchor"] for row in data["stations"]}
+        # Visit-only destinations share physical slots with task stations, but
+        # have no capability and can never be dispatched through a task API.
+        destinations = [*data["stations"], *nav.get("destinations", [])]
+        self.stations = {row["id"]: row["anchor"] for row in destinations}
         if (
             not 1 <= len(self.stations) <= 64
-            or len(self.stations) != len(data["stations"])
+            or len(self.stations) != len(destinations)
             or any(
                 anchor not in self.nodes or row["capacity"] != 1
-                for row in data["stations"]
+                for row in destinations
                 for anchor in [row["anchor"]]
             )
         ):

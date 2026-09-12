@@ -1,8 +1,8 @@
 {
   "kind": "public-editable-source-metadata-verification",
   "field_classes_sanitized": {
-    "Image.filepath": 18,
-    "ImagePackedFile.filepath": 18,
+    "Image.filepath": 20,
+    "ImagePackedFile.filepath": 20,
     "FileSelectParams.dir": 1,
     "RenderData.pic": 1
   },
@@ -12,16 +12,16 @@
   "serialized_content_marker_occurrences": 0,
   "blender_reopen": {
     "version": "5.0.1",
-    "portable_fields_validated": 38,
+    "portable_fields_validated": 42,
     "export_meshes": 20,
-    "triangles": 211968,
-    "packed_material_images": 18
+    "triangles": 212724,
+    "packed_material_images": 20
   },
-  "source_bytes": 28882004,
-  "source_sha256": "3b81643faaa3802916794286eb3c5be4997bac092358476d3627dc961acb50be",
-  "glb_sha256": "c697b08e0b49ad462be7b2e32230183ebb5bb1c2956d21580dc71bd9e95c802e",
-  "glb_unchanged": true,
-  "geometry_changed": false,
+  "source_bytes": 29804549,
+  "source_sha256": "c233ea227eca1d3d9f4d1e565f6e6e9659ef04024ca56331ea240cb0f28bcec1",
+  "glb_sha256": "dde2c6c384f6c05daca459e3def952eb76b56540a220ed9bd6f272b52e27c324",
+  "glb_unchanged": false,
+  "geometry_changed": true,
   "runtime_visual_approval": "pending",
-  "scope": "Paths were sanitized through Blender datablocks and reserialized; no source deletion or byte-concealing transformation."
+  "scope": "Normal-map source packing and portable path records were verified after a clean rebuild and Blender reopen; source remains editable."
 }

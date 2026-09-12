@@ -16,4 +16,6 @@
 .mars-district-label { display:flex; flex-direction:column; align-items:center; gap:2px; padding:4px 7px; border:1px solid hsl(var(--border)); border-radius:4px; background:hsl(var(--popover) / .9); color:hsl(var(--popover-foreground)); white-space:nowrap; font-size:10px; }
 .mars-district-label span { font-size:9px; color:hsl(var(--muted-foreground)); }
 .mars-door-label { padding:4px 6px; border-radius:3px; background:hsl(var(--popover) / .9); color:hsl(var(--popover-foreground)); white-space:nowrap; font-size:10px; }
+.gigi-focus-marker { border:1px solid hsl(var(--border)); border-radius:8px; padding:4px 8px; background:hsl(var(--popover) / .92); color:hsl(var(--popover-foreground)); font-size:11px; white-space:nowrap; cursor:pointer; }
+.gigi-focus-marker:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
 @media (max-width:600px) { .mars-toolbar { padding:7px; } .mars-actions { gap:3px; } .mars-actions button { padding:6px; } .mars-footer { padding:6px 8px; } .mars-district-label { font-size:8px; padding:2px 4px; } }

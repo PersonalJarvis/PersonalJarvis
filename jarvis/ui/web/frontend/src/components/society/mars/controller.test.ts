@@ -42,7 +42,7 @@ describe("bounded Mars movement", () => {
     const frames = Math.ceil(Math.hypot(dx, dz) / WALK_SPEED * 60);
     for (let i = 0; i < frames; i++) advancePlayer(player, { ...still, right: 1 }, yaw, 1 / 60);
     expect(player.position[0]).toBeCloseTo(road.end[0], 0);
-    expect(player.position[1]).toBeCloseTo(58.08, 1);
+    expect(player.position[1]).toBeCloseTo(58, 1);
   });
   it("lands after a single jump and does not auto-jump while Space stays held", () => {
     const player = createPlayer([0, 0, 0]);

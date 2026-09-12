@@ -54,3 +54,33 @@ def test_bounds_contain_tallest_landmark_and_station_rejects_unknown_anchor():
     definition["stations"][0]["anchor"] = "unreachable-console"
     with pytest.raises(ValueError):
         validate_definition(definition)
+
+
+def test_visit_targets_reuse_existing_nodes_and_have_no_task_authority():
+    data = load_definition()
+    destinations = data["navigation"]["destinations"]
+    assert {row["id"]: row["anchor"] for row in destinations} == {
+        "outpost-approach": "console-approach",
+        "outpost-bridge-staging": "outpost-west",
+    }
+    assert all(set(row) == {"id", "name", "anchor", "capacity"} for row in destinations)
+    assert all(row["capacity"] == 1 for row in destinations)
+    assert len(data["stations"]) == 1
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"capacity": 2},
+        {"capacity": True},
+        {"anchor": "missing"},
+        {"capability": "send-email"},
+        {"name": ""},
+        {"id": "communications-console"},
+    ],
+)
+def test_invalid_visit_target_cannot_create_a_task_station(patch):
+    data = load_definition()
+    data["navigation"]["destinations"][0].update(patch)
+    with pytest.raises(ValueError):
+        validate_definition(data)

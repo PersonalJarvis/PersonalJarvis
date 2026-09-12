@@ -1,0 +1,83 @@
+{
+  "kind": "material-and-source-buffer-verification",
+  "runtime_visual_approval": "pending",
+  "glb_sha256": "dde2c6c384f6c05daca459e3def952eb76b56540a220ed9bd6f272b52e27c324",
+  "glb_bytes": 15089320,
+  "source_sha256": "c233ea227eca1d3d9f4d1e565f6e6e9659ef04024ca56331ea240cb0f28bcec1",
+  "source_bytes": 29804549,
+  "numeric_material_validation": {
+    "colored_primitives": 13,
+    "linear_color_range": [
+      0.032668162137269974,
+      0.7518854141235352
+    ],
+    "uv_abs_max": 977.0883178710938
+  },
+  "normal_maps": [
+    {
+      "family": "paint",
+      "maximum_encoding_error": 0.0019607912463026067,
+      "maximum_normal_tilt_degrees": 1.5883864605532065
+    },
+    {
+      "family": "metal",
+      "maximum_encoding_error": 0.0019607698272156027,
+      "maximum_normal_tilt_degrees": 0.9531881531811416
+    },
+    {
+      "family": "mineral",
+      "maximum_encoding_error": 0.0019608281560691276,
+      "maximum_normal_tilt_degrees": 27.268268316224578
+    },
+    {
+      "family": "concrete",
+      "maximum_encoding_error": 0.0019607915743717896,
+      "maximum_normal_tilt_degrees": 4.313815920532387
+    },
+    {
+      "family": "paving",
+      "maximum_encoding_error": 0.0019607244389230893,
+      "maximum_normal_tilt_degrees": 2.927041436948962
+    },
+    {
+      "family": "road",
+      "maximum_encoding_error": 0.0019607825760971642,
+      "maximum_normal_tilt_degrees": 4.713162903302976
+    }
+  ],
+  "bounds_unchanged": true,
+  "local_runtime_bounds": {
+    "min": [
+      -195.43536376953125,
+      -63.18514633178711,
+      -49.922935485839844
+    ],
+    "max": [
+      63.38080978393555,
+      62.0,
+      51.0
+    ]
+  },
+  "anchors_unchanged": true,
+  "colliders_unchanged": true,
+  "unchanged_geometry_batches": [
+    "Batched blue",
+    "Batched ceramic",
+    "Batched ceramic-warm",
+    "Batched dust-coated",
+    "Batched glass",
+    "Batched gold",
+    "Batched marking",
+    "Batched metal",
+    "Batched ochre",
+    "Batched painted-alloy",
+    "Batched roof-alloy",
+    "Batched rubber",
+    "Batched screen",
+    "Batched structure",
+    "Batched warm-light"
+  ],
+  "source_profile_marker_occurrences": 0,
+  "material_profile_count": 6,
+  "definition_sha256": "1dae7897e477201b1a859fcc813e7ff5111982a2f2a330bd872245b67eb35c2d"
+}

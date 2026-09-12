@@ -990,6 +990,20 @@
         ],
         "stage": "blockout"
       }
+    ],
+    "destinations": [
+      {
+        "id": "outpost-approach",
+        "name": "Outpost approach",
+        "anchor": "console-approach",
+        "capacity": 1
+      },
+      {
+        "id": "outpost-bridge-staging",
+        "name": "Outpost bridge staging",
+        "anchor": "outpost-west",
+        "capacity": 1
+      }
     ]
   },
   "stations": [

@@ -36,7 +36,8 @@ describe("Mars camera", () => {
   it("restores only valid client/world view state and recovers from corrupt storage", () => {
     const pose = { position: [320, 100, 150], target: [320, 76, 50] };
     const saved = { world_id: "mars:ordinary", layout_version: 1, mode: "orbit", viewpoint: "rear", neutral: true, pose };
-    expect(parseViewPreferences(JSON.stringify(saved))).toEqual({ mode: "orbit", viewpoint: "rear", neutral: true, pose });
+    expect(parseViewPreferences(JSON.stringify(saved))).toEqual({ mode: "orbit", viewpoint: "rear", neutral: true, shadows: true, pose });
+    expect(parseViewPreferences(JSON.stringify({ ...saved, shadows: false })).shadows).toBe(false);
     for (const change of [{ world_id: "mars:swarm:other" }, { layout_version: 2 }, { mode: "bad" }]) {
       expect(parseViewPreferences(JSON.stringify({ ...saved, ...change })).mode).toBe("overview");
     }

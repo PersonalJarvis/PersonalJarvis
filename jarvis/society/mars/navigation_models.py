@@ -47,6 +47,12 @@ class MoveCommand(ContractModel):
         return value
 
 
+class PedestrianMoveCommand(MoveCommand):
+    """The public visit API does not yet expose vehicle control."""
+
+    mode: Literal[TravelMode.PEDESTRIAN] = TravelMode.PEDESTRIAN
+
+
 class NavigationRecord(ContractModel):
     command_id: Identity
     request_id: Identity

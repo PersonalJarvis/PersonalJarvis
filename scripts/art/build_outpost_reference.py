@@ -213,9 +213,30 @@ def tower_sections():
     ]
 
 
-def surface_grain(family, resolution=128):
-    """New periodic material relief data, independent of private concept pixels."""
-    seed = {"paint": 41, "metal": 87, "mineral": 129, "road": 219}[family]
+SURFACE_PROFILES = {
+    "paint": {"seed": 41, "tile_metres": 0.24, "relief_metres": 0.00012, "roughness_span": 0.025},
+    "metal": {"seed": 87, "tile_metres": 0.20, "relief_metres": 0.00006, "roughness_span": 0.04},
+    "mineral": {"seed": 129, "tile_metres": 1.8, "relief_metres": 0.018, "roughness_span": 0.10},
+    "concrete": {"seed": 173, "tile_metres": 0.8, "relief_metres": 0.0012, "roughness_span": 0.05},
+    "paving": {"seed": 191, "tile_metres": 0.65, "relief_metres": 0.0006, "roughness_span": 0.04},
+    "road": {"seed": 219, "tile_metres": 0.6, "relief_metres": 0.001, "roughness_span": 0.06},
+}
+
+
+def surface_grain(family, resolution=256):
+    """Periodic stochastic microrelief with slopes derived from physical metres.
+
+    Relief is a material property, not silhouette displacement. Paint must not
+    inherit centimetre-scale rock grain, and polished aggregate is distinct from
+    cliff stone. Independent lattice samples avoid diagonal hash correlations;
+    no sinusoidal banding is painted across unrelated manufactured surfaces.
+    """
+    profile = SURFACE_PROFILES[family]
+    grids = (8, 31, 71)
+    lattices = {}
+    for grid in grids:
+        rng = random.Random(profile["seed"] + grid * 1009)  # noqa: S311 - repeatable material.
+        lattices[grid] = [rng.random() for _ in range(grid * grid)]
 
     def noise(x, y, grid):
         x, y = x * grid / resolution, y * grid / resolution
@@ -224,9 +245,7 @@ def surface_grain(family, resolution=128):
         fx, fy = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)
 
         def sample(dx, dy):
-            value = ((ix + dx) % grid) * 374761393 + ((iy + dy) % grid) * 668265263 + seed
-            value = ((value ^ (value >> 13)) * 1274126177) & 0xFFFFFFFF
-            return (value ^ (value >> 16)) / 0xFFFFFFFF
+            return lattices[grid][((iy + dy) % grid) * grid + (ix + dx) % grid]
 
         a, b, c, d = sample(0, 0), sample(1, 0), sample(0, 1), sample(1, 1)
         return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy
@@ -234,10 +253,9 @@ def surface_grain(family, resolution=128):
     values = []
     for y in range(resolution):
         for x in range(resolution):
-            coarse, fine = noise(x, y, 8), noise(x, y, 43)
-            brush = 0.06 * math.sin(math.tau * y * 37 / resolution) if family == "metal" else 0
-            values.append(0.68 * coarse + 0.32 * fine + brush)
-    strength = {"paint": 0.35, "metal": 0.28, "mineral": 3.4, "road": 1.6}[family]
+            coarse, middle, fine = (noise(x, y, grid) for grid in grids)
+            values.append(0.20 * coarse + 0.35 * middle + 0.45 * fine)
+    strength = profile["relief_metres"] * resolution / (2 * profile["tile_metres"])
     normals = []
     for y in range(resolution):
         for x in range(resolution):
@@ -252,6 +270,95 @@ def surface_grain(family, resolution=128):
             normal = normalized((-dx * strength, -dy * strength, 1))
             normals.extend((normal[0] * 0.5 + 0.5, normal[1] * 0.5 + 0.5, normal[2] * 0.5 + 0.5, 1))
     return values, normals
+
+
+def polygon_area(points):
+    """Signed area in the runtime X/Z ground plane."""
+    return (
+        sum(
+            a[0] * b[1] - b[0] * a[1] for a, b in zip(points, [*points[1:], points[0]], strict=True)
+        )
+        / 2
+        if points
+        else 0
+    )
+
+
+def subtract_convex_polygon(subject, cutter):
+    """Partition a convex surface around another, without coplanar overlap.
+
+    Each emitted piece lies outside one cutter half-plane. The portion inside
+    that plane continues to the next edge; consequently emitted pieces cannot
+    overlap one another. Coordinates and the retained surface elevation stay
+    unchanged, unlike polygon-offset or small height-shift workarounds.
+    """
+    # Most route pairs are far apart. Avoid splitting an unrelated surface on
+    # the infinite extension of cutter edges, which adds needless tessellation.
+    if any(
+        max(point[axis] for point in subject) <= min(point[axis] for point in cutter)
+        or max(point[axis] for point in cutter) <= min(point[axis] for point in subject)
+        for axis in (0, 1)
+    ):
+        return [subject]
+    if polygon_area(cutter) < 0:
+        cutter = list(reversed(cutter))
+    remaining, result = list(subject), []
+    for start, end in zip(cutter, [*cutter[1:], cutter[0]], strict=True):
+        if not remaining:
+            break
+
+        def distance(point, start=start, end=end):
+            return (end[0] - start[0]) * (point[1] - start[1]) - (end[1] - start[1]) * (
+                point[0] - start[0]
+            )
+
+        inside, outside = [], []
+        for a, b in zip(remaining, [*remaining[1:], remaining[0]], strict=True):
+            da, db = distance(a), distance(b)
+            (inside if da >= 0 else outside).append(a)
+            if (da > 0 and db < 0) or (da < 0 and db > 0):
+                t = da / (da - db)
+                intersection = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+                inside.append(intersection)
+                outside.append(intersection)
+            elif da == 0:
+                outside.append(a)
+        if abs(polygon_area(outside)) > 1e-8:
+            result.append(outside)
+        remaining = inside if abs(polygon_area(inside)) > 1e-8 else []
+    return result
+
+
+def road_surface_pieces(routes):
+    """Yield nonoverlapping convex top surfaces; earlier routes own junctions."""
+    occupied = []
+    for label, polygon, material in routes:
+        pieces = [polygon]
+        for cutter in occupied:
+            pieces = [part for piece in pieces for part in subtract_convex_polygon(piece, cutter)]
+            if not pieces:
+                break
+        for index, piece in enumerate(pieces):
+            yield f"{label} surface {index:02d}", piece, material
+        occupied.append(polygon)
+
+
+def road_piece_mesh(polygon, height=0.006, thickness=0.24):
+    """Closed supporting road volume with one nonoverlapping top polygon."""
+    vertices = [(x, height, z) for x, z in polygon]
+    vertices.extend((x, height - thickness, z) for x, z in polygon)
+    count = len(polygon)
+    top = list(range(count))
+    if polygon_area(polygon) > 0:
+        top.reverse()
+    faces = [tuple(top), tuple(index + count for index in reversed(top))]
+    faces.extend((b, a, a + count, b + count) for a, b in zip(top, [*top[1:], top[0]], strict=True))
+    return vertices, faces
+
+
+def fracture_center_y(center_y, vertical_radius):
+    """Decorative cliff fragments never pierce the paved terrace above them."""
+    return min(center_y, -0.20 - vertical_radius)
 
 
 def glb_attribute_values(document, binary, index):
@@ -403,7 +510,9 @@ def sanitize_source_metadata(bpy_module):
         filename = image.filepath.replace("\\", "/").rsplit("/", 1)[-1]
         portable = "//materials/" + filename
         validate_source_path_records([("Image.filepath", portable)])
-        replace_field(image, "filepath", portable)
+        # filepath_raw writes the same serialized buffer without asking Blender
+        # to reload each temporary neutral path during fixed-size tail clearing.
+        replace_field(image, "filepath_raw", portable)
         for packed in image.packed_files:
             replace_field(packed, "filepath", portable)
             packed_count += 1
@@ -449,11 +558,11 @@ class Author:
             "cliff": ((0.29, 0.092, 0.034), 0.0, 0.96),
             "rock-highlight": ((0.42, 0.18, 0.077), 0.0, 0.9),
             "rock-shadow": ((0.19, 0.059, 0.027), 0.0, 0.98),
-            "paving": ((0.24, 0.25, 0.24), 0.1, 0.83),
-            "road": ((0.082, 0.096, 0.11), 0.08, 0.88),
+            "paving": ((0.24, 0.25, 0.24), 0.0, 0.78),
+            "road": ((0.082, 0.096, 0.11), 0.0, 0.88),
             "concrete": ((0.39, 0.35, 0.29), 0.0, 0.84),
-            "ceramic": ((0.73, 0.73, 0.67), 0.18, 0.34),
-            "ceramic-warm": ((0.61, 0.61, 0.56), 0.22, 0.43),
+            "ceramic": ((0.73, 0.73, 0.67), 0.0, 0.34),
+            "ceramic-warm": ((0.61, 0.61, 0.56), 0.0, 0.43),
             "structure": ((0.075, 0.095, 0.12), 0.74, 0.37),
             "metal": ((0.40, 0.46, 0.49), 0.82, 0.3),
             "gold": ((0.34, 0.23, 0.11), 0.8, 0.34),
@@ -464,7 +573,7 @@ class Author:
             "ochre": ((0.48, 0.29, 0.075), 0.1, 0.62),
             "blue": ((0.012, 0.30, 0.75), 0.2, 0.24),
             "warm-light": ((0.95, 0.64, 0.24), 0.0, 0.35),
-            "painted-alloy": ((0.34, 0.39, 0.41), 0.36, 0.50),
+            "painted-alloy": ((0.34, 0.39, 0.41), 0.0, 0.50),
             "roof-alloy": ((0.40, 0.42, 0.40), 0.35, 0.65),
             "dust-coated": ((0.34, 0.25, 0.17), 0.12, 0.86),
         }
@@ -488,17 +597,14 @@ class Author:
         """Embed authored roughness/normal maps and material-aware color tinting."""
         folder = self.study / "source/materials"
         folder.mkdir(parents=True, exist_ok=True)
-        resolution = 128
-        grains = {
-            family: surface_grain(family, resolution)
-            for family in ("paint", "metal", "mineral", "road")
-        }
+        resolution = 256
+        grains = {family: surface_grain(family, resolution) for family in SURFACE_PROFILES}
         families = {
             "cliff": "mineral",
             "rock-highlight": "mineral",
             "rock-shadow": "mineral",
-            "concrete": "mineral",
-            "paving": "mineral",
+            "concrete": "concrete",
+            "paving": "paving",
             "road": "road",
             "ceramic": "paint",
             "ceramic-warm": "paint",
@@ -507,7 +613,7 @@ class Author:
             "structure": "metal",
             "metal": "metal",
             "gold": "metal",
-            "dust-coated": "mineral",
+            "dust-coated": "concrete",
         }
         normal_images = {}
         self.material_families = families
@@ -518,8 +624,10 @@ class Author:
             image.filepath_raw = str(folder / f"{family}-normal.png")
             image.file_format = "PNG"
             image.save()
-            image.filepath = f"//materials/{family}-normal.png"
-            image.pack()
+            packed_data = (folder / f"{family}-normal.png").read_bytes()
+            image.filepath_raw = f"//materials/{family}-normal.png"
+            # Explicit bytes work before a new .blend has a relative base path.
+            image.pack(data=packed_data, data_len=len(packed_data))
             normal_images[family] = image
         for name, family in families.items():
             material = self.materials[name]
@@ -527,7 +635,8 @@ class Author:
             roughness = shader.inputs["Roughness"].default_value
             pixels = array("f")
             for grain in grains[family][0]:
-                value = min(0.99, max(0.08, roughness + (grain - 0.5) * 0.22))
+                variation = (grain - 0.5) * SURFACE_PROFILES[family]["roughness_span"]
+                value = min(0.99, max(0.08, roughness + variation))
                 pixels.extend((value, value, value, 1))
             image = self.bpy.data.images.new(f"Authored {name} roughness", resolution, resolution)
             image.colorspace_settings.name = "Non-Color"
@@ -535,8 +644,9 @@ class Author:
             image.filepath_raw = str(folder / f"{name}-roughness.png")
             image.file_format = "PNG"
             image.save()
-            image.filepath = f"//materials/{name}-roughness.png"
-            image.pack()
+            packed_data = (folder / f"{name}-roughness.png").read_bytes()
+            image.filepath_raw = f"//materials/{name}-roughness.png"
+            image.pack(data=packed_data, data_len=len(packed_data))
             nodes, links = material.node_tree.nodes, material.node_tree.links
             roughness_map = nodes.new("ShaderNodeTexImage")
             roughness_map.image = image
@@ -544,7 +654,7 @@ class Author:
             texture = nodes.new("ShaderNodeTexImage")
             texture.image = normal_images[family]
             normal = nodes.new("ShaderNodeNormalMap")
-            normal.inputs["Strength"].default_value = 0.65 if family == "mineral" else 0.35
+            normal.inputs["Strength"].default_value = 1
             links.new(texture.outputs["Color"], normal.inputs["Color"])
             links.new(normal.outputs["Normal"], shader.inputs["Normal"])
             color = nodes.new("ShaderNodeVertexColor")
@@ -710,6 +820,7 @@ class Author:
                 self.rng.uniform(1.4, 3.1),
                 self.rng.uniform(3, 8),
             )
+            rock.location.z = fracture_center_y(rock.location.z, rock.scale.z)
             self.adopt(
                 rock,
                 f"Exposed vertical fracture {index:02d}",
@@ -742,12 +853,6 @@ class Author:
             [(0, 1 + (i + 1) % len(outer), i + 1) for i in range(len(outer))],
             "paving",
         )
-        for index, start in enumerate(outer):
-            end = outer[(index + 1) % len(outer)]
-            vertices, faces = deck_mesh(
-                add(start, (0, 0.035, 0)), add(end, (0, 0.035, 0)), 5.8, 0.14
-            )
-            self.mesh(f"Perimeter road segment {index:02d}", vertices, faces, "road")
         self.tube(
             "Inner perimeter lane marking",
             [(p[0] * 0.943, 0.035, p[2] * 0.936) for p in outer],
@@ -757,18 +862,35 @@ class Author:
             1,
         )
         nodes = self.layout["nodes"]
+        routes = []
         for label, first, last, width in [
             ("Arrival road", "outpost-west", "outpost-arrival", 10),
             ("Operations footpath", "outpost-arrival", "console-approach", 4),
             ("South transport link", "outpost-arrival", "outpost-south", 10),
         ]:
             start, end = nodes[first], nodes[last]
-            vertices, faces = deck_mesh(
-                add(start, (0, 0.006, 0)), add(end, (0, 0.006, 0)), width, 0.24
+            vertices, _ = deck_mesh(start, end, width)
+            routes.append(
+                (label, [(x, z) for x, _, z in vertices[:4]], "paving" if width == 4 else "road")
             )
-            self.mesh(label, vertices, faces, "paving" if width == 4 else "road")
             self.anchor(first, start, kind="navigation")
             self.anchor(last, end, kind="navigation")
+        for index, start in enumerate(outer):
+            end = outer[(index + 1) % len(outer)]
+            vertices, _ = deck_mesh(start, end, 5.8)
+            routes.append(
+                (
+                    f"Perimeter road segment {index:02d}",
+                    [(x, z) for x, _, z in vertices[:4]],
+                    "road",
+                )
+            )
+        # Top faces form a planar subdivision. No intersecting road rectangles
+        # compete for depth at the arrival plaza or the curved perimeter joins.
+        # Each piece retains a closed supporting slab under its top polygon.
+        for label, polygon, material in road_surface_pieces(routes):
+            vertices, faces = road_piece_mesh(polygon)
+            self.mesh(label, vertices, faces, material)
         # Seams are organized in service plazas, away from travel corridors.
         for z in (-17, -13, -9, 26, 30):
             self.tube(
@@ -1549,8 +1671,8 @@ class Author:
         width, height, depth = size
         self.box(
             "Operations load-bearing floor",
-            add(center, (0, -0.22, 0)),
-            (width, 0.44, depth),
+            add(center, (0, -0.24, 0)),
+            (width, 0.40, depth),
             "concrete",
             0.06,
         )
@@ -1974,9 +2096,7 @@ class Author:
                     )
                     batch = batches[material.name]
                     family = self.material_families.get(material.name)
-                    tile_metres = {"paint": 1.0, "metal": 0.8, "mineral": 1.8, "road": 1.5}.get(
-                        family, 1
-                    )
+                    tile_metres = SURFACE_PROFILES[family]["tile_metres"] if family else 1
                     base = material.diffuse_color[:3]
                     part_tint = 0.96 + 0.07 * (
                         math.sin(sum(map(ord, obj.name)) * 0.713) * 0.5 + 0.5
@@ -2002,15 +2122,12 @@ class Author:
                                 dust = min(0.16, max(0, 1.2 - point[2]) * 0.085)
                                 if normal.z > 0.7:
                                     dust += 0.035
-                            fine = 1 + 0.023 * math.sin(
-                                point[0] * 2.7 + point[1] * 3.1 + point[2] * 0.51
-                            )
                             tint = [
                                 min(
                                     1,
                                     max(
                                         0,
-                                        base[i] * part_tint * fine * (1 - dust)
+                                        base[i] * part_tint * (1 - dust)
                                         + (0.34, 0.22, 0.13)[i] * dust,
                                     ),
                                 )
@@ -2167,6 +2284,11 @@ def main():
     author.bpy.ops.wm.save_as_mainfile(
         filepath=str(source_path), check_existing=False, relative_remap=False, compress=False
     )
+    operations = layout["buildings"]["operations"]
+    floor_bounds = [
+        [operations["local"][axis] + sign * (operations["size"][axis] / 2 - 0.4) for axis in (0, 2)]
+        for sign in (-1, 1)
+    ]
     report.update(
         {
             "asset_id": ASSET_ID,
@@ -2182,6 +2304,31 @@ def main():
             "source_bytes": source_path.stat().st_size,
             "source_sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
             "source_metadata_validation": source_metadata,
+            "material_profiles": SURFACE_PROFILES,
+            "walk_surfaces": {
+                "coordinates": "asset-local runtime Y-up metres",
+                "route-01": {"surface": "bridge", "node_height_offset": 0},
+                "route-02": {"surface": "road", "node_height_offset": 0.006},
+                "route-03": {"surface": "footpath", "node_height_offset": 0.006},
+                "route-04": {
+                    "surface": "operations-entry",
+                    "approach_surface": "terrace",
+                    "interior_surface": "operations",
+                },
+                "route-05": {"surface": "road", "node_height_offset": 0.006},
+                "perimeter": {"top_y": 0.006},
+                "terrace": {
+                    "top_y": -0.03,
+                    "footprint": [[x, z] for x, _, z in author.rounded_perimeter(-0.03)],
+                },
+                "operations": {
+                    "structural_slab_top_y": -0.04,
+                    "finished_floor_top_y": 0,
+                    "finished_floor_xz_bounds": floor_bounds,
+                    "south_door_threshold_z": operations["local"][2] + operations["size"][2] / 2,
+                    "approach_terrace_top_y": -0.03,
+                },
+            },
             "colliders": author.colliders,
             "anchors": author.anchors,
             "runtime_evidence": [],

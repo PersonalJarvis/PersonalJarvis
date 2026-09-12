@@ -35,8 +35,7 @@ def validate_definition(data: dict[str, Any]) -> None:
     def position(value: Any) -> None:
         vector(value)
         if any(
-            v < lo or v > hi
-            for v, lo, hi in zip(value, bounds["min"], bounds["max"], strict=True)
+            v < lo or v > hi for v, lo, hi in zip(value, bounds["min"], bounds["max"], strict=True)
         ):
             raise ValueError("position lies outside world bounds")
 
@@ -49,11 +48,13 @@ def validate_definition(data: dict[str, Any]) -> None:
     districts = index(data["districts"])
     for district in districts.values():
         position(district["center"])
-        position([
-            district["center"][0],
-            district["center"][1] + district["landmark_height"],
-            district["center"][2],
-        ])
+        position(
+            [
+                district["center"][0],
+                district["center"][1] + district["landmark_height"],
+                district["center"][2],
+            ]
+        )
     buildings = index(data["buildings"])
     for building in buildings.values():
         if building["district_id"] not in districts:
@@ -63,11 +64,13 @@ def validate_definition(data: dict[str, Any]) -> None:
         if min(building["size"]) <= 0:
             raise ValueError("building dimensions must be positive")
         for sign in (-1, 1):
-            position([
-                building["position"][0] + sign * building["size"][0] / 2,
-                building["position"][1] + (building["size"][1] if sign == 1 else 0),
-                building["position"][2] + sign * building["size"][2] / 2,
-            ])
+            position(
+                [
+                    building["position"][0] + sign * building["size"][0] / 2,
+                    building["position"][1] + (building["size"][1] if sign == 1 else 0),
+                    building["position"][2] + sign * building["size"][2] / 2,
+                ]
+            )
     navigation = data["navigation"]
     if navigation["version"] != data["layout_version"]:
         raise ValueError("navigation and layout versions differ")
@@ -100,7 +103,8 @@ def validate_definition(data: dict[str, Any]) -> None:
             pending.extend(adjacent[key] - visited)
     if visited != set(nodes):
         raise ValueError("colony navigation contains a disconnected route")
-    for station in index(data["stations"]).values():
+    stations = index(data["stations"])
+    for station in stations.values():
         building = buildings.get(station["building_id"])
         if (
             building is None
@@ -109,6 +113,19 @@ def validate_definition(data: dict[str, Any]) -> None:
             or station["capacity"] != 1
         ):
             raise ValueError("invalid station location or capacity")
+    destinations = index(navigation.get("destinations", []))
+    if stations.keys() & destinations.keys() or len(stations) + len(destinations) > 64:
+        raise ValueError("invalid bounded navigation destination identities")
+    for destination in destinations.values():
+        if (
+            destination["anchor"] not in visited
+            or type(destination["capacity"]) is not int
+            or destination["capacity"] != 1
+            or not isinstance(destination.get("name"), str)
+            or not destination["name"].strip()
+            or set(destination) != {"id", "name", "anchor", "capacity"}
+        ):
+            raise ValueError("invalid visit-only destination")
     position(data["spawn"]["position"])
 
 

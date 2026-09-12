@@ -17,16 +17,23 @@ from starlette.responses import Response
 from jarvis.society.mars.definition import load_definition
 from jarvis.society.mars.models import (
     CommandRecord,
+    Identity,
     StationCommand,
     StationError,
     StationEventBatch,
     StationSnapshot,
+)
+from jarvis.society.mars.navigation_models import (
+    NavigationRecord,
+    NavigationSnapshot,
+    PedestrianMoveCommand,
 )
 
 log = logging.getLogger(__name__)
 
 _INITIALIZATION_TIMEOUT_S = 30.0
 _INITIALIZATION_STOP_TIMEOUT_S = 5.0
+_NAVIGATION_TICK_S = 0.25
 
 
 class _PrivateStationRoute(APIRoute):
@@ -44,10 +51,19 @@ class _PrivateStationRoute(APIRoute):
         async def private_validation(request: Request) -> Response:
             try:
                 return await handler(request)
-            except RequestValidationError:
+            except RequestValidationError as exc:
+                reason = "invalid_station_request"
+                if "/moves" in self.path or "/navigation/" in self.path:
+                    reason = "invalid_navigation_request"
+                    if any(
+                        error.get("loc") == ("body", "mode")
+                        and error.get("type") == "literal_error"
+                        for error in exc.errors()
+                    ):
+                        reason = "unsupported_navigation_mode"
                 return JSONResponse(
                     status_code=422,
-                    content={"detail": {"reason": "invalid_station_request"}},
+                    content={"detail": {"reason": reason}},
                     headers={"Cache-Control": "no-store"},
                 )
 
@@ -69,6 +85,18 @@ async def _reconcile_loop(service: Any) -> None:
         await asyncio.sleep(1.0)
 
 
+async def _navigation_loop(service: Any) -> None:
+    """Travel has its own owner; slow task inspection cannot stall movement."""
+    while True:
+        try:
+            await service.advance()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("Mars navigation advance unavailable (%s)", type(exc).__name__)
+        await asyncio.sleep(_NAVIGATION_TICK_S)
+
+
 def _station_lock(state: Any) -> asyncio.Lock:
     if getattr(state, "mars_station_lock", None) is None:
         state.mars_station_lock = asyncio.Lock()
@@ -77,11 +105,15 @@ def _station_lock(state: Any) -> asyncio.Lock:
 
 async def _initialize_mars_station(state: Any) -> Any:
     """The application owns initialization even when every HTTP waiter leaves."""
+    from jarvis.society.mars.navigation_ordinary import OrdinaryNavigationAuthority
+    from jarvis.society.mars.navigation_service import MarsNavigationService
+    from jarvis.society.mars.navigation_store import MarsNavigationStore
     from jarvis.society.mars.ordinary import OrdinaryStationExecutor
     from jarvis.society.mars.service import MarsStationService
     from jarvis.society.mars.store import MarsStore
 
     service = None
+    navigation = None
     published = False
     try:
         async with asyncio.timeout(_INITIALIZATION_TIMEOUT_S):
@@ -102,13 +134,23 @@ async def _initialize_mars_station(state: Any) -> Any:
                 operation_timeout_s=20.0,
             )
             await service.start()
+            navigation = MarsNavigationService(
+                MarsNavigationStore(runtime.store.path.parent / "mars" / "navigation.db"),
+                load_definition(),
+                authorize=OrdinaryNavigationAuthority(runtime),
+            )
+            await navigation.start()
             if getattr(state, "mars_station_stopping", False):
                 raise HTTPException(503, "mars_station_stopped")
             # No await separates the stop check and publication. The state lock
             # only protects task creation; it is never held across initialization.
             state.mars_station = service
+            state.mars_navigation = navigation
             state.mars_station_task = asyncio.create_task(
                 _reconcile_loop(service), name="mars-station-owner"
+            )
+            state.mars_navigation_task = asyncio.create_task(
+                _navigation_loop(navigation), name="mars-navigation-owner"
             )
             published = True
             return service
@@ -117,8 +159,13 @@ async def _initialize_mars_station(state: Any) -> Any:
         log.warning("Mars station startup unavailable (%s)", type(exc).__name__)
         raise HTTPException(503, "mars_station_unavailable") from exc
     finally:
-        if service is not None and not published:
-            await service.close()
+        if not published:
+            try:
+                if navigation is not None:
+                    await navigation.close()
+            finally:
+                if service is not None:
+                    await service.close()
 
 
 def _observe_initialization(task: asyncio.Task[Any]) -> None:
@@ -164,8 +211,14 @@ def schedule_mars_resume(state: Any, data_dir: Path) -> None:
         # Even an eager task factory must not run recovery on the boot chain.
         await asyncio.sleep(0)
         try:
-            path = Path(data_dir) / "mars" / "ordinary.db"
-            if await asyncio.to_thread(path.is_file):
+            directory = Path(data_dir) / "mars"
+
+            def has_journal() -> bool:
+                return any(
+                    (directory / name).is_file() for name in ("ordinary.db", "navigation.db")
+                )
+
+            if await asyncio.to_thread(has_journal):
                 await ensure_mars_station(state)
         except asyncio.CancelledError:
             raise
@@ -184,6 +237,7 @@ async def stop_mars_station(state: Any) -> None:
             "mars_station_startup_task",
             "mars_station_initialization_task",
             "mars_station_task",
+            "mars_navigation_task",
         )
         if (task := getattr(state, name, None)) is not None
     )
@@ -198,17 +252,35 @@ async def stop_mars_station(state: Any) -> None:
             log.warning("Mars station shutdown deadline expired (TimeoutError)")
             raise TimeoutError("mars_station_shutdown_timeout")
     async with _station_lock(state):
+        navigation = getattr(state, "mars_navigation", None)
         service = getattr(state, "mars_station", None)
-        if service is not None:
-            await service.close()
-            state.mars_station = None
+        try:
+            if navigation is not None:
+                await navigation.close()
+                state.mars_navigation = None
+        finally:
+            # Each service owns an independent journal. A navigation cleanup
+            # failure must not leave the task journal open as a side effect.
+            if service is not None:
+                await service.close()
+                state.mars_station = None
         state.mars_station_startup_task = None
         state.mars_station_initialization_task = None
         state.mars_station_task = None
+        state.mars_navigation_task = None
 
 
 async def _service(request: Request) -> Any:
     return await ensure_mars_station(request.app.state)
+
+
+async def ensure_mars_navigation(state: Any) -> Any:
+    """Both surfaces share the same initialization task, deadline and stop fence."""
+    await ensure_mars_station(state)
+    navigation = getattr(state, "mars_navigation", None)
+    if navigation is None:
+        raise HTTPException(503, "mars_navigation_unavailable")
+    return navigation
 
 
 def _error(exc: StationError) -> HTTPException:
@@ -265,5 +337,40 @@ async def cancel_mars_command(agent_id: str, command_id: str, request: Request) 
     """Request a scoped stop without canceling a newer unrelated conversation."""
     try:
         return await (await _service(request)).cancel(agent_id, command_id)
+    except StationError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/navigation/snapshot", response_model=NavigationSnapshot)
+async def get_mars_navigation_snapshot(request: Request) -> NavigationSnapshot:
+    """Read bounded durable visits and physical occupancy independently of tasks."""
+    try:
+        return await (await ensure_mars_navigation(request.app.state)).snapshot()
+    except StationError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/agents/{agent_id}/moves", response_model=NavigationRecord)
+async def submit_mars_move(
+    agent_id: Identity, body: PedestrianMoveCommand, request: Request
+) -> NavigationRecord:
+    """Visit a named destination on foot without dispatching provider work."""
+    try:
+        return await (await ensure_mars_navigation(request.app.state)).submit(agent_id, body)
+    except StationError as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/agents/{agent_id}/moves/{command_id}/cancel",
+    response_model=NavigationRecord,
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def cancel_mars_move(
+    agent_id: Identity, command_id: Identity, request: Request
+) -> NavigationRecord:
+    """Stop only the named visit in place; ordinary tasks remain unchanged."""
+    try:
+        return await (await ensure_mars_navigation(request.app.state)).cancel(agent_id, command_id)
     except StationError as exc:
         raise _error(exc) from exc

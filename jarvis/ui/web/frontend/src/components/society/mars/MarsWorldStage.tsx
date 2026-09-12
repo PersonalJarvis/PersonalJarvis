@@ -1,4 +1,5 @@
-import { Component, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Canvas } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
 import { useCanvasAwake } from "@/hooks/useCanvasAwake";
@@ -10,6 +11,13 @@ import { MarsScene, type CameraMode } from "./MarsScene";
 import { WORLD, WORLD_BOUNDS } from "./world";
 import { MarsBackgroundControl } from "./MarsBackgroundControl";
 import { readViewPreferences, saveViewPreferences, VIEWPOINTS, type CameraPose, type Viewpoint } from "./viewPreferences";
+import { fetchMarsRoster, WORLD_ID } from "./api";
+import { latestNavigationRecords } from "./navigationApi";
+import { MarsNavigationContext, useMarsNavigation } from "./useMarsNavigation";
+import { useEventStore } from "@/store/events";
+import { useCompanionPresentation } from "../companion/useCompanionPresentation";
+import { readCompanionVisible, writeCompanionVisible } from "../companion/preferences";
+import { useCompanionFocusRequests } from "../companion/useCompanionFocusRequests";
 import "./mars.css";
 
 export interface MarsWorldStageProps {
@@ -39,17 +47,32 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
   const ready = useLocaleChunk("society");
   const hostRef = useRef<HTMLDivElement>(null);
   const awake = useCanvasAwake(hostRef);
+  const navigation = useMarsNavigation(awake);
+  const roster = useQuery({ queryKey: ["mars", WORLD_ID, "roster"], queryFn: ({ signal }) => fetchMarsRoster(signal), enabled: awake, retry: false, staleTime: 5000 });
+  const navigationRecords = useMemo(() => latestNavigationRecords(navigation.data), [navigation.data]);
+  const agentNames = useMemo(() => new Map((roster.data ?? []).map((row) => [row.agent_id, row.name])), [roster.data]);
   const { generation } = useWebglSurface(hostRef);
   const webgl = useWebglSupported();
   const reduced = useReducedMotion() ?? false;
   const [initial] = useState(readViewPreferences);
   const [mode, setMode] = useState<CameraMode>(initial.mode);
   const [neutral, setNeutral] = useState(initial.neutral);
+  const [shadows, setShadows] = useState(initial.shadows);
   const [viewpoint, setViewpoint] = useState<Viewpoint>(initial.viewpoint);
   const [pose, setPose] = useState<CameraPose | null>(initial.pose);
-  useEffect(() => { saveViewPreferences({ mode, neutral, viewpoint, pose }); }, [mode, neutral, viewpoint, pose]);
+  useEffect(() => { saveViewPreferences({ mode, neutral, shadows, viewpoint, pose }); }, [mode, neutral, shadows, viewpoint, pose]);
   const [selected, setSelected] = useState<string | null>(null);
   const [reset, setReset] = useState(0);
+  const [gigiVisible, setGigiVisible] = useState(() => readCompanionVisible(WORLD.world_id));
+  const { pending: gigiFocus, request: requestGigiFocus, acknowledge: acknowledgeGigiFocus, cancel: cancelGigiFocus } = useCompanionFocusRequests();
+  const [gigiRecall, setGigiRecall] = useState(0);
+  const gigiPresentation = useCompanionPresentation(awake);
+  const showGigi = (visible: boolean) => { setGigiVisible(visible); writeCompanionVisible(WORLD.world_id, visible); if (!visible) cancelGigiFocus(); };
+  const openAssistant = useCallback(() => useEventStore.getState().setActiveSection("chats"), []);
+  const focusGigi = useCallback(() => {
+    setGigiVisible(true); writeCompanionVisible(WORLD.world_id, true);
+    setSelected(null); setMode("orbit"); requestGigiFocus();
+  }, [requestGigiFocus]);
   const orbit = useCallback(() => setMode("orbit"), []);
   const select = useCallback((id: string) => { setSelected(id); setMode("orbit"); }, []);
   const choose = (next: CameraMode) => {
@@ -60,6 +83,7 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
   const selectedBuilding = WORLD.buildings.find((building) => building.id === selected);
   if (!ready) return null;
   return (
+    <MarsNavigationContext.Provider value={navigation}>
     <section className="mars-stage" data-mars-world={WORLD.world_id} data-mars-layout={WORLD.layout_version} data-mars-stage="blockout" data-mars-mode={mode} aria-label={t("society.mars.foundation")}>
       <div className="mars-toolbar" data-mars-ui>
         <div className="mars-title"><strong>{t("society.mars.colony")}</strong><span>{t("society.mars.foundation")}</span></div>
@@ -73,8 +97,12 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
           </select>
           <button type="button" aria-pressed={mode === "player"} onClick={() => choose("player")}>{t("society.mars.walk")}</button>
           <button type="button" aria-pressed={neutral} onClick={() => setNeutral((value) => !value)}>{t("society.mars.neutral")}</button>
+          <button type="button" aria-pressed={shadows} onClick={() => setShadows((value) => !value)}>{t("society.mars.shadows")}</button>
           {onOpenStation && <button type="button" onClick={onOpenStation}>{t("society.mars.station_title")}</button>}
           <button type="button" onClick={onOpenLedger}>{t("society.mars.ledger")}</button>
+          <button type="button" onClick={focusGigi}>{t("society.mars.gigi_focus")}</button>
+          <button type="button" onClick={() => { showGigi(true); setGigiRecall((value) => value + 1); }}>{t("society.mars.gigi_recall")}</button>
+          <button type="button" aria-pressed={gigiVisible} onClick={() => showGigi(!gigiVisible)}>{t(gigiVisible ? "society.mars.gigi_hide" : "society.mars.gigi_show")}</button>
           {topRight}
         </div>
       </div>
@@ -84,7 +112,8 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
           <RenderBoundary key={generation} fallbackText={t("society.mars.no_graphics")}>
             <Suspense fallback={<div className="mars-render-fallback" role="status">{t("society.mars.loading")}</div>}>
               <Canvas shadows="percentage" camera={{ position: INITIAL_CAMERA, fov: CAMERA_FOV, near: 0.12, far: 20000 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} frameloop={!awake ? "never" : reduced ? "demand" : "always"} onPointerMissed={() => { setSelected(null); onSelectAgent?.(null); }}>
-                <MarsScene hostRef={hostRef} mode={mode} neutral={neutral} viewpoint={viewpoint} initialPose={pose} onSavePose={setPose} awake={awake && !stationPanel} selected={selected} onSelect={select} onOrbit={orbit} onOpenStation={onOpenStation} reset={reset} />
+                <MarsScene hostRef={hostRef} mode={mode} neutral={neutral} shadows={shadows} viewpoint={viewpoint} initialPose={pose} onSavePose={setPose} awake={awake && !stationPanel} selected={selected} onSelect={select} onOrbit={orbit} onOpenStation={onOpenStation} reset={reset} navigationRecords={navigationRecords} agentNames={agentNames} navigationStale={navigation.isError} onSelectAgent={onSelectAgent}
+                  gigiVisible={gigiVisible} gigiFocus={gigiFocus} onGigiFocusApplied={acknowledgeGigiFocus} gigiRecall={gigiRecall} reducedMotion={reduced} gigiPresentation={gigiPresentation} onOpenAssistant={openAssistant} onFocusGigi={focusGigi} />
               </Canvas>
             </Suspense>
           </RenderBoundary>
@@ -93,12 +122,14 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
       {stationPanel && <div className="mars-station-slot" data-mars-ui>{stationPanel}</div>}
       </div>
       <div className="mars-footer" data-mars-ui>
+        {navigation.isError && <p role="status">{t("society.mars.positions_offline")}</p>}
         <MarsBackgroundControl />
         <p>{t(mode === "player" ? "society.mars.player_help" : "society.mars.orbit_help")}</p>
         <p role="status" aria-live="polite">{selectedBuilding ? `${selectedBuilding.name} — ${t(selectedBuilding.access === "required-interior" ? "society.mars.interior_pending" : "society.mars.access_pending")}` : t("society.mars.placeholder_actor")}</p>
         {selected === "operations" && onOpenStation && <button type="button" className="mars-use-station" onClick={onOpenStation}>{t("society.mars.station_title")}</button>}
       </div>
     </section>
+    </MarsNavigationContext.Provider>
   );
 }
 

@@ -325,6 +325,37 @@ class MarsNavigationService:
                     }
                 )
             return self._blocked(record, now, "route_temporarily_blocked")
+        if record.presence == "spawn_queue":
+            # Admit a new body only when its whole entry corridor is clear.
+            # Reserving the console's approach while its previous occupant is
+            # leaving would strand both agents head-on in a single-lane path.
+            # A logical spawn waiter has no body and must yield to departures.
+            corridor = ((record.edge_id,) if record.edge_id else ()) + path
+            resources = {
+                resource
+                for edge_id in corridor
+                for resource in (
+                    "edge:" + edge_id,
+                    "node:" + self.graph.edges[edge_id].start,
+                    "node:" + self.graph.edges[edge_id].end,
+                )
+            }
+            if any(not self._available(leases, occupancy, item, record) for item in resources):
+                intent = {}
+                if record.edge_id is None and path:
+                    intent = {
+                        "edge_id": path[0],
+                        "next_node": self.graph.destination(path[0], record.current_node),
+                        "path": path[1:],
+                    }
+                return record.model_copy(
+                    update={
+                        **intent,
+                        "state": NavigationState.QUEUEING,
+                        "reason": "physical_route_occupied",
+                        "updated_ms": now,
+                    }
+                )
         if (
             record.path
             and any(edge in blocked for edge in record.path)

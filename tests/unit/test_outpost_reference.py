@@ -134,7 +134,7 @@ def test_revised_tower_uses_separate_equipment_sections_inside_collision_envelop
     assert sections[-1]["top"] < 62
 
 
-@pytest.mark.parametrize("family", ["paint", "metal", "mineral", "road"])
+@pytest.mark.parametrize("family", list(recipe.SURFACE_PROFILES))
 def test_authored_surface_maps_are_repeatable_and_have_valid_tangent_normals(family):
     heights, normals = recipe.surface_grain(family, 16)
     assert (heights, normals) == recipe.surface_grain(family, 16)
@@ -145,6 +145,107 @@ def test_authored_surface_maps_are_repeatable_and_have_valid_tangent_normals(fam
         vector = [normals[offset + axis] * 2 - 1 for axis in range(3)]
         assert sum(value * value for value in vector) == pytest.approx(1)
         assert vector[2] > 0
+
+
+def test_paint_relief_is_submillimetre_and_does_not_inherit_cliff_scale():
+    paint = recipe.SURFACE_PROFILES["paint"]
+    paving = recipe.SURFACE_PROFILES["paving"]
+    mineral = recipe.SURFACE_PROFILES["mineral"]
+    assert paint["relief_metres"] <= 0.0002
+    assert paving["relief_metres"] <= 0.001
+    assert mineral["relief_metres"] > paving["relief_metres"] * 10
+    for family in ("paint", "metal", "paving"):
+        _, normals = recipe.surface_grain(family)
+        # Maximum microfacet tilt below 5 degrees; large seams belong to geometry.
+        assert min(normals[2::4]) * 2 - 1 > math.cos(math.radians(5))
+    assert recipe.surface_grain("paving", 16) != recipe.surface_grain("mineral", 16)
+
+
+def test_crossing_roads_have_one_top_surface_per_ground_location():
+    horizontal = [(-4, -1), (4, -1), (4, 1), (-4, 1)]
+    vertical = [(-1, -4), (1, -4), (1, 4), (-1, 4)]
+    diagonal = [(-4, -3), (-3, -4), (4, 3), (3, 4)]
+    routes = [
+        ("arrival", horizontal, "road"),
+        ("crossing", vertical, "road"),
+        ("footpath", diagonal, "paving"),
+    ]
+    pieces = list(recipe.road_surface_pieces(routes))
+    assert len(pieces) > len(routes)
+    for index, (_, polygon, _) in enumerate(pieces):
+        assert abs(recipe.polygon_area(polygon)) > 1e-8
+        for _, other, _ in pieces[:index]:
+            after = recipe.subtract_convex_polygon(polygon, other)
+            assert sum(abs(recipe.polygon_area(part)) for part in after) == pytest.approx(
+                abs(recipe.polygon_area(polygon)), abs=1e-7
+            )
+        vertices, faces = recipe.road_piece_mesh(polygon)
+        assert recipe.closed_edges(faces)
+        assert signed_volume(vertices, faces) == pytest.approx(
+            abs(recipe.polygon_area(polygon)) * 0.24
+        )
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_surface_partition_handles_touching_edges_and_fully_occluded_route(reverse):
+    first = [(0, 0), (2, 0), (2, 2), (0, 2)]
+    second = [(2, 0), (4, 0), (4, 2), (2, 2)]
+    if reverse:
+        first.reverse()
+        second.reverse()
+    pieces = list(
+        recipe.road_surface_pieces(
+            [("first", first, "road"), ("touching", second, "road"), ("duplicate", first, "paving")]
+        )
+    )
+    assert len(pieces) == 2
+    assert sum(abs(recipe.polygon_area(polygon)) for _, polygon, _ in pieces) == 8
+
+
+def test_cliff_fragments_stay_below_walkable_terrace_without_moving_deep_rocks():
+    assert recipe.fracture_center_y(-25, 8) == -25
+    assert recipe.fracture_center_y(-3, 8) + 8 == pytest.approx(-0.20)
+    for center in (-25, -15, -5, -3):
+        for radius in (3, 5, 8):
+            assert recipe.fracture_center_y(center, radius) + radius <= -0.20 + 1e-8
+
+
+def test_authored_perimeter_and_arrival_slabs_have_no_coplanar_top_overlap():
+    class CapturePaths(recipe.Author):
+        def __init__(self):
+            self.layout = recipe.canonical_layout(ROOT / "jarvis/society/mars/definition.json")
+            self.anchors = []
+            self.surfaces = []
+
+        def mesh(self, name, vertices, faces, material, smooth=False):
+            if "surface" in name:
+                self.surfaces.append(
+                    [(vertices[index][0], vertices[index][2]) for index in faces[0]]
+                )
+                assert recipe.closed_edges(faces)
+                assert all(vertices[index][1] == 0.006 for index in faces[0])
+
+        def group(self, *args):
+            pass  # Collection bookkeeping is irrelevant to the geometry check.
+
+        def tube(self, *args, **kwargs):
+            pass  # Markings are deliberately raised, not competing slab tops.
+
+        def lamp(self, *args):
+            pass  # Fixtures do not contribute road surface polygons.
+
+        def beam(self, *args):
+            pass  # Railings do not contribute road surface polygons.
+
+    author = CapturePaths()
+    author.paths()
+    assert 50 < len(author.surfaces) < 150
+    for index, polygon in enumerate(author.surfaces):
+        for other in author.surfaces[:index]:
+            remaining = recipe.subtract_convex_polygon(polygon, other)
+            assert sum(abs(recipe.polygon_area(piece)) for piece in remaining) == pytest.approx(
+                abs(recipe.polygon_area(polygon)), abs=1e-6
+            )
 
 
 def test_export_preserves_absolute_surface_tints_and_embeds_material_images():

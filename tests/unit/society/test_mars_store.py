@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import aiosqlite
 import pytest
@@ -14,6 +15,7 @@ from jarvis.society.mars.models import (
     StationCommand,
     StationError,
 )
+from jarvis.society.mars.navigation_store import MarsNavigationStore
 from jarvis.society.mars.store import MarsStore
 
 
@@ -24,6 +26,88 @@ async def store(tmp_path):
     try:
         yield value
     finally:
+        await value.close()
+
+
+@pytest.mark.parametrize("kind", ["station", "navigation"])
+@pytest.mark.parametrize("cancel_at", ["begin", "body"])
+async def test_cancellation_joins_rollback_before_unlock_and_connection_reuse(
+    tmp_path, kind, cancel_at
+):
+    """Gate real SQLite worker statements, including cancellation during cleanup."""
+    value = (MarsStore if kind == "station" else MarsNavigationStore)(tmp_path / "cancel.db")
+    await value.open()
+    transaction = value._transaction if kind == "station" else value.transaction
+    connection = value._conn
+    await connection.execute("CREATE TABLE cancellation_probe(value INTEGER)")
+    loop = asyncio.get_running_loop()
+    begin_seen, rollback_seen, body_seen = (asyncio.Event() for _ in range(3))
+    begin_release, rollback_release = threading.Event(), threading.Event()
+    callback_timeouts = []
+    first_begin = True
+
+    def trace(statement):
+        nonlocal first_begin
+        if statement == "BEGIN IMMEDIATE" and first_begin:
+            first_begin = False
+            loop.call_soon_threadsafe(begin_seen.set)
+            if cancel_at == "begin" and not begin_release.wait(timeout=10):
+                callback_timeouts.append("begin")
+        if statement == "ROLLBACK":
+            loop.call_soon_threadsafe(rollback_seen.set)
+            if not rollback_release.wait(timeout=10):
+                callback_timeouts.append("rollback")
+
+    await connection.set_trace_callback(trace)
+
+    async def write():
+        async with transaction() as conn:
+            await conn.execute("INSERT INTO cancellation_probe VALUES(1)")
+            body_seen.set()
+            await asyncio.Event().wait()
+
+    async def successor():
+        async with transaction() as conn:
+            async with conn.execute("SELECT COUNT(*) FROM cancellation_probe") as cursor:
+                assert (await cursor.fetchone())[0] == 0
+            await conn.execute("INSERT INTO cancellation_probe VALUES(2)")
+
+    writer = asyncio.create_task(write())
+    next_writer = None
+    try:
+        await asyncio.wait_for((begin_seen if cancel_at == "begin" else body_seen).wait(), 2)
+        writer.cancel()
+        await asyncio.sleep(0)
+        if cancel_at == "begin":
+            # BEGIN is accepted by the worker but still blocked before execution.
+            assert value._lock.locked() and not writer.done()
+            assert not body_seen.is_set()
+        begin_release.set()
+        await asyncio.wait_for(rollback_seen.wait(), 2)
+        writer.cancel()  # A stop deadline may cancel an owner already rolling back.
+        await asyncio.sleep(0)
+        assert value._lock.locked() and not writer.done()
+        next_writer = asyncio.create_task(successor())
+        await asyncio.sleep(0)
+        assert not next_writer.done()
+        rollback_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(writer, 2)
+        await asyncio.wait_for(next_writer, 2)
+        assert not connection.in_transaction
+        async with connection.execute("SELECT value FROM cancellation_probe") as cursor:
+            assert [row[0] for row in await cursor.fetchall()] == [2]
+        assert callback_timeouts == []
+    finally:
+        begin_release.set()
+        rollback_release.set()
+        writer.cancel()
+        if next_writer is not None:
+            next_writer.cancel()
+        await asyncio.gather(
+            writer, *([next_writer] if next_writer else []), return_exceptions=True
+        )
+        await connection.set_trace_callback(None)
         await value.close()
 
 

@@ -16,10 +16,12 @@ describe("canonical Mars foundation", () => {
     expect([...visited].sort()).toEqual(WORLD.navigation.nodes.map((node) => node.id).sort());
   });
 
-  it("keeps connected road collision at the same elevation on each shared node", () => {
+  it("keeps shared nodes within the authored/proxy deck seam tolerance", () => {
     for (const node of WORLD.navigation.nodes) {
-      expect(surfaceHeight(node.position[0], node.position[2]), node.id).toBeCloseTo(node.position[1] + 0.08, 1);
+      expect(Math.abs(surfaceHeight(node.position[0], node.position[2]) - node.position[1]), node.id).toBeLessThanOrEqual(0.081);
     }
+    expect(surfaceHeight(294, 64)).toBe(58); // Finished operations floor.
+    expect(surfaceHeight(365, 60)).toBeCloseTo(57.97, 5); // Authored terrace.
   });
 
   it("keeps rendered terrain below every road centre and avoids a raised endpoint cap", () => {
@@ -34,7 +36,7 @@ describe("canonical Mars foundation", () => {
     }
     const bridge = ROADS.find((road) => road.id === "route-01")!;
     const t = 126 / 131;
-    expect(surfaceHeight(251, 40 + 10 * t)).toBeCloseTo(48 + 10 * t + 0.08, 5);
+    expect(surfaceHeight(251, 40 + 10 * t)).toBeCloseTo(48 + 10 * t, 5);
     expect(projectRoad(251, 40 + 10 * t, bridge).distance).toBeCloseTo(0);
   });
 

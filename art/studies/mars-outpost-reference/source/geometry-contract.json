@@ -1,13 +1,13 @@
 {
-  "source_objects": 1215,
+  "source_objects": 1279,
   "export_meshes": 20,
-  "triangles": 211968,
+  "triangles": 212724,
   "asset_id": "communications-outpost-reference",
   "stage": "authored-reference-unreviewed",
   "blender_version": "5.0.1",
   "seed": 6901,
   "layout_version": 1,
-  "definition_sha256": "e626ae3f9d6ef7f5e3b3613e4d4bf3f2ef4a0416a142d884f4377a897a545978",
+  "definition_sha256": "1dae7897e477201b1a859fcc813e7ff5111982a2f2a330bd872245b67eb35c2d",
   "world_translation": [
     320,
     58,
@@ -16,8 +16,307 @@
   "source_axes": "Blender Z-up; runtime (x,y,z) maps to Blender (x,-z,y)",
   "export_axes": "Runtime Y-up via glTF exporter export_yup=True",
   "triangle_target": 300000,
-  "source_bytes": 28882004,
-  "source_sha256": "3b81643faaa3802916794286eb3c5be4997bac092358476d3627dc961acb50be",
+  "source_bytes": 29804549,
+  "source_sha256": "c233ea227eca1d3d9f4d1e565f6e6e9659ef04024ca56331ea240cb0f28bcec1",
+  "source_metadata_validation": {
+    "validated_fields": 42,
+    "packed_image_files": 20,
+    "file_browser_defaults": 1
+  },
+  "material_profiles": {
+    "paint": {
+      "seed": 41,
+      "tile_metres": 0.24,
+      "relief_metres": 0.00012,
+      "roughness_span": 0.025
+    },
+    "metal": {
+      "seed": 87,
+      "tile_metres": 0.2,
+      "relief_metres": 6e-05,
+      "roughness_span": 0.04
+    },
+    "mineral": {
+      "seed": 129,
+      "tile_metres": 1.8,
+      "relief_metres": 0.018,
+      "roughness_span": 0.1
+    },
+    "concrete": {
+      "seed": 173,
+      "tile_metres": 0.8,
+      "relief_metres": 0.0012,
+      "roughness_span": 0.05
+    },
+    "paving": {
+      "seed": 191,
+      "tile_metres": 0.65,
+      "relief_metres": 0.0006,
+      "roughness_span": 0.04
+    },
+    "road": {
+      "seed": 219,
+      "tile_metres": 0.6,
+      "relief_metres": 0.001,
+      "roughness_span": 0.06
+    }
+  },
+  "walk_surfaces": {
+    "coordinates": "asset-local runtime Y-up metres",
+    "route-01": {
+      "surface": "bridge",
+      "node_height_offset": 0
+    },
+    "route-02": {
+      "surface": "road",
+      "node_height_offset": 0.006
+    },
+    "route-03": {
+      "surface": "footpath",
+      "node_height_offset": 0.006
+    },
+    "route-04": {
+      "surface": "operations-entry",
+      "approach_surface": "terrace",
+      "interior_surface": "operations"
+    },
+    "route-05": {
+      "surface": "road",
+      "node_height_offset": 0.006
+    },
+    "perimeter": {
+      "top_y": 0.006
+    },
+    "terrace": {
+      "top_y": -0.03,
+      "footprint": [
+        [
+          55.0,
+          28.0
+        ],
+        [
+          54.880228059233346,
+          29.827366691080723
+        ],
+        [
+          54.52296156804695,
+          31.623466631435292
+        ],
+        [
+          53.93431345515801,
+          33.35756805311126
+        ],
+        [
+          53.124355652982146,
+          35.0
+        ],
+        [
+          52.10694676407729,
+          36.52266000612209
+        ],
+        [
+          50.89949493661167,
+          37.89949493661167
+        ],
+        [
+          49.52266000612209,
+          39.10694676407729
+        ],
+        [
+          48.0,
+          40.12435565298214
+        ],
+        [
+          46.35756805311126,
+          40.93431345515801
+        ],
+        [
+          44.62346663143529,
+          41.52296156804695
+        ],
+        [
+          42.82736669108073,
+          41.880228059233346
+        ],
+        [
+          41.0,
+          42.0
+        ],
+        [
+          -41.0,
+          42.0
+        ],
+        [
+          -42.82736669108072,
+          41.880228059233346
+        ],
+        [
+          -44.62346663143529,
+          41.52296156804695
+        ],
+        [
+          -46.35756805311126,
+          40.93431345515801
+        ],
+        [
+          -48.0,
+          40.124355652982146
+        ],
+        [
+          -49.52266000612209,
+          39.10694676407729
+        ],
+        [
+          -50.89949493661166,
+          37.89949493661167
+        ],
+        [
+          -52.10694676407729,
+          36.522660006122095
+        ],
+        [
+          -53.124355652982146,
+          35.0
+        ],
+        [
+          -53.93431345515801,
+          33.35756805311126
+        ],
+        [
+          -54.52296156804695,
+          31.623466631435296
+        ],
+        [
+          -54.880228059233346,
+          29.827366691080723
+        ],
+        [
+          -55.0,
+          28.0
+        ],
+        [
+          -55.0,
+          -28.0
+        ],
+        [
+          -54.880228059233346,
+          -29.82736669108072
+        ],
+        [
+          -54.52296156804695,
+          -31.623466631435292
+        ],
+        [
+          -53.93431345515802,
+          -33.35756805311126
+        ],
+        [
+          -53.12435565298214,
+          -35.0
+        ],
+        [
+          -52.10694676407729,
+          -36.52266000612209
+        ],
+        [
+          -50.89949493661167,
+          -37.89949493661166
+        ],
+        [
+          -49.522660006122095,
+          -39.10694676407729
+        ],
+        [
+          -48.00000000000001,
+          -40.12435565298214
+        ],
+        [
+          -46.35756805311125,
+          -40.93431345515802
+        ],
+        [
+          -44.62346663143529,
+          -41.52296156804695
+        ],
+        [
+          -42.82736669108073,
+          -41.880228059233346
+        ],
+        [
+          -41.0,
+          -42.0
+        ],
+        [
+          41.0,
+          -42.0
+        ],
+        [
+          42.82736669108072,
+          -41.880228059233346
+        ],
+        [
+          44.623466631435285,
+          -41.52296156804696
+        ],
+        [
+          46.35756805311126,
+          -40.93431345515801
+        ],
+        [
+          48.0,
+          -40.12435565298214
+        ],
+        [
+          49.52266000612209,
+          -39.10694676407729
+        ],
+        [
+          50.89949493661166,
+          -37.89949493661167
+        ],
+        [
+          52.10694676407729,
+          -36.522660006122095
+        ],
+        [
+          53.12435565298214,
+          -35.00000000000001
+        ],
+        [
+          53.93431345515802,
+          -33.35756805311125
+        ],
+        [
+          54.52296156804695,
+          -31.62346663143529
+        ],
+        [
+          54.880228059233346,
+          -29.827366691080723
+        ],
+        [
+          55.0,
+          -28.000000000000004
+        ]
+      ]
+    },
+    "operations": {
+      "structural_slab_top_y": -0.04,
+      "finished_floor_top_y": 0,
+      "finished_floor_xz_bounds": [
+        [
+          -35.6,
+          7.4
+        ],
+        [
+          -16.4,
+          20.6
+        ]
+      ],
+      "south_door_threshold_z": 21.0,
+      "approach_terrace_top_y": -0.03
+    }
+  },
   "colliders": [
     {
       "id": "plateau-surface",
@@ -1022,10 +1321,5 @@
     "No visual approval or production-catalog promotion is granted.",
     "Material batching reduces object selection granularity; stable anchors remain separate.",
     "Editable source rebuilds may vary in Blender metadata; byte identity is not promised."
-  ],
-  "source_metadata_validation": {
-    "validated_fields": 38,
-    "packed_image_files": 18,
-    "file_browser_defaults": 1
-  }
+  ]
 }

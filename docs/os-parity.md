@@ -38,6 +38,16 @@ performance and a clean single-key/headless installation remain unverified.
 Tests with fakes do not establish those device or provider results.
 See [the Mars runtime](agent-society/mars-runtime.md) for current support boundaries.
 
+Physical pedestrian visits use the same bounded SQLite/asyncio graph controller
+on Windows, macOS and Linux, with no native graphics requirement. The existing
+world owner resumes either station or navigation journals after boot; no-client
+movement, process-abort recovery, authority checks and repeated-cancellation
+rollback are covered by portable contracts. The ordinary-world HTTP surface is
+pedestrian-only; rover control and per-Swarm adapters remain unfinished. These
+contracts do not establish live native macOS/Linux rendering or fresh-install
+acceptance. Gigi is a client presentation over the existing assistant, not a
+new provider, worker scheduler or audio process.
+
 **Managed agent browser, 2026-09-10:** The Browser-Use environment and browser
 are provisioned per host with one shared installer. The live viewport uses
 CDP pixels over the authenticated app WebSocket, including on headless Linux;

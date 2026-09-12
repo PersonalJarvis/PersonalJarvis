@@ -8,9 +8,10 @@ export interface ViewPreferences {
   mode: CameraMode;
   viewpoint: Viewpoint;
   neutral: boolean;
+  shadows: boolean;
   pose: CameraPose | null;
 }
-const DEFAULTS: ViewPreferences = { mode: "overview", viewpoint: "reference", neutral: false, pose: null };
+const DEFAULTS: ViewPreferences = { mode: "overview", viewpoint: "reference", neutral: false, shadows: true, pose: null };
 export const VIEW_KEY = `jarvis.${WORLD.world_id}.view.v${WORLD.layout_version}`;
 export const VIEW_DIRECTIONS: Record<Viewpoint, Vec3> = {
   reference: [0.8, 0.9, 1], front: [0, 0.28, 1], rear: [0, 0.28, -1],
@@ -31,7 +32,7 @@ export function parseViewPreferences(raw: string | null): ViewPreferences {
       && pose.target.every((n: number, axis: number) => n >= WORLD_BOUNDS.min[axis] && n <= WORLD_BOUNDS.max[axis])
       && Math.hypot(...pose.position.map((n: number, axis: number) => n - pose.target[axis])) >= 0.5;
     return { mode: value.mode === "orbit" && !validPose ? "overview" : value.mode,
-      viewpoint: value.viewpoint, neutral: value.neutral, pose: validPose ? pose : null };
+      viewpoint: value.viewpoint, neutral: value.neutral, shadows: typeof value.shadows === "boolean" ? value.shadows : true, pose: validPose ? pose : null };
   } catch {
     // Corrupt or older client preferences must never prevent opening the world.
     return { ...DEFAULTS };

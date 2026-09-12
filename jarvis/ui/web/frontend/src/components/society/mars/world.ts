@@ -13,6 +13,8 @@ export const WORLD_BOUNDS: Bounds = {
   max: [...WORLD.bounds.max] as Vec3,
 };
 export const OUTPOST = WORLD.districts.find((d) => d.id === "communications-outpost")!;
+const OUTPOST_ORIGIN = outpostContract.world_translation;
+const WALK_SURFACES = outpostContract.walk_surfaces;
 const nodes = new Map(WORLD.navigation.nodes.map((node) => [node.id, node]));
 export const ROADS = WORLD.navigation.edges.map((edge) => ({
   ...edge,
@@ -105,26 +107,40 @@ export function terrainHeight(x: number, z: number): number {
 /** Roads and bridges retain stable collision independently of rendered detail. */
 export function surfaceHeight(x: number, z: number): number {
   let height = terrainHeight(x, z), nearest = Infinity;
-  const plateau = outpostContract.colliders.find((collider) => collider.shape === "plateau");
-  const footprint = plateau?.footprint;
-  if (footprint) {
-    const localX = x - 320, localZ = z - 50;
+  const localX = x - OUTPOST_ORIGIN[0], localZ = z - OUTPOST_ORIGIN[2];
+  const insideFootprint = (footprint: number[][]) => {
     let inside = false;
     for (let i = 0, j = footprint.length - 1; i < footprint.length; j = i++) {
       const [xi, zi] = footprint[i], [xj, zj] = footprint[j];
       if ((zi > localZ) !== (zj > localZ)
         && localX < (xj - xi) * (localZ - zi) / (zj - zi) + xi) inside = !inside;
     }
-    if (inside) height = 58 + (plateau.top_y ?? 0);
+    return inside;
+  };
+  const plateau = outpostContract.colliders.find((collider) => collider.shape === "plateau");
+  const footprint = plateau?.footprint;
+  if (footprint && insideFootprint(footprint)) height = OUTPOST_ORIGIN[1] + (plateau.top_y ?? 0);
+  if (insideFootprint(WALK_SURFACES.terrace.footprint)) height = OUTPOST_ORIGIN[1] + WALK_SURFACES.terrace.top_y;
+  const operations = WORLD.buildings.find((building) => building.id === "operations")!;
+  const [ox, , oz] = operations.position, [ow, , od] = operations.size;
+  if (Math.abs(x - ox) <= ow / 2 && Math.abs(z - oz) <= od / 2) {
+    const [min, max] = WALK_SURFACES.operations.finished_floor_xz_bounds;
+    const finished = localX >= min[0] && localX <= max[0] && localZ >= min[1] && localZ <= max[1];
+    height = OUTPOST_ORIGIN[1] + (finished ? WALK_SURFACES.operations.finished_floor_top_y : WALK_SURFACES.operations.structural_slab_top_y);
   }
   for (const road of ROADS) {
+    // The entry is terrace followed by the authored interior floor, not a
+    // separate raised deck. Preserve its graph edge without inventing a surface.
+    if (road.id === "route-04") continue;
     const projection = projectRoad(x, z, road);
     // Collision uses the same rectangular deck as RoadMesh, not a rounded
     // endpoint capsule that creates a step before two sloped routes meet.
     if (projection.along >= -1e-7 && projection.along <= 1 + 1e-7
       && projection.distance <= road.width / 2 && projection.distance < nearest) {
       nearest = projection.distance;
-      height = projection.height + 0.08;
+      const authored = WALK_SURFACES[road.id as keyof typeof WALK_SURFACES];
+      const offset = typeof authored === "object" && "node_height_offset" in authored ? authored.node_height_offset : 0.08;
+      height = projection.height + offset;
     }
   }
   return height;
@@ -190,7 +206,7 @@ export const BUILDING_COLLIDERS: Collider[] = WORLD.buildings.flatMap((building)
 }).concat(outpostContract.colliders.flatMap((collider) => {
   if (collider.shape !== "box" || !collider.center || !collider.size) return [];
   const [x, y, z] = collider.center, [w, h, d] = collider.size;
-  return [box("outpost:" + collider.id, x + 320, y + 58 - h / 2, z + 50, w, h, d)];
+  return [box("outpost:" + collider.id, x + OUTPOST_ORIGIN[0], y + OUTPOST_ORIGIN[1] - h / 2, z + OUTPOST_ORIGIN[2], w, h, d)];
 }));
 
 export const PLAYER_SPAWN: Vec3 = [WORLD.spawn.position[0], surfaceHeight(WORLD.spawn.position[0], WORLD.spawn.position[2]), WORLD.spawn.position[2]];

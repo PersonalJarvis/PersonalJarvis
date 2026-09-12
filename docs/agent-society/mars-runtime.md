@@ -24,13 +24,39 @@ The renderer is not an execution dependency. Unknown outcomes are reconciled
 without blindly repeating dispatch or cancellation.
 
 The `mars` OpenAPI group provides definition, snapshot, bounded cursor events,
-draft submission and scoped cancellation. Dynamic CLI discovery respects the
+draft submission and scoped cancellation, plus physical visit snapshots,
+pedestrian visit requests and movement-only stops. Dynamic CLI discovery respects the
 selected server and isolates cached schemas by its full base URL. Example:
 
 ```text
 jarvis --url http://127.0.0.1:47869 api mars --help
 jarvis --url http://127.0.0.1:47869 --json api mars get-mars-snapshot
+jarvis --url http://127.0.0.1:47869 --json api mars get-mars-navigation-snapshot
 ```
+
+## Physical visits
+
+The communications panel can send a real active roster member to the console,
+operations entrance or bridge waiting area. Visiting does not start a provider
+turn, and stopping a visit does not cancel the agent's work. A stopped agent
+remains physically present; moving it to the bridge waiting area frees the
+console route. The entrance is a usable destination on that route, so waiting
+there deliberately blocks through traffic.
+
+Visit identity, graph version, position and occupancy are durable. Physical
+bodies survive intent-lease expiry, cancellation and process restart; only
+actual departure clears their occupied resources. Movement rechecks roster
+authority and the kill switch. Routes, snapshots and actor counts are bounded.
+The process advances movement independently of renderer frames and draft-task
+inspection; clients display confirmed positions, with only short interpolation
+on the same graph segment. Spawn queues are not rendered as physical actors.
+The public API supports pedestrian visits; rover control remains separate work.
+
+The renderer currently uses named location markers while final worker art is
+pending. An optional Gigi companion uses the existing assistant's presentation
+state and opens its existing chat. It creates no second assistant or audio
+session. Camera focus requests live outside the Canvas so graphics recovery
+cannot replay an already-consumed focus action.
 
 ## Window ownership
 
@@ -53,15 +79,15 @@ acceptance are still open; the private issue tracker retains the full ledger.
 
 ## Restart recovery
 
-An existing `mars/ordinary.db` under the configured data directory schedules
+An existing `mars/ordinary.db` or `mars/navigation.db` under the configured data directory schedules
 recovery after the server boot chain yields. No browser tab, desktop renderer or
-HTTP request is needed to start that recovery. An installation without this
+HTTP request is needed to start that recovery. An installation without either
 journal does not construct the Society runtime or create Mars storage for it.
 The initial HTTP request and deferred recovery share one application-owned
 initialization task with a thirty-second deadline, service and journal owner.
 An individual HTTP disconnect cannot cancel initialization for other waiters.
 Explicit server stop fences late initialization, cancels and joins the owned
-startup/reconciliation tasks, then closes the journal before Society shutdown.
+startup/reconciliation/movement tasks, then closes both journals before Society shutdown.
 A collaborator that ignores cancellation produces an explicit shutdown timeout
 after five seconds; it cannot publish a late station owner. The server retains
 the Mars stop latch and task references, completes independent browser, chat,
@@ -81,7 +107,9 @@ and a clearly labeled test executor. It also covers concurrent first access,
 authority revocation, startup/shutdown races and private error logging. This is
 local process-failure evidence; actual host power loss, sleep/reboot, unavailable
 provider recovery and live external-outcome reconciliation remain separate
-acceptance work. No OS-specific lifecycle API or new execution scheduler is
+acceptance work. SQLite rollback is joined even if cancellation occurs while
+BEGIN is executing or a second cancellation arrives during rollback, before
+the connection lock is released for reuse. No OS-specific lifecycle API or new execution scheduler is
 introduced by this recovery path.
 
 ## Art and verification
@@ -92,6 +120,9 @@ they do not install Blender or obtain private reference images. Original concept
 inputs remain private. The source recipe validates packed portable paths,
 geometry, UVs, normals and linear vertex colors; numeric tests do not approve
 appearance. See the study source README for rebuild commands and limitations.
+The Gigi companion's separate editable source is under
+`art/studies/gigi-hover-companion`. Neither study grants colony-family rollout
+or replaces imported user figures. Full Outpost visual approval remains open.
 
 Focused checks live in `tests/contract/test_mars_*.py`, the Mars unit tests,
 `tests/unit/test_outpost_reference.py`, and frontend `components/society/mars`.
