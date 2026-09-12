@@ -1,0 +1,10 @@
+{
+  "blender": "5.0.1",
+  "body_height_m": 0.4,
+  "forward": "glTF +Z",
+  "pivot": "body bottom center",
+  "objects": 37,
+  "textures": "none; glTF PBR constants",
+  "approval": "pending",
+  "body_emblem": "none"
+}
