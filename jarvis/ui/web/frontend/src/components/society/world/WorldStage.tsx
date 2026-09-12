@@ -9,7 +9,7 @@
  *    IntersectionObserver (`useCanvasAwake`) — never `document.hidden`;
  *  - `prefers-reduced-motion` freezes the island (demand-driven frames, no
  *    wander, no water drift, no clouds) instead of animating it;
- *  - no WebGL at all → an honest fallback that points to the ledger.
+ *  - no WebGL at all → an honest fallback that points to the Agents workspace.
  *
  * Everything inside the canvas wears the world's own branding (§4.3); the
  * switch the section hands in for the top-right corner is app chrome.
@@ -65,10 +65,10 @@ import { SKY } from "./worldPalette";
 import { useWorldSettings } from "./worldSettings";
 
 export interface WorldStageProps {
-  /** App-chrome content for the HUD's top-right corner (the World / Ledger switch). */
+  /** App-chrome content for the HUD's top-right corner (the Map / Agents switch). */
   topRight?: ReactNode;
   /** Where the fallback sends someone whose window cannot draw 3D. */
-  onOpenLedger: () => void;
+  onOpenAgents: () => void;
   /** A figure was clicked (or the selection cleared). The model card hooks in here. */
   onSelectAgent?: (agentId: string | null) => void;
   /**
@@ -84,7 +84,7 @@ const CAMERA_START = cameraOffset();
 /** Zoom step the island snaps to when it shows a newborn leaving the foundry. */
 const SPAWN_ZOOM = 1;
 
-export function WorldStage({ topRight, onOpenLedger, onSelectAgent, onSelectPlace }: WorldStageProps) {
+export function WorldStage({ topRight, onOpenAgents, onSelectAgent, onSelectPlace }: WorldStageProps) {
   const t = useT();
   const ready = useLocaleChunk("society");
   const hostRef = useRef<HTMLDivElement>(null);
@@ -140,13 +140,13 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent, onSelectPlac
           <h3 className="font-display text-base font-semibold text-foreground">
             {t("society.world.webgl_missing_title")}
           </h3>
-          <p className="text-sm text-muted-foreground">{t("society.world.webgl_missing_body")}</p>
+          <p className="text-sm text-muted-foreground">{t("society.world.webgl_agents_body")}</p>
           <button
             type="button"
-            onClick={onOpenLedger}
+            onClick={onOpenAgents}
             className="inline-flex h-8 items-center rounded-md bg-secondary px-3 text-sm font-medium text-foreground hover:bg-muted"
           >
-            {t("society.world.open_ledger")}
+            {t("society.world.open_agents")}
           </button>
         </div>
       </div>
@@ -163,7 +163,7 @@ export function WorldStage({ topRight, onOpenLedger, onSelectAgent, onSelectPlac
         data-grain={grain > 0 ? grain : undefined}
         tabIndex={0}
         role="application"
-        aria-label={ready ? t("society.world.mode_world") : undefined}
+        aria-label={ready ? t("society.world.mode_map") : undefined}
       >
         <Canvas
           key={generation}

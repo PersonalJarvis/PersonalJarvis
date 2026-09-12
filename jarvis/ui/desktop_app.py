@@ -4454,6 +4454,12 @@ class DesktopApp:
         """
         return f"{WINDOW_TITLE} — {DETACHABLE_VIEWS[view]}"
 
+    def set_fullscreen(self, enabled: bool) -> dict[str, Any]:
+        """Set the main window's fullscreen state without blocking the API loop."""
+        from jarvis.ui.window_fullscreen import set_window_fullscreen
+
+        return set_window_fullscreen(self._window, enabled)
+
     def _window_background(self) -> str:
         """The theme-correct frame color, same derivation as the main window."""
         from jarvis.ui.theme import window_background

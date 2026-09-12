@@ -1,3 +1,4 @@
+import { useSocietyShell } from "@/store/societyShell";
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 
 import { isSectionId, useEventStore } from "@/store/events";
@@ -272,6 +273,9 @@ export default function App() {
   );
 
   const activeSection = useEventStore((s) => s.activeSection);
+  const agentsNavOpen = useSocietyShell((s) => s.navigationOpen);
+  const toggleAgentsNav = useSocietyShell((s) => s.toggleNavigation);
+  const hideNavigation = activeSection === "agents" && !agentsNavOpen;
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
 
@@ -328,10 +332,11 @@ export default function App() {
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
       <DesktopWallpaper />
 
+      {!hideNavigation && <>
       <Sidebar
         width={sidebar.size}
-        collapsed={navCollapsed}
-        onToggleCollapsed={toggleNav}
+        collapsed={activeSection === "agents" ? false : navCollapsed}
+        onToggleCollapsed={activeSection === "agents" ? toggleAgentsNav : toggleNav}
       />
 
       <PaneResizer
@@ -342,6 +347,7 @@ export default function App() {
         active={sidebar.isResizing}
         title="Drag to resize the sidebar — double-click to reset"
       />
+      </>}
 
       {/*
         The stage column carries NO z-index, and must not get one back.

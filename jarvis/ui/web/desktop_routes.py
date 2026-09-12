@@ -118,3 +118,21 @@ async def window_reattach(body: DetachBody, request: Request) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         log.warning("window reattach failed: %s: %s", type(exc).__name__, exc)
         return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+
+class FullscreenBody(BaseModel):
+    enabled: bool
+
+
+@router.post("/fullscreen", operation_id="fullscreen")
+async def window_fullscreen(body: FullscreenBody, request: Request) -> dict[str, Any]:
+    """Enter or leave native desktop fullscreen."""
+    desktop = getattr(request.app.state, "desktop_app", None)
+    setter = getattr(desktop, "set_fullscreen", None)
+    if not callable(setter):
+        return {"ok": False, "reason": "no_desktop_shell"}
+    try:
+        return await asyncio.to_thread(setter, body.enabled)
+    except Exception:
+        log.exception("Could not change desktop fullscreen")
+        return {"ok": False, "reason": "fullscreen_failed"}
