@@ -249,13 +249,20 @@ def test_amd_absence_degrades_without_importing_native_libraries(monkeypatch, pl
         amd_mcp.read_amd_status()
 
 
-def test_amd_reads_only_fixed_json_commands(monkeypatch):
+def test_amd_reads_only_fixed_json_commands(monkeypatch, tmp_path):
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
     from jarvis.marketplace import amd_mcp
 
     calls = []
     monkeypatch.setattr(amd_mcp.sys, "platform", "linux")
     monkeypatch.setattr(amd_mcp.shutil, "which", lambda _: "/opt/rocm/bin/amd-smi")
+    pci = tmp_path / "pci"
+    gpu = pci / "gpu-device"
+    gpu.mkdir(parents=True)
+    (gpu / "vendor").write_text("0x1002\n", encoding="ascii")
+    (gpu / "class").write_text("0x030000\n", encoding="ascii")
+    monkeypatch.setattr(amd_mcp, "_PCI_DEVICES", pci)
+    monkeypatch.setattr(amd_mcp, "_DRM_DEVICES", tmp_path / "drm")
 
     def run(args, **kwargs):
         calls.append(args)

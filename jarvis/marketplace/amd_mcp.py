@@ -7,9 +7,57 @@ import json
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+_PCI_DEVICES = Path("/sys/bus/pci/devices")
+_DRM_DEVICES = Path("/sys/class/drm")
+
+
+def _amd_hardware_unavailable_reason() -> str | None:
+    """Read Linux device metadata only; an installed CLI is not hardware evidence.
+
+    PCI display/accelerator class filtering avoids treating AMD CPU chipsets as
+    GPUs. DRM is a fallback for hosts exposing graphics devices but not the
+    complete PCI tree. Restricted/container sysfs is explicitly unverifiable,
+    not evidence that the physical host has no AMD GPU.
+    """
+    readable_root = False
+    incomplete = False
+    for root, drm in ((_PCI_DEVICES, False), (_DRM_DEVICES, True)):
+        try:
+            devices = list(root.iterdir())
+            readable_root = True
+        except OSError:
+            # An alternative sysfs view can still prove GPU presence.
+            continue
+        for entry in devices:
+            if drm and not (entry.name.startswith("card") and entry.name[4:].isdigit()):
+                continue
+            device = entry / "device" if drm else entry
+            try:
+                vendor = (device / "vendor").read_text(encoding="ascii").strip().lower()
+                if vendor != "0x1002":
+                    continue
+                if drm:
+                    return None
+                device_class = int((device / "class").read_text(encoding="ascii").strip(), 16)
+                if device_class >> 16 in (0x03, 0x12):
+                    return None
+            except (OSError, UnicodeError, ValueError):
+                # Hot unplug and unreadable sysfs must not escape into the UI.
+                incomplete = True
+    if not readable_root or incomplete:
+        return (
+            "AMD GPU availability could not be verified from Linux device information. "
+            "Check hardware access and permissions, including container device access."
+        )
+    return (
+        "No AMD GPU is visible to this connector. A compatible AMD GPU must be exposed "
+        "to this Linux environment before connecting."
+    )
 
 
 def amd_unavailable_reason() -> str | None:
@@ -24,7 +72,7 @@ def amd_unavailable_reason() -> str | None:
             "AMD SMI is unavailable. Install AMD's supported SMI/ROCm tooling "
             "on a compatible AMD host. Missing metrics are never reported as zero."
         )
-    return None
+    return _amd_hardware_unavailable_reason()
 
 
 def read_amd_status() -> dict[str, Any]:
