@@ -37,7 +37,10 @@ export function splitMessageChips(
     return choices.length ? choices.map((row) => ({ type: "chip" as const, row })) : [];
   }
   const tags = choiceLookup(choices);
-  const used = new Set<ToolChoice>();
+  // Event receipts can be replayed from an older client which wrote the same
+  // choice twice. Identity is the tool id, not the object instance: JSON
+  // hydration creates a fresh object for every copy.
+  const used = new Set<string>();
   const parts: Array<{ type: "text"; text: string } | { type: "chip"; row: ToolChoice }> = [];
   const chunks = text.split(CHIP_RE);
   for (const chunk of chunks) {
@@ -45,14 +48,15 @@ export function splitMessageChips(
     const name = chunk.startsWith("@") ? chunk.slice(1).toLowerCase() : "";
     const row = name ? tags.get(name) : undefined;
     if (row) {
-      parts.push({ type: "chip", row });
-      used.add(row);
+      if (!used.has(row.id)) parts.push({ type: "chip", row });
+      used.add(row.id);
     } else {
       parts.push({ type: "text", text: chunk });
     }
   }
   for (const row of choices) {
-    if (!used.has(row)) parts.push({ type: "chip", row });
+    if (!used.has(row.id)) parts.push({ type: "chip", row });
+    used.add(row.id);
   }
   return parts;
 }

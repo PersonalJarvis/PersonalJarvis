@@ -35,4 +35,12 @@ describe("composer chips", () => {
     expect(parts[0]).toEqual({ type: "text", text: "Find that email" });
     expect(parts[1]).toEqual({ type: "chip", row: gmail });
   });
+
+  it("renders each selected connector once when an old receipt duplicates it", () => {
+    const duplicate = { ...gmail };
+    const parts = splitMessageChips("Use @gmail", [gmail, duplicate]);
+    expect(parts.filter((part) => part.type === "chip")).toEqual([
+      { type: "chip", row: duplicate },
+    ]);
+  });
 });

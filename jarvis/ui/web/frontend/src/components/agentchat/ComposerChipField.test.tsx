@@ -66,4 +66,12 @@ describe("ComposerChipField", () => {
     expect(draft.text).toContain("@gmail");
     expect(draft.caret).toBeGreaterThan(draft.text.indexOf("@gmail"));
   });
+
+  it("keeps an already selected connector to one chip", () => {
+    const handle = createRef<ComposerChipFieldHandle>();
+    render(<ComposerChipField ref={handle} placeholder="Message" onSubmit={() => {}} onDraftChange={() => {}} />);
+    handle.current?.insertChip(gmail);
+    handle.current?.insertChip(gmail);
+    expect(handle.current?.getDraft().choices.map((row) => row.id)).toEqual(["plugin:gmail"]);
+  });
 });

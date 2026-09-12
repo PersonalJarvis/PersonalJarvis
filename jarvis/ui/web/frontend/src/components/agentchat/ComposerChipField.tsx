@@ -223,6 +223,14 @@ export const ComposerChipField = forwardRef<
 
   useImperativeHandle(ref, () => ({
     insertChip(row) {
+      // A connector is a per-message selection, not a repeatable word. The
+      // Add menu may be reopened after the field has emitted its draft, so
+      // reject the second insertion at the source rather than serializing two
+      // identical connector IDs to the turn.
+      if (elRef.current && serialize(elRef.current).choices.some((choice) => choice.id === row.id)) {
+        elRef.current.focus();
+        return;
+      }
       insertNode(createChipEl(row));
     },
     insertText(text) {

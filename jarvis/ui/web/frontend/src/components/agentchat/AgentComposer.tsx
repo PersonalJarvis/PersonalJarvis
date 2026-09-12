@@ -208,7 +208,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       await send(
         content,
         attached,
-        selected.map((row) => row.id),
+        [...new Set(selected.map((row) => row.id))],
       );
     else await send(content, attached);
     if (sessionAtSend && store.getState().activeSessionId !== sessionAtSend) return;
