@@ -113,6 +113,40 @@ async def test_second_viewer_receives_static_page_without_new_browser(live):
         await live.close()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="requires the native Windows window transport")
+async def test_native_chrome_toolbar_keyboard_and_agent_handoff(live, site):
+    agent = SimpleNamespace(agent_id="native", model="", browser_allowed_domains=["http*://127.0.0.1"])
+    try:
+        session, queue = await live.subscribe(agent)
+        while True:
+            event = await asyncio.wait_for(queue.get(), 10)
+            if event["kind"] == "state":
+                break
+        assert event["full_window"] is True
+        await live.control(session, "viewer", "takeover", {"enabled": True})
+        await live.control(session, "viewer", "key", {"key": "Control+t"})
+        await live.control(session, "viewer", "text", {"text": site})
+        await live.control(session, "viewer", "key", {"key": "Enter"})
+        try:
+            async with asyncio.timeout(15):
+                while True:
+                    event = await queue.get()
+                    if event["kind"] == "state" and event["url"].rstrip("/") == site:
+                        break
+        except TimeoutError:
+            pytest.fail(f"Native browser did not select the navigated tab: {session.state}")
+        assert len(event["tabs"]) == 2
+        await live.control(session, "viewer", "takeover", {"enabled": False})
+        async with asyncio.timeout(5):
+            while True:
+                event = await queue.get()
+                if event["kind"] == "state" and not event["manual"]:
+                    break
+        assert event["url"].rstrip("/") == site
+    finally:
+        await live.close()
+
+
 async def test_takeover_pauses_and_resumes_the_same_browser_job(live, site):
     import json
     import contextvars

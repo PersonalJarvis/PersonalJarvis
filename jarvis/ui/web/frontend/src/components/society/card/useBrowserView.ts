@@ -5,6 +5,7 @@ import { jitteredDelay, requestConnect } from "@/lib/connectBudget";
 export interface BrowserViewState {
   connected: boolean;
   ready: boolean;
+  fullWindow: boolean;
   manual: boolean;
   running: boolean;
   controlPending: boolean;
@@ -16,7 +17,7 @@ export interface BrowserViewState {
   dialog?: { type: string; message: string };
 }
 const empty: BrowserViewState = {
-  connected: false, ready: false, manual: false, running: false, controlPending: false,
+  connected: false, ready: false, fullWindow: false, manual: false, running: false, controlPending: false,
   url: "", tabs: [], target: "", error: "",
 };
 
@@ -92,6 +93,9 @@ export function useBrowserView(agentId: string) {
               if (!Number.isFinite(event.timestamp)) return;
               lastLiveEvent = Date.now();
               attempt = 0;
+              if (typeof event.full_window === "boolean") {
+                setState((s) => s.fullWindow === event.full_window ? s : { ...s, fullWindow: event.full_window });
+              }
               if (event.generation !== generation) {
                 generation = event.generation;
                 lastSequence = -1;
@@ -108,7 +112,7 @@ export function useBrowserView(agentId: string) {
             } else if (event.kind === "state") {
               lastLiveEvent = Date.now();
               setState((s) => ({ ...s, manual: event.manual, running: event.running,
-                url: event.url, target: event.target, tabs: event.tabs ?? [] }));
+                url: event.url, target: event.target, tabs: event.tabs ?? [], fullWindow: Boolean(event.full_window) }));
             } else if (event.kind === "control") {
               setState((s) => ({ ...s, controlPending: false, error: event.ok ? "" : event.error,
                 manual: typeof event.manual === "boolean" ? event.manual : s.manual }));

@@ -1,5 +1,22 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Full Chrome window preview (2026-09-12, T3; acceptance open)
+
+Windows interactive sessions now capture the owned Chrome window with Windows
+Graphics Capture, including the original tab strip and address bar. The browser
+worker probes the input desktop and capture package before selecting this path.
+Its frame dimensions drive pointer mapping, and input targets only the owned
+Chrome process. The capture thread is stopped and joined before browser cleanup.
+Dependencies are platform-marked inside the isolated, hash-locked browser runtime;
+base installation and headless boot do not import native capture packages.
+
+macOS, Linux and non-interactive Windows retain the existing page-only CDP stream
+and controls. Full native Chrome UI capture/input is **not implemented** on macOS
+or Linux and must not be described as native-window parity or release-complete.
+The existing page-stream behavior on those hosts is intentionally preserved.
+Current native evidence is Windows-only; cross-platform full-window acceptance
+remains open under RUB-17.
+
 ## Service connectors (2026-09-10, T3)
 
 The 21 cloud-service additions use the same HTTP/OAuth code on Windows, macOS

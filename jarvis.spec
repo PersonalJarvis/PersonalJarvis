@@ -70,6 +70,7 @@ VERSION = _package_version()
 
 datas = []
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/live_runner.py"), "jarvis/society/browser"))
+datas.append((str(PROJECT_ROOT / "jarvis/society/browser/native_window.py"), "jarvis/society/browser"))
 
 # Include the frontend build when present. Preserve its package-relative layout
 # so the FastAPI static-files mount can serve it from a frozen application.

@@ -35,7 +35,6 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
     )}>
       <div className="mb-1 flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
         <div className="min-w-0">
-          <div className="font-medium text-foreground">Personal Jarvis</div>
           <div className="truncate">{agent.name} · {status}</div>
         </div>
         <button className={buttonClass} onClick={() => setExpanded((v) => !v)}
@@ -43,7 +42,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
           {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
         </button>
       </div>
-      {expanded && (
+      {expanded && state.ready && !state.fullWindow && (
         <div className="mb-2 flex items-center gap-1">
           <button disabled={!state.manual} className={buttonClass} onClick={() => control("back")} aria-label={t("society.browser_live.back")}><ArrowLeft size={16} /></button>
           <button disabled={!state.manual} className={buttonClass} onClick={() => control("forward")} aria-label={t("society.browser_live.forward")}><ArrowRight size={16} /></button>
@@ -68,10 +67,11 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
             if (!state.manual) return;
             e.currentTarget.focus();
             const box = e.currentTarget.getBoundingClientRect();
-            const scale = Math.min(box.width / 1280, box.height / 800);
-            const x = (e.clientX - box.left - (box.width - 1280 * scale) / 2) / scale;
-            const y = (e.clientY - box.top - (box.height - 800 * scale) / 2) / scale;
-            if (x >= 0 && y >= 0 && x <= 1280 && y <= 800) control("click", { x, y });
+            const { width, height } = e.currentTarget;
+            const scale = Math.min(box.width / width, box.height / height);
+            const x = (e.clientX - box.left - (box.width - width * scale) / 2) / scale;
+            const y = (e.clientY - box.top - (box.height - height * scale) / 2) / scale;
+            if (x >= 0 && y >= 0 && x <= width && y <= height) control("click", { x, y });
           }}
           onWheel={(e) => { if (state.manual) control("scroll", { dx: e.deltaX, dy: e.deltaY }); }}
           onPaste={(e) => {

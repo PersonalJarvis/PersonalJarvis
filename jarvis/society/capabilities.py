@@ -228,7 +228,7 @@ def build_catalog(
         kind = CapabilityKind(cap_id.split(":", 1)[0])
         aliases: tuple[str, ...] = ()
         if cap_id == "core:browser":
-            aliases = ("browser", "browser-use", "browser_use")
+            aliases = ("browser", "chrome", "browser-use", "browser_use")
         if kind is CapabilityKind.MCP:
             server = name.split("/", 1)[0]
             aliases = (server,)
@@ -237,7 +237,7 @@ def build_catalog(
             CapabilityRow(
                 id=cap_id,
                 kind=kind,
-                label=_label(name, kind),
+                label="Chrome / Browser" if cap_id == "core:browser" else _label(name, kind),
                 one_liner=_one_liner(getattr(tool, "description", "") or ""),
                 risk_tier=str(getattr(tool, "risk_tier", "monitor") or "monitor"),
                 connected=is_connected,
