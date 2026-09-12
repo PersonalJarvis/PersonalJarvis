@@ -235,6 +235,10 @@ class LocalFinalSTT:
                 f"the dictation worker takes 16 kHz audio, not {sample_rate} Hz"
             )
         if not self._call_lock.acquire(blocking=False):
+            if self.is_loading:
+                raise LocalEngineUnavailable(
+                    "the local dictation engine is still starting"
+                )
             await asyncio.to_thread(self.recover)
             raise LocalEngineUnavailable(
                 "a previous call is still waiting on the dictation worker; "

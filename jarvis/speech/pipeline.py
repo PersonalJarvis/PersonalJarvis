@@ -11217,6 +11217,11 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001 — lazy final STT still gets a chance
             log.warning("Dictation STT warm-up failed; using lazy load: %s", exc)
         else:
+            if not getattr(provider, "is_warm", True):
+                log.info(
+                    "Dictation STT warm-up ended without a ready engine; retry remains enabled."
+                )
+                return
             self._dictation_warmup_succeeded_provider = provider
             log.info(
                 "Dictation STT warm-up done in %.0f ms.",
@@ -11234,7 +11239,10 @@ class SpeechPipeline:
         provider = provider if provider is not None else self._dictation_stt()
         if provider is None or not callable(getattr(provider, "warm_up", None)):
             return
-        if getattr(self, "_dictation_warmup_succeeded_provider", None) is provider:
+        if (
+            getattr(self, "_dictation_warmup_succeeded_provider", None) is provider
+            and getattr(provider, "is_warm", True)
+        ):
             return
         current = getattr(self, "_dictation_warmup_task", None)
         current_provider = getattr(self, "_dictation_warmup_provider", None)
