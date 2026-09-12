@@ -1065,6 +1065,8 @@ def _with_identity(
         return prompt
     if resume:
         if identity.session_id.startswith("society:"):
+            from jarvis.core.response_style import CONVERSATIONAL_TURN_REMINDER
+
             # A resumed vendor conversation may remember an old, incomplete
             # tool catalog. Refresh the execution contract without repeating
             # the large identity/history block on every turn.
@@ -1081,7 +1083,9 @@ def _with_identity(
                 "Use existing connected-account information; ask only for essential "
                 "missing information. If a tool is unavailable or fails, report the "
                 "actual blocker without claiming completion. Existing permission "
-                "rules still apply.\n</jarvis_turn_context>\n\n" + prompt
+                "rules still apply.\n"
+                + CONVERSATIONAL_TURN_REMINDER
+                + "\n</jarvis_turn_context>\n\n" + prompt
             )
         return prompt
     text = identity.compact if compact else identity.text

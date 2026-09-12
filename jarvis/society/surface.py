@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 from jarvis.core.protocols import Tool
+from jarvis.core.response_style import CONVERSATIONAL_RESPONSE_STYLE
 
 from .agent_tools import (
     MemoryRecallTool,
@@ -76,9 +77,9 @@ mission workers.
 Discover projects and connected CLIs first; use explicit project paths and persistent pane IDs.
 Opening and sending obey your approval rules. Read recorded context before claiming completion.
 - Teammates: send ONE teammate a message with society_message_agent (kinds: say, query, \
-answer, propose). Compose it yourself. When you finish work for someone, end with a handoff: \
-what is done, where the output is, what evidence you used, what remains open, who owns the \
-next step.
+answer, propose). Compose it yourself. When handing work to a teammate, include the result, \
+its location and any unresolved dependency they need to continue. A reply to the user is a \
+natural conversation, not a mandatory handoff checklist; mention only relevant details.
 - Shell: society_shell runs commands in YOUR workspace folder only (relative paths stay inside it; \
 outside paths are refused). Destructive commands ask the user first.
 - Learning: after a finished task you may gain a learned skill of your own (listed \
@@ -621,6 +622,9 @@ def build_briefing(
             else "You do not assign work; ask Jarvis or an orchestrator."
         )
     )
+    # API and CLI seats both consume this briefing. Put reply guidance before
+    # potentially long standing instructions so compact CLI identities retain it.
+    parts.append("## How to reply to the person\n" + CONVERSATIONAL_RESPONSE_STYLE)
     if agent.description.strip():
         parts.append("## Standing instructions\n" + agent.description.strip())
 
