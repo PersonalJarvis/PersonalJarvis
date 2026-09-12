@@ -8,6 +8,7 @@ import {
   SIDEBAR_RAIL_AT_WIDTH,
   SIDEBAR_RAIL_WIDTH,
 } from "@/components/layout/Sidebar";
+import { NAV_GROUPS, NAV_FOOTER_ITEMS } from "@/components/layout/navGroups";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { useIdeChatStore } from "@/store/ideChat";
@@ -271,6 +272,7 @@ describe("Sidebar brain footer", () => {
     useEventStore.setState({ brainProvider: "claude-api", brainModel: "claude-opus-4-8" });
 
     renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
     expect(screen.getByText("Claude (API)")).toBeTruthy();
     const modelLine = screen.getByTestId("sidebar-brain-model");
@@ -281,6 +283,7 @@ describe("Sidebar brain footer", () => {
     useEventStore.setState({ brainProvider: "gemini", brainModel: "" });
 
     renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
     expect(screen.getByText("Gemini")).toBeTruthy();
     expect(screen.queryByTestId("sidebar-brain-model")).toBeNull();
@@ -289,6 +292,7 @@ describe("Sidebar brain footer", () => {
   test("follows a live model change", () => {
     useEventStore.setState({ brainProvider: "claude-api", brainModel: "claude-opus-4-8" });
     renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
     expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("claude-opus-4-8");
 
     act(() => {
@@ -333,6 +337,7 @@ describe("Sidebar footer in realtime voice mode", () => {
     };
 
     renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
     expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Realtime");
     expect(screen.getByText("Gemini Live")).toBeTruthy();
@@ -359,6 +364,7 @@ describe("Sidebar footer in realtime voice mode", () => {
     };
 
     renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
     expect(screen.getByText("OpenAI Realtime")).toBeTruthy();
     expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("gpt-realtime-2.1");
@@ -376,6 +382,7 @@ describe("Sidebar footer in realtime voice mode", () => {
     };
 
     renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
     expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Brain");
     expect(screen.getByText("OpenRouter")).toBeTruthy();
@@ -394,6 +401,7 @@ describe("Sidebar footer in realtime voice mode", () => {
     };
 
     renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
     expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Realtime");
     expect(screen.getByText("Vertex AI Live")).toBeTruthy();
@@ -567,9 +575,7 @@ describe("Sidebar icon rail", () => {
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     expect(screen.getByTestId("sidebar").dataset.railed).toBe("false");
-    // "Tools" starts folded so the column fits 1080 px; its label is the fold.
-    expect(screen.getByTestId("nav-group-tools").dataset.open).toBe("false");
-    fireEvent.click(screen.getByTestId("nav-group-toggle-tools"));
+    fireEvent.click(screen.getByTestId("sidebar-tools-toggle"));
     // The label is ON the row, and names the workspace rather than carrying
     // the retired generic "Chat" label shown in the product screenshot.
     expect(screen.getByTestId("nav-row-agentic-ide").textContent).toContain(
@@ -586,38 +592,25 @@ describe("Sidebar icon rail", () => {
     // shows half a word per row and reads as a rendering fault, so it is
     // skipped rather than rendered at the dragged width.
     expect(aside.style.width).toBe(`${SIDEBAR_RAIL_WIDTH}px`);
-    expect(screen.getByTestId("nav-row-agentic-ide").textContent?.trim()).toBe(
-      "",
-    );
+    expect(screen.getByTestId("nav-row-agents").getAttribute("aria-label")).toBeTruthy();
   });
 
   test("keeps every destination named once its label is off the screen", () => {
     renderSidebar(SIDEBAR_RAIL_WIDTH);
 
-    // The label survives as the accessible name, and the rail draws its own
-    // label beside the icon on hover — it is off the row, not gone. (No native
-    // title: a browser tooltip on top of the rail's label would be a second,
-    // late label.) WHAT they say is the locale's business.
-    const row = screen.getByTestId("nav-row-agentic-ide");
+    const row = screen.getByTestId("nav-row-agents");
     expect(row.getAttribute("aria-label")).toBeTruthy();
-    expect(row.getAttribute("title")).toBeNull();
-    act(() => {
-      row.focus();
-      row.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
-    });
-    expect(screen.getByTestId("dock-label").textContent).toContain(
-      row.getAttribute("aria-label"),
-    );
+    expect(row.getAttribute("title")).toBe(row.getAttribute("aria-label"));
   });
 
   test("still switches section on a click", () => {
     renderSidebar(SIDEBAR_RAIL_WIDTH);
 
     act(() => {
-      screen.getByTestId("nav-row-agentic-ide").click();
+      screen.getByTestId("nav-row-agents").click();
     });
 
-    expect(useEventStore.getState().activeSection).toBe("agentic-ide");
+    expect(useEventStore.getState().activeSection).toBe("agents");
   });
 
   test("keeps the rail canvas transparent and the active control glassy", () => {
@@ -735,204 +728,62 @@ describe("Sidebar collapse toggle", () => {
   });
 });
 
-describe("the Agentic IDE's chat face", () => {
-  /*
-   * Chat mode in the IDE turns this column into the workspace's session
-   * list and nothing else. The sections are one button away, and a row at
-   * the top of them brings the chats back; every entry into chat mode
-   * opens on the chats again (maintainer, 2026-08-27).
-   */
+describe("compact sidebar navigation", () => {
   beforeEach(() => {
-    useIdeChatStore.setState({
-      view: "chat",
-      workspace: { id: "w1", name: "Personal Jarvis", path: "/work/jarvis" },
-      workspaces: [{ id: "w1", name: "Personal Jarvis", folder: "/work/jarvis", active: true }],
-    });
+    useEventStore.setState({ activeSection: "chats", connected: true });
+    useIdeChatStore.setState({ workspaces: [], view: "chat" });
   });
+  afterEach(() => cleanup());
 
-  afterEach(() => {
-    useIdeChatStore.setState({
-      view: "grid",
-      workspace: null,
-      workspaces: [],
-    });
-  });
-
-  test("shows only the workspace's chats by default", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
-
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-
-    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
-    expect(screen.queryByTestId("nav-row-settings")).toBeNull();
-    expect(screen.getByTestId("sidebar-show-sections")).toBeTruthy();
-  });
-
-  test("reaches the sections behind one button and comes back", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-
-    act(() => {
-      screen.getByTestId("sidebar-show-sections").click();
-    });
-    expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
-    expect(screen.queryByTestId("workspace-chats")).toBeNull();
-
-    act(() => {
-      screen.getByTestId("sidebar-show-chats").click();
-    });
-    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
-    expect(screen.queryByTestId("nav-row-settings")).toBeNull();
-  });
-
-  test("the IDE's own row is a request for its chats", () => {
-    // From the sections, pressing the row the IDE itself answers to must not
-    // leave the sections standing: it is the way back as much as the button.
-    useEventStore.setState({ activeSection: "agentic-ide" });
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-
-    act(() => {
-      screen.getByTestId("sidebar-show-sections").click();
-    });
-    act(() => {
-      screen.getByTestId("nav-row-agentic-ide").click();
-    });
-
-    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
-    expect(screen.queryByTestId("nav-row-settings")).toBeNull();
-  });
-
-  test("opens on the chats again after the IDE was left and returned to", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-
-    act(() => {
-      screen.getByTestId("sidebar-show-sections").click();
-    });
-    act(() => {
-      screen.getByTestId("nav-row-settings").click();
-    });
-    // Another section: plain navigation, no way "back" to offer.
-    expect(screen.queryByTestId("workspace-chats")).toBeNull();
-    expect(screen.queryByTestId("sidebar-show-chats")).toBeNull();
-
-    act(() => {
-      useEventStore.setState({ activeSection: "agentic-ide" });
-    });
-    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
-    expect(screen.queryByTestId("nav-row-settings")).toBeNull();
-  });
-
-  /*
-   * The launcher for one more workspace deactivates the front tab while it
-   * asks for a folder — and that must not take the list of running
-   * workspaces away with it, which is what a takeover gated on the ACTIVE
-   * workspace did.
-   */
-  test("keeps the chats while another workspace is being opened", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
-    useIdeChatStore.setState({ workspace: null });
-
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-
-    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
-  });
-
-  test("drops the chat face once nothing is open at all", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
-    useIdeChatStore.setState({ workspace: null, workspaces: [] });
-
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-
-    expect(screen.queryByTestId("workspace-chats")).toBeNull();
-    expect(screen.queryByTestId("sidebar-show-chats")).toBeNull();
-    expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
-  });
-
-  test("leaves every other section its plain navigation", () => {
-    // The IDE is in chat mode, but the user is reading another section: its
-    // workspace list has no business standing in that column.
-    useEventStore.setState({ activeSection: "settings" });
-
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-
-    expect(screen.queryByTestId("workspace-chats")).toBeNull();
-    expect(screen.queryByTestId("sidebar-show-chats")).toBeNull();
-    expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
-  });
-});
-
-describe("the Chat row's history", () => {
-  /*
-   * The recent conversations hang under the Chat row and fold out on the
-   * row's chevron. The row itself keeps opening the chat: reaching the
-   * section must not unfold the list, and the fold is remembered.
-   */
-  beforeEach(() => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) =>
-        String(url).startsWith("/api/chats")
-          ? new Response(JSON.stringify([]), { status: 200 })
-          : new Response(JSON.stringify({ sessions: [] }), { status: 200 }),
-      ),
-    );
-    window.localStorage.clear();
-    useEventStore.setState({ connected: true, activeSection: "board", conversations: [] });
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-    window.localStorage.clear();
-  });
-
-  test("folds out on the chevron, not on the row", () => {
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-
-    expect(screen.queryByTestId("recent-chats")).toBeNull();
-
-    act(() => {
-      screen.getByTestId("nav-row-chats").click();
-    });
-    // The row went to the chat and left the list alone.
-    expect(useEventStore.getState().activeSection).toBe("chats");
-    expect(screen.queryByTestId("recent-chats")).toBeNull();
-
-    act(() => {
-      screen.getByTestId("nav-expand-chats").click();
-    });
-    expect(screen.getByTestId("nav-expand-chats").getAttribute("aria-expanded")).toBe("true");
+  test("keeps core destinations above visible recent chats", () => {
+    renderSidebar();
+    for (const id of ["agents", "visualization", "tasks", "plugins", "marketplace"]) {
+      expect(screen.getByTestId(`nav-row-${id}`)).toBeTruthy();
+    }
     expect(screen.getByTestId("recent-chats")).toBeTruthy();
-    // The list must not live in the chevron's positioning parent: `top-1/2`
-    // would then sit in the middle of the chats and the rows would cover
-    // the only control that hides them again.
-    const chevron = screen.getByTestId("nav-expand-chats");
-    const list = screen.getByTestId("recent-chats");
-    expect(chevron.parentElement?.contains(list)).toBe(false);
-
-    act(() => {
-      screen.getByTestId("nav-expand-chats").click();
-    });
-    expect(screen.queryByTestId("recent-chats")).toBeNull();
+    expect(screen.queryByTestId("nav-row-wallpaper")).toBeNull();
+    expect(screen.queryByTestId("nav-row-memory")).toBeNull();
   });
 
-  test("remembers the fold across a reload", () => {
-    const first = renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-    act(() => {
-      screen.getByTestId("nav-expand-chats").click();
-    });
-    first.unmount();
-
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+  test("expands tools through More without duplicating rows", () => {
+    renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-tools-toggle"));
+    expect(screen.getByTestId("nav-row-memory")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
+    expect(screen.getAllByTestId("nav-row-memory")).toHaveLength(1);
+    fireEvent.click(screen.getByTestId("nav-row-memory"));
+    expect(useEventStore.getState().activeSection).toBe("memory");
+    fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
+    expect(screen.queryByTestId("nav-row-memory")).toBeNull();
     expect(screen.getByTestId("recent-chats")).toBeTruthy();
   });
 
-  test("no longer stands above the navigation as its own block", () => {
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-    // The old free-standing group is gone: nothing lists chats until the
-    // Chat row is opened.
-    expect(screen.queryByTestId("recent-chats")).toBeNull();
-    expect(screen.getByTestId("nav-row-chats")).toBeTruthy();
+  test("opens settings from the profile and closes after navigation", () => {
+    renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
+    fireEvent.click(screen.getByTestId("nav-row-wallpaper"));
+    expect(useEventStore.getState().activeSection).toBe("wallpaper");
+    expect(screen.queryByTestId("sidebar-profile-panel")).toBeNull();
+  });
+
+  test("dismisses the profile with Escape and restores focus", () => {
+    renderSidebar();
+    const trigger = screen.getByTestId("sidebar-profile-toggle");
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("sidebar-profile-panel")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    fireEvent.click(trigger);
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByTestId("sidebar-profile-panel")).toBeNull();
+  });
+
+  test("every registered destination remains reachable", () => {
+    renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
+    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
+    for (const item of [...NAV_GROUPS.flat(), ...NAV_FOOTER_ITEMS]) {
+      expect(screen.getByTestId(`nav-row-${item.id}`)).toBeTruthy();
+    }
   });
 });

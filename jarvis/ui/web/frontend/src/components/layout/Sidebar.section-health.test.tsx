@@ -8,7 +8,7 @@
  * fresh install isn't permanently flagged.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render as rtlRender, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render as rtlRender, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { SectionHealth } from "@/hooks/useProviders";
@@ -71,6 +71,8 @@ describe("Sidebar — API-Keys alert dot", () => {
       tts: { status: "ok", reason: "ok", detail: "", subject_id: "gemini-flash-tts" },
     };
     render(<Sidebar />);
+    expect(screen.getByTestId("sidebar-profile-attention")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
     const dot = screen.getByTestId("nav-alert-apikeys");
     expect(dot).toBeTruthy();
     expect(dot.className).toMatch(/bg-destructive/);

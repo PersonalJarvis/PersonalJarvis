@@ -1,22 +1,22 @@
 import {
   Loader2,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
-  LayoutList,
+  Folder,
+  MoreHorizontal,
+  Store,
+  UserCircle2,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
 } from "lucide-react";
 import {
   NAV_FOOTER_ITEMS,
-  NAV_GROUP_META,
   NAV_GROUPS,
   presentNavItem,
   resolveNavLabel,
   type NavItem,
 } from "@/components/layout/navGroups";
-import { DockRail } from "@/components/layout/DockRail";
 import { useEventStore } from "@/store/events";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
@@ -25,7 +25,7 @@ import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { clsx } from "clsx";
 import { cn } from "@/lib/utils";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
 import { SurfaceSwitch } from "@/components/home/SurfaceSwitch";
@@ -36,30 +36,8 @@ import { useAgentChatStore } from "@/store/agentChat";
 import { useIdeChatStore } from "@/store/ideChat";
 import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
 import { useAppInstance } from "@/hooks/useAppInstance";
+import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
-
-/** Where the Chat row remembers whether its history is folded out. */
-const CHATS_OPEN_KEY = "jarvis.sidebar.recent-chats-open";
-
-/** Where each nav group remembers whether it is folded. One key per group. */
-const GROUP_OPEN_KEY = "jarvis.sidebar.group-open.v1";
-
-function readGroupOpen(): Record<string, boolean> {
-  try {
-    const raw = window.localStorage.getItem(GROUP_OPEN_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeGroupOpen(state: Record<string, boolean>): void {
-  try {
-    window.localStorage.setItem(GROUP_OPEN_KEY, JSON.stringify(state));
-  } catch {
-    // Storage denied: the fold still works for this visit.
-  }
-}
 
 /*
  * Why `clsx` and not `cn` on the rows below.
@@ -78,23 +56,6 @@ function writeGroupOpen(state: Record<string, boolean>): void {
  * ["display","page","title","reading","body","meta","micro"] }] } } })`. That
  * file is outside this change; once it lands these can go back to `cn`.
  */
-
-function readChatsOpen(): boolean {
-  try {
-    return window.localStorage.getItem(CHATS_OPEN_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeChatsOpen(open: boolean): void {
-  try {
-    window.localStorage.setItem(CHATS_OPEN_KEY, open ? "1" : "0");
-  } catch {
-    // Storage denied (private window, quota): the fold still works for
-    // this visit, it just starts closed next time.
-  }
-}
 
 /**
  * The section ids the Agentic IDE answers to.
@@ -267,54 +228,33 @@ export function Sidebar({
   const ideWorkspaceOpen = useIdeChatStore((s) => s.workspaces.length > 0);
   const onIdeSection = IDE_SECTIONS.includes(active);
   const chatFace = onIdeSection && ideWorkspaceOpen && ideView === "chat";
-  /*
-   * Is the Chat row's history folded out?
-   *
-   * Opened by the chevron on the row, never by the row itself: pressing
-   * "Chat" goes to the chat, and the list stays the way it was left. It is a
-   * preference rather than a per-visit state — a sidebar that forgets which
-   * rows were open every time the window reloads is one the user keeps
-   * re-opening — so it survives a reload the way the sidebar's width does.
-   */
-  const [chatsOpen, setChatsOpen] = useState(readChatsOpen);
-  const toggleChats = useCallback(() => {
-    setChatsOpen((current) => {
-      const next = !current;
-      writeChatsOpen(next);
-      return next;
-    });
-  }, []);
-  /*
-   * Which face the chat mode's column wears: the chats, or the sections.
-   *
-   * The chats, by default and on every entry into chat mode — the column is
-   * the workspace's session list then and nothing else, because that is
-   * what chat mode is for (maintainer, 2026-08-27: "only the chats, with a
-   * button for the rest, and a way back"). The sections stand behind one
-   * button at the foot of the list, and a "back" row at the top of the
-   * sections brings the chats back. Pressing any section row leaves the
-   * sections face too: a section outside the IDE takes the chat face away
-   * with it, and the IDE's own row is a request for the IDE — its chats.
-   * Not remembered on purpose: chat mode always opens on the chats.
-   */
-  const [sectionsShown, setSectionsShown] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+  const profileButtonRef = useRef<HTMLButtonElement>(null);
+  const identity = usePublishIdentity();
   useEffect(() => {
-    if (chatFace) setSectionsShown(false);
-  }, [chatFace]);
-  /*
-   * Which nav groups are folded. A group's default comes from NAV_GROUP_META
-   * and the user's choice outranks it, remembered per group. A group that
-   * holds the ACTIVE section is always shown open, so "where am I" is never
-   * hidden behind a fold.
-   */
-  const [groupOpen, setGroupOpen] = useState<Record<string, boolean>>(readGroupOpen);
-  const toggleGroup = useCallback((id: string, fallback: boolean) => {
-    setGroupOpen((current) => {
-      const next = { ...current, [id]: !(current[id] ?? fallback) };
-      writeGroupOpen(next);
-      return next;
-    });
-  }, []);
+    setProfileOpen(false);
+  }, [active]);
+  useEffect(() => {
+    if (!profileOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!profileRef.current?.contains(event.target as Node)) setProfileOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setProfileOpen(false);
+        profileButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [profileOpen]);
   const resetTranscript = useHomeStore((s) => s.resetTranscript);
   // On the voice stage: clear the lane, drop the open voice thread and let the
   // backend forget the one it was seeded with. We stay on Voice and the mic
@@ -427,6 +367,27 @@ export function Sidebar({
   // seam past the snap point. Either one alone is enough — a user who dragged
   // the column narrow gets icons without having to also find the button.
   const railed = collapsed || width < SIDEBAR_RAIL_AT_WIDTH;
+
+  const allItems = NAV_GROUPS.flat();
+  const findItem = (id: string) => allItems.find((item) => item.id === id)!;
+  const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis", "agentic-ide"];
+  const toolItems = toolIds.map(findItem);
+  const profileItems = [...NAV_GROUPS[3], ...NAV_GROUPS[4], ...NAV_FOOTER_ITEMS];
+  const primaryIds = ["chats", "agents", "visualization", "tasks", "plugins", "marketplace"];
+  const assignedIds = new Set([...primaryIds, ...toolIds, ...profileItems.map((item) => item.id)]);
+  const moreItems = [...toolItems, ...allItems.filter((item) => !assignedIds.has(item.id))];
+  const rowClass = "flex min-h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  const renderRow = (raw: NavItem, compact = railed) => {
+    const item = presentNavItem(raw, surface);
+    return <NavRow key={item.id} item={item} label={resolveNavLabel(t, item)} compact={compact}
+      active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
+      badge={item.id === "agents" ? agentsCount : undefined}
+      betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
+      alert={item.id === "apikeys" && apikeysHasError} alertTitle={t("sidebar.apikeys_alert")}
+      warn={item.id === "plugins" ? pluginsNeedReconnect : item.id === "local-models" && localModelsNeedAttention}
+      warnTitle={item.id === "local-models" ? localModelsHealth?.detail || localModelsHealth?.reason || undefined : pluginWarnTitle}
+      onClick={() => { setActive(item.id); setProfileOpen(false); }} />;
+  };
 
   return (
     // No right border: the draggable seam beside it draws that line now, and
@@ -578,203 +539,66 @@ export function Sidebar({
         )}
       </div>
 
-      {railed ? (
-        // The rail is the app-wide icon dock: it carries the same signals (the
-        // API-Keys error pip, the plugin reconnect pip, the Skills → Plugins
-        // shortcut) from its own sources, so nothing here has to be threaded in.
-        <DockRail className="min-h-0 flex-1" />
-      ) : (
-        // ONE scrolling body, whatever is in it. In the IDE's chat mode it is
-        // the workspace's session list, with the sections one button away and
-        // one button back (see `sectionsShown`); everywhere else it is the
-        // navigation. One face at a time: the two stacked in one column read
-        // as one long list with no seam (maintainer report 2026-08-27), and
-        // the sessions are what chat mode is for.
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
-          {chatFace && !sectionsShown ? (
-            <>
-              <WorkspaceChats />
-              <button
-                type="button"
-                onClick={() => setSectionsShown(true)}
-                data-testid="sidebar-show-sections"
-                className={clsx(
-                  "group mx-2 mb-2 mt-3 flex h-9 shrink-0 items-center gap-2 rounded-md px-3 text-base font-medium transition-colors",
-                  "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                )}
-              >
-                <LayoutList
-                  aria-hidden
-                  className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
-                />
-                <span className="flex-1 text-left">{t("sidebar.sections")}</span>
-                <ChevronRight
-                  aria-hidden
-                  className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground"
-                />
-              </button>
-            </>
-          ) : (
-          // 8px in from the column edge, because the SELECTION is drawn on the
-          // whole row now: the fill needs an inset to read as a rounded object
-          // sitting in the rail rather than as a stripe welded to its side.
-          <nav className="px-2 py-2">
-            {chatFace && (
-              <button
-                type="button"
-                onClick={() => setSectionsShown(false)}
-                data-testid="sidebar-show-chats"
-                className={clsx(
-                  "group mb-2 flex h-9 w-full items-center gap-2 rounded-md px-3 text-base font-medium transition-colors",
-                  "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                )}
-              >
-                <ChevronLeft
-                  aria-hidden
-                  className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:-translate-x-0.5 group-hover:text-foreground"
-                />
-                <span className="flex-1 text-left">{t("sidebar.back_to_chats")}</span>
-              </button>
-            )}
-            {NAV_GROUPS.map((group, groupIndex) => {
-              const meta = NAV_GROUP_META[groupIndex];
-              const collapsible = Boolean(meta?.labelKey);
-              const holdsActive = group.some((raw) =>
-                raw.matchIds ? raw.matchIds.includes(active) : raw.id === active,
-              );
-              const open =
-                !collapsible ||
-                holdsActive ||
-                (groupOpen[meta.id] ?? meta.defaultOpen);
-              const groupLabel = meta?.labelKey
-                ? resolveNavLabel(t, {
-                    id: "chats",
-                    labelKey: meta.labelKey,
-                    icon: Plus,
-                    fallbackLabel: meta.fallbackLabel,
-                  })
-                : null;
-              return (
-              <ul
-                key={meta?.id ?? groupIndex}
-                data-testid={meta ? `nav-group-${meta.id}` : undefined}
-                data-open={open ? "true" : "false"}
-                className={cn("space-y-0.5", groupIndex > 0 && "mt-5")}
-              >
-                {groupLabel && (
-                  <li>
-                    {/* The group label doubles as its fold. Uppercase, faint
-                        ink, the xs step — a heading, never a row. */}
-                    <button
-                      type="button"
-                      onClick={() => toggleGroup(meta.id, meta.defaultOpen)}
-                      aria-expanded={open}
-                      data-testid={`nav-group-toggle-${meta.id}`}
-                      className={clsx(
-                        "group mb-1 flex h-6 w-full items-center gap-1 rounded-sm px-3 text-xs font-medium uppercase tracking-wide",
-                        "text-foreground-faint transition-colors hover:text-muted-foreground",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      )}
-                    >
-                      <span className="flex-1 truncate text-left">{groupLabel}</span>
-                      <ChevronDown
-                        aria-hidden
-                        className={cn(
-                          "h-3 w-3 shrink-0 opacity-0 transition-[opacity,transform] group-hover:opacity-100 group-focus-visible:opacity-100",
-                          !open && "-rotate-90 opacity-100",
-                        )}
-                      />
-                    </button>
-                  </li>
-                )}
-                {open && group.map((raw) => {
-                  const item = presentNavItem(raw, surface);
-                  return (
-                    <NavRow
-                      key={item.id}
-                      item={item}
-                      label={resolveNavLabel(t, item)}
-                      active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
-                      // The Chat row carries its own history: a chevron at
-                      // its end folds the recent conversations out under it.
-                      // One list, not two: a voice session IS a run, and
-                      // showing it as "recent run" and "recent chat" read as
-                      // a duplicate (maintainer, 2026-08-23). These are the
-                      // front page's own conversations, never the IDE's
-                      // coding sessions (see RecentChats) — the two never
-                      // name the same thing twice.
-                      expand={
-                        item.id === "chats"
-                          ? {
-                              open: chatsOpen,
-                              onToggle: toggleChats,
-                              label: chatsOpen
-                                ? t("sidebar.chats_collapse")
-                                : t("sidebar.chats_expand"),
-                            }
-                          : undefined
-                      }
-                      badge={item.id === "agents" ? agentsCount : undefined}
-                      betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
-                      alert={item.id === "apikeys" ? apikeysHasError : false}
-                      alertTitle={t("sidebar.apikeys_alert")}
-                      warn={
-                        item.id === "plugins"
-                          ? pluginsNeedReconnect
-                          : item.id === "local-models"
-                            ? localModelsNeedAttention
-                            : false
-                      }
-                      warnTitle={
-                        item.id === "local-models"
-                          ? localModelsHealth?.detail || localModelsHealth?.reason || undefined
-                          : pluginWarnTitle
-                      }
-                      onClick={() => {
-                        setSectionsShown(false);
-                        setActive(
-                          item.id,
-                        );
-                      }}
-                    >
-                      {item.id === "chats" && chatsOpen ? <RecentChats /> : null}
-                    </NavRow>
-                  );
-                })}
-              </ul>
-              );
-            })}
-          </nav>
-          )}
-        </div>
-      )}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
+        <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
+          <ul className="space-y-1">
+            {renderRow(findItem("chats"))}
+            {renderRow(findItem("agents"))}
+            {renderRow(findItem("visualization"))}
+          </ul>
+          <button type="button" onClick={() => { setToolsOpen(!toolsOpen); setMoreOpen(false); }}
+            aria-expanded={toolsOpen} aria-controls="sidebar-tools" title={t("sidebar.jarvis_tools")}
+            data-testid="sidebar-tools-toggle" className={cn(rowClass, toolItems.some((item) => (item.matchIds ?? [item.id]).includes(active)) && "jarvis-nav-active bg-secondary text-foreground")}>
+            <Folder aria-hidden className="h-4 w-4 shrink-0" />
+            {!railed && <><span className="flex-1 text-left">{t("sidebar.jarvis_tools")}</span><ChevronDown className={cn("h-3.5 w-3.5", toolsOpen && "rotate-180")} /></>}
+          </button>
+          {toolsOpen && <ul id="sidebar-tools" className={cn("space-y-1", !railed && "ml-3 border-l border-border pl-1")}>
+            {toolItems.map((item) => renderRow(item))}
+          </ul>}
+          <ul className="space-y-1">
+            {renderRow({ ...findItem("tasks"), labelKey: "sidebar.scheduled" })}
+            {renderRow({ ...findItem("plugins"), labelKey: "nav.plugins" })}
+          </ul>
+          <button type="button" onClick={() => { setMoreOpen(!moreOpen); setToolsOpen(false); }} aria-expanded={moreOpen}
+            aria-controls="sidebar-more" title={t("sidebar.more")} data-testid="sidebar-more-toggle" className={rowClass}>
+            <MoreHorizontal aria-hidden className="h-4 w-4 shrink-0" />
+            {!railed && <span>{t(moreOpen ? "sidebar.show_less" : "sidebar.more")}</span>}
+          </button>
+          {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => renderRow(item))}</ul>}
+        </nav>
+        {!railed && <section className="mt-4 px-2 pb-3" aria-label={t("sidebar.recent_chats")}>
+          <h2 className="px-3 pb-2 text-sm font-medium text-muted-foreground">{t("sidebar.recent_chats")}</h2>
+          {chatFace ? <WorkspaceChats /> : <RecentChats />}
+        </section>}
+      </div>
 
-      <div className={cn("flex flex-col gap-1 border-t border-border", railed ? "p-2" : "p-3")}>
-        {!railed &&
-          NAV_FOOTER_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const isActive = item.id === active;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                data-testid={`nav-row-${item.id}`}
-                onClick={() => setActive(item.id)}
-                className={clsx(
-                  "group flex h-9 w-full items-center gap-2 rounded-md px-3 text-base font-medium transition-colors",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  isActive
-                    ? "jarvis-nav-active bg-secondary text-foreground"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                )}
-              >
-                <Icon aria-hidden className="h-4 w-4 shrink-0" />
-                <span className="truncate">{resolveNavLabel(t, item)}</span>
-              </button>
-            );
-          })}
+      <div ref={profileRef} className="relative shrink-0 border-t border-border p-2"
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node)) setProfileOpen(false);
+        }}>
+        <div className={cn("flex items-center gap-1", railed && "flex-col")}>
+          <button ref={profileButtonRef} type="button" onClick={() => setProfileOpen(!profileOpen)}
+            aria-expanded={profileOpen} aria-controls="sidebar-profile-panel" title={t("nav.profile")}
+            data-testid="sidebar-profile-toggle" className={cn(rowClass, "min-w-0 flex-1")}>
+            <span className="relative shrink-0">
+              <UserCircle2 aria-hidden className="h-7 w-7" />
+              {(apikeysHasError || localModelsNeedAttention) && <span data-testid="sidebar-profile-attention"
+                role="status" aria-label={t("sidebar.apikeys_alert")}
+                className={cn("absolute bottom-0 right-0 h-2 w-2 rounded-full", apikeysHasError ? "bg-destructive" : "bg-warning")} />}
+            </span>
+            {!railed && <span className="min-w-0 flex-1 truncate text-left">{identity.data?.signed_in ? identity.data.login || t("nav.profile") : t("nav.profile")}</span>}
+          </button>
+          <button type="button" onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
+            aria-label={t("nav.marketplace")} data-testid="nav-row-marketplace"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Store aria-hidden className="h-5 w-5" />
+          </button>
+        </div>
+        {profileOpen && <div id="sidebar-profile-panel" data-testid="sidebar-profile-panel"
+          className="absolute bottom-full left-2 z-50 mb-2 w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-border bg-card p-2 shadow-xl">
+          <div className="max-h-[65vh] overflow-y-auto scrollbar-jarvis">
+            <ul className="space-y-0.5">{profileItems.map((item) => renderRow(item, false))}</ul>
+          </div>
         <button
           type="button"
           onClick={() => setActive("apikeys")}
@@ -782,7 +606,7 @@ export function Sidebar({
           className={cn(
             "group flex w-full items-center rounded-lg border border-border bg-card text-left transition-colors hover:border-border-strong",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
-            railed ? "justify-center px-2 py-2" : "gap-3 p-3",
+            "mt-2 gap-3 p-3",
           )}
           // On the rail the card shrinks to its status dot, so everything it
           // would have said moves into the hover text — otherwise the dot is a
@@ -808,7 +632,7 @@ export function Sidebar({
                   : "bg-muted-foreground",
             )}
           />
-          {!railed && (
+          {(
           <div className="flex-1 min-w-0">
             <div
               className="text-xs uppercase tracking-wide text-foreground-faint"
@@ -833,16 +657,18 @@ export function Sidebar({
             )}
           </div>
           )}
-          {!railed && (
+          {(
             <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
           )}
         </button>
+        </div>}
       </div>
     </aside>
   );
 }
 
 function NavRow({
+  compact = false,
   item,
   label,
   active,
@@ -856,6 +682,7 @@ function NavRow({
   onClick,
   children,
 }: {
+  compact?: boolean;
   item: NavItem;
   label: string;
   active: boolean;
@@ -910,7 +737,8 @@ function NavRow({
           type="button"
           data-testid={`nav-row-${item.id}`}
           onClick={onClick}
-          title={hint}
+          title={compact ? `${label}${hint ? ` — ${hint}` : ""}` : hint}
+          aria-label={compact ? label : undefined}
           className={clsx(
             "group relative flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium transition-colors",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -931,7 +759,7 @@ function NavRow({
               active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
             )}
           />
-          <span className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <span className={cn("flex min-w-0 flex-1 items-center gap-2 text-left", compact && "hidden")}>
             {/* The row is a fixed 40px now, so a long label has to be cut rather
                 than allowed to wrap out of it. */}
             <span className="truncate">{label}</span>
