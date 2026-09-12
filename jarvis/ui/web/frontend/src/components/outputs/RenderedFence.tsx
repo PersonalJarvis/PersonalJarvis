@@ -104,7 +104,11 @@ export function wrapInlineHtml(html: string, theme: Theme, token: string): strin
 
 /** An SVG snippet as an inert picture. */
 export function svgDataUrl(svg: string): string {
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  // Inline HTML supplies this namespace implicitly; an SVG image document does not.
+  const document = svg.replace(/<svg(?=[\s>])[^>]*>/, root =>
+    /\sxmlns\s*=/.test(root) ? root : root.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"'),
+  );
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(document)}`;
 }
 
 /** The sandboxed frame an inline HTML snippet runs in, sized to its content. */

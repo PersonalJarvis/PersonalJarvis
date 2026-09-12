@@ -4,6 +4,36 @@ import { ChatMarkdown, mediaKind, normalizeMediaMarkup, safeMediaUrl } from "./C
 
 afterEach(cleanup);
 
+describe("chat visual fences", () => {
+  it.each(["HTML", "htm", "text/html"])("previews %s instead of leaving source", async language => {
+    render(<ChatMarkdown text={`\`\`\`${language}\n<div>Visual card</div>\n\`\`\``} />);
+    expect((await screen.findByTestId("inline-html-frame")).getAttribute("srcdoc")).toContain("Visual card");
+  });
+
+  it.each(["SVG", "xml", "image/svg+xml", ""])("previews SVG with the %s label", async language => {
+    render(<ChatMarkdown text={`\`\`\`${language}\n<svg width="80" height="40"><rect width="80" height="40"/></svg>\n\`\`\``} />);
+    const image = await screen.findByTestId("inline-svg");
+    expect(decodeURIComponent(image.getAttribute("src")!)).toContain('xmlns="http://www.w3.org/2000/svg"');
+  });
+
+  it.each(["~~~", "````", "```"])("preserves HTML media during streaming in %s fences", async marker => {
+    const code = '<div><img src="https://example.test/chart.png"></div>';
+    const text = `${marker}html\n${code}\n`;
+    expect(normalizeMediaMarkup(text)).toBe(text);
+    expect(normalizeMediaMarkup(text + marker)).toBe(text + marker);
+    const { rerender } = render(<ChatMarkdown text={text} />);
+    expect((await screen.findByTestId("inline-html-frame")).getAttribute("srcdoc")).toContain(code);
+    rerender(<ChatMarkdown text={text + marker} />);
+    expect(screen.getByTestId("inline-html-frame").getAttribute("srcdoc")).toContain(code);
+  });
+
+  it("keeps JSON results and explicit text as code", () => {
+    const { container } = render(<ChatMarkdown text={'```json\n{"ok":true,"artifacts":[]}\n```\n\n```text\n<svg><rect/></svg>\n```'} />);
+    expect(container.querySelectorAll("pre")).toHaveLength(2);
+    expect(screen.queryByTestId("rendered-fence")).toBeNull();
+  });
+});
+
 describe("shared chat media", () => {
   it("renders every image and video in a mixed response", () => {
     const { container } = render(<ChatMarkdown text={'![First](https://example.test/a.png)\n\n![Second](https://example.test/b.webp)\n\n[Clip](https://example.test/video.mp4)\n\n[Audio](https://example.test/audio.mp3)'} />);

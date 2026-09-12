@@ -1,10 +1,11 @@
-import { Children, createContext, isValidElement, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Children, createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertCircle, Download, Maximize2, X } from "lucide-react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
+import { readFence, visualFenceLanguage } from "@/lib/visualFence";
 import * as Dialog from "@radix-ui/react-dialog";
 
 const RenderedFence = lazy(() => import("@/components/outputs/RenderedFence").then(module => ({ default: module.RenderedFence })));
@@ -53,7 +54,25 @@ function assetKey(raw: string): string {
 /** Recognize media tags without executing arbitrary model-authored HTML. */
 export function normalizeMediaMarkup(text: string): string {
   const attr = (markup: string, name: string) => markup.match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']*)["']`, "i"))?.[1];
-  const parts = text.split(/(```[\s\S]*?```)/);
+  // Protect CommonMark fences, including tilde fences and a still-streaming
+  // block. Rewriting an <img> inside HTML code corrupts the eventual preview.
+  const parts: string[] = [""];
+  let fence: string | null = null;
+  for (const line of text.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*?)(?:\r?\n)?$/.exec(line);
+    if (!fence && marker && !(marker[1][0] === "`" && marker[2].includes("`"))) {
+      fence = marker[1];
+      parts.push(line);
+    } else if (fence) {
+      parts[parts.length - 1] += line;
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
+        fence = null;
+        parts.push("");
+      }
+    } else {
+      parts[parts.length - 1] += line;
+    }
+  }
   return parts.map((part, i) => i % 2 ? part : part
     .replace(/<(video|audio)\b([^>]*)>([\s\S]*?)<\/\1>/gi, (original, kind: string, head: string, body: string) => {
       const source = attr(head, "src") ?? attr(body.match(/<source\b[^>]*>/i)?.[0] ?? "", "src");
@@ -138,10 +157,10 @@ const MARKDOWN_COMPONENTS: Components = {
     }}>{children}</a>;
   },
   pre: ({ children, node: _node, ...props }) => {
-    const child = Children.toArray(children)[0];
-    if (isValidElement<{ className?: string; children?: unknown }>(child)) {
-      const language = child.props.className?.match(/language-(html|svg)\b/)?.[1];
-      if (language === "html" || language === "svg") return <Suspense fallback={<pre>{children}</pre>}><RenderedFence language={language} code={String(child.props.children ?? "").replace(/\n$/, "")} /></Suspense>;
+    const fence = readFence(children);
+    if (fence) {
+      const language = visualFenceLanguage(fence.language, fence.code);
+      if (language) return <Suspense fallback={<pre>{children}</pre>}><RenderedFence language={language} code={fence.code} /></Suspense>;
     }
     return <pre {...props}>{children}</pre>;
   },

@@ -16,7 +16,7 @@
  * archive. The typography is the caller's — the reader passes its own
  * classes, the output page the artifact standard's.
  */
-import { Children, isValidElement, useMemo, type ReactNode } from "react";
+import { useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -27,6 +27,8 @@ import { CodeBlock } from "@/components/docs/CodeBlock";
 import { RenderedFence } from "@/components/outputs/RenderedFence";
 import { AsciiTableFence } from "@/components/outputs/AsciiTableFence";
 import { fenceLooseAsciiTables, parseAsciiTable } from "@/lib/asciiTable";
+import { readFence, visualFenceLanguage } from "@/lib/visualFence";
+export { readFence } from "@/lib/visualFence";
 
 /**
  * Split a leading YAML front matter block (`---` … `---`) off a document.
@@ -63,30 +65,6 @@ export function resolveSiblingPath(fromPath: string, href: string): string | nul
 
 /** Languages whose fences may hold an ASCII grid table rather than code. */
 const PLAIN_FENCE_LANGUAGES = new Set(["", "text", "txt", "plain", "plaintext", "ascii"]);
-
-/**
- * Read the fence back out of a Markdown `<pre>`.
- *
- * The fence has to be handled HERE and not in the `code` component, because
- * react-markdown 9 dropped the `inline` prop: the same `code` component serves
- * inline `` `code` `` and block fences and cannot tell them apart. The parent
- * element can — a fence is the only `code` inside a `pre`. What arrives as
- * `children` is our own `code` component still unrendered, so its props are the
- * ORIGINAL ones: the `language-…` class and the raw fence text.
- *
- * A fence with no language tag lands here with `language: ""`. That case is
- * exactly what used to escape as a bare `<code>` with no `<pre>` around it,
- * which collapses every line break and renders a table as one run-on line.
- */
-export function readFence(children: ReactNode): { language: string; code: string } | null {
-  const element = Children.toArray(children).find((child) => isValidElement(child));
-  if (!isValidElement<{ className?: string; children?: ReactNode }>(element)) return null;
-  const match = /language-([\w+#.-]+)/.exec(element.props.className ?? "");
-  return {
-    language: match ? match[1].toLowerCase() : "",
-    code: String(element.props.children ?? "").replace(/\n$/, ""),
-  };
-}
 
 /**
  * The typographic base every Markdown document shares: Tailwind's prose in
@@ -138,8 +116,9 @@ export function MarkdownProse({
         const fence = readFence(children);
         if (fence === null) return <pre>{children}</pre>;
         const { language, code } = fence;
-        if (language === "html" || language === "svg") {
-          return <RenderedFence language={language} code={code} />;
+        const visualLanguage = visualFenceLanguage(language, code);
+        if (visualLanguage) {
+          return <RenderedFence language={visualLanguage} code={code} />;
         }
         if (PLAIN_FENCE_LANGUAGES.has(language)) {
           const grid = parseAsciiTable(code);

@@ -11,9 +11,16 @@ import {
   INLINE_HTML_CSP,
   INLINE_HTML_SIZE_MESSAGE,
   wrapInlineHtml,
+  svgDataUrl,
 } from "@/components/outputs/RenderedFence";
 
 afterEach(() => cleanup());
+
+it("adds the standalone SVG namespace without replacing a declared namespace", () => {
+  expect(decodeURIComponent(svgDataUrl('<svg viewBox="0 0 10 10"><rect/></svg>'))).toContain('<svg xmlns="http://www.w3.org/2000/svg"');
+  const declared = '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>';
+  expect(decodeURIComponent(svgDataUrl(declared)).split(",")[1]).toBe(declared);
+});
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>';
 
@@ -45,6 +52,10 @@ describe("wrapInlineHtml", () => {
 });
 
 describe("MarkdownProse fences", () => {
+  it.each(["SVG", "xml", "image/svg+xml", ""])("draws a complete SVG with label %s", language => {
+    render(<MarkdownProse slug="r" path="r.md" files={[]} text={`\`\`\`${language}\n${SVG}\n\`\`\``} />);
+    expect(screen.getByTestId("inline-svg")).toBeDefined();
+  });
   it("draws an svg fence as a picture and an html fence in a sandboxed frame", () => {
     render(
       <MarkdownProse
