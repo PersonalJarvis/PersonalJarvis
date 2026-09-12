@@ -704,7 +704,7 @@ label,
     --input: 0 0% 12%; /* a field is a lift surface */
     --popover: 0 0% 11%; /* #1C1C1C — the floating layer, plus .shadow-float */
     --popover-foreground: 0 0% 98%;
-    --user-bubble: 0 0% 12%; /* #1F1F1F — the speaker: quiet fill, strong ink */
+    --user-bubble: 0 0% 16%; /* #292929 — the speaker: a quiet, legible lift */
     --user-bubble-foreground: 0 0% 98%;
 
     /* --- Rims. A rim is LIGHTER than the fill it encloses ------------------
