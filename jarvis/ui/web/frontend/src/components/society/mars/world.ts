@@ -2,6 +2,7 @@
 import { BufferGeometry, Float32BufferAttribute, Color } from "three";
 import definition from "./worldDefinition.json";
 import outpostContract from "../../../../../../../../art/studies/mars-outpost-reference/source/geometry-contract.json";
+import outpostExport from "../../../../../../../../art/studies/mars-outpost-reference/source/export-report.json";
 
 export type Vec3 = [number, number, number];
 export interface Bounds { min: Vec3; max: Vec3 }
@@ -195,8 +196,11 @@ export const BUILDING_COLLIDERS: Collider[] = WORLD.buildings.flatMap((building)
 export const PLAYER_SPAWN: Vec3 = [WORLD.spawn.position[0], surfaceHeight(WORLD.spawn.position[0], WORLD.spawn.position[2]), WORLD.spawn.position[2]];
 
 export function outpostBounds(): Bounds {
+  // Include the authored bridge/supports and complete cliff, not just the
+  // proposed plateau envelope. Independent review presets must fit every side.
+  const translation = outpostExport.world_translation;
   return {
-    min: [OUTPOST.center[0] - OUTPOST.size[0] / 2 - 16, 32, OUTPOST.center[2] - OUTPOST.size[1] / 2 - 16],
-    max: [OUTPOST.center[0] + OUTPOST.size[0] / 2 + 16, OUTPOST.center[1] + OUTPOST.landmark_height, OUTPOST.center[2] + OUTPOST.size[1] / 2 + 16],
+    min: outpostExport.local_runtime_bounds.min.map((n, i) => n + translation[i]) as Vec3,
+    max: outpostExport.local_runtime_bounds.max.map((n, i) => n + translation[i]) as Vec3,
   };
 }

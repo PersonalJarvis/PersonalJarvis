@@ -48,8 +48,41 @@ Local work cannot continue when its execution host is stopped or asleep.
 
 Windows native closure/reopening and a real draft continuing after window
 destruction have been measured. Direct tray-menu interaction, other native OSes,
-host-crash recovery, a fresh single-key install and final graphics/performance
+host sleep/reboot, a fresh single-key install and final graphics/performance
 acceptance are still open; the private issue tracker retains the full ledger.
+
+## Restart recovery
+
+An existing `mars/ordinary.db` under the configured data directory schedules
+recovery after the server boot chain yields. No browser tab, desktop renderer or
+HTTP request is needed to start that recovery. An installation without this
+journal does not construct the Society runtime or create Mars storage for it.
+The initial HTTP request and deferred recovery share one application-owned
+initialization task with a thirty-second deadline, service and journal owner.
+An individual HTTP disconnect cannot cancel initialization for other waiters.
+Explicit server stop fences late initialization, cancels and joins the owned
+startup/reconciliation tasks, then closes the journal before Society shutdown.
+A collaborator that ignores cancellation produces an explicit shutdown timeout
+after five seconds; it cannot publish a late station owner. The server retains
+the Mars stop latch and task references, completes independent browser, chat,
+plugin, watcher, terminal and server teardown, then reports the incomplete Mars
+cleanup. A Mars timeout must not leave those unrelated resources running.
+
+Acknowledged queued requests are checked against current agent authority before
+dispatch. Previously owned work receives a new fence and an interruption event;
+the existing executor inspects its stable command/task identity rather than
+dispatching it again. Completed result references remain unchanged. An outcome
+the executor cannot establish stays uncertain and holds the station for
+reconciliation; this does not promise exactly-once external effects.
+
+The portable lifecycle contract exercises separate abrupt-exit and recovery
+processes at queued, active and result-committed checkpoints, using real SQLite
+and a clearly labeled test executor. It also covers concurrent first access,
+authority revocation, startup/shutdown races and private error logging. This is
+local process-failure evidence; actual host power loss, sleep/reboot, unavailable
+provider recovery and live external-outcome reconciliation remain separate
+acceptance work. No OS-specific lifecycle API or new execution scheduler is
+introduced by this recovery path.
 
 ## Art and verification
 

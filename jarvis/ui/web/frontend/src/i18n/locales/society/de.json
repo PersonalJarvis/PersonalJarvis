@@ -19,6 +19,13 @@
       "legacy": "Ältere Ausführung: Ergebnis vorhanden; Abschlussstatus wurde nicht aufgezeichnet."
     },
     "mars": {
+      "viewpoint": "Outpost-Blickwinkel",
+      "view_reference": "Referenzansicht",
+      "view_front": "Vorderseite",
+      "view_rear": "Rückseite",
+      "view_left": "Linke Seite",
+      "view_right": "Rechte Seite",
+      "view_top": "Dachansicht",
       "background_unavailable": "Hintergrundbetrieb ist in dieser Umgebung nicht verfügbar. Lass das Fenster offen oder nutze den Headless-Server.",
       "headless_background": "Backend läuft ohne Fenster",
       "background_on": "Hintergrundmodus an",

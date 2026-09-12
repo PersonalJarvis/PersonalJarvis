@@ -19,6 +19,13 @@
       "legacy": "Older execution: result available; final status was not recorded."
     },
     "mars": {
+      "viewpoint": "Outpost viewpoint",
+      "view_reference": "Reference view",
+      "view_front": "Front",
+      "view_rear": "Rear",
+      "view_left": "Left side",
+      "view_right": "Right side",
+      "view_top": "Roof view",
       "background_unavailable": "Background mode is unavailable in this environment. Keep the window open or use the headless server.",
       "headless_background": "Backend running without a window",
       "background_on": "Background mode on",

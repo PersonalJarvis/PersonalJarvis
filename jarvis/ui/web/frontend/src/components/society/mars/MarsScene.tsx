@@ -8,17 +8,21 @@ import { OutpostReference } from "./OutpostReference";
 import type { OrbitControls as OrbitControlsInstance } from "three-stdlib";
 import { advancePlayer, createPlayer } from "./controller";
 import { bindPlayerInput, NO_INPUT } from "./input";
-import { avoidCameraCollision, fitWorldBounds, MAX_POLAR, MIN_POLAR } from "./camera";
+import { avoidCameraCollision, frameInspectionBounds, MAX_POLAR, MIN_POLAR } from "./camera";
+import { VIEW_DIRECTIONS, type CameraPose, type Viewpoint, type CameraMode } from "./viewPreferences";
 import {
   BUILDING_COLLIDERS, createTerrainGeometry, OUTPOST, outpostBounds, PLAYER_SPAWN,
   ROADS, terrainHeight, WORLD, WORLD_BOUNDS, type Collider, type Road, type Vec3,
 } from "./world";
 
-export type CameraMode = "overview" | "outpost" | "orbit" | "player";
+export type { CameraMode } from "./viewPreferences";
 export interface MarsSceneProps {
   hostRef: RefObject<HTMLDivElement>;
   mode: CameraMode;
   neutral: boolean;
+  viewpoint: Viewpoint;
+  initialPose: CameraPose | null;
+  onSavePose: (pose: CameraPose) => void;
   awake: boolean;
   selected: string | null;
   onSelect: (id: string) => void;
@@ -115,7 +119,7 @@ function ColonyBlockout({ onSelect, outpostReady }: { onSelect: (id: string) => 
   );
 }
 
-export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, onOrbit, onOpenStation, reset }: MarsSceneProps) {
+export function MarsScene({ hostRef, mode, neutral, viewpoint, initialPose, onSavePose, awake, selected, onSelect, onOrbit, onOpenStation, reset }: MarsSceneProps) {
   const sunTarget = useMemo(() => {
     const target = new Object3D(); target.position.set(320, 58, 50); return target;
   }, []);
@@ -133,6 +137,7 @@ export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, o
   const { camera, size, invalidate, gl } = useThree();
   const orbitYaw = useRef(0.7);
   const followHeight = useRef(2.15);
+  const restored = useRef(false);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -155,15 +160,25 @@ export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, o
       orbitYaw.current = Math.atan2(camera.position.x - value.target.x, camera.position.z - value.target.z);
       invalidate(); return;
     }
-    if (mode === "orbit") return;
+    if (mode === "orbit") {
+      if (!restored.current && initialPose) {
+        value.target.fromArray(initialPose.target);
+        camera.position.fromArray(avoidCameraCollision(initialPose.target, initialPose.position));
+        value.update(); invalidate();
+      }
+      restored.current = true;
+      return;
+    }
+    restored.current = true;
     const bounds = mode === "overview" ? WORLD_BOUNDS : outpostBounds();
-    const frame = fitWorldBounds(bounds, size.width / Math.max(1, size.height), WORLD.view.overview_padding);
+    const frame = frameInspectionBounds(bounds, size.width / Math.max(1, size.height), WORLD.view.overview_padding,
+      mode === "outpost" ? VIEW_DIRECTIONS[viewpoint] : VIEW_DIRECTIONS.reference);
     camera.position.fromArray(frame.position);
     camera.far = Math.max(8000, frame.distance * 4);
     camera.updateProjectionMatrix();
     value.target.fromArray(frame.target);
     value.update(); invalidate();
-  }, [camera, size.width, size.height, mode, reset, invalidate]);
+  }, [camera, size.width, size.height, mode, reset, invalidate, viewpoint, initialPose]);
 
   useEffect(() => {
     const value = controls.current;
@@ -191,7 +206,7 @@ export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, o
       const position = avoidCameraCollision(target, desired);
       camera.position.fromArray(position);
       value.target.fromArray(target); camera.lookAt(...target);
-    } else {
+    } else if (mode === "orbit") {
       value.target.x = Math.max(WORLD_BOUNDS.min[0], Math.min(WORLD_BOUNDS.max[0], value.target.x));
       value.target.z = Math.max(WORLD_BOUNDS.min[2], Math.min(WORLD_BOUNDS.max[2], value.target.z));
       value.target.y = Math.max(terrainHeight(value.target.x, value.target.z) + 1, value.target.y);
@@ -209,6 +224,7 @@ export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, o
         host.dataset.marsDrawCalls = String(gl.info.render.calls);
         host.dataset.marsTriangles = String(gl.info.render.triangles);
         host.dataset.marsCamera = camera.position.toArray().map((v) => v.toFixed(2)).join(",");
+        host.dataset.marsTarget = value.target.toArray().map((v) => v.toFixed(2)).join(",");
       }
     }
     // Reduced-motion scenes redraw only for deliberate input, gravity or camera interaction.
@@ -232,6 +248,9 @@ export function MarsScene({ hostRef, mode, neutral, awake, selected, onSelect, o
         ref={controls} makeDefault enabled={mode !== "player" && awake} enableDamping={false}
         minPolarAngle={MIN_POLAR} maxPolarAngle={MAX_POLAR} minDistance={WORLD.view.near_inspection_m}
         maxDistance={20000} screenSpacePanning={false} onStart={onOrbit}
+        onEnd={() => {
+          if (controls.current) onSavePose({ position: camera.position.toArray() as Vec3, target: controls.current.target.toArray() as Vec3 });
+        }}
       />
     </>
   );

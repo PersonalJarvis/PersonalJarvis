@@ -19,6 +19,13 @@
       "legacy": "Ejecución anterior: resultado disponible; no se registró el estado final."
     },
     "mars": {
+      "viewpoint": "Vista del puesto",
+      "view_reference": "Vista de referencia",
+      "view_front": "Frente",
+      "view_rear": "Parte posterior",
+      "view_left": "Lado izquierdo",
+      "view_right": "Lado derecho",
+      "view_top": "Vista del techo",
       "background_unavailable": "El modo en segundo plano no está disponible aquí. Mantén la ventana abierta o usa el servidor sin interfaz.",
       "headless_background": "Servidor activo sin ventana",
       "background_on": "Modo en segundo plano activo",

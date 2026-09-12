@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -23,6 +24,9 @@ from jarvis.society.mars.models import (
 )
 
 log = logging.getLogger(__name__)
+
+_INITIALIZATION_TIMEOUT_S = 30.0
+_INITIALIZATION_STOP_TIMEOUT_S = 5.0
 
 
 class _PrivateStationRoute(APIRoute):
@@ -65,37 +69,146 @@ async def _reconcile_loop(service: Any) -> None:
         await asyncio.sleep(1.0)
 
 
-async def _service(request: Request) -> Any:
-    state = request.app.state
+def _station_lock(state: Any) -> asyncio.Lock:
     if getattr(state, "mars_station_lock", None) is None:
         state.mars_station_lock = asyncio.Lock()
-    async with state.mars_station_lock:
+    return state.mars_station_lock
+
+
+async def _initialize_mars_station(state: Any) -> Any:
+    """The application owns initialization even when every HTTP waiter leaves."""
+    from jarvis.society.mars.ordinary import OrdinaryStationExecutor
+    from jarvis.society.mars.service import MarsStationService
+    from jarvis.society.mars.store import MarsStore
+
+    service = None
+    published = False
+    try:
+        async with asyncio.timeout(_INITIALIZATION_TIMEOUT_S):
+            runtime = getattr(state, "society", None)
+            if runtime is None:
+                factory = getattr(state, "society_factory", None)
+                if factory is None:
+                    raise HTTPException(503, "mars_station_unavailable")
+                runtime = factory()
+                state.society = runtime
+            await runtime.ensure_started()
+            if getattr(state, "mars_station_stopping", False):
+                raise HTTPException(503, "mars_station_stopped")
+            service = MarsStationService(
+                MarsStore(runtime.store.path.parent / "mars" / "ordinary.db"),
+                OrdinaryStationExecutor(runtime),
+                # Existing chat cancellation waits up to fifteen seconds before forcing stop.
+                operation_timeout_s=20.0,
+            )
+            await service.start()
+            if getattr(state, "mars_station_stopping", False):
+                raise HTTPException(503, "mars_station_stopped")
+            # No await separates the stop check and publication. The state lock
+            # only protects task creation; it is never held across initialization.
+            state.mars_station = service
+            state.mars_station_task = asyncio.create_task(
+                _reconcile_loop(service), name="mars-station-owner"
+            )
+            published = True
+            return service
+    except Exception as exc:
+        # Exception text may contain private drafts or provider error bodies.
+        log.warning("Mars station startup unavailable (%s)", type(exc).__name__)
+        raise HTTPException(503, "mars_station_unavailable") from exc
+    finally:
+        if service is not None and not published:
+            await service.close()
+
+
+def _observe_initialization(task: asyncio.Task[Any]) -> None:
+    # All waiters may have disconnected. Startup logs a sanitized failure itself;
+    # retrieving the exception avoids asyncio logging its private exception chain.
+    if not task.cancelled():
+        task.exception()
+
+
+async def ensure_mars_station(state: Any) -> Any:
+    """Share one bounded initialization task between HTTP and deferred recovery."""
+    async with _station_lock(state):
+        if getattr(state, "mars_station_stopping", False):
+            raise HTTPException(503, "mars_station_stopped")
         existing = getattr(state, "mars_station", None)
         if existing is not None:
             return existing
-        from jarvis.society.mars.ordinary import OrdinaryStationExecutor
-        from jarvis.society.mars.service import MarsStationService
-        from jarvis.society.mars.store import MarsStore
+        initialization = getattr(state, "mars_station_initialization_task", None)
+        if initialization is None or initialization.done():
+            initialization = asyncio.create_task(
+                _initialize_mars_station(state), name="mars-station-initialize"
+            )
+            initialization.add_done_callback(_observe_initialization)
+            state.mars_station_initialization_task = initialization
+    # A canceled HTTP request must not cancel initialization needed by other
+    # callers or the process-owned recovery task. Explicit stop cancels the owner.
+    return await asyncio.shield(initialization)
 
-        from .society_routes import _runtime
 
-        runtime = await _runtime(request)
-        service = MarsStationService(
-            MarsStore(runtime.store.path.parent / "mars" / "ordinary.db"),
-            OrdinaryStationExecutor(runtime),
-            # Existing chat cancellation waits up to fifteen seconds before forcing stop.
-            operation_timeout_s=20.0,
-        )
+def schedule_mars_resume(state: Any, data_dir: Path) -> None:
+    """Resume an existing journal after boot, without requiring any client.
+
+    Merely scheduling this task does no I/O and calls no runtime factory. A
+    normal install that has never used Mars retains its lazy boot behavior.
+    """
+    if getattr(state, "mars_station_stopping", False):
+        return
+    previous = getattr(state, "mars_station_startup_task", None)
+    if previous is not None and not previous.done():
+        return
+
+    async def resume() -> None:
+        # Even an eager task factory must not run recovery on the boot chain.
+        await asyncio.sleep(0)
         try:
-            await service.start()
+            path = Path(data_dir) / "mars" / "ordinary.db"
+            if await asyncio.to_thread(path.is_file):
+                await ensure_mars_station(state)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            log.warning("Mars station startup unavailable (%s)", type(exc).__name__)
-            raise HTTPException(503, "mars_station_unavailable") from exc
-        state.mars_station = service
-        state.mars_station_task = asyncio.create_task(
-            _reconcile_loop(service), name="mars-station-owner"
+            log.warning("Mars station deferred resume unavailable (%s)", type(exc).__name__)
+
+    state.mars_station_startup_task = asyncio.create_task(resume(), name="mars-station-resume")
+
+
+async def stop_mars_station(state: Any) -> None:
+    """Fence late initialization and join both owners before releasing the store."""
+    state.mars_station_stopping = True
+    tasks = tuple(
+        task
+        for name in (
+            "mars_station_startup_task",
+            "mars_station_initialization_task",
+            "mars_station_task",
         )
-        return service
+        if (task := getattr(state, name, None)) is not None
+    )
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        _done, pending = await asyncio.wait(tasks, timeout=_INITIALIZATION_STOP_TIMEOUT_S)
+        if pending:
+            # Retain ownership references and the stop latch if a collaborator
+            # ignores cancellation. It still cannot publish a station when it
+            # eventually returns; its finally block closes any partial service.
+            log.warning("Mars station shutdown deadline expired (TimeoutError)")
+            raise TimeoutError("mars_station_shutdown_timeout")
+    async with _station_lock(state):
+        service = getattr(state, "mars_station", None)
+        if service is not None:
+            await service.close()
+            state.mars_station = None
+        state.mars_station_startup_task = None
+        state.mars_station_initialization_task = None
+        state.mars_station_task = None
+
+
+async def _service(request: Request) -> Any:
+    return await ensure_mars_station(request.app.state)
 
 
 def _error(exc: StationError) -> HTTPException:
@@ -135,9 +248,7 @@ async def get_mars_events(
     response_model=CommandRecord,
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def submit_mars_draft(
-    agent_id: str, body: StationCommand, request: Request
-) -> CommandRecord:
+async def submit_mars_draft(agent_id: str, body: StationCommand, request: Request) -> CommandRecord:
     """Submit one idempotent communication draft through existing agent authority."""
     try:
         return await (await _service(request)).submit(agent_id, body)

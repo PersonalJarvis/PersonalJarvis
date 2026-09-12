@@ -1,4 +1,4 @@
-import { Component, Suspense, useCallback, useRef, useState, type ReactNode } from "react";
+import { Component, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Canvas } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
 import { useCanvasAwake } from "@/hooks/useCanvasAwake";
@@ -9,6 +9,7 @@ import { CAMERA_FOV, fitWorldBounds } from "./camera";
 import { MarsScene, type CameraMode } from "./MarsScene";
 import { WORLD, WORLD_BOUNDS } from "./world";
 import { MarsBackgroundControl } from "./MarsBackgroundControl";
+import { readViewPreferences, saveViewPreferences, VIEWPOINTS, type CameraPose, type Viewpoint } from "./viewPreferences";
 import "./mars.css";
 
 export interface MarsWorldStageProps {
@@ -41,8 +42,12 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
   const { generation } = useWebglSurface(hostRef);
   const webgl = useWebglSupported();
   const reduced = useReducedMotion() ?? false;
-  const [mode, setMode] = useState<CameraMode>("overview");
-  const [neutral, setNeutral] = useState(false);
+  const [initial] = useState(readViewPreferences);
+  const [mode, setMode] = useState<CameraMode>(initial.mode);
+  const [neutral, setNeutral] = useState(initial.neutral);
+  const [viewpoint, setViewpoint] = useState<Viewpoint>(initial.viewpoint);
+  const [pose, setPose] = useState<CameraPose | null>(initial.pose);
+  useEffect(() => { saveViewPreferences({ mode, neutral, viewpoint, pose }); }, [mode, neutral, viewpoint, pose]);
   const [selected, setSelected] = useState<string | null>(null);
   const [reset, setReset] = useState(0);
   const orbit = useCallback(() => setMode("orbit"), []);
@@ -61,6 +66,11 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
         <div className="mars-actions">
           <button type="button" aria-pressed={mode === "overview"} onClick={() => choose("overview")}>{t("society.mars.overview")}</button>
           <button type="button" aria-pressed={mode === "outpost"} onClick={() => choose("outpost")}>{t("society.mars.outpost")}</button>
+          <select aria-label={t("society.mars.viewpoint")} value={viewpoint} onChange={(event) => {
+            setViewpoint(event.target.value as Viewpoint); choose("outpost");
+          }}>
+            {VIEWPOINTS.map((value) => <option key={value} value={value}>{t(`society.mars.view_${value}`)}</option>)}
+          </select>
           <button type="button" aria-pressed={mode === "player"} onClick={() => choose("player")}>{t("society.mars.walk")}</button>
           <button type="button" aria-pressed={neutral} onClick={() => setNeutral((value) => !value)}>{t("society.mars.neutral")}</button>
           {onOpenStation && <button type="button" onClick={onOpenStation}>{t("society.mars.station_title")}</button>}
@@ -74,7 +84,7 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
           <RenderBoundary key={generation} fallbackText={t("society.mars.no_graphics")}>
             <Suspense fallback={<div className="mars-render-fallback" role="status">{t("society.mars.loading")}</div>}>
               <Canvas shadows="percentage" camera={{ position: INITIAL_CAMERA, fov: CAMERA_FOV, near: 0.12, far: 20000 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} frameloop={!awake ? "never" : reduced ? "demand" : "always"} onPointerMissed={() => { setSelected(null); onSelectAgent?.(null); }}>
-                <MarsScene hostRef={hostRef} mode={mode} neutral={neutral} awake={awake && !stationPanel} selected={selected} onSelect={select} onOrbit={orbit} onOpenStation={onOpenStation} reset={reset} />
+                <MarsScene hostRef={hostRef} mode={mode} neutral={neutral} viewpoint={viewpoint} initialPose={pose} onSavePose={setPose} awake={awake && !stationPanel} selected={selected} onSelect={select} onOrbit={orbit} onOpenStation={onOpenStation} reset={reset} />
               </Canvas>
             </Suspense>
           </RenderBoundary>

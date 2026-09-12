@@ -2827,6 +2827,12 @@ class WebServer:
             except Exception:
                 logger.debug("Browser preparation deferred after failure", exc_info=True)
         self._browser_prepare_task = asyncio.create_task(prepare_browser(), name="browser-prepare")
+        # Existing Mars work recovers with zero clients. The deferred helper
+        # performs its existence probe and runtime composition after boot yields.
+        from .mars_routes import schedule_mars_resume
+
+        data_dir = Path(getattr(getattr(self.cfg, "memory", None), "data_dir", None) or "data")
+        schedule_mars_resume(self.app.state, data_dir)
 
     async def _init_screenshot_retention(self) -> None:
         """Auto-delete captured screenshot blobs older than the configured
@@ -3736,20 +3742,23 @@ class WebServer:
         return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
     async def stop(self) -> None:
+        from .mars_routes import stop_mars_station
+
+        # Fence station creation before any other shutdown await can interleave
+        # with a pending boot recovery or first HTTP request.
+        mars_shutdown_failure: str | None = None
+        try:
+            await stop_mars_station(self.app.state)
+        except Exception as exc:  # noqa: BLE001 -- independent resources must still shut down
+            # The helper retains its stop latch and pending owner references.
+            # Keep only the type: cleanup failures can contain private payloads.
+            mars_shutdown_failure = type(exc).__name__
+            logger.warning("Mars station cleanup incomplete ({})", mars_shutdown_failure)
         if self._browser_prepare_task is not None:
             self._browser_prepare_task.cancel()
             await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
             self._browser_prepare_task = None
         society = getattr(self.app.state, "society", None)
-        mars_task = getattr(self.app.state, "mars_station_task", None)
-        if mars_task is not None:
-            mars_task.cancel()
-            await asyncio.gather(mars_task, return_exceptions=True)
-            self.app.state.mars_station_task = None
-        mars_station = getattr(self.app.state, "mars_station", None)
-        if mars_station is not None:
-            await mars_station.close()
-            self.app.state.mars_station = None
         if society is not None:
             await society.browser.close()
         self._mic_level_sessions.clear()
@@ -4059,6 +4068,11 @@ class WebServer:
             await close_shared_codex_app_servers()
         except Exception as exc:  # noqa: BLE001 - shutdown continues best-effort
             logger.opt(exception=exc).warning("Codex subscription app-server cleanup failed")
+
+        if mars_shutdown_failure is not None:
+            # Report incomplete Mars cleanup only after unrelated browser, chat,
+            # plugin, watcher, terminal and server resources have been released.
+            raise RuntimeError(f"mars_station_shutdown_incomplete ({mars_shutdown_failure})")
 
     @property
     def running(self) -> bool:

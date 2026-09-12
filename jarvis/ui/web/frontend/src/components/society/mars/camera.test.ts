@@ -1,9 +1,50 @@
 import { describe, expect, it } from "vitest";
 import { PerspectiveCamera, Vector3 } from "three";
-import { avoidCameraCollision, boundsCorners, CAMERA_FOV, fitWorldBounds, MAX_POLAR, MIN_POLAR } from "./camera";
-import { box, WORLD_BOUNDS } from "./world";
+import { avoidCameraCollision, boundsCorners, CAMERA_FOV, fitWorldBounds, frameInspectionBounds, MAX_POLAR, MIN_POLAR } from "./camera";
+import { box, outpostBounds, WORLD_BOUNDS } from "./world";
+import { parseViewPreferences, VIEW_DIRECTIONS, VIEWPOINTS } from "./viewPreferences";
 
 describe("Mars camera", () => {
+  it.each(VIEWPOINTS)("frames the complete authored Outpost from %s", (view) => {
+    const bounds = outpostBounds();
+    expect(bounds.min[0]).toBeLessThan(125); // West bridge, not just the plateau.
+    expect(bounds.min[1]).toBeLessThan(0); // Complete cliff/support base.
+    const frame = frameInspectionBounds(bounds, 16 / 9, 1.15, VIEW_DIRECTIONS[view]);
+    const camera = new PerspectiveCamera(CAMERA_FOV, 16 / 9, 0.12, 20000);
+    camera.position.fromArray(frame.position); camera.lookAt(...frame.target); camera.updateMatrixWorld();
+    for (const point of boundsCorners(bounds)) {
+      const projected = new Vector3(...point).project(camera);
+      expect(Math.abs(projected.x)).toBeLessThan(1 / 1.15);
+      expect(Math.abs(projected.y)).toBeLessThan(1 / 1.15);
+    }
+  });
+  it("backs a preset lens out of solids without cropping its complete subject", () => {
+    const bounds = box("subject", 0, 0, 0, 10, 10, 10);
+    const raw = fitWorldBounds(bounds, 1.6);
+    const obstacle = box("lens-obstacle", ...raw.position, 10, 10, 10);
+    const frame = frameInspectionBounds(bounds, 1.6, 1.15, [0.8, 0.9, 1], [obstacle], () => -10);
+    expect(frame.distance).toBeGreaterThan(raw.distance);
+    expect(frame.target).toEqual(raw.target);
+    const camera = new PerspectiveCamera(CAMERA_FOV, 1.6, 0.12, 20000);
+    camera.position.fromArray(frame.position); camera.lookAt(...frame.target); camera.updateMatrixWorld();
+    for (const point of boundsCorners(bounds)) {
+      const projected = new Vector3(...point).project(camera);
+      expect(Math.abs(projected.x)).toBeLessThan(1 / 1.15);
+      expect(Math.abs(projected.y)).toBeLessThan(1 / 1.15);
+    }
+  });
+  it("restores only valid client/world view state and recovers from corrupt storage", () => {
+    const pose = { position: [320, 100, 150], target: [320, 76, 50] };
+    const saved = { world_id: "mars:ordinary", layout_version: 1, mode: "orbit", viewpoint: "rear", neutral: true, pose };
+    expect(parseViewPreferences(JSON.stringify(saved))).toEqual({ mode: "orbit", viewpoint: "rear", neutral: true, pose });
+    for (const change of [{ world_id: "mars:swarm:other" }, { layout_version: 2 }, { mode: "bad" }]) {
+      expect(parseViewPreferences(JSON.stringify({ ...saved, ...change })).mode).toBe("overview");
+    }
+    for (const position of [[0, 0], [null, 0, 0], [1e9, 0, 0], pose.target]) {
+      expect(parseViewPreferences(JSON.stringify({ ...saved, pose: { ...pose, position } })).mode).toBe("overview");
+    }
+    expect(parseViewPreferences("invalid JSON").mode).toBe("overview");
+  });
   it.each([0.32, 0.65, 1, 16 / 9, 3.4])("fits the full three-dimensional world at aspect %s", (aspect) => {
     const frame = fitWorldBounds(WORLD_BOUNDS, aspect);
     const camera = new PerspectiveCamera(CAMERA_FOV, aspect, 0.12, 20000);

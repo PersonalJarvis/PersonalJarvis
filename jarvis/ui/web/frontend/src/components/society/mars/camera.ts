@@ -28,6 +28,22 @@ export function fitWorldBounds(bounds: Bounds, aspect: number, padding = 1.15, d
   return { target: target.toArray() as Vec3, position: target.clone().addScaledVector(outward, distance).toArray() as Vec3, distance };
 }
 
+/** A frame may look through parts of its subject; only its lens must be clear.
+ * Moving farther along the same direction preserves the complete bounds fit.
+ */
+export function frameInspectionBounds(bounds: Bounds, aspect: number, padding = 1.15, direction: Vec3 = [0.8, 0.9, 1], colliders = BUILDING_COLLIDERS, ground = terrainHeight) {
+  const frame = fitWorldBounds(bounds, aspect, padding, direction);
+  const target = new Vector3(...frame.target);
+  const outward = new Vector3(...direction).normalize();
+  for (let attempt = 0; attempt < 32; attempt++) {
+    const position = target.clone().addScaledVector(outward, frame.distance).toArray() as Vec3;
+    const inSolid = colliders.some((box) => position.every((n, axis) => n >= box.min[axis] - CAMERA_CLEARANCE && n <= box.max[axis] + CAMERA_CLEARANCE));
+    if (!inSolid && position[1] >= ground(position[0], position[2]) + CAMERA_CLEARANCE) return { ...frame, position };
+    frame.distance *= 1.2;
+  }
+  throw new Error("No clear Mars inspection camera position");
+}
+
 export function segmentBox(from: Vec3, to: Vec3, bounds: Collider, radius = 0): number | null {
   let enter = 0, leave = 1;
   for (let axis = 0; axis < 3; axis++) {
