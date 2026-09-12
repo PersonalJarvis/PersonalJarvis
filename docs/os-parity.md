@@ -1,5 +1,17 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## GPT-Live migration (acceptance pending)
+
+The new continuous voice core uses portable Python, SQLite and WebRTC/WebSocket
+transports. Browser audio is selected by provider capability and owns echo
+cancellation on desktop and remote surfaces. OS-specific capture and actuation
+remain behind the existing screen/desktop adapters and ToolExecutor.
+
+Windows contract tests, an OpenAI API synthetic tool-and-audio test, and a Python
+3.11 Linux-container contract run passed. Native macOS audio, native Linux audio,
+fresh installations, long-call recovery and comparative latency remain unverified.
+See [the continuous voice architecture](gpt-live.md).
+
 ## Full Chrome window preview (2026-09-12, T3; acceptance open)
 
 Windows interactive sessions now capture the owned Chrome window with Windows

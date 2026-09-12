@@ -445,6 +445,17 @@ def _warn_on_same_family_delegate_chain(
         log.debug("Realtime credential-family diagnostics failed.", exc_info=True)
 
 
+def realtime_browser_audio(cfg: Any) -> bool:
+    """Whether the selected engine needs browser echo-cancelled audio."""
+    for provider_id in _explicit_provider_ids(cfg)[:1]:
+        try:
+            provider = load(_GROUP, provider_id, protocol=RealtimeProvider)
+            return bool(getattr(provider, "browser_audio", False))
+        except Exception:
+            log.warning("Browser audio capability unavailable", exc_info=True)
+    return False
+
+
 def build_realtime_session(
     *,
     cfg: Any,
@@ -470,6 +481,20 @@ def build_realtime_session(
             log.info("Realtime voice has no credential-ready provider; using pipeline mode.")
             return None
         primary_provider = providers[0]
+        if getattr(primary_provider, "native_tool_orchestration", False):
+            from jarvis.live.native import NativeLiveVoiceSession
+
+            return NativeLiveVoiceSession(
+                session_id=session_id, send_binary=send_binary, send_json=send_json,
+                providers=providers, config=cfg, bus=bus, brain=brain, surface=surface,
+            )
+        if getattr(primary_provider, "continuous_conversation", False):
+            from jarvis.live.session import LiveVoiceSession
+
+            return LiveVoiceSession(
+                session_id=session_id, send_binary=send_binary, send_json=send_json,
+                providers=providers, config=cfg, bus=bus, brain=brain, surface=surface,
+            )
         _warn_on_same_family_delegate_chain(
             cfg,
             str(getattr(primary_provider, "name", "") or ""),

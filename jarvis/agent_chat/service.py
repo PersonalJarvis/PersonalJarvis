@@ -391,6 +391,22 @@ class AgentChatService:
         session = self.store.get_session(session_id)
         if session is None:
             raise NoSuchSession(session_id)
+        selected_runner = None
+        if session.surface == "jarvis":
+            from jarvis.core.model_selection import worker_selection
+            from jarvis.core.runtime_refs import get_brain_manager
+            from jarvis.core.task_agent import subscription_seat
+
+            manager = get_brain_manager()
+            selection = worker_selection(getattr(manager, "_config", None))
+            if selection is not None:
+                provider, selected_runner = subscription_seat(selection.provider) or (
+                    selection.provider, "brain"
+                )
+                if (session.provider, session.model) != (provider, selection.model or ""):
+                    session = replace(session, provider=provider, model=selection.model or "",
+                                      vendor_session=None, effort=selection.reasoning_effort)
+                    self.store.reseat_session(session_id, provider=provider, model=session.model)
         if (
             session.surface in ("jarvis", "society")
             and direct_user
@@ -498,7 +514,7 @@ class AgentChatService:
                     },
                 ),
             )
-        runner = resolve_runner(session.provider, surface=session.surface)
+        runner = selected_runner or resolve_runner(session.provider, surface=session.surface)
         await self._emit(
             session_id,
             make_event(

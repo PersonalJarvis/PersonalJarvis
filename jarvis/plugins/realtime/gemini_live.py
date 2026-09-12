@@ -905,6 +905,11 @@ class _GeminiLiveSession:
         await self._session.send_realtime_input(text=payload)
         self._note_input_sent("text")
 
+    async def send_image(self, image: bytes, mime: str) -> None:
+        from google.genai import types
+
+        await self._session.send_realtime_input(video=types.Blob(data=image, mime_type=mime))
+
     async def truncate(self, audio_end_ms: int) -> None:
         del audio_end_ms  # Gemini interrupts generation when new audio arrives.
 
@@ -1181,6 +1186,8 @@ class GeminiLiveProvider:
     # same value so a terminal billing/auth failure is not retried through an
     # alias backed by the very same credential family (AP-22).
     credential_family = "gemini"
+    browser_audio = True
+    native_tool_orchestration = True
     supports_realtime = True
     implicit_usage_fallback_allowed = True
     input_sample_rate = _INPUT_RATE

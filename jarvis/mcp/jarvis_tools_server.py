@@ -59,6 +59,10 @@ def approval_snapshot() -> dict[str, Any]:
     session_id = CHAT_SESSION_REF.get()
     if not session_id:
         return {}
+    from jarvis.core.task_agent import scope_for
+
+    if scope_for(session_id) is not None:
+        return {"approval_surface": "unattended", "approval_ref": f"agent-chat:{session_id}"}
     return {
         "approval_surface": "interactive",
         "approval_ref": f"agent-chat:{session_id}",
@@ -164,6 +168,13 @@ def build_server() -> Any:
                 if _usable_name(str(entry.name)) and str(entry.name) not in _WITHHELD
             ]
         for entry in entries:
+            from jarvis.core.task_agent import scope_for
+
+            task_scope = scope_for(session_id)
+            if session_id and session_id.startswith("task-") and task_scope is None:
+                continue
+            if task_scope is not None and entry.name not in task_scope.names:
+                continue
             schema = entry.input_schema
             if not isinstance(schema, dict) or not schema:
                 schema = {"type": "object", "properties": {}}
@@ -201,8 +212,15 @@ def build_server() -> Any:
 
             with restore_turn(CHAT_SESSION_REF.get()):
                 turn = current_chat_turn.get()
+                from jarvis.core.task_agent import scope_for
+
+                task_scope = scope_for(CHAT_SESSION_REF.get())
+                if (CHAT_SESSION_REF.get() or "").startswith("task-") and task_scope is None:
+                    return [types.TextContent(type="text", text="The task grant has expired.")]
+                if task_scope is not None and name not in task_scope.names:
+                    return [types.TextContent(type="text", text="Tool outside the task grant.")]
                 request = SupervisorToolRequest(
-                    trace_id=uuid4(),
+                    trace_id=task_scope.trace_id if task_scope else uuid4(),
                     origin=CHAT_ORIGIN,
                     user_utterance=turn.user_text if turn else "",
                     rationale="agent chat tool call",

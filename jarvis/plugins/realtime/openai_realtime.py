@@ -1649,6 +1649,8 @@ class LocalRealtimeProvider:
     """
 
     name = "local-realtime"
+    browser_audio = True
+    native_tool_orchestration = True
     supports_realtime = True
     # Class-level floor for the declaration budget (ADR-0035 §4). The real
     # number is per-instance and comes from the brain this machine actually

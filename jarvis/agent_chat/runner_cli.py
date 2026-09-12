@@ -2510,6 +2510,17 @@ async def _run_cli_once(
             from .native_control import disable_cli_tools
 
             disable_cli_tools(plan, runner)
+        if getattr(handle, "gateway_only", False):
+            if runner == "claude-cli":
+                plan.argv += ["--tools", "", "--strict-mcp-config"]
+            elif runner == "codex-cli":
+                plan.argv += ["--ignore-user-config", "--ignore-rules"]
+                for feature in ("shell_tool", "apps", "hooks", "multi_agent", "browser_use",
+                                "web_search_request", "goals", "memories", "plugins",
+                                "computer_use", "image_generation", "multi_agent_v2"):
+                    plan.argv += ["--disable", feature]
+            else:
+                raise CliUnavailable("The selected runner cannot isolate task tools.")
     except CliUnavailable as exc:
         return _Outcome("error", str(exc), {}, None, None)
 

@@ -35,6 +35,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 # jarvis.awareness.config only knows Pydantic and never calls back into core.* —
 # no circular-import risk.
 from jarvis.awareness.config import AwarenessConfig
+from jarvis.live.config import LiveConfig
 
 # wake_constants is pure stdlib (no jarvis imports) — safe to import from this
 # foundational config module without a cycle. Single source of truth for the
@@ -212,6 +213,10 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "openai-realtime": (
         ("realtime_openai_api_key", "JARVIS_REALTIME_OPENAI_API_KEY"),
         ("openai_api_key", "OPENAI_API_KEY"),
+    ),
+    "openai-live": (
+        ("openai_api_key", "OPENAI_API_KEY"),
+        ("realtime_openai_api_key", "JARVIS_REALTIME_OPENAI_API_KEY"),
     ),
     "gemini-live": (
         ("realtime_gemini_api_key", "JARVIS_REALTIME_GEMINI_API_KEY"),
@@ -4326,6 +4331,7 @@ class JarvisConfig(BaseModel):
     stt: STTConfig = Field(default_factory=STTConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
     brain: BrainConfig = Field(default_factory=BrainConfig)
+    live: LiveConfig = Field(default_factory=LiveConfig)
     # Google key routing (AI Studio vs Vertex express) — see GoogleAuthConfig.
     google: GoogleAuthConfig = Field(default_factory=GoogleAuthConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)

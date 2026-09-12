@@ -524,6 +524,7 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
     # through /v1/models at connect time (same as the local brain card), and a
     # user who wants a specific one pins it on the card.
     "local-realtime": _curated([("auto", "Chosen by your server")]),
+    "openai-live": _curated([("gpt-live-1", "GPT-Live 1")]),
     "openai-realtime": _curated(
         [
             ("gpt-realtime", "GPT Realtime (default)"),

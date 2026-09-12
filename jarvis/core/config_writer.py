@@ -2230,6 +2230,35 @@ def _read_doc(path: Path) -> tuple[TOMLDocument, bool]:
     return tomlkit.parse(raw), had_bom
 
 
+def set_live_profile(values: dict, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Guided opt-in: back up the old configuration and atomically select Live."""
+    from jarvis.live.config import LiveConfig
+
+    profile = LiveConfig.model_validate(values)
+    if not profile.configured or not profile.backend_model.strip():
+        raise ValueError("Select a thinking model before enabling GPT-Live.")
+    path = _ensure_writable_config_path(path)
+    with _WRITE_LOCK:
+        doc, bom = _read_doc(path)
+        backup = path.with_name(path.name + ".pre-live.bak")
+        if not backup.exists():
+            _atomic_write(backup, path.read_text(encoding="utf-8"))
+        doc["live"] = profile.model_dump()
+        if "brain" not in doc:
+            doc["brain"] = tomlkit.table()
+        doc["brain"]["realtime"] = {"provider": "openai-live", "model": profile.model}
+        if "voice" not in doc:
+            doc["voice"] = tomlkit.table()
+        doc["voice"]["mode"] = "realtime"
+        _write_doc(path, doc, bom)
+    clear_config_cache()
+    _update_config_soll_section("live", profile.model_dump())  # i18n-allow
+    _update_config_soll_section(  # i18n-allow
+        "brain.realtime", {"provider": "openai-live", "model": profile.model}
+    )
+    _update_config_soll_section("voice", {"mode": "realtime"})  # i18n-allow
+
+
 def _write_doc(path: Path, doc: TOMLDocument, had_bom: bool) -> None:
     out = tomlkit.dumps(doc)
     if had_bom:

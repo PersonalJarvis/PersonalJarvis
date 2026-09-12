@@ -1,4 +1,13 @@
 {
+  "live": {
+    "loading": "Cargando ajustes de voz…", "description": "Conversación natural, tu modelo de razonamiento y las herramientas de Jarvis con una sola clave de OpenAI.",
+    "key_required": "Conecta tu clave de OpenAI abajo para activar GPT-Live.", "voice_model": "Modelo de voz", "voice": "Voz", "thinking_model": "Modelo de razonamiento",
+    "choose_model": "Selecciona un modelo", "reasoning": "Esfuerzo de razonamiento", "model_default": "Predeterminado del modelo", "web_search": "Búsqueda web",
+    "prompts": "Personalizar instrucciones", "conversation_prompt": "Estilo de conversación", "backend_prompt": "Instrucciones de razonamiento y herramientas",
+    "billing": "La duración de voz y el modelo se facturan por separado. El control del ordenador usa el mismo modelo. OpenAI no almacena una grabación de la conversación.",
+    "save": "Guardar y usar GPT-Live", "saved": "Guardado para la próxima llamada. Se guardó una copia de la configuración anterior.",
+    "use_for_agents": "Usar esta clave y modelo para agentes y chat de texto", "agent_saved": "Los agentes y el chat ahora usan este modelo de OpenAI."
+  },
   "input_isolation": {
     "title": "Las herramientas de dictado y escritura no alcanzan esta ventana",
     "impact": "Esta aplicación se está ejecutando con permisos de administrador, por lo que Windows impide que otros programas escriban en ella. Las apps de dictado, los expansores de texto, los gestores de portapapeles y el autocompletado de los gestores de contraseñas parecerán no hacer nada aquí, aunque sigan funcionando en el resto de aplicaciones.",
@@ -541,7 +550,7 @@
     "realtime_transport_socket_unreachable": "No se pudo acceder al canal del transporte de suscripción. Reinicia la aplicación e inténtalo de nuevo."
   },
   "provider_billing": {
-    "api": "API, facturación por token",
+    "api": "API, facturación por uso",
     "subscription": "Inicio de sesión con suscripción",
     "subscription_or_api": "Inicio de sesión con suscripción o clave API",
     "local": "Local, no necesita clave"
@@ -1940,7 +1949,7 @@
     "mode_active_badge": "Activo",
     "mode_recommended": "Recomendado",
     "voice_engine_label": "Motor de voz",
-    "voice_engine_desc": "Cómo escucha y habla {name}: la pipeline clásica o un único modelo en tiempo real.",
+    "voice_engine_desc": "Cómo escucha y habla {name}: conversación en vivo con herramientas o voz local.",
     "mode_needs_credentials": "Conecta o configura un proveedor de tiempo real abajo para cambiar.",
     "mode_desc_pipeline": "Tres pasos: voz a texto, el Brain piensa, texto a voz.",
     "mode_desc_realtime": "Un solo modelo escucha y responde en el mismo flujo de audio en vivo.",
@@ -2002,7 +2011,7 @@
     "guide_computer_use_title": "¿Qué proveedor debería impulsar el Tool Model?",
     "guide_computer_use_body": "El Tool Model se encarga de cada acción que Jarvis realiza por ti — incluido Computer-Use, que lee capturas de tu pantalla y necesita un modelo que entienda imágenes; el selector oculta los modelos de solo texto. En caso de duda, quédate con tu proveedor Brain principal y su modelo predeterminado.",
     "reco_title": "Recomendación personal",
-    "reco_realtime_pick": "OpenAI Realtime",
+    "reco_realtime_pick": "OpenAI GPT-Live",
     "reco_realtime_why": "Gemini Live también vale, cualquiera funciona.",
     "reco_computer_use_pick": "Gemini 3.5 Flash",
     "reco_computer_use_why": "la latencia más rápida para herramientas.",

@@ -710,13 +710,6 @@ function RecommendedSetupPanel({
       why: t("apikeys_view.reco_realtime_why"),
     },
     {
-      tab: "computer-use",
-      icon: Terminal,
-      label: t("apikeys_view.tab_computer_use"),
-      pick: t("apikeys_view.reco_computer_use_pick"),
-      why: t("apikeys_view.reco_computer_use_why"),
-    },
-    {
       tab: "subagents",
       icon: Bot,
       label: t("apikeys_view.tab_subagents"),

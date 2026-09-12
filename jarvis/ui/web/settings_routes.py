@@ -264,6 +264,8 @@ def _realtime_model_label(provider_id: str | None, model: str | None) -> str | N
 
 @router.get("/voice-mode")
 async def get_voice_mode(request: Request) -> dict[str, object]:
+    from jarvis.realtime.factory import realtime_browser_audio
+
     cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
     mode = getattr(getattr(cfg, "voice", None), "mode", "pipeline")
     from jarvis.voice.subscription_profile import (
@@ -354,6 +356,7 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
         "realtime_available": realtime_available,
         "realtime_availability_pending": realtime_availability_pending,
         "requires_webrtc_offer": requires_webrtc_offer,
+        "browser_audio": realtime_browser_audio(cfg),
         "handshake_budget_s": handshake_budget_s,
         "transport_offer_ready": transport_offer_ready,
         "transport_offer_detail": transport_offer_detail,

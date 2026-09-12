@@ -217,7 +217,7 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         # one pipeline, one place the model is picked, one usage ledger. A
         # subscription CLI seat is a coding agent and belongs to the IDE's
         # chat, where its own loop and its own tools are the point.
-        cli_seats=False,
+        cli_seats=True,
         ladder=_JARVIS_LADDER,
         uses_stance=True,
         session_tools=_jarvis_tools,

@@ -9096,6 +9096,12 @@ class SpeechPipeline:
         echo cancellation. The browser surface provides full duplex with Web
         Audio echo cancellation.
         """
+        from jarvis.realtime.factory import realtime_browser_audio
+
+        if realtime_browser_audio(self._config):
+            from jarvis.live.runtime import run_browser_call
+
+            return await run_browser_call(self._bus, self._hangup_event)
         allow_classic_fallback = True
         try:
             from jarvis.realtime.desktop import (

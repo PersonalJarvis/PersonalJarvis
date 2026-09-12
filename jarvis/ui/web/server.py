@@ -364,6 +364,7 @@ class WebServer:
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
+        from .live_routes import router as live_router
         from .local_models_assistant_routes import (
             router as local_models_assistant_router,
         )
@@ -441,6 +442,11 @@ class WebServer:
         # cancellation busy-loop from inside the loop; see diagnostics_routes.
         app.include_router(diagnostics_router)
         app.include_router(provider_router)
+        app.include_router(live_router)
+        from jarvis.agent_chat.tasks import run_subscription_task
+        from jarvis.core.task_agent import register_runner
+
+        register_runner(run_subscription_task)
         # Local models section: inventory / unload / delete behind the
         # pull-capable card (same capability gate as the pull routes).
         app.include_router(local_models_router)

@@ -101,6 +101,21 @@ class BrainSupervisorToolGateway:
         with self._lock:
             return self._catalog_version
 
+    def _voice_tools(self) -> dict[str, Any]:
+        from jarvis.harness.computer_use_context import peek_computer_use_context
+        from jarvis.plugins.tool.live_screen import LiveScreenTool
+
+        tools = self._live_tools()
+        context = peek_computer_use_context()
+        if context is not None:
+            tools.update(context.tools or {})
+        tools["screen_snapshot"] = LiveScreenTool()
+        return tools
+
+    def voice_catalog(self) -> tuple[SupervisorToolDescriptor, ...]:
+        """Live models can see desktop primitives without a second tool model."""
+        return self._describe(self._voice_tools())
+
     async def execute(
         self,
         name: str,
@@ -114,7 +129,7 @@ class BrainSupervisorToolGateway:
                 error=f"cancelled ({request.cancel_token.reason or 'requested'})",
             )
 
-        tools = self._live_tools()
+        tools = self._voice_tools() if request.origin == "realtime" else self._live_tools()
         ref = str(request.config_snapshot.get("approval_ref") or "")
         scoped = None
         if (

@@ -251,9 +251,27 @@ class SupervisorToolRequest:
     cancel_token: CancelToken | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ContinuousVoiceStart:
+    """Configuration for a continuous provider; media and tools have separate lifecycles."""
+
+    session: dict[str, Any]
+    offer_sdp: str = ""
+
+
+class ContinuousVoiceConnection(Protocol):
+    session_id: str
+    answer_sdp: str
+
+    async def send(self, event: dict[str, Any]) -> None: ...
+    async def receive(self) -> dict[str, Any]: ...
+    async def close(self) -> None: ...
+
+
 # ----------------------------------------------------------------------
 # Protocols
 # ----------------------------------------------------------------------
+
 
 @runtime_checkable
 class WakeWordProvider(Protocol):

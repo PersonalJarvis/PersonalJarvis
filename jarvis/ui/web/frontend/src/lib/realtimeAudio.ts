@@ -2,6 +2,7 @@
 // JSON-only WSClient: this socket carries raw mono PCM16 in both directions.
 
 import { LevelMeter } from "./levelMeter";
+import { requestConnect } from "./connectBudget";
 import { mintWsTicket } from "./ws";
 import pcmWorkletUrl from "./pcm-worklet.ts?worker&url";
 
@@ -30,6 +31,7 @@ export type RealtimeCallbacks = {
 };
 
 export type RealtimeAudioOptions = {
+  browserAudio?: boolean;
   /** The active provider needs a WebRTC offer to open its subscription transport. */
   requiresWebRtcOffer?: boolean;
   /**
@@ -85,15 +87,49 @@ const ICE_GATHER_TIMEOUT_MS = 1_500;
  */
 export class RealtimeWebRtcTransport {
   private peer: RTCPeerConnection | null = null;
+  private player: HTMLAudioElement | null = null;
+  private dataChannel: RTCDataChannel | null = null;
+  private started: Promise<void> | null = null;
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
+  constructor(private onRemoteStream?: (stream: MediaStream) => void) {}
 
-  async createOffer(): Promise<string | null> {
+  async createOffer(stream?: MediaStream): Promise<string | null> {
     this.close();
     if (typeof RTCPeerConnection !== "function") return null;
 
     const peer = new RTCPeerConnection();
     this.peer = peer;
-    peer.addTransceiver("audio", { direction: "recvonly" });
-    peer.createDataChannel("oai-events");
+    if (stream) {
+      for (const track of stream.getAudioTracks()) peer.addTrack(track, stream);
+      this.player = new Audio();
+      this.player.autoplay = true;
+      peer.ontrack = (event) => {
+        if (this.player) {
+          this.player.srcObject = event.streams[0] ?? new MediaStream([event.track]);
+          this.onRemoteStream?.(this.player.srcObject as MediaStream);
+          void this.player.play().catch((error) => console.warn("Voice playback requires user activation", error));
+        }
+      };
+    } else {
+      peer.addTransceiver("audio", { direction: "recvonly" });
+    }
+    this.dataChannel = peer.createDataChannel("oai-events");
+    if (stream) {
+      const channel = this.dataChannel;
+      this.started = new Promise<void>((resolve, reject) => {
+        this.startupTimer = setTimeout(() => reject(new Error("GPT-Live did not start")), 25_000);
+        channel.addEventListener("message", event => {
+          try {
+            if (JSON.parse(event.data).type === "session.started") {
+              if (this.startupTimer) clearTimeout(this.startupTimer);
+              resolve();
+            }
+          } catch { /* Non-JSON data cannot acknowledge startup. */ }
+        });
+      });
+      void this.started.catch(() => undefined);
+    }
+    // Only the backend sideband executes tools or continues Responses work.
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
     await waitForIceGathering(peer);
@@ -105,11 +141,23 @@ export class RealtimeWebRtcTransport {
   async applyAnswer(sdp: string): Promise<void> {
     if (!this.peer) throw new Error("WebRTC answer arrived without an active offer");
     await this.peer.setRemoteDescription({ type: "answer", sdp });
+    if (this.started) await this.started;
+  }
+
+  muteOutput(): void {
+    if (this.player) this.player.muted = true;
   }
 
   close(): void {
     const peer = this.peer;
     this.peer = null;
+    this.dataChannel?.close();
+    this.dataChannel = null;
+    this.started = null;
+    if (this.startupTimer) clearTimeout(this.startupTimer);
+    this.player?.pause();
+    if (this.player) this.player.srcObject = null;
+    this.player = null;
     peer?.close();
   }
 }
@@ -335,12 +383,39 @@ export class RealtimeAudioClient {
   private webRtcOfferSdp: string | null = null;
   private startupPreroll: ArrayBuffer[] = [];
   private startupPrerollBytes = 0;
+  private finalized: (() => void) | null = null;
+  private serverClosed = false;
 
   constructor(
     private cb: RealtimeCallbacks = {},
     private options: RealtimeAudioOptions = {},
   ) {
-    this.webRtcTransport = new RealtimeWebRtcTransport();
+    this.webRtcTransport = new RealtimeWebRtcTransport(stream => this.observeRemoteAudio(stream));
+  }
+
+  private mediaFrame = 0;
+  private lastPlaybackActive = false;
+
+  private observeRemoteAudio(stream: MediaStream): void {
+    if (!this.ctx) return;
+    const analyser = this.ctx.createAnalyser();
+    analyser.fftSize = 256;
+    this.ctx.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+    const measure = () => {
+      analyser.getFloatTimeDomainData(samples);
+      const rms = Math.sqrt(samples.reduce((sum, x) => sum + x * x, 0) / samples.length);
+      this.cb.onOutputLevel?.(this.outputMeter.push(rms));
+      const active = rms > 0.004;
+      if (active !== this.lastPlaybackActive) {
+        this.lastPlaybackActive = active;
+        if (active) this.cb.onAudio?.();
+        this.cb.onStatus?.(active ? "speaking" : "listening", {});
+        if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active }));
+      }
+      this.mediaFrame = requestAnimationFrame(measure);
+    };
+    measure();
   }
 
   connect(): Promise<void> {
@@ -354,6 +429,7 @@ export class RealtimeAudioClient {
 
   private async open(): Promise<void> {
     this.intentionalClose = false;
+    this.serverClosed = false;
     try {
       const supportIssue = browserRealtimeSupportIssue();
       if (supportIssue) throw new RealtimeAudioSupportError(supportIssue);
@@ -364,7 +440,7 @@ export class RealtimeAudioClient {
       const webRtcOffer: Promise<{
         sdp: string | null;
         error: unknown | null;
-      }> | null = this.options.requiresWebRtcOffer
+      }> | null = this.options.requiresWebRtcOffer && !this.options.browserAudio
         ? this.webRtcTransport.createOffer().then(
             (sdp) => ({ sdp, error: null }),
             (error: unknown) => ({ sdp: null, error }),
@@ -410,7 +486,9 @@ export class RealtimeAudioClient {
       // alone. A subscription session cannot be opened or billed correctly
       // without its WebRTC peer, so this path fails closed.
       if (this.options.requiresWebRtcOffer) {
-        const result = await webRtcOffer;
+        const result = this.options.browserAudio
+          ? { sdp: await this.webRtcTransport.createOffer(this.stream), error: null }
+          : await webRtcOffer;
         if (result?.error) {
           this.webRtcTransport.close();
           this.webRtcOfferSdp = null;
@@ -430,11 +508,14 @@ export class RealtimeAudioClient {
       // first works on every engine; on a mint failure (e.g. older backend)
       // fall back to the cookie-only handshake, which Chromium still accepts.
       const ticket = await mintWsTicket();
+      await new Promise<void>((resolve) => requestConnect(resolve));
+      if (this.intentionalClose) throw new Error("Voice start cancelled");
       this.ws = new WebSocket(buildAudioSocketUrl(ticket));
       this.ws.binaryType = "arraybuffer";
       this.captureNode.port.onmessage = (event) => {
         const data = event.data as ArrayBuffer | { type?: string; rms?: number };
         if (data instanceof ArrayBuffer) {
+          if (this.options.browserAudio && this.options.requiresWebRtcOffer) return;
           if (this.ready && this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(data);
           } else if (!this.ready) {
@@ -517,7 +598,13 @@ export class RealtimeAudioClient {
             Boolean(message.is_final),
             typeof message.role === "string" ? message.role : "user",
           );
-        } else if (type === "tts_cancel") {
+        } else if (type === "audio_stopping") {
+          this.webRtcTransport.muteOutput();
+          this.stream?.getAudioTracks().forEach(track => { track.enabled = false; });
+        } else if (type === "audio_closed") {
+          this.serverClosed = true;
+          this.finalized?.();
+        } else if (type === "tts_cancel" || type === "audio_clear") {
           this.browserSpeech.cancel();
           this.playbackResampler?.reset();
           this.playbackNode?.port.postMessage({ type: "flush" });
@@ -666,10 +753,24 @@ export class RealtimeAudioClient {
 
   async disconnect(): Promise<void> {
     this.intentionalClose = true;
-    await this.teardown(true);
+    if (this.options.browserAudio && this.ready && !this.serverClosed && this.ws?.readyState === WebSocket.OPEN) {
+      this.ready = false;
+      this.webRtcTransport.muteOutput();
+      this.stream?.getAudioTracks().forEach(track => { track.enabled = false; });
+      await new Promise<void>(resolve => {
+        const timer = window.setTimeout(resolve, 16_000);
+        this.finalized = () => { window.clearTimeout(timer); resolve(); };
+        this.ws?.send(JSON.stringify({ type: "audio_stop" }));
+      });
+      this.finalized = null;
+      await this.teardown(false);
+    } else {
+      await this.teardown(true);
+    }
   }
 
   private async teardown(sendStop: boolean): Promise<void> {
+    cancelAnimationFrame(this.mediaFrame);
     const socket = this.ws;
     this.ws = null;
     this.ready = false;

@@ -20,6 +20,19 @@ def _pipeline(request: Any) -> Any | None:
 
 
 def voice_engine_status(request: Any) -> dict[str, Any]:
+    from jarvis.live.runtime import active
+
+    sessions = active()
+    if sessions:
+        session = sessions[0]
+        return {
+            "session_active": True,
+            "session_id": session.session_id,
+            "active_session_mode": "realtime",
+            "active_session_provider": session.active_provider,
+            "active_session_model": session._active_model,
+            "transitioning": False,
+        }
     pipeline = _pipeline(request)
     snapshot = getattr(pipeline, "voice_engine_status", None)
     if not callable(snapshot):

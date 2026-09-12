@@ -14,6 +14,7 @@ type VoiceModeResp = {
   mode: string;
   realtime_available: boolean;
   requires_webrtc_offer: boolean;
+  browser_audio?: boolean;
   /** Longest handshake any eligible realtime provider declares it needs. */
   handshake_budget_s?: number;
   /**
@@ -312,6 +313,7 @@ export function useVoiceMode() {
     mode,
     realtimeAvailable: q.data?.realtime_available ?? false,
     requiresWebRtcOffer: q.data?.requires_webrtc_offer ?? false,
+    browserAudio: q.data?.browser_audio ?? false,
     startBudgetMs: Math.max(
       REALTIME_START_BUDGET_FLOOR_MS,
       Math.round((q.data?.handshake_budget_s ?? 0) * 1000),

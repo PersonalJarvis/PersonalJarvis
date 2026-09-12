@@ -599,6 +599,7 @@ discord = "jarvis.channels.discord:DiscordChannel"
 # through the stable classic-pipeline composition (voice.profile =
 # "codex-subscription-voice"), which uses the audited app-server TEXT protocol.
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
+openai-live = "jarvis.plugins.realtime.openai_live:OpenAILiveProvider"
 gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
 # Same duplex socket on Google Cloud Vertex AI. A DISTINCT credential family:
 # a Cloud project and an AI Studio account fail independently, so crossing
@@ -610,6 +611,7 @@ vertex-live = "jarvis.plugins.realtime.gemini_live:VertexLiveProvider"
 local-realtime = "jarvis.plugins.realtime.openai_realtime:LocalRealtimeProvider"
 
 [project.entry-points."jarvis.tool"]
+live-screen-snapshot = "jarvis.plugins.tool.live_screen:LiveScreenTool"
 open-app = "jarvis.plugins.tool.open_app:OpenAppTool"
 type-text = "jarvis.plugins.tool.type_text:TypeTextTool"
 hotkey = "jarvis.plugins.tool.hotkey:HotkeyTool"

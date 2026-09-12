@@ -1,4 +1,13 @@
 {
+  "live": {
+    "loading": "Loading voice setup…", "description": "Natural conversation, your chosen thinking model, and Jarvis tools — one OpenAI key.",
+    "key_required": "Connect your OpenAI key below to enable GPT-Live.", "voice_model": "Voice model", "voice": "Voice", "thinking_model": "Thinking model",
+    "choose_model": "Choose a model", "reasoning": "Reasoning effort", "model_default": "Model default", "web_search": "Web search",
+    "prompts": "Customize instructions", "conversation_prompt": "Conversation style", "backend_prompt": "Thinking and tool instructions",
+    "billing": "Voice duration and thinking-model usage are billed separately. Computer control uses this same thinking model. Recordings are not stored by OpenAI.",
+    "save": "Save and use GPT-Live", "saved": "Saved. Your selection applies to the next call; the previous configuration was backed up.",
+    "use_for_agents": "Use this key and model for agents and text chat", "agent_saved": "Agents and text chat now use this OpenAI model."
+  },
   "input_isolation": {
     "title": "Dictation and typing tools can't reach this window",
     "impact": "This app is running with administrator rights, so Windows blocks other programs from typing into it. Dictation apps, text expanders, clipboard tools, and password-manager auto-type will seem to do nothing here, while still working in every other app.",
@@ -541,7 +550,7 @@
     "realtime_transport_socket_unreachable": "The subscription transport channel could not be reached. Restart the app, then try again."
   },
   "provider_billing": {
-    "api": "API, billed per token",
+    "api": "API, usage-based billing",
     "subscription": "Subscription login",
     "subscription_or_api": "Subscription login or API key",
     "local": "Local, no key needed"
@@ -1973,7 +1982,7 @@
     "mode_active_badge": "Active",
     "mode_recommended": "Recommended",
     "voice_engine_label": "Voice engine",
-    "voice_engine_desc": "How {name} listens and talks — the classic pipeline, or a single realtime model.",
+    "voice_engine_desc": "How {name} listens and talks — live conversation with tools, or local speech.",
     "mode_needs_credentials": "Connect or configure a Realtime provider below to switch.",
     "mode_desc_pipeline": "Three steps: speech-to-text, the Brain thinks, text-to-speech.",
     "mode_desc_realtime": "One model listens and answers in the same live audio stream.",
@@ -2036,7 +2045,7 @@
     "guide_computer_use_title": "Which provider should power the Tool Model?",
     "guide_computer_use_body": "The Tool Model handles every action Jarvis takes for you — including Computer-Use, which reads screenshots of your screen, so it needs a model that understands images; the picker hides text-only models. If unsure, keep your main Brain provider and its default model.",
     "reco_title": "Personal recommendation",
-    "reco_realtime_pick": "OpenAI Realtime",
+    "reco_realtime_pick": "OpenAI GPT-Live",
     "reco_realtime_why": "Gemini Live is fine too, either works.",
     "reco_computer_use_pick": "Gemini 3.5 Flash",
     "reco_computer_use_why": "the snappiest tool latency.",
