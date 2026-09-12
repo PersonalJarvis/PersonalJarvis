@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CHAT_COMMAND_NAMES, parseChatCommand, type ChatControlState } from "@/lib/chatControlApi";
 import { createAgentChatStore } from "@/store/agentChat";
 import { EMPTY_TIMELINE, reduceEvent } from "./reduce";
@@ -19,9 +19,11 @@ let failOnce = false;
 
 function Harness() {
   const [value, setValue] = useState("");
+  const anchorRef = useRef<HTMLDivElement>(null);
   const commands = useChatCommands({ value, setValue, onModel: model, agentId: "test" });
-  return <><ChatCommandPanel control={commands} /><input aria-label="Message" value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={commands.onKeyDown} />
-    <button onClick={() => void commands.execute(value)}>Send</button></>;
+  return <div role="dialog"><div style={{ overflow: "hidden" }} data-testid="scroll-container"><div ref={anchorRef}>
+    <ChatCommandPanel control={commands} anchorRef={anchorRef} /><input aria-label="Message" value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={commands.onKeyDown} />
+    <button onClick={() => void commands.execute(value)}>Send</button></div></div></div>;
 }
 function type(text: string) { fireEvent.change(screen.getByRole("textbox"), { target: { value: text } }); }
 function send(text: string) { type(text); fireEvent.click(screen.getByText("Send")); }
@@ -50,6 +52,29 @@ it("offers all sixteen commands and supports keyboard selection", async () => {
   fireEvent.keyDown(screen.getByRole("textbox"), { key: "Tab" });
   expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("/goal ");
   expect(requests).toHaveLength(0);
+});
+
+it("floats outside the clipping container while staying inside the agent dialog", async () => {
+  type("/");
+  const popup = await screen.findByRole("listbox");
+  expect(popup.parentElement).toBe(screen.getByRole("dialog"));
+  expect(screen.getByTestId("scroll-container").contains(popup)).toBe(false);
+  expect(popup.classList.contains("fixed")).toBe(true);
+  expect(popup.style.bottom).not.toBe("");
+});
+
+it("selects an exact command on Enter and dismisses without losing the draft", async () => {
+  type("/clear");
+  await screen.findByRole("option");
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+  expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("/clear ");
+  expect(requests).toHaveLength(0);
+  type("/go");
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("/go");
+  type("/goal");
+  expect(await screen.findByRole("listbox")).toBeTruthy();
 });
 
 it("clears and restores only the local view", async () => {

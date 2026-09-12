@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { Loader2, Pause, Play, X } from "lucide-react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,7 @@ export function useChatCommands({ value, setValue, onModel, onClear, agentId = "
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [help, setHelp] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   const [panel, setPanel] = useState<"status" | "find" | "routines" | null>(null);
   const [hits, setHits] = useState<ChatSearchHit[]>([]);
   const [result, setResult] = useState<ChatCommandResult | null>(null);
@@ -62,8 +64,8 @@ export function useChatCommands({ value, setValue, onModel, onClear, agentId = "
   }), [catalog, t]);
   const token = /^\/([a-z]*)$/.exec(value.trimStart());
   const matches = commands.filter((row) => help || row.name.startsWith(token?.[1] ?? ""));
-  const open = enabled && (help || Boolean(token && matches.length));
-  useEffect(() => { setActiveIndex(0); }, [value, help]);
+  const open = enabled && !dismissed && (help || Boolean(token && matches.length));
+  useEffect(() => { setActiveIndex(0); setDismissed(false); }, [value, help]);
   useEffect(() => { if (value) setHelp(false); }, [value]);
 
   async function ensureSession(): Promise<string> {
@@ -108,7 +110,7 @@ export function useChatCommands({ value, setValue, onModel, onClear, agentId = "
     sending.current = true; setBusy(true); setError(""); setHelp(false); setResult(null);
     try {
       switch (command.name) {
-        case "help": setHelp(true); break;
+        case "help": setDismissed(false); setHelp(true); break;
         case "clear": (onClear ?? view.clear)(); setPanel(null); break;
         case "history": restoreTranscriptView(sid); break;
         case "model":
@@ -134,11 +136,11 @@ export function useChatCommands({ value, setValue, onModel, onClear, agentId = "
   }
   function onKeyDown(event: KeyboardEvent): boolean {
     if (!open || !matches.length) return false;
-    if (event.key === "Escape") { event.preventDefault(); setHelp(false); setValue(""); return true; }
+    if (event.key === "Escape") { event.preventDefault(); setHelp(false); setDismissed(true); return true; }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault(); setActiveIndex((n) => (n + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); return true;
     }
-    if (event.key === "Tab" || event.key === "Enter" && value.trim() !== `/${matches[activeIndex]?.name}`) {
+    if (event.key === "Tab" || event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault(); select(matches[activeIndex] ?? matches[0]); return true;
     }
     return false;
@@ -153,9 +155,32 @@ export function useChatCommands({ value, setValue, onModel, onClear, agentId = "
     state, error, busy, panel, setPanel, hits, reveal, result, agentId };
 }
 
-export function ChatCommandPanel({ control }: { control: ReturnType<typeof useChatCommands> }) {
+export function ChatCommandPanel({ control, anchorRef }: { control: ReturnType<typeof useChatCommands>; anchorRef: RefObject<HTMLElement | null> }) {
   const t = useT();
   const list = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<CSSProperties | null>(null);
+  useLayoutEffect(() => {
+    if (!control.open) return;
+    const measure = () => {
+      const anchor = anchorRef.current;
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const width = Math.min(Math.max(rect.width, 320), window.innerWidth - 16);
+      setPosition({
+        left: Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8)),
+        bottom: window.innerHeight - rect.top + 6,
+        width,
+        maxHeight: Math.max(120, Math.min(340, rect.top - 14)),
+      });
+    };
+    measure();
+    window.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("resize", measure);
+    };
+  }, [control.open, anchorRef, control.matches.length]);
   useEffect(() => { list.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView?.({ block: "nearest" }); }, [control.activeIndex, control.open]);
   if (!control.enabled) return null;
   const goal = control.state?.goal;
@@ -183,13 +208,14 @@ export function ChatCommandPanel({ control }: { control: ReturnType<typeof useCh
         <span className="text-muted-foreground">#{hit.seq}</span> <span className="whitespace-pre-wrap">{hit.text}</span></button>) : <p>{t("slash.no_matches")}</p> : null}
     </section> : null}
     {control.result?.data.result ? <p className="mb-2 text-muted-foreground" role="status">{t("slash.command_done")}: /{control.result.command}</p> : null}
-    {control.open ? <div ref={list} role="listbox" aria-label={t("slash.help")} className="absolute bottom-full left-0 right-0 z-40 mb-2 max-h-80 overflow-auto rounded-xl border border-border bg-popover p-1 shadow-lg">
+    {control.open && position ? createPortal(<div ref={list} role="listbox" aria-label={t("slash.help")} data-combobox-panel="" data-testid="slash-command-picker" style={position}
+      className="pointer-events-auto fixed z-[70] overflow-y-auto rounded-xl border border-border-strong bg-popover p-1 text-xs text-foreground shadow-float">
       {control.matches.map((row, index) => <button key={row.name} role="option" aria-selected={index === control.activeIndex} aria-disabled={!row.available}
         onMouseEnter={() => control.setActiveIndex(index)} onMouseDown={(e) => e.preventDefault()} onClick={() => control.select(row)}
         className={cn("block w-full rounded-lg px-3 py-2 text-left", index === control.activeIndex && "bg-secondary", !row.available && "opacity-50")}>
         <span className="font-medium">/{row.name}</span><span className="ml-3 text-muted-foreground">{t(`slash.commands.${row.name}`)}</span>
         <span className="mt-0.5 block text-[11px] text-muted-foreground">{row.available ? row.example : row.reason}</span>
       </button>)}
-    </div> : null}
+    </div>, anchorRef.current?.closest<HTMLElement>('[role="dialog"]') ?? document.body) : null}
   </div>;
 }

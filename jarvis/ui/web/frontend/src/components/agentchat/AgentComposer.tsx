@@ -471,7 +471,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       {/* The blue variant of this strip lived here; a running microphone is a
           live state, not the accent, so it now shares the one green strip. */}
       <DictationStatus onStop={stopDictation} />
-      <ChatCommandPanel control={commands} />
+      <ChatCommandPanel control={commands} anchorRef={cardRef} />
       <ChatAttachmentStrip
         attachments={files.attachments}
         analyzing={files.analyzing}

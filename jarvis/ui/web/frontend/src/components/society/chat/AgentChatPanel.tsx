@@ -1104,7 +1104,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
 
   return (
     <div className="shrink-0 px-4 pb-4 pt-2 sm:px-6">
-      <div className={CHAT_MEASURE}><ChatCommandPanel control={commands} /></div>
+      <div className={CHAT_MEASURE}><ChatCommandPanel control={commands} anchorRef={composerRef} /></div>
       {problem ? <p className="mb-1 px-1 text-xs text-destructive">{problem}</p> : null}
       {mentionOpen && codingError ? <button type="button" className="mb-1 text-xs text-destructive underline" onClick={() => setCodingRetry((n) => n + 1)}>{t("society.chat.coding_retry")}</button> : null}
       {mentionOpen && capabilities.inventoryError ? <button type="button" className="mb-1 text-xs text-destructive underline" onClick={capabilities.retryInventory}>{t("common.retry")}</button> : null}
