@@ -1,5 +1,23 @@
 {
   "society": {
+    "routine_detail": {
+      "test_started": "Test run started.",
+      "active": "Active",
+      "delete": "Delete",
+      "test": "Test run",
+      "delete_confirm": "Delete this routine, all its schedules and execution history?",
+      "cancel": "Cancel",
+      "name": "Name",
+      "prompt": "Instruction",
+      "save": "Save",
+      "saved": "Saved.",
+      "when": "When to run",
+      "add_schedule": "Add another schedule",
+      "remove_schedule": "Remove schedule",
+      "history": "Execution history",
+      "no_runs": "No executions yet.",
+      "legacy": "Older execution: result available; final status was not recorded."
+    },
     "chat": {
       "activity_details": "Details",
       "activity_trace": "Activity · {count} steps",

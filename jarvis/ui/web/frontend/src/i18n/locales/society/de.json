@@ -1,5 +1,23 @@
 {
   "society": {
+    "routine_detail": {
+      "test_started": "Testlauf gestartet.",
+      "active": "Aktiv",
+      "delete": "Löschen",
+      "test": "Testlauf",
+      "delete_confirm": "Diese Routine mit allen Zeitplänen und ihrem Ausführungsverlauf löschen?",
+      "cancel": "Abbrechen",
+      "name": "Name",
+      "prompt": "Anweisung",
+      "save": "Speichern",
+      "saved": "Gespeichert.",
+      "when": "Wann ausführen",
+      "add_schedule": "Weiteren Zeitplan hinzufügen",
+      "remove_schedule": "Zeitplan entfernen",
+      "history": "Ausführungsverlauf",
+      "no_runs": "Noch keine Ausführungen.",
+      "legacy": "Ältere Ausführung: Ergebnis vorhanden; Abschlussstatus wurde nicht aufgezeichnet."
+    },
     "chat": {
       "activity_details": "Details",
       "activity_trace": "Aktivität · {count} Schritte",

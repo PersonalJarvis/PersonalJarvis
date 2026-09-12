@@ -26,6 +26,7 @@ export interface OptionsRailProps {
 export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailProps) {
   const t = useT();
   const [more, setMore] = useState(false);
+  const [routineOpen, setRoutineOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -81,10 +82,14 @@ export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailPro
         </div>
       </header>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-3 pb-3 pt-2">
-        <AgentBrowserPreview agent={agent} />
-        {agent.tier === "lead" ? <JarvisHistoryRail /> : null}
+        <div className={routineOpen ? "hidden" : "contents"}>
+          <AgentBrowserPreview agent={agent} />
+          {agent.tier === "lead" ? <JarvisHistoryRail /> : null}
+        </div>
         <AgentRoutinesList
+          key={agent.agentId}
           agentId={agent.agentId}
+          onDetailOpenChange={setRoutineOpen}
           sampleRoutines={sample ? agent.routines : undefined}
           variant="rail"
           className="min-h-0 flex-1"

@@ -1,5 +1,23 @@
 {
   "society": {
+    "routine_detail": {
+      "test_started": "Prueba iniciada.",
+      "active": "Activo",
+      "delete": "Eliminar",
+      "test": "Prueba",
+      "delete_confirm": "¿Eliminar esta rutina, todos sus horarios y su historial?",
+      "cancel": "Cancelar",
+      "name": "Nombre",
+      "prompt": "Instrucción",
+      "save": "Guardar",
+      "saved": "Guardado.",
+      "when": "Cuándo ejecutar",
+      "add_schedule": "Añadir otro horario",
+      "remove_schedule": "Eliminar horario",
+      "history": "Historial de ejecuciones",
+      "no_runs": "Todavía no hay ejecuciones.",
+      "legacy": "Ejecución anterior: resultado disponible; no se registró el estado final."
+    },
     "chat": {
       "activity_details": "Detalles",
       "activity_trace": "Actividad · {count} pasos",

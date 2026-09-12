@@ -50,6 +50,8 @@ export interface LiveRoutine {
   /** Next fire in epoch ms, or null when the scheduler knows none. */
   dueMs: number | null;
   lastRunMs: number | null;
+  prompt?: string;
+  members?: LiveRoutine[];
 }
 
 /** Per-agent browser status from `GET /api/society/agents/{id}/browser`. */
@@ -173,7 +175,9 @@ export function useAgentRoutines(agentId: string | null) {
     refetchInterval: import.meta.env.MODE === "test" ? false : 5_000,
     retry: false,
     queryFn: async (): Promise<LiveRoutine[]> => {
-      const body = await getJson<{
+      const response = await fetch(`/api/society/agents/${encodeURIComponent(agentId ?? "")}/routines`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = await response.json() as {
         routines?: {
           id?: string;
           title?: string;
@@ -181,9 +185,12 @@ export function useAgentRoutines(agentId: string | null) {
           trigger?: unknown;
           due_at_ns?: number;
           last_run_ns?: number;
+          prompt?: string;
+          tags?: string[];
         }[];
-      }>(`/api/society/agents/${encodeURIComponent(agentId ?? "")}/routines`);
-      return (body?.routines ?? []).map((r, i) => ({
+      };
+      const raw = body?.routines ?? [];
+      const mapped = raw.map((r, i) => ({
         id: String(r.id ?? i),
         title: String(r.title ?? ""),
         state: String(r.state ?? ""),
@@ -191,7 +198,20 @@ export function useAgentRoutines(agentId: string | null) {
         schedule: "",
         dueMs: nsToMs(r.due_at_ns),
         lastRunMs: nsToMs(r.last_run_ns),
+        prompt: r.prompt ?? "",
       }));
+      const groups = new Map<string, LiveRoutine[]>();
+      mapped.forEach((row, i) => {
+        const group = raw[i].tags?.find((tag) => tag.startsWith("routine-group:"))?.slice(14) ?? row.id;
+        groups.set(group, [...(groups.get(group) ?? []), row]);
+      });
+      return [...groups.entries()].map(([id, members]) => {
+        members.sort((a, b) => Number(b.id === id) - Number(a.id === id));
+        const due = members.filter((m) => m.state === "scheduled" && m.dueMs).map((m) => m.dueMs!);
+        const state = members.some((m) => m.state === "running") ? "running"
+          : members.some((m) => m.state === "scheduled") ? "scheduled" : members[0].state;
+        return { ...members[0], state, members, dueMs: due.length ? Math.min(...due) : null };
+      });
     },
   });
 }

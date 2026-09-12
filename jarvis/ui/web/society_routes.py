@@ -16,7 +16,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.requests import HTTPConnection
 
 from jarvis.society.events import MsgType
@@ -724,6 +724,7 @@ class RoutineBody(BaseModel):
     schedule: dict[str, Any] = Field(default_factory=lambda: {"kind": "every"})
     plugin_grants: list[dict[str, str]] = Field(default_factory=list)
     announce_on_success: str | None = None
+    parent_task_id: str | None = None
 
 
 def _task_store(request: Request) -> Any:
@@ -755,6 +756,7 @@ async def create_agent_routine(
         build_task_spec,
         count_routines,
         create_routine,
+        is_agent_routine,
     )
 
     rt = await _runtime(request)
@@ -764,6 +766,15 @@ async def create_agent_routine(
     store = _task_store(request)
     if await count_routines(store, agent.agent_id) >= MAX_ROUTINES_PER_AGENT:
         raise HTTPException(409, {"reason": str(FailureReason.BLOCKED_BY_POLICY)})
+    parent_spec = None
+    parent_row = None
+    if body.parent_task_id:
+        parent_row = await store.get(body.parent_task_id)
+        if parent_row is None or not is_agent_routine(parent_row, agent.agent_id):
+            raise HTTPException(404, "Parent routine not found")
+        if parent_row["state"] not in ("scheduled", "paused"):
+            raise HTTPException(409, "Wait until the routine is idle before adding a schedule")
+        parent_spec = await store.get_spec(body.parent_task_id)
     try:
         spec = build_task_spec(
             agent,
@@ -773,15 +784,79 @@ async def create_agent_routine(
             plugin_grants=body.plugin_grants,
             announce_on_success=body.announce_on_success,
         )
+        if parent_spec is not None:
+            if spec.trigger.type not in ("calendar", "cron", "every"):
+                raise ValueError("Additional schedules must use a recurring time trigger")
+            # Additional timings keep the existing action, grants, and identity.
+            group_tag = next(
+                (tag for tag in parent_spec.tags if tag.startswith("routine-group:")),
+                f"routine-group:{parent_spec.id}",
+            )
+            spec = parent_spec.model_copy(
+                update={
+                    "id": spec.id,
+                    "created_at_ns": spec.created_at_ns,
+                    "trigger": spec.trigger,
+                    "tags": tuple(
+                        tag for tag in parent_spec.tags if not tag.startswith("routine-group:")
+                    )
+                    + (group_tag,),
+                }
+            )
     except (ValueError, KeyError) as exc:
         raise HTTPException(422, f"invalid routine: {exc}") from exc
     try:
-        task_id = await create_routine(
-            store, getattr(request.app.state, "task_scheduler", None), spec
-        )
+        if parent_row is not None and parent_row["state"] == "paused":
+            # Never register an inactive routine, even briefly, with the scheduler.
+            task_id = str(await store.insert(spec))
+            await store.update_state(task_id, "paused")
+        else:
+            task_id = await create_routine(
+                store, getattr(request.app.state, "task_scheduler", None), spec
+            )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"id": task_id, "title": spec.title, "tags": list(spec.tags)}
+
+
+class RoutineUpdateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=200)
+    prompt: str = Field(min_length=1, max_length=16_000)
+    schedule: dict[str, Any]
+
+
+@router.patch("/agents/{agent_id}/routines/{task_id}")
+async def update_agent_routine(
+    agent_id: str, task_id: str, body: RoutineUpdateBody, request: Request
+) -> dict[str, Any]:
+    """Edit an agent's routine without losing its identity or execution history."""
+    from jarvis.society.routines import is_agent_routine, manage_routine
+    from jarvis.tasks.scheduler import TaskNotFound, TaskStateConflict
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    store = _task_store(request)
+    row = await store.get(task_id)
+    if agent is None or row is None or not is_agent_routine(row, agent.agent_id):
+        raise HTTPException(404, "Routine not found")
+    scheduler = getattr(request.app.state, "task_scheduler", None)
+    if scheduler is None:
+        raise HTTPException(503, "The task scheduler is unavailable")
+    try:
+        await manage_routine(
+            agent,
+            {**body.model_dump(), "task_id": task_id, "operation": "update"},
+            store,
+            scheduler,
+        )
+    except TaskNotFound as exc:
+        raise HTTPException(404, "Routine not found") from exc
+    except TaskStateConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True, "id": task_id}
 
 
 # ---------------------------------------------------------------- approvals

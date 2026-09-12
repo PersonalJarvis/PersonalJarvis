@@ -15,16 +15,23 @@ export const TRIGGER_GROUPS = {
 type Group = keyof typeof TRIGGER_GROUPS;
 
 /** Jarvis' trigger editor: choose an entry point, then its connection or input. */
-export function TriggerBuilder({ onChange }: { onChange: (value: Record<string, unknown> | null) => void }) {
+export function TriggerBuilder({ onChange, initialValue, timeOnly = false }: {
+  onChange: (value: Record<string, unknown> | null) => void;
+  initialValue?: Record<string, unknown>;
+  timeOnly?: boolean;
+}) {
   const t = useT();
   useLocaleChunk("society");
-  const [group, setGroup] = useState<Group>("time");
-  const [kind, setKind] = useState<string>("every");
-  const [time, setTime] = useState("08:00");
-  const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
-  const [amount, setAmount] = useState("5");
+  const [group, setGroup] = useState<Group>(() => {
+    const kind = String(initialValue?.type ?? "every");
+    return (Object.entries(TRIGGER_GROUPS).find(([, kinds]) => (kinds as readonly string[]).includes(kind))?.[0] ?? "time") as Group;
+  });
+  const [kind, setKind] = useState<string>(String(initialValue?.type ?? "every"));
+  const [time, setTime] = useState(String(initialValue?.local_time ?? "08:00"));
+  const [timezone, setTimezone] = useState(() => String(initialValue?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone));
+  const [amount, setAmount] = useState(String(Number(initialValue?.interval_seconds ?? initialValue?.delay_seconds ?? 18000) / 3600));
   const [unit, setUnit] = useState("3600");
-  const [expression, setExpression] = useState("0 8 * * 1-5");
+  const [expression, setExpression] = useState(String(initialValue?.expression ?? "0 8 * * 1-5"));
   const [date, setDate] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [topic, setTopic] = useState("");
@@ -77,13 +84,16 @@ export function TriggerBuilder({ onChange }: { onChange: (value: Record<string, 
       return { type: "source", source, conditions };
     } catch { return null; /* Invalid editor input is never submitted. */ }
   }, [kind, group, filters, amount, unit, time, timezone, expression, date, endpoint, topic, consumerGroup, path, pattern, recursive, fields, upstreamKind, upstreamId, when, eventName]);
-  useEffect(() => onChange(value), [onChange, value]);
+  useEffect(() => {
+    // Keep calendar restrictions and hook options the compact editor does not expose.
+    onChange(value && initialValue?.type === value.type ? { ...initialValue, ...value } : value);
+  }, [onChange, value, initialValue]);
   const field = "w-full rounded-md border border-border bg-background px-2 py-1.5 text-[12px] text-foreground";
   const label = (key: string) => t(`society.triggers.${key}`);
   const input = (name: string, current: string, set: (v: string) => void, type = "text") => <label className="block text-[11px] text-muted-foreground">{label(name)}<input type={type} aria-label={label(name)} value={current} onChange={(e) => set(e.target.value)} className={field} /></label>;
   return <div className="space-y-2" data-testid="trigger-builder">
-    <BrandedSelect value={group} onValueChange={(next) => { setGroup(next as Group); setKind(TRIGGER_GROUPS[next as Group][0]); }} options={Object.keys(TRIGGER_GROUPS).map((key) => ({ value: key, label: label(`groups.${key}`) }))} testId="routine-trigger-group" ariaLabel={label("group")} />
-    <BrandedSelect value={kind} onValueChange={(next) => { setKind(next); if (next.startsWith("workflow_")) { setUpstreamKind("workflow"); setUpstreamId(""); } }} options={TRIGGER_GROUPS[group].map((key) => ({ value: key, label: label(`kinds.${key}`) }))} testId="agent-routines-kind" ariaLabel={label("kind")} />
+    {!timeOnly && <BrandedSelect value={group} onValueChange={(next) => { setGroup(next as Group); setKind(TRIGGER_GROUPS[next as Group][0]); }} options={Object.keys(TRIGGER_GROUPS).map((key) => ({ value: key, label: label(`groups.${key}`) }))} testId="routine-trigger-group" ariaLabel={label("group")} />}
+    <BrandedSelect value={kind} onValueChange={(next) => { setKind(next); if (next.startsWith("workflow_")) { setUpstreamKind("workflow"); setUpstreamId(""); } }} options={TRIGGER_GROUPS[group].filter((key) => !timeOnly || ["every", "calendar", "cron"].includes(key)).map((key) => ({ value: key, label: label(`kinds.${key}`) }))} testId="agent-routines-kind" ariaLabel={label("kind")} />
     {(kind === "every" || kind === "after_delay") && <div className="flex gap-2">{input("amount", amount, setAmount, "number")}<BrandedSelect ariaLabel={label("hours")} value={unit} onValueChange={setUnit} options={[{ value: "60", label: label("minutes") }, { value: "3600", label: label("hours") }, { value: "86400", label: label("days") }]} /></div>}
     {kind === "calendar" && input("time", time, setTime, "time")}
     {kind === "cron" && input("expression", expression, setExpression)}

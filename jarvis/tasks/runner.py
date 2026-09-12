@@ -189,6 +189,7 @@ class TaskRunner:
 
         ctx = _event_context(trigger_event)
         await self._store.update_state(task_id, "running", increment_attempts=True)
+        await self._store.append_step(task_id, "log", {"event": "run_started"})
         await self._bus.publish(TaskStarted(task_id=task_id, source_layer="tasks.runner"))
 
         start = time.perf_counter()
@@ -196,6 +197,9 @@ class TaskRunner:
             await self._execute_action(task_id, spec, cancel_token, ctx)
         except _Cancelled as exc:
             await self._store.update_state(task_id, "cancelled", error=str(exc))
+            await self._store.append_step(
+                task_id, "log", {"event": "run_cancelled", "message": str(exc)}
+            )
             return
         except Exception as exc:  # noqa: BLE001
             if isinstance(exc, RoutineDeferred) and ctx.get("hook_delivery_id"):
@@ -240,6 +244,9 @@ class TaskRunner:
             task_id,
             final_state,
             result={"duration_ms": duration_ms},
+        )
+        await self._store.append_step(
+            task_id, "log", {"event": "run_completed", "duration_ms": duration_ms}
         )
         await self._bus.publish(
             TaskCompleted(
