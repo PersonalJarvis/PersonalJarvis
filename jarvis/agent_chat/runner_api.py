@@ -47,6 +47,7 @@ from jarvis.agent_chat.tools import (
     summarize_call,
 )
 from jarvis.core.protocols import BrainDelta, BrainMessage, BrainRequest
+from jarvis.core.response_style import CONVERSATIONAL_RESPONSE_STYLE
 
 log = logging.getLogger(__name__)
 
@@ -124,7 +125,9 @@ def system_prompt(*, cwd: Path, assistant_name: str, plan: bool = False) -> str:
         "help, fenced code blocks with a language tag, file paths in backticks.\n"
         "- Never invent file contents, command output or results you did not observe.\n"
         "- When the task is done, stop calling tools and give a short summary of what "
-        "changed and anything the person should do next." + plan_note
+        "changed and anything the person should do next.\n\n"
+        + CONVERSATIONAL_RESPONSE_STYLE
+        + plan_note
     )
 
 

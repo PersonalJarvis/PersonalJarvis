@@ -6,6 +6,7 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
 import { readFence, visualFenceLanguage } from "@/lib/visualFence";
+import { parseToolResult, ToolResultCard } from "./ToolResultCard";
 import * as Dialog from "@radix-ui/react-dialog";
 
 const RenderedFence = lazy(() => import("@/components/outputs/RenderedFence").then(module => ({ default: module.RenderedFence })));
@@ -159,6 +160,10 @@ const MARKDOWN_COMPONENTS: Components = {
   pre: ({ children, node: _node, ...props }) => {
     const fence = readFence(children);
     if (fence) {
+      if (fence.language === "json" || fence.language === "") {
+        const result = parseToolResult(fence.code);
+        if (result) return <ToolResultCard result={result} code={fence.code} />;
+      }
       const language = visualFenceLanguage(fence.language, fence.code);
       if (language) return <Suspense fallback={<pre>{children}</pre>}><RenderedFence language={language} code={fence.code} /></Suspense>;
     }

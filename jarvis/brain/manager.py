@@ -76,6 +76,7 @@ from jarvis.core.protocols import (
 )
 from jarvis.brain.turn_override import TurnOverride
 from jarvis.core.redact import safe_preview
+from jarvis.core.response_style import CONVERSATIONAL_RESPONSE_STYLE
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
     detect_text_language,
@@ -2377,6 +2378,9 @@ _WRITTEN_CHAT_STYLE = (
     "column. Keep it tight: one concrete next step at most, never a triple of "
     "summary plus action plan plus emoji question."
 )
+
+# Keep the API chat and the main brain's written delivery equally conversational.
+_WRITTEN_CHAT_STYLE += "\n" + CONVERSATIONAL_RESPONSE_STYLE
 
 
 def _is_written_turn() -> bool:
