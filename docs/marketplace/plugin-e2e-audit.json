@@ -32,7 +32,7 @@
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Initial generic test used cli_gh and is excluded. A strict GitHub-plugin request exposed unconditional CLI-over-plugin suppression. The matcher and manager wiring are now repaired and regression-tested. Live retest was blocked before tool dispatch by an unrelated chat provider/model mismatch; no GitHub smoke PASS claimed.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
@@ -178,9 +178,10 @@
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "2026-09-12: a read-only request submitted through Jarvis Chat executed notion/notion-fetch; the persisted tool_result reports is_error=false and duration_ms=790. Existing grant only; this does not prove a new authorization or full reconnect cycle.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
         },
         "reconnect": {
           "status": "BLOCKED",
@@ -194,7 +195,7 @@
         }
       },
       "blocker": {
-        "reason": "Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+        "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
         "next_action": "Approve the intended workspace or cloud resource grant, then verify callback, action, reconnect and restart.",
         "evidence": "Existing connection retained; Reconnect reached real Notion workspace consent. New grant awaits explicit user approval for workspace access."
@@ -276,9 +277,10 @@
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "2026-09-12: a read-only request submitted through Jarvis Chat executed linear/get_workspace; the persisted tool_result reports is_error=false and duration_ms=188. Existing grant only; this does not prove a new authorization or full reconnect cycle.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
         },
         "reconnect": {
           "status": "BLOCKED",
@@ -292,7 +294,7 @@
         }
       },
       "blocker": {
-        "reason": "Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+        "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
         "next_action": "Approve the intended workspace or cloud resource grant, then verify callback, action, reconnect and restart.",
         "evidence": "Existing connection retained; Reconnect reached official mcp.linear.app authorization page for Personal Jarvis."
@@ -374,9 +376,10 @@
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "2026-09-12: a read-only request submitted through Jarvis Chat executed cloudflare/workers_list; the persisted tool_result reports is_error=false and duration_ms=1829. Existing grant only; this does not prove a new authorization or full reconnect cycle.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
         },
         "reconnect": {
           "status": "BLOCKED",
@@ -390,7 +393,7 @@
         }
       },
       "blocker": {
-        "reason": "Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+        "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
         "next_action": "Approve the intended workspace or cloud resource grant, then verify callback, action, reconnect and restart.",
         "evidence": "Existing connection retained; Reconnect reached official workers-observability approval page for Personal Jarvis; private cloud resource access requires approval."
@@ -628,9 +631,10 @@
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "2026-09-12: a read-only request submitted through Jarvis Chat executed gmail/list_messages; the persisted tool_result reports is_error=false and duration_ms=290. Existing grant only; this does not prove a new authorization or full reconnect cycle.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
         },
         "reconnect": {
           "status": "BLOCKED",
@@ -644,7 +648,7 @@
         }
       },
       "blocker": {
-        "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+        "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
         "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect Gmail\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
@@ -677,9 +681,10 @@
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "2026-09-12: a read-only request submitted through Jarvis Chat executed google_calendar/list_events; the persisted tool_result reports is_error=false and duration_ms=606. Existing grant only; this does not prove a new authorization or full reconnect cycle.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
         },
         "reconnect": {
           "status": "BLOCKED",
@@ -693,7 +698,7 @@
         }
       },
       "blocker": {
-        "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+        "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
         "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect Google Calendar\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
