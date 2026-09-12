@@ -9,10 +9,19 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from pathlib import Path
 
 import bpy
 from mathutils import Vector
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gigi_source_metadata import (  # noqa: E402
+    sanitize_source_metadata,
+    source_path_records,
+    validate_saved_source,
+    validate_source_path_records,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 STUDY = ROOT / "art/studies/gigi-hover-companion"
@@ -310,16 +319,29 @@ def main():
     scene.render.film_transparent = True
     scene.view_settings.view_transform = "AgX"
     source = STUDY / "source/gigi.blend"
-    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    bpy.context.preferences.filepaths.save_version = 0
+    metadata = sanitize_source_metadata(bpy)
+    bpy.ops.wm.save_as_mainfile(
+        filepath=str(source), check_existing=False, relative_remap=False, compress=False
+    )
+    saved_validation = validate_saved_source(source.read_bytes())
+    # Reopen with UI data so file-browser path fields are checked after serialization.
+    bpy.ops.wm.open_mainfile(filepath=str(source), load_ui=True, use_scripts=False)
+    reopened = validate_source_path_records(source_path_records(bpy))
     report = {
         "blender": bpy.app.version_string,
         "body_height_m": 0.4,
         "forward": "glTF +Z",
         "pivot": "body bottom center",
-        "objects": len(collection.all_objects),
+        "objects": len(bpy.data.collections["GigiExport"].all_objects),
         "textures": "none; glTF PBR constants",
         "approval": "pending",
         "body_emblem": "none",
+        "source_metadata": {
+            **metadata,
+            **saved_validation,
+            "reopened_fields": reopened["validated_fields"],
+        },
     }
     (STUDY / "source/build-report.json").write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8"

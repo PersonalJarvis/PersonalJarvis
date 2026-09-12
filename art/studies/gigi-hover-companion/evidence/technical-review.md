@@ -77,3 +77,33 @@ local workloads and browser scaling changes affected observation reliability.
 
 No visual approval has been recorded. Neither this report nor passing tests
 authorize broad replacement or completion of RUB-82/RUB-69.
+
+## Independent-review corrections
+
+The independent review identified four issues in the initial checkpoint:
+uncertain work lost its blocked presentation, a first hidden-to-focus request
+could be consumed before a pose existed, reduced-motion following could stall
+between periodic replans, and the compressed Blender source retained local
+authoring profile metadata that a compressed-byte scan did not reveal.
+
+Corrections derive blocked presentation directly from current unknown/interrupted
+commands, consume focus only after pose publication, and immediately replan when
+a reduced-motion target changes. The actual frame callback has an automated
+single-short-movement/demand-loop regression using real Three.js transforms.
+
+The authoring recipe now replaces entire fixed-size path fields with neutral
+bytes before assigning portable paths, saves uncompressed, verifies every byte
+and reopens the source including UI state. The 2,479,697-byte saved source had
+zero local profile-path matches and zero current profile-name matches in the
+verification environment. Packed-image paths are included in the sanitizer.
+Tests fail closed on compressed sources rather than claiming a plaintext scan.
+
+The earlier source was already pushed on the feature branch. Updating this file
+does not erase earlier Git objects; integrate the sanitized net diff into the
+main development line instead of landing the earlier source as an intermediate
+commit. Historical removal requires a separately coordinated repository action.
+
+Corrective verification: 17 companion tests and 16 Python metadata/asset/art tests
+pass. The regenerated GLB is 776,764 bytes; the earlier size above belongs to the
+initial checkpoint. Existing visual captures are historical reference evidence;
+fresh live verification of the corrected integration remains pending.

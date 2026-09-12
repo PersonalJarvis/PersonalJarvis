@@ -8,6 +8,10 @@ blender --background --factory-startup --disable-autoexec --python scripts/art/e
 ```
 
 Run at the repository root. Keep `gigi.blend`, the builder and manifest together.
+The builder scrubs file-browser, render and packed-image path fields including
+their fixed-size unused tails, saves uncompressed, scans the complete serialized
+file and reopens it with UI data for field validation. Do not enable source
+compression without adding an actual decompression-aware privacy validator.
 `GigiExport` owns the model; studio lights/camera stay outside that collection.
 The editable eyes include blink animation sources; runtime expression control
 uses the named eye/mouth/arm hierarchy. It never runs a walking animation.

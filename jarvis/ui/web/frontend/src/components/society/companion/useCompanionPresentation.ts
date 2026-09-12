@@ -23,7 +23,6 @@ export function useCompanionPresentation(awake: boolean): AssistantPresentation 
       // Initial history is a baseline. Reopening the world never celebrates old work.
       if (!previous.current?.has(command.command_id) || previous.current.get(command.command_id) === command.state) continue;
       if (command.state === "failed") changed = "error";
-      else if (command.state === "interrupted" || command.state === "unknown") changed = "blocked";
       else if (command.state === "completed" && changed === "idle") changed = "complete";
     }
     previous.current = new Map(commands.map((command) => [command.command_id, command.state]));
@@ -35,9 +34,12 @@ export function useCompanionPresentation(awake: boolean): AssistantPresentation 
     return () => clearTimeout(timeout);
   }, [terminal]);
   const active = snapshot.data?.commands.some((command) => command.state === "active" || command.state === "queued") ?? false;
+  // Uncertain work is current state, including on initial hydration. It must
+  // outlive cosmetic notification timers and take precedence over queued work.
+  const blocked = snapshot.data?.commands.some((command) => command.state === "unknown" || command.state === "interrupted") ?? false;
   return {
     audio: voice === "speaking" || voice === "listening" ? voice : "idle",
-    task: voice === "error" ? "error" : active || voice === "thinking" ? "working" : terminal,
+    task: voice === "error" ? "error" : blocked ? "blocked" : active || voice === "thinking" ? "working" : terminal,
     muted: voice === "paused",
   };
 }

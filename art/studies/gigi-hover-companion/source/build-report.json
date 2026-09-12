@@ -6,5 +6,11 @@
   "objects": 37,
   "textures": "none; glTF PBR constants",
   "approval": "pending",
-  "body_emblem": "none"
+  "body_emblem": "none",
+  "source_metadata": {
+    "validated_fields": 3,
+    "format": "uncompressed Blender",
+    "validated_bytes": 2479697,
+    "reopened_fields": 3
+  }
 }
