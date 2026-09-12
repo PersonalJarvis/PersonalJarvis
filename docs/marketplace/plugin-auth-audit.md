@@ -94,3 +94,11 @@ Slack channel enumeration and Canvas permissions now match the advertised featur
 The section opens directly into the existing compact dialog, defaults to Plugins, and orders tabs Plugins, MCPs, Skills. Direct Skills and MCP deep links select their respective tabs. Browser checks verified tab switching, default-on-reopen, Escape close and focus restoration to the Plugins navigation button. Both light and dark presentations were visually inspected with the real catalog loaded. A transient backend startup outage recovered before the final light-mode check.
 
 The first generic GitHub read used cli_gh and is excluded as plugin proof. A strict plugin request exposed unconditional CLI suppression despite live GitHub MCP tools. Explicit registered plugin tool requests now survive that suppression, with URL/path false positives excluded. A subsequent live attempt stopped at the chat runtime provider/model mismatch before dispatch; this is not a successful plugin retest.
+
+## Worker selection and native MCP follow-up
+
+The incompatible worker model override was removed through the product API, preserving the configured provider. After the authorized app restart and selecting the default model in the composer, a Codex turn completed without the former model rejection. It still reported the GitHub plugin unavailable.
+
+Two producer/adapter repairs are implemented: provider switching now synchronizes one authoritative provider/model pair across TOML, current and legacy environment overrides, drift configuration and memory; native MCP export now maps valid canonical names such as `github/get_me` to stable portable aliases and resolves them through the current authorized catalog before safety-gated execution. Custom task/session restrictions and canonical gateway identities are preserved. These are code/test results, not live plugin acceptance.
+
+The final browser retest is blocked by an unavailable Codex Chrome connection. Documented diagnostics found Chrome running and its extension enabled but the required native-host registration absent. Browser-plugin restoration is required; no native-host registration was manually bypassed or repaired. The existing publisher/account/hardware prerequisites and full clean-state lifecycle requirements remain unchanged.

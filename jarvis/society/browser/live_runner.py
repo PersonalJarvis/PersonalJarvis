@@ -100,6 +100,7 @@ class Worker:
         self.native: Any = None
         self.native_frame_at = 0.0
         self.native_replay = False
+        self.branding: asyncio.Task | None = None
 
     async def rpc(self, kind: str, payload: dict) -> dict:
         key = uuid.uuid4().hex
@@ -208,10 +209,14 @@ class Worker:
                     raise RuntimeError("Chrome did not produce a window image")
                 self.native.frame()
                 await asyncio.to_thread(self.native.park)
+                if args.get("icon_path"):
+                    self.branding = asyncio.create_task(
+                        asyncio.to_thread(self.native.brand, str(args["icon_path"]))
+                    )
             finally:
                 await connection.detach()
             if self.page.url == "about:blank":
-                await self.page.goto("chrome://newtab/")
+                await self.page.goto("chrome://newtab/", wait_until="commit", timeout=5000)
         elif self.owns_context and self.page.url == "about:blank":
             await self.page.set_content(
                 "<html><head><title>Personal Jarvis — Agent Browser</title></head>"
@@ -677,6 +682,8 @@ class Worker:
                 task.cancel()
             await asyncio.gather(*monitors, return_exceptions=True)
             if self.native:
+                if self.branding:
+                    await self.branding
                 await asyncio.to_thread(self.native.close)
             if self.browser:
                 with contextlib.suppress(Exception):

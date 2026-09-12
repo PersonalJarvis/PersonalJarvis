@@ -30,6 +30,7 @@ class _Descriptor:
     description: str = "a tool"
     input_schema: dict[str, Any] = field(default_factory=lambda: {"type": "object"})
     risk_tier: str = "safe"
+    is_action_tool: bool = False
 
 
 @dataclass
@@ -69,6 +70,60 @@ def test_no_gateway_offers_nothing_instead_of_crashing():
 def test_a_name_mcp_cannot_carry_is_dropped_not_renamed():
     runtime_refs.set_supervisor_tool_gateway(_Gateway(names=("fine-name", "not a name!")))
     assert [e.name for e in server.offered_tools()] == ["fine-name"]
+
+
+def test_plugin_wire_names_are_stable_portable_and_unambiguous():
+    canonical = "github/get_me"
+    wire = server._wire_name(canonical)
+    assert wire is not None and wire.startswith("github_get_me_")
+    assert server._usable_name(wire) and len(wire) <= 64
+    assert server._wire_name(canonical) == wire
+    assert len(server._wire_name("a" * 128 + "/" + "b" * 128)) <= 64
+    assert server._wire_name("github/not a tool") is None
+    assert server._wire_name("github/get/me") is None
+    assert server._wire_name("github_get_me") != wire
+    assert server._wire_catalog([_Descriptor(canonical), _Descriptor(wire)]) == {}
+
+
+@pytest.mark.asyncio
+async def test_plugin_wire_listing_and_execution_preserve_canonical_gateway_name():
+    import mcp.types as types
+
+    gateway = _Gateway(names=("github/get_me", "spawn-worker"))
+    runtime_refs.set_supervisor_tool_gateway(gateway)
+    instance = server.build_server()
+    listed = await instance.request_handlers[types.ListToolsRequest](types.ListToolsRequest())
+    tools = listed.root.tools
+    assert len(tools) == 1
+    wire = tools[0].name
+    assert "github/get_me" in tools[0].description
+    request = types.CallToolRequest(params=types.CallToolRequestParams(name=wire, arguments={}))
+    await instance.request_handlers[types.CallToolRequest](request)
+    assert gateway.calls[-1][0] == "github/get_me"
+    gateway.names = ()
+    await instance.request_handlers[types.CallToolRequest](request)
+    assert len(gateway.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_plugin_wire_catalog_rechecks_session_scope():
+    class ScopedGateway(_Gateway):
+        permitted = ("github/get_me",)
+
+        async def session_catalog(self, session_id):
+            assert session_id == "scoped-chat"
+            return tuple(_Descriptor(name) for name in self.permitted)
+
+    gateway = ScopedGateway(names=("github/get_me", "other/list"))
+    runtime_refs.set_supervisor_tool_gateway(gateway)
+    token = server.CHAT_SESSION_REF.set("scoped-chat")
+    try:
+        entries = await server._session_wire_catalog()
+        assert [entry.name for entry in entries.values()] == ["github/get_me"]
+        gateway.permitted = ()
+        assert await server._session_wire_catalog() == {}
+    finally:
+        server.CHAT_SESSION_REF.reset(token)
 
 
 def test_a_tool_result_becomes_text_the_model_can_read():

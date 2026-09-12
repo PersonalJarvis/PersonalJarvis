@@ -50,6 +50,9 @@ headless Python 3.11 Linux container. These checks do not establish native audio
 parity or release readiness. Native macOS/Linux audio, fresh installations,
 long-session recovery and comparative latency still require qualification.
 
+Transport failures currently stop the call. Automatic reconnection with restored
+conversation state still needs implementation and verification before full migration.
+
 Run `python scripts/verify_gpt_live.py --run-live` for the opt-in OpenAI synthetic
 probe. The test uses configured credentials and incurs normal API usage; it
 captures neither microphone nor screen data. Gemini is selectable with

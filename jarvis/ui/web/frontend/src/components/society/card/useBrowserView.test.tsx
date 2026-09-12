@@ -15,6 +15,7 @@ class Socket {
   onopen?: () => void;
   onclose?: () => void;
   onmessage?: (event: { data: string }) => void;
+  send = vi.fn();
   close = vi.fn(() => { this.readyState = 3; this.onclose?.(); });
   constructor() { Socket.current = this; }
 }
@@ -76,4 +77,34 @@ test("startup failure remains visible while reconnecting", async () => {
   });
   expect(hook.result.current.state.error).toBe("Browser startup failed");
   expect(hook.result.current.state.ready).toBe(false);
+});
+
+test("first click and typing wait for the exclusive control acknowledgement", async () => {
+  const hook = await mount();
+  act(() => {
+    hook.result.current.control("click", { x: 240, y: 60 });
+    hook.result.current.control("text", { text: "example.com" });
+  });
+  expect(Socket.current.send.mock.calls.map(([value]) => JSON.parse(value))).toEqual([
+    { op: "takeover", args: { enabled: true } },
+  ]);
+  act(() => Socket.current.onmessage?.({ data: JSON.stringify({ kind: "control", ok: true, manual: true }) }));
+  expect(Socket.current.send.mock.calls.map(([value]) => JSON.parse(value))).toEqual([
+    { op: "takeover", args: { enabled: true } },
+    { op: "click", args: { x: 240, y: 60 } },
+    { op: "text", args: { text: "example.com" } },
+  ]);
+});
+
+test("denied control never replays queued input", async () => {
+  const hook = await mount();
+  act(() => hook.result.current.control("text", { text: "private input" }));
+  act(() => Socket.current.onmessage?.({ data: JSON.stringify({ kind: "control", ok: false, error: "Already controlled" }) }));
+  act(() => Socket.current.onmessage?.({ data: JSON.stringify({ kind: "control", ok: true, manual: true }) }));
+  expect(Socket.current.send).toHaveBeenCalledTimes(1);
+});
+
+test("connect does not wait for a separate HTTP setup request", async () => {
+  await mount();
+  expect(fetch).not.toHaveBeenCalled();
 });

@@ -348,3 +348,41 @@ async def test_browser_audio_releases_the_native_wake_microphone(monkeypatch):
     async with pipeline._capture_first_session_input() as buffer:
         assert original._closed
         assert buffer.capture is None
+
+
+def test_tool_text_is_redacted_without_corrupting_image_bytes():
+    secret = "sk-" + "x" * 48
+    result = LiveTools._result(
+        ToolResult(
+            True,
+            {
+                "text": secret,
+                "_image": {"mime": "image/png", "data": "unchanged-image"},
+            },
+        )
+    )
+    assert secret not in str(result["output"])
+    assert result["artifacts"][0]["data"] == "unchanged-image"
+
+
+def test_disabled_computer_use_does_not_expose_its_primitives(monkeypatch):
+    from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
+    from jarvis.harness import computer_use_context
+
+    tool = SimpleNamespace(
+        execute=lambda *args: None,
+        schema={"type": "object"},
+        description="Click",
+        risk_tier="monitor",
+    )
+    monkeypatch.setattr(
+        computer_use_context,
+        "peek_computer_use_context",
+        lambda: SimpleNamespace(tools={"click": tool}),
+    )
+    setting = SimpleNamespace(enabled=False)
+    manager = SimpleNamespace(_tools={}, _config=SimpleNamespace(computer_use=setting))
+    gateway = BrainSupervisorToolGateway(manager)
+    assert "click" not in {d.name for d in gateway.voice_catalog()}
+    setting.enabled = True
+    assert "click" in {d.name for d in gateway.voice_catalog()}

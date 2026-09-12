@@ -96,7 +96,10 @@ def test_writes_all_three_layers(
     assert soll["brain.worker"]["provider"] == "gemini"  # i18n-allow
 
     # Layer 3: ENV var (new name post-rename).
-    assert env_calls == [("JARVIS__BRAIN__WORKER__PROVIDER", "gemini")]
+    assert env_calls == [
+        ("JARVIS__BRAIN__WORKER__PROVIDER", "gemini"),
+        ("JARVIS__BRAIN__WORKER__MODEL", ""),
+    ]
 
 
 def test_toml_preserves_sibling_keys(

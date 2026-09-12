@@ -289,7 +289,9 @@ class LiveTools:
 
     @staticmethod
     def _result(result: Any) -> dict:
-        return {
+        from jarvis.core.redact import redact_secrets
+
+        payload = {
             "success": result.success,
             "output": result.output,
             "error": result.error,
@@ -298,6 +300,10 @@ class LiveTools:
                 isinstance(result.output, dict) and result.output.get("verified") is False
             ),
         }
+        images = take_images(payload)
+        sanitized = json.loads(redact_secrets(json.dumps(payload, default=str)))
+        sanitized["artifacts"].extend({**image, "type": "image"} for image in images)
+        return sanitized
 
     async def close(self) -> None:
         self.accepting = False

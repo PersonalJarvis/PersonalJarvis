@@ -107,7 +107,8 @@ class BrainSupervisorToolGateway:
 
         tools = self._live_tools()
         context = peek_computer_use_context()
-        if context is not None:
+        computer_use = getattr(getattr(self._manager, "_config", None), "computer_use", None)
+        if context is not None and getattr(computer_use, "enabled", True):
             tools.update(context.tools or {})
         tools["screen_snapshot"] = LiveScreenTool()
         return tools
