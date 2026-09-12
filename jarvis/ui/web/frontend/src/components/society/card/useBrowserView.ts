@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mintWsTicket } from "@/lib/ws";
 import { jitteredDelay, requestConnect } from "@/lib/connectBudget";
+import type { BrowserPointerState } from "./BrowserPointer";
 
 export interface BrowserViewState {
   connected: boolean;
@@ -13,6 +14,7 @@ export interface BrowserViewState {
   tabs: Array<{ id: string; url: string }>;
   target: string;
   error: string;
+  pointer?: BrowserPointerState;
   approval?: { id: string; action: string };
   dialog?: { type: string; message: string };
 }
@@ -103,6 +105,7 @@ export function useBrowserView(agentId: string) {
               }
               if (event.generation !== generation) {
                 generation = event.generation;
+                setState((s) => ({ ...s, pointer: undefined }));
                 lastSequence = -1;
                 epoch++;
               }
@@ -112,6 +115,14 @@ export function useBrowserView(agentId: string) {
               decodeFrame();
             } else if (event.kind === "starting") {
               lastLiveEvent = Date.now();
+            } else if (event.kind === "pointer") {
+              if (generation && event.generation !== generation) return;
+              if (!event.visible) {
+                setState((s) => ({ ...s, pointer: undefined }));
+              } else if ([event.x, event.y, event.width, event.height, event.click_id, event.click_x, event.click_y].every(Number.isFinite)
+                && event.width > 0 && event.height > 0) {
+                setState((s) => ({ ...s, pointer: event }));
+              }
             } else if (event.kind === "error") {
               setState((s) => ({ ...s, ready: false, error: event.error }));
             } else if (event.kind === "state") {
@@ -152,7 +163,7 @@ export function useBrowserView(agentId: string) {
           manual.current = false;
           claiming.current = false;
           inputs.current = [];
-          setState((s) => ({ ...s, connected: false, manual: false, controlPending: false }));
+          setState((s) => ({ ...s, connected: false, manual: false, controlPending: false, pointer: undefined }));
           cancelConnect = requestConnect(() => void connect(), jitteredDelay(attempt++));
         };
         ws.onerror = () => ws.close();

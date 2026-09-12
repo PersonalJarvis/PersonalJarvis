@@ -266,6 +266,46 @@ class NativeWindow:
             target = int(child)
         raise RuntimeError("Chrome input widget nesting is invalid")
 
+    def viewport_point(self, x: float, y: float) -> tuple[float, float, int, int]:
+        """Project CDP viewport coordinates into the complete captured Chrome frame."""
+        c, w, u = self.ctypes, self.wintypes, self.user32
+        self._check_owner()
+        u.EnumChildWindows.argtypes = [w.HWND, self.callback_type, w.LPARAM]
+        u.EnumChildWindows.restype = w.BOOL
+        children = []
+
+        @self.callback_type
+        def visit(hwnd: int, _unused: int) -> bool:
+            name = c.create_unicode_buffer(128)
+            u.GetClassNameW(hwnd, name, len(name))
+            if name.value == "Chrome_RenderWidgetHostHWND" and u.IsWindowVisible(hwnd):
+                rect = w.RECT()
+                if u.GetWindowRect(hwnd, c.byref(rect)):
+                    children.append((rect.right - rect.left, rect.left, rect.top))
+            return True
+
+        with self.dpi():
+            u.EnumChildWindows(self.hwnd, visit, 0)
+            if not children:
+                raise RuntimeError("Chrome viewport is unavailable")
+            width, left, top = max(children)
+            bounds = w.RECT()
+            dwm = c.WinDLL("dwmapi")
+            dwm.DwmGetWindowAttribute.argtypes = [w.HWND, w.DWORD, c.c_void_p, w.DWORD]
+            dwm.DwmGetWindowAttribute.restype = c.c_long
+            if dwm.DwmGetWindowAttribute(self.hwnd, 9, c.byref(bounds), c.sizeof(bounds)):
+                raise RuntimeError("Chrome frame geometry is unavailable")
+            frame = self.frame()
+            if not frame:
+                raise RuntimeError("Chrome frame is unavailable")
+            scale = width / 1280
+            return (
+                left - bounds.left + x * scale,
+                top - bounds.top + y * scale,
+                frame["width"],
+                frame["height"],
+            )
+
     def shortcut(self, key: int, modifiers: list[int]) -> None:
         """Apply modifiers to Chrome's input queue, never to the physical keyboard."""
         c, w, u = self.ctypes, self.wintypes, self.user32

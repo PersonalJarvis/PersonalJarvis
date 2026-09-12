@@ -1,0 +1,49 @@
+.jarvis-browser-pointer-layer {
+  --browser-pointer-fill: #208678;
+  --browser-pointer-edge: #f7fffc;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.dark .jarvis-browser-pointer-layer {
+  --browser-pointer-fill: #4bb9a4;
+  --browser-pointer-edge: #e6fff6;
+}
+.jarvis-browser-pointer {
+  position: absolute;
+  width: 23px;
+  height: 28px;
+  transform: translate(-2px, -3px);
+  filter: drop-shadow(0 2px 3px #0008);
+  transition: left 80ms ease-out, top 80ms ease-out;
+}
+.jarvis-browser-pointer-label {
+  position: absolute;
+  left: 20px;
+  top: 21px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--browser-pointer-edge);
+  background: var(--browser-pointer-fill);
+  font: 600 10px/14px system-ui, sans-serif;
+  white-space: nowrap;
+}
+.jarvis-browser-click {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  margin: -12px;
+  border: 2px solid var(--browser-pointer-fill);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--browser-pointer-edge);
+  animation: jarvis-browser-click 500ms ease-out forwards;
+}
+@keyframes jarvis-browser-click {
+  from { transform: scale(.45); opacity: .95; }
+  to { transform: scale(1.8); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jarvis-browser-pointer { transition: none; }
+  .jarvis-browser-click { animation-duration: 120ms; }
+}
