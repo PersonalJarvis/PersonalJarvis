@@ -43,7 +43,7 @@ class NativeWindow:
         import ctypes
         from ctypes import wintypes
 
-        from windows_capture import WindowsCapture
+        from windows_capture import WindowsCapture  # type: ignore[import-not-found]
 
         self.ctypes = ctypes
         self.wintypes = wintypes
@@ -109,7 +109,7 @@ class NativeWindow:
 
         @capture.event
         def on_frame_arrived(frame: Any, _control: Any) -> None:
-            import cv2
+            import cv2  # type: ignore[import-not-found]
 
             try:
                 captured_at = time.time()

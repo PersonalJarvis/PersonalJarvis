@@ -35,7 +35,7 @@ def emit(kind: str, **values: Any) -> None:
 
 async def probe() -> None:
     from PIL import Image
-    from playwright.async_api import async_playwright
+    from playwright.async_api import async_playwright  # type: ignore[import-not-found]
 
     __import__("browser_use")  # The health check includes the actual runtime import.
     async with async_playwright() as pw:
@@ -112,7 +112,7 @@ class Worker:
             self.pending.pop(key, None)
 
     async def start(self, args: dict) -> dict:
-        from native_window import NativeWindow, available
+        from native_window import NativeWindow, available  # type: ignore[import-not-found]
 
         native_enabled = available()
 
@@ -551,7 +551,9 @@ class Worker:
                 self.manual = True
             else:
                 if self.native and self.manual:
-                    from browser_use.browser.events import SwitchTabEvent
+                    from browser_use.browser.events import (
+                        SwitchTabEvent,  # type: ignore[import-not-found]
+                    )
 
                     await self.focused()
                     target = next((t for t, p in self.tabs.items() if p is self.page), "")
