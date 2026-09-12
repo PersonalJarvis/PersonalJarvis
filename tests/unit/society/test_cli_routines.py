@@ -228,6 +228,7 @@ def test_resumed_society_seat_refreshes_routine_contract(monkeypatch, tmp_path):
     )
     assert "mcp_servers.jarvis.required=true" in plan.argv
     assert 'mcp_servers.jarvis.tools.society_propose_change.approval_mode="approve"' in plan.argv
+    assert 'mcp_servers.jarvis.tools.society_browser.approval_mode="approve"' in plan.argv
     assert not any("default_tools_approval_mode" in arg for arg in plan.argv)
     assert "society_propose_change" in plan.stdin_text
     assert "LARGE OLD IDENTITY" not in plan.stdin_text

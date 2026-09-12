@@ -189,6 +189,11 @@ def codex_config_args(session_id: str | None = None) -> list[str]:
                 args += [
                     "-c",
                     f'mcp_servers.{_SERVER_NAME}.tools.society_propose_change.approval_mode="approve"',
+                    # The browser entrypoint delegates each actual action to
+                    # Jarvis' executor and its approval UI. Let it reach that
+                    # boundary instead of asking exec for an unreadable prompt.
+                    "-c",
+                    f'mcp_servers.{_SERVER_NAME}.tools.society_browser.approval_mode="approve"',
                 ]
         return args
     except Exception:  # noqa: BLE001 — see mcp_config_json
