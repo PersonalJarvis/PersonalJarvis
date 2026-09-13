@@ -4,7 +4,6 @@ import {
   Mic,
   ChevronDown,
   ChevronRight,
-  Folder,
   MoreHorizontal,
   Store,
   UserCircle2,
@@ -227,7 +226,6 @@ export function Sidebar({
   const ideWorkspaceOpen = useIdeChatStore((s) => s.workspaces.length > 0);
   const onIdeSection = IDE_SECTIONS.includes(active);
   const chatFace = onIdeSection && ideWorkspaceOpen && ideView === "chat";
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
@@ -387,7 +385,11 @@ export function Sidebar({
   const findItem = (id: string) => allItems.find((item) => item.id === id)!;
   const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis", "agentic-ide"];
   const toolItems = toolIds.map(findItem);
-  const primaryIds = ["chats", "agents", "dictation", "tasks", "plugins", "marketplace"];
+  // Artifacts ("visualization") sits directly in the main list where the
+  // retired "Jarvis Tools" folder used to be — it was the only entry hiding
+  // behind "Show more" that users reached for daily, while the tools folder
+  // duplicated exactly what "Show more" already lists.
+  const primaryIds = ["chats", "agents", "dictation", "visualization", "tasks", "plugins", "marketplace"];
   const profileItems = [...NAV_GROUPS[3], ...NAV_GROUPS[4], ...NAV_FOOTER_ITEMS]
     .filter((item) => !primaryIds.includes(item.id));
   const assignedIds = new Set([...primaryIds, ...toolIds, ...profileItems.map((item) => item.id)]);
@@ -563,20 +565,12 @@ export function Sidebar({
             {renderRow(findItem("agents"))}
             {renderRow(findItem("dictation"))}
           </ul>
-          <button type="button" onClick={() => { setToolsOpen(!toolsOpen); setMoreOpen(false); }}
-            aria-expanded={toolsOpen} aria-controls="sidebar-tools" title={t("sidebar.jarvis_tools")}
-            data-testid="sidebar-tools-toggle" className={cn(rowClass, toolItems.some((item) => (item.matchIds ?? [item.id]).includes(active)) && "jarvis-nav-active bg-secondary text-foreground")}>
-            <Folder aria-hidden className="h-4 w-4 shrink-0" />
-            {!railed && <><span className="flex-1 text-left">{t("sidebar.jarvis_tools")}</span><ChevronDown className={cn("h-3.5 w-3.5", toolsOpen && "rotate-180")} /></>}
-          </button>
-          {toolsOpen && <ul id="sidebar-tools" className={cn("space-y-1", !railed && "ml-3 border-l border-border pl-1")}>
-            {toolItems.map((item) => renderRow(item))}
-          </ul>}
           <ul className="space-y-1">
+            {renderRow(findItem("visualization"))}
             {renderRow({ ...findItem("tasks"), labelKey: "sidebar.scheduled" })}
             {renderRow({ ...findItem("plugins"), labelKey: "sidebar.extensions_label" })}
           </ul>
-          <button type="button" onClick={() => { setMoreOpen(!moreOpen); setToolsOpen(false); }} aria-expanded={moreOpen}
+          <button type="button" onClick={() => { setMoreOpen(!moreOpen); }} aria-expanded={moreOpen}
             aria-controls="sidebar-more" title={t("sidebar.more")} data-testid="sidebar-more-toggle" className={rowClass}>
             <MoreHorizontal aria-hidden className="h-4 w-4 shrink-0" />
             {!railed && <span>{t(moreOpen ? "sidebar.show_less" : "sidebar.more")}</span>}

@@ -593,7 +593,7 @@ describe("Sidebar icon rail", () => {
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     expect(screen.getByTestId("sidebar").dataset.railed).toBe("false");
-    fireEvent.click(screen.getByTestId("sidebar-tools-toggle"));
+    fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
     // The label is ON the row, and names the workspace rather than carrying
     // the retired generic "Chat" label shown in the product screenshot.
     expect(screen.getByTestId("nav-row-agentic-ide").textContent).toContain(
@@ -753,7 +753,7 @@ describe("compact sidebar navigation", () => {
 
   test("keeps core destinations above visible recent chats", () => {
     renderSidebar();
-    for (const id of ["agents", "dictation", "tasks", "plugins", "marketplace"]) {
+    for (const id of ["agents", "dictation", "visualization", "tasks", "plugins", "marketplace"]) {
       expect(screen.getByTestId(`nav-row-${id}`)).toBeTruthy();
     }
     expect(screen.getByTestId("recent-chats")).toBeTruthy();
@@ -761,14 +761,15 @@ describe("compact sidebar navigation", () => {
     expect(screen.queryByTestId("nav-row-memory")).toBeNull();
   });
 
-  test("opens Jarvis Voice directly and keeps artifacts under More", () => {
+  test("opens Jarvis Voice directly with artifacts in the main list", () => {
     useHomeStore.setState({ surface: "chat" });
     renderSidebar();
-    expect(screen.queryByTestId("nav-row-visualization")).toBeNull();
+    // Artifacts sits directly in the main list (where the retired "Jarvis
+    // Tools" folder used to be) — no "Show more" needed to reach it.
+    expect(screen.getByTestId("nav-row-visualization")).toBeTruthy();
     fireEvent.click(screen.getByTestId("nav-row-dictation"));
     expect(useHomeStore.getState().surface).toBe("chat");
     expect(useEventStore.getState().activeSection).toBe("dictation");
-    fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
     expect(screen.getAllByTestId("nav-row-dictation")).toHaveLength(1);
     fireEvent.click(screen.getByTestId("nav-row-visualization"));
     expect(useEventStore.getState().activeSection).toBe("visualization");
@@ -776,10 +777,8 @@ describe("compact sidebar navigation", () => {
 
   test("expands tools through More without duplicating rows", () => {
     renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-tools-toggle"));
-    expect(screen.getByTestId("nav-row-memory")).toBeTruthy();
     fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
-    expect(screen.getAllByTestId("nav-row-memory")).toHaveLength(1);
+    expect(screen.getByTestId("nav-row-memory")).toBeTruthy();
     fireEvent.click(screen.getByTestId("nav-row-memory"));
     expect(useEventStore.getState().activeSection).toBe("memory");
     fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
