@@ -82,7 +82,7 @@ describe("SocialsView (grouped, read-only)", () => {
   it("a single-link platform is a direct link; a multi-link platform is a button", async () => {
     const openSpy = vi
       .spyOn(openExternal, "openExternalUrl")
-      .mockResolvedValue(undefined);
+      .mockResolvedValue(true);
     installFetchMock({
       "GET /api/socials": () => ({ body: { entries: [DISCORD, GITHUB_REPO, GITHUB_PROFILE] } }),
     });
@@ -100,7 +100,7 @@ describe("SocialsView (grouped, read-only)", () => {
   it("clicking a multi-link platform opens a detail page listing all its links", async () => {
     const openSpy = vi
       .spyOn(openExternal, "openExternalUrl")
-      .mockResolvedValue(undefined);
+      .mockResolvedValue(true);
     installFetchMock({
       "GET /api/socials": () => ({ body: { entries: [DISCORD, GITHUB_REPO, GITHUB_PROFILE] } }),
     });

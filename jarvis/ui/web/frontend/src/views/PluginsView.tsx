@@ -622,8 +622,16 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
           : { method: "POST" },
       );
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-        throw new Error(err.error_code ?? "unknown");
+        const err = (await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))) as {
+          error_code?: string;
+          error?: string;
+          detail?: string;
+        };
+        // The backend serves `{detail}` for HTTP errors; OAuth handlers use
+        // `{error_code}`. Prefer the code for known flows so the dialog can
+        // map it, otherwise surface the human-readable detail instead of a
+        // bare "unknown" (e.g. the 409 publisher-provisioning message).
+        throw new Error(err.error_code ?? err.error ?? err.detail ?? `HTTP ${res.status}`);
       }
       return res.json() as Promise<{
         flow_id: string;
@@ -677,9 +685,11 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
           return false;
         }
         // Auto-open the pre-filled verify URL if available; user lands
-        // on the consent page with the code already typed in.
+        // on the consent page with the code already typed in. Awaited so the
+        // bridge dispatch happens before the dialog paints; when it reports
+        // failure the dialog's manual link + retry button take over.
         if (verifyUrlComplete) {
-          void openExternalUrl(verifyUrlComplete);
+          await openExternalUrl(verifyUrlComplete);
         }
         setDeviceSession({
           flowId: r.flow_id,
@@ -696,7 +706,11 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         setConnectFailure("The sign-in page is unavailable. Please try again.");
         return false;
       }
-      void openExternalUrl(r.open_url);
+      // Awaited: the bridge must dispatch before the pending dialog paints.
+      // When neither the bridge nor a fallback tab reaches a browser (popup
+      // blocker, headless host), the dialog keeps an explicit retry + a
+      // copyable link instead of claiming a tab opened.
+      await openExternalUrl(r.open_url);
       setOauthSession({
         flowId: r.flow_id,
         pluginId: r.plugin_id,
@@ -713,7 +727,10 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         port_in_use: "The sign-in callback is busy. Close the other sign-in attempt and try again.",
         misconfigured: "Browser sign-in is pending publisher setup. No developer setup is required from you.",
       };
-      setConnectFailure(messages[code] ?? `Could not connect ${p.name}. Please try again. If this continues, check the service availability.`);
+      // Known OAuth codes map to a short sentence; anything else is already a
+      // backend-provided human-readable detail (e.g. the 409 provisioning
+      // note) and is shown verbatim instead of a generic fallback.
+      setConnectFailure(messages[code] ?? code);
       return false;
     }
   };
@@ -758,15 +775,25 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
       setConnectingPlugin(p);
       return;
     }
-    if (p.authMode === "oauth_pkce_loopback" ||
-      (p.authMode === "oauth_device_flow" && !p.browserReady)) {
+    // The pre-connect dialog is only for browser flows whose shared client is
+    // still pending (!browserReady): it explains the wait and offers the
+    // collapsed expert token fallback. A provisioned browser flow (PKCE or
+    // device) goes straight to /connect/start so the provider opens at once —
+    // the standard is "Connect → provider opens", not "Connect → setup form".
+    // An already-stored own OAuth client is still picked up by the backend's
+    // resolve step, so skipping the form loses no expert path.
+    if (
+      (p.authMode === "oauth_pkce_loopback" || p.authMode === "oauth_device_flow") &&
+      !p.browserReady
+    ) {
       setPkceSetupPlugin(p);
       return;
     }
     if (
       p.authMode === "hosted_mcp_oauth_dcr" ||
       p.authMode === "local" ||
-      p.authMode === "oauth_device_flow"
+      p.authMode === "oauth_device_flow" ||
+      p.authMode === "oauth_pkce_loopback"
     ) {
       await startOAuthFlow(p);
       return;
@@ -781,6 +808,28 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
   );
   const handleDisconnect = (id: string) =>
     setDisconnectingPlugin(allPlugins.find((p) => p.id === id) ?? null);
+
+  // A fresh install is never usable yet — installed ≠ connected. Bring the
+  // new card into view and immediately run its connect flow, so the provider
+  // opens in the browser and the card stays "Not connected" until the OAuth
+  // callback completes AND the verification check passes. Never marks the
+  // card connected optimistically.
+  const handleFreshInstall = async (pluginId: string) => {
+    setView("list");
+    setListFilter("installed");
+    try {
+      const fresh = await fetchCatalog();
+      qc.setQueryData<CatalogResponse>(["marketplace-plugins"], fresh);
+      const found = fresh.plugins.map(adapt).find((p) => p.id === pluginId);
+      if (found) {
+        await handleConnect(found);
+        return;
+      }
+    } catch {
+      // Fall through to a plain refetch: the card still lands in Installed.
+    }
+    void qc.refetchQueries({ queryKey: ["marketplace-plugins"] });
+  };
   const categoryOrder = useMemo(
     () => orderedCategories(data, allPlugins),
     [data, allPlugins],
@@ -867,9 +916,9 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
       <PluginUploadDialog
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
-        onInstalled={() => {
-          setListFilter("installed");
-          void refetch();
+        onInstalled={(id) => {
+          setUploadOpen(false);
+          void handleFreshInstall(id);
         }}
       />
 
@@ -997,7 +1046,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
       <>
         <BackLink label={translate("plugins_view.title")} onClick={() => setView("list")} />
         <div className="mt-5">
-          <CommunityTab />
+          <CommunityTab onInstalled={(name) => void handleFreshInstall(name)} />
         </div>
       </>,
     );
@@ -1320,12 +1369,16 @@ function WindowConnectButton({ plugin, onConnect, onDisconnect }: { plugin: Plug
       else await onConnect(plugin);
     } finally { setBusy(false); }
   };
+  // Connection state in connection words, never install words: "Installed"
+  // already names the marketplace tab and the community badge, so a connected
+  // card saying "Added" read as done-before-authed. Connected says Connected,
+  // untouched says Connect.
   return <button type="button" disabled={busy || Boolean(plugin.unavailableReason)} title={plugin.unavailableReason} onClick={() => void act()}
     aria-label={translate(connected ? "plugins_view.disconnect" : reconnect ? "plugins_view.reconnect" : "plugins_view.connect")}
     className={cn("flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
       connected ? "text-muted-foreground hover:bg-secondary" : "bg-secondary text-foreground hover:bg-accent-soft")}>
     {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : connected ? <Check className="h-3.5 w-3.5 text-success" /> : reconnect ? <RotateCw className="h-3.5 w-3.5" /> : null}
-    {translate(connected ? "plugins_view.added" : reconnect ? "plugins_view.reconnect" : "plugins_view.add")}
+    {translate(connected ? "plugins_view.status_connected" : reconnect ? "plugins_view.reconnect" : "plugins_view.connect")}
   </button>;
 }
 
@@ -2133,25 +2186,23 @@ function OAuthRedirectDialog({
                   Authorize {PRODUCT_NAME} in your browser
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  A browser tab opened for {pluginName}. Sign in if prompted,
-                  click "Authorize", then come back here.
+                  Continue in the browser tab for {pluginName} — sign in if
+                  prompted, click "Authorize", then come back here. No tab
+                  visible? Open it again or copy the link below. The plugin
+                  stays "Not connected" until you finish there.
                 </p>
               </div>
-              <a
-                href={openUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => {
-                  e.preventDefault();
-                  void openExternalUrl(openUrl);
-                }}
-                className="text-micro text-muted-foreground underline-offset-4 hover:text-foreground-strong hover:underline"
+              <button
+                type="button"
+                onClick={() => void openExternalUrl(openUrl)}
+                className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
               >
-                Tab didn't open? Click here
-              </a>
+                Open {pluginName} again
+                <ExternalLink className="h-3 w-3" />
+              </button>
               <CopyableUrl
                 url={openUrl}
-                hint="Still nothing? Copy this link and paste it into your browser's address bar."
+                hint="Or copy this link and paste it into your browser's address bar."
               />
             </div>
           )}

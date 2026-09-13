@@ -130,6 +130,32 @@ describe("PluginsView live badge", () => {
   });
 });
 
+describe("PluginsView window catalog states connection in connection words", () => {
+  it("says Connect/Connected, never Add/Added, so install and auth cannot mix", async () => {
+    installCatalogFetchMock();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <PluginsView inDialog />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText("GitHub")).toBeDefined());
+    expect(screen.getByText("Vercel")).toBeDefined();
+    // Untouched card offers a connection, connected card names it. (The
+    // window catalog buttons are labelled Connect/Disconnect.)
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeDefined();
+    expect(screen.getByText("Connect")).toBeDefined();
+    expect(screen.getByText("Connected")).toBeDefined();
+    // No install wording on connection buttons: "Installed" already names the
+    // tab and the community badge, and "Added" read as done-before-authed.
+    expect(screen.queryByText("Added")).toBeNull();
+  });
+});
+
 // Regression: `/connect/start` takes ~0.6s with no other feedback, so a user
 // clicked the "+" several times and EACH click launched its own OAuth flow — a
 // burst of browser tabs + multiple DCR client registrations. The button must
@@ -419,7 +445,7 @@ describe("PluginsView opens the PKCE pre-connect dialog", () => {
 });
 
 describe("PluginsView publishes OAuth success immediately", () => {
-  it("shows Gmail as connected while the catalog revalidation is still pending", async () => {
+  it("opens a provisioned browser login at once and shows Gmail as connected", async () => {
     let catalogReads = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -488,8 +514,9 @@ describe("PluginsView publishes OAuth success immediately", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Connect plugin" })).toBeDefined(),
     );
+    // A provisioned browser flow opens the provider at once — no intermediate
+    // setup form. (Unprovisioned flows still show the pre-connect dialog.)
     fireEvent.click(screen.getByRole("button", { name: "Connect plugin" }));
-    fireEvent.click(await screen.findByRole("button", { name: /^continue$/i }));
 
     await screen.findByText("Gmail connected");
     expect(
