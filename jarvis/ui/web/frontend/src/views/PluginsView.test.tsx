@@ -524,6 +524,84 @@ describe("PluginsView publishes OAuth success immediately", () => {
     ).toBeDefined();
     expect(catalogReads).toBeGreaterThan(1);
   });
+
+  it("names the callback address while waiting so a silent provider is diagnosable", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/marketplace/plugins") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            version: 1,
+            schema_version: "t",
+            total: 1,
+            connected: 0,
+            plugins: [
+              {
+                id: "slack",
+                display_name: "Slack",
+                description: "Chat",
+                category: "Communication",
+                logo_slug: "slack",
+                auth: { mode: "oauth_pkce_loopback" },
+                status: "not_connected",
+                live_callable: false,
+                oauth_client_configured: true,
+              },
+            ],
+          }),
+        } as Response;
+      }
+      if (url.endsWith("/connect/start")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            flow_id: "slack-flow",
+            plugin_id: "slack",
+            kind: "browser_redirect",
+            open_url: "https://slack.com/oauth/v2/authorize",
+            redirect_uri: "http://127.0.0.1:3118/oauth/callback",
+            expires_at_ms: null,
+          }),
+        } as Response;
+      }
+      if (url === "/api/settings/open-external") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ opened: true }),
+        } as Response;
+      }
+      if (url.endsWith("/connect/poll/slack-flow")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ state: "pending", flow_id: "slack-flow" }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    renderPluginsView();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Connect plugin" })).toBeDefined(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Connect plugin" }));
+
+    // The pending dialog names the exact address the provider must call
+    // back — previously it spun silently when the provider never did.
+    await screen.findByText(/to call back at/i);
+    expect(
+      screen.getByText("http://127.0.0.1:3118/oauth/callback"),
+    ).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: /open slack again/i }),
+    ).toBeDefined();
+  });
 });
 
 function installImmediateConnectionFetch(

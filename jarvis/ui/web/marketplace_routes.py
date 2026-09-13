@@ -734,6 +734,12 @@ async def connect_start(
         async with slot.completion_lock:
             try:
                 result = await handler.await_completion(session)
+            except asyncio.CancelledError:
+                # The dialog was cancelled (DELETE /connect/{flow_id} drops
+                # the slot and stops the listener): nothing left to report.
+                # Without this the task dies with an unretrieved exception
+                # while the poll endpoint keeps answering "pending".
+                return
             except Exception as exc:  # noqa: BLE001
                 log.warning("plugin %s connect/await failed (%s)", plugin_id, type(exc).__name__)
                 if registry.get(session.flow_id) is slot:
@@ -789,6 +795,11 @@ async def connect_start(
         "plugin_id": session.plugin_id,
         "kind": session.kind,
         "open_url": session.open_url,
+        # The exact address the provider must call back with ?code=&state=.
+        # The UI shows it while waiting so a provider page that never calls
+        # back (unregistered redirect URI, missing approval) is diagnosable
+        # instead of an endless spinner.
+        "redirect_uri": session.redirect_uri,
         "user_code": session.user_code,
         "verification_uri": session.verification_uri,
         "verification_uri_complete": session.verification_uri_complete,

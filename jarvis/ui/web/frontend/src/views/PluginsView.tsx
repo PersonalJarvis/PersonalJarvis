@@ -638,6 +638,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         plugin_id: string;
         kind: "browser_redirect" | "device_flow" | "local";
         open_url: string | null;
+        redirect_uri: string | null;
         expires_at_ms: number | null;
       }>;
     },
@@ -648,6 +649,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
     pluginId: string;
     pluginName: string;
     openUrl: string;
+    redirectUri: string | null;
   } | null>(null);
 
   const [deviceSession, setDeviceSession] = useState<{
@@ -716,6 +718,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         pluginId: r.plugin_id,
         pluginName: p.name,
         openUrl: r.open_url,
+        redirectUri: r.redirect_uri ?? null,
       });
       return true;
     } catch (e) {
@@ -998,6 +1001,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
           pluginId={oauthSession.pluginId}
           pluginName={oauthSession.pluginName}
           openUrl={oauthSession.openUrl}
+          redirectUri={oauthSession.redirectUri}
           onClose={() => {
             cancelOAuthSession(oauthSession);
             setOauthSession(null);
@@ -2104,6 +2108,7 @@ function OAuthRedirectDialog({
   pluginId,
   pluginName,
   openUrl,
+  redirectUri,
   onClose,
   onSuccess,
 }: {
@@ -2111,6 +2116,7 @@ function OAuthRedirectDialog({
   pluginId: string;
   pluginName: string;
   openUrl: string;
+  redirectUri: string | null;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -2192,6 +2198,21 @@ function OAuthRedirectDialog({
                   stays "Not connected" until you finish there.
                 </p>
               </div>
+              {redirectUri && (
+                <div className="w-full rounded-md border border-border bg-background px-3 py-2 text-left">
+                  <p className="text-micro text-muted-foreground">
+                    Waiting for {pluginName} to call back at
+                  </p>
+                  <code className="mt-0.5 block select-all break-all font-mono text-micro text-foreground">
+                    {redirectUri}
+                  </code>
+                  <p className="mt-1 text-micro text-muted-foreground">
+                    If the provider shows an error instead of asking for
+                    approval, allow exactly this address in your provider
+                    app's redirect settings, then open the sign-in again.
+                  </p>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => void openExternalUrl(openUrl)}
