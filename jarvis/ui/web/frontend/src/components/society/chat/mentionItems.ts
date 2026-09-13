@@ -333,6 +333,10 @@ function scoreItem(item: MentionItem, q: string): number | null {
   const value = item.value.toLowerCase();
   const label = item.label.toLowerCase();
   if (value.startsWith(q) || label.startsWith(q)) return 0;
+  // A single letter sits inside almost every description ("x" in "X-Marketing",
+  // "xAI", "codex", "dropbox"). Keep such queries strictly alphabetical:
+  // only a tag or label starting with that letter may match.
+  if (q.length <= 1) return null;
   if (value.includes(q) || label.includes(q)) return 1;
   if (item.searchText.includes(q) || item.hint.toLowerCase().includes(q)) return 2;
   return null;
@@ -354,7 +358,13 @@ export function filterMentions(items: readonly MentionItem[], query: string): Me
     if (score === null) return;
     ranked.push({ score, index, item });
   });
-  ranked.sort((a, b) => a.score - b.score || a.index - b.index);
+  ranked.sort(
+    (a, b) =>
+      a.score - b.score ||
+      a.item.value.localeCompare(b.item.value, undefined, { sensitivity: "base" }) ||
+      a.item.label.localeCompare(b.item.label, undefined, { sensitivity: "base" }) ||
+      a.index - b.index,
+  );
   return groupMentions(ranked.map((r) => r.item)).flatMap((group) => group.items);
 }
 

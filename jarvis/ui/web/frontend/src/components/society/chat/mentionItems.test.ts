@@ -254,6 +254,27 @@ describe("filterMentions", () => {
   it("a disconnected plugin still appears once it is searched for", () => {
     expect(filterMentions(items, "notion").map((i) => i.value)).toEqual(["notion"]);
   });
+
+  it("a single letter only matches tags and labels starting with it", () => {
+    const catalog = buildMentionCatalog(
+      [agent({ agentId: "nala", name: "Nala", title: "X-Marketing Lead & Growth Specialist" })],
+      [
+        cap({ id: "plugin:x", label: "X (Twitter)", one_liner: "Read posts and mentions" }),
+        cap({ id: "plugin:dropbox", label: "Dropbox", one_liner: "Find files" }),
+      ],
+      [
+        { name: "codex", display_name: "Codex", installed: true, version: null, install_command: null },
+        {
+          name: "grok-build", display_name: "Grok Build",
+          description: "xAI's terminal coding agent",
+          installed: true, version: null, install_command: null,
+        },
+      ],
+    );
+    expect(filterMentions(catalog, "x").map((i) => i.value)).toEqual(["x"]);
+    expect(filterMentions(catalog, "g").map((i) => i.value)).toEqual(["grok-build"]);
+    expect(filterMentions(catalog, "d").map((i) => i.value)).toEqual(["dropbox"]);
+  });
 });
 
 describe("groupMentions / mentionsInText / mentionToken", () => {

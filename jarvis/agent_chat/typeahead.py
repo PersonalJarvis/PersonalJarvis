@@ -617,25 +617,33 @@ def jarvis_skills() -> list[Suggestion]:
 
 
 def _filter_definitions(rows: list[Suggestion], query: str) -> list[Suggestion]:
-    """Prefix matches first, then substring — on the value, the label, or the hint."""
+    """Prefix matches first, then substring — on the value, the label, or the hint.
+
+    A single letter sits inside almost every description ("x" in "X-Marketing",
+    "xAI", "codex", "dropbox"), so single-character queries stay strictly
+    alphabetical: only a value or label starting with that letter may match.
+    """
     if not query:
         return rows
     q = query.lower()
-    ranked: list[tuple[int, int, Suggestion]] = []
+    single = len(q) <= 1
+    ranked: list[tuple[int, str, str, int, Suggestion]] = []
     for idx, row in enumerate(rows):
         value = row.value.lower()
         label = row.label.lower()
         if value.startswith(q) or label.startswith(q):
             score = 0
+        elif single:
+            continue
         elif q in value or q in label:
             score = 1
         elif q in row.hint.lower():
             score = 2
         else:
             continue
-        ranked.append((score, idx, row))
-    ranked.sort(key=lambda t: (t[0], t[1]))
-    return [row for _, _, row in ranked]
+        ranked.append((score, value, label, idx, row))
+    ranked.sort(key=lambda t: (t[0], t[1], t[2], t[3]))
+    return [row for _, _, _, _, row in ranked]
 
 
 # ------------------------------------------------------------------- files
