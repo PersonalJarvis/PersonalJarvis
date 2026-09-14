@@ -582,6 +582,7 @@ SECRETS: list[SecretSpec] = [
             ("gitlab", "GitLab", "https://gitlab.com/-/profile/applications"),
             ("figma", "Figma", "https://www.figma.com/developers/apps"),
             ("hubspot", "HubSpot", "https://app.hubspot.com/"),
+            ("discord", "Discord", "https://discord.com/developers/applications"),
         )
         for prefix, env_prefix, kind in (
             ("", "", "your own"),

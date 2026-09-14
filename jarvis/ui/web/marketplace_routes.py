@@ -577,6 +577,83 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
 
 
 # ----------------------------------------------------------------------
+# Discord helpers: verified identity + bot invite (browser-first channel)
+# ----------------------------------------------------------------------
+
+
+@router.get("/plugins/discord/identity")
+async def discord_identity() -> dict[str, Any]:
+    """Verified Discord user id for the linked browser grant.
+
+    The token-paste dialog asks for the numeric user id to lock the bot;
+    this endpoint fills it from the confirmed OAuth login instead of making
+    the user dig through Developer Mode. Returns 404 when no browser grant
+    is stored. A stored *bot* token (token-fallback path) is rejected here
+    by design — ``Bot`` and ``Bearer`` credentials are not interchangeable.
+    """
+    from jarvis.marketplace.oauth_discord import DiscordApiError, fetch_current_user
+
+    try:
+        tokens = TokenStore().load("discord")
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=500, detail="the stored Discord credential is unreadable"
+        ) from exc
+    if tokens is None or not tokens.access or tokens.needs_reauth:
+        raise HTTPException(
+            status_code=404,
+            detail="Discord browser login is not connected yet — "
+            "connect Discord in the browser first.",
+        )
+    try:
+        identity = await fetch_current_user(tokens.access)
+    except DiscordApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "plugin_id": "discord",
+        "user_id": identity.user_id,
+        "username": identity.username,
+        "global_name": identity.global_name,
+    }
+
+
+@router.get("/plugins/discord/invite")
+async def discord_invite() -> dict[str, Any]:
+    """Ready-to-open bot-install URL for the effective Discord client.
+
+    Opens the official guild picker in the browser (bot authorization flow,
+    least-privilege bitfield). Reports 409 while no real OAuth client is
+    provisioned — a publisher/operator task, never end-user setup.
+    """
+    from jarvis.marketplace.connect_helpers import is_placeholder_client_id
+    from jarvis.marketplace.oauth_discord import MINIMAL_BOT_PERMISSIONS, build_bot_invite_url
+    from jarvis.marketplace.publisher_clients import resolve_publisher_client
+
+    catalog = load_catalog()
+    spec = catalog.by_id("discord")
+    client_id = ""
+    if spec is not None and isinstance(spec.auth, OAuthPkceLoopbackAuth):
+        client_id, _, _ = resolve_publisher_client(
+            "discord", spec.auth.client_id, spec.auth.client_secret
+        )
+    if is_placeholder_client_id(client_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Discord browser sign-in is not provisioned yet: no "
+            "publisher-shared OAuth client is installed and the catalog "
+            "carries only a placeholder client_id. Meanwhile connect with "
+            "a bot token via the dialog's token fallback.",
+        )
+    return {
+        "ok": True,
+        "plugin_id": "discord",
+        "invite_url": build_bot_invite_url(client_id),
+        "permissions": MINIMAL_BOT_PERMISSIONS,
+    }
+
+
+# ----------------------------------------------------------------------
 # OAuth redirect connect (Notion, Supabase main path)
 # ----------------------------------------------------------------------
 

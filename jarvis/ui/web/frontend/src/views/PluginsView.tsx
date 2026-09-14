@@ -456,6 +456,13 @@ const OAUTH_NO_SECRET_NEEDED: Record<string, string> = {
  *  meaningful for a plugin with a FIXED port; one with an ephemeral port has
  *  nothing stable to register.
  *
+ *  An absent `callback_path` means the backend default (`/oauth/callback` in
+ *  `OAuthPkceLoopbackAuth`) — NOT an empty path. Showing the bare
+ *  `http://127.0.0.1:PORT` made users register exactly that address while the
+ *  listener waited one level deeper, so the provider either rejected the
+ *  login as a redirect mismatch or called back into a 404 and the dialog spun
+ *  forever.
+ *
  *  Worth surfacing because a mismatch here is the single most common reason a
  *  first connect fails, and the provider's error ("INVALID_CLIENT: Invalid
  *  redirect URI") names neither the expected value nor where to put it. */
@@ -467,7 +474,7 @@ function loopbackRedirectUri(plugin: Plugin): string | undefined {
   };
   const port = typeof auth?.callback_port === "number" ? auth.callback_port : 0;
   if (!port) return undefined;
-  const path = typeof auth?.callback_path === "string" ? auth.callback_path : "";
+  const path = typeof auth?.callback_path === "string" ? auth.callback_path : "/oauth/callback";
   return `http://127.0.0.1:${port}${path}`;
 }
 
@@ -2484,7 +2491,9 @@ export function PkceConnectDialog({
   const fam = oauthClientFamily(plugin);
   const clientRequired = !(plugin.browserReady ?? plugin.oauthClientConfigured);
   const redirectUri = loopbackRedirectUri(plugin);
-  const [showClient, setShowClient] = useState(false);
+  // Publisher-pending flows open expanded: the client form IS the way to
+  // connect today, not an expert override. Ready flows keep it collapsed.
+  const [showClient, setShowClient] = useState(clientRequired);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2562,7 +2571,26 @@ export function PkceConnectDialog({
         </header>
 
         <div className="space-y-3 px-5 py-4">
-          {clientRequired && <p className="rounded-md bg-secondary px-3 py-2 text-micro text-foreground">Browser sign-in is pending publisher setup. No developer account or client registration is required from you.</p>}
+          {clientRequired ? (
+            <div className="rounded-md bg-secondary px-3 py-2 text-micro text-foreground">
+              <p>
+                Browser sign-in is pending publisher setup. Connect today with
+                your own free {fam?.label ?? "provider"} app — a few minutes,
+                no code. Continue opens the real {plugin.name} login in your
+                browser once the client below is filled in.
+              </p>
+              {fam && OAUTH_CLIENT_CONSOLE[fam.family] && (
+                <button
+                  type="button"
+                  onClick={() => void openExternalUrl(OAUTH_CLIENT_CONSOLE[fam.family])}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-micro font-semibold text-primary-foreground transition-all hover:bg-primary/90"
+                >
+                  Step 1 — open the {fam.label} app console
+                  <ExternalLink className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          ) : null}
 
           {fam && (
             <div>
@@ -2572,31 +2600,42 @@ export function PkceConnectDialog({
                 aria-expanded={showClient}
                 className="text-micro font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
-                Use your own OAuth client (advanced)
+                {clientRequired ? "Your OAuth client" : "Use your own OAuth client (advanced)"}
               </button>
               {showClient && (
                 <div className="mt-2 space-y-2">
                   <p className="text-micro text-muted-foreground">
-                    Optional expert override. Paste a client
-                    from your own {fam.label}{" "}
-                    {OAUTH_CLIENT_CONSOLE[fam.family] && (
-                      <a
-                        href={OAUTH_CLIENT_CONSOLE[fam.family]}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="underline underline-offset-2 hover:text-foreground"
-                      >
-                        console
-                      </a>
+                    {clientRequired ? (
+                      <>
+                        Step 2 — paste the client from the app you just
+                        created{fam.family === "google" &&
+                          ". One client covers Gmail, Drive, Calendar and YouTube Music"}
+                        .
+                      </>
+                    ) : (
+                      <>
+                        Optional expert override. Paste a client from your own{" "}
+                        {fam.label}{" "}
+                        {OAUTH_CLIENT_CONSOLE[fam.family] && (
+                          <a
+                            href={OAUTH_CLIENT_CONSOLE[fam.family]}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline underline-offset-2 hover:text-foreground"
+                          >
+                            console
+                          </a>
+                        )}
+                        .{" "}
+                        {fam.family === "google" &&
+                          "One client covers Gmail, Drive, Calendar and YouTube Music."}
+                      </>
                     )}
-                    .{" "}
-                    {fam.family === "google" &&
-                      "One client covers Gmail, Drive, Calendar and YouTube Music."}
                   </p>
                   {redirectUri && (
                     <div className="rounded-md border border-border bg-background px-2.5 py-2">
                       <p className="text-micro text-muted-foreground">
-                        While creating the app, register this as its{" "}
+                        {clientRequired ? "Step 3 — while" : "While"} creating the app, register this as its{" "}
                         <span className="font-medium text-foreground">
                           redirect URI
                         </span>
@@ -2885,6 +2924,55 @@ export function PatConnectDialog({
   const [userId, setUserId] = useState("");
   const [instanceUrl, setInstanceUrl] = useState("");
   const ownerLock = OWNER_LOCK_PLUGIN_IDS.has(plugin.id);
+  const discordHelpers = plugin.id === "discord";
+  const [discordIdLoading, setDiscordIdLoading] = useState(false);
+  const [discordIdError, setDiscordIdError] = useState<string | null>(null);
+  const [discordInviteLoading, setDiscordInviteLoading] = useState(false);
+  const [discordInviteError, setDiscordInviteError] = useState<string | null>(null);
+
+  // Discord token fallback: fill the owner id from the verified browser
+  // login instead of Developer Mode, and open the official guild picker
+  // for the bot install. Both hit the backend helpers; no secret or id
+  // is ever invented client-side.
+  const fetchDiscordId = async () => {
+    setDiscordIdLoading(true);
+    setDiscordIdError(null);
+    try {
+      const res = await fetch("/api/marketplace/plugins/discord/identity");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(err.detail || `Could not read your Discord ID (HTTP ${res.status})`);
+      }
+      const data = await res.json();
+      if (!data.user_id) throw new Error("Discord returned no user id.");
+      setUserId(String(data.user_id));
+    } catch (e) {
+      setDiscordIdError(e instanceof Error ? e.message : "Could not read your Discord ID.");
+    } finally {
+      setDiscordIdLoading(false);
+    }
+  };
+
+  const openDiscordInvite = async () => {
+    setDiscordInviteLoading(true);
+    setDiscordInviteError(null);
+    try {
+      const res = await fetch("/api/marketplace/plugins/discord/invite");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(err.detail || `Could not build the invite link (HTTP ${res.status})`);
+      }
+      const data = await res.json();
+      if (!data.invite_url) throw new Error("Discord returned no invite link.");
+      await openExternalUrl(data.invite_url);
+    } catch (e) {
+      setDiscordInviteError(
+        e instanceof Error ? e.message : "Could not build the invite link.",
+      );
+    } finally {
+      setDiscordInviteLoading(false);
+    }
+  };
   const auth = plugin.authConfig as unknown as PatPasteAuthDetail;
   const instanceField = auth.instance_url ?? null;
   const expectedPrefixes = [
@@ -3053,6 +3141,31 @@ export function PatConnectDialog({
                 Only this user id can command the bot. Leave blank to let the
                 first person who messages it claim access instead.
               </p>
+              {discordHelpers && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={isPending || discordIdLoading}
+                    onClick={() => void fetchDiscordId()}
+                    className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
+                  >
+                    {discordIdLoading ? "Looking up…" : "Fill in my Discord ID"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isPending || discordInviteLoading}
+                    onClick={() => void openDiscordInvite()}
+                    className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
+                  >
+                    {discordInviteLoading ? "Opening…" : "Add the bot to my server"}
+                  </button>
+                </div>
+              )}
+              {(discordIdError || discordInviteError) && (
+                <p className="mt-1.5 text-micro text-destructive">
+                  {discordIdError ?? discordInviteError}
+                </p>
+              )}
               {userIdTrimmed !== "" && !userIdOk && (
                 <p className="mt-1 text-micro text-foreground">
                   User id must be digits only.
