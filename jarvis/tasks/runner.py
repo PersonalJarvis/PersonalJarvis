@@ -615,19 +615,11 @@ class TaskRunner:
                 await self._result_sink(tags, text, "done")
             except Exception:  # noqa: BLE001 — the task succeeded; a failed delivery is logged
                 log.warning("task %s: result sink failed for tags %s", task_id, tags, exc_info=True)
-        # Delivery: speak the result at the next VAD turn-boundary. The TTS
-        # pipeline scrubs it; on a muted/headless runtime this is a logged
-        # no-op (cloud-first). The result also stays visible as the step above
-        # in the task's detail timeline.
-        if text:
-            await self._bus.publish(
-                AnnouncementRequested(
-                    text=text,
-                    # A scheduled/background task result is sub-agent output.
-                    kind="subagent",
-                    source_layer="tasks.runner",
-                )
-            )
+        # RUB-95: an agent routine completing must never trigger automatic
+        # speech output. The result stays visible as the agent_result step
+        # above (and via result_sink in the owner's chat); spoken output is
+        # reserved for an explicit opt-in via announce_on_success/failure
+        # (handled in run() -> _announce) or an explicit SpeakAction.
 
     async def _run_tool_call(
         self,
