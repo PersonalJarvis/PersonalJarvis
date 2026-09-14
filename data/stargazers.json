@@ -4,7 +4,7 @@
   "forks": 16,
   "placed": 11,
   "stated": 13,
-  "generatedAt": "2026-09-14T06:28:46.643Z",
+  "generatedAt": "2026-09-14T14:15:50.336Z",
   "clusters": [
     {
       "lat": -36.848,
@@ -42,13 +42,6 @@
       "count": 1
     },
     {
-      "lat": 51.502,
-      "lon": -0.119,
-      "label": "London",
-      "country": "United Kingdom",
-      "count": 1
-    },
-    {
       "lat": 44.982,
       "lon": -93.254,
       "label": "Minnesota",
@@ -81,6 +74,13 @@
       "lon": 12.481,
       "label": "Rome",
       "country": "Italy",
+      "count": 1
+    },
+    {
+      "lat": 48.202,
+      "lon": 16.365,
+      "label": "Vienna",
+      "country": "Austria",
       "count": 1
     }
   ]
