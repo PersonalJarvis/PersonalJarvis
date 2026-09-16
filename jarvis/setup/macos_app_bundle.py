@@ -134,10 +134,69 @@ def _venv_python(install_dir: Path) -> Path:
     return Path(sys.executable)
 
 
+SYSTEM_APPLICATIONS_DIR = Path("/Applications")
+
+
+def user_applications_dir() -> Path:
+    return Path.home() / "Applications"
+
+
+def macos_applications_dir(
+    *, system_dir: Path | None = None, user_dir: Path | None = None
+) -> Path:
+    """The folder the app lives in — or, when it lives nowhere yet, belongs in.
+
+    ``/Applications`` is the folder Finder's "Applications" sidebar item and
+    Launchpad show; a bundle kept only in ``~/Applications`` is installed but
+    invisible to a user who looks where Mac apps are (BUG-216). It is writable
+    without a password for every admin account, so it is the default whenever
+    this user can write there; a standard account keeps ``~/Applications``.
+    """
+    system = system_dir or SYSTEM_APPLICATIONS_DIR
+    user = user_dir or user_applications_dir()
+    for root in (system, user):
+        candidate = root / APP_DIR_NAME
+        if candidate.exists() or candidate.is_symlink():
+            return root
+    return system if os.access(system, os.W_OK) else user
+
+
 def macos_app_bundle_path(*, applications_dir: Path | None = None) -> Path:
-    """Return the one canonical per-user application-bundle path."""
-    root = applications_dir or (Path.home() / "Applications")
+    """Return the application-bundle path (see ``macos_applications_dir``)."""
+    root = applications_dir or macos_applications_dir()
     return root / APP_DIR_NAME
+
+
+def _promote_to_system_applications(
+    *, system_dir: Path | None = None, user_dir: Path | None = None
+) -> Path | None:
+    """Move a ``~/Applications`` install into ``/Applications`` once.
+
+    A rename keeps every byte and therefore the code signature: TCC pins grants
+    to the bundle id and signature, never to a path (BUG-161), so the user's
+    permissions survive the move. Only runs when ``/Applications`` has no copy
+    of its own and is writable without elevation; a failure leaves the app where
+    it was, which still works.
+    """
+    system = system_dir or SYSTEM_APPLICATIONS_DIR
+    user = user_dir or user_applications_dir()
+    source = user / APP_DIR_NAME
+    target = system / APP_DIR_NAME
+    if (
+        not source.is_dir()
+        or source.is_symlink()
+        or target.exists()
+        or target.is_symlink()
+        or not os.access(system, os.W_OK)
+    ):
+        return None
+    try:
+        source.rename(target)
+    except OSError as exc:
+        log.warning("Could not move %s to %s; keeping it in place: %s", source, system, exc)
+        return None
+    log.info("Moved the macOS app into %s so Finder and Launchpad show it.", system)
+    return target
 
 
 def _is_macho_executable(path: Path) -> bool:
@@ -1017,7 +1076,10 @@ def ensure_macos_app_bundle(
     applications_dir: Path | None = None,
     create_signing_identity: bool = False,
 ) -> Path | None:
-    """Ensure ``~/Applications/Personal Jarvis.app`` has a stable identity.
+    """Ensure ``/Applications/Personal Jarvis.app`` has a stable identity.
+
+    ``~/Applications`` is used instead when this account cannot write
+    ``/Applications``; an existing install there is moved over once.
 
     A valid existing bundle is preserved byte-for-byte so normal source
     updates cannot churn its local TCC identity. ``create_signing_identity``
@@ -1032,7 +1094,8 @@ def ensure_macos_app_bundle(
         if sys.platform != "darwin":
             log.info("App bundle skipped: only macOS uses .app bundles.")
             return None
-        applications_dir = Path.home() / "Applications"
+        _promote_to_system_applications()
+        applications_dir = macos_applications_dir()
     try:
         install_root = (install_dir or _default_install_dir()).resolve()
         bundle = macos_app_bundle_path(applications_dir=applications_dir)
@@ -1049,6 +1112,10 @@ def ensure_macos_app_bundle(
         # certificate identity: the reset that follows would hit this very
         # process, so that migration waits for the installer.
         running = _running_managed_bundle(install_root=install_root, diagnostics=diagnostics)
+        if running is not None and not running.exists() and bundle.exists():
+            # This process still carries the path it launched from, but the
+            # bundle was just moved (``_promote_to_system_applications``).
+            running = bundle
         if running is not None:
             register_with_launch_services(running)
             if identity is not None and not _signed_with_certificate(running):
@@ -1120,21 +1187,29 @@ def ensure_macos_app_bundle(
 
 
 def remove_macos_app_bundle(*, applications_dir: Path | None = None) -> bool:
-    """Delete the bundle on uninstall and report whether it is gone."""
+    """Delete the bundle on uninstall and report whether it is gone.
+
+    Without an explicit directory both install locations are cleared, so an
+    app the installer moved or the user dragged elsewhere is not left behind.
+    """
     if applications_dir is None:
         if sys.platform != "darwin":
             return True
-        applications_dir = Path.home() / "Applications"
-    bundle = macos_app_bundle_path(applications_dir=applications_dir)
-    if not bundle.exists() and not bundle.is_symlink():
-        return True
-    try:
-        _remove_path(bundle)
-        log.info("macOS app bundle removed: %s", bundle)
-        return True
-    except OSError as exc:
-        log.warning("Could not remove %s: %s", bundle, exc)
-        return False
+        roots = [SYSTEM_APPLICATIONS_DIR, user_applications_dir()]
+    else:
+        roots = [applications_dir]
+    removed = True
+    for root in roots:
+        bundle = root / APP_DIR_NAME
+        if not bundle.exists() and not bundle.is_symlink():
+            continue
+        try:
+            _remove_path(bundle)
+            log.info("macOS app bundle removed: %s", bundle)
+        except OSError as exc:
+            log.warning("Could not remove %s: %s", bundle, exc)
+            removed = False
+    return removed
 
 
 __all__ = [
@@ -1144,7 +1219,10 @@ __all__ = [
     "ensure_macos_app_bundle",
     "last_error",
     "macos_app_bundle_is_launchable",
+    "SYSTEM_APPLICATIONS_DIR",
     "macos_app_bundle_path",
+    "macos_applications_dir",
+    "user_applications_dir",
     "macos_launch_services_command",
     "register_with_launch_services",
     "remove_macos_app_bundle",

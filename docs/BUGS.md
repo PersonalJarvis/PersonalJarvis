@@ -15362,3 +15362,16 @@ single restart, onboarding leaves the restart to itself).
 **Related.** BUG-083, BUG-159, BUG-161 (all "still open" on this point until
 now), `docs/product/privacy-safety-and-support/permissions.md`,
 `docs/os-parity.md`.
+
+**Follow-up 2026-09-16 (the app was not among the user's apps).** Even with a
+healthy index the bundle sat in `~/Applications`, which Finder's
+"Applications" item and Launchpad do not show — the user reported it missing
+from their apps although it was installed. `macos_app_bundle.py` now installs
+into `/Applications` whenever the account can write there without elevation
+(every admin account) and keeps `~/Applications` only for standard accounts.
+An existing per-user install is moved over once with a plain rename, so its
+bytes, code signature and therefore every TCC grant survive (TCC never pins a
+path, BUG-161); a running app is followed to its new path instead of being
+rebuilt. Uninstall clears both folders, and the Keychain ownership check in
+`jarvis/core/control_key.py` and `jarvis permissions` accept both locations.
+Guard: `tests/unit/setup/test_macos_app_location.py`.

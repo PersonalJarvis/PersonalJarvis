@@ -320,7 +320,11 @@ bundle out of Spotlight search. macOS now also imports the bundle with
 `mdimport` and checks the indexing switch of the volume that controls it (`/`
 for the APFS data volume), logging the admin repair command when indexing is
 off; `--doctor` (`macos-spotlight`) additionally detects a stalled index by an
-import that never appears. Windows and Linux are
+import that never appears. The bundle is also installed into `/Applications`
+(Finder's Applications folder, Launchpad) whenever the account may write there,
+falling back to `~/Applications` for standard accounts; an existing per-user
+install is moved over by rename, keeping its signature and TCC grants. Windows
+and Linux are
 unchanged — their index announcements already feed the search the user types
 into.
 
