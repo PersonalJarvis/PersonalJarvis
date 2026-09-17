@@ -88,10 +88,12 @@ def is_our_tile(tile: dict) -> bool:
 
 
 def _tile_for(bundle: Path) -> dict:
+    # No "bundle-identifier": the Dock fills that in itself when it resolves
+    # the URL, and silently drops a hand-written tile that claims one without
+    # the bookmark data that normally comes with it (seen live, macOS 15).
     return {
         "tile-type": "file-tile",
         "tile-data": {
-            "bundle-identifier": MACOS_BUNDLE_ID,
             "file-label": bundle.stem,
             "file-type": 41,
             "file-data": {

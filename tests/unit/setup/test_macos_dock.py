@@ -71,6 +71,8 @@ def test_a_fresh_install_lands_in_the_dock(fake_dock) -> None:
     assert tile["tile-data"]["file-data"]["_CFURLString"] == (
         "file:///Applications/Personal%20Jarvis.app/"
     )
+    # The Dock drops a hand-written tile that names a bundle id (seen live).
+    assert "bundle-identifier" not in tile["tile-data"]
     assert dock.is_our_tile(tile)
     assert calls[-1] == [dock._KILLALL, "Dock"]
 
