@@ -76,6 +76,7 @@ from jarvis.agent_chat.permissions import normalize_permission
 from jarvis.agent_chat.runner_api import TurnHandle
 from jarvis.agent_chat.tool_context import register_turn, unregister_turn
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.core.response_style import KEEP_GOING_ON_TOOL_FAILURE
 
 log = logging.getLogger(__name__)
 
@@ -506,9 +507,11 @@ def plan_grok(
     else:
         # Print-mode grok cannot answer a permission prompt. default and
         # acceptEdits therefore decline MCP tools (live Morning Briefing,
-        # 2026-09-17: jarvis__gmail "Tool not found" / cancelled). Jarvis'
-        # gateway still gates every call.
+        # 2026-09-17: jarvis__gmail "Tool not found" / cancelled) and abort
+        # the whole turn (live Bot ersteller, 2026-09-17: run_terminal_command
+        # "User cancelled"). Jarvis' gateway still gates every call.
         argv += ["--always-approve"]
+    argv += ["--rules", KEEP_GOING_ON_TOOL_FAILURE]
     if model:
         argv += ["-m", model]
     if effort:
@@ -1095,9 +1098,9 @@ def _with_identity(
                 "society_routines before reporting it active. Do not substitute "
                 "a plan, memory note, shell command or workspace file for scheduling. "
                 "Use existing connected-account information; ask only for essential "
-                "missing information. If a tool is unavailable or fails, report the "
-                "actual blocker without claiming completion. Existing permission "
-                "rules still apply.\n"
+                "missing information. "
+                + KEEP_GOING_ON_TOOL_FAILURE
+                + " Existing permission rules still apply.\n"
                 + CONVERSATIONAL_TURN_REMINDER
                 + "\n</jarvis_turn_context>\n\n"
                 + prompt
@@ -1167,6 +1170,9 @@ class _ClaudeState:
     result_text: str = ""
     #: The turn's ``result`` line arrived — stdin may close, the CLI exits.
     saw_result: bool = False
+    #: Last tool_result that came back as an error — used when the CLI then
+    #: aborts the turn instead of thinking again (Grok print-mode cancel).
+    last_tool_error: str | None = None
 
 
 def _claude_request_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -1194,12 +1200,32 @@ def _content_text(content: Any) -> str:
             if isinstance(block, dict):
                 if block.get("type") == "text":
                     parts.append(str(block.get("text") or ""))
+                elif block.get("type") == "content":
+                    nested = _content_text(block.get("content"))
+                    if nested:
+                        parts.append(nested)
                 elif "text" in block:
                     parts.append(str(block.get("text") or ""))
             elif isinstance(block, str):
                 parts.append(block)
-        return "\n".join(p for p in parts if p)
+        joined = "\n".join(p for p in parts if p)
+        # Grok wraps a cancelled tool as ``[{type: content, content: {type: text}}]``
+        # — keep the payload readable so recovery can see "User cancelled".
+        return joined if joined else json.dumps(content, ensure_ascii=False)
     if isinstance(content, dict):
+        if content.get("type") == "text":
+            return str(content.get("text") or "")
+        if content.get("type") == "content":
+            return _content_text(content.get("content"))
+        if "text" in content and not any(
+            key in content for key in ("type", "image", "image_url", "input_image")
+        ):
+            return str(content.get("text") or "")
+        inner = content.get("content")
+        if inner is not None and inner is not content:
+            nested = _content_text(inner)
+            if nested:
+                return nested
         return json.dumps(content, ensure_ascii=False)
     return "" if content is None else str(content)
 
@@ -1394,14 +1420,18 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
         if isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
+                    output = _content_text(block.get("content"))
+                    is_error = bool(block.get("is_error"))
+                    if is_error and output.strip():
+                        st.last_tool_error = output.strip()
                     out.append(
                         make_event(
                             "tool_result",
                             {
                                 "turn_id": st.turn_id,
                                 "call_id": str(block.get("tool_use_id") or ""),
-                                "output": _content_text(block.get("content")),
-                                "is_error": bool(block.get("is_error")),
+                                "output": output,
+                                "is_error": is_error,
                                 "duration_ms": None,
                             },
                         )
@@ -1415,7 +1445,9 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
             st.status = "error"
             errors = obj.get("errors")
             detail = "; ".join(str(e) for e in errors if e) if isinstance(errors, list) else ""
-            st.error = st.result_text or detail or str(obj.get("subtype") or "error")
+            st.error = (
+                st.result_text or detail or st.last_tool_error or str(obj.get("subtype") or "error")
+            )
         usage = obj.get("usage") or {}
         if isinstance(usage, dict):
             for k in (
@@ -2353,6 +2385,57 @@ def _resume_was_lost(error: str | None) -> bool:
     return any(m in low for m in _RESUME_LOST_MARKERS)
 
 
+# A print-mode CLI that cannot ask back treats an unanswered permission
+# prompt as "the user cancelled this tool" and then *exits* — Grok
+# StopCancelled / agy 1.1.26. The model never gets a second round. These
+# markers are that abort, not a person hitting Stop on the chat.
+_TOOL_ABORT_MARKERS: Final[tuple[str, ...]] = (
+    "user cancelled the execution",
+    "cancelled the execution of tool",
+    "tool not found",
+    "permission_cancelled",
+    "permission_rejected",
+    "permission denied",
+    "hasn't granted permission",
+    "has not granted permission",
+    "requires approval",
+    "declined this action",
+    "the person declined",
+)
+
+
+def _tool_abort_is_recoverable(error: str | None) -> bool:
+    low = (error or "").lower()
+    return any(m in low for m in _TOOL_ABORT_MARKERS)
+
+
+def _keep_going_prompt(user_text: str, error: str | None) -> str:
+    err = (error or "the last tool call failed").strip()[:500]
+    return (
+        "The last tool call was cancelled or failed:\n"
+        f"{err}\n\n"
+        f"{KEEP_GOING_ON_TOOL_FAILURE}\n\n"
+        "Original request:\n"
+        f"{user_text}"
+    )
+
+
+def _merge_cli_outcome(first: _Outcome, second: _Outcome) -> _Outcome:
+    usage = dict(first.usage)
+    for key, value in second.usage.items():
+        usage[key] = usage.get(key, 0) + value
+    cost: float | None = None
+    if first.cost_usd is not None or second.cost_usd is not None:
+        cost = (first.cost_usd or 0.0) + (second.cost_usd or 0.0)
+    return _Outcome(
+        second.status,
+        second.error,
+        usage,
+        cost,
+        second.vendor_session or first.vendor_session,
+    )
+
+
 async def _surface_identity(session: Any) -> str | None:
     """A surface whose identity is per session (an agent-society member's
     briefing) hands that text over; ``None`` keeps Jarvis' own layers."""
@@ -2463,6 +2546,28 @@ async def run_cli_turn(
             outcome = await _run_cli_once(
                 handle, user_text, runner, None, identity=ident, bridge=bridge
             )
+        if (
+            outcome.status == "error"
+            and _tool_abort_is_recoverable(outcome.error)
+            and not handle.cancel.is_set()
+        ):
+            # Print-mode Grok/agy abort the process after a cancelled tool
+            # instead of thinking again. Resume the same vendor session once
+            # with the error in front so the model can work around it.
+            log.info(
+                "agent chat %s: recovering from cancelled/failed tool (%s)",
+                handle.turn_id,
+                (outcome.error or "")[:180],
+            )
+            recovered = await _run_cli_once(
+                handle,
+                _keep_going_prompt(user_text, outcome.error),
+                runner,
+                outcome.vendor_session or resume,
+                identity=ident,
+                bridge=bridge,
+            )
+            outcome = _merge_cli_outcome(outcome, recovered)
     finally:
         unregister_turn(session.session_id, tool_context)
         ACCOUNT_OVERRIDE.reset(account_token)
@@ -2762,12 +2867,16 @@ async def _run_cli_once(
         status = "cancelled"
     elif status == "done":
         if state.status == "error":
-            status, error_text = "error", state.error
+            status, error_text = (
+                "error",
+                state.error or getattr(state, "last_tool_error", None),
+            )
         elif proc.returncode not in (0, None):
             status = "error"
             error_text = (
                 state.error
                 or getattr(state, "last_error", None)
+                or getattr(state, "last_tool_error", None)
                 or "\n".join(stderr_tail[-8:]).strip()
                 or f"{runner} exited with code {proc.returncode}."
             )

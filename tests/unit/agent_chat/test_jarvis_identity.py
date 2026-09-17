@@ -16,6 +16,7 @@ import pytest
 from jarvis.agent_chat import jarvis_harness, runner_cli
 from jarvis.agent_chat.events import make_event
 from jarvis.core import runtime_refs
+from jarvis.core.response_style import KEEP_GOING_ON_TOOL_FAILURE
 from jarvis.mcp import jarvis_tools_server as server
 from jarvis.ui.web import mcp_server_routes
 
@@ -191,6 +192,8 @@ def test_grok_takes_the_compact_identity_on_argv(monkeypatch, tmp_path: Path):
     assert prompt.startswith("<jarvis_identity>\nSHORT IDENTITY") and prompt.endswith("hi")
     assert "--always-approve" in plan.argv
     assert "--permission-mode" not in plan.argv
+    assert "--rules" in plan.argv
+    assert plan.argv[plan.argv.index("--rules") + 1] == KEEP_GOING_ON_TOOL_FAILURE
 
 
 def test_grok_plan_mode_does_not_auto_approve(monkeypatch, tmp_path: Path):
@@ -206,6 +209,7 @@ def test_grok_plan_mode_does_not_auto_approve(monkeypatch, tmp_path: Path):
     )
     assert plan.argv[plan.argv.index("--permission-mode") + 1] == "plan"
     assert "--always-approve" not in plan.argv
+    assert plan.argv[plan.argv.index("--rules") + 1] == KEEP_GOING_ON_TOOL_FAILURE
 
 
 def test_grok_with_identity_writes_a_project_mcp_config(monkeypatch, tmp_path: Path):

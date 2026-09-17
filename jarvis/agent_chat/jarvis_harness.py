@@ -89,8 +89,10 @@ SYSTEM_PREAMBLE: Final[str] = (
     "`jarvis__run_shell` and their siblings are Jarvis' hands on the whole "
     "machine. Use the folder's hands for the folder, Jarvis' for everything else.\n\n"
     "Some of those tools ask the person for approval before they run. That is "
-    "normal and it is not a failure — wait for the answer rather than routing "
-    "around it.\n\n"
+    "normal and it is not a failure — wait for an approval card that is actually "
+    "on screen rather than routing around it. If a tool is cancelled, denied, "
+    "missing or fails, that is not the end of the task: read the error, try "
+    "another path, and keep going until the original goal is done.\n\n"
     "Do not spawn background workers or sub-agents: for this turn, you are the "
     "worker."
 )
