@@ -82,6 +82,29 @@ def test_catalog_groups_orders_and_filters():
     assert all("spawn" not in r.id and "navigate" not in r.id for r in rows)
 
 
+def test_cli_label_uses_display_name() -> None:
+    rows = build_catalog(
+        {
+            "cli_gws": _tool("cli_gws", "Google Workspace: Gmail, Drive."),
+        }
+    )
+    assert rows[0].id == "cli:gws"
+    assert rows[0].label == "gws"
+
+    rows = build_catalog(
+        {
+            "cli_gws": SimpleNamespace(
+                name="cli_gws",
+                description="Google Workspace: Gmail, Drive.",
+                risk_tier="monitor",
+                schema={},
+                display_name="Google Workspace CLI",
+            )
+        }
+    )
+    assert rows[0].label == "Google Workspace CLI"
+
+
 def test_catalog_marks_disconnected_and_sorts_them_last():
     tools = {"gmail": _tool("gmail"), "spotify": _tool("spotify")}
     rows = build_catalog(tools, connected=lambda name, kind: name != "gmail")

@@ -180,9 +180,12 @@ def _one_liner(text: str, limit: int = 140) -> str:
     return first[:limit]
 
 
-def _label(tool_name: str, kind: CapabilityKind) -> str:
+def _label(tool_name: str, kind: CapabilityKind, tool: Any = None) -> str:
     if kind is CapabilityKind.CLI:
-        return tool_name[4:]
+        display = getattr(tool, "display_name", None)
+        if isinstance(display, str) and display.strip():
+            return display.strip()
+        return tool_name[4:] if tool_name.startswith("cli_") else tool_name
     if kind is CapabilityKind.MCP:
         return tool_name
     return tool_name.replace("_", "-")
@@ -237,7 +240,7 @@ def build_catalog(
             CapabilityRow(
                 id=cap_id,
                 kind=kind,
-                label="Chrome / Browser" if cap_id == "core:browser" else _label(name, kind),
+                label="Chrome / Browser" if cap_id == "core:browser" else _label(name, kind, tool),
                 one_liner=_one_liner(getattr(tool, "description", "") or ""),
                 risk_tier=str(getattr(tool, "risk_tier", "monitor") or "monitor"),
                 connected=is_connected,

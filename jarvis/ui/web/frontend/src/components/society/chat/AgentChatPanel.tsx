@@ -1130,6 +1130,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         activeIndex={activeIndex}
         onHover={setActiveIndex}
         onPick={insertMention}
+        grouped={!mention?.query.trim()}
       />
       <div
         ref={composerRef}

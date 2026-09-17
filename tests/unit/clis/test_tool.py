@@ -78,6 +78,11 @@ def test_tool_name_is_prefixed() -> None:
     assert tool.name == "cli_pytool"
 
 
+def test_tool_exposes_display_name() -> None:
+    tool, _ = _make_tool(Path("."))
+    assert tool.display_name == "Python Tool"
+
+
 def test_tool_risk_tier_from_spec() -> None:
     tool, _ = _make_tool(Path("."))
     assert tool.risk_tier == "safe"

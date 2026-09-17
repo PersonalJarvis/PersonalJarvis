@@ -255,6 +255,61 @@ describe("filterMentions", () => {
     expect(filterMentions(items, "notion").map((i) => i.value)).toEqual(["notion"]);
   });
 
+  it("does not pick an MCP Drive tool when searching for Google Workspace", () => {
+    const catalog = buildMentionCatalog(
+      [],
+      [
+        cap({
+          id: "cli:gws",
+          label: "Google Workspace CLI",
+          one_liner: "Google Workspace: Gmail, Drive, Docs, Sheets, Calendar, Tasks, Chat, Slides.",
+        }),
+        cap({
+          id: "mcp:notebooklm-mcp/notebook_add_drive",
+          label: "notebooklm-mcp/notebook_add_drive",
+          one_liner: "Add Google Drive document as source.",
+        }),
+        cap({
+          id: "mcp:notebooklm-mcp/notebook_list",
+          label: "notebooklm-mcp/notebook_list",
+          one_liner: "List notebooks.",
+        }),
+      ],
+    );
+    const values = (q: string) => filterMentions(catalog, q).map((item) => item.value);
+    expect(values("google")[0]).toBe("gws");
+    expect(values("google")).not.toContain("notebooklm-mcp/notebook_add_drive");
+    expect(values("workspace")[0]).toBe("gws");
+    expect(values("google-workspace")[0]).toBe("gws");
+    expect(values("gws")[0]).toBe("gws");
+    expect(values("notebook_add_drive")[0]).toBe("notebooklm-mcp/notebook_add_drive");
+  });
+
+  it("still finds a CLI when only the short tag is labelled, via the product words", () => {
+    const catalog = buildMentionCatalog(
+      [],
+      [
+        cap({
+          id: "cli:gws",
+          label: "gws",
+          one_liner: "Google Workspace CLI — Google Workspace: Gmail, Drive, Docs.",
+        }),
+        cap({
+          id: "mcp:notebooklm-mcp/notebook_add_drive",
+          one_liner: "Add Google Drive document as source.",
+        }),
+        cap({
+          id: "mcp:notebooklm-mcp/notebook_list",
+          one_liner: "List notebooks.",
+        }),
+      ],
+    );
+    expect(filterMentions(catalog, "google")[0]?.value).toBe("gws");
+    expect(filterMentions(catalog, "google").map((item) => item.value)).not.toContain(
+      "notebooklm-mcp/notebook_add_drive",
+    );
+  });
+
   it("a single letter only matches tags and labels starting with it", () => {
     const catalog = buildMentionCatalog(
       [agent({ agentId: "nala", name: "Nala", title: "X-Marketing Lead & Growth Specialist" })],
