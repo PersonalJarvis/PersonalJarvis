@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, FileText, FolderSearch, ShieldQuestion, Terminal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -127,6 +127,24 @@ function Disclosure({ label, children, forced = false, initiallyOpen = false, ic
   );
 }
 
+function ReasoningBody({ text, live }: { text: string; live: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !live) return;
+    el.scrollTop = el.scrollHeight;
+  }, [text, live]);
+  return (
+    <div
+      ref={ref}
+      data-testid="reasoning-body"
+      className="prose prose-sm max-h-64 max-w-none overflow-auto text-xs leading-6 text-muted-foreground dark:prose-invert [overflow-wrap:anywhere] prose-p:my-1 prose-pre:overflow-auto"
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
+}
+
 export function ReasoningTrace({ block, turnLive, compact = false }: { block: ReasoningBlock; turnLive: boolean; compact?: boolean }) {
   const t = useT();
   const live = turnLive && block.live;
@@ -140,9 +158,7 @@ export function ReasoningTrace({ block, turnLive, compact = false }: { block: Re
     forced={live} initiallyOpen={compact ? live : turnLive}
     resetKey={compact ? String(turnLive) : ""}
     summary={!compact && !turnLive && gist ? <p className="mb-2 ml-6 line-clamp-2 text-xs leading-5">{gist.slice(0, 240)}</p> : undefined}>
-    {text ? <div className="prose prose-sm max-h-64 max-w-none overflow-auto text-xs leading-6 text-muted-foreground dark:prose-invert [overflow-wrap:anywhere] prose-p:my-1 prose-pre:overflow-auto">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-    </div> : undefined}
+    {text ? <ReasoningBody text={text} live={live} /> : undefined}
   </Disclosure>;
 }
 

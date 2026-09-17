@@ -617,7 +617,11 @@ export function Transcript({
   // watches the content's own size too, so growth follows; scrolled up, the
   // reader keeps their place and gets a button back.
   const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
-  useLayoutEffect(follow, [follow, items.length]);
+  // `items` itself, not its length: a reasoning trace or tool row grows
+  // the same turn in place, so the length does not change. Pin in this
+  // layout pass — waiting for ResizeObserver is one frame too late, and
+  // that frame is when overflow anchoring would unstick the view.
+  useLayoutEffect(follow, [follow, items]);
 
   if (items.length === 0) {
     return (

@@ -156,15 +156,17 @@ function ChatStageContent() {
       scrollMessageToTop(viewport, lastItemId);
       return;
     }
-    // A new item under a turn that has outgrown its window — or an opened
-    // conversation landing at its end, or a coding agent's next tool call
-    // arriving under a pane that was already full: the end, if the view was
-    // there. A reader who scrolled up is left where they are.
+    // A turn that has outgrown its window — a live reasoning trace, a
+    // coding agent's next tool call, an opened conversation landing at
+    // its end: follow if the view was already there. Growth in place
+    // (same item, more words) used to wait for ResizeObserver and lose
+    // the reader for that frame. A reader who scrolled up is left where
+    // they are (`follow` no-ops).
     const roomLeft = applySpacer();
-    if (isNew && !roomLeft) follow();
+    if (!roomLeft) follow();
     // `applySpacer` reads refs only and is recreated per render by design.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastItemId, lastItemIsUser, activeSessionId, items.length, follow]);
+  }, [lastItemId, lastItemIsUser, activeSessionId, items, follow]);
 
   // The live blocks grow without a new item — a reasoning trace, a streamed
   // answer — so no render-driven effect fires for it; the column's own size

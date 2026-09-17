@@ -38,6 +38,18 @@ export function useStickToBottom() {
   const [contentEl, setContentEl] = useState<HTMLElement | null>(null);
   const stickRef = useRef(true);
   const [atEnd, setAtEnd] = useState(true);
+  // Layout growth (a live thought, a tool row) is taller than NEAR_END_PX in
+  // one frame. Overflow anchoring then fires `scroll` with the OLD top —
+  // before any resize observer can pin — and `isNearEnd` would lie that the
+  // reader moved away. Remembering the last size lets that event re-pin
+  // instead of unsticking; a real scroll-up still unsticks.
+  const lastHeightRef = useRef(0);
+  const lastTopRef = useRef(0);
+  // Smooth "jump to end" emits many `scroll` events that are not near the
+  // end yet. Those must not clear the stick, or the next reasoning token
+  // leaves the reader stranded mid-animation.
+  const jumpingRef = useRef(false);
+  const jumpTimerRef = useRef(0);
 
   const rootRef = useCallback((node: HTMLElement | null) => {
     rootElRef.current = node;
@@ -48,11 +60,17 @@ export function useStickToBottom() {
     setContentEl(node);
   }, []);
 
+  const pinToEnd = (viewport: HTMLElement) => {
+    viewport.scrollTop = viewport.scrollHeight;
+    lastHeightRef.current = viewport.scrollHeight;
+    lastTopRef.current = viewport.scrollTop;
+  };
+
   /** Pull the view to the end — but only if it was already there. */
   const follow = useCallback(() => {
     const viewport = scrollViewportOf(rootElRef.current);
     if (!viewport || !stickRef.current) return;
-    viewport.scrollTop = viewport.scrollHeight;
+    pinToEnd(viewport);
   }, []);
 
   /** Take the reader back to the end, and follow again from there. */
@@ -62,9 +80,17 @@ export function useStickToBottom() {
     stickRef.current = true;
     setAtEnd(true);
     if (!prefersReducedMotion() && typeof viewport.scrollTo === "function") {
+      jumpingRef.current = true;
       viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+      window.clearTimeout(jumpTimerRef.current);
+      jumpTimerRef.current = window.setTimeout(() => {
+        if (!jumpingRef.current) return;
+        jumpingRef.current = false;
+        pinToEnd(viewport);
+        setAtEnd(true);
+      }, 400);
     } else {
-      viewport.scrollTop = viewport.scrollHeight;
+      pinToEnd(viewport);
     }
   }, []);
 
@@ -73,14 +99,54 @@ export function useStickToBottom() {
   useEffect(() => {
     const viewport = scrollViewportOf(rootEl);
     if (!viewport) return;
+    const previousAnchor = viewport.style.overflowAnchor;
+    viewport.style.overflowAnchor = "none";
     const read = () => {
-      const near = isNearEnd(viewport.scrollTop, viewport.scrollHeight, viewport.clientHeight);
+      if (jumpingRef.current) {
+        stickRef.current = true;
+        if (isNearEnd(viewport.scrollTop, viewport.scrollHeight, viewport.clientHeight)) {
+          jumpingRef.current = false;
+          pinToEnd(viewport);
+          setAtEnd(true);
+        }
+        return;
+      }
+      const height = viewport.scrollHeight;
+      const top = viewport.scrollTop;
+      // A first observation (height still 0) is not growth — jsdom and a
+      // just-mounted pane both start there. Treating it as growth would pin
+      // a reader who opened the thread mid-way.
+      const hadLayout = lastHeightRef.current > 0;
+      const grew = hadLayout && height > lastHeightRef.current;
+      const scrolledUp = hadLayout && top + 1 < lastTopRef.current;
+      // Content grew while we were following, and the reader did not scroll
+      // up: this `scroll` is layout, not a choice. Stay stuck and pin.
+      if (stickRef.current && grew && !scrolledUp) {
+        pinToEnd(viewport);
+        setAtEnd(true);
+        return;
+      }
+      lastHeightRef.current = height;
+      lastTopRef.current = top;
+      const near = isNearEnd(top, height, viewport.clientHeight);
       stickRef.current = near;
       setAtEnd(near);
     };
     read();
     viewport.addEventListener("scroll", read, { passive: true });
-    return () => viewport.removeEventListener("scroll", read);
+    const onScrollEnd = () => {
+      if (!jumpingRef.current) return;
+      jumpingRef.current = false;
+      if (stickRef.current) pinToEnd(viewport);
+      setAtEnd(true);
+    };
+    viewport.addEventListener("scrollend", onScrollEnd);
+    return () => {
+      viewport.removeEventListener("scroll", read);
+      viewport.removeEventListener("scrollend", onScrollEnd);
+      viewport.style.overflowAnchor = previousAnchor;
+      window.clearTimeout(jumpTimerRef.current);
+    };
   }, [rootEl]);
 
   // An answer grows WITHOUT a new item arriving, so no render-driven effect
@@ -89,7 +155,9 @@ export function useStickToBottom() {
     const viewport = scrollViewportOf(rootEl);
     if (!viewport || !contentEl || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      if (stickRef.current) viewport.scrollTop = viewport.scrollHeight;
+      if (!stickRef.current) return;
+      pinToEnd(viewport);
+      setAtEnd(true);
     });
     ro.observe(contentEl);
     return () => ro.disconnect();

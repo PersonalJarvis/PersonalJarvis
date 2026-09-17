@@ -17,3 +17,12 @@ it("does not offer an empty disclosure for redacted thought", () => {
  render(<ReasoningTrace block={{...block, text: ""}} turnLive={false} />);
  expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
 });
+it("keeps the live thought pinned to its newest line", () => {
+ const live: ReasoningBlock = { ...block, live: true, durationMs: null, text: "First line.\n" };
+ const { rerender } = render(<ReasoningTrace block={live} turnLive />);
+ const body = screen.getByTestId("reasoning-body");
+ Object.defineProperty(body, "scrollHeight", { value: 400, configurable: true });
+ body.scrollTop = 0;
+ rerender(<ReasoningTrace block={{ ...live, text: "First line.\nSecond line that wraps past the box." }} turnLive />);
+ expect(body.scrollTop).toBe(400);
+});
