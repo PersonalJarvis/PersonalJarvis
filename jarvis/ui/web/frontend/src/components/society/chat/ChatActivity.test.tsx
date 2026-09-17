@@ -57,6 +57,19 @@ it("keeps live conversation tool rows left-aligned instead of centering them", (
   expect(container.querySelectorAll(".mx-auto")).toHaveLength(0);
 });
 
+it("keeps a failure visible when the surrounding work is folded", () => {
+  const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
+  render(<WorkTrace conversation status="done" startedMs={0} durationMs={2000} blocks={[
+    tool,
+    { ...tool, callId: "error", isError: true, output: "Upload failed" },
+    { kind: "text", id: "reply", text: "I could not finish." },
+  ]} />);
+  expect(screen.getByText("Upload failed")).toBeTruthy();
+  expect(screen.getByText("I could not finish.")).toBeTruthy();
+  expect(screen.queryByText("Report contents")).toBeNull();
+  expect(screen.getByRole("button", { name: "Thought for 2.0s" })).toBeTruthy();
+});
+
 it("keeps failures and approvals visible in the conversation style", () => {
   const base: ToolBlock = { kind: "tool", callId: "failure", name: "send_message", input: {}, output: "Delivery failed", isError: true, durationMs: 100, approval: null, startedMs: 0 };
   render(<WorkTrace conversation status="done" startedMs={0} durationMs={1000} blocks={[
@@ -89,11 +102,42 @@ it("folds successful work between replies without swallowing an error or reorder
   fireEvent.click(activity);
   fireEvent.click(activity);
   rerender(<WorkTrace conversation status="done" startedMs={0} durationMs={1000} blocks={blocks} />);
-  expect(activity.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByRole("button", { name: "Reading files Creating files" })).toBeNull();
   expect(screen.queryByRole("button", { name: /Write file/ })).toBeNull();
   expect(screen.getByText("Your report is ready.")).toBeTruthy();
   expect(screen.getByText("Upload failed")).toBeTruthy();
-  fireEvent.click(activity);
+  fireEvent.click(screen.getByRole("button", { name: "Thought for 1.0s" }));
+  fireEvent.click(screen.getByRole("button", { name: "Read files Created files" }));
   fireEvent.click(screen.getByRole("button", { name: /Write file/ }));
   expect(screen.getByText("Report contents")).toBeTruthy();
+});
+
+it("does not offer a thought toggle when the turn is only a reply", () => {
+  render(<WorkTrace conversation status="done" startedMs={0} durationMs={1000} blocks={[{ kind: "text", id: "a", text: "Hello." }]} />);
+  expect(screen.queryByTestId("conversation-work-fold")).toBeNull();
+  expect(screen.getByText("Hello.")).toBeTruthy();
+});
+
+it("hides intermediate replies behind one thought toggle once the turn completes", () => {
+  const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
+  const blocks = [
+    tool,
+    { kind: "text" as const, id: "think", text: "I will inspect the files first." },
+    { ...tool, callId: "b", name: "list_dir" },
+    { kind: "text" as const, id: "final", text: "The report is ready." },
+  ];
+  const { rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={blocks} />);
+  expect(screen.getByText("I will inspect the files first.")).toBeTruthy();
+  expect(screen.getByText("The report is ready.")).toBeTruthy();
+  rerender(<WorkTrace conversation status="done" startedMs={0} durationMs={4000} blocks={blocks} />);
+  expect(screen.queryByText("I will inspect the files first.")).toBeNull();
+  expect(screen.queryByText("Used tools")).toBeNull();
+  expect(screen.getByText("The report is ready.")).toBeTruthy();
+  const toggle = screen.getByRole("button", { name: "Thought for 4.0s" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByText("I will inspect the files first.")).toBeTruthy();
+  fireEvent.click(toggle);
+  expect(screen.queryByText("I will inspect the files first.")).toBeNull();
 });
