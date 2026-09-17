@@ -57,6 +57,10 @@ def fake_tools(monkeypatch: pytest.MonkeyPatch):
     """Pretend to be macOS with the metadata tools present; record every argv."""
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(Path, "is_file", lambda self: True)
+    # The root conftest points both tools at nothing so no suite reaches the
+    # real databases; this one fakes the runner, so it names the real tools.
+    monkeypatch.setattr(macos_search_index, "_MDIMPORT", "/usr/bin/mdimport")
+    monkeypatch.setattr(macos_app_bundle, "_LSREGISTER", "/System/Library/Frameworks/lsregister")
     calls: list[list[str]] = []
     replies: dict[str, _Result] = {}
 

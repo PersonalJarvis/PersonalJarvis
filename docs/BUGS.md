@@ -15375,3 +15375,57 @@ path, BUG-161); a running app is followed to its new path instead of being
 rebuilt. Uninstall clears both folders, and the Keychain ownership check in
 `jarvis/core/control_key.py` and `jarvis permissions` accept both locations.
 Guard: `tests/unit/setup/test_macos_app_location.py`.
+
+## BUG-218: after the move to /Applications the app no longer started at login, and other loose ends of "a normal Mac app" (HIGH, FIXED 2026-09-17)
+
+**Symptom.** Checked on a real Mac the day after BUG-216's follow-up moved the
+bundle into `/Applications`: the LaunchAgent still read
+`open -W -a ~/Applications/Personal Jarvis.app`, a path that no longer existed.
+Login autostart was silently dead. Finder's "Get Info" showed version 2.1.0 on
+a 2.2.1 install. `lsregister -dump` listed about eighty
+`Personal Jarvis.app` bundles under the product's bundle id — all in pytest
+temp directories.
+
+**Cause.** Four independent gaps around the bundle's life cycle:
+
+1. *The login item did not move with the app.* The LaunchAgent names the app
+   by absolute path and was only ever refreshed by the boot-time reconcile —
+   which runs once the app is up. An entry aimed at the old path is what keeps
+   the app from coming up at login, so the self-heal could never fire by
+   itself.
+2. *Same name, different app.* The notarized DMG build is also
+   `Personal Jarvis.app` in `/Applications`, under its own bundle id. The
+   managed installer would have taken it for a broken bundle of its own and
+   rebuilt over it; the uninstaller would have deleted it. The no-venv fallback
+   in `install/uninstall.sh` only knew `~/Applications` and left the
+   LaunchAgent behind.
+3. *Frozen metadata.* A healthy bundle is kept across source updates, so its
+   `Info.plist` stayed at the version that first built it.
+4. *Tests wrote to the developer's real shell databases.* On a Mac,
+   `ensure_macos_app_bundle` registered every temp bundle with the real
+   LaunchServices database, and `MacOSAutostart.install` ran a real
+   `launchctl load` under the product's own label.
+
+**Fix.** `ensure_macos_app_bundle` now ends by calling
+`jarvis.autostart.macos.retarget_launch_agent`, which rewrites the bundle path
+of an EXISTING entry (autostart that is off stays off) and deliberately does
+not `launchctl load` — RunAtLoad would start the app in the middle of the
+installer run. `_is_foreign_bundle` keeps a same-named app with another bundle
+id from being chosen, rebuilt over, or removed, in Python and in the shell
+fallback, which now also clears both folders and the LaunchAgent. Under the
+certificate identity (BUG-217) the code requirement does not depend on the
+bundle's bytes, so `_refresh_bundle_version` brings `Info.plist` up to date
+without costing a permission; an ad-hoc bundle is never touched for it. A
+moved or removed bundle is dropped from LaunchServices
+(`unregister_from_launch_services`). The root `tests/conftest.py` points
+`lsregister`, `mdimport`, the LaunchAgents folder and `launchctl` at nothing
+for every suite.
+
+**Guards.** `tests/unit/autostart/test_macos.py`,
+`tests/unit/setup/test_macos_app_location.py`,
+`tests/unit/setup/test_macos_app_bundle.py`, `tests/unit/setup/test_uninstall.py`.
+
+**Known limit.** Spotlight answers from the per-volume metadata store. On the
+Mac this was verified on, 71 of 72 apps in `/Applications` were missing from
+it — a stalled system index that only `sudo mdutil -E /` repairs; `jarvis
+doctor` names it. No app can fix that without an administrator password.

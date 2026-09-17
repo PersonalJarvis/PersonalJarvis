@@ -156,9 +156,31 @@ def macos_applications_dir(
     user = user_dir or user_applications_dir()
     for root in (system, user):
         candidate = root / APP_DIR_NAME
-        if candidate.exists() or candidate.is_symlink():
+        if (candidate.exists() or candidate.is_symlink()) and not _is_foreign_bundle(candidate):
             return root
-    return system if os.access(system, os.W_OK) else user
+    system_slot = system / APP_DIR_NAME
+    if os.access(system, os.W_OK) and not (system_slot.exists() or system_slot.is_symlink()):
+        return system
+    return user
+
+
+def _is_foreign_bundle(candidate: Path) -> bool:
+    """Whether ``candidate`` is an app of the same NAME that is not ours.
+
+    The notarized DMG build is also called ``Personal Jarvis.app`` and is
+    dragged to ``/Applications`` by hand, under its own bundle id. It is the
+    user's app, not this installer's: it must never be taken for the managed
+    bundle, replaced by a rebuild, or deleted by an uninstall. Only a readable
+    ``Info.plist`` naming a different bundle id proves that — a damaged bundle
+    of ours (no or unreadable ``Info.plist``) stays ours, so it can be repaired.
+    """
+    try:
+        with (candidate / "Contents" / "Info.plist").open("rb") as stream:
+            bundle_id = plistlib.load(stream).get("CFBundleIdentifier")
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        # Missing or unreadable metadata proves nothing about ownership.
+        return False
+    return isinstance(bundle_id, str) and bool(bundle_id) and bundle_id != BUNDLE_ID
 
 
 def macos_app_bundle_path(*, applications_dir: Path | None = None) -> Path:
@@ -196,6 +218,7 @@ def _promote_to_system_applications(
         log.warning("Could not move %s to %s; keeping it in place: %s", source, system, exc)
         return None
     log.info("Moved the macOS app into %s so Finder and Launchpad show it.", system)
+    unregister_from_launch_services(source)
     return target
 
 
@@ -547,6 +570,31 @@ def register_with_launch_services(bundle: Path) -> bool:
     except Exception as exc:  # noqa: BLE001 - search registration is best-effort
         log.debug("LaunchServices registration skipped: %s", exc)
         return False
+
+
+def unregister_from_launch_services(bundle: Path) -> bool:
+    """Drop ``bundle`` from the LaunchServices database.
+
+    A deleted or moved app otherwise lingers as a second "Personal Jarvis" in
+    "Open With" and as a dead target for ``open -b`` until the next database
+    rebuild. Works on a path that no longer exists. Best-effort, never raises.
+    """
+    if sys.platform != "darwin" or not Path(_LSREGISTER).is_file():
+        return False
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed system path, no shell
+            [_LSREGISTER, "-u", str(bundle)],
+            timeout=60,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.debug("LaunchServices unregistration skipped: %s", exc)
+        return False
+    return result.returncode == 0
 
 
 def _try_build_icns(resources_dir: Path) -> str | None:
@@ -1001,14 +1049,48 @@ def _install_native_bundle(
     return bundle
 
 
-def _resign_bundle_in_place(bundle: Path, identity: str) -> Path:
+def _bundle_version(bundle: Path) -> str | None:
+    try:
+        with (bundle / "Contents" / "Info.plist").open("rb") as stream:
+            version = plistlib.load(stream).get("CFBundleShortVersionString")
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return None
+    return version if isinstance(version, str) else None
+
+
+def _stamp_current_version(staged: Path) -> None:
+    info_path = staged / "Contents" / "Info.plist"
+    with info_path.open("rb") as stream:
+        info = plistlib.load(stream)
+    info["CFBundleShortVersionString"] = _version()
+    info["CFBundleVersion"] = _version()
+    with info_path.open("wb") as stream:
+        plistlib.dump(info, stream)
+
+
+def _refresh_bundle_version(bundle: Path, identity: str) -> Path:
+    """Make Finder's "Get Info" show the version that is actually installed.
+
+    The bundle is kept across source updates, so its ``Info.plist`` froze at
+    the version that first built it. Under the certificate identity the code
+    requirement does not depend on the bundle's bytes, so the metadata can be
+    brought up to date without costing a single permission. An ad-hoc bundle
+    is never touched here — for it, any new signature is a new TCC identity.
+    """
+    refreshed = _resign_bundle_in_place(bundle, identity, prepare=_stamp_current_version)
+    log.info("macOS app bundle metadata updated to version %s: %s", _version(), bundle)
+    return refreshed
+
+
+def _resign_bundle_in_place(bundle: Path, identity: str, *, prepare=None) -> Path:
     """Move a healthy ad-hoc bundle onto the certificate identity.
 
     Same files, new signature: a copy is signed beside the original and
     swapped in atomically, so a running instance keeps its own (old) inode
     and nothing is ever half-signed on disk. This is the ONE remaining
     identity change the user pays for with a final round of re-granting —
-    after it, no rebuild can orphan a grant again.
+    after it, no rebuild can orphan a grant again. ``prepare`` may edit the
+    staged copy before it is signed.
     """
     parent = bundle.parent
     previous_identity = _bundle_tcc_identity(bundle)
@@ -1016,6 +1098,8 @@ def _resign_bundle_in_place(bundle: Path, identity: str) -> Path:
         work = Path(raw_work)
         staged = work / bundle.name
         shutil.copytree(bundle, staged, symlinks=True)
+        if prepare is not None:
+            prepare(staged)
         _sign_bundle(staged, identity)
         if not _signed_with_certificate(staged):
             raise RuntimeError("re-signing produced a bundle without a certificate identity")
@@ -1032,7 +1116,6 @@ def _resign_bundle_in_place(bundle: Path, identity: str) -> Path:
             if previous.exists() or previous.is_symlink():
                 previous.rename(bundle)
             raise
-    log.info("Moved the macOS app bundle onto the local signing identity: %s", bundle)
     _reset_or_explain(bundle, previous_identity)
     return bundle
 
@@ -1076,6 +1159,30 @@ def ensure_macos_app_bundle(
     applications_dir: Path | None = None,
     create_signing_identity: bool = False,
 ) -> Path | None:
+    """Ensure the app bundle (see ``_ensure_macos_app_bundle``) and keep the
+    login item aimed at it, so a moved app still starts at login."""
+    bundle = _ensure_macos_app_bundle(
+        install_dir=install_dir,
+        applications_dir=applications_dir,
+        create_signing_identity=create_signing_identity,
+    )
+    if applications_dir is None and sys.platform == "darwin":
+        from jarvis.autostart.macos import retarget_launch_agent
+
+        # A repair that failed still leaves the app wherever it was moved to,
+        # and login must find it there.
+        target = bundle or macos_app_bundle_path()
+        if target.is_dir():
+            retarget_launch_agent(target)
+    return bundle
+
+
+def _ensure_macos_app_bundle(
+    *,
+    install_dir: Path | None = None,
+    applications_dir: Path | None = None,
+    create_signing_identity: bool = False,
+) -> Path | None:
     """Ensure ``/Applications/Personal Jarvis.app`` has a stable identity.
 
     ``~/Applications`` is used instead when this account cannot write
@@ -1099,6 +1206,13 @@ def ensure_macos_app_bundle(
     try:
         install_root = (install_dir or _default_install_dir()).resolve()
         bundle = macos_app_bundle_path(applications_dir=applications_dir)
+        if _is_foreign_bundle(bundle):
+            # Rebuilding "repairs" by replacing; that would destroy an app the
+            # user installed themselves (the DMG build shares our name).
+            raise RuntimeError(
+                f"{bundle} is a separately installed app with its own bundle id; "
+                "it is left untouched and no second copy is written next to it"
+            )
         diagnostics: list[str] = []
         identity = (
             ensure_local_signing_identity(create=create_signing_identity)
@@ -1136,9 +1250,12 @@ def ensure_macos_app_bundle(
                         bundle,
                     )
                     resigned = _resign_bundle_in_place(bundle, identity)
+                    log.info("Moved the macOS app bundle onto the local signing identity.")
                     register_with_launch_services(resigned)
                     _record_rebuild(resigned, install_root=install_root, identity=identity)
                     return resigned
+                if identity is not None and _bundle_version(bundle) != _version():
+                    bundle = _refresh_bundle_version(bundle, identity)
                 # A healthy bundle is kept byte-for-byte, but LaunchServices may
                 # still not know it — an interrupted earlier run, or a database
                 # rebuilt since. Re-registering is a no-op when it is known, and
@@ -1203,8 +1320,12 @@ def remove_macos_app_bundle(*, applications_dir: Path | None = None) -> bool:
         bundle = root / APP_DIR_NAME
         if not bundle.exists() and not bundle.is_symlink():
             continue
+        if _is_foreign_bundle(bundle):
+            log.info("Keeping %s: it is a separately installed app, not this install's.", bundle)
+            continue
         try:
             _remove_path(bundle)
+            unregister_from_launch_services(bundle)
             log.info("macOS app bundle removed: %s", bundle)
         except OSError as exc:
             log.warning("Could not remove %s: %s", bundle, exc)
@@ -1226,4 +1347,5 @@ __all__ = [
     "macos_launch_services_command",
     "register_with_launch_services",
     "remove_macos_app_bundle",
+    "unregister_from_launch_services",
 ]

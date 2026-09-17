@@ -1005,3 +1005,76 @@ def test_a_rebuild_with_the_identity_never_resets_the_grants(tmp_path: Path, mon
     mab._reset_or_explain(tmp_path / APP_DIR_NAME, same)
 
     assert not marker.exists()
+
+
+def _healthy_darwin_bundle(tmp_path: Path, monkeypatch, *, identity: str | None):
+    import jarvis.setup.macos_app_bundle as mab
+
+    bundle = _build(tmp_path, monkeypatch)
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    monkeypatch.setattr(mab, "ensure_local_signing_identity", lambda *, create: identity)
+    monkeypatch.setattr(mab, "_codesign_issue", lambda _bundle: None)
+    monkeypatch.setattr(mab, "_running_managed_bundle", lambda *, install_root, **_kw: None)
+    monkeypatch.setattr(
+        mab,
+        "_runtime_identity_valid",
+        lambda _bundle, *, install_root, diagnostics=None: True,
+    )
+    monkeypatch.setattr(mab, "_signed_with_certificate", lambda _b: identity is not None)
+    monkeypatch.setattr(mab, "_bundle_tcc_identity", lambda _b: "identifier and certificate")
+    monkeypatch.setattr(
+        mab,
+        "_install_native_bundle",
+        lambda *_args, **_kwargs: pytest.fail("a healthy bundle is never rebuilt"),
+    )
+    return mab, bundle
+
+
+def test_an_update_brings_the_bundle_version_along(tmp_path: Path, monkeypatch) -> None:
+    """Finder's "Get Info" froze at the version that first built the bundle."""
+    mab, bundle = _healthy_darwin_bundle(tmp_path, monkeypatch, identity="ABCDEF")
+    signed: list[str | None] = []
+    monkeypatch.setattr(mab, "_sign_bundle", lambda _target, identity=None: signed.append(identity))
+    monkeypatch.setattr(
+        mab, "_reset_stale_tcc_grants", lambda: pytest.fail("same identity, nothing to reset")
+    )
+    monkeypatch.setattr(mab, "_version", lambda: "9.9.9")
+
+    result = ensure_macos_app_bundle(
+        install_dir=tmp_path / "install", applications_dir=tmp_path / "Applications"
+    )
+
+    assert result == bundle
+    with (bundle / "Contents" / "Info.plist").open("rb") as stream:
+        info = plistlib.load(stream)
+    assert info["CFBundleShortVersionString"] == info["CFBundleVersion"] == "9.9.9"
+    assert signed == ["ABCDEF"]
+    assert not [p for p in bundle.parent.iterdir() if p.name.startswith(".jarvis-")]
+
+
+def test_an_adhoc_bundle_keeps_its_stale_version(tmp_path: Path, monkeypatch) -> None:
+    """For an ad-hoc bundle a new signature is a new TCC identity: every grant
+    would be the price of a cosmetic version string."""
+    mab, bundle = _healthy_darwin_bundle(tmp_path, monkeypatch, identity=None)
+    before = (bundle / "Contents" / "Info.plist").read_bytes()
+    monkeypatch.setattr(
+        mab, "_sign_bundle", lambda *_a, **_kw: pytest.fail("an ad-hoc bundle is never re-signed")
+    )
+    monkeypatch.setattr(mab, "_version", lambda: "9.9.9")
+
+    ensure_macos_app_bundle(
+        install_dir=tmp_path / "install", applications_dir=tmp_path / "Applications"
+    )
+
+    assert (bundle / "Contents" / "Info.plist").read_bytes() == before
+
+
+def test_a_removed_app_is_dropped_from_launch_services(tmp_path: Path, monkeypatch) -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    bundle = _build(tmp_path, monkeypatch)
+    unregistered: list[Path] = []
+    monkeypatch.setattr(mab, "unregister_from_launch_services", unregistered.append)
+
+    assert mab.remove_macos_app_bundle(applications_dir=bundle.parent) is True
+    assert unregistered == [bundle]

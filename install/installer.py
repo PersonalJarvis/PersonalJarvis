@@ -796,7 +796,7 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
         rows.append(("Start again", f'Windows search -> "{PRODUCT_NAME}"', "brand"))
     elif sys.platform == "darwin":
         rows.append(
-            ("Start again", f'Spotlight → "{PRODUCT_NAME}" (app in ~/Applications)', "brand")
+            ("Start again", f'Launchpad or Spotlight → "{PRODUCT_NAME}"', "brand")
         )
         rows.append(("Permissions", "macOS asks on first launch - approve each prompt", "muted"))
     elif sys.platform.startswith("linux") and not (headless or is_headless_linux()):

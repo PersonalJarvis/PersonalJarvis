@@ -323,7 +323,10 @@ off; `--doctor` (`macos-spotlight`) additionally detects a stalled index by an
 import that never appears. The bundle is also installed into `/Applications`
 (Finder's Applications folder, Launchpad) whenever the account may write there,
 falling back to `~/Applications` for standard accounts; an existing per-user
-install is moved over by rename, keeping its signature and TCC grants. Windows
+install is moved over by rename, keeping its signature and TCC grants, and the
+LaunchAgent is pointed at the new path in the same step (BUG-218). A same-named
+app with another bundle id (the DMG build) is never replaced or removed, and a
+certificate-signed bundle's `Info.plist` version follows source updates. Windows
 and Linux are
 unchanged — their index announcements already feed the search the user types
 into.

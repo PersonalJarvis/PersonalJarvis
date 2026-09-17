@@ -165,7 +165,11 @@ def test_bootstrap_fallbacks_remove_registration_without_the_venv() -> None:
 
     assert "$WindowsUninstallRegistrySubkey" in windows
     assert "$WindowsShortcutFileName" in windows
-    assert "$HOME/Applications/$MACOS_APP_DIR_NAME" in posix
+    # Both install locations (BUG-216), never a same-named app with its own
+    # bundle id, and the login item that would otherwise fire at a deleted app.
+    assert 'for apps_dir in "/Applications" "$HOME/Applications"' in posix
+    assert '"$app_id" != "$MACOS_BUNDLE_ID"' in posix
+    assert "LaunchAgents/${MACOS_AUTOSTART_LABEL}.plist" in posix
     assert "applications/$LINUX_DESKTOP_ENTRY_FILE_NAME" in posix
 
 

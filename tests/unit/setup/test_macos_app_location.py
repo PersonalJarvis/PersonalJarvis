@@ -11,6 +11,7 @@ every TCC grant, survives a rename), and never loses the app on the way.
 from __future__ import annotations
 
 import os
+import plistlib
 import sys
 from pathlib import Path
 
@@ -167,3 +168,115 @@ def test_the_running_app_is_followed_to_its_new_location(
     assert result == system / APP_DIR_NAME
     assert registered == [system / APP_DIR_NAME]
     assert not launched_from.exists()
+
+
+def _foreign_bundle(root: Path) -> Path:
+    """The notarized DMG build: same name, its own bundle id."""
+    bundle = _bundle(root, marker="dmg-build")
+    with (bundle / "Contents" / "Info.plist").open("wb") as stream:
+        plistlib.dump({"CFBundleIdentifier": "ai.personaljarvis.desktop"}, stream)
+    return bundle
+
+
+def test_a_separately_installed_app_is_not_taken_for_ours(roots) -> None:
+    system, user = roots
+    _foreign_bundle(system)
+    assert macos_applications_dir(system_dir=system, user_dir=user) == user
+
+
+def test_uninstall_keeps_a_separately_installed_app(roots, monkeypatch: pytest.MonkeyPatch) -> None:
+    system, user = roots
+    foreign = _foreign_bundle(system)
+    _bundle(user)
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    monkeypatch.setattr(mab, "SYSTEM_APPLICATIONS_DIR", system)
+    monkeypatch.setattr(mab, "user_applications_dir", lambda: user)
+
+    assert remove_macos_app_bundle() is True
+    assert foreign.is_dir()
+    assert not (user / APP_DIR_NAME).exists()
+
+
+def test_a_repair_never_replaces_a_separately_installed_app(
+    roots, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    system, _user = roots
+    foreign = _foreign_bundle(system)
+    monkeypatch.setattr(mab, "ensure_local_signing_identity", lambda **_kw: None)
+    monkeypatch.setattr(
+        mab,
+        "_install_native_bundle",
+        lambda *_a, **_kw: pytest.fail("a foreign app must never be rebuilt over"),
+    )
+
+    assert (
+        ensure_macos_app_bundle(install_dir=tmp_path / "install", applications_dir=system) is None
+    )
+    assert "separately installed" in (mab.last_error() or "")
+    assert (foreign / "Contents" / "MacOS" / "PersonalJarvis").read_text() == "dmg-build"
+
+
+def test_a_damaged_bundle_of_ours_is_still_ours(roots) -> None:
+    """No Info.plist proves nothing about ownership — it must stay repairable."""
+    system, user = roots
+    _bundle(system)
+    assert macos_applications_dir(system_dir=system, user_dir=user) == system
+
+
+def test_the_login_item_follows_the_moved_app(
+    roots, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import jarvis.autostart.macos as autostart_macos
+    from jarvis.autostart.macos import MacOSAutostart
+    from jarvis.autostart.protocol import LaunchSpec
+
+    system, user = roots
+    _bundle(user)
+    launched_from = user / APP_DIR_NAME
+    agents = tmp_path / "LaunchAgents"
+    monkeypatch.setattr(autostart_macos, "_agents_dir", lambda: agents)
+    MacOSAutostart().install(
+        LaunchSpec(
+            program="/usr/bin/open",
+            args=("-W", "-a", str(launched_from)),
+            working_dir=str(tmp_path),
+            minimized=False,
+        )
+    )
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    monkeypatch.setattr(mab, "SYSTEM_APPLICATIONS_DIR", system)
+    monkeypatch.setattr(mab, "user_applications_dir", lambda: user)
+    monkeypatch.setattr(mab, "ensure_local_signing_identity", lambda **_kw: None)
+    monkeypatch.setattr(
+        mab, "_running_managed_bundle", lambda *, install_root, **_kw: launched_from
+    )
+    monkeypatch.setattr(mab, "register_with_launch_services", lambda _bundle: True)
+
+    ensure_macos_app_bundle(install_dir=tmp_path / "install")
+
+    with (agents / "com.personal-jarvis.autostart.plist").open("rb") as fh:
+        arguments = plistlib.load(fh)["ProgramArguments"]
+    assert arguments == ["/usr/bin/open", "-W", "-a", str(system / APP_DIR_NAME)]
+
+
+def test_the_login_item_follows_even_when_the_repair_fails(
+    roots, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Seen live: signing failed after the move, and login kept the dead path."""
+    import jarvis.autostart.macos as autostart_macos
+
+    system, user = roots
+    _bundle(user)
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    monkeypatch.setattr(mab, "SYSTEM_APPLICATIONS_DIR", system)
+    monkeypatch.setattr(mab, "user_applications_dir", lambda: user)
+
+    def _signing_breaks(**_kw):
+        raise RuntimeError("errSecInternalComponent")
+
+    monkeypatch.setattr(mab, "ensure_local_signing_identity", _signing_breaks)
+    retargeted: list[Path] = []
+    monkeypatch.setattr(autostart_macos, "retarget_launch_agent", retargeted.append)
+
+    assert ensure_macos_app_bundle(install_dir=tmp_path / "install") is None
+    assert retargeted == [system / APP_DIR_NAME]
