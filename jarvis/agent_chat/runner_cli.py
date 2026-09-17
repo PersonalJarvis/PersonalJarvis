@@ -485,6 +485,12 @@ def plan_grok(
     # Grok Build takes the prompt on argv, so the identity rides in front of
     # it — the compact cut, and only on a fresh conversation.
     prompt = _with_identity(prompt, identity, resume, compact=True)
+    mode = normalize_permission("grok-cli", permission_mode)
+    work = _resolved_cwd(cwd)
+    if identity is not None:
+        # grok has no --mcp-config; a project `.grok/config.toml` is how
+        # print-mode actually sees Jarvis' tools (gmail, calendar, the rest).
+        jarvis_harness.install_grok_jarvis_mcp(work, identity.session_id)
     argv = [
         *grok_argv_prefix(),
         "--no-auto-update",
@@ -492,11 +498,17 @@ def plan_grok(
         "--output-format",
         "streaming-messages-json",
         "--include-partial-messages",
-        "--permission-mode",
-        normalize_permission("grok-cli", permission_mode),
         "--cwd",
-        str(cwd),
+        str(work),
     ]
+    if mode == "plan":
+        argv += ["--permission-mode", "plan"]
+    else:
+        # Print-mode grok cannot answer a permission prompt. default and
+        # acceptEdits therefore decline MCP tools (live Morning Briefing,
+        # 2026-09-17: jarvis__gmail "Tool not found" / cancelled). Jarvis'
+        # gateway still gates every call.
+        argv += ["--always-approve"]
     if model:
         argv += ["-m", model]
     if effort:
@@ -508,7 +520,9 @@ def plan_grok(
         sid = str(uuid.uuid4())
         argv += ["--session-id", sid]
     argv += ["-p", prompt]
-    return CliPlan(argv, _account_env("grok-build"), None, "claude", sid)
+    env = jarvis_harness.apply_env(_account_env("grok-build"))
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return CliPlan(argv, env, None, "claude", sid)
 
 
 #: agy's own model ids as of 1.1.19, for a box where ``agy models`` cannot be
@@ -1085,7 +1099,8 @@ def _with_identity(
                 "actual blocker without claiming completion. Existing permission "
                 "rules still apply.\n"
                 + CONVERSATIONAL_TURN_REMINDER
-                + "\n</jarvis_turn_context>\n\n" + prompt
+                + "\n</jarvis_turn_context>\n\n"
+                + prompt
             )
         return prompt
     text = identity.compact if compact else identity.text
