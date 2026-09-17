@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
-import type { ReasoningBlock, ToolBlock, TurnBlock, TurnItem, TurnStatus } from "./reduce";
+import type { ReasoningBlock, TextBlock, ToolBlock, TurnBlock, TurnItem, TurnStatus } from "./reduce";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { toolDiff } from "./toolDiff";
 import { formatTokens, outputTokens } from "./toolView";
@@ -70,6 +70,41 @@ export function groupConversationTrace(blocks: TurnBlock[]): Group[] {
     else groups.push({ id: block.kind === "tool" ? block.callId : block.id, blocks: [block], family });
   }
   return groups;
+}
+
+/**
+ * The last assistant reply stays in the conversation. Narration between
+ * tools, and every tool or thought before that reply, is foldable work.
+ * Failures after the reply stay after it.
+ */
+export function splitConversationTurn(blocks: TurnBlock[]): { work: TurnBlock[]; answer: TextBlock[]; after: TurnBlock[] } {
+  let lastText = -1;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i];
+    if (block.kind === "text" && block.text.trim()) {
+      lastText = i;
+      break;
+    }
+  }
+  if (lastText < 0) return { work: blocks, answer: [], after: [] };
+  let firstText = lastText;
+  while (firstText > 0 && blocks[firstText - 1].kind === "text") firstText--;
+  return {
+    work: blocks.slice(0, firstText),
+    answer: blocks.slice(firstText, lastText + 1) as TextBlock[],
+    after: blocks.slice(lastText + 1),
+  };
+}
+
+function isAttentionBlock(block: TurnBlock): block is ToolBlock {
+  return block.kind === "tool" && attention(block);
+}
+
+function hasFoldableWork(blocks: TurnBlock[]): boolean {
+  return blocks.some((block) => {
+    if (isAttentionBlock(block)) return false;
+    return block.kind !== "text" || Boolean(block.text.trim());
+  });
 }
 
 /** Summarize completed adjacent work; replies and attention are hard boundaries. */
@@ -260,6 +295,29 @@ function ActivityIcon({ blocks, live }: { blocks: TurnBlock[]; live: boolean }) 
   return <Icon aria-hidden className={cn(iconClass, "mt-1", live && "motion-safe:animate-spin")} />;
 }
 
+/** Small chevron that hides finished work so the reply can stand alone. */
+function ConversationWorkFold({ durationMs, attention, children }: {
+  durationMs: number | null; attention?: ReactNode; children: ReactNode;
+}) {
+  const t = useT();
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const label = durationMs !== null && durationMs > 0
+    ? t("work_trace.thought_for").replace("{duration}", traceDuration(durationMs))
+    : t("work_trace.thought");
+  return (
+    <div className="min-w-0" data-testid="conversation-work-fold" data-open={open ? "true" : "false"}>
+      <button type="button" aria-expanded={open} aria-controls={id}
+        className="group/fold mb-1 inline-flex max-w-full items-center gap-1 rounded-md py-0.5 pr-1.5 text-left text-xs leading-5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => setOpen(!open)}>
+        <ChevronRight aria-hidden className={cn("h-3 w-3 shrink-0 opacity-70 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
+        <span className="truncate">{label}</span>
+      </button>
+      {open ? <div id={id}>{children}</div> : attention}
+    </div>
+  );
+}
+
 export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false }: {
   blocks: TurnBlock[]; status: TurnStatus; startedMs: number; durationMs: number | null; error?: string | null;
   onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; className?: string;
@@ -289,8 +347,8 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
         icon={<Check aria-hidden className={iconClass} />} initiallyOpen={live}>
         {group.blocks.map(block => <TraceTool key={(block as ToolBlock).callId} block={block as ToolBlock} status={status} onDecide={onDecide} />)}
       </Disclosure>;
-      if (first.kind === "tool") return <div key={group.id} className={conversation ? "mx-auto w-full max-w-xl py-1 text-xs [&_button]:text-xs" : undefined}><TraceTool block={first} status={status} onDecide={onDecide} /></div>;
-      if (first.kind === "reasoning") return <div key={group.id} className={conversation ? "max-w-xl text-xs [&_button]:text-xs" : undefined}><ReasoningTrace block={first} turnLive={live} compact={conversation} /></div>;
+      if (first.kind === "tool") return <div key={group.id} className={conversation ? "w-full max-w-xl py-1 text-xs [&_button]:text-xs" : undefined}><TraceTool block={first} status={status} onDecide={onDecide} /></div>;
+      if (first.kind === "reasoning") return <div key={group.id} className={conversation ? "w-full max-w-xl text-xs [&_button]:text-xs" : undefined}><ReasoningTrace block={first} turnLive={live} compact={conversation} /></div>;
       return first.text.trim() ? <div key={group.id} className={cn("min-w-0 py-2", conversation && "w-fit max-w-[min(85%,42rem)] rounded-2xl rounded-bl-md bg-secondary px-4 py-2.5")}>{renderText ? renderText(first.text, first.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={first.text} /></div>}</div> : null;
     })}
     {error ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{error}</p> : null}

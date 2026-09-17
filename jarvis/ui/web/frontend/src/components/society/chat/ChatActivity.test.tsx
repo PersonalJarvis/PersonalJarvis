@@ -41,6 +41,22 @@ it("folds a live manual choice on completion even when the provider never ends r
   expect(screen.getByText(block.text)).toBeTruthy();
 });
 
+it("keeps live conversation tool rows left-aligned instead of centering them", () => {
+  const live: ToolBlock = {
+    kind: "tool", callId: "live", name: "search_files", input: { pattern: "archive" },
+    output: null, isError: false, durationMs: null, approval: null, startedMs: 0,
+  };
+  const { container } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={[
+    { kind: "reasoning", id: "r", text: "Inspect archive.", live: false, durationMs: 2000, startedMs: 0 },
+    live,
+  ]} />);
+  // A live tool is a singleton group; mx-auto used to park it in the middle of
+  // the lane, then snap it left once it joined the completed activity fold.
+  const liveRow = container.querySelector("[data-trace-tool]")?.parentElement;
+  expect(liveRow?.className ?? "").not.toMatch(/(^|\s)mx-auto(\s|$)/);
+  expect(container.querySelectorAll(".mx-auto")).toHaveLength(0);
+});
+
 it("keeps failures and approvals visible in the conversation style", () => {
   const base: ToolBlock = { kind: "tool", callId: "failure", name: "send_message", input: {}, output: "Delivery failed", isError: true, durationMs: 100, approval: null, startedMs: 0 };
   render(<WorkTrace conversation status="done" startedMs={0} durationMs={1000} blocks={[
