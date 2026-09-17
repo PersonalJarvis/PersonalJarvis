@@ -337,11 +337,14 @@ SECRETS: list[SecretSpec] = [
         section="stt",
     ),
     SecretSpec(
-        key="tavily_api_key",
-        env_fallback="TAVILY_API_KEY",
-        label="Tavily API Key (web search for agents)",
-        help_url="https://app.tavily.com/home",
-        required_for="Tool (search_web)",
+        key="apifare_api_key",
+        env_fallback="APIPAY_TOKEN",
+        label="Apifare token (optional prepaid web search)",
+        help_url="https://apifare.com/start",
+        required_for=(
+            "Optional prepaid live-Google hop. search_web already works "
+            "without a key (no Tavily, Serper or Brave account needed)"
+        ),
         section="tools",
     ),
     SecretSpec(
@@ -674,7 +677,11 @@ _SECTIONS: tuple[_Section, ...] = (
     _Section(
         id="tools",
         title="Web search & tools",
-        blurb="Optional. Lets Jarvis and its agents search the live web.",
+        blurb=(
+            "Optional. Live web search already works without a key. Add one "
+            "prepaid Apifare token only if you want a metered Google hop "
+            "instead of a Tavily, Serper or Brave account."
+        ),
     ),
     _Section(
         id="channels",

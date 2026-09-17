@@ -12,18 +12,21 @@ This module replaces that single backend with a priority chain that returns
 real web results for any query, while keeping a key-free default so the base
 install still searches on a fresh python:3.11-slim VPS:
 
-    keyed API (Brave, if a key is configured)
+    prepaid Apifare hop (if a token is configured; live Google via DataForSEO)
         -> real DuckDuckGo SERP (key-free, default)
             -> DuckDuckGo Instant Answer (last-resort encyclopedic abstract)
+
+There is no Tavily, Serper or Brave key on this path. A missing or failed
+prepaid hop degrades to DuckDuckGo instead of blocking the turn.
 
 Each backend returns a SearchOutcome with an explicit status so the brain can
 tell "searched, genuinely empty" from "backend temporarily unavailable" and
 phrase the spoken answer honestly instead of always saying "no results".
 
 This module performs no config or secret access — the caller (search_web.py)
-loads the backend preference and the optional Brave key and passes them in.
-That keeps every function here pure and unit-testable with an injected httpx
-client (httpx.MockTransport) or an injected synchronous searcher.
+loads the optional Apifare token and passes it in. That keeps every function
+here pure and unit-testable with an injected httpx client (httpx.MockTransport)
+or an injected synchronous searcher.
 """
 from __future__ import annotations
 
@@ -181,7 +184,93 @@ async def ddg_serp_search(
 
 
 # ---------------------------------------------------------------------------
-# Resolver: real SERP first, Instant Answer as the encyclopedic fallback
+# Prepaid Apifare hop (optional live-Google SERP; no Tavily/Serper/Brave key)
+# ---------------------------------------------------------------------------
+
+_APIFARE_CALL_URL: Final[str] = "https://apifare.com/v1/call/dataforseo"
+
+
+def _apifare_items(payload: Any) -> list[Any]:
+    """Unwrap the compact organic list from an Apifare dataforseo body."""
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    for key in ("results", "items", "organic", "data", "result"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict):
+            nested = _apifare_items(value)
+            if nested:
+                return nested
+    return []
+
+
+def _apifare_map_item(item: Any) -> SearchResult | None:
+    if not isinstance(item, dict):
+        return None
+    title = str(item.get("title") or "").strip()
+    url = str(item.get("url") or item.get("link") or "").strip()
+    snippet = str(
+        item.get("description") or item.get("snippet") or item.get("body") or ""
+    ).strip()
+    if not (title or snippet or url):
+        return None
+    return {"title": title, "snippet": snippet, "url": url}
+
+
+async def apifare_search(
+    query: str,
+    max_results: int,
+    client: Any,
+    api_key: str,
+) -> SearchOutcome:
+    """Live Google organic results via Apifare's resold DataForSEO hop.
+
+    Empty ``api_key`` is unavailable (caller should skip). HTTP 402 (empty
+    prepaid balance) and transport/provider errors are unavailable so the
+    key-free DuckDuckGo chain can still answer. Provider error bodies are
+    never logged (AP-34).
+    """
+    token = (api_key or "").strip()
+    if not token:
+        return SearchOutcome(results=[], backend="apifare", status="unavailable")
+    try:
+        resp = await client.post(
+            _APIFARE_CALL_URL,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+            json={"q": query, "count": max(1, min(int(max_results), 100))},
+        )
+    except Exception:  # noqa: BLE001 — network / transport error -> unavailable
+        return SearchOutcome(results=[], backend="apifare", status="unavailable")
+    status_code = getattr(resp, "status_code", 0)
+    if status_code != 200:
+        return SearchOutcome(results=[], backend="apifare", status="unavailable")
+    try:
+        payload = resp.json()
+    except Exception:  # noqa: BLE001 — non-JSON body is not a usable SERP
+        return SearchOutcome(results=[], backend="apifare", status="unavailable")
+    mapped: list[SearchResult] = []
+    for item in _apifare_items(payload):
+        row = _apifare_map_item(item)
+        if row is None:
+            continue
+        mapped.append(row)
+        if len(mapped) >= max_results:
+            break
+    return SearchOutcome(
+        results=mapped,
+        backend="apifare",
+        status="ok" if mapped else "empty",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Resolver: optional prepaid hop, then SERP, Instant Answer as last fallback
 # ---------------------------------------------------------------------------
 
 async def run_search(
@@ -190,16 +279,24 @@ async def run_search(
     *,
     client: Any,
     searcher: DdgsSearcher | None = None,
+    apifare_key: str = "",
 ) -> SearchOutcome:
-    """Real DuckDuckGo web search first; the DuckDuckGo Instant-Answer box as a
-    cheap encyclopedic fallback. Honest status: ``ok`` with results, otherwise
-    ``empty`` if a backend actually reached its index, else ``unavailable`` so
-    the brain says search is down rather than claiming there is nothing."""
+    """Optional prepaid Apifare hop, then DuckDuckGo SERP, then Instant Answer.
+
+    Honest status: ``ok`` with results, otherwise ``empty`` if a backend
+    actually reached its index, else ``unavailable`` so the brain says search
+    is down rather than claiming there is nothing."""
     saw_empty = False
+    if (apifare_key or "").strip():
+        prepaid = await apifare_search(query, max_results, client, apifare_key)
+        if prepaid.status == "ok" and prepaid.results:
+            return prepaid
+        saw_empty = prepaid.status == "empty"
+
     serp = await ddg_serp_search(query, max_results, searcher=searcher)
     if serp.status == "ok" and serp.results:
         return serp
-    saw_empty = serp.status == "empty"
+    saw_empty = saw_empty or serp.status == "empty"
 
     instant = await ddg_instant_search(query, max_results, client)
     if instant.status == "ok" and instant.results:
