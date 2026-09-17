@@ -15429,3 +15429,19 @@ for every suite.
 Mac this was verified on, 71 of 72 apps in `/Applications` were missing from
 it — a stalled system index that only `sudo mdutil -E /` repairs; `jarvis
 doctor` names it. No app can fix that without an administrator password.
+
+**Follow-up 2026-09-17 (installed, and still nowhere to be seen).** The user
+reported the app missing from the Dock and from Spotlight. Two separate causes.
+*Dock:* no installer path ever added a tile, so a finished install was only
+startable by someone who already knew where it lived. `jarvis/setup/macos_dock.py`
+adds the tile once per install (`--pin-to-dock`, passed by the installer only);
+a marker remembers it, so a user who drags the app out keeps it out, a
+same-named DMG build's tile is never touched, and uninstall removes ours so no
+"?" tile stays behind. *Spotlight:* the Mac's index had stopped absorbing
+anything new days earlier — a fresh probe file was not indexed either, and no
+app installed after that date was findable. `mdimport` is accepted and changes
+nothing; only `sudo mdutil -E /` repairs it. The installer now proves the stall
+(`wait_until_indexed` returns `False`) and prints that command instead of
+finishing silently on an app search cannot find. Launchpad listed the app all
+along. Guards: `tests/unit/setup/test_macos_dock.py`,
+`tests/unit/install/test_installer_flow.py`.

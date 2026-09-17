@@ -326,7 +326,10 @@ falling back to `~/Applications` for standard accounts; an existing per-user
 install is moved over by rename, keeping its signature and TCC grants, and the
 LaunchAgent is pointed at the new path in the same step (BUG-218). A same-named
 app with another bundle id (the DMG build) is never replaced or removed, and a
-certificate-signed bundle's `Info.plist` version follows source updates. Windows
+certificate-signed bundle's `Info.plist` version follows source updates. The
+installer adds the app to the Dock once per install (the macOS counterpart of
+the Windows Desktop/Start-menu launcher) and names a stalled Spotlight index
+with its admin repair command. Windows
 and Linux are
 unchanged — their index announcements already feed the search the user types
 into.

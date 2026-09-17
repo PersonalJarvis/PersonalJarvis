@@ -140,6 +140,12 @@ def _macos_shell_registration_in_tmp(tmp_path_factory, monkeypatch):  # noqa: AN
     monkeypatch.setattr(autostart_macos, "_launchctl", lambda *_argv: True)
     monkeypatch.setattr(mab, "_LSREGISTER", str(agents / "no-lsregister"))
     monkeypatch.setattr(search_index, "_MDIMPORT", str(agents / "no-mdimport"))
+    # ``defaults write com.apple.dock`` + ``killall Dock`` on a developer's Mac.
+    import jarvis.setup.macos_dock as macos_dock
+
+    monkeypatch.setattr(macos_dock, "_DEFAULTS", str(agents / "no-defaults"))
+    monkeypatch.setattr(macos_dock, "_KILLALL", str(agents / "no-killall"))
+    monkeypatch.setattr(macos_dock, "_marker_path", lambda: agents / "macos-dock-pinned")
     yield agents
 
 
