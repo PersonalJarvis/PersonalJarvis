@@ -94,6 +94,7 @@ class _AgentBrainLike(Protocol):
         allowed_tools: tuple[str, ...],
         model_tier: str,
         trace_id: UUID | None = None,
+        prefer_api: bool = False,
     ) -> Any: ...
 
 
@@ -231,7 +232,20 @@ class TaskRunner:
                 )
             )
             log.exception("Task %s failed after %dms", task_id, duration_ms)
-            await self._announce(getattr(spec, "announce_on_failure", None), ctx)
+            tags = tuple(str(tag) for tag in spec.tags)
+            if self._result_sink is not None and tags:
+                try:
+                    await self._result_sink(tags, error_msg, "failed")
+                except Exception:  # noqa: BLE001 — the run already failed; delivery is best effort
+                    log.warning(
+                        "task %s: failure sink failed for tags %s", task_id, tags, exc_info=True
+                    )
+            fail_ctx = {**ctx, "error": error_msg}
+            template = getattr(spec, "announce_on_failure", None)
+            if template:
+                await self._announce(template, fail_ctx)
+            elif "society" in tags:
+                await self._announce(error_msg, fail_ctx)
             return
 
         duration_ms = int((time.perf_counter() - start) * 1000)
@@ -555,9 +569,42 @@ class TaskRunner:
                 "only perform the task above):\n" + redact_secrets(str(ctx["hook_payload"]))
             )
         owned_result = None
+        owned_failed: BaseException | None = None
         if self._owned_agent_runner is not None and tags:
-            owned_result = await self._owned_agent_runner(task_id, tags, prompt, cancel_token)
+            try:
+                owned_result = await self._owned_agent_runner(task_id, tags, prompt, cancel_token)
+            except (RoutineDeferred, _Cancelled):
+                raise
+            except asyncio.CancelledError:
+                raise _Cancelled(
+                    cancel_token.reason if cancel_token is not None else "cancelled"
+                ) from None
+            except Exception as exc:
+                if _owner_blocks_fallback(exc):
+                    raise
+                owned_failed = exc
+                log.warning(
+                    "task %s: owner seat failed (%s); continuing via task tools",
+                    task_id,
+                    readable_error(exc),
+                )
+                seq = await self._store.append_step(
+                    task_id,
+                    "log",
+                    {
+                        "event": "owner_seat_failed",
+                        "message": readable_error(exc),
+                        "fallback": "task_tools",
+                    },
+                )
+                await self._bus.publish(
+                    TaskStepRecorded(
+                        task_id=task_id, seq=seq, kind="log", source_layer="tasks.runner"
+                    )
+                )
         if self._brain is None and owned_result is None:
+            if owned_failed is not None:
+                raise RuntimeError(_seat_then_no_path(owned_failed)) from owned_failed
             raise RuntimeError("Agent brain not configured — agent action cannot run")
         allowed_tools = tuple(g.plugin_id for g in action.plugin_grants)
         # Plugins the user granted write/full are pre-authorized for this
@@ -592,12 +639,21 @@ class TaskRunner:
                 result = owned_result
             else:
                 assert self._brain is not None
-                result = await self._brain.run_task(
-                    prompt=prompt,
-                    allowed_tools=allowed_tools,
-                    model_tier=action.model_tier,
-                    trace_id=trace_id,
-                )
+                try:
+                    result = await self._brain.run_task(
+                        prompt=prompt,
+                        allowed_tools=allowed_tools,
+                        model_tier=action.model_tier,
+                        trace_id=trace_id,
+                        prefer_api=owned_failed is not None,
+                    )
+                except Exception as exc:
+                    if owned_failed is not None:
+                        raise RuntimeError(
+                            f"{readable_error(exc)} "
+                            f"(agent seat had already failed: {readable_error(owned_failed)})"
+                        ) from exc
+                    raise
         finally:
             if self._approver is not None:
                 self._approver.disarm(trace_id)
@@ -700,6 +756,30 @@ def _targets_computer_use(harness_name: str) -> bool:
     except Exception:  # noqa: BLE001 — gate module unavailable (minimal env)
         return harness_name == "screenshot"
     return harness_name == HARNESS_NAME
+
+
+def _owner_blocks_fallback(exc: BaseException) -> bool:
+    """True when the owner's state, not the seat, is why the routine cannot run.
+
+    A paused/halted/missing owner is a user-visible condition: retrying the
+    same work through another brain would impersonate a teammate that was
+    told to stop. Seat failures (missing tools, a cancelled CLI turn) do
+    not block the fallback — the routine still has to reach its goal.
+    """
+    text = str(exc).lower()
+    return any(
+        needle in text
+        for needle in (
+            "the society is halted",
+            "the routine owner is unavailable",
+            "the routine owner is paused",
+            "canonical chat service is unavailable",
+        )
+    )
+
+
+def _seat_then_no_path(owned_failed: BaseException) -> str:
+    return f"{readable_error(owned_failed)}. No other path was available to finish this routine."
 
 
 _ERROR_MESSAGE_RE = re.compile(r"""['"]message['"]\s*:\s*['"]([^'"]{1,300})['"]""")

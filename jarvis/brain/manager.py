@@ -13346,6 +13346,7 @@ class BrainManager:
         allowed_tools: tuple[str, ...] = (),
         model_tier: str = "auto",
         trace_id: UUID | None = None,
+        prefer_api: bool = False,
     ) -> str:
         """Run one isolated agentic turn for a scheduled task.
 
@@ -13365,8 +13366,13 @@ class BrainManager:
         other error propagates so the runner records it in ``last_error``.
         The persistent active provider is never switched.
 
+        ``prefer_api`` is accepted so a routine whose owner seat already
+        failed (a CLI without Jarvis tools) can retry here without a
+        TypeError. This path is already the API provider chain.
+
         Returns the final assistant text.
         """
+        del prefer_api
         intent = "deep" if model_tier == "deep" else "fast"
         tools = self._select_task_tools(allowed_tools)
         # The per-turn context (date/time, awareness, wiki) rides on the user
