@@ -280,9 +280,11 @@ def select_tools(
     3. order focus first, the rest alphabetically — prompt-cache safe because
        the order depends only on the roster row.
     """
-    granted = set(grants)
+    from jarvis.clis.capability_provider import equivalent_grants
+
+    granted = set(equivalent_grants(grants))
     denied = set(denies)
-    focus_list = [f for f in focus]
+    focus_list = list(equivalent_grants(focus))
     keep: dict[str, Any] = {}
     for name, tool in tools.items():
         cap_id = capability_id_for_tool(name)
