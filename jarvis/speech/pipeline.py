@@ -9032,9 +9032,14 @@ class SpeechPipeline:
                     if next_task is None:
                         next_task = asyncio.create_task(vad_iter.__anext__())
                     hangup_task = asyncio.create_task(self._hangup_event.wait())
+                    # A running lesson (teacher mode) keeps the session open
+                    # through quiet stretches: the teacher pausing must not
+                    # end the recording.
+                    idle_hangup = getattr(
+                        self, "_idle_hangup_enabled", True
+                    ) and not self._lesson_running()
                     self._idle_deadline_monotonic = (
-                        time.monotonic() + self._idle_timeout_s
-                        if getattr(self, "_idle_hangup_enabled", True) else None
+                        time.monotonic() + self._idle_timeout_s if idle_hangup else None
                     )
                     try:
                         done, _pending = await asyncio.wait(
@@ -9045,11 +9050,7 @@ class SpeechPipeline:
                             # never reached, so the session stays active until the
                             # user hangs up. Otherwise bound the LISTENING window
                             # so a silent session hangs up after the timeout.
-                            timeout=(
-                                self._idle_timeout_s
-                                if getattr(self, "_idle_hangup_enabled", True)
-                                else None
-                            ),
+                            timeout=(self._idle_timeout_s if idle_hangup else None),
                             return_when=asyncio.FIRST_COMPLETED,
                         )
                     except asyncio.CancelledError:
@@ -16598,6 +16599,10 @@ class SpeechPipeline:
         return bool(
             getattr(getattr(self, "_brain", None), "_last_turn_all_failed", False)
         )
+
+    def _lesson_running(self) -> bool:
+        """True while the brain runs a teacher-mode lesson (jarvis/teacher)."""
+        return getattr(getattr(self, "_brain", None), "_lesson", None) is not None
 
     def _brain_turn_suppressed(self) -> bool:
         """True when the just-finished brain turn was a fire-and-forget

@@ -2817,6 +2817,10 @@ class BrainManager:
         # cannot drift back to German (live bug 2026-06-14).
         self._turn_detected_lang: str = ""
         self._turn_japanese: bool = False
+        # Teacher mode: the running lesson (text transcript only) and the last
+        # lesson plan made in this session (its topic/length seed the lesson).
+        self._lesson: Any = None
+        self._lesson_plan: Any = None
         # Sticky conversation language (de/en/es, "" until established). Updated
         # only on a SUBSTANTIVE turn so a thin interjection ("Now", "Stop") never
         # flips an established conversation; consumed by _update_turn_language and
@@ -5025,6 +5029,75 @@ class BrainManager:
         if persisted:
             return _LANG_SWITCH_CONFIRM.get(lang, _LANG_SWITCH_CONFIRM["de"])
         return _LANG_SWITCH_CONFIRM_SESSION.get(lang, _LANG_SWITCH_CONFIRM_SESSION["de"])
+
+    async def _teacher_complete(self, system: str, prompt: str) -> str:
+        """One tool-less completion on the active brain (lesson plan/summary/report)."""
+        name = self._active_name
+        brain = self._get_brain(name, self._fast_model(name))
+        req = BrainRequest(
+            messages=(BrainMessage(role="user", content=prompt),),
+            system=system,
+            max_tokens=3000,
+            stream=True,
+        )
+        agg = await aggregate(brain.complete(req))
+        return (agg.text or "").strip()
+
+    async def _handle_teacher_command(self, cmd: Any) -> str:
+        """Run one teacher-mode command and return what to say/show."""
+        from jarvis.teacher import lesson as lessons
+        from jarvis.teacher.replies import reply
+
+        lang = "ja" if getattr(self, "_turn_japanese", False) else self._resolve_turn_lang()
+        language = lessons._language_name(lang)
+        current = getattr(self, "_lesson", None)
+        try:
+            if cmd.kind == "plan":
+                minutes = cmd.minutes or lessons.DEFAULT_MINUTES
+                text = await self._teacher_complete(
+                    lessons.PLAN_SYSTEM.format(language=language),
+                    lessons.plan_prompt(cmd.topic, minutes),
+                )
+                stamp_holder = lessons.LessonSession(topic=cmd.topic, minutes=minutes)
+                path = lessons.save(stamp_holder.stamp, "plan", text)
+                self._lesson_plan = stamp_holder
+                return reply("plan_done", lang, minutes=minutes, path=path) + "\n\n" + text
+            if cmd.kind == "start":
+                plan = getattr(self, "_lesson_plan", None)
+                self._lesson = lessons.LessonSession(
+                    topic=plan.topic if plan else "",
+                    minutes=cmd.minutes or (plan.minutes if plan else lessons.DEFAULT_MINUTES),
+                    language=lang,
+                )
+                if plan is not None:
+                    self._lesson.stamp = plan.stamp
+                return reply("started", lang, minutes=self._lesson.minutes)
+            if cmd.kind == "summary" and current is not None:
+                text = await self._teacher_complete(
+                    lessons.SUMMARY_SYSTEM.format(
+                        language=language, music=lessons.music_clause(current)
+                    ),
+                    lessons.summary_prompt(current),
+                )
+                current.summaries += 1
+                lessons.save(current.stamp, f"summary-{current.summaries}", text)
+                remaining = reply("remaining", lang, minutes=round(current.remaining_min()))
+                return f"{text}\n\n{remaining}"
+            if cmd.kind == "end" and current is not None:
+                text = await self._teacher_complete(
+                    lessons.REPORT_SYSTEM.format(
+                        language=language, music=lessons.music_clause(current)
+                    ),
+                    lessons.report_prompt(current),
+                )
+                path = lessons.save(current.stamp, "report", text)
+                lessons.save(current.stamp, "transcript", current.transcript(limit=10**7))
+                self._lesson = None
+                return reply("ended", lang, path=path)
+        except Exception as exc:  # noqa: BLE001 - reported to the teacher, never a crash
+            log.warning("teacher mode %s failed: %s", cmd.kind, exc)
+            return reply("failed", lang, error=str(exc)[:200])
+        return ""
 
     async def _apply_local_mode(self, mode: str) -> str:
         """Switch the local model mode and say what happened, in the turn's language."""
@@ -11232,6 +11305,30 @@ class BrainManager:
                 trace_id=turn_trace_id,
             )
             return confirmation
+
+        # Teacher mode (jarvis/teacher): explicit lesson commands, and while a
+        # lesson runs every other utterance is recorded as text and NOT
+        # answered — the co-teacher listens; it speaks when asked.
+        if not ide_owns_turn:
+            from jarvis.teacher.gate import match_teacher_command
+
+            lesson = getattr(self, "_lesson", None)
+            teacher_cmd = match_teacher_command(user_text, lesson_active=lesson is not None)
+            if teacher_cmd is not None:
+                reply_text = await self._handle_teacher_command(teacher_cmd)
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=reply_text,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return reply_text
+            if lesson is not None:
+                lesson.add(user_text)
+                # Deliberately silent: the pipeline treats a suppressed turn
+                # like a background spawn and asks no clarifying question.
+                self._last_turn_suppressed = True
+                return ""
 
         # Deterministic sub-agent (Heavy-Task worker) provider switch — same
         # reasoning as the language switch: runs BEFORE the force-spawn/LLM path

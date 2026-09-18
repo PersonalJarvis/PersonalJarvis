@@ -17,7 +17,7 @@ Target box: Windows 11, RTX 3050 Laptop (4 GB VRAM), 16 GB RAM, Python 3.13 venv
 | 7 | Double-clap wake | DONE, live-verified via speaker playback (real claps: user to confirm) |
 | 8 | Model switch (normal 4B / developer 9B) | DONE for brain modes, live-verified; vision model not done |
 | 9 | Developer Mode | PARTIAL: project-chat loop live-verified on a sandbox; Unreal/Unity/Blender build loops not done |
-| 10 | Teacher Mode | NOT STARTED |
+| 10 | Teacher Mode | DONE via chat (plan/start/silent record/summary/end), voice path partially verified |
 | 11 | Hand tracking | NOT STARTED |
 | 12 | iPhone client | NOT STARTED |
 | 13 | Self-check / recovery | NOT STARTED |
@@ -347,7 +347,33 @@ Japanese and is fixed:
 - Not done: Unreal/Unity/Blender build+run+log loops (no .uproject exists on
   this PC), "same fix max 3 times" guard, voice-only "Unrealの続き".
 
+## Phase 10 — Teacher Mode (2026-09-18)
+
+- `jarvis/teacher/`: gate (explicit ja/en phrases; "matomete" only counts
+  while a lesson runs), `lesson.py` (text-only transcript with timestamps,
+  prompts, files), `replies.py`. Wired in `BrainManager.generate()` before
+  the LLM. During a lesson every other utterance is recorded and NOT
+  answered (`_last_turn_suppressed`, so the pipeline asks no clarifying
+  question) and the voice session does not idle-hang-up.
+- Files: `%LOCALAPPDATA%/Jarvis/lessons/<stamp>-{plan,summary-N,report,transcript}.md`.
+  No audio is stored.
+- Live (chat, local 4B): plan for "中学2年の音楽 ヴィヴァルディ「春」25分"
+  (objectives, intro/development/summary, teacher lines, questions, expected
+  answers, board, slides, time table, assessment); start; 4 student remarks
+  recorded silently; "ジャービス、まとめて" -> common/different opinions,
+  questions, key terms, per musical element, next questions, time left; end
+  -> report (record, real timing, opinions by element, improvements, next).
+- 4B quality issues seen: a Chinese heading glyph, "pianist" for a violin
+  piece. Music element names are now forced to the Japanese terms.
+- Voice: wake + commands through the laptop speaker->mic loop were
+  misrecognised ("授業を始めて" -> "重要を始めて" / "授業を集めてください");
+  the same audio files transcribe correctly directly. STT dictionary now
+  carries the classroom phrases. Voice path with a real speaker: to confirm.
+- Not done: live slide/screen window for summaries (text is shown in the
+  chat/voice transcript and saved as Markdown), speaker separation.
+
 ## Changelog
+- 2026-09-18: Teacher Mode (plan / in-class listening + summary / report) verified via chat.
 - 2026-09-18: local model modes (4B/9B) + developer project-chat loop verified; run_shell cwd + install-confirmation fixes.
 - 2026-09-18: Phase 7 double-clap wake + opt-in spoken wake ack; install_voicevox.py syntax fix.
 - 2026-09-18: Japanese long-term memory save+recall verified across restart; PC op (Notepad) verified.
