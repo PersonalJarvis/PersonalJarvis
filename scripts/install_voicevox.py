@@ -61,9 +61,15 @@ def main() -> int:
         if not args.tag and rel.get("prerelease"):
             continue
         parts = sorted(
-            a for a in rel["assets"]
-            if f"-{flavour}-" in a["name"] and ".7z." in a["name"] and not a["name"].endswith(".txt")
-        , key=lambda a: a["name"])
+            (
+                a
+                for a in rel["assets"]
+                if f"-{flavour}-" in a["name"]
+                and ".7z." in a["name"]
+                and not a["name"].endswith(".txt")
+            ),
+            key=lambda a: a["name"],
+        )
         if not parts:
             continue
         home = engine_home()

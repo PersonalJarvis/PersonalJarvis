@@ -3975,6 +3975,7 @@ class DesktopApp:
             _t_stt = time.perf_counter()
             _call_hk, _ptt_hk = self.cfg.trigger.resolve_hotkeys()
             pipeline = SpeechPipeline(
+                ack_phrase=str(getattr(self.cfg.voice, "wake_ack_phrase", "") or ""),
                 call_hotkeys=_call_hk,
                 ptt_hotkeys=_ptt_hk,
                 # Dictation. Both keys ship bound to a curated combo (see

@@ -373,6 +373,10 @@ class WakeWordConfig(BaseModel):
 
 class TriggerConfig(BaseModel):
     wake_word_enabled: bool = False
+    # Double hand clap as a second, keyless activation next to the wake word
+    # (``jarvis.speech.clap_detector``). Off by default: a clap is not a word
+    # the user chose, so it is opt-in per install.
+    clap_enabled: bool = False
     # Deprecated compatibility field. Older installs may still carry this
     # push-to-talk key in jarvis.toml, so the config model continues to accept
     # it, but the desktop no longer registers or exposes it.
@@ -3000,6 +3004,10 @@ class VoiceConfig(BaseModel):
     # Master switch for the completion classifier + waiting state. When false
     # the pipeline behaves exactly as before this feature landed.
     completion_detection_enabled: bool = True
+    # Short phrase spoken after the wake chime (wake word or double clap), in
+    # the user's language — e.g. "Yes?". Empty keeps the chime alone, which is
+    # the shipped default: canned persona phrases were removed on request.
+    wake_ack_phrase: str = ""
     # Voice engine selector. "realtime" (default) = the full-duplex
     # speech-to-speech engine — the recommended mode. "pipeline" = the classic
     # STT->brain->TTS chain. Read once per voice session; a live change lands

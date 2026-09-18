@@ -2585,6 +2585,11 @@ class SpeechPipeline:
             enable_openwakeword = False
             enable_whisper_wake = False
         self._openwakeword_enabled = enable_openwakeword
+        # Double-clap activation rides the same wake microphone; it follows the
+        # ambient-duty gate above (only the owning app listens).
+        self._clap_enabled = bool(
+            getattr(getattr(config, "trigger", None), "clap_enabled", False)
+        ) and _owns_ambient_duties()
         # Custom-wake-word plan (jarvis.speech.wake_phrase.WakeWordPlan) or None.
         # When None, the wake path is byte-identical to the legacy "Hey Jarvis"
         # behaviour (every existing test + call site). When set, the plan drives
@@ -6708,6 +6713,7 @@ class SpeechPipeline:
             async for c in self._tts.synthesize(self._ack_phrase):
                 chunks.append(c)
             self._ack_pcm = b"".join(c.pcm for c in chunks)
+            self._ack_rate = getattr(chunks[0], "sample_rate", 24_000) if chunks else 24_000
             log.info("ACK phrase cached (%d KB).", len(self._ack_pcm) // 1024)
         except Exception as exc:  # noqa: BLE001
             log.warning("ACK pre-render failed (%s) — chime only as feedback.", exc)
@@ -8144,9 +8150,12 @@ class SpeechPipeline:
         whisper_queue: asyncio.Queue = asyncio.Queue(
             maxsize=REALTIME_QUEUE_CHUNKS * 2
         )
+        clap_queue: asyncio.Queue = asyncio.Queue(maxsize=REALTIME_QUEUE_CHUNKS * 2)
         detector_queues = [oww_queue] if self._openwakeword_enabled else []
         if self._whisper_wake_enabled and self._whisper_wake is not None:
             detector_queues.append(whisper_queue)
+        if getattr(self, "_clap_enabled", False):
+            detector_queues.append(clap_queue)
         if not detector_queues:
             await asyncio.sleep(1.0)
             return
@@ -8269,6 +8278,13 @@ class SpeechPipeline:
                 return f"oww:{kw}"
             return ""
 
+        async def _run_clap() -> str:
+            from jarvis.speech.clap_detector import detect_double_clap
+
+            async for kw in detect_double_clap(_queue_iter(clap_queue)):
+                return f"clap:{kw}"
+            return ""
+
         async def _run_whisper() -> str:
             if self._whisper_wake is None:
                 await asyncio.Event().wait()  # never completes
@@ -8306,6 +8322,8 @@ class SpeechPipeline:
                 tasks.append(whisper_task)
             else:
                 whisper_task = None  # type: ignore[assignment]
+            if getattr(self, "_clap_enabled", False):
+                tasks.append(asyncio.create_task(_run_clap(), name="clap-wake"))
 
             async def _detector_heartbeat() -> None:
                 """Log every ten seconds while all detector tasks remain alive.
@@ -8726,6 +8744,8 @@ class SpeechPipeline:
                             self._active_voice_mode,
                         )
                         await self._set_turn_state(TurnTakingState.LISTENING)
+                        if self._ack_pcm and not self._ptt_mode:
+                            await self._play_opt_in_wake_ack()
                         # Activation feedback is now visual-only. Playing a
                         # chime or spoken ACK while a portable desktop mic is
                         # live forces an impossible choice: discard simultaneous
@@ -8860,6 +8880,22 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001
             log.debug("Earcon playback skipped (%s).", exc)
 
+    async def _play_opt_in_wake_ack(self) -> None:
+        """Chime + the configured ``[voice].wake_ack_phrase`` ("Yes?"), echo-safe.
+
+        Opt-in only (the phrase is empty by default, and then feedback stays
+        visual-only, see below). The session microphone is already live, so
+        every input frame captured while the acknowledgement plays is dropped
+        through the same suppression window the TTS echo lock uses: the user
+        answers AFTER hearing it, and its sound never reaches the recognizer.
+        """
+        rate = getattr(self, "_ack_rate", 24_000) or 24_000
+        seconds = len(CHIME_PCM) / 2 / CHIME_SAMPLE_RATE + len(self._ack_pcm) / 2 / rate + 0.3
+        until_ns = time.time_ns() + int(seconds * 1_000_000_000)
+        previous = getattr(self, "_input_suppressed_until_ns", 0)
+        self._input_suppressed_until_ns = max(previous, until_ns)
+        await self._play_ack()
+
     async def _play_ack(self, *, ptt: bool = False) -> None:
         """Play the legacy chime and optional pre-rendered acknowledgement.
 
@@ -8879,7 +8915,9 @@ class SpeechPipeline:
                 # the key is released).
                 return
             if self._ack_pcm:
-                await self._player.play_pcm(self._ack_pcm, sample_rate=24_000)
+                await self._player.play_pcm(
+                    self._ack_pcm, sample_rate=getattr(self, "_ack_rate", 24_000)
+                )
             # Brief echo suppression keeps a pre-rendered acknowledgement from
             # leaking through open-back headphones and retriggering VAD.
             await asyncio.sleep(0.4)

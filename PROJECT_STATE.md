@@ -14,7 +14,7 @@ Target box: Windows 11, RTX 3050 Laptop (4 GB VRAM), 16 GB RAM, Python 3.13 venv
 | 4 | Memory (Japanese search + say-do write) | PARTIAL: Japanese save/recall live-verified across restart; tiers/embeddings not done |
 | 5 | PC control | PARTIAL: local brain opened Notepad via run_shell (live) |
 | 6 | Screen understanding | NOT STARTED (large existing base) |
-| 7 | Double-clap wake | NOT STARTED |
+| 7 | Double-clap wake | DONE, live-verified via speaker playback (real claps: user to confirm) |
 | 8 | Model auto-switch / VRAM governor | NOT STARTED |
 | 9 | Developer Mode | NOT STARTED |
 | 10 | Teacher Mode | NOT STARTED |
@@ -287,7 +287,29 @@ Japanese and is fixed:
 - Existing: UIA tree, pywinauto, click/type/hotkey tools, risk tiers. Not yet
   exercised with the local brain: UIA-driven apps, VS Code/Unity/Unreal/Blender.
 
+## Phase 7 — Double-clap wake (2026-09-18)
+
+- `jarvis/speech/clap_detector.py`: deterministic, model-free, nothing stored.
+  Per 16 ms frame: adaptive noise floor; onset (8x floor, 4x the quieter of
+  the two previous frames, >=0.005 FS); shape (peak within 2 frames, >=2
+  frames above 30% of peak — rejects keystrokes —, decay to 25% within ~130
+  ms — rejects speech/music); spectrum (centroid >=1.2 kHz, >=20% energy in
+  2-8 kHz — rejects knocks/voice); pair gap 0.2-0.8 s, peak ratio <=3, no
+  third clap within 0.35 s (applause -> 1 s quiet period), 2 s cooldown.
+- Offline (200 seeds each): double clap 100%, keystrokes/speech/knocks 0%
+  false triggers; a clap only ~6x above the noise floor is mostly missed.
+- Wired as a wake-mic detector next to the wake word ("Hey Jarvis" kept),
+  `[trigger].clap_enabled` (default false; true on this box).
+- Flow: wake -> UI -> chime -> "はい。" -> listening. The spoken ack is the
+  new opt-in `[voice].wake_ack_phrase` (default empty = visual-only, as
+  before); input captured while it plays is dropped (echo-safe).
+- Live (speaker playback of synthetic claps, the WORST case — the laptop
+  speaker has no highs): detected 2 of 3 plays; full flow verified through a
+  Japanese command and spoken reply. Real hand claps not yet tested by a
+  person.
+
 ## Changelog
+- 2026-09-18: Phase 7 double-clap wake + opt-in spoken wake ack; install_voicevox.py syntax fix.
 - 2026-09-18: Japanese long-term memory save+recall verified across restart; PC op (Notepad) verified.
 - 2026-09-18: Phase 2 (ja STT) and Phase 3 (VOICEVOX TTS) live-verified; 3 pre-existing bugs fixed (vosk deadlock, STT busy drop, CJK sentence split).
 - 2026-09-18: first-turn latency 100 s -> 5 s; Japanese reply pin.
