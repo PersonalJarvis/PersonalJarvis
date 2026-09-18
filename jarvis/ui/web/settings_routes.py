@@ -2886,6 +2886,42 @@ def put_sound_effects(body: BoolToggleBody, request: Request) -> dict[str, objec
 # ---------------------------------------------------------------------------
 
 
+@router.get("/lan-access")
+def get_lan_access(request: Request) -> dict[str, object]:
+    """Phone access on the home network: saved switch vs. what is running."""
+    from jarvis.ui.web.lan_access import lan_ip
+
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    return {
+        "enabled": bool(getattr(ui, "lan_access", False)),
+        "running": getattr(request.app.state, "lan_access_running", False) is True,
+        "lan_ip": lan_ip(),
+        "lan_port": int(getattr(ui, "lan_port", 47843)),
+    }
+
+
+@router.put("/lan-access")
+def put_lan_access(body: BoolToggleBody, request: Request) -> dict[str, object]:
+    """Persist ``[ui] lan_access``; the listener follows on the next start."""
+    from jarvis.ui.web.surface_security import is_loopback_request
+
+    if not is_loopback_request(request.scope):
+        raise HTTPException(status_code=403, detail="Change this on the PC itself.")
+    enabled = bool(body.enabled)
+    from jarvis.core import config_writer
+
+    config_writer.set_lan_access(enabled)
+    ui = getattr(_config(request), "ui", None)
+    if ui is not None:
+        try:
+            ui.lan_access = enabled  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 - the disk value is what matters
+            log.debug("in-memory lan_access update skipped: %s", exc)
+    running = getattr(request.app.state, "lan_access_running", False) is True
+    return {"ok": True, "enabled": enabled, "restart_required": enabled != running}
+
+
 @router.get("/browser-login")
 def get_browser_login(request: Request) -> dict[str, object]:
     cfg = _config(request)

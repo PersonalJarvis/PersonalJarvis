@@ -5,6 +5,7 @@ import { JarvisAgentSection } from "@/components/JarvisAgentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
+import { PhoneAccessGroup } from "@/views/settings/PhoneAccessGroup";
 import { TeamProxyGroup } from "@/views/settings/TeamProxyGroup";
 // The provider-card machinery lives in its own module so the voice section's
 // "API Keys" tab renders the very same subtree (scoped to the `stt` tier)
@@ -548,6 +549,7 @@ function JarvisKeyCategory() {
       />
       <div className="space-y-4">
         <JarvisApiGroup />
+        <PhoneAccessGroup />
       </div>
     </div>
   );

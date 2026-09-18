@@ -375,6 +375,28 @@ async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------------
+# Phone pairing (LAN access)
+# ----------------------------------------------------------------------
+
+
+@router.get("/lan/pair", dependencies=[Depends(require_control_key_or_session)])
+def lan_pair(request: Request) -> dict[str, Any]:
+    """One-time sign-in URL for a phone on the home network.
+
+    Minted only for a request made ON this machine: a paired phone must not be
+    able to hand out further devices' sessions.
+    """
+    from jarvis.ui.web.lan_access import lan_origin, mint_pairing_url
+    from jarvis.ui.web.surface_security import is_loopback_request
+
+    if not is_loopback_request(request.scope):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Pairing is only available on this PC.")
+    cfg = cfg_mod.load_config()
+    url = mint_pairing_url(cfg)
+    return {"enabled": url is not None, "url": url, "origin": lan_origin(cfg)}
+
+
+# ----------------------------------------------------------------------
 # Control-API key reveal + rotate (authenticated UI session or Bearer)
 # ----------------------------------------------------------------------
 

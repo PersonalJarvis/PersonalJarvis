@@ -2122,6 +2122,13 @@ class UIConfig(BaseModel):
     # (see surface_security.open_access_granted). Toggled live from
     # Settings → API Keys → Control Key.
     require_browser_login: bool = False
+    # Phone access on the home network: a second, HTTPS-only listener on the
+    # machine's private LAN address (self-signed certificate) so a phone's
+    # browser can open the app. Off by default. A LAN device never gets open
+    # access: it signs in with a one-time pairing link (QR in Settings) or the
+    # Control Key. Read by jarvis.ui.web.lan_access.
+    lan_access: bool = False
+    lan_port: int = 47843
     # On-screen overlay style: "jarvis_bar" (slim default), "mascot" (the ghost
     # mascot), "voice_orb" (the procedural weather sphere — the desktop twin of
     # the in-app orb), or "none". One list: jarvis.ui.overlay_styles.

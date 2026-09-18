@@ -484,11 +484,9 @@
     "recent": "Recent",
     "pin_chat": "Pin chat",
     "unpin_chat": "Unpin chat",
-
     "jarvis_tools": "Jarvis Tools",
     "scheduled": "Scheduled",
     "more": "More",
-
     "instance_dev_hint": "Dev instance — a second, freely restartable copy of the app with its own data, ports and icon. The regular app keeps running beside it.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
@@ -2580,6 +2578,17 @@
       "system": "System",
       "system_now_dark": "Following your system, which is currently dark.",
       "system_now_light": "Following your system, which is currently light."
+    },
+    "phone_access": {
+      "title": "Phone access",
+      "description": "Open Jarvis from a phone on the same Wi-Fi. Only devices on your home network can reach it, over an encrypted connection.",
+      "switch_title": "Allow phones on this network",
+      "switch_description": "Reachable at https://{ip} on your home network. Every phone signs in once with a QR code from this PC.",
+      "no_network": "This PC has no home-network address right now.",
+      "restart_hint": "Saved. Restart Jarvis (top bar) to apply it.",
+      "pair_button": "Pair a phone",
+      "pair_hint": "Scan with the phone's camera. The code works once; make a new one for each phone.",
+      "certificate_hint": "The phone warns that the connection is not private the first time: this PC made its own certificate. Choose Details, then Visit this website."
     }
   },
   "telephony_view": {

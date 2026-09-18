@@ -265,6 +265,11 @@ class WebServer:
             )
             if value
         )
+        from jarvis.ui.web.lan_access import lan_origin
+
+        _lan = lan_origin(self.cfg)
+        if _lan:
+            public_urls = (*public_urls, _lan)
         # The security boundary must wrap every router and both HTTP and WS.
         # It is added after CORS so Starlette places it outside the CORS layer:
         # hostile Host/Origin values never reach route code or preflight logic.
@@ -2595,6 +2600,19 @@ class WebServer:
 
         _boot_mark("uvicorn_serve")
 
+        # Opt-in phone access: the same app over HTTPS on the LAN address.
+        self._lan_server = None
+        if getattr(self.cfg.ui, "lan_access", False):
+            try:
+                from jarvis.ui.web.lan_access import start_lan_listener
+
+                self._lan_server = await start_lan_listener(
+                    self.app, self.cfg, log_level=self.cfg.telemetry.log_level.lower()
+                )
+                self.app.state.lan_access_running = self._lan_server is not None
+            except Exception:  # noqa: BLE001 - the desktop app must boot without it
+                logger.opt(exception=True).warning("LAN access listener failed to start")
+
         # Voice-ready UI backstop (permanent "starting up" bug): the frontend's
         # startup banner + top-left "STARTING…" status clear ONLY on a
         # VoiceBootStatus(ready=True). If the speech pipeline crashes during
@@ -4073,6 +4091,9 @@ class WebServer:
             self.app.state.channel_manager = None
             self.app.state.friend_registry = None
 
+        _lan_server = getattr(self, "_lan_server", None)
+        if _lan_server is not None:
+            _lan_server.should_exit = True
         if self._server is not None:
             self._server.should_exit = True
             if self._serve_task is not None:

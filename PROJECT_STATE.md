@@ -19,7 +19,7 @@ Target box: Windows 11, RTX 3050 Laptop (4 GB VRAM), 16 GB RAM, Python 3.13 venv
 | 9 | Developer Mode | PARTIAL: project-chat loop live-verified on a sandbox; Unreal/Unity/Blender build loops not done |
 | 10 | Teacher Mode | DONE via chat (plan/start/silent record/summary/end), voice path partially verified |
 | 11 | Hand tracking | PARTIAL: open-palm stop (MediaPipe, opt-in); landmarker verified, real-hand camera test open |
-| 12 | iPhone client | BLOCKED: LAN HTTPS listener drafted; exposing the port needs the user's explicit permission rule |
+| 12 | iPhone client | DONE (web client): HTTPS on the LAN + one-time QR pairing; verified with curl, real iPhone scan open |
 | 13 | Self-check / recovery | PARTIAL: doctor reports the local stack; llama-server watchdog; git tag rollback point |
 
 Nothing below is "done" unless it says VERIFIED with evidence.
@@ -399,14 +399,17 @@ Japanese and is fixed:
 - Verified: landmarker loads and runs on this box; logic unit-tested.
   Not verified: a real hand in front of the camera (needs the user).
 
-## Phase 12 — iPhone (blocked, 2026-09-18)
+## Phase 12 — iPhone (2026-09-18)
 
-- Design: HTTPS-only second listener on the private LAN IP (self-signed cert,
-  never 0.0.0.0), LAN origin added to SurfaceSecurity's trusted hosts, a
-  one-time pairing URL (`#pair=<bootstrap token>`) minted only from this PC
-  and shown as a QR (frontend already ships qrcode.react).
-- Blocked: the agent's permission classifier refused the change that exposes
-  a local service. Draft kept outside the repo; needs the user's go-ahead.
+- `[ui] lan_access` (Settings -> API Keys -> Jarvis Key -> Phone access):
+  a second HTTPS listener on the private LAN IP, port 47843, self-signed
+  cert in `<user_data>/lan-tls`. Takes effect after a Jarvis restart.
+- "Pair a phone" shows a QR with a one-time `#pair=` link; AuthGate
+  exchanges it for a session and strips it from the address bar.
+- VERIFIED (curl on the LAN address): no session 401, pairing exchange 204,
+  then 200; replayed token 401; pairing requested from the LAN 403; plain
+  HTTP and the desktop port are unreachable from the LAN.
+- Open: a real iPhone scan (first visit shows a certificate warning).
 
 ## Changelog
 

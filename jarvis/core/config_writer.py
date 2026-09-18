@@ -1451,6 +1451,15 @@ def set_require_browser_login(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE
     _patch_table(path, "ui", "require_browser_login", bool(enabled))
 
 
+def set_lan_access(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] lan_access`` (phone access on the home network).
+
+    Takes effect on the next start: the LAN listener and its trusted origin
+    are set up while the server boots.
+    """
+    _patch_table(path, "ui", "lan_access", bool(enabled))
+
+
 def set_team_proxy(
     enabled: bool,
     url: str,

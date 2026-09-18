@@ -630,3 +630,15 @@ provider authorization may remain at the provider because revoking it could also
 invalidate a shared existing grant. Users can revoke it in the provider's app
 settings. The release audit separately requires a real safe action, disconnect,
 reconnect and persistence after restart.
+
+## Phone access on the home network (`[ui].lan_access`)
+
+Opt-in, off by default. A second uvicorn listener serves the same app over
+HTTPS on the machine's private IPv4 address (never `0.0.0.0`, never a public
+address) with a self-signed certificate made by `cryptography`. Pure Python:
+identical on Windows, macOS and Linux; a headless box without a private
+address simply does not start it. A LAN device never gets open access: it
+signs in with a one-time pairing token minted only from the machine itself
+(Settings, Jarvis Key tab, QR code) or with the Control Key. Verified live on
+Windows with curl against the LAN address; macOS/Linux follow the same code
+path and are not device-verified.

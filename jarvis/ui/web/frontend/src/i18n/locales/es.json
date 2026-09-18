@@ -484,11 +484,9 @@
     "recent": "Recientes",
     "pin_chat": "Fijar chat",
     "unpin_chat": "Desfijar chat",
-
     "jarvis_tools": "Herramientas Jarvis",
     "scheduled": "Programado",
     "more": "Más",
-
     "instance_dev_hint": "Instancia de desarrollo: una segunda copia de la app que puedes reiniciar libremente, con sus propios datos, puertos e icono. La app normal sigue funcionando al lado.",
     "surface_voice": "Voz",
     "surface_chat": "Chat",
@@ -2547,6 +2545,17 @@
       "system": "Sistema",
       "system_now_dark": "Sigue a su sistema, que actualmente está en modo oscuro.",
       "system_now_light": "Sigue a su sistema, que actualmente está en modo claro."
+    },
+    "phone_access": {
+      "title": "Acceso desde el móvil",
+      "description": "Abre Jarvis desde un móvil en la misma Wi-Fi. Solo los dispositivos de tu red doméstica pueden llegar, con una conexión cifrada.",
+      "switch_title": "Permitir móviles en esta red",
+      "switch_description": "Disponible en https://{ip} en tu red doméstica. Cada móvil inicia sesión una vez con un código QR de este PC.",
+      "no_network": "Este PC no tiene ahora una dirección en la red doméstica.",
+      "restart_hint": "Guardado. Reinicia Jarvis (barra superior) para aplicarlo.",
+      "pair_button": "Vincular un móvil",
+      "pair_hint": "Escanéalo con la cámara del móvil. El código sirve una vez; crea uno nuevo para cada móvil.",
+      "certificate_hint": "La primera vez, el móvil avisará de que la conexión no es privada: este PC creó su propio certificado. Elige Detalles y luego Visitar este sitio web."
     }
   },
   "telephony_view": {
