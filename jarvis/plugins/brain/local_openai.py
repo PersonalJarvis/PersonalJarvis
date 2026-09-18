@@ -83,6 +83,21 @@ class LocalOpenAIBrain:
     context_window: int = 32_768
     supports_tools: bool = True
     supports_vision: bool = False
+    # A local model prefills every schema on every turn; the full surface
+    # (~15k tokens) cost over a minute per turn on a 4 GB laptop GPU. The
+    # manager trims to this budget and keeps ``core_tools`` first.
+    tool_budget_tokens: int = 4000
+    core_tools: frozenset[str] = frozenset({
+        "run_shell",
+        "open_app",
+        "switch_window",
+        "type_text",
+        "hotkey",
+        "read_visible_ui_state",
+        "remember",
+        "wiki-recall",
+        "search_web",
+    })
 
     def __init__(self, model: str | None = None) -> None:
         self._model = (model or "").strip()

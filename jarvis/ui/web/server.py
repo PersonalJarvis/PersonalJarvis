@@ -142,6 +142,7 @@ class WebServer:
         # Local server autostart: one task a few seconds after the serving
         # path returned; starts nothing unless local models are in use.
         self._local_models_autostart_task: asyncio.Task[None] | None = None
+        self._llama_server_task: asyncio.Task[None] | None = None
         self._refresh_registry_tasks: set[asyncio.Task[Any]] = set()
         self._refresh_scheduler_stopping = False
         # Realtime transport pre-warm — scheduled at the end of start() so the
@@ -2295,8 +2296,23 @@ class WebServer:
             self._local_models_autostart_task = schedule(lambda: self.cfg)
         except Exception as exc:  # noqa: BLE001 -- a convenience must never block boot
             logger.opt(exception=exc).warning("Local models autostart did not schedule.")
+        try:
+            from jarvis.local_models.llama_server import schedule_boot
+
+            self._llama_server_task = schedule_boot(lambda: self.cfg)
+        except Exception as exc:  # noqa: BLE001 -- the local brain must never block boot
+            logger.opt(exception=exc).warning("Managed llama-server did not schedule.")
 
     async def _stop_local_models_autostart(self) -> None:
+        llama_task, self._llama_server_task = self._llama_server_task, None
+        if llama_task is not None and not llama_task.done():
+            llama_task.cancel()
+        try:
+            from jarvis.local_models.llama_server import shutdown as llama_shutdown
+
+            await asyncio.to_thread(llama_shutdown)
+        except Exception as exc:  # noqa: BLE001 -- shutdown stays best-effort
+            logger.opt(exception=exc).debug("Managed llama-server stop failed.")
         task = self._local_models_autostart_task
         self._local_models_autostart_task = None
         if task is None or task.done():

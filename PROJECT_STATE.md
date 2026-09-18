@@ -8,7 +8,7 @@ Target box: Windows 11, RTX 3050 Laptop (4 GB VRAM), 16 GB RAM, Python 3.13 venv
 | Phase | Topic | Status |
 |---|---|---|
 | 0 | Full analysis | DONE (this file) — no code changed |
-| 1 | Local Brain (llama.cpp + Qwen3-4B Q4_K_M) | NOT STARTED |
+| 1 | Local Brain (llama.cpp + Qwen3.5-4B Q4_K_M) | DONE with known issues (see Phase 1) |
 | 2 | Local Japanese STT | NOT STARTED |
 | 3 | Local Japanese TTS (VOICEVOX / Piper) | NOT STARTED |
 | 4 | Memory tiers + multilingual embeddings | NOT STARTED |
@@ -123,7 +123,7 @@ Nothing below is "done" unless it says VERIFIED with evidence.
 2. STT = gemini-api, TTS = gemini-flash-tts (keys required).
 3. `local_fallback` defaults to a cloud provider.
 
-## Proposed Phase 1 plan (awaiting go)
+## Phase 1 plan (as proposed; executed below)
 - Add a managed llama.cpp `llama-server` runtime (download official release
   binary, CUDA build, into the app data dir) + GGUF download (Qwen3-4B
   Q4_K_M) with a VRAM-aware `--n-gpu-layers` calculator and `-c 8192`.
@@ -132,5 +132,65 @@ Nothing below is "done" unless it says VERIFIED with evidence.
 - Model selector already exists on the provider card; extend with GGUF list.
 - Verify: boot with no keys, Japanese chat turn, forced 429 fallback test.
 
+## Phase 1 — Local Brain (2026-09-18)
+
+### What was built
+- `jarvis/local_models/llama_server.py`: managed llama.cpp `llama-server`
+  in router mode (`--models-preset`, `--models-max 1`): every GGUF in
+  `%LOCALAPPDATA%/Jarvis/llama/models` shows in `/v1/models`, so the
+  local-openai card / chat model picker switches models; only ONE model is
+  resident. Per-model offload tier from free VRAM: full GPU -> `--fit`
+  (partial, rest in RAM/CPU) -> CPU; a failed warm-up (OOM) steps down and
+  restarts. 32K context, q8_0 KV cache, 1 slot, reasoning off. Watchdog
+  restarts a dead server (backoff, max 5). Starts in the background at boot
+  (AP-26); stops on app shutdown. Opt-out:
+  `[brain.providers."local-openai"].managed_server = false`.
+- Boot wiring in `jarvis/ui/web/server.py`; base_url pinned through
+  `config_writer.set_provider_base_url` (AP-7).
+- `jarvis/brain/manager.py`: stage 4 "keyless local floor" appended to every
+  fallback chain when a local-openai server URL is configured (capability, not
+  a provider name). Brains may declare `tool_budget_tokens` + `core_tools`;
+  local-openai declares 4000 tokens and 9 core tools.
+- `scripts/install_local_brain.py`: downloads the official llama.cpp release
+  (CUDA 12.4 on Windows+NVIDIA, CPU otherwise, Ubuntu/macOS builds) and the
+  default GGUF. No account, no key.
+- Model: `unsloth/Qwen3.5-4B-GGUF` Q4_K_M (Qwen3.5-4B, 2026-02, Apache-2.0).
+  Chosen over Qwen3-4B because the repo forbids defaults a year old or older.
+- llama.cpp build: b11026 (b11028 had no Windows assets yet).
+
+### Verified (live, this box)
+- Standalone: full offload 3.3-3.5 GB VRAM, 32-42 tok/s generation.
+- Jarvis boots with no API keys and starts the server itself:
+  log `llama-server: ready on http://127.0.0.1:18181 — Qwen3.5-4B-Q4_K_M on tier full`.
+- `jarvis brain test local-openai` -> ok (1.8 s).
+- Desktop chat, Japanese: reply received in Japanese. Turn 1: 101 s
+  (13.3K-token prompt prefill). Turn 2: 3.0 s (prompt cache).
+- 429 fallback over a real HTTP path: stub OpenAI endpoint returning 429 ->
+  chain skipped key-less clouds -> local Qwen answered.
+- Tests: `tests/unit/local_models/test_llama_server.py`,
+  `tests/integration/test_local_floor_fallback.py`,
+  `tests/unit/brain/test_context_window_fit.py` (budget case) pass.
+  Pre-existing failures (fail identically on the pre-change commit, not
+  caused by this work): 9 in ollama/supervisor/stt/realtime tests.
+
+### Known issues (not solved yet)
+1. **First turn is slow (~100 s)**: Jarvis's prompt is ~13K tokens even with
+   the tool cut (system prompt ~6K + per-turn context + 28 tools). Needs a
+   lean local prompt profile. Priority for Phase 8 / before voice use.
+2. **GPU throttling**: during Jarvis runs the GPU sat at P3, 712/2100 MHz,
+   throttle reason 0x20 (SW thermal slowdown); prefill dropped 660 -> 138
+   tok/s and generation 42 -> 20 tok/s. Laptop power/thermal profile
+   (vendor utility "silent" mode?) is a user-side setting.
+3. VRAM is tight: 3.9 / 4.0 GB used with Jarvis + model resident. STT must
+   stay on CPU; Epic Games Launcher also holds GPU memory.
+4. Quality: the 4B model mixed a Chinese glyph into Japanese ("ジャル维斯")
+   and invented a weather report when the weather tool had been cut.
+5. Language: outside the UI turn path (direct BrainManager call) the reply
+   defaulted to German. Japanese pinning belongs to Phase 2/3
+   (`[ui].language`, `reply_language`, TTS `language_code = de-DE`).
+6. Spec deviation: context is 32K, not 8K — Jarvis's request (~13-22K tokens)
+   cannot fit in 8K at all.
+
 ## Changelog
+- 2026-09-18: Phase 1 local brain implemented and live-verified (see above).
 - 2026-09-18: Phase 0 analysis written. No code modified.

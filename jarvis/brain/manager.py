@@ -6727,6 +6727,17 @@ class BrainManager:
             keep.add(str(mandated))
         if getattr(self, "_skill_turn_match", None) is not None:
             keep.add("run-skill")
+        # A brain may declare a tool budget below its window: a small local
+        # model reads every token of every schema on each turn, and on a
+        # consumer GPU a 15k-token tool surface costs a minute of prefill.
+        # Its declared core tools survive the cut first.
+        try:
+            budget = int(getattr(brain, "tool_budget_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            budget = 0
+        if budget > 0:
+            window = min(window, used + budget)
+            keep |= {name for name in getattr(brain, "core_tools", ()) if name in tools}
         fitted, dropped = _fit_tools_to_context_window(
             tools, context_window=window, used_tokens=used, keep=keep
         )
@@ -10608,6 +10619,17 @@ class BrainManager:
                 chain.insert(0, helper)
         return chain
 
+    def _local_floor(self, level: str) -> tuple[str, str | None] | None:
+        """The keyless local stage, or None when no local server is configured."""
+        name = "local-openai"
+        if name not in set(self._registry.available()):
+            return None
+        block = (self._config.brain.providers or {}).get(name)
+        if block is None or not str(getattr(block, "base_url", "") or "").strip():
+            return None
+        model = self._deep_model(name) if level in ("deep", "code") else self._fast_model(name)
+        return (name, model or self._fast_model(name) or None)
+
     def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
         """Returns a prioritised list of (provider, model) attempts."""
         active = self._active_name
@@ -10730,6 +10752,14 @@ class BrainManager:
             m_deep = self._deep_model(name)
             preferred = m_deep if level in ("deep", "code") else m_fast
             chain.append((name, preferred or m_fast or m_deep))
+
+        # 4. Keyless local floor: a local OpenAI-compatible server (the managed
+        #    llama-server) answers when every hosted stage is rate-limited,
+        #    over quota, down or offline. Gated on capability — a configured
+        #    server URL — never on this box's choice of provider.
+        local = self._local_floor(level)
+        if local is not None and local[0] != active:
+            chain.append(local)
 
         # Deduplicate (first instance wins) + filter dead providers.
         # Dead = provider already failed with "no API key" in this session.
