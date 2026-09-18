@@ -80,6 +80,7 @@ from jarvis.core.response_style import CONVERSATIONAL_RESPONSE_STYLE
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
     detect_text_language,
+    is_japanese_text,
     resolve_output_language,
     resolve_turn_language,
 )
@@ -2788,6 +2789,7 @@ class BrainManager:
         # in auto mode to hard-pin the turn's language so a tool-synthesis turn
         # cannot drift back to German (live bug 2026-06-14).
         self._turn_detected_lang: str = ""
+        self._turn_japanese: bool = False
         # Sticky conversation language (de/en/es, "" until established). Updated
         # only on a SUBSTANTIVE turn so a thin interjection ("Now", "Stop") never
         # flips an established conversation; consumed by _update_turn_language and
@@ -3620,6 +3622,38 @@ class BrainManager:
     # Dispatcher builder
     # ------------------------------------------------------------------
 
+    async def prewarm_prompt_cache(self) -> bool:
+        """Prefill the active brain's prompt cache with this install's real turn prefix.
+
+        Only for brains that declare ``compact_prompt`` (small local servers):
+        their first turn after boot otherwise pays a full prefill of system
+        prompt + tool schemas — measured 70-100 s on a 4 GB laptop GPU while
+        the rest of the app was still booting. One request with the exact
+        system prompt and tool surface a turn uses, ``max_tokens=1``, leaves
+        that prefix cached so the user's first turn only prefills its own
+        words. Returns whether a prefill was sent; never raises.
+        """
+        try:
+            name = self._active_name
+            brain = self._get_brain(name, self._fast_model(name))
+            if not getattr(brain, "compact_prompt", False):
+                return False
+            dispatcher = self._build_dispatcher(brain)
+            req = BrainRequest(
+                messages=(BrainMessage(role="user", content="."),),
+                tools=tuple(dispatcher.tools_payload()),
+                system=dispatcher._system_prompt,
+                max_tokens=1,
+                stream=True,
+            )
+            async for _delta in brain.complete(req):
+                pass
+            log.info("Prompt cache prefilled for %s.", name)
+            return True
+        except Exception as exc:  # noqa: BLE001 - a warm-up is an optimisation, never an error
+            log.info("Prompt cache prefill skipped: %s", exc)
+            return False
+
     def _build_dispatcher(
         self,
         brain: Brain,
@@ -3665,19 +3699,59 @@ class BrainManager:
         ``_cu_context_lines`` reads).
         """
         tools = tools_override if tools_override is not None else self._tools
-        system_prompt = self._build_system_prompt()
+        if getattr(brain, "compact_prompt", False):
+            # Freeze the stable surface first: the prompt's tool-name list
+            # reads it, and the two must agree from the very first turn.
+            self._stable_compact_tools(brain)
+            system_prompt = self._build_system_prompt(compact=True)
+        else:
+            system_prompt = self._build_system_prompt()
         history = _TURN_HISTORY_OVERRIDE.get()
         if history is None:
             history = tuple(getattr(self, "_history", None) or ())
         tools = self._fit_tools_to_brain(
             tools, brain, system_prompt=system_prompt, history=history
         )
+        # A compact-prompt brain (small local server) sees ONE stable tool
+        # surface every turn: its chat template renders tool definitions before
+        # the system prompt, so a per-turn change (a smalltalk turn with no
+        # tools, a gate hiding action tools, chat build-mode extras) threw away
+        # the whole cached prefix — 70+ s of prefill on a 4 GB GPU. What may
+        # EXECUTE is still this turn's gated set; the stable surface only
+        # changes what the model reads (a chat's plan-mode filter still binds
+        # execution). A society agent's turn, with its own briefing, keeps its own.
+        # Turn-specific extras (chat build-mode file tools) stay out: each one
+        # moves the point where the prompt diverges to the front. Only a tool
+        # a gate MANDATED this turn is appended — without it the turn fails.
+        advertised: dict[str, Tool] | None = None
+        _override = _TURN_OVERRIDE.get()
+        if getattr(brain, "compact_prompt", False) and (
+            _override is None or not _override.system_extra
+        ):
+            advertised = self._stable_compact_tools(brain)
+            mandated = str(getattr(self, "_evidence_required_tool", "") or "")
+            if mandated and mandated in tools and mandated not in advertised:
+                advertised = {**advertised, mandated: tools[mandated]}
         # Per-plugin usage guidance for whichever plugins are active this turn
         # (the "MCP + thin skill" reliability layer). Appended last so it sits
         # closest to the turn; only present when a plugin tool is in scope.
         cards = self._plugin_usage_cards_block(tools)
         if cards:
             system_prompt = f"{system_prompt}\n\n{cards}"
+        if getattr(brain, "tool_budget_tokens", 0):
+            # Small local brains pay prefill for every token; say where they go.
+            log.info(
+                "Local turn size: system %d chars, history %d msgs / ~%d tokens, "
+                "tools %d (~%d tokens)",
+                len(system_prompt),
+                len(history),
+                _approx_history_tokens(history),
+                len(advertised if advertised is not None else tools),
+                sum(
+                    _tool_surface_tokens(n, t)
+                    for n, t in (advertised if advertised is not None else tools).items()
+                ),
+            )
         if delegated_voice:
             system_prompt = f"{system_prompt}\n\n{_DELEGATE_VOICE_DIRECTIVE}"
         kwargs: dict[str, Any] = {}
@@ -3693,8 +3767,33 @@ class BrainManager:
             reasoning_effort=reasoning_effort,
             tool_context=tool_context,
             loop_control=loop_control,
+            advertised_tools=advertised,
             **kwargs,
         )
+
+    def _stable_compact_tools(self, brain: Any) -> dict[str, Tool]:
+        """The fixed tool surface for a compact-prompt brain: its core tools,
+        then the registry filled up to its declared budget. Depends only on
+        the registry, never on the turn, so it is byte-identical turn to turn."""
+        tools = self._tools if isinstance(self._tools, dict) else {}
+        frozen: tuple[str, ...] | None = getattr(self, "_compact_surface_names", None)
+        if frozen:
+            # Frozen at first use: ``refresh_tools()`` swaps the registry as
+            # CLIs and MCP servers attach, and a surface recomputed from it
+            # would differ turn to turn. A tool that went away drops out.
+            return {n: tools[n] for n in frozen if n in tools}
+        try:
+            budget = int(getattr(brain, "tool_budget_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            budget = 0
+        if budget <= 0 or not tools:
+            return dict(tools)
+        core = {n for n in getattr(brain, "core_tools", ()) if n in tools}
+        fitted, _dropped = _fit_tools_to_context_window(
+            tools, context_window=budget, used_tokens=0, keep=core
+        )
+        self._compact_surface_names = tuple(sorted(fitted))
+        return {n: fitted[n] for n in self._compact_surface_names}
 
     def _apply_turn_override_tools(
         self, tools: dict[str, Tool] | None, override: TurnOverride
@@ -3946,6 +4045,9 @@ class BrainManager:
         uses the pin; genuinely ambiguous text stays ``"unknown"`` so the
         directive keeps its soft "mirror the user" form.
         """
+        # Japanese has no canned-phrase tables yet, so it is tracked apart from
+        # the de/en/es output locale and only steers the reply directive.
+        self._turn_japanese = is_japanese_text(user_text)
         if self._reply_language in _REPLY_LANG_NAMES:
             self._turn_detected_lang = ""
             return
@@ -4067,6 +4169,8 @@ class BrainManager:
         name = _REPLY_LANG_NAMES.get(self._reply_language)
         if name is not None:
             return self._mandatory_lang_directive(name)
+        if getattr(self, "_turn_japanese", False):
+            return self._mandatory_lang_directive("Japanese")
         # auto mode: when THIS turn's language is confidently detected, pin it
         # HARD with the same MANDATORY wording as an explicit pin. A soft
         # "please mirror" line let the model anchor to German on clean English
@@ -4145,8 +4249,14 @@ class BrainManager:
             return target_prefix + raw_output[len(de_prefix):]
         return raw_output
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, *, compact: bool = False) -> str:
         """Builds the system prompt with Jarvis-Agent-style workspace injection.
+
+        ``compact`` (2026-09-18) is for small local brains that declare
+        ``compact_prompt``: they prefill every token on every turn, so the two
+        static catalogues that only a lead-grade model uses are left out — the
+        full skill list (the per-turn skill hint still names a matching skill)
+        and the agent-society lead card.
 
         Layer order (Jarvis-Agent priority map):
         1. SOUL.md           — Jarvis' own persona (who I am, tone rules)
@@ -4332,12 +4442,12 @@ class BrainManager:
             )
             from jarvis.skills.skill_context import try_get_skill_context
 
-            _skill_ctx = try_get_skill_context()
+            _skill_ctx = None if compact else try_get_skill_context()
             if _skill_ctx is not None:
                 _skills_section = render_available_skills_section(_skill_ctx.registry)
                 if _skills_section:
                     parts.append(_skills_section)
-            elif not self._skills_omit_warned:
+            elif not compact and not self._skills_omit_warned:
                 # AD-S6: silently omitting the section was RC2 of "Jarvis
                 # never calls a skill" — warn once per manager lifetime.
                 self._skills_omit_warned = True
@@ -4377,7 +4487,7 @@ class BrainManager:
         # briefing (TurnOverride.system_extra), and a specialist must not be
         # told it is the lead.
         _turn_override = _TURN_OVERRIDE.get()
-        if _turn_override is None or not _turn_override.system_extra:
+        if not compact and (_turn_override is None or not _turn_override.system_extra):
             try:
                 from jarvis.society.lead_card import lead_card_section
 
@@ -4453,7 +4563,7 @@ class BrainManager:
         #       about exactly this drift.
         # The live surface is the only honest source, and it is the same one
         # ``_check_unsupported_intent`` already trusts.
-        tool_list_block = self._render_live_tool_block()
+        tool_list_block = self._render_live_tool_block(compact=compact)
         if tool_list_block:
             parts.append(tool_list_block)
 
@@ -5143,7 +5253,7 @@ class BrainManager:
             tools = self._apply_turn_override_tools(tools, override)
         return tuple(sorted(tools))
 
-    def _render_live_tool_block(self) -> str:
+    def _render_live_tool_block(self, *, compact: bool = False) -> str:
         """Render the attached tool surface for the system prompt (PR-05).
 
         NAMES ONLY, on purpose. Every attached tool already reaches the model
@@ -5177,6 +5287,13 @@ class BrainManager:
         # five tool names no provider request carries.
         hidden = set(getattr(self, "_local_action_tools", None) or {})
         names = [n for n in self._live_tool_names() if n not in hidden]
+        frozen = getattr(self, "_compact_surface_names", None)
+        if compact and frozen:
+            # A compact-prompt brain is sent only its frozen surface; naming
+            # the rest would list tools it can never call, and the list
+            # changing as CLIs/MCP servers attach would break its cached prefix.
+            live = set(names)
+            names = [n for n in frozen if n in live]
         if not names:
             return ""
 

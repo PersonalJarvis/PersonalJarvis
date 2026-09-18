@@ -852,3 +852,41 @@ async def test_explicit_delegation_request_executes_spawn() -> None:
     )
 
     assert len(executor.calls) == 1, "an explicit spawn request must execute"
+
+
+class _OpenAppTool:
+    name = "open_app"
+    schema: dict[str, Any] = {}
+
+
+class _CallsGatedToolBrain:
+    """Calls ``open_app`` (advertised, gated off this turn), then answers."""
+
+    def __init__(self) -> None:
+        self.requests: list[BrainRequest] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            yield BrainDelta(tool_call={"id": "c1", "name": "open_app", "input": {"name": "x"}})
+            yield BrainDelta(finish_reason="tool_use")
+            return
+        yield BrainDelta(content="Hello there.")
+        yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_advertised_but_gated_tool_is_not_run_and_the_turn_answers() -> None:
+    brain = _CallsGatedToolBrain()
+    executor = _Executor()
+    loop = ToolUseLoop(
+        brain,  # type: ignore[arg-type]
+        {},
+        executor,  # type: ignore[arg-type]
+        advertised_tools={"open_app": _OpenAppTool()},  # type: ignore[dict-item]
+    )
+    agg = await loop.run([], user_utterance="hi")
+    assert executor.calls == []
+    assert "Hello there." in agg.text
+    # The model saw the stable surface on every round.
+    assert [t["name"] for t in brain.requests[0].tools] == ["open_app"]

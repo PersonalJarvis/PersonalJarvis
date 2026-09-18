@@ -203,6 +203,23 @@ class TestFitOnTheManager:
         assert "run_shell" in fitted
         assert len(fitted) < len(tools)
 
+    def test_compact_brain_surface_is_stable_whatever_the_turn_gates(self) -> None:
+        m = self._mgr()
+
+        class _Compact(_FakeBrain):
+            tool_budget_tokens = 300
+            core_tools = frozenset({"run_shell"})
+            compact_prompt = True
+
+        m._tools = {f"t{i}": _tool(f"t{i}", size=3) for i in range(30)}
+        m._tools["run_shell"] = _tool("run_shell", size=3)
+        brain = _Compact(32_768)
+        first = m._stable_compact_tools(brain)
+        # A smalltalk turn (no tools) and a gated turn see the same surface.
+        assert m._stable_compact_tools(brain) == first
+        assert list(first) == list(m._stable_compact_tools(brain))
+        assert "run_shell" in first and len(first) < len(m._tools)
+
     def test_undeclared_window_is_left_alone(self) -> None:
         m = self._mgr()
 

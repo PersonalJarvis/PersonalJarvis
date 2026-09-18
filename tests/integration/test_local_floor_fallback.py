@@ -57,3 +57,37 @@ async def test_quota_error_on_hosted_brain_is_answered_locally() -> None:
     result = await manager.generate("こんにちは", use_history=False)
     assert "ローカル" in result
     assert len(hosted.calls) == 1 and len(local.calls) == 1
+
+
+class _CompactBrain(FakeBrain):
+    compact_prompt = True
+
+
+@pytest.mark.asyncio
+async def test_prewarm_sends_the_turn_prefix_once_for_compact_brains() -> None:
+    manager = _manager("http://127.0.0.1:18181")
+    manager._active_name = "local-openai"
+    brain = _CompactBrain()
+    manager._get_brain = lambda name, model=None, **_kw: brain
+    assert await manager.prewarm_prompt_cache() is True
+    assert len(brain.calls) == 1
+    req = brain.calls[0]
+    assert req.max_tokens == 1 and req.system
+
+
+@pytest.mark.asyncio
+async def test_prewarm_is_a_no_op_for_hosted_brains() -> None:
+    manager = _manager("http://127.0.0.1:18181")
+    brain = FakeBrain()
+    manager._get_brain = lambda name, model=None, **_kw: brain
+    assert await manager.prewarm_prompt_cache() is False
+    assert brain.calls == []
+
+
+def test_japanese_turn_pins_a_japanese_reply_directive() -> None:
+    manager = _manager("http://127.0.0.1:18181")
+    # i18n-allow: Japanese input under test
+    manager._update_turn_language("おはよう。今日もよろしく。")  # i18n-allow
+    assert "Always reply in Japanese" in manager._reply_language_directive()
+    manager._update_turn_language("Good morning, how are you today?")
+    assert "Japanese" not in manager._reply_language_directive()

@@ -2299,7 +2299,13 @@ class WebServer:
         try:
             from jarvis.local_models.llama_server import schedule_boot
 
-            self._llama_server_task = schedule_boot(lambda: self.cfg)
+            async def _prewarm() -> None:
+                brain = getattr(self.app.state, "brain", None)
+                prewarm = getattr(brain, "prewarm_prompt_cache", None)
+                if callable(prewarm):
+                    await prewarm()
+
+            self._llama_server_task = schedule_boot(lambda: self.cfg, on_ready=_prewarm)
         except Exception as exc:  # noqa: BLE001 -- the local brain must never block boot
             logger.opt(exception=exc).warning("Managed llama-server did not schedule.")
 

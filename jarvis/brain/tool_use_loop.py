@@ -639,10 +639,16 @@ class ToolUseLoop:
         reasoning_effort: ReasoningEffort | None = None,
         tool_context: dict[str, Any] | None = None,
         loop_control: LoopControl | None = None,
+        advertised_tools: dict[str, Tool] | None = None,
     ) -> None:
         self._brain = brain
         self._tools = tools
         self._executor = executor
+        # Tool DEFINITIONS sent to the model, when they differ from what may
+        # run this turn. A small local brain gets one stable surface every
+        # turn so its prompt prefix stays cached (templates render tools
+        # first); the per-turn gates still decide what executes.
+        self._advertised = advertised_tools
         # Caller-supplied keys for every tool's ``ExecutionContext.config``
         # (see BrainDispatcher.tool_context). Per-turn keys set below win.
         self._tool_context = dict(tool_context or {})
@@ -801,13 +807,14 @@ class ToolUseLoop:
 
     def _tool_schemas(self) -> list[dict[str, Any]]:
         """Schemas in Anthropic-compatible format (providers normalise)."""
+        source = self._advertised if self._advertised is not None else self._tools
         return [
             {
                 "name": tool.name,
                 "description": getattr(tool, "description", ""),
                 "input_schema": tool.schema,
             }
-            for tool in self._tools.values()
+            for tool in source.values()
         ]
 
     async def _phase(self, phase: str, detail: str = "") -> None:
@@ -1268,6 +1275,19 @@ class ToolUseLoop:
                             "automatically in the background and persists them "
                             "to USER.md — you must NOT manually edit USER.md, "
                             "spawn a worker, or invoke a shell."
+                        ),
+                    }
+                elif tool is None and self._advertised and tool_name in self._advertised:
+                    # Advertised for prompt-cache stability but gated off this
+                    # turn: not a missing tool. Say so and let the model answer
+                    # in words — no refusal phrase, nothing executed.
+                    await self._publish_guard_denied(
+                        tool_name, "advertised but gated off this turn", tid
+                    )
+                    tool_result_payload = {
+                        "error": (
+                            f"Tool '{tool_name}' is not used for this request. "
+                            "Do not call tools for it; answer the user directly."
                         ),
                     }
                 elif tool is None:

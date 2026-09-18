@@ -55,3 +55,8 @@ def test_start_without_install_is_absent_not_an_error(tmp_path: Path, monkeypatc
     monkeypatch.setattr(ls, "models_dir", lambda: tmp_path / "models")
     monkeypatch.setattr(ls.shutil, "which", lambda _name: None)
     assert ls.LlamaServer().start() is None
+
+
+def test_presets_cap_the_host_ram_prompt_cache(tmp_path: Path) -> None:
+    text = ls.render_presets([tmp_path / "A.gguf"], {"A": "full"})
+    assert "cache-ram = 1536" in text

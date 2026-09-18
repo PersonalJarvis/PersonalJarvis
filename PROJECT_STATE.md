@@ -173,24 +173,41 @@ Nothing below is "done" unless it says VERIFIED with evidence.
   Pre-existing failures (fail identically on the pre-change commit, not
   caused by this work): 9 in ollama/supervisor/stt/realtime tests.
 
-### Known issues (not solved yet)
-1. **First turn is slow (~100 s)**: Jarvis's prompt is ~13K tokens even with
-   the tool cut (system prompt ~6K + per-turn context + 28 tools). Needs a
-   lean local prompt profile. Priority for Phase 8 / before voice use.
-2. **GPU throttling**: during Jarvis runs the GPU sat at P3, 712/2100 MHz,
-   throttle reason 0x20 (SW thermal slowdown); prefill dropped 660 -> 138
-   tok/s and generation 42 -> 20 tok/s. Laptop power/thermal profile
-   (vendor utility "silent" mode?) is a user-side setting.
-3. VRAM is tight: 3.9 / 4.0 GB used with Jarvis + model resident. STT must
-   stay on CPU; Epic Games Launcher also holds GPU memory.
-4. Quality: the 4B model mixed a Chinese glyph into Japanese ("ジャル维斯")
-   and invented a weather report when the weather tool had been cut.
-5. Language: outside the UI turn path (direct BrainManager call) the reply
-   defaulted to German. Japanese pinning belongs to Phase 2/3
-   (`[ui].language`, `reply_language`, TTS `language_code = de-DE`).
-6. Spec deviation: context is 32K, not 8K — Jarvis's request (~13-22K tokens)
-   cannot fit in 8K at all.
+### Known issues
+1. ~~First turn slow (~100 s)~~ **FIXED 2026-09-18** — first turn after boot
+   now 5.0 s (Japanese reply), follow-ups 2-3 s. Root causes and fixes:
+   - Prompt too big for a 4B model: compact prompt for brains declaring
+     `compact_prompt` (drops the 9K-char skill catalogue + society lead card;
+     the per-turn skill hint still names a matching skill) and a 4000-token
+     tool budget with core tools kept first.
+   - Boot contention: the app's own boot (voice models, 3D scene) slowed the
+     first prefill 5x. The server now prefills the real turn prefix 45 s after
+     it is healthy (`BrainManager.prewarm_prompt_cache`).
+   - Cache never hit: Qwen3.5's chat template renders TOOLS before the system
+     prompt, and its recurrent layers can only rewind to a checkpoint. Any
+     per-turn tool change (smalltalk turns with no tools, gates hiding action
+     tools, chat build-mode tools, CLIs/MCP attaching later) forced a full
+     re-prefill. Fix: a compact brain is ADVERTISED one frozen tool surface
+     every turn (`_stable_compact_tools`, frozen at first use); what may
+     EXECUTE is still the per-turn gated set — an advertised-but-gated call
+     is answered "not used for this request" and nothing runs
+     (`ToolUseLoop.advertised_tools`). Checkpoint spacing 1024 tokens.
+   - Host-RAM prompt cache capped at 1.5 GB (llama.cpp default is 8 GB).
+2. GPU throttling seen once (P3, 712 MHz, reason 0x20); later runs were at
+   P0 1.6-1.7 GHz and prefill ran at 600-780 tok/s. Keep an eye on it.
+3. VRAM is tight: 3.9 / 4.0 GB with Jarvis + model resident. STT on CPU.
+4. Quality of the 4B model: occasional Chinese glyph in Japanese, invented a
+   weather report when no weather tool was advertised.
+5. Japanese: **reply language FIXED** — `turn_language.is_japanese_text`
+   (kana, or Han without Latin words) pins a MANDATORY Japanese reply
+   directive. Canned phrases (acks, errors) are still de/en/es: 278 tables in
+   41 files have no `ja` key yet — Japanese turns hear English canned phrases.
+   To do in Phase 3.
+6. Spec deviation: 32K context, not 8K (Jarvis's request cannot fit in 8K).
+7. Chat build-mode file tools (Edit/Write/Grep...) are not advertised to the
+   4B local brain; coding belongs to Developer Mode (Phase 9, 7B coder).
 
 ## Changelog
+- 2026-09-18: first-turn latency 100 s -> 5 s; Japanese reply pin.
 - 2026-09-18: Phase 1 local brain implemented and live-verified (see above).
 - 2026-09-18: Phase 0 analysis written. No code modified.

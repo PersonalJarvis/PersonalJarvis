@@ -49,9 +49,13 @@ class BrainDispatcher:
         reasoning_effort: ReasoningEffort | None = None,
         tool_context: dict[str, Any] | None = None,
         loop_control: LoopControl | None = None,
+        advertised_tools: dict[str, Tool] | None = None,
     ) -> None:
         self._brain = brain
         self._tools = tools or {}
+        # See ToolUseLoop.advertised_tools: the stable definitions a small
+        # local brain sees every turn; ``self._tools`` stays what may run.
+        self._advertised = advertised_tools
         self._executor = executor
         # Extra keys merged into every tool's ``ExecutionContext.config`` for
         # this dispatcher's turns (e.g. ``{"delivery": "written"}`` for a
@@ -94,6 +98,7 @@ class BrainDispatcher:
             reasoning_effort=self._reasoning_effort,
             tool_context=self._tool_context,
             loop_control=self._loop_control,
+            advertised_tools=self._advertised,
         )
 
     def set_tools(self, tools: dict[str, Tool]) -> None:
@@ -148,7 +153,7 @@ class BrainDispatcher:
         user_content = f"{turn_context}\n\n{user_text}" if turn_context else user_text
         messages.append(BrainMessage(role="user", content=user_content, images=images))
 
-        if self._tools and self._executor is not None:
+        if (self._tools or self._advertised) and self._executor is not None:
             loop = ToolUseLoop(
                 self._brain,
                 self._tools,
@@ -163,6 +168,7 @@ class BrainDispatcher:
                 reasoning_effort=self._reasoning_effort,
                 tool_context=self._tool_context,
                 loop_control=self._loop_control,
+                advertised_tools=self._advertised,
             )
             return await loop.run(
                 messages,
@@ -227,5 +233,5 @@ class BrainDispatcher:
                 "description": getattr(t, "description", ""),
                 "input_schema": t.schema,
             }
-            for t in self._tools.values()
+            for t in (self._advertised if self._advertised is not None else self._tools).values()
         ]

@@ -38,6 +38,7 @@ __all__ = [
     "OutputLanguageValidation",
     "detect_language_request",
     "detect_text_language",
+    "is_japanese_text",
     "is_substantive_turn",
     "normalize_language_tag",
     "resolve_output_language",
@@ -211,6 +212,26 @@ def normalize_language_tag(tag: object) -> str:
         return "unknown"
     head = str(tag).strip().lower().replace("_", "-").split("-", 1)[0]
     return _TAG_TO_CODE.get(head, "unknown")
+
+
+#: Hiragana + Katakana (incl. half-width and the prolonged-sound mark).
+_KANA_RE = re.compile(r"[぀-ヿｦ-ﾟ]")
+_HAN_RE = re.compile(r"[一-鿿]")
+_LATIN_WORD_RE = re.compile(r"[A-Za-z]{2,}")
+
+
+def is_japanese_text(text: str) -> bool:
+    """Whether *text* is Japanese: any kana, or Han script with no Latin words.
+
+    Script-only and deliberately separate from :func:`detect_text_language`:
+    the canned-phrase tables are keyed ``de``/``en``/``es``, so Japanese is
+    resolved here for the brain's reply directive while spoken canned phrases
+    keep their de/en/es locale until Japanese tables exist.
+    """
+    t = text or ""
+    if _KANA_RE.search(t):
+        return True
+    return len(_HAN_RE.findall(t)) >= 2 and not _LATIN_WORD_RE.search(t)
 
 
 def detect_text_language(text: str) -> str:

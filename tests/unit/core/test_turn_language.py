@@ -21,6 +21,7 @@ from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
     detect_language_request,
     detect_text_language,
+    is_japanese_text,
     normalize_language_tag,
     resolve_output_language,
     resolve_transcript_language,
@@ -488,3 +489,35 @@ def test_output_language_validator_keeps_unknown_target_non_blocking() -> None:
     assert result.status == "indeterminate"
     assert result.resolved_language == "unknown"
     assert result.should_block is False
+
+
+# ---------------------------------------------------------------------------
+# Japanese (script-based; steers the brain's reply directive only)
+# ---------------------------------------------------------------------------
+
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "おはよう。今日もよろしく。",  # i18n-allow: Japanese user input under test
+        "メモ帳開いて",  # i18n-allow: Japanese user input under test
+        "日本語",  # i18n-allow: kanji-only Japanese
+        "はい",  # i18n-allow: thin Japanese turn
+        "VS Codeを開いて",  # i18n-allow: kana wins over a Latin brand name
+    ],
+)
+def test_japanese_text_is_detected(text: str) -> None:
+    assert is_japanese_text(text)
+
+
+@pytest.mark.parametrize("text", ["Guten Morgen", "Hello there", "Hola", "", "OK 123"])
+def test_non_japanese_text_is_not_japanese(text: str) -> None:
+    assert not is_japanese_text(text)
+
+
+def test_japanese_does_not_change_the_de_en_es_output_locale() -> None:
+    # Canned-phrase tables are keyed de/en/es; Japanese must not leak a new
+    # key into resolve_output_language.
+    locale = resolve_output_language("auto", None, "おはよう", default="en")  # i18n-allow
+    assert locale in {"de", "en", "es"}

@@ -67,6 +67,13 @@ _SAFETY_MARGIN_MB = 250
 #: ``fit`` = llama.cpp's own fitter keeps what fits, ``cpu`` = no GPU at all.
 OFFLOAD_TIERS: tuple[str, ...] = ("full", "fit", "cpu")
 
+_CACHE_RAM_MB = 1536
+
+#: Seconds after the server is ready before the prompt-cache prefill runs:
+#: the app's own boot (voice models, the 3D scene) competes for the GPU for
+#: about a minute, and a prefill during that window runs 5x slower.
+PREWARM_DELAY_S = 45.0
+
 
 def llama_home() -> Path:
     return user_data_dir() / "llama"
@@ -157,6 +164,14 @@ def render_presets(models: list[Path], tiers: dict[str, str], ctx: int = DEFAULT
             "parallel = 1",
             "cache-type-k = q8_0",
             "cache-type-v = q8_0",
+            # Host-RAM prompt cache: lets a side call (title, summary) run
+            # without evicting the main turn prefix. The default is 8 GB,
+            # half of a 16 GB machine; 1.5 GB holds several 32K prefixes.
+            f"cache-ram = {_CACHE_RAM_MB}",
+            # Hybrid models (Qwen3.5's recurrent layers) cannot rewind to an
+            # arbitrary position, only to a checkpoint. The default spacing
+            # (8192) made any mid-prompt divergence a full re-prefill.
+            "checkpoint-min-step = 1024",
             # Voice turns want the answer, not a visible chain of thought.
             "reasoning = off",
             *_tier_lines(tiers.get(path.stem, "cpu")),
@@ -435,8 +450,17 @@ async def _watch(cfg_fn: Any) -> None:
     log.error("llama-server: gave up after %d restarts; see llama-server.log", MAX_RESTARTS)
 
 
-def schedule_boot(cfg_fn: Any, *, delay_s: float = BOOT_DELAY_S) -> asyncio.Task[None]:
-    """Boot hook: start the managed server in the background. Never raises."""
+def schedule_boot(
+    cfg_fn: Any,
+    *,
+    delay_s: float = BOOT_DELAY_S,
+    on_ready: Any = None,
+) -> asyncio.Task[None]:
+    """Boot hook: start the managed server in the background. Never raises.
+
+    ``on_ready`` is an optional coroutine function run once, PREWARM_DELAY_S
+    after the server is healthy (the prompt-cache prefill).
+    """
 
     async def _boot() -> None:
         await asyncio.sleep(delay_s)
@@ -447,8 +471,15 @@ def schedule_boot(cfg_fn: Any, *, delay_s: float = BOOT_DELAY_S) -> asyncio.Task
         except Exception:  # noqa: BLE001 - a missing local brain is a log line, not a boot error
             log.warning("llama-server: boot start failed", exc_info=True)
             return
-        if state is not None:
-            await _watch(cfg_fn)
+        if state is None:
+            return
+        if on_ready is not None:
+            await asyncio.sleep(PREWARM_DELAY_S)
+            try:
+                await on_ready()
+            except Exception:  # noqa: BLE001 - an optimisation; the watchdog still runs
+                log.info("llama-server: on-ready hook failed", exc_info=True)
+        await _watch(cfg_fn)
 
     task = asyncio.create_task(_boot(), name="llama-server-boot")
     _tasks.add(task)

@@ -87,6 +87,8 @@ class LocalOpenAIBrain:
     # (~15k tokens) cost over a minute per turn on a 4 GB laptop GPU. The
     # manager trims to this budget and keeps ``core_tools`` first.
     tool_budget_tokens: int = 4000
+    # Leave the static skill catalogue and society card out of the prompt.
+    compact_prompt: bool = True
     core_tools: frozenset[str] = frozenset({
         "run_shell",
         "open_app",
