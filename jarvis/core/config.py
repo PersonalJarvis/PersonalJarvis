@@ -377,6 +377,10 @@ class TriggerConfig(BaseModel):
     # (``jarvis.speech.clap_detector``). Off by default: a clap is not a word
     # the user chose, so it is opt-in per install.
     clap_enabled: bool = False
+    # Show an open palm to the webcam for about a second = emergency stop
+    # (``jarvis.vision.hand_gesture``). Off by default: it keeps the camera
+    # on. Frames are analysed in memory and never stored.
+    palm_stop_enabled: bool = False
     # Deprecated compatibility field. Older installs may still carry this
     # push-to-talk key in jarvis.toml, so the config model continues to accept
     # it, but the desktop no longer registers or exposes it.

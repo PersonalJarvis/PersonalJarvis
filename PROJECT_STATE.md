@@ -104,7 +104,7 @@ Nothing below is "done" unless it says VERIFIED with evidence.
   Japanese whole-utterance stop ("Jarvis, teishi", tomatte, yamete, sutoppu, ...) added.
   Classic voice pipeline: a bare stop publishes KillRequested and skips the brain.
   Doctor: `python -m jarvis --doctor` now reports the local stack (llama.cpp, models, VOICEVOX, whisper, disk).
-  Holding ESC 1.5 s (Windows) = tray emergency stop (`control/esc_hold.py`). No palm-gesture stop yet.
+  Holding ESC 1.5 s (Windows) = tray emergency stop (`control/esc_hold.py`). Open-palm stop: `vision/hand_gesture.py` (opt-in `[trigger] palm_stop_enabled`, MediaPipe via `scripts/install_hand_tracking.py`).
 
 ### Japanese
 - UI locales: de, en, es only — **no ja.json**. `[ui].language = "en"`.
