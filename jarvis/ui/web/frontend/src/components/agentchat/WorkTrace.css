@@ -1,0 +1,16 @@
+/* Conversation traces share one left lane. Inner rows used to set their own
+   max width and then center it in the chat pane, so a live or interrupted
+   tool jumped to the middle until it joined the completed fold. */
+[data-testid="work-trace"][data-conversation] {
+  width: 100%;
+  max-width: 36rem;
+  margin-left: 0 !important;
+  margin-right: auto;
+  align-self: flex-start;
+}
+[data-testid="work-trace"][data-conversation] [data-trace-tool],
+[data-testid="work-trace"][data-conversation] [data-trace-summary] {
+  margin-left: 0 !important;
+  margin-right: 0;
+  width: 100%;
+}

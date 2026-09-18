@@ -41,20 +41,27 @@ it("folds a live manual choice on completion even when the provider never ends r
   expect(screen.getByText(block.text)).toBeTruthy();
 });
 
-it("keeps live conversation tool rows left-aligned instead of centering them", () => {
+it("keeps live and interrupted conversation tools in the left lane", () => {
   const live: ToolBlock = {
     kind: "tool", callId: "live", name: "search_files", input: { pattern: "archive" },
     output: null, isError: false, durationMs: null, approval: null, startedMs: 0,
   };
-  const { container } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={[
-    { kind: "reasoning", id: "r", text: "Inspect archive.", live: false, durationMs: 2000, startedMs: 0 },
+  const thought: ReasoningBlock = { kind: "reasoning", id: "r", text: "Inspect archive.", live: false, durationMs: 2000, startedMs: 0 };
+  const { container, rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={[thought, live]} />);
+  const lane = screen.getByTestId("work-trace");
+  expect(lane.hasAttribute("data-conversation")).toBe(true);
+  expect(lane.className).toMatch(/max-w-xl/);
+  expect(lane.className).toMatch(/self-start/);
+  expect(container.querySelectorAll(".mx-auto")).toHaveLength(0);
+  expect(container.querySelector("[data-trace-tool]")?.closest("[data-testid='work-trace']")).toBe(lane);
+  rerender(<WorkTrace conversation status="cancelled" startedMs={0} durationMs={4100} blocks={[
+    thought,
+    { kind: "text", id: "reply", text: "I will send the mail next." },
     live,
   ]} />);
-  // A live tool is a singleton group; mx-auto used to park it in the middle of
-  // the lane, then snap it left once it joined the completed activity fold.
-  const liveRow = container.querySelector("[data-trace-tool]")?.parentElement;
-  expect(liveRow?.className ?? "").not.toMatch(/(^|\s)mx-auto(\s|$)/);
+  expect(screen.getByText("Interrupted without a result")).toBeTruthy();
   expect(container.querySelectorAll(".mx-auto")).toHaveLength(0);
+  expect(screen.getByTestId("work-trace").className).toMatch(/self-start/);
 });
 
 it("keeps a failure visible when the surrounding work is folded", () => {

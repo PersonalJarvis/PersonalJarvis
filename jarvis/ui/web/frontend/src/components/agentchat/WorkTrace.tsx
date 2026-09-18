@@ -12,6 +12,7 @@ import { formatTokens, outputTokens } from "./toolView";
 import { activityParts, traceToolIdentity } from "./traceActivity";
 import { ToolChoiceIcon } from "./ToolChoiceChips";
 import { toolIdentityStyle } from "./toolIdentity";
+import "./WorkTrace.css";
 
 export type Decide = (id: string, decision: ApprovalDecision) => void | Promise<void>;
 type Group = { id: string; blocks: TurnBlock[]; family: string | null };
@@ -325,7 +326,7 @@ function TraceGroups({ groups, live, status, onDecide, renderText, conversation 
   const t = useT();
   return groups.map(group => {
     const first = group.blocks[0];
-    if (group.family === "activity" && group.blocks.length > 1) return <div key={group.id} className={cn("py-1", conversation && "w-full max-w-xl")} data-trace-summary>
+    if (group.family === "activity" && group.blocks.length > 1) return <div key={group.id} className={cn("py-1", conversation && "w-full")} data-trace-summary>
       <Disclosure label={<ActivitySummary blocks={group.blocks} live={live} />}
         icon={<ActivityIcon blocks={group.blocks} live={live} />} initiallyOpen={live}
         forced={live}>
@@ -339,8 +340,8 @@ function TraceGroups({ groups, live, status, onDecide, renderText, conversation 
       icon={<Check aria-hidden className={iconClass} />} initiallyOpen={live}>
       {group.blocks.map(block => <TraceTool key={(block as ToolBlock).callId} block={block as ToolBlock} status={status} onDecide={onDecide} />)}
     </Disclosure>;
-    if (first.kind === "tool") return <div key={group.id} className={conversation ? "w-full max-w-xl py-1 text-xs [&_button]:text-xs" : undefined}><TraceTool block={first} status={status} onDecide={onDecide} /></div>;
-    if (first.kind === "reasoning") return <div key={group.id} className={conversation ? "w-full max-w-xl text-xs [&_button]:text-xs" : undefined}><ReasoningTrace block={first} turnLive={live} compact={conversation} /></div>;
+    if (first.kind === "tool") return <div key={group.id} className={conversation ? "w-full py-1 text-xs [&_button]:text-xs" : undefined}><TraceTool block={first} status={status} onDecide={onDecide} /></div>;
+    if (first.kind === "reasoning") return <div key={group.id} className={conversation ? "w-full text-xs [&_button]:text-xs" : undefined}><ReasoningTrace block={first} turnLive={live} compact={conversation} /></div>;
     return first.text.trim() ? <div key={group.id} className={cn("min-w-0 py-2", conversation && "w-fit max-w-[min(85%,42rem)] rounded-2xl rounded-bl-md bg-secondary px-4 py-2.5")}>{renderText ? renderText(first.text, first.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={first.text} /></div>}</div> : null;
   });
 }
@@ -361,9 +362,9 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
   const outcome = pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
   const Icon = pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
   const groupProps = { live, status, onDecide, renderText, conversation };
-  return <div className={cn("min-w-0 space-y-0.5", className)} data-testid="work-trace" data-state={status}>
+  return <div className={cn("min-w-0 space-y-0.5", conversation && "w-full max-w-xl self-start", className)} data-testid="work-trace" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
     {fold ? <ConversationWorkFold durationMs={durationMs} attention={fold.work.filter(isAttentionBlock).map(block =>
-      <div key={block.callId} className="w-full max-w-xl py-1 text-xs [&_button]:text-xs">
+      <div key={block.callId} className="w-full py-1 text-xs [&_button]:text-xs">
         <TraceTool block={block} status={status} onDecide={onDecide} />
       </div>)}>
       <TraceGroups groups={groups} {...groupProps} />
