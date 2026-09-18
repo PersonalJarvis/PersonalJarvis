@@ -182,6 +182,33 @@ _CORRECTION_RE: Final[re.Pattern[str]] = re.compile(
 _REDIRECT_MAX_TOKENS: Final[int] = 24
 
 
+# Japanese stop requests. Japanese has no word boundaries, so it is matched on
+# the WHOLE utterance after stripping the wake name and punctuation: a bare
+# "teishi" / "tomatte" stops; a sentence that merely contains one does not.
+_JA_NAME_RE: Final[re.Pattern[str]] = re.compile(
+    "^(?:\u30b8\u30e3\u30fc\u30d3\u30b9|jarvis)[\s\u3001,]*", re.IGNORECASE
+)
+_JA_STOP_RE: Final[re.Pattern[str]] = re.compile(
+    "^(?:"
+    "\u505c\u6b62(?:\u3057\u3066)?"  # teishi (shite)
+    "|\u6b62\u307e\u3063\u3066"  # tomatte
+    "|\u6b62\u307e\u308c"  # tomare
+    "|\u6b62\u3081\u3066"  # tomete
+    "|\u3084\u3081\u3066"  # yamete
+    "|\u30b9\u30c8\u30c3\u30d7"  # sutoppu
+    "|\u30ad\u30e3\u30f3\u30bb\u30eb(?:\u3057\u3066)?"  # kyanseru
+    "|\u4e2d\u6b62(?:\u3057\u3066)?"  # chuushi
+    "|\u5f85\u3063\u3066"  # matte
+    ")(?:\u304f\u3060\u3055\u3044)?$"  # kudasai
+)
+_JA_TRIM: Final[str] = " \u3000\u3001\u3002!?\uff01\uff1f.,\u2026"
+
+
+def _is_japanese_stop(utterance: str) -> bool:
+    core = _JA_NAME_RE.sub("", utterance.strip(_JA_TRIM)).strip(_JA_TRIM)
+    return bool(_JA_STOP_RE.match(core))
+
+
 def classify_interrupt(text: str | None) -> str:
     """Classify ``text`` as a stop request, a redirect, or neither.
 
@@ -200,6 +227,8 @@ def classify_interrupt(text: str | None) -> str:
     # merely cancel an action and leave the session listening.
     if HANGUP_RE.search(utterance):
         return INTERRUPT_NONE
+    if _is_japanese_stop(utterance):
+        return INTERRUPT_STOP
 
     match = _ANY_LEAD_RE.match(utterance)
     if match is not None and _TAIL_RE.match(match.group("rest") or ""):

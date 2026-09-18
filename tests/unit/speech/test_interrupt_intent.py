@@ -148,3 +148,23 @@ def test_hangup_phrases_never_classify_as_an_action_interrupt(
 def test_none_input_is_safe() -> None:
     assert classify_interrupt(None) == INTERRUPT_NONE
     assert not is_interrupt_intent(None)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "\u30b8\u30e3\u30fc\u30d3\u30b9\u3001\u505c\u6b62",
+        "\u505c\u6b62\u3002",
+        "\u6b62\u307e\u3063\u3066",
+        "\u3084\u3081\u3066\u304f\u3060\u3055\u3044",
+        "Jarvis \u30b9\u30c8\u30c3\u30d7",
+    ],
+)
+def test_japanese_stop_is_a_stop(text: str) -> None:
+    assert classify_interrupt(text) == INTERRUPT_STOP
+
+
+def test_japanese_sentence_containing_stop_word_is_not_a_stop() -> None:
+    # "teishi shita riyuu wo oshiete" - asks about a stop, does not order one.
+    text = "\u505c\u6b62\u3057\u305f\u7406\u7531\u3092\u6559\u3048\u3066"
+    assert classify_interrupt(text) == INTERRUPT_NONE
