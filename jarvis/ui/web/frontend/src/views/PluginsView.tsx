@@ -1327,6 +1327,7 @@ function PluginWindowCatalog({
           </div>
           <BrandedSelect value={category} onValueChange={onCategory}
             ariaLabel={translate("plugins_view.col_category")}
+            testId="plugin-window-category"
             className="h-8 w-auto max-w-full rounded-full bg-secondary px-3 text-xs"
             options={[{ value: "all", label: translate("plugins_view.all_categories") },
               ...[...categories].sort((a, b) => WINDOW_CATEGORY_ORDER.indexOf(a) - WINDOW_CATEGORY_ORDER.indexOf(b)).map((name) => ({ value: name, label: name }))]} />
