@@ -11,8 +11,8 @@ Target box: Windows 11, RTX 3050 Laptop (4 GB VRAM), 16 GB RAM, Python 3.13 venv
 | 1 | Local Brain (llama.cpp + Qwen3.5-4B Q4_K_M) | DONE with known issues (see Phase 1) |
 | 2 | Local Japanese STT | DONE, live-verified via speaker->mic loop (see Phase 2) |
 | 3 | Local Japanese TTS (VOICEVOX + SAPI5 fallback) | DONE, live-verified; latency open (see Phase 3) |
-| 4 | Memory tiers + multilingual embeddings | NOT STARTED |
-| 5 | PC control | NOT STARTED (large existing base) |
+| 4 | Memory (Japanese search + say-do write) | PARTIAL: Japanese save/recall live-verified across restart; tiers/embeddings not done |
+| 5 | PC control | PARTIAL: local brain opened Notepad via run_shell (live) |
 | 6 | Screen understanding | NOT STARTED (large existing base) |
 | 7 | Double-clap wake | NOT STARTED |
 | 8 | Model auto-switch / VRAM governor | NOT STARTED |
@@ -257,7 +257,38 @@ Nothing below is "done" unless it says VERIFIED with evidence.
 - Credit note: VOICEVOX characters require "VOICEVOX:<character>" credit when
   audio is published.
 
+## Phase 4 — Memory, Japanese (2026-09-18)
+
+Existing store kept (SQLite + markdown wiki vault + FTS5). What was broken for
+Japanese and is fixed:
+- **Save**: "...と覚えておいて" had no remember cue (de/en/es only) -> the 4B
+  model said "Noted." and stored nothing. Japanese cues added
+  (`contact_intent._MEMORY_VERB_JA_RE`); a mandated tool now forces a tool call
+  on the first round for compact local brains (`BrainRequest.tool_choice =
+  "required"`, OpenAI-compatible field; hosted brains unaffected).
+- **Search**: FTS5 `unicode61` made a Japanese sentence ONE token. New
+  `jarvis/memory/wiki/cjk.py`: index gets a `cjk` column with CJK
+  unigrams+bigrams (old index auto-dropped and rebuilt at boot); a CJK query
+  becomes content kanji + katakana bigrams (particles dropped).
+- **Relevance gate**: Japanese was "too short" (word count) and had no
+  personal/lookup markers -> strict bar. Now CJK counts characters, and
+  Japanese "watashi no ... nan datta" style is a personal lookup.
+- Live: "私の好きな色は翡翠色だと覚えておいて" -> wiki-ingest wrote
+  entities/user.md; app restart; "私の好きな色は何だった？" ->
+  "あなたの好きな色はエメラルドグリーン（翡翠色）です。" (5.1 s).
+- Not done: separate session/short/long/project/task/error tiers, embedding
+  search (multilingual-e5) — cross-lingual recall (English page, Japanese
+  question) still depends on shared kanji.
+
+## Phase 5 — PC control (partial, 2026-09-18)
+
+- Live: chat "メモ帳を開いて" -> local brain called run_shell
+  `start notepad.exe` -> Notepad process confirmed (7.1 s).
+- Existing: UIA tree, pywinauto, click/type/hotkey tools, risk tiers. Not yet
+  exercised with the local brain: UIA-driven apps, VS Code/Unity/Unreal/Blender.
+
 ## Changelog
+- 2026-09-18: Japanese long-term memory save+recall verified across restart; PC op (Notepad) verified.
 - 2026-09-18: Phase 2 (ja STT) and Phase 3 (VOICEVOX TTS) live-verified; 3 pre-existing bugs fixed (vosk deadlock, STT busy drop, CJK sentence split).
 - 2026-09-18: first-turn latency 100 s -> 5 s; Japanese reply pin.
 - 2026-09-18: Phase 1 local brain implemented and live-verified (see above).

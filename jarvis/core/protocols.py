@@ -144,6 +144,11 @@ class BrainRequest:
     # person picks the level by hand; a provider that does not know a level
     # treats it like the nearest one it does (see jarvis.agent_chat.effort).
     reasoning_effort: ReasoningEffort | None = None
+    # ``"required"`` asks the provider to answer with a tool call rather than
+    # prose, for the first round of a turn that a gate MANDATED a tool on.
+    # A capability hint like ``reasoning_effort``: ``None`` keeps the
+    # provider default, and providers without the knob ignore it.
+    tool_choice: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

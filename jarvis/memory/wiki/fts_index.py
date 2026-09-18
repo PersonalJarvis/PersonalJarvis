@@ -62,9 +62,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(
     frontmatter,
     body,
     mtime     UNINDEXED,
+    cjk,
     tokenize = 'unicode61 remove_diacritics 2'
 );
 """
+
+#: Column that holds the CJK unigram/bigram expansion of title + frontmatter +
+#: body (see ``jarvis.memory.wiki.cjk``). Its presence is also the schema
+#: version marker: an index built before it existed is dropped and rebuilt.
+_CJK_COLUMN = "cjk"
 
 _CREATE_WIKI_INDEX_META = """
 CREATE TABLE IF NOT EXISTS wiki_index_meta (
@@ -107,8 +113,24 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         Open, writable ``sqlite3.Connection``.
     """
     _verify_fts5(conn)
+    _drop_outdated_fts_table(conn)
     conn.executescript(_CREATE_WIKI_FTS + _CREATE_WIKI_INDEX_META)
     conn.commit()
+
+
+def _drop_outdated_fts_table(conn: sqlite3.Connection) -> None:
+    """Drop a ``wiki_fts`` built before the CJK column existed.
+
+    The index is derived data (the vault is the source), and FTS5 tables
+    cannot gain a column in place. The boot reconciliation rebuilds it.
+    """
+    try:
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(wiki_fts)").fetchall()]
+    except sqlite3.OperationalError:
+        return
+    if cols and _CJK_COLUMN not in cols:
+        conn.execute("DROP TABLE wiki_fts")
+        log.info("fts_index: dropped the pre-CJK wiki index; it is rebuilt from the vault")
 
 
 def index_vault(vault_root: Path, conn: sqlite3.Connection) -> int:
@@ -431,10 +453,19 @@ def _upsert_one(
 
     # Delete-then-insert is the canonical FTS5 upsert pattern.
     conn.execute("DELETE FROM wiki_fts WHERE path = ?", (rel_path,))
+    from jarvis.memory.wiki.cjk import index_terms
+
     conn.execute(
-        "INSERT INTO wiki_fts(path, title, frontmatter, body, mtime) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (rel_path, title, frontmatter_flat, body, mtime_str),
+        "INSERT INTO wiki_fts(path, title, frontmatter, body, mtime, cjk) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            rel_path,
+            title,
+            frontmatter_flat,
+            body,
+            mtime_str,
+            index_terms(f"{title} {frontmatter_flat} {body}"),
+        ),
     )
     log.debug("fts_index: upserted %s", rel_path)
     return True

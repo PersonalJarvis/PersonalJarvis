@@ -890,3 +890,28 @@ async def test_advertised_but_gated_tool_is_not_run_and_the_turn_answers() -> No
     assert "Hello there." in agg.text
     # The model saw the stable surface on every round.
     assert [t["name"] for t in brain.requests[0].tools] == ["open_app"]
+
+
+class _RememberTool:
+    name = "wiki-ingest"
+    schema: dict[str, Any] = {}
+
+
+@pytest.mark.asyncio
+async def test_mandated_turn_forces_a_tool_call_on_a_compact_brain_first_round_only() -> None:
+    class _Compact(_ToolThenAnswerBrain):
+        compact_prompt = True
+
+    brain = _Compact()
+    loop = ToolUseLoop(brain, {"wiki-ingest": _RememberTool()}, _Executor())  # type: ignore[arg-type,dict-item]
+    await loop.run([], user_utterance="remember that", evidence_required_tool="wiki-ingest")
+    assert brain.requests[0].tool_choice == "required"
+    assert all(r.tool_choice is None for r in brain.requests[1:])
+
+
+@pytest.mark.asyncio
+async def test_hosted_brains_are_never_forced() -> None:
+    brain = _ToolThenAnswerBrain()
+    loop = ToolUseLoop(brain, {"wiki-ingest": _RememberTool()}, _Executor())  # type: ignore[arg-type,dict-item]
+    await loop.run([], user_utterance="remember that", evidence_required_tool="wiki-ingest")
+    assert all(r.tool_choice is None for r in brain.requests)

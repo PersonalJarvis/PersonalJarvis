@@ -984,6 +984,16 @@ class ToolUseLoop:
             round_no += 1
             await self._phase(PHASE_GATHER, f"round {round_no}")
 
+            # A small local model answered a mandated write ("remember that
+            # ...") with "Noted." and no call at all (live 2026-09-18), even
+            # with the mandate directive in its prompt. For such brains the
+            # FIRST round of a mandated turn must be a tool call.
+            force_call = (
+                round_no == 1
+                and bool(evidence_required_tool)
+                and bool(tools_payload)
+                and bool(getattr(self._brain, "compact_prompt", False))
+            )
             req = BrainRequest(
                 messages=tuple(current_messages),
                 tools=tuple(tools_payload),
@@ -991,6 +1001,7 @@ class ToolUseLoop:
                 max_tokens=self._max_tokens,
                 stream=True,
                 reasoning_effort=self._reasoning_effort,
+                tool_choice="required" if force_call else None,
             )
             stream = self._brain.complete(req)
             if text_consumer is not None:

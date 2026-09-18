@@ -155,6 +155,66 @@ _MIN_TOKENS = 3
 
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
+#: CJK counterpart of ``_MIN_TOKENS``: a question shorter than this many
+#: characters is a greeting or a fragment.
+_MIN_CJK_CHARS = 4
+
+#: Japanese self-reference and lookup markers. Matched on the RAW text (the
+#: fold strips kana voicing marks) and without word boundaries (Japanese has
+#: none): "watashi no ... nan datta?" is a personal lookup like "what was my".
+_JA_PERSONAL_RE = re.compile(
+    "|".join(
+        (
+            "\u79c1\u306e",
+            "\u50d5\u306e",
+            "\u4ffa\u306e",
+            "\u308f\u305f\u3057\u306e",
+            "\u307c\u304f\u306e",
+            "\u81ea\u5206\u306e",
+            "\u79c1\u304c",
+            "\u50d5\u304c",
+            "\u4ffa\u304c",
+            "\u79c1\u306f",
+            "\u50d5\u306f",
+            "\u4ffa\u306f",
+        )
+    )
+)
+_JA_LOOKUP_RE = re.compile(
+    "|".join(
+        (
+            "\u4f55",
+            "\u3069\u3053",
+            "\u3044\u3064",
+            "\u8ab0",
+            "\u3060\u308c",
+            "\u3069\u308c",
+            "\u3069\u3093\u306a",
+            "\u6559\u3048\u3066",
+            "\u3060\u3063\u3051",
+            "\u3060\u3063\u305f",
+            "\u899a\u3048\u3066",
+            "\u77e5\u3063\u3066",
+        )
+    )
+)
+
+
+def _has_cjk(text: str) -> bool:
+    from jarvis.memory.wiki.cjk import has_cjk
+
+    return has_cjk(text)
+
+
+def _word_tokens(folded: str) -> list[str]:
+    """Words of ``folded``, a CJK run counting as its content terms."""
+    from jarvis.memory.wiki.cjk import content_terms as cjk_content_terms
+    from jarvis.memory.wiki.cjk import has_cjk, strip_cjk
+
+    if not has_cjk(folded):
+        return _WORD_RE.findall(folded)
+    return _WORD_RE.findall(strip_cjk(folded)) + cjk_content_terms(folded)
+
 
 @dataclass(frozen=True)
 class MemoryVerdict:
@@ -212,10 +272,18 @@ def should_consult_memory(user_text: str) -> MemoryVerdict:
     if not user_text or not user_text.strip():
         return _SKIP_TOO_SHORT
     folded = _fold(user_text)
-    if len(_WORD_RE.findall(folded)) < _MIN_TOKENS:
+    tokens = _word_tokens(folded)
+    if _has_cjk(folded):
+        # A CJK question packs a whole ask into two content characters
+        # ("which colour do I like" -> like, colour); count characters, not words.
+        if not tokens or len(folded.strip()) < _MIN_CJK_CHARS:
+            return _SKIP_TOO_SHORT
+    elif len(tokens) < _MIN_TOKENS:
         return _SKIP_TOO_SHORT
     if _MEMORY_RE.search(folded):
         return _CONSULT_RECOLLECTION
+    if _JA_PERSONAL_RE.search(user_text) and _JA_LOOKUP_RE.search(user_text):
+        return _CONSULT_PERSONAL_LOOKUP
     if _PLANNING_RE.search(folded):
         return _CONSULT_PLANNING
     personal = bool(_PERSONAL_RE.search(folded))
@@ -255,13 +323,23 @@ def content_terms(query: str, *, min_length: int = 3) -> tuple[str, ...]:
     without pointing at any page — "wie hiess mein Zahnarzt nochmal" must be
     judged on "zahnarzt", not on "hiess"/"nochmal".  # i18n-allow: quoted German utterance
     """
+    from jarvis.memory.wiki.cjk import content_terms as cjk_content_terms
+    from jarvis.memory.wiki.cjk import strip_cjk
+
     seen: set[str] = set()
     terms: list[str] = []
-    for token in _WORD_RE.findall(_fold(query)):
+    folded = _fold(query)
+    for token in _WORD_RE.findall(strip_cjk(folded)):
         if len(token) < min_length or token in seen or token in STOPWORDS:
             continue
         seen.add(token)
         terms.append(token)
+    # CJK has no spaces: its content terms are single kanji and katakana words,
+    # of any length (a one-character noun is a whole word there).
+    for token in cjk_content_terms(folded):
+        if token not in seen:
+            seen.add(token)
+            terms.append(token)
     return tuple(terms)
 
 
@@ -273,6 +351,11 @@ def _covers(haystack: str, term: str) -> bool:
     dependency. Terms shorter than four characters must match as whole words,
     since a three-letter substring hits almost anything.
     """
+    from jarvis.memory.wiki.cjk import has_cjk
+
+    if has_cjk(term):
+        # No word boundaries in CJK text: containment is the match.
+        return term in haystack
     if len(term) < 4:
         return re.search(rf"\b{re.escape(term)}\b", haystack) is not None
     return term in haystack
