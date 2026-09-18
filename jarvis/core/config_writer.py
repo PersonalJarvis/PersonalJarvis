@@ -1870,6 +1870,15 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
         "voice_en": "vits-piper-en_US-ryan-medium",
         "language_code": "auto",
     },
+    "voicevox": {
+        # VOICEVOX speaks Japanese only; the speaker is "<character>/<style>" in
+        # [tts].model and "" means the plugin default. The de/en voices are not
+        # consumed; blanking them keeps a cloud voice name out of the block.
+        "model": "",
+        "voice_de": "",
+        "voice_en": "",
+        "language_code": "ja-JP",
+    },
 }
 
 # Per-provider voice allowlist — when the existing voice does not match the

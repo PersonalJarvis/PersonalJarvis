@@ -9,8 +9,8 @@ Target box: Windows 11, RTX 3050 Laptop (4 GB VRAM), 16 GB RAM, Python 3.13 venv
 |---|---|---|
 | 0 | Full analysis | DONE (this file) — no code changed |
 | 1 | Local Brain (llama.cpp + Qwen3.5-4B Q4_K_M) | DONE with known issues (see Phase 1) |
-| 2 | Local Japanese STT | NOT STARTED |
-| 3 | Local Japanese TTS (VOICEVOX / Piper) | NOT STARTED |
+| 2 | Local Japanese STT | DONE, live-verified via speaker->mic loop (see Phase 2) |
+| 3 | Local Japanese TTS (VOICEVOX + SAPI5 fallback) | DONE, live-verified; latency open (see Phase 3) |
 | 4 | Memory tiers + multilingual embeddings | NOT STARTED |
 | 5 | PC control | NOT STARTED (large existing base) |
 | 6 | Screen understanding | NOT STARTED (large existing base) |
@@ -207,7 +207,58 @@ Nothing below is "done" unless it says VERIFIED with evidence.
 7. Chat build-mode file tools (Edit/Write/Grep...) are not advertised to the
    4B local brain; coding belongs to Developer Mode (Phase 9, 7B coder).
 
+## Phase 2 — Japanese STT (2026-09-18)
+
+- Engine: existing `faster-whisper` plugin (CTranslate2 Whisper) instead of a
+  second whisper.cpp stack — same Whisper models, already integrated, tested
+  and wrapped by the STT dictionary. Silero VAD sits in front (existing).
+- Model: **base** on CPU int8, language pinned `ja`. Measured on this box
+  (5 Japanese test sentences, SAPI-generated): small 3.7-4.1 s/utterance,
+  base 1.2-1.4 s; with vocabulary bias BOTH 5/5 correct -> base (spec: "small,
+  base if heavy"). `[stt].model = "small"` switches back.
+- STT dictionary seeded with Jarvis/app names (+ misheard variants). Fixed:
+  misheard replacements never matched in Japanese (word-boundary lookarounds
+  require spaces) — kana/Han edges now match without a boundary.
+- Fixed a dropped-turn bug: the final transcription gave up after ~1.2 s while
+  a cancelled preview decode still held the local engine ("already in flight").
+  The final now waits out `TranscribeBusy` for up to 6 s.
+- Fixed a GPU grab: the dictation engines chose CUDA when free at boot and took
+  ~600 MB, pushing the LLM off full offload. With a managed local LLM installed
+  they now run on the CPU (`_local_brain_owns_accelerator`). Dictation final
+  model on this box: `[dictation].local_model = "small"` (large-v3-turbo on CPU
+  took 66 s to load).
+- Fixed an event-loop DEADLOCK (pre-existing): a vosk recognizer `__del__`
+  during GC inside `ThreadPoolExecutor.submit` re-entered the executor's global
+  lock -> loop frozen 75 s+ right after a wake. Release now goes through a
+  `queue.SimpleQueue` + daemon thread.
+- Live: wake "Hey Jarvis" -> Japanese command -> transcript
+  "こんにちは 自己紹介を一分でお願いします" (ref: ...一文で...), ja, ~1.5 s STT.
+- No audio is stored by these changes (existing session recorder unchanged).
+
+## Phase 3 — Japanese TTS (2026-09-18)
+
+- `jarvis/plugins/tts/voicevox_tts.py` + `voicevox_engine.py`: VOICEVOX Engine
+  0.25.2 (CPU build, 127.0.0.1:50021), started in the background at boot and
+  on first use; speaker chosen by name from `/speakers` (default: a calm male
+  fictional character), `[tts].model = "<character>/<style>"` overrides.
+  Speed from `[tts].speed`; volume stays in the player (`[tts].volume`).
+  Voice ON/OFF: existing voice session controls.
+- Fallback: `sapi5` (Windows built-in Japanese voice "Haruka", local). Piper
+  has no Japanese voice, so it stays the de/en/es local voice.
+- UI card "VOICEVOX (on this machine, Japanese)", defaults entry, contract
+  test for the local TTS family, `scripts/install_voicevox.py`.
+- Japanese streaming: sentence splitter now splits on 。！？ without a space
+  (before: the whole reply was waited for — ~8 s of silence).
+- Measured: synthesis ~1.0-1.3 s for a short phrase, roughly real-time for
+  longer sentences on this CPU (clock stayed at 2.3 GHz base). Open: GPU TTS
+  is blocked by VRAM (LLM uses 3.3 of 4 GB) -> Phase 8.
+- Live: voice turn answered in Japanese through VOICEVOX
+  ("こんにちは。私はジャルビスです。...").
+- Credit note: VOICEVOX characters require "VOICEVOX:<character>" credit when
+  audio is published.
+
 ## Changelog
+- 2026-09-18: Phase 2 (ja STT) and Phase 3 (VOICEVOX TTS) live-verified; 3 pre-existing bugs fixed (vosk deadlock, STT busy drop, CJK sentence split).
 - 2026-09-18: first-turn latency 100 s -> 5 s; Japanese reply pin.
 - 2026-09-18: Phase 1 local brain implemented and live-verified (see above).
 - 2026-09-18: Phase 0 analysis written. No code modified.

@@ -524,3 +524,13 @@ class TestWrapper:
         result = await wrapped.transcribe_pcm(b"")
         assert result.text == "GitHub auf"
         assert result.language == "de"
+
+
+def test_japanese_misheard_replacement_needs_no_word_boundary(tmp_path) -> None:
+    from jarvis.speech.stt_dictionary import DictionaryStore, TranscriptCorrector
+
+    store = DictionaryStore(tmp_path / "dict.json")
+    store.add("メモ帳", ["メモチョ"])  # i18n-allow: Japanese vocabulary under test
+    corrector = TranscriptCorrector(store.list_all())
+    fixed = corrector.correct("ジャービスメモチョを開いて")  # i18n-allow
+    assert fixed == "ジャービスメモ帳を開いて"  # i18n-allow

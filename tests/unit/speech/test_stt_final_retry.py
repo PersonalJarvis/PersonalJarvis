@@ -138,3 +138,25 @@ async def test_final_retries_timeout_then_succeeds(monkeypatch: pytest.MonkeyPat
 
     assert transcript is _OK
     assert stt.calls == 2, "first call timed out, second succeeded"
+
+
+class TranscribeBusy(Exception):
+    """Same class name the local faster-whisper provider raises."""
+
+
+@pytest.mark.asyncio
+async def test_final_waits_out_a_busy_local_engine_without_spending_retries() -> None:
+    # A cancelled preview decode keeps the local engine busy for longer than
+    # the whole retry ladder on a CPU-only box; the final must wait for it.
+    stt = _ScriptedSTT([TranscribeBusy("busy")] * 12 + [_OK])
+    pipe = _make_pipe(stt)
+    pipe._drain_stale_probe = _no_probe  # type: ignore[method-assign]
+
+    transcript = await pipe._transcribe_final(b"\x00\x00" * 256)
+
+    assert transcript is _OK
+    assert stt.calls == 13
+
+
+async def _no_probe() -> None:
+    return None

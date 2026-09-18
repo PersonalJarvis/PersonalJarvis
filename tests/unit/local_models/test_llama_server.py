@@ -60,3 +60,10 @@ def test_start_without_install_is_absent_not_an_error(tmp_path: Path, monkeypatc
 def test_presets_cap_the_host_ram_prompt_cache(tmp_path: Path) -> None:
     text = ls.render_presets([tmp_path / "A.gguf"], {"A": "full"})
     assert "cache-ram = 1536" in text
+
+
+def test_low_first_vram_reading_is_resampled(monkeypatch) -> None:
+    readings = iter([3325, 3880])
+    monkeypatch.setattr(ls, "free_vram_mb", lambda: next(readings))
+    monkeypatch.setattr(ls.time, "sleep", lambda _s: None)
+    assert ls._settled_free_vram_mb(2614 * MB) == 3880

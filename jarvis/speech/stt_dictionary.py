@@ -347,7 +347,15 @@ def _boundary_pattern(phrase: str) -> re.Pattern[str]:
     """
     parts = [re.escape(tok) for tok in phrase.split()]
     body = r"\s+".join(parts)
-    return re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE | re.UNICODE)
+    # Japanese/Chinese write without spaces, so a kana/Han edge has no word
+    # boundary to anchor on: a misheard "memocho" sits inside the rest of the
+    # sentence with no space around it.
+    head = "" if _CJK_EDGE_RE.match(phrase.strip()[:1]) else r"(?<!\w)"
+    tail = "" if _CJK_EDGE_RE.match(phrase.strip()[-1:]) else r"(?!\w)"
+    return re.compile(rf"{head}{body}{tail}", re.IGNORECASE | re.UNICODE)
+
+
+_CJK_EDGE_RE = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff\uff66-\uff9f]")
 
 
 def _edit_distance_within(a: str, b: str, budget: int) -> bool:

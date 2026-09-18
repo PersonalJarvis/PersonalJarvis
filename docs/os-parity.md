@@ -1,5 +1,21 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Keyless local brain and Japanese voice (2026-09-18, T3; acceptance open)
+
+A managed llama.cpp `llama-server` (`jarvis/local_models/llama_server.py`)
+starts in the background when a binary and a GGUF are installed under the app
+data dir (`scripts/install_local_brain.py` picks the release asset per OS: CUDA
+or CPU on Windows, Ubuntu build on Linux, arm64/x64 on macOS). Offload is sized
+from `nvidia-smi` free memory; with no NVIDIA probe the server runs CPU-only.
+VOICEVOX Engine (`scripts/install_voicevox.py`, Windows/Linux/macOS builds) is
+the Japanese voice; `sapi5` is its Windows-only local fallback and raises on
+other hosts so a fallback chain moves on (Piper remains the local voice for
+de/en/es everywhere). Japanese STT runs on faster-whisper on every OS.
+
+Verified live on Windows only (RTX 3050 Laptop 4 GB). macOS and Linux have the
+code paths and installers but no live evidence yet; a headless box without the
+binaries simply has no local brain/voice (capability probe, boot unaffected).
+
 ## Full Chrome window preview (2026-09-12, T3; acceptance open)
 
 Windows interactive sessions now capture the owned Chrome window with Windows

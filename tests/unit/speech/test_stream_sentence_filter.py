@@ -324,3 +324,13 @@ async def test_ordinal_answer_reaches_tts_as_one_utterance(monkeypatch) -> None:
         "de",
     )
     assert spoken == ["Am 1. Januar geht es los.", "Dann ruhe."]
+
+
+def test_japanese_full_width_terminators_split_without_a_space() -> None:
+    from jarvis.speech.pipeline import _next_stream_sentence_break
+
+    first = "こんにちは。"  # "Hello." in Japanese
+    rest = "よろしく"  # the next sentence, still streaming
+    assert _next_stream_sentence_break(first + rest) == len(first)
+    assert _next_stream_sentence_break("はい！" + rest) == 3
+    assert _next_stream_sentence_break(rest) is None

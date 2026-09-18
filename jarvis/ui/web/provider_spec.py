@@ -766,6 +766,25 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "the more natural-sounding option."
         ),
     ),
+    # Local, keyless Japanese neural TTS. The engine is a separate local HTTP
+    # server (scripts/install_voicevox.py) that Jarvis starts on demand.
+    ProviderSpec(
+        id="voicevox",
+        label="VOICEVOX (on this machine, Japanese)",
+        tier="tts",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        signup_url=None,
+        credential_help=(
+            "Natural Japanese speech on this machine: no API key, no account, "
+            "nothing sent anywhere. Install the free VOICEVOX Engine once "
+            "(scripts/install_voicevox.py, about 1.8 GB); Jarvis starts it when "
+            "needed. The voices are fictional characters, free to use with a "
+            "credit line such as 'VOICEVOX:<character>' where audio is "
+            "published. Pick a character as '<name>/<style>' in the model field."
+        ),
+    ),
     # ── STT ───────────────────────────────────────────────────────────────
     ProviderSpec(
         id="openai-api",

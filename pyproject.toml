@@ -533,6 +533,8 @@ vertex-stt = "jarvis.plugins.stt.gemini_api:VertexSTT"
 # Runtime). The voices are plain ONNX files, deliberately NOT loaded through the
 # GPL-3 piper1-gpl library, so this repo stays free of GPL obligations.
 piper-local = "jarvis.plugins.tts.piper_local:PiperLocalTTS"
+voicevox = "jarvis.plugins.tts.voicevox_tts:VoicevoxTTS"
+sapi5 = "jarvis.plugins.tts.sapi5_tts:Sapi5TTS"
 inworld = "jarvis.plugins.tts.inworld_tts:InworldTTS"
 elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
 gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"

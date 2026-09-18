@@ -593,6 +593,9 @@ _STT_TRANSIENT_STATUS: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 # probe stops the instant the VAD endpoint fires, so the shared rate window
 # frees within ~1 s — two retries with capped backoff almost always recover.
 _STT_FINAL_RETRIES: int = 2
+#: How long a final transcription waits for a local engine that is still busy
+#: with a cancelled preview decode before counting it as a failed attempt.
+_STT_FINAL_BUSY_WAIT_S: float = 6.0
 _STT_RETRY_BASE_S: float = 0.4
 _STT_RETRY_CAP_S: float = 2.0
 
@@ -1654,7 +1657,12 @@ _MIC_HOLD_RELEASE_S = 0.15
 # something. Every rule that can decide from the text BEFORE the gap decides
 # immediately; the following character only refines a candidate when it
 # already happens to be in the buffer.
-_STREAM_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+#
+# CJK full-width terminators close a sentence with NO following space —
+# Japanese never puts one there — so they split on the spot. Without this a
+# Japanese answer never split at all and waited for the whole reply before the
+# first word was spoken (live 2026-09-18: ~8 s of silence).
+_STREAM_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|(?<=[\u3002\uff01\uff1f])\s*")
 
 # Tokens whose trailing period is practically NEVER a sentence end. One shared
 # set for every locale: the turn language is a hint, not a guarantee, and
@@ -11446,6 +11454,14 @@ class SpeechPipeline:
                 return None
             model = str(getattr(dictation_cfg, "local_model", "") or "").strip()
             min_free = getattr(dictation_cfg, "local_min_free_gb", DEFAULT_MIN_FREE_GB)
+            from jarvis.dictation.local_preview import _local_brain_owns_accelerator
+
+            if _local_brain_owns_accelerator():
+                # The managed local LLM owns the GPU; the final pass runs on
+                # the CPU instead of being declined there.
+                return LocalFinalSTT(
+                    model or DEFAULT_FINAL_MODEL, min_free_gb=0.0, compute="cpu", allow_cpu=True
+                )
             return LocalFinalSTT(
                 model or DEFAULT_FINAL_MODEL,
                 min_free_gb=float(min_free if min_free is not None else 0.0),
@@ -14280,6 +14296,25 @@ class SpeechPipeline:
             self._latency_first_audio_marked = True
             tracker.mark(LatencyPhase.TURN_TO_FIRST_AUDIO)
 
+    async def _transcribe_waiting_out_busy(self, pcm: bytes) -> Transcript:
+        """One final transcription that waits out a busy local engine.
+
+        A local engine answers ``TranscribeBusy`` while a cancelled preview's
+        decode still runs in its worker thread — cancelling the task cannot
+        stop it. On a CPU-only machine that decode outlived the whole retry
+        ladder (0.4 s + 0.8 s) and the turn was dropped. Busy is not a failure:
+        poll for the engine, bounded; a wedged engine still ends in the
+        caller's timeout and the provider's own recover().
+        """
+        deadline = time.monotonic() + _STT_FINAL_BUSY_WAIT_S
+        while True:
+            try:
+                return await self._utterance_stt.transcribe_pcm(pcm)
+            except Exception as exc:
+                if type(exc).__name__ != "TranscribeBusy" or time.monotonic() >= deadline:
+                    raise
+            await asyncio.sleep(0.1)
+
     async def _transcribe_final(self, pcm: bytes) -> Transcript | None:
         """Final utterance transcription with transient-error retry (AD-OE6).
 
@@ -14312,7 +14347,7 @@ class SpeechPipeline:
         last_exc: BaseException | None = None
         for attempt in range(_STT_FINAL_RETRIES + 1):
             stt_task = asyncio.create_task(
-                self._utterance_stt.transcribe_pcm(pcm), name="stt-final"
+                self._transcribe_waiting_out_busy(pcm), name="stt-final"
             )
             try:
                 return await asyncio.wait_for(

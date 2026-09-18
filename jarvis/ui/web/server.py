@@ -143,6 +143,7 @@ class WebServer:
         # path returned; starts nothing unless local models are in use.
         self._local_models_autostart_task: asyncio.Task[None] | None = None
         self._llama_server_task: asyncio.Task[None] | None = None
+        self._voicevox_task: asyncio.Task[bool] | None = None
         self._refresh_registry_tasks: set[asyncio.Task[Any]] = set()
         self._refresh_scheduler_stopping = False
         # Realtime transport pre-warm — scheduled at the end of start() so the
@@ -2308,6 +2309,22 @@ class WebServer:
             self._llama_server_task = schedule_boot(lambda: self.cfg, on_ready=_prewarm)
         except Exception as exc:  # noqa: BLE001 -- the local brain must never block boot
             logger.opt(exception=exc).warning("Managed llama-server did not schedule.")
+        try:
+            tts_names = {
+                str(getattr(self.cfg.tts, "provider", "") or "").lower(),
+                str(getattr(self.cfg.tts, "fallback", "") or "").lower(),
+            }
+            if "voicevox" in tts_names:
+                from jarvis.plugins.tts import voicevox_engine
+
+                # Warm start off the boot path: the first spoken reply must not
+                # wait ~10 s for the engine. A missing install is a log line.
+                self._voicevox_task = asyncio.create_task(
+                    asyncio.to_thread(voicevox_engine.ensure_running),
+                    name="voicevox-engine-boot",
+                )
+        except Exception as exc:  # noqa: BLE001 -- the local voice must never block boot
+            logger.opt(exception=exc).warning("VOICEVOX engine did not schedule.")
 
     async def _stop_local_models_autostart(self) -> None:
         llama_task, self._llama_server_task = self._llama_server_task, None
@@ -2319,6 +2336,12 @@ class WebServer:
             await asyncio.to_thread(llama_shutdown)
         except Exception as exc:  # noqa: BLE001 -- shutdown stays best-effort
             logger.opt(exception=exc).debug("Managed llama-server stop failed.")
+        try:
+            from jarvis.plugins.tts import voicevox_engine
+
+            await asyncio.to_thread(voicevox_engine.shutdown)
+        except Exception as exc:  # noqa: BLE001 -- shutdown stays best-effort
+            logger.opt(exception=exc).debug("VOICEVOX engine stop failed.")
         task = self._local_models_autostart_task
         self._local_models_autostart_task = None
         if task is None or task.done():

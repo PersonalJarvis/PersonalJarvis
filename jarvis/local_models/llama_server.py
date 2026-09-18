@@ -132,6 +132,25 @@ def free_vram_mb() -> int | None:
         return None
 
 
+def _settled_free_vram_mb(model_bytes: int, *, samples: int = 3, gap_s: float = 1.0) -> int | None:
+    """Free VRAM, re-sampled while it reads too low for a full offload.
+
+    A process that just exited (the previous server on an app restart) hands
+    its memory back to the driver a moment later; one early reading put a
+    model that fits on the ``fit`` tier (live 2026-09-18: 3325 MB read, 3880 MB
+    a second later). The best of a few readings is what is actually free.
+    """
+    best = free_vram_mb()
+    for _ in range(samples - 1):
+        if best is None or choose_tier(model_bytes, best) == "full":
+            break
+        time.sleep(gap_s)
+        again = free_vram_mb()
+        if again is not None:
+            best = max(best, again)
+    return best
+
+
 def choose_tier(model_bytes: int, free_mb: int | None) -> str:
     """The strongest offload tier this model can use with ``free_mb`` of VRAM."""
     if free_mb is None:
@@ -318,7 +337,7 @@ class LlamaServer:
                 return self._state(models)
             self._port = _pick_free_port()
         self._adopted = False
-        free = free_vram_mb()
+        free = _settled_free_vram_mb(max(p.stat().st_size for p in models))
         self._tiers = {p.stem: choose_tier(p.stat().st_size, free) for p in models}
         target = warm_model if warm_model in self._tiers else models[0].stem
         for _attempt in range(len(OFFLOAD_TIERS)):

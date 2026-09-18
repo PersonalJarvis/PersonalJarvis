@@ -223,6 +223,21 @@ class _WorkerModel:
             _close_worker_process(self._proc)
 
 
+def _local_brain_owns_accelerator() -> bool:
+    """Whether a managed local LLM server is installed on this machine.
+
+    It is started at boot and sized to the free GPU memory, so every other
+    local model defers to it and runs on the CPU.
+    """
+    try:
+        from jarvis.local_models.llama_server import find_binary, list_models
+
+        return find_binary() is not None and bool(list_models())
+    except Exception:  # noqa: BLE001 - a probe failure keeps the old device choice
+        log.debug("local brain accelerator probe failed", exc_info=True)
+        return False
+
+
 def _spawn_worker_model(model_name: str, *, compute: str | None = None) -> _WorkerModel | None:
     """Start the out-of-process engine; ``None`` when this host cannot.
 
@@ -498,6 +513,11 @@ class LocalPreviewTranscriber:
         Anything uncertain picks CPU, and ``_load_model`` still proves the choice
         with a real model build before accepting it.
         """
+        if _local_brain_owns_accelerator():
+            # The managed local LLM needs the whole card on a small GPU; a
+            # dictation engine that grabbed ~600 MB first pushed it off full
+            # offload (live 2026-09-18, 4 GB card: 40 -> 13 tok/s).
+            return "cpu", "int8"
         try:
             from jarvis.plugins.stt.fwhisper import (
                 ensure_cuda_libraries_findable,

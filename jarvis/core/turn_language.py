@@ -215,8 +215,8 @@ def normalize_language_tag(tag: object) -> str:
 
 
 #: Hiragana + Katakana (incl. half-width and the prolonged-sound mark).
-_KANA_RE = re.compile(r"[぀-ヿｦ-ﾟ]")
-_HAN_RE = re.compile(r"[一-鿿]")
+_KANA_RE = re.compile(r"[\u3040-\u30ff\uff66-\uff9f]")
+_HAN_RE = re.compile(r"[\u4e00-\u9fff]")
 _LATIN_WORD_RE = re.compile(r"[A-Za-z]{2,}")
 
 

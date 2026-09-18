@@ -10837,6 +10837,12 @@ class BrainManager:
         else:
             if fast:
                 chain.append((active, fast))
+        if not fast and not deep:
+            # A provider whose model is resolved at call time (a local server
+            # serving whatever it loaded) has no configured model at all. It
+            # is still the brain the user picked: without this, a keyless
+            # install's voice turn built an EMPTY chain and spoke "no API key".
+            chain.append((active, None))
 
         # 2. Explicit tier fallbacks from jarvis.toml. These must run before
         # generic cross-provider probing so runtime matches healthcheck order.

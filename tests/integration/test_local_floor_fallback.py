@@ -91,3 +91,14 @@ def test_japanese_turn_pins_a_japanese_reply_directive() -> None:
     assert "Always reply in Japanese" in manager._reply_language_directive()
     manager._update_turn_language("Good morning, how are you today?")
     assert "Japanese" not in manager._reply_language_directive()
+
+
+def test_active_brain_without_a_configured_model_still_leads_the_chain() -> None:
+    config = JarvisConfig()
+    config.brain.primary = "local-openai"
+    config.brain.providers["local-openai"] = BrainProviderConfig(base_url="http://127.0.0.1:18181")
+    manager = BrainManager(config=config, bus=EventBus(), tools={})
+    manager._registry._loaded = True
+    manager._registry._classes["local-openai"] = FakeBrain
+    chain = manager._build_fallback_chain("fast")
+    assert chain and chain[0][0] == "local-openai"
