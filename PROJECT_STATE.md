@@ -101,7 +101,9 @@ Nothing below is "done" unless it says VERIFIED with evidence.
   command_impact, `ToolExecutor.execute()` is the only authorized path.
 - Cancellation: `jarvis/control/cancel.py` (CancelToken registry). Voice
   "stop" intent: `speech/interrupt_intent.py`, `speech/hangup.py`.
-  No ESC-long-press or gesture stop.
+  Japanese whole-utterance stop ("Jarvis, teishi", tomatte, yamete, sutoppu, ...) added.
+  Classic voice pipeline: a bare stop publishes KillRequested and skips the brain.
+  Holding ESC 1.5 s (Windows) = tray emergency stop (`control/esc_hold.py`). No palm-gesture stop yet.
 
 ### Japanese
 - UI locales: de, en, es only — **no ja.json**. `[ui].language = "en"`.

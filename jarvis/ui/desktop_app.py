@@ -5516,6 +5516,10 @@ class DesktopApp:
                     return
 
         threading.Thread(target=_bridge_loop, name="jarvis-tray-bridge", daemon=True).start()
+        # Holding ESC is the keyboard twin of the tray's emergency-stop item.
+        from jarvis.control.esc_hold import start_esc_hold_watcher  # noqa: PLC0415
+
+        start_esc_hold_watcher(self._publish_kill_requested_threadsafe)
 
     def _publish_kill_requested_threadsafe(self) -> None:
         """Publish ``KillRequested(source="tray")`` from a non-async thread.

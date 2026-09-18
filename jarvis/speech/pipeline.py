@@ -69,6 +69,7 @@ from jarvis.core.events import (
     DictationTranscript,
     JarvisAgentAnnouncement,
     JarvisAgentBackgroundCompleted,
+    KillRequested,
     LatencyTurnComplete,
     ListeningStarted,
     MessageSent,
@@ -140,6 +141,7 @@ from jarvis.speech.hangup import (
     matched_hangup_pattern,
     supports_semantic_hangup,
 )
+from jarvis.speech.interrupt_intent import INTERRUPT_STOP, classify_interrupt
 from jarvis.speech.pending_buffer import PendingPromptBuffer
 from jarvis.speech.persona import PhrasePicker, iter_all_start_ack
 from jarvis.speech.rolling_whisper_wake import RollingWhisperWake
@@ -14853,6 +14855,16 @@ class SpeechPipeline:
         # eigentlichen Command nachreichen.
         if _is_wake_only(text):
             log.info("🤫 Wake-only-Turn (%r) — skip Brain, weiter zuhören.", text)
+            await self._set_turn_state(TurnTakingState.LISTENING)
+            return True
+
+        # A bare stop request ("Jarvis, stop", "teishi") is the voice emergency
+        # stop: barge-in already silenced the reply; fire the kill switch for
+        # anything still running and do NOT hand the word to the brain, which
+        # would only answer it.
+        if classify_interrupt(text) == INTERRUPT_STOP:
+            log.info("Voice stop (%r): KillRequested, skip brain.", text[:40])
+            await self._publish_event(KillRequested(source="voice"))
             await self._set_turn_state(TurnTakingState.LISTENING)
             return True
 
