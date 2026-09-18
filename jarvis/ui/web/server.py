@@ -364,6 +364,7 @@ class WebServer:
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
+        from .live_routes import router as live_router
         from .local_models_assistant_routes import (
             router as local_models_assistant_router,
         )
@@ -441,6 +442,11 @@ class WebServer:
         # cancellation busy-loop from inside the loop; see diagnostics_routes.
         app.include_router(diagnostics_router)
         app.include_router(provider_router)
+        app.include_router(live_router)
+        from jarvis.agent_chat.tasks import run_subscription_task
+        from jarvis.core.task_agent import register_runner
+
+        register_runner(run_subscription_task)
         # Local models section: inventory / unload / delete behind the
         # pull-capable card (same capability gate as the pull routes).
         app.include_router(local_models_router)
@@ -3380,10 +3386,7 @@ class WebServer:
         from jarvis.harness.manager import HarnessManager
 
         def workflow_services():
-            return (
-                getattr(self.app.state, "workflow_store", None),
-                getattr(self.app.state, "workflow_runner", None),
-            )
+            return (getattr(self.app.state, "workflow_store", None), getattr(self.app.state, "workflow_runner", None))
 
         runner = TaskRunner(
             store=store,
@@ -3396,9 +3399,7 @@ class WebServer:
             owned_action_guard=self._guard_society_routine_action,
             workflow_services=workflow_services,
         )
-        scheduler = TaskScheduler(
-            store=store, bus=self.bus, runner=runner, workflow_services=workflow_services
-        )
+        scheduler = TaskScheduler(store=store, bus=self.bus, runner=runner, workflow_services=workflow_services)
         scheduler.bind_bus()
         await scheduler.hydrate()
 
@@ -3501,6 +3502,27 @@ class WebServer:
         self.app.state.session_store = result["store"]
         self._session_recorder = result["recorder"]
         logger.info("Session recorder online (db={}, retention={}d)", db_path, retention_days)
+        # Spoken turns also appear in the Jarvis agent chat (Voice | Chat):
+        # the mirror files each completed voice turn into the newest
+        # jarvis-surface session without answering it. Best-effort — the
+        # voice path stays untouched when the chat is unavailable.
+        try:
+            from jarvis.agent_chat.voice_mirror import VoiceChatMirror
+
+            from .agent_chat_routes import _service_from_state
+
+            state = self.app.state
+
+            def _mirror_service() -> Any:
+                try:
+                    return _service_from_state(state)
+                except Exception:  # noqa: BLE001 — mirroring stays best-effort
+                    return None
+
+            self._voice_chat_mirror = VoiceChatMirror(_mirror_service)
+            self._voice_chat_mirror.attach(self.bus)
+        except Exception as exc:  # noqa: BLE001 — never break boot for the mirror
+            logger.debug("Voice chat mirror init failed: {}", exc)
 
     async def _init_channel_stack(self) -> None:
         """Bootstraps FriendRegistry + ChannelManager + starts all channels.

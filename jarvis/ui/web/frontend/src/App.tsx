@@ -43,6 +43,7 @@ import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 import { installDictationFocusTracker } from "@/lib/dictationTarget";
 import { SubscriptionRealtimeTransportBroker } from "@/components/voice/SubscriptionRealtimeTransportBroker";
+import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
 import { useDesktopWallpaper } from "@/hooks/useDesktopWallpaper";
 import { installWallpaperSync, useWallpaperStore } from "@/store/wallpaper";
 import { cn } from "@/lib/utils";
@@ -309,6 +310,7 @@ export default function App() {
       <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
         <DesktopWallpaper />
         {brokerMounted && <SubscriptionRealtimeTransportBroker />}
+        <BrowserRealtimeControl controlOnly />
         {/* No z-index on the stage column — see the shell below. */}
         <main className="relative flex min-w-0 flex-1 flex-col">
           <SectionStage visualization={visualizationActive}>
@@ -330,6 +332,7 @@ export default function App() {
   return (
     <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
+      <BrowserRealtimeControl controlOnly />
       <DesktopWallpaper />
 
       {!hideNavigation && <>

@@ -8,6 +8,7 @@ discovery.
 Streaming is first-class: every Brain/STT/TTS/Harness response is an
 ``AsyncIterator``. Non-streaming providers yield exactly one element.
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -36,9 +37,11 @@ class ChatControlAdapter(Protocol):
 # Audio Data-Types
 # ----------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class AudioChunk:
     """Raw PCM audio with sample rate and timestamp."""
+
     pcm: bytes
     sample_rate: int
     timestamp_ns: int
@@ -48,6 +51,7 @@ class AudioChunk:
 @dataclass(frozen=True, slots=True)
 class AudioDevice:
     """Audio device (input or output)."""
+
     index: int
     name: str
     is_input: bool
@@ -59,6 +63,7 @@ class AudioDevice:
 # ----------------------------------------------------------------------
 # Speech Data-Types
 # ----------------------------------------------------------------------
+
 
 @dataclass(frozen=True, slots=True)
 class Transcript:
@@ -77,6 +82,7 @@ class Transcript:
     output. It defaults to empty, so a provider that does not set it costs
     those callers nothing — they fall back to ``text``.
     """
+
     text: str
     language: str  # "de", "en", "auto-detected", or a concrete code
     confidence: float  # 0.0-1.0
@@ -90,6 +96,7 @@ class Transcript:
 # Brain Data-Types
 # ----------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class ImageBlock:
     """Multimodal image input for brain providers.
@@ -100,6 +107,7 @@ class ImageBlock:
     ``source_hash`` is an observation hash for logging/deduplication and is
     not forwarded to the LLM.
     """
+
     mime: str
     data_b64: str
     source_hash: str = ""
@@ -108,6 +116,7 @@ class ImageBlock:
 @dataclass(frozen=True, slots=True)
 class BrainMessage:
     """A message in the message log (user/assistant/system/tool)."""
+
     role: Literal["user", "assistant", "system", "tool"]
     content: str | list[dict[str, Any]]
     tool_call_id: str | None = None
@@ -124,6 +133,7 @@ ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "
 @dataclass(frozen=True, slots=True)
 class BrainRequest:
     """Request to a brain provider."""
+
     messages: tuple[BrainMessage, ...]
     tools: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     system: str | None = None
@@ -149,6 +159,7 @@ class BrainRequest:
 @dataclass(frozen=True, slots=True)
 class BrainDelta:
     """A stream chunk from the brain: text, tool call, or finish signal."""
+
     content: str | None = None
     tool_call: dict[str, Any] | None = None
     finish_reason: str | None = None
@@ -165,6 +176,7 @@ RiskTier = Literal["safe", "monitor", "ask", "block"]
 @dataclass(frozen=True, slots=True)
 class HarnessTask:
     """Task for a sub-agent harness (Jarvis-Agent, Codex, OI, …)."""
+
     prompt: str
     cwd: str = "."
     env: dict[str, str] = field(default_factory=dict)
@@ -176,6 +188,7 @@ class HarnessTask:
 @dataclass(frozen=True, slots=True)
 class HarnessResult:
     """Result of a harness invocation stream."""
+
     stdout: str = ""
     stderr: str = ""
     exit_code: int = 0
@@ -189,9 +202,11 @@ class HarnessResult:
 # Tool Data-Types
 # ----------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class ExecutionContext:
     """Context passed to a tool at execution time."""
+
     trace_id: UUID
     user_utterance: str
     config: dict[str, Any]
@@ -202,6 +217,7 @@ class ExecutionContext:
 @dataclass(frozen=True, slots=True)
 class ToolResult:
     """Result of a tool execution."""
+
     success: bool
     output: Any
     error: str | None = None
@@ -251,9 +267,27 @@ class SupervisorToolRequest:
     cancel_token: CancelToken | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ContinuousVoiceStart:
+    """Configuration for a continuous provider; media and tools have separate lifecycles."""
+
+    session: dict[str, Any]
+    offer_sdp: str = ""
+
+
+class ContinuousVoiceConnection(Protocol):
+    session_id: str
+    answer_sdp: str
+
+    async def send(self, event: dict[str, Any]) -> None: ...
+    async def receive(self) -> dict[str, Any]: ...
+    async def close(self) -> None: ...
+
+
 # ----------------------------------------------------------------------
 # Protocols
 # ----------------------------------------------------------------------
+
 
 @runtime_checkable
 class WakeWordProvider(Protocol):
@@ -293,7 +327,7 @@ class TurnDetector(Protocol):
     """
 
     name: str
-    supports_semantic: bool   # True = uses phoneme/prosody model, False = silence-only
+    supports_semantic: bool  # True = uses phoneme/prosody model, False = silence-only
 
     async def start(self) -> None:
         """Initialise the model (lazy load)."""
@@ -339,7 +373,9 @@ class TTSProvider(Protocol):
     supports_streaming: bool
 
     async def synthesize(
-        self, text: str, voice: str | None = None,
+        self,
+        text: str,
+        voice: str | None = None,
         language_code: str | None = None,
     ) -> AsyncIterator[AudioChunk]:
         """Synthesise audio, yielding chunks for streaming playback.
@@ -537,6 +573,7 @@ PLUGIN_GROUPS: tuple[str, ...] = (
 # Vision Data-Types (Phase 5 — Capability 1)
 # ----------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class UIANode:
     """A single node from the UIAutomation tree (after pruning, see ADR-0002).
@@ -544,15 +581,16 @@ class UIANode:
     Fields are intentionally short — the entire tree is serialised to the LLM,
     so every byte counts.
     """
-    role: str                        # "Button", "Edit", "MenuItem", ...
-    name: str                        # UIA Name-Property
-    automation_id: str = ""          # AutomationId (stabiler als Name)
+
+    role: str  # "Button", "Edit", "MenuItem", ...
+    name: str  # UIA Name-Property
+    automation_id: str = ""  # AutomationId (stabiler als Name)
     bounds: tuple[int, int, int, int] = (0, 0, 0, 0)  # x, y, w, h
     enabled: bool = True
-    parent_index: int = -1           # Index in der flachen Nodes-Liste
-    value: str = ""                  # L3: current text of an editable control
-    is_password: bool = False        # secure/password edit -> redact, never read
-    focused: bool = False            # holds keyboard focus (post-click verify)
+    parent_index: int = -1  # Index in der flachen Nodes-Liste
+    value: str = ""  # L3: current text of an editable control
+    is_password: bool = False  # secure/password edit -> redact, never read
+    focused: bool = False  # holds keyboard focus (post-click verify)
 
 
 @dataclass(frozen=True, slots=True)
@@ -561,10 +599,11 @@ class Observation:
     a pruned UIA tree. An Observation is the input unit for the
     Plan-Observe-Act-Verify-Loop.
     """
+
     trace_id: UUID
     timestamp_ns: int
-    screenshot_path: str | None       # path to the screenshot blob (PNG) or None
-    screenshot_hash: str              # SHA256 of the PNG content (for cache)
+    screenshot_path: str | None  # path to the screenshot blob (PNG) or None
+    screenshot_hash: str  # SHA256 of the PNG content (for cache)
     nodes: tuple[UIANode, ...] = field(default_factory=tuple)
     window_title: str = ""
     active_pid: int = 0
@@ -607,6 +646,7 @@ class VisionSource(Protocol):
 # CancelToken (Phase 5 — Capability 5, Kill-Switch-Propagation, ADR-0004)
 # ----------------------------------------------------------------------
 
+
 @runtime_checkable
 class CancelToken(Protocol):
     """Propagates cancellation signals through the async hierarchy.
@@ -631,9 +671,11 @@ class CancelToken(Protocol):
 # CostMeter (Phase 5 — Capability 5, Cost-Circuit-Breaker, ADR-0006)
 # ----------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class CostRecord:
     """An atomic cost entry for one brain delta."""
+
     trace_id: UUID
     provider: str
     model: str
@@ -668,6 +710,7 @@ class CostMeter(Protocol):
 # Intent-Classification (Phase 5 — CL-3, Tiered Routing)
 # ----------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class IntentClassification:
     """Result of the RouterBrain classifier.
@@ -679,10 +722,11 @@ class IntentClassification:
     - `spawn_worker`  → task goes verbatim to the Jarvis-Agent bridge via
                           the mission manager. (formerly ``spawn_sub_jarvis``.)
     """
+
     intent: Literal["trivial", "direct_action", "spawn_worker"]
-    confidence: float                       # 0.0–1.0
-    suggested_tool: str | None = None       # for direct_action: "bash" | "screenshot" | ...
-    rationale: str = ""                     # one-sentence rationale for the debug log
+    confidence: float  # 0.0–1.0
+    suggested_tool: str | None = None  # for direct_action: "bash" | "screenshot" | ...
+    rationale: str = ""  # one-sentence rationale for the debug log
 
 
 @runtime_checkable
@@ -697,9 +741,7 @@ class IntentClassifier(Protocol):
 
     name: str
 
-    async def classify(
-        self, utterance: str, *, ctx: ExecutionContext
-    ) -> IntentClassification:
+    async def classify(self, utterance: str, *, ctx: ExecutionContext) -> IntentClassification:
         """Klassifiziert `utterance` und liefert Intent + Konfidenz."""
         ...
 

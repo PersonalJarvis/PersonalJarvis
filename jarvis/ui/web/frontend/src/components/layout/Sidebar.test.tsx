@@ -8,8 +8,8 @@ import {
   SIDEBAR_RAIL_AT_WIDTH,
   SIDEBAR_RAIL_WIDTH,
 } from "@/components/layout/Sidebar";
-import { NAV_GROUPS, NAV_FOOTER_ITEMS } from "@/components/layout/navGroups";
-import { useEventStore } from "@/store/events";
+import { NAV_GROUPS, NAV_FOOTER_ITEMS, SETTINGS_HUB_IDS } from "@/components/layout/navGroups";
+import { isSectionId, useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { useIdeChatStore } from "@/store/ideChat";
 
@@ -58,19 +58,6 @@ const voiceModeMock = vi.hoisted(() => ({
 vi.mock("@/hooks/useVoiceMode", () => ({
   useVoiceMode: () => voiceModeMock.value,
 }));
-
-function resetVoiceModeMock() {
-  voiceModeMock.value = {
-    mode: "pipeline",
-    activeProvider: null,
-    activeProviderLabel: null,
-    activeModel: null,
-    sessionActive: false,
-    activeSessionMode: null,
-    activeSessionProvider: "",
-    activeSessionModel: "",
-  };
-}
 
 function renderSidebar(width?: number) {
   const client = new QueryClient({
@@ -267,7 +254,7 @@ describe("Sidebar header avatar", () => {
   });
 });
 
-describe("Sidebar brain footer", () => {
+describe("Sidebar settings-hub entry", () => {
   beforeEach(() => {
     useEventStore.setState({
       voiceState: "idle",
@@ -275,8 +262,7 @@ describe("Sidebar brain footer", () => {
       transcriptionFinal: true,
       connected: true,
       voiceReady: true,
-      brainProvider: "unknown",
-      brainModel: "",
+      activeSection: "chats",
     });
   });
 
@@ -284,146 +270,41 @@ describe("Sidebar brain footer", () => {
     cleanup();
   });
 
-  test("renders the active provider and its model id", () => {
-    // The footer must show WHICH model is in use, not just the provider — a
-    // user who configured e.g. opus-4-8 wants that surfaced, not a bare "—".
-    useEventStore.setState({ brainProvider: "claude-api", brainModel: "claude-opus-4-8" });
-
+  test("the profile button opens the hub on the Profile tab", () => {
+    // The popup is gone: one click lands in the Settings hub, on Profile.
     renderSidebar();
+
     fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
-    expect(screen.getByText("Claude (API)")).toBeTruthy();
-    const modelLine = screen.getByTestId("sidebar-brain-model");
-    expect(modelLine.textContent).toBe("claude-opus-4-8");
+    expect(useEventStore.getState().activeSection).toBe("profile");
   });
 
-  test("hides the model line when no model is known (shows provider only)", () => {
-    useEventStore.setState({ brainProvider: "gemini", brainModel: "" });
-
+  test("the profile button stays lit while any hub section is on screen", () => {
+    // It IS the hub's entry point, so it carries "you are here" for all of
+    // the hub's sections — including ones only reachable from inside the hub.
+    useEventStore.setState({ activeSection: "wallpaper" });
     renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
-    expect(screen.getByText("Gemini")).toBeTruthy();
-    expect(screen.queryByTestId("sidebar-brain-model")).toBeNull();
-  });
-
-  test("follows a live model change", () => {
-    useEventStore.setState({ brainProvider: "claude-api", brainModel: "claude-opus-4-8" });
-    renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
-    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("claude-opus-4-8");
-
-    act(() => {
-      useEventStore.setState({ brainProvider: "gemini", brainModel: "gemini-3.1-flash" });
-    });
-
-    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("gemini-3.1-flash");
-    expect(screen.getByText("Gemini")).toBeTruthy();
-  });
-});
-
-describe("Sidebar footer in realtime voice mode", () => {
-  beforeEach(() => {
-    useEventStore.setState({
-      voiceState: "idle",
-      transcription: "",
-      transcriptionFinal: true,
-      connected: true,
-      voiceReady: true,
-      // The pipeline brain stays configured — it must NOT be what the footer
-      // shows while the realtime engine owns the voice path.
-      brainProvider: "openrouter",
-      brainModel: "google/gemini-3.5-flash",
-    });
-  });
-
-  afterEach(() => {
-    cleanup();
-    resetVoiceModeMock();
-  });
-
-  test("shows the realtime provider + model instead of the dormant pipeline brain", () => {
-    // The bug: the footer said "OpenRouter / google/gemini-3.5-flash" while
-    // Gemini Live was doing all the talking. In realtime mode the card must
-    // follow the realtime engine.
-    voiceModeMock.value = {
-      ...voiceModeMock.value,
-      mode: "realtime",
-      activeProvider: "gemini-live",
-      activeProviderLabel: "Gemini Live",
-      activeModel: "gemini-3.1-flash-live-preview",
-    };
-
-    renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
-
-    expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Realtime");
-    expect(screen.getByText("Gemini Live")).toBeTruthy();
-    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe(
-      "gemini-3.1-flash-live-preview",
-    );
-    expect(screen.queryByText("OpenRouter")).toBeNull();
-    expect(screen.queryByText("google/gemini-3.5-flash")).toBeNull();
-  });
-
-  test("a RUNNING realtime session's live provider/model outrank the configured pick", () => {
-    // Mid-call cross-family fallback (AP-22) must be visible: the session
-    // crossed from Gemini to OpenAI, so the card shows the live engine.
-    voiceModeMock.value = {
-      ...voiceModeMock.value,
-      mode: "realtime",
-      activeProvider: "gemini-live",
-      activeProviderLabel: "Gemini Live",
-      activeModel: "gemini-3.1-flash-live-preview",
-      sessionActive: true,
-      activeSessionMode: "realtime",
-      activeSessionProvider: "openai-realtime",
-      activeSessionModel: "gpt-realtime-2.1",
-    };
-
-    renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
-
-    expect(screen.getByText("OpenAI Realtime")).toBeTruthy();
-    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("gpt-realtime-2.1");
-  });
-
-  test("pipeline mode keeps the classic brain footer", () => {
-    // Guard the split itself: mode "pipeline" must still show the brain card
-    // even when a realtime provider is fully configured.
-    voiceModeMock.value = {
-      ...voiceModeMock.value,
-      mode: "pipeline",
-      activeProvider: "gemini-live",
-      activeProviderLabel: "Gemini Live",
-      activeModel: "gemini-3.1-flash-live-preview",
-    };
-
-    renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
-
-    expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Brain");
-    expect(screen.getByText("OpenRouter")).toBeTruthy();
-    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe(
-      "google/gemini-3.5-flash",
+    expect(screen.getByTestId("sidebar-profile-toggle").className).toMatch(
+      /jarvis-nav-active/,
     );
   });
 
-  test("Vertex AI Live is named as such, not as the pipeline brain", () => {
-    voiceModeMock.value = {
-      ...voiceModeMock.value,
-      mode: "realtime",
-      activeProvider: "vertex-live",
-      activeProviderLabel: "Vertex AI Live",
-      activeModel: "gemini-live-2.5-flash-preview-native-audio-dialog",
-    };
+  test("the profile button is calm on non-hub sections", () => {
+    useEventStore.setState({ activeSection: "board" });
+    renderSidebar();
 
+    expect(screen.getByTestId("sidebar-profile-toggle").className).not.toMatch(
+      /jarvis-nav-active/,
+    );
+  });
+
+  test("opens no popup — the hub is the only destination", () => {
     renderSidebar();
     fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
-    expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Realtime");
-    expect(screen.getByText("Vertex AI Live")).toBeTruthy();
-    expect(screen.queryByText("OpenRouter")).toBeNull();
+    expect(screen.queryByTestId("sidebar-profile-panel")).toBeNull();
+    expect(screen.queryByTestId("sidebar-brain-card")).toBeNull();
   });
 });
 
@@ -786,32 +667,29 @@ describe("compact sidebar navigation", () => {
     expect(screen.getByTestId("recent-chats")).toBeTruthy();
   });
 
-  test("opens settings from the profile and closes after navigation", () => {
+  test("the profile button opens the hub — hub tabs are the hub's own tests", () => {
+    // No popup anymore: entries like Wallpaper live in the hub's left nav
+    // (see SettingsHubView.test), so one click on the profile button is the
+    // whole interaction and it lands on the Profile tab.
     renderSidebar();
     fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
-    fireEvent.click(screen.getByTestId("nav-row-wallpaper"));
-    expect(useEventStore.getState().activeSection).toBe("wallpaper");
-    expect(screen.queryByTestId("sidebar-profile-panel")).toBeNull();
-  });
-
-  test("dismisses the profile with Escape and restores focus", () => {
-    renderSidebar();
-    const trigger = screen.getByTestId("sidebar-profile-toggle");
-    fireEvent.click(trigger);
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByTestId("sidebar-profile-panel")).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-    fireEvent.click(trigger);
-    fireEvent.pointerDown(document.body);
+    expect(useEventStore.getState().activeSection).toBe("profile");
     expect(screen.queryByTestId("sidebar-profile-panel")).toBeNull();
   });
 
   test("every registered destination remains reachable", () => {
     renderSidebar();
     fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
     for (const item of [...NAV_GROUPS.flat(), ...NAV_FOOTER_ITEMS]) {
+      // Hub entries are one profile-button click away (covered above); the
+      // hub selects their tab itself (see SettingsHubView.test).
+      if ((SETTINGS_HUB_IDS as readonly string[]).includes(item.id)) continue;
       expect(screen.getByTestId(item.id === "chats" ? "sidebar-new-chat" : `nav-row-${item.id}`)).toBeTruthy();
+    }
+    // And every hub id is still a valid section id — an id the hub lists
+    // that stops resolving strands deep links, the deck and voice commands.
+    for (const id of SETTINGS_HUB_IDS) {
+      expect(isSectionId(id)).toBe(true);
     }
   });
 });

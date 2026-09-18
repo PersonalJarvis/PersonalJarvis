@@ -3,7 +3,6 @@ import {
   MessageSquare,
   Mic,
   ChevronDown,
-  ChevronRight,
   MoreHorizontal,
   Store,
   UserCircle2,
@@ -12,8 +11,8 @@ import {
   Plus,
 } from "lucide-react";
 import {
-  NAV_FOOTER_ITEMS,
   NAV_GROUPS,
+  SETTINGS_HUB_IDS,
   presentNavItem,
   resolveNavLabel,
   type NavItem,
@@ -23,10 +22,9 @@ import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
-import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { clsx } from "clsx";
 import { cn } from "@/lib/utils";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
@@ -227,34 +225,10 @@ export function Sidebar({
   const onIdeSection = IDE_SECTIONS.includes(active);
   const chatFace = onIdeSection && ideWorkspaceOpen && ideView === "chat";
   const [moreOpen, setMoreOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [startingVoice, setStartingVoice] = useState(false);
   const startingVoiceRef = useRef(false);
-  const profileRef = useRef<HTMLDivElement>(null);
-  const profileButtonRef = useRef<HTMLButtonElement>(null);
   const identity = usePublishIdentity();
-  useEffect(() => {
-    setProfileOpen(false);
-  }, [active]);
-  useEffect(() => {
-    if (!profileOpen) return;
-    const dismiss = (event: PointerEvent) => {
-      if (!profileRef.current?.contains(event.target as Node)) setProfileOpen(false);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setProfileOpen(false);
-        profileButtonRef.current?.focus();
-      }
-    };
-    document.addEventListener("pointerdown", dismiss);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("pointerdown", dismiss);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [profileOpen]);
   const startNewChat = () => {
     newChat();
     newAgentChat();
@@ -303,10 +277,6 @@ export function Sidebar({
   // page's verdict rather than a decorative grey mark. Three honest states:
   // something is failing, something has answered, or nothing has reported yet
   // — a fresh install must not claim green before a single provider replied.
-  const providersAnswering = useMemo(
-    () => Object.values(sectionHealth).some((h) => h?.status === "ok"),
-    [sectionHealth],
-  );
   // A connected marketplace plugin whose token was revoked/expired (needs_reauth)
   // — surfaced as an amber dot on the row that fronts Plugins ("Skills & Tools"),
   // so a dead connection is visible app-wide, not only on the Plugins page. The
@@ -328,15 +298,10 @@ export function Sidebar({
     s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
   );
 
-  // Read before the status line because BOTH depend on it now: the footer card
-  // follows the VOICE MODE rather than the pipeline brain (in realtime mode the
-  // pipeline brain is dormant, and showing it there misled the user —
-  // "OpenRouter" while Gemini Live was doing all the talking), and the status
-  // line needs its connecting phase. Same resolver as the mission-deck header
-  // and orb (`useVoiceEngineDisplay`): a live session outranks the configured
-  // pick so a mid-call cross-family fallback is visible (AP-22).
+  // Read for the status line's connecting phase. Same resolver as the
+  // mission-deck header and orb (`useVoiceMode`): a negotiating realtime
+  // transport outranks the pipeline's own state.
   const voiceMode = useVoiceMode();
-  const engine = useVoiceEngineDisplay();
 
   // The window connects in ~1s but the voice feature warms up ~20s in the
   // background. During that gap show a "Voice starting…" spinner instead of the
@@ -361,19 +326,8 @@ export function Sidebar({
         ? t("voice_state.connecting")
         : t(`voice_state.${voiceState}`);
 
-  const realtimeFooter = engine.tier === "realtime";
-  const footerLabel = realtimeFooter
-    ? t("sidebar.realtime_label")
-    : t("sidebar.brain_label");
-  const footerTooltip = realtimeFooter
-    ? t("sidebar.realtime_tooltip")
-    : t("sidebar.brain_tooltip");
-  const footerProvider = engine.providerLabel;
-  const footerModel = engine.model;
-
   // Dragged past the snap point the sidebar becomes a rail of icons. Everything
-  // that only makes sense with a label beside it — the wake-word hint, the
-  // realtime control, the brain card's provider and model — steps aside; the
+  // that only makes sense with a label beside it steps aside; the
   // navigation itself never does, because losing it would make the rail a dead
   // end rather than a narrow sidebar.
   // Two independent ways into the rail: the explicit toggle, and dragging the
@@ -390,10 +344,14 @@ export function Sidebar({
   // behind "Show more" that users reached for daily, while the tools folder
   // duplicated exactly what "Show more" already lists.
   const primaryIds = ["chats", "agents", "dictation", "visualization", "tasks", "plugins", "marketplace"];
-  const profileItems = [...NAV_GROUPS[3], ...NAV_GROUPS[4], ...NAV_FOOTER_ITEMS]
-    .filter((item) => !primaryIds.includes(item.id));
-  const assignedIds = new Set([...primaryIds, ...toolIds, ...profileItems.map((item) => item.id)]);
+  // The Settings hub owns its entries — they live in the hub's left
+  // navigation now, so "Show more" must not list them a second time. The set
+  // itself is named once in `navGroups` (`SETTINGS_HUB_IDS`).
+  const assignedIds = new Set([...primaryIds, ...toolIds, ...SETTINGS_HUB_IDS]);
   const moreItems = [...toolItems, ...allItems.filter((item) => !assignedIds.has(item.id))];
+  // Lit while any hub section is on screen — the profile button IS the hub's
+  // entry point now, so it carries the "you are here" state for all of them.
+  const hubActive = (SETTINGS_HUB_IDS as readonly string[]).includes(active);
   const rowClass = "flex min-h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const renderRow = (raw: NavItem, compact = railed) => {
     const item = presentNavItem(raw, surface);
@@ -404,7 +362,7 @@ export function Sidebar({
       alert={item.id === "apikeys" && apikeysHasError} alertTitle={t("sidebar.apikeys_alert")}
       warn={item.id === "plugins" ? pluginsNeedReconnect : item.id === "local-models" && localModelsNeedAttention}
       warnTitle={item.id === "local-models" ? localModelsHealth?.detail || localModelsHealth?.reason || undefined : pluginWarnTitle}
-      onClick={() => { setActive(item.id); setProfileOpen(false); }} />;
+      onClick={() => { setActive(item.id); }} />;
   };
 
   return (
@@ -582,14 +540,17 @@ export function Sidebar({
         </section>}
       </div>
 
-      <div ref={profileRef} className="relative shrink-0 border-t border-border p-2"
-        onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node)) setProfileOpen(false);
-        }}>
+      {/* The footer is one button now, not a popup: it opens the Settings hub
+          on the Profile tab. The hub carries every former popup entry
+          (Profile, {name}.md, Contacts, Spend, Socials, API Keys, Local
+          models, Settings, Wallpaper, Feedback) in its own left navigation.
+          The attention dot stays — a failing provider, or a local setup that
+          needs care, must be visible without opening anything. */}
+      <div className="shrink-0 border-t border-border p-2">
         <div className={cn("flex items-center gap-1", railed && "flex-col")}>
-          <button ref={profileButtonRef} type="button" onClick={() => setProfileOpen(!profileOpen)}
-            aria-expanded={profileOpen} aria-controls="sidebar-profile-panel" title={t("nav.profile")}
-            data-testid="sidebar-profile-toggle" className={cn(rowClass, "min-w-0 flex-1")}>
+          <button type="button" onClick={() => setActive("profile")} title={t("nav.profile")}
+            data-testid="sidebar-profile-toggle"
+            className={cn(rowClass, "min-w-0 flex-1", hubActive && "jarvis-nav-active bg-secondary text-foreground")}>
             <span className="relative shrink-0">
               <UserCircle2 aria-hidden className="h-7 w-7" />
               {(apikeysHasError || localModelsNeedAttention) && <span data-testid="sidebar-profile-attention"
@@ -604,74 +565,6 @@ export function Sidebar({
             <Store aria-hidden className="h-5 w-5" />
           </button>
         </div>
-        {profileOpen && <div id="sidebar-profile-panel" data-testid="sidebar-profile-panel"
-          className="absolute bottom-full left-2 z-50 mb-2 w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-border bg-card p-2 shadow-xl">
-          <div className="max-h-[65vh] overflow-y-auto scrollbar-jarvis">
-            <ul className="space-y-0.5">{profileItems.map((item) => renderRow(item, false))}</ul>
-          </div>
-        <button
-          type="button"
-          onClick={() => setActive("apikeys")}
-          data-testid="sidebar-brain-card"
-          className={cn(
-            "group flex w-full items-center rounded-lg border border-border bg-card text-left transition-colors hover:border-border-strong",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
-            "mt-2 gap-3 p-3",
-          )}
-          // On the rail the card shrinks to its status dot, so everything it
-          // would have said moves into the hover text — otherwise the dot is a
-          // button with no stated purpose.
-          title={
-            railed
-              ? `${footerLabel}: ${footerProvider}${footerModel ? ` · ${footerModel}` : ""} — ${footerTooltip}`
-              : footerTooltip
-          }
-        >
-          {/* Not decoration: the dot is this button's destination reporting in
-              — red when a configured provider is failing, green once one has
-              actually answered, neutral until any of them has. On the rail it
-              is the whole card, which is why it has to mean something. */}
-          <div
-            data-testid="sidebar-footer-health"
-            className={cn(
-              "h-2 w-2 shrink-0 rounded-full",
-              apikeysHasError
-                ? "bg-destructive"
-                : providersAnswering
-                  ? "bg-success"
-                  : "bg-muted-foreground",
-            )}
-          />
-          {(
-          <div className="flex-1 min-w-0">
-            <div
-              className="text-xs uppercase tracking-wide text-foreground-faint"
-              data-testid="sidebar-footer-tier"
-            >
-              {footerLabel}
-            </div>
-            <div className="truncate text-base font-medium text-foreground-strong">
-              {footerProvider}
-            </div>
-            {/* The model id actually in use (e.g. "claude-opus-4-8", or the
-                realtime model in realtime mode) — the user asked to see WHICH
-                model is in use, not just the provider. */}
-            {footerModel && (
-              <div
-                className="truncate text-sm text-muted-foreground"
-                title={footerModel}
-                data-testid="sidebar-brain-model"
-              >
-                {footerModel}
-              </div>
-            )}
-          </div>
-          )}
-          {(
-            <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-          )}
-        </button>
-        </div>}
       </div>
     </aside>
   );

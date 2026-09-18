@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bot, Brain, KeyRound, Mic, Phone, Radio, SlidersHorizontal, Terminal, Volume2, Wand2 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { JarvisAgentSection } from "@/components/JarvisAgentSection";
+import { LiveProfile } from "@/components/providers/LiveProfile";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
@@ -54,7 +55,6 @@ type CategoryKey = ProviderTier | "subagents" | "jarvis-key" | "advanced";
 // does — it only ever works on a transcript that tier produced.
 const PIPELINE_TABS: CategoryKey[] = [
   "brain",
-  "computer-use",
   "tts",
   "stt",
   "dictation",
@@ -64,7 +64,6 @@ const PIPELINE_TABS: CategoryKey[] = [
 ];
 const REALTIME_TABS: CategoryKey[] = [
   "realtime",
-  "computer-use",
   "subagents",
   "jarvis-key",
   "advanced",
@@ -199,6 +198,8 @@ export function ApiKeysView() {
           />
         )}
         {active === "realtime" && (
+          <>
+          {!localMode && <LiveProfile />}
           <RealtimeCategory
             meta={categories.realtime}
             providers={providers}
@@ -210,6 +211,7 @@ export function ApiKeysView() {
             localMode={localMode}
             onDisableLocalMode={() => setLocalMode(false)}
           />
+          </>
         )}
         {active === "computer-use" && (
           <ComputerUseCategory

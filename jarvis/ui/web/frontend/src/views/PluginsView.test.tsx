@@ -387,7 +387,56 @@ describe("PkceConnectDialog own-client + production hint", () => {
       (screen.getByRole("button", { name: /^continue$/i }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
-    expect(screen.queryByLabelText(/client id/i)).toBeNull();
+    // Publisher-pending setup is expanded up front: the client form is the
+    // way to connect today, not a hidden expert override.
+    expect(screen.getByLabelText(/client id/i)).toBeDefined();
+  });
+
+  it("guides a publisher-pending provider through console, redirect URI and client", async () => {
+    const slack = {
+      ...gmail,
+      id: "slack",
+      name: "Slack",
+      oauthClientFamily: "slack",
+      oauthClientConfigured: false,
+      browserReady: false,
+      authConfig: {
+        mode: "oauth_pkce_loopback" as const,
+        callback_port: 3118,
+        callback_path: "/oauth/callback",
+      },
+    } as unknown as Parameters<typeof PkceConnectDialog>[0]["plugin"];
+    const calls: { url: string; body: string }[] = [];
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      calls.push({ url: String(input), body: String(init?.body ?? "") });
+      return { ok: true, status: 200, json: async () => ({ opened: true }) } as Response;
+    }) as unknown as typeof fetch;
+    render(
+      <PkceConnectDialog plugin={slack} onClose={() => {}} onProceed={() => {}} />,
+    );
+
+    // Step 1 opens the provider app console in the browser.
+    fireEvent.click(
+      screen.getByRole("button", { name: /open the slack app console/i }),
+    );
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.url === "/api/settings/open-external" &&
+            c.body.includes("https://api.slack.com/apps"),
+        ),
+      ).toBe(true),
+    );
+    // The exact redirect URI to register, and the client field, are visible
+    // without opening any collapsed section first.
+    expect(
+      screen.getByText("http://127.0.0.1:3118/oauth/callback"),
+    ).toBeDefined();
+    expect(screen.getByLabelText(/client id/i)).toBeDefined();
   });
 });
 

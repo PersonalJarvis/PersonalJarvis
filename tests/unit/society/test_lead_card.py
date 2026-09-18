@@ -166,8 +166,7 @@ def test_render_lists_hands_by_grant_mode():
     assert "- Bare · specialist · idle · hands: none granted yet" in card
     assert "- Focused · specialist · idle · hands: Gmail" in card
     assert (
-        "Coding terminals open in the Agentic IDE right now (not society agents): T1, T2."
-        in card
+        "Coding terminals open in the Agentic IDE right now (not society agents): T1, T2." in card
     )
 
 
@@ -233,3 +232,99 @@ async def test_a_lead_assigned_result_reaches_the_person(rt: SocietyRuntime):
     assert announcements[0].language == "de"
     spoken = "Gmail agent ist fertig: Invoice answered."  # i18n-allow: spoken completion
     assert announcements[0].text == spoken
+
+
+async def test_an_agent_answer_to_the_lead_reaches_the_person(rt: SocietyRuntime):
+    """Live 2026-09-09: the ack promised a report, the ANSWER arrived, voice
+    stayed silent. The lead's incoming message is owed an answer too."""
+    import asyncio
+
+    chat: FakeChat = rt.chat  # type: ignore[attr-defined]
+    chat.store.create_session(
+        provider="openai", model="gpt-5.2", effort="", cwd=str(tmp_path_of(rt)), surface="jarvis"
+    )
+    gmail = await rt.roster.create(name="Gmail agent", focus=["plugin:gmail"])
+    # The order Jarvis gave (German turn, like delegate_to_agent sends it).
+    request = await rt.say(
+        from_agent="jarvis",
+        to_agent=gmail[0].agent_id,
+        text="Answer the invoice mail.",
+        trace_id="voice:abc",
+        msg_type=MsgType.ASSIGN,
+        payload={"lang": "de"},
+    )
+    published = rt.published  # type: ignore[attr-defined]
+    published.clear()
+    # MessageAgentTool preserves the incoming request's trace and parent.
+    await rt.say(
+        from_agent=gmail[0].agent_id,
+        to_agent="jarvis",
+        text="Invoice answered.",
+        msg_type=MsgType.ANSWER,
+        trace_id=request.trace_id,
+        parent_event_id=request.event_id,
+    )
+    await asyncio.sleep(0.05)
+
+    assert len(chat.notices) == 1
+    session_id, payload = chat.notices[0]
+    assert chat.store.get_session(session_id).surface == "jarvis"
+    assert payload["kind"] == "society_message"
+    assert payload["agent_name"] == "Gmail agent"
+    assert payload["msg_type"] == "answer"
+    assert payload["text"] == "Invoice answered."
+    announcements = [e for e in published if type(e).__name__ == "AnnouncementRequested"]
+    assert len(announcements) == 1
+    assert announcements[0].kind == "completion"
+    assert announcements[0].language == "de"
+    spoken = "Gmail agent meldet: Invoice answered."  # i18n-allow: spoken completion
+    assert announcements[0].text == spoken
+
+
+async def test_agent_to_agent_chatter_stays_silent(rt: SocietyRuntime):
+    """Only messages TO Jarvis reach the person; team chatter stays on the board."""
+    import asyncio
+
+    await rt.roster.create(name="Scout")
+    await rt.roster.create(name="Archivist")
+    published = rt.published  # type: ignore[attr-defined]
+    published.clear()
+    await rt.say(from_agent="scout", to_agent="archivist", text="ping")
+    await asyncio.sleep(0.05)
+    assert [e for e in published if type(e).__name__ == "AnnouncementRequested"] == []
+
+
+async def test_result_to_the_lead_does_not_double_announce(rt: SocietyRuntime):
+    """RESULT keeps its owners (report_to_lead / MissionAnnouncer); the new
+    incoming hook must not speak it a second time."""
+    import asyncio
+
+    gmail = await rt.roster.create(name="Gmail agent")
+    published = rt.published  # type: ignore[attr-defined]
+    published.clear()
+    await rt.say(
+        from_agent=gmail[0].agent_id,
+        to_agent="jarvis",
+        text="done",
+        msg_type=MsgType.RESULT,
+        payload={"run_id": "r1", "status": "done", "done": "x", "output": ["chat:s"]},
+    )
+    await asyncio.sleep(0.05)
+    assert [e for e in published if type(e).__name__ == "AnnouncementRequested"] == []
+
+
+async def test_direct_agent_chat_after_old_assignment_stays_silent(rt: SocietyRuntime):
+    """An old Jarvis request must not turn a later direct chat into speech."""
+    gmail, _ = await rt.roster.create(name="Gmail agent")
+    await rt.say(
+        from_agent="jarvis", to_agent=gmail.agent_id, text="Check the inbox",
+        msg_type=MsgType.ASSIGN, trace_id="old-request", payload={"lang": "en"},
+    )
+    published = rt.published  # type: ignore[attr-defined]
+    published.clear()
+    await rt.say(
+        from_agent=gmail.agent_id, to_agent="jarvis", text="Hello there",
+        msg_type=MsgType.ANSWER, trace_id="direct-chat",
+    )
+    assert not [e for e in published if type(e).__name__ == "AnnouncementRequested"]
+    assert not rt.chat.notices  # type: ignore[attr-defined]
