@@ -1213,3 +1213,11 @@ def test_serp_footer_is_still_deleted_whole_not_placeholdered() -> None:
     assert "weitere ergebnisse" not in low
     assert "website" not in low
     assert "removed_source_artifacts" in result.actions
+
+
+def test_japanese_reply_keeps_its_digits() -> None:
+    from jarvis.brain.output_filter import scrub_for_voice
+
+    text = "手順は 1. 開く 2. 閉じる"  # Japanese steps "1." "2."
+    out = scrub_for_voice(text, language="en")
+    assert "1" in out.cleaned and "one" not in out.cleaned.lower()

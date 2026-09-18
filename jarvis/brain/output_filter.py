@@ -819,9 +819,13 @@ def scrub_for_voice(
     #     words. A flash-tier model still emits digits despite that rule, so this
     #     is the deterministic backstop (num2words, rule-based — NO LLM, AP-11
     #     safe). Locale-aware; a transparent no-op when num2words is missing.
+    #     Not for Japanese text: its canned locale is de/en/es, so a Japanese
+    #     reply had "1." spelled as English "one." — and Japanese TTS reads
+    #     digits natively.
+    from jarvis.core.turn_language import is_japanese_text
     from jarvis.voice.number_speller import spell_out_numbers
 
-    new = spell_out_numbers(out, language=language)
+    new = out if is_japanese_text(out) else spell_out_numbers(out, language=language)
     if new != out:
         actions.append("spelled_out_numbers")
         out = new

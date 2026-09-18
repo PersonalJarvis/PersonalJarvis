@@ -1758,6 +1758,39 @@ def _is_whole_text_fallback(original: str, scrubbed: ScrubResult) -> bool:
     return cleaned not in original
 
 
+def _own_probe_engine(config: Any, utterance_stt: Any = None) -> Any:
+    """A SEPARATE on-device recognizer for the live preview, or ``None``.
+
+    With no wake Whisper, the preview used to share the utterance provider's
+    engine. A local engine runs one decode at a time (AP-24), so a slow preview
+    held it while the final transcription of the same turn waited — 10 s on a
+    CPU-only box right after boot (live 2026-09-18). An on-device recognizer
+    gets its own instance; a cloud one keeps sharing (no engine to contend).
+    """
+    stt_cfg = getattr(config, "stt", None)
+    if stt_cfg is None:
+        return None
+    # Only when the utterance engine really is a shipped STT plugin (seen
+    # through its wrappers); an injected engine is the caller's to share.
+    inner = utterance_stt
+    for _ in range(4):
+        nxt = getattr(inner, "_inner", None) or getattr(inner, "_primary", None)
+        if nxt is None:
+            break
+        inner = nxt
+    if utterance_stt is not None and not type(inner).__module__.startswith("jarvis.plugins.stt."):
+        return None
+    try:
+        from jarvis.plugins.stt import build_stt_from_config, provider_runs_on_device
+
+        if not provider_runs_on_device(str(getattr(stt_cfg, "provider", "") or "")):
+            return None
+        return build_stt_from_config(stt_cfg)
+    except Exception as exc:  # noqa: BLE001 - the shared engine still previews
+        log.info("Separate preview recognizer unavailable (%s); sharing the utterance one.", exc)
+        return None
+
+
 def _next_stream_sentence_break(buffer: str) -> int | None:
     """Cut index just past the next real sentence boundary in ``buffer``.
 
@@ -2512,7 +2545,9 @@ class SpeechPipeline:
         # In lightweight mode there is no local Whisper, but the post-wake
         # utterance STT may still exist (cloud provider). Keep that path alive
         # so the Listening bubble does not stay stuck on "...".
-        self._probe_stt: Any = self._stt or self._utterance_stt
+        self._probe_stt: Any = (
+            self._stt or _own_probe_engine(config, self._utterance_stt) or self._utterance_stt
+        )
         # User STT dictionary (dictation-tool-style custom vocabulary): wrap the
         # utterance + preview handles so EVERY provider's transcript gets the
         # user's corrections — brain turns, chat dictation, and the live

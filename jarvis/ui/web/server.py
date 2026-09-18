@@ -2315,12 +2315,14 @@ class WebServer:
                 str(getattr(self.cfg.tts, "fallback", "") or "").lower(),
             }
             if "voicevox" in tts_names:
-                from jarvis.plugins.tts import voicevox_engine
+                from jarvis.plugins.tts import _build_provider
 
                 # Warm start off the boot path: the first spoken reply must not
-                # wait ~10 s for the engine. A missing install is a log line.
+                # wait ~10 s for the engine and the voice model. A missing
+                # install is a log line.
+                voice = _build_provider(self.cfg.tts, "voicevox")
                 self._voicevox_task = asyncio.create_task(
-                    asyncio.to_thread(voicevox_engine.ensure_running),
+                    asyncio.to_thread(voice.warm),
                     name="voicevox-engine-boot",
                 )
         except Exception as exc:  # noqa: BLE001 -- the local voice must never block boot

@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import threading
 import time
 import wave
 from collections.abc import AsyncIterator
@@ -31,8 +32,15 @@ log = logging.getLogger(__name__)
 #: Default character + style: a calm, low male voice that suits an assistant.
 #: Proper nouns from the engine's catalogue (the engine only knows them in
 #: Japanese); an unknown name falls back to the catalogue's first style.
-DEFAULT_SPEAKER = "青山龍星"  # Aoyama Ryusei
-DEFAULT_STYLE = "ノーマル"  # "Normal"
+DEFAULT_SPEAKER = "\u9752\u5c71\u9f8d\u661f"  # Aoyama Ryusei
+DEFAULT_STYLE = "\u30ce\u30fc\u30de\u30eb"  # "Normal"
+
+#: One synthesis at a time. The pipeline pre-synthesises the next sentences
+#: while the first is still rendering; on a CPU engine running near real time
+#: those parallel jobs split the cores and the FIRST sentence finished last
+#: (live 2026-09-18: 16 s to the first word). Serialised, sentence 1 is ready
+#: in ~1.3 s and the rest follow while it plays.
+_SYNTH_LOCK = threading.Lock()
 
 
 class VoicevoxTTS:
@@ -74,9 +82,34 @@ class VoicevoxTTS:
                 self._speaker,
                 self._style,
             )
+            # Load the voice model now; the engine otherwise loads it inside
+            # the first synthesis, which delayed the first spoken word by
+            # several seconds.
+            try:
+                engine.request_bytes(
+                    f"/initialize_speaker?speaker={self._speaker_id}&skip_reinit=true",
+                    body={},
+                    timeout=60.0,
+                )
+            except Exception as exc:  # noqa: BLE001 - synthesis still loads it lazily
+                log.info("VOICEVOX speaker pre-load skipped: %s", exc)
         return self._speaker_id
 
+    def warm(self) -> bool:
+        """Start the engine and pre-load this speaker. Blocking; off-loop only."""
+        try:
+            with _SYNTH_LOCK:
+                self._prepare()
+            return True
+        except Exception as exc:  # noqa: BLE001 - a warm-up failure is a log line
+            log.info("VOICEVOX warm-up failed: %s", exc)
+            return False
+
     def _synthesize_sync(self, text: str) -> tuple[bytes, int]:
+        with _SYNTH_LOCK:
+            return self._synthesize_locked(text)
+
+    def _synthesize_locked(self, text: str) -> tuple[bytes, int]:
         speaker_id = self._prepare()
         from urllib.parse import quote
 

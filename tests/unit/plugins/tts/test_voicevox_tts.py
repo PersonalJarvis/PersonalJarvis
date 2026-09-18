@@ -67,7 +67,8 @@ async def test_synthesize_queries_then_renders_with_speed(monkeypatch) -> None:
 
     def _bytes(path: str, *, body, **_kw):
         calls.append(("POST", path))
-        bodies.append(body)
+        if path.startswith("/synthesis"):
+            bodies.append(body)
         return _wav(b"\x00\x00" * 50)
 
     monkeypatch.setattr(vv.engine, "request_json", _json)
@@ -76,6 +77,7 @@ async def test_synthesize_queries_then_renders_with_speed(monkeypatch) -> None:
     chunks = [c async for c in tts.synthesize("test")]
     assert len(chunks) == 1 and chunks[0].sample_rate == 24000
     assert ("POST", "/synthesis?speaker=14") in calls
+    assert ("POST", "/initialize_speaker?speaker=14&skip_reinit=true") in calls
     assert bodies[0]["speedScale"] == 1.2
 
 
