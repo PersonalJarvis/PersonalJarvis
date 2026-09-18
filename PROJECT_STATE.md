@@ -13,14 +13,14 @@ Target box: Windows 11, RTX 3050 Laptop (4 GB VRAM), 16 GB RAM, Python 3.13 venv
 | 3 | Local Japanese TTS (VOICEVOX + SAPI5 fallback) | DONE, live-verified; latency open (see Phase 3) |
 | 4 | Memory (Japanese search + say-do write) | PARTIAL: Japanese save/recall live-verified across restart; tiers/embeddings not done |
 | 5 | PC control | PARTIAL: local brain opened Notepad via run_shell (live) |
-| 6 | Screen understanding | NOT STARTED (large existing base) |
+| 6 | Screen understanding | DONE, live-verified: "look at the screen" in chat -> screenshot -> local Qwen3.5-4B vision (~35 s) |
 | 7 | Double-clap wake | DONE, live-verified via speaker playback (real claps: user to confirm) |
 | 8 | Model switch (normal 4B / developer 9B) | DONE for brain modes, live-verified; vision model not done |
 | 9 | Developer Mode | PARTIAL: project-chat loop live-verified on a sandbox; Unreal/Unity/Blender build loops not done |
 | 10 | Teacher Mode | DONE via chat (plan/start/silent record/summary/end), voice path partially verified |
-| 11 | Hand tracking | NOT STARTED |
-| 12 | iPhone client | NOT STARTED |
-| 13 | Self-check / recovery | NOT STARTED |
+| 11 | Hand tracking | PARTIAL: open-palm stop (MediaPipe, opt-in); landmarker verified, real-hand camera test open |
+| 12 | iPhone client | BLOCKED: LAN HTTPS listener drafted; exposing the port needs the user's explicit permission rule |
+| 13 | Self-check / recovery | PARTIAL: doctor reports the local stack; llama-server watchdog; git tag rollback point |
 
 Nothing below is "done" unless it says VERIFIED with evidence.
 
@@ -375,7 +375,42 @@ Japanese and is fixed:
 - Not done: live slide/screen window for summaries (text is shown in the
   chat/voice transcript and saved as Markdown), speaker separation.
 
+## Phase 6 — Screen understanding (2026-09-18)
+
+- Qwen3.5 is natively multimodal: `mmproj-<model>.gguf` next to the model
+  (installer: `install_local_brain.py`, default model only) is added to the
+  llama-server preset with `mmproj-offload = false` (projector on CPU; the
+  4 GB card has ~600 MB free with the 4B loaded).
+- `LocalOpenAIBrain` declares vision when its projector exists, keeps the
+  `screenshot` tool through the tool trim, and caps images at 768 px.
+  Measured: 1280 px 56 s, 768 px 17 s (correct), 512 px 7 s (misread).
+- `brain/screen_intent.py`: an explicit screen request (ja/en/de/es) mandates
+  the screenshot tool on a seeing brain; the 4B otherwise answered from
+  window titles. Also feeds `vision_gate.has_visual_marker`.
+- VERIFIED live: chat "gamen wo mite ..." -> "Looking at the screen" -> answer
+  from the image, 37 s end to end.
+- Not done: the 9B developer model has no projector (text only).
+
+## Phase 11 — Hand tracking (partial, 2026-09-18)
+
+- `vision/hand_gesture.py`: MediaPipe hand landmarker (optional install +
+  model via `scripts/install_hand_tracking.py`), open palm held 1 s ->
+  KillRequested. Opt-in `[trigger] palm_stop_enabled` (keeps the camera on).
+- Verified: landmarker loads and runs on this box; logic unit-tested.
+  Not verified: a real hand in front of the camera (needs the user).
+
+## Phase 12 — iPhone (blocked, 2026-09-18)
+
+- Design: HTTPS-only second listener on the private LAN IP (self-signed cert,
+  never 0.0.0.0), LAN origin added to SurfaceSecurity's trusted hosts, a
+  one-time pairing URL (`#pair=<bootstrap token>`) minted only from this PC
+  and shown as a QR (frontend already ships qrcode.react).
+- Blocked: the agent's permission classifier refused the change that exposes
+  a local service. Draft kept outside the repo; needs the user's go-ahead.
+
 ## Changelog
+
+- 2026-09-18: Emergency stop (ja voice, ESC hold, open palm), doctor local-stack check, Phase 6 local vision.
 - 2026-09-18: Teacher Mode (plan / in-class listening + summary / report) verified via chat.
 - 2026-09-18: local model modes (4B/9B) + developer project-chat loop verified; run_shell cwd + install-confirmation fixes.
 - 2026-09-18: Phase 7 double-clap wake + opt-in spoken wake ack; install_voicevox.py syntax fix.

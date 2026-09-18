@@ -38,6 +38,11 @@ DEFAULT_MODEL_URL = (
     "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"
 )
 
+#: Its vision projector (F16, ~670 MB). Installed next to the model as
+#: ``mmproj-<model>.gguf``, it lets the local brain read screenshots; the
+#: managed server keeps it on the CPU so VRAM planning is unchanged.
+DEFAULT_MMPROJ_URL = "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/mmproj-F16.gguf"
+
 
 def _asset_patterns() -> list[str]:
     system = sys.platform
@@ -103,18 +108,34 @@ def install_model(home: Path, url: str) -> Path:
     return dest
 
 
+def install_mmproj(model: Path, url: str) -> Path:
+    dest = model.parent / f"mmproj-{model.stem}.gguf"
+    if dest.is_file() and dest.stat().st_size > 0:
+        print(f"  vision projector already present: {dest.name}")
+        return dest
+    _fetch(url, dest)
+    return dest
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--model-url", default=DEFAULT_MODEL_URL)
     ap.add_argument("--skip-model", action="store_true")
     ap.add_argument("--skip-binary", action="store_true")
+    ap.add_argument("--mmproj-url", default=DEFAULT_MMPROJ_URL)
+    ap.add_argument("--skip-vision", action="store_true", help="text only, no screen reading")
     args = ap.parse_args()
     home = llama_home()
     print(f"Local brain home: {home}")
     if not args.skip_binary:
         print(f"llama.cpp: {install_binary(home)}")
     if not args.skip_model:
-        print(f"model: {install_model(home, args.model_url).name}")
+        model = install_model(home, args.model_url)
+        print(f"model: {model.name}")
+        # The projector belongs to the default model; a custom model URL needs
+        # its own matching projector, so it is only fetched for the default.
+        if not args.skip_vision and args.model_url == DEFAULT_MODEL_URL:
+            print(f"vision: {install_mmproj(model, args.mmproj_url).name}")
     print("Done. Restart Jarvis (or wait for the next boot) to start the local brain.")
     return 0
 

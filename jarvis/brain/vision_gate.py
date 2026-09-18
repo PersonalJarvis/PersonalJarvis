@@ -59,7 +59,13 @@ _MARKER_RE = re.compile("|".join(re.escape(m) for m in _VISUAL_MARKERS), re.IGNO
 
 def has_visual_marker(text: str) -> bool:
     """True if the utterance contains a deictic / visual-reference marker."""
-    return bool(_MARKER_RE.search(text or ""))
+    if _MARKER_RE.search(text or ""):
+        return True
+    # Explicit screen requests in every locale, incl. Japanese (no word
+    # boundaries, so it lives in its own matcher).
+    from jarvis.brain.screen_intent import wants_screen_look  # noqa: PLC0415
+
+    return wants_screen_look(text or "")
 
 
 def should_attach_screenshot(text: str, *, is_smalltalk: bool = False) -> bool:

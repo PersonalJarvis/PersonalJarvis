@@ -92,3 +92,13 @@ def test_low_first_vram_reading_is_resampled(monkeypatch) -> None:
     monkeypatch.setattr(ls, "free_vram_mb", lambda: next(readings))
     monkeypatch.setattr(ls.time, "sleep", lambda _s: None)
     assert ls._settled_free_vram_mb(2614 * MB) == 3880
+
+
+def test_presets_attach_an_installed_vision_projector_on_the_cpu(tmp_path: Path) -> None:
+    model = tmp_path / "A.gguf"
+    (tmp_path / "mmproj-A.gguf").write_bytes(b"x")
+    text = ls.render_presets([model, tmp_path / "B.gguf"], {"A": "full", "B": "full"})
+    block_a, block_b = text.split("\n\n")
+    assert f"mmproj = {tmp_path / 'mmproj-A.gguf'}" in block_a
+    assert "mmproj-offload = false" in block_a
+    assert "mmproj" not in block_b

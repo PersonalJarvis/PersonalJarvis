@@ -99,9 +99,7 @@ def list_models(directory: Path | None = None) -> list[Path]:
     if not root.is_dir():
         return []
     files = [
-        p
-        for p in root.glob("*.gguf")
-        if p.is_file() and not p.name.lower().startswith("mmproj")
+        p for p in root.glob("*.gguf") if p.is_file() and not p.name.lower().startswith("mmproj")
     ]
     return sorted(files, key=lambda p: (p.stat().st_size, p.name))
 
@@ -230,6 +228,22 @@ def gguf_block_count(path: Path) -> int | None:
     return None
 
 
+def mmproj_for(model: Path | str) -> Path | None:
+    """The vision projector installed for ``model`` (``mmproj-<stem>.gguf``)."""
+    stem = model.stem if isinstance(model, Path) else str(model)
+    path = models_dir() / f"mmproj-{stem}.gguf"
+    return path if path.is_file() else None
+
+
+def _vision_lines(path: Path) -> list[str]:
+    proj = path.parent / f"mmproj-{path.stem}.gguf"
+    if not proj.is_file():
+        return []
+    # The projector stays on the CPU: the VRAM tiers above are sized for the
+    # text model alone, and an image turn is rare enough to pay a few seconds.
+    return [f"mmproj = {proj}", "mmproj-offload = false"]
+
+
 def _tier_lines(tier: str) -> list[str]:
     if tier == "full":
         return ["n-gpu-layers = 99"]
@@ -264,6 +278,7 @@ def render_presets(models: list[Path], tiers: dict[str, str], ctx: int = DEFAULT
             # Voice turns want the answer, not a visible chain of thought.
             "reasoning = off",
             *_tier_lines(tiers.get(path.stem, "cpu")),
+            *_vision_lines(path),
         ]
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + "\n"
@@ -332,10 +347,14 @@ class LlamaServer:
         self._log_handle = open(log_path, "ab")  # noqa: SIM115 - lives as long as the process
         cmd = [
             str(binary),
-            "--host", "127.0.0.1",
-            "--port", str(self._port),
-            "--models-preset", str(preset),
-            "--models-max", "1",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(self._port),
+            "--models-preset",
+            str(preset),
+            "--models-max",
+            "1",
         ]
         log.info("llama-server: starting %s (tiers %s)", " ".join(cmd), self._tiers)
         self._proc = subprocess.Popen(  # noqa: S603 - fixed argv, managed binary
@@ -394,7 +413,8 @@ class LlamaServer:
         if binary is None or not models:
             log.info(
                 "llama-server: not installed (binary=%s, models=%d) — local brain absent.",
-                binary, len(models),
+                binary,
+                len(models),
             )
             return None
         if self.is_running() and self._healthy():
@@ -421,7 +441,10 @@ class LlamaServer:
             if self._warm(target):
                 log.info(
                     "llama-server: ready on %s — %s on tier %s (free VRAM %s MB)",
-                    self.base_url, target, self._tiers[target], free,
+                    self.base_url,
+                    target,
+                    self._tiers[target],
+                    free,
                 )
                 return self._state(models)
             current = self._tiers[target]
@@ -433,7 +456,9 @@ class LlamaServer:
             self._tiers[target] = OFFLOAD_TIERS[OFFLOAD_TIERS.index(ladder) + 1]
             log.warning(
                 "llama-server: stepping %s down from %s to %s and restarting",
-                target, current, self._tiers[target],
+                target,
+                current,
+                self._tiers[target],
             )
             self.stop()
         self.stop()
@@ -480,8 +505,10 @@ def _configured_base_url(cfg: Any) -> str:
 def _wire(cfg: Any, state: ServerState) -> None:
     """Pin the card's base URL to the served port (only when it differs)."""
     current = _configured_base_url(cfg)
-    if current and current != state.base_url and not current.startswith(
-        ("http://127.0.0.1", "http://localhost")
+    if (
+        current
+        and current != state.base_url
+        and not current.startswith(("http://127.0.0.1", "http://localhost"))
     ):
         # The user points the card at a remote server — theirs, not ours.
         log.info("llama-server: card points at %s — leaving it untouched.", current)
@@ -598,6 +625,7 @@ __all__ = [
     "free_vram_mb",
     "list_models",
     "llama_home",
+    "mmproj_for",
     "render_presets",
     "schedule_boot",
     "server",

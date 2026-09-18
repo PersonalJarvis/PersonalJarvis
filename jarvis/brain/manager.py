@@ -11836,6 +11836,26 @@ class BrainManager:
                     _save_mandate[0],
                 )
 
+        # "Look at my screen" on a brain that can see: mandate the screenshot
+        # (see jarvis/brain/screen_intent.py for the live failure).
+        if not self._evidence_required_tool:
+            from jarvis.brain.screen_intent import (
+                SCREEN_DIRECTIVE,
+                SCREEN_TOOL,
+                wants_screen_look,
+            )
+
+            if (
+                wants_screen_look(user_text)
+                and SCREEN_TOOL in (getattr(self, "_tools", None) or {})
+                and self._provider_advertises_vision(
+                    self._active_name, self._vision_look_model(self._active_name)
+                )
+            ):
+                self._evidence_directive = SCREEN_DIRECTIVE
+                self._evidence_required_tool = SCREEN_TOOL
+                log.info("Screen guard: mandating %s this turn", SCREEN_TOOL)
+
         # Say-do guard for LOCAL OUTCOMES (shell-consistency rework 2026-08-08).
         # A natural file/folder/system request ("erstell einen Ordner auf dem
         # Desktop") used to reach the LLM with run_shell merely OPTIONAL:
