@@ -42,6 +42,18 @@ describe("tool visual identities", () => {
     expect(identity.logo).toBeTruthy();
   });
 
+  it("uses the bundled PNG for AgentMail and the AMD arrow for GPU status", () => {
+    const mail = toolIdentity(row({ id: "plugin:agentmail", brand: "agentmail", label: "AgentMail" }));
+    expect(mail.key).toBe("agentmail");
+    expect(mail.logo).toMatch(/agentmail/);
+    expect(mail.logo).not.toMatch(/^https?:/);
+    const amd = toolIdentity(row({ id: "plugin:amd_gpu", brand: "amd_gpu", label: "AMD GPU Status" }));
+    expect(amd.key).toBe("amd_gpu");
+    expect(amd.logo).toBeTruthy();
+    expect(amd.logo).toMatch(/389\.9|amd_gpu/);
+    expect(amd.mark).toBe("mono");
+  });
+
   it("has a local mark for every shipped marketplace connector", () => {
     for (const plugin of seedCatalog.plugins) {
       const identity = toolIdentity(
@@ -53,7 +65,7 @@ describe("tool visual identities", () => {
         }),
       );
       expect(identity.logo, plugin.id).toBeTruthy();
-      expect(identity.key, plugin.id).toBe(plugin.id);
+      expect(identity.key?.replace(/-/g, "_"), plugin.id).toBe(plugin.id);
       expect(identity.logo).not.toMatch(/^https?:/);
     }
   });

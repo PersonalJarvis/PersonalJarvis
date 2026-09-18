@@ -74,6 +74,16 @@ function cap(over: Partial<Capability> & Pick<Capability, "id">): Capability {
 }
 
 describe("buildMentionCatalog", () => {
+  it("treats a marketplace-connected plugin as connected even before tools load", () => {
+    const catalog = buildMentionCatalog([], [], [], [
+      { id: "agentmail", display_name: "AgentMail", description: "Inbox", status: "connected" },
+    ]);
+    expect(filterMentions(catalog, "")[0]).toMatchObject({
+      connected: true, label: "AgentMail", value: "agentmail",
+    });
+    expect(filterMentions(catalog, "agent")[0]?.connected).toBe(true);
+  });
+
   it("keeps installed but disconnected community plugins searchable", () => {
     const catalog = buildMentionCatalog([], [], [], [{ id: "todo_fox", display_name: "Todo Fox", description: "Tasks" }]);
     expect(filterMentions(catalog, "")).toEqual([]);

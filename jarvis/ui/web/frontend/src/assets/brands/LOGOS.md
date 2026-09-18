@@ -118,7 +118,7 @@ still supply their own logo URL. No built-in depends on the Simple Icons CDN.
 | salesforce | [Original mark](https://cdn.jsdelivr.net/gh/gilbarbara/logos@main/logos/salesforce.svg) | CC0-1.0; nominative use | 2026-09-10 |
 | granola | [Original mark](https://cdn.jsdelivr.net/gh/pheralb/svgl@main/static/library/granola-light.svg) | MIT; nominative use | 2026-09-10 |
 | zoom | [Original mark](https://cdn.jsdelivr.net/gh/gilbarbara/logos@main/logos/zoom-icon.svg) | CC0-1.0; nominative use | 2026-09-10 |
-| amd_gpu | [Original mark](https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/amd.svg) | CC0-1.0; nominative use | 2026-09-10 |
+| amd_gpu | [Original AMD arrow](https://cdn.jsdelivr.net/gh/gilbarbara/logos@main/logos/amd.svg) cropped to the square mark | CC0-1.0; nominative use | 2026-09-17 |
 | onedrive | [Vendor original](https://www.microsoft.com/content/dam/microsoft/bade/images/icons/en-us/m365-app-icons-fy26/OneDrive-Icon-FY26.svg) | Vendor artwork; nominative identification only | 2026-09-10 |
 | aws | Simple Icons amazonwebservices.svg; shared with [CLI marks](../clis/LOGOS.md) | CC0-1.0; monochrome, white icon tile | 2026-09-10 |
 | meta | [Original mark](https://cdn.jsdelivr.net/gh/gilbarbara/logos@main/logos/meta-icon.svg) | CC0-1.0; unchanged artwork inside square viewport | 2026-09-10 |

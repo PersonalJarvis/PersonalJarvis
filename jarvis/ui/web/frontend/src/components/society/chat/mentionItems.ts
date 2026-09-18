@@ -64,6 +64,8 @@ export interface MentionPlugin {
   display_name: string;
   description: string;
   native_tool?: string | null;
+  /** Marketplace token status: connected | not_connected | needs_reauth. */
+  status?: string;
 }
 
 function kindOf(cap: Capability): MentionKind {
@@ -248,7 +250,7 @@ export function buildMentionCatalog(
     const family = pluginFamily(familyId);
     const installed = livePlugins.get(familyId);
     const live = members.filter((cap) => kindOf(cap) !== "skill");
-    const connected = live.some((cap) => cap.connected);
+    const connected = live.some((cap) => cap.connected) || installed?.status === "connected";
     const representative =
       members.find((cap) => kindOf(cap) === "plugin") ?? live[0] ?? members[0] ?? {
         id: `plugin:${familyId}`, kind: "plugin", label: installed?.display_name ?? familyId,
