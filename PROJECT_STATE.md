@@ -103,6 +103,7 @@ Nothing below is "done" unless it says VERIFIED with evidence.
   "stop" intent: `speech/interrupt_intent.py`, `speech/hangup.py`.
   Japanese whole-utterance stop ("Jarvis, teishi", tomatte, yamete, sutoppu, ...) added.
   Classic voice pipeline: a bare stop publishes KillRequested and skips the brain.
+  Doctor: `python -m jarvis --doctor` now reports the local stack (llama.cpp, models, VOICEVOX, whisper, disk).
   Holding ESC 1.5 s (Windows) = tray emergency stop (`control/esc_hold.py`). No palm-gesture stop yet.
 
 ### Japanese
