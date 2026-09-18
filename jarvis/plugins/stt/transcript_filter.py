@@ -52,6 +52,8 @@ import logging
 import re
 import unicodedata
 
+from jarvis.core.turn_language import localized
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -187,7 +189,7 @@ PHONETIC_FIXES: dict[str, tuple[tuple[str, str], ...]] = {
 
 def _compile_phonetic(language: str) -> tuple[tuple[re.Pattern[str], str], ...]:
     """Whole-word patterns for one language, longest source first."""
-    pairs = sorted(PHONETIC_FIXES[language], key=lambda p: len(p[0]), reverse=True)
+    pairs = sorted(localized(PHONETIC_FIXES, language), key=lambda p: len(p[0]), reverse=True)
     return tuple(
         (
             re.compile(

@@ -33,7 +33,7 @@ from typing import Any
 
 # Kept static for zero-import-cost; parity-tested against
 # jarvis.brain.manager.SUPPORTED_REPLY_LANGUAGES (the authoritative tuple).
-REPLY_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
+REPLY_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es", "ja")
 
 VOICE_MODES: tuple[str, ...] = ("pipeline", "realtime")
 

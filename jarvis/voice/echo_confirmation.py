@@ -141,6 +141,53 @@ _AMBIGUOUS_PATTERNS_ES: tuple[str, ...] = (
     r"\bni idea\b",
 )
 
+# Japanese: substring patterns (no word boundaries). Veto is still checked
+# first, so "iie" is never read as the "ii" of "ii yo".
+_CONFIRM_PATTERNS_JA: tuple[str, ...] = (
+    "\u306f\u3044",
+    "\u3046\u3093",
+    "\u3048\u3048",
+    "\u304a\u9858\u3044",
+    "\u3044\u3044\u3088",
+    "\u3044\u3044\u3067\u3059",
+    "\u3069\u3046\u305e",
+    "\u30aa\u30fc\u30b1\u30fc",
+    "\u4e86\u89e3",
+    "\u5b9f\u884c\u3057\u3066",
+    "\u3084\u3063\u3066",
+    "\u30a4\u30a8\u30b9",
+    r"\bok\b",
+    r"\bokay\b",
+)
+
+_VETO_PATTERNS_JA: tuple[str, ...] = (
+    "\u3044\u3044\u3048",
+    "\u3044\u3084",
+    "\u3060\u3081",
+    "\u30c0\u30e1",
+    "\u3084\u3081",
+    "\u6b62\u3081",
+    "\u3057\u306a\u3044\u3067",
+    "\u30ad\u30e3\u30f3\u30bb\u30eb",
+    "\u4e2d\u6b62",
+    "\u9055\u3046",
+    "\u3061\u304c\u3046",
+    "\u30ce\u30fc",
+    "\u7d50\u69cb\u3067\u3059",
+    "\u30b9\u30c8\u30c3\u30d7",
+)
+
+_AMBIGUOUS_PATTERNS_JA: tuple[str, ...] = (
+    "\u305f\u3076\u3093",
+    "\u591a\u5206",
+    "\u308f\u304b\u3089\u306a\u3044",
+    "\u5206\u304b\u3089\u306a\u3044",
+    "\u3069\u3046\u3057\u3088\u3046",
+    "\u3046\u30fc\u3093",
+    "\u5927\u4e08\u592b",
+    "\u3061\u3087\u3063\u3068\u5f85\u3063\u3066",
+)
+
 ResponseVerdict = Literal["confirm", "veto", "ambiguous", "unknown"]
 
 
@@ -161,6 +208,10 @@ def classify_response(transcript: str, *, language: str = "de") -> ResponseVerdi
         veto_pats = _VETO_PATTERNS_EN
         confirm_pats = _CONFIRM_PATTERNS_EN
         ambig_pats = _AMBIGUOUS_PATTERNS_EN
+    elif language == "ja":
+        veto_pats = _VETO_PATTERNS_JA
+        confirm_pats = _CONFIRM_PATTERNS_JA
+        ambig_pats = _AMBIGUOUS_PATTERNS_JA
     elif language == "es":
         veto_pats = _VETO_PATTERNS_ES
         confirm_pats = _CONFIRM_PATTERNS_ES

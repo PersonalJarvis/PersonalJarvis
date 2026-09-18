@@ -3099,13 +3099,18 @@
       "es": {
         "label": "Español",
         "description": "Español para cada etiqueta y botón."
+      },
+      "ja": {
+        "label": "日本語 (japonés)",
+        "description": "Japonés para cada etiqueta y botón."
       }
     },
     "reply_options": {
       "auto": "{name} refleja el idioma que hables o escribas.",
       "en": "{name} responde en inglés.",
       "de": "{name} responde en alemán.",
-      "es": "{name} responde en español."
+      "es": "{name} responde en español.",
+      "ja": "{name} responde en japonés."
     },
     "stt_options": {
       "auto": "Detecta automáticamente el idioma que hablas.",

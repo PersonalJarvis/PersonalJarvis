@@ -3099,13 +3099,18 @@
       "es": {
         "label": "Español (Spanisch)",
         "description": "Spanisch für jede Beschriftung und Schaltfläche."
+      },
+      "ja": {
+        "label": "日本語 (Japanisch)",
+        "description": "Japanisch für jede Beschriftung und Schaltfläche."
       }
     },
     "reply_options": {
       "auto": "{name} spiegelt die Sprache, die du sprichst oder schreibst.",
       "en": "{name} antwortet auf Englisch.",
       "de": "{name} antwortet auf Deutsch.",
-      "es": "{name} antwortet auf Spanisch."
+      "es": "{name} antwortet auf Spanisch.",
+      "ja": "{name} antwortet auf Japanisch."
     },
     "stt_options": {
       "auto": "Erkennt automatisch, welche Sprache du sprichst.",

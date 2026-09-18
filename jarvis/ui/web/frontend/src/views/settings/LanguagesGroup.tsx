@@ -18,8 +18,8 @@ import {
 } from "@/i18n";
 import { LanguageSelect } from "@/components/ui/language-select";
 
-const UI_OPTIONS: UiLanguage[] = ["en", "de", "es"];
-const REPLY_OPTIONS: ReplyLanguage[] = ["auto", "en", "de", "es"];
+const UI_OPTIONS: UiLanguage[] = ["en", "de", "es", "ja"];
+const REPLY_OPTIONS: ReplyLanguage[] = ["auto", "en", "de", "es", "ja"];
 
 /**
  * "Languages" group inside the Settings view — the interface-language and

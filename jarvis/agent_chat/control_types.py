@@ -32,7 +32,7 @@ class CommandRequest(BaseModel):
     command: CommandName
     arguments: str = Field(default="", max_length=16000)
     request_id: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$")
-    locale: Literal["en", "de", "es"] = "en"
+    locale: Literal["en", "de", "es", "ja"] = "en"
     attachments: list[dict] = Field(default_factory=list)
 
 

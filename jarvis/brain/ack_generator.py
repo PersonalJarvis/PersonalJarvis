@@ -46,6 +46,8 @@ from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from jarvis.core.turn_language import localized
+
 __all__ = [
     "ACK_SKIP_TOOLS",
     "AckPhrasePicker",
@@ -255,6 +257,11 @@ _GENERIC_ACK: dict[str, tuple[str, ...]] = {
         "Voy, un segundito.",
         "De acuerdo, espera un poco.",
     ),
+    "ja": (
+        "\u306f\u3044\u3001\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002",
+        "\u5c11\u3057\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002",
+        "\u627f\u77e5\u3057\u307e\u3057\u305f\u3001\u3059\u3050\u3084\u308a\u307e\u3059\u3002",
+    ),
 }
 
 _SHELL_ACK: dict[str, tuple[str, ...]] = {
@@ -281,6 +288,14 @@ _SHELL_ACK: dict[str, tuple[str, ...]] = {
         "Dame un segundo para mirarlo.",
         "Le echo un vistazo rápido.",
     ),
+    "ja": (
+        (
+            "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001\u78ba\u8a8d\u3057\u307e"
+            "\u3059\u3002"
+        ),
+        "\u3061\u3087\u3063\u3068\u898b\u3066\u307f\u307e\u3059\u3002",
+        "\u4eca\u78ba\u8a8d\u3057\u3066\u3044\u307e\u3059\u3002",
+    ),
 }
 
 # {service} is interpolated with a human-readable CLI service name
@@ -306,6 +321,14 @@ _CLI_SERVICE_ACK: dict[str, tuple[str, ...]] = {
         "Déjame mirarlo en {service}.",
         "Reviso {service} ahora mismo.",
         "Voy a ver en {service}.",
+    ),
+    "ja": (
+        "{service}\u3092\u78ba\u8a8d\u3057\u307e\u3059\u3002",
+        (
+            "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001{service}\u3092\u898b"
+            "\u3066\u3044\u307e\u3059\u3002"
+        ),
+        "{service}\u304b\u3089\u53d6\u3063\u3066\u304d\u307e\u3059\u3002",
     ),
 }
 
@@ -353,6 +376,11 @@ _HARNESS_ACK: dict[str, tuple[str, ...]] = {
         "Okay, me pongo con ello.",
         "Claro, un momento.",
     ),
+    "ja": (
+        "\u4e86\u89e3\u3067\u3059\u3001\u53d6\u308a\u304b\u304b\u308a\u307e\u3059\u3002",
+        "\u627f\u77e5\u3057\u307e\u3057\u305f\u3001\u9032\u3081\u307e\u3059\u3002",
+        "\u308f\u304b\u308a\u307e\u3057\u305f\u3001\u4f5c\u696d\u3057\u307e\u3059\u3002",
+    ),
 }
 
 _SEARCH_TOPIC_ACK: dict[str, tuple[str, ...]] = {
@@ -373,6 +401,14 @@ _SEARCH_TOPIC_ACK: dict[str, tuple[str, ...]] = {
         "Un momento, investigo {topic}.",
         "Voy a ver qué encuentro sobre {topic}.",
         "Buscando {topic} ahora.",
+    ),
+    "ja": (
+        "{topic}\u306b\u3064\u3044\u3066\u8abf\u3079\u307e\u3059\u3002",
+        "{topic}\u3092\u3055\u3063\u3068\u691c\u7d22\u3057\u307e\u3059\u3002",
+        (
+            "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001{topic}\u3092\u8abf\u3079"
+            "\u3066\u3044\u307e\u3059\u3002"
+        ),
     ),
 }
 
@@ -395,6 +431,14 @@ _SEARCH_GENERIC_ACK: dict[str, tuple[str, ...]] = {
         "Un momento, echo un vistazo.",
         "Dame un momento para reunir los datos.",
     ),
+    "ja": (
+        "\u306f\u3044\u3001\u8abf\u3079\u307e\u3059\u3002",
+        "\u63a2\u3057\u3066\u307f\u307e\u3059\u3002",
+        (
+            "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001\u8abf\u3079\u3066\u3044"
+            "\u307e\u3059\u3002"
+        ),
+    ),
 }
 
 _MULTI_SPAWN_ACK: dict[str, tuple[str, ...]] = {
@@ -412,6 +456,11 @@ _MULTI_SPAWN_ACK: dict[str, tuple[str, ...]] = {
         "Vale, hago {n} cosas en paralelo.",
         "Me pongo con las {n} tareas a la vez.",
         "{n} cosas en paralelo — voy.",
+    ),
+    "ja": (
+        "{n}\u4ef6\u306e\u4f5c\u696d\u3092\u4e26\u884c\u3057\u3066\u9032\u3081\u307e\u3059\u3002",
+        "{n}\u3064\u306e\u30bf\u30b9\u30af\u3092\u540c\u6642\u306b\u59cb\u3081\u307e\u3059\u3002",
+        "{n}\u4ef6\u3001\u307e\u3068\u3081\u3066\u53d6\u308a\u304b\u304b\u308a\u307e\u3059\u3002",
     ),
 }
 
@@ -431,6 +480,14 @@ _OPEN_APP_ACK: dict[str, tuple[str, ...]] = {
         "Un segundo, lanzo {app}.",
         "Inicio {app}.",
     ),
+    "ja": (
+        "{app}\u3092\u958b\u304d\u307e\u3059\u3002",
+        (
+            "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001{app}\u3092\u8d77\u52d5"
+            "\u3057\u307e\u3059\u3002"
+        ),
+        "{app}\u3092\u7acb\u3061\u4e0a\u3052\u307e\u3059\u3002",
+    ),
 }
 
 _RUN_SKILL_ACK: dict[str, tuple[str, ...]] = {
@@ -448,6 +505,14 @@ _RUN_SKILL_ACK: dict[str, tuple[str, ...]] = {
         "Vale, ejecuto {skill}.",
         "Un momento, arranco {skill}.",
         "Pongo {skill} en marcha.",
+    ),
+    "ja": (
+        "{skill}\u3092\u5b9f\u884c\u3057\u307e\u3059\u3002",
+        (
+            "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001{skill}\u3092\u59cb\u3081"
+            "\u307e\u3059\u3002"
+        ),
+        "{skill}\u3092\u958b\u59cb\u3057\u307e\u3059\u3002",
     ),
 }
 
@@ -470,6 +535,14 @@ _GMAIL_READ_ACK: dict[str, tuple[str, ...]] = {
         "Echo un vistazo a tus correos.",
         "Miro tu bandeja de entrada.",
     ),
+    "ja": (
+        "\u30e1\u30fc\u30eb\u3092\u78ba\u8a8d\u3057\u307e\u3059\u3002",
+        (
+            "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001\u53d7\u4fe1\u7bb1\u3092"
+            "\u958b\u304d\u307e\u3059\u3002"
+        ),
+        "\u30e1\u30fc\u30eb\u3092\u3055\u3063\u3068\u898b\u3066\u307f\u307e\u3059\u3002",
+    ),
 }
 
 _CALENDAR_ACK: dict[str, tuple[str, ...]] = {
@@ -491,6 +564,14 @@ _CALENDAR_ACK: dict[str, tuple[str, ...]] = {
         "Compruebo tus citas.",
         "Un vistazo rápido a tu calendario.",
     ),
+    "ja": (
+        "\u30ab\u30ec\u30f3\u30c0\u30fc\u3092\u78ba\u8a8d\u3057\u307e\u3059\u3002",
+        (
+            "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001\u4e88\u5b9a\u3092\u898b"
+            "\u3066\u3044\u307e\u3059\u3002"
+        ),
+        "\u4e88\u5b9a\u3092\u78ba\u8a8d\u3057\u307e\u3059\u3002",
+    ),
 }
 
 _REMEMBER_ACK: dict[str, tuple[str, ...]] = {
@@ -511,6 +592,14 @@ _REMEMBER_ACK: dict[str, tuple[str, ...]] = {
         "Entendido, lo recordaré.",
         "Me lo apunto.",
     ),
+    "ja": (
+        "\u306f\u3044\u3001\u30e1\u30e2\u3057\u307e\u3059\u3002",
+        (
+            "\u308f\u304b\u308a\u307e\u3057\u305f\u3001\u899a\u3048\u3066\u304a\u304d\u307e\u3059"
+            "\u3002"
+        ),
+        "\u8a18\u9332\u3057\u3066\u304a\u304d\u307e\u3059\u3002",
+    ),
 }
 
 _VERIFY_ACK: dict[str, tuple[str, ...]] = {
@@ -528,6 +617,14 @@ _VERIFY_ACK: dict[str, tuple[str, ...]] = {
         "Vale, lo compruebo.",
         "Un momento, lo pruebo.",
         "Déjame verificarlo.",
+    ),
+    "ja": (
+        "\u78ba\u8a8d\u3057\u307e\u3059\u3002",
+        (
+            "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001\u8a66\u3057\u3066\u307f"
+            "\u307e\u3059\u3002"
+        ),
+        "\u691c\u8a3c\u3057\u307e\u3059\u3002",
     ),
 }
 
@@ -547,6 +644,14 @@ _SERVER_ACK: dict[str, tuple[str, ...]] = {
         "Un momento, arranco el servidor.",
         "Levanto el servidor.",
     ),
+    "ja": (
+        "\u30b5\u30fc\u30d0\u30fc\u3092\u8d77\u52d5\u3057\u307e\u3059\u3002",
+        (
+            "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001\u30b5\u30fc\u30d0\u30fc"
+            "\u3092\u7acb\u3061\u4e0a\u3052\u307e\u3059\u3002"
+        ),
+        "\u30b5\u30fc\u30d0\u30fc\u3092\u8d77\u52d5\u3057\u3066\u3044\u307e\u3059\u3002",
+    ),
 }
 
 _SET_CONFIG_ACK: dict[str, tuple[str, ...]] = {
@@ -564,6 +669,14 @@ _SET_CONFIG_ACK: dict[str, tuple[str, ...]] = {
         "Vale, lo cambio.",
         "Un momento, lo ajusto.",
         "Lo adapto ahora.",
+    ),
+    "ja": (
+        "\u306f\u3044\u3001\u5909\u66f4\u3057\u307e\u3059\u3002",
+        (
+            "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001\u8a2d\u5b9a\u3092\u5909"
+            "\u3048\u307e\u3059\u3002"
+        ),
+        "\u4eca\u8abf\u6574\u3057\u307e\u3059\u3002",
     ),
 }
 
@@ -583,11 +696,11 @@ def _interpolate(pool: tuple[str, ...], **kwargs: Any) -> tuple[str, ...]:
 
 
 def _ack_dispatch_harness(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
-    return _HARNESS_ACK[lang]
+    return localized(_HARNESS_ACK, lang)
 
 
 def _ack_run_shell(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
-    return _SHELL_ACK[lang]
+    return localized(_SHELL_ACK, lang)
 
 
 def _ack_search_web(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
@@ -596,22 +709,22 @@ def _ack_search_web(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
     # question sentence read back sounds robotic.
     if query and len(query) <= 40 and len(query.split()) <= 4:
         topic = _trim_to_words(query, 40)
-        return _interpolate(_SEARCH_TOPIC_ACK[lang], topic=topic)
-    return _SEARCH_GENERIC_ACK[lang]
+        return _interpolate(localized(_SEARCH_TOPIC_ACK, lang), topic=topic)
+    return localized(_SEARCH_GENERIC_ACK, lang)
 
 
 def _ack_spawn_sub_jarvis(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
     # Sub-Jarvis spawns are the exact case the user complained about ("silent
     # pause before a long answer"). Keep the ack short and warm.
-    return _HARNESS_ACK[lang]
+    return localized(_HARNESS_ACK, lang)
 
 
 def _ack_multi_spawn(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
     tasks = args.get("tasks") or args.get("jobs") or []
     n = len(tasks) if isinstance(tasks, (list, tuple)) else 0
     if n >= 2:
-        return _interpolate(_MULTI_SPAWN_ACK[lang], n=n)
-    return _GENERIC_ACK[lang]
+        return _interpolate(localized(_MULTI_SPAWN_ACK, lang), n=n)
+    return localized(_GENERIC_ACK, lang)
 
 
 def _ack_open_app(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
@@ -619,8 +732,8 @@ def _ack_open_app(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
         args.get("app") or args.get("app_name") or args.get("name") or ""
     ).strip()
     if app and len(app) <= 30:
-        return _interpolate(_OPEN_APP_ACK[lang], app=app)
-    return _GENERIC_ACK[lang]
+        return _interpolate(localized(_OPEN_APP_ACK, lang), app=app)
+    return localized(_GENERIC_ACK, lang)
 
 
 def _ack_run_skill(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
@@ -628,8 +741,8 @@ def _ack_run_skill(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
         args.get("skill") or args.get("skill_name") or args.get("name") or ""
     ).strip()
     if skill and len(skill) <= 40:
-        return _interpolate(_RUN_SKILL_ACK[lang], skill=skill)
-    return _GENERIC_ACK[lang]
+        return _interpolate(localized(_RUN_SKILL_ACK, lang), skill=skill)
+    return localized(_GENERIC_ACK, lang)
 
 
 def _ack_gmail(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
@@ -639,28 +752,28 @@ def _ack_gmail(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
     # neutral filler, while reads get the specific "checking your mail" pool.
     action = str(args.get("action") or "list_messages").strip()
     if action == "send_message":
-        return _GENERIC_ACK[lang]
-    return _GMAIL_READ_ACK[lang]
+        return localized(_GENERIC_ACK, lang)
+    return localized(_GMAIL_READ_ACK, lang)
 
 
 def _ack_google_calendar(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
-    return _CALENDAR_ACK[lang]
+    return localized(_CALENDAR_ACK, lang)
 
 
 def _ack_remember(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
-    return _REMEMBER_ACK[lang]
+    return localized(_REMEMBER_ACK, lang)
 
 
 def _ack_verify(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
-    return _VERIFY_ACK[lang]
+    return localized(_VERIFY_ACK, lang)
 
 
 def _ack_start_preview_server(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
-    return _SERVER_ACK[lang]
+    return localized(_SERVER_ACK, lang)
 
 
 def _ack_set_config(args: Mapping[str, Any], lang: str) -> tuple[str, ...]:
-    return _SET_CONFIG_ACK[lang]
+    return localized(_SET_CONFIG_ACK, lang)
 
 
 _TemplateFn = Callable[[Mapping[str, Any], str], tuple[str, ...]]
@@ -694,11 +807,11 @@ def _cli_pool(norm_tool: str, lang: str) -> tuple[str, ...]:
     """
     suffix = norm_tool[len("cli_"):].strip("_")
     if not suffix:
-        return _SHELL_ACK[lang]
+        return localized(_SHELL_ACK, lang)
     service = _CLI_SERVICE_NAMES.get(
         suffix, suffix.replace("_", " ").title()
     )
-    return _interpolate(_CLI_SERVICE_ACK[lang], service=service)
+    return _interpolate(localized(_CLI_SERVICE_ACK, lang), service=service)
 
 
 # ---------------------------------------------------------------------------
@@ -735,7 +848,7 @@ def generate_ack(
         try:
             return chooser.pick(_cli_pool(norm, lang))
         except Exception:  # noqa: BLE001 — never let a broken pool muzzle the ack
-            return chooser.pick(_GENERIC_ACK[lang])
+            return chooser.pick(localized(_GENERIC_ACK, lang))
 
     handler = _TEMPLATES.get(norm)
     if handler is not None:
@@ -745,7 +858,7 @@ def generate_ack(
                 return chooser.pick(pool)
         except Exception:  # noqa: BLE001 — never let a broken template muzzle the ack
             pass
-    return chooser.pick(_GENERIC_ACK[lang])
+    return chooser.pick(localized(_GENERIC_ACK, lang))
 
 
 def describe_tool_action(

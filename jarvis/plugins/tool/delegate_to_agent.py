@@ -24,6 +24,7 @@ from collections.abc import Callable
 from typing import Any, Final
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
+from jarvis.core.turn_language import localized
 
 log = logging.getLogger(__name__)
 
@@ -164,10 +165,18 @@ class DelegateToAgentTool:
         target_key = str(args.get("agent") or "").strip()
         task = str(args.get("task") or "").strip()
         if not task:
-            return ToolResult(success=False, output=_NOT_READY[lang], error="task required")
+            return ToolResult(
+                success=False,
+                output=localized(_NOT_READY, lang),
+                error="task required",
+            )
         runtime = await self._runtime()
         if runtime is None:
-            return ToolResult(success=False, output=_NOT_READY[lang], error="society unavailable")
+            return ToolResult(
+                success=False,
+                output=localized(_NOT_READY, lang),
+                error="society unavailable",
+            )
         target = await runtime.roster.resolve(target_key) if target_key else None
         if not target_key:
             target = runtime.pick_agent(task)
@@ -175,10 +184,10 @@ class DelegateToAgentTool:
             if target_key:
                 return ToolResult(
                     success=False,
-                    output=_NO_AGENT[lang].format(target=target_key),
+                    output=localized(_NO_AGENT, lang).format(target=target_key),
                     error="target_unknown",
                 )
-            return ToolResult(success=False, output=_NO_FIT[lang], error="no_agent_fits")
+            return ToolResult(success=False, output=localized(_NO_FIT, lang), error="no_agent_fits")
         from jarvis.society.events import MsgType
 
         context = str(args.get("context") or "").strip()
@@ -224,7 +233,9 @@ class DelegateToAgentTool:
                 output={
                     **tracking,
                     "state": "refused",
-                    "acknowledgement": _REFUSED[lang].format(name=target.name, reason=reason),
+                    "acknowledgement": localized(_REFUSED, lang).format(
+                        name=target.name, reason=reason
+                    ),
                 },
                 error=str(outcome.payload.get("reason") or "vetoed"),
             )
@@ -313,7 +324,11 @@ class SocietyStatusTool:
             log.warning("society_status: runtime resolver failed", exc_info=True)
             runtime = None
         if runtime is None:
-            return ToolResult(success=False, output=_NOT_READY[lang], error="society unavailable")
+            return ToolResult(
+                success=False,
+                output=localized(_NOT_READY, lang),
+                error="society unavailable",
+            )
         assignment_id = str(args.get("assignment_id") or "").strip()
         trace_id = str(args.get("trace_id") or "").strip()
         target_key = str(args.get("agent") or "").strip()
@@ -397,7 +412,7 @@ class SocietyStatusTool:
                 if target is None:
                     return ToolResult(
                         success=False,
-                        output=_NO_AGENT[lang].format(target=target_key),
+                        output=localized(_NO_AGENT, lang).format(target=target_key),
                         error="target_unknown",
                     )
                 targets = [target]
@@ -428,28 +443,34 @@ class SocietyStatusTool:
             agents = await runtime.roster.list()
             names = ", ".join(a.name for a in agents if a.agent_id != runtime.lead_id)
             if not names:
-                return ToolResult(success=True, output=_EMPTY_ROSTER[lang])
-            return ToolResult(success=True, output=_ROSTER[lang].format(names=names))
+                return ToolResult(success=True, output=localized(_EMPTY_ROSTER, lang))
+            return ToolResult(success=True, output=localized(_ROSTER, lang).format(names=names))
         target = await runtime.roster.resolve(target_key)
         if target is None:
             return ToolResult(
                 success=False,
-                output=_NO_AGENT[lang].format(target=target_key),
+                output=localized(_NO_AGENT, lang).format(target=target_key),
                 error="target_unknown",
             )
         if runtime.scheduler.active_runs(target.agent_id) > 0:
             events = await runtime.store.events_for_agent(target.agent_id, limit=5)
             text = next((e.text for e in reversed(events) if e.text), "")
             return ToolResult(
-                success=True, output=_STATUS_WORKING[lang].format(name=target.name, text=text)
+                success=True,
+                output=localized(_STATUS_WORKING, lang).format(
+                    name=target.name, text=text
+                ),
             )
         events = await runtime.store.events_for_agent(target.agent_id, limit=1)
         if not events:
-            return ToolResult(success=True, output=_STATUS_IDLE[lang].format(name=target.name))
+            return ToolResult(
+                success=True,
+                output=localized(_STATUS_IDLE, lang).format(name=target.name),
+            )
         last = events[-1]
         return ToolResult(
             success=True,
-            output=_STATUS_LAST[lang].format(
+            output=localized(_STATUS_LAST, lang).format(
                 name=target.name, kind=str(last.msg_type).lower(), text=last.text[:200]
             ),
         )

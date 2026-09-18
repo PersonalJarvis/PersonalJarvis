@@ -2093,7 +2093,7 @@ class UIConfig(BaseModel):
     # value, so a voice command or the Control API can change it and the open UI
     # switches live (a ConfigReloaded / UiLanguageChanged event reaches the
     # frontend over /ws). Distinct from brain.reply_language (what Jarvis SPEAKS).
-    language: Literal["en", "de", "es"] = "en"
+    language: Literal["en", "de", "es", "ja"] = "en"
     # Colour theme of the whole desktop app: "dark" (the product default —
     # matte black + signal yellow), "light" (warm paper + dark gold), or
     # "system" (follow the OS appearance, re-evaluated live when the OS flips).

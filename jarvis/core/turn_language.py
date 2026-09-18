@@ -30,8 +30,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TypeVar
 
 __all__ = [
     "DEFAULT_LOCALE",
@@ -56,7 +57,7 @@ DEFAULT_LOCALE = "en"
 
 #: The codes an explicit ``brain.reply_language`` pin may carry (``"auto"`` is
 #: deliberately absent — it means "no pin, mirror the input").
-_REPLY_PINS: frozenset[str] = frozenset({"de", "en", "es"})
+_REPLY_PINS: frozenset[str] = frozenset({"de", "en", "es", "ja"})
 
 #: A turn with at most this many word tokens is a "thin" turn — a one- or
 #: two-word interjection ("Now", "Stop now", "jetzt", a lone loanword). A thin
@@ -204,6 +205,20 @@ _TAG_TO_CODE: dict[str, str] = {
     "es": "es", "spa": "es", "spanish": "es", "spanisch": "es",
     "espanol": "es", "español": "es", "castellano": "es",
 }
+
+
+_T = TypeVar("_T")
+
+
+def localized(table: Mapping[str, _T], lang: str) -> _T:
+    """``table[lang]``, or the ``DEFAULT_LOCALE`` entry when ``lang`` has none.
+
+    Every canned-phrase lookup goes through here so a locale without its own
+    row (Japanese, while its tables are being filled) speaks English instead
+    of raising ``KeyError`` mid-turn.
+    """
+    value = table.get(lang)
+    return value if value is not None else table[DEFAULT_LOCALE]
 
 
 def normalize_language_tag(tag: object) -> str:
@@ -424,6 +439,24 @@ def is_substantive_turn(text: str) -> bool:
     )
 
 
+# Japanese requests ("nihongo de hanashite", "eigo ni kirikaete"). Whole
+# utterance, like the Latin form: the language name, "de"/"ni", a switch verb,
+# optional "kudasai". Script-matched, so it lives apart from the token regex.
+_JA_LANGUAGE_NAMES: dict[str, str] = {
+    "\u65e5\u672c\u8a9e": "ja",
+    "\u82f1\u8a9e": "en",
+    "\u30c9\u30a4\u30c4\u8a9e": "de",
+    "\u30b9\u30da\u30a4\u30f3\u8a9e": "es",
+}
+_JA_LANGUAGE_REQUEST_RE = re.compile(
+    "^(?:\u30b8\u30e3\u30fc\u30d3\u30b9[\u3001,\\s]*)?"
+    "(?P<language>" + "|".join(_JA_LANGUAGE_NAMES) + ")"
+    "(?:\u3067|\u306b)"
+    "(?:\u8a71\u3057\u3066|\u7b54\u3048\u3066|\u8fd4\u4e8b\u3057\u3066|\u3057\u3083\u3079\u3063\u3066|\u3057\u3066|\u5207\u308a\u66ff\u3048\u3066|\u5909\u3048\u3066)"
+    "(?:\u304f\u3060\u3055\u3044)?[\u3002\uff01!.]?$"
+)
+
+
 def detect_language_request(text: str) -> str:
     """Return the requested reply language of a complete instruction, else "".
 
@@ -432,6 +465,9 @@ def detect_language_request(text: str) -> str:
     it needs a command, preposition, or politeness marker to establish intent.
     """
     value = unicodedata.normalize("NFC", text or "").strip()
+    ja_match = _JA_LANGUAGE_REQUEST_RE.match(value)
+    if ja_match is not None:
+        return _JA_LANGUAGE_NAMES[ja_match.group("language")]
     match = _LANGUAGE_REQUEST_RE.fullmatch(value)
     if match is None or len(_TOKEN_RE.findall(value)) < 2:
         return ""
@@ -460,7 +496,7 @@ def resolve_output_language(
     default: str = DEFAULT_LOCALE,
     conversation_language: object = "",
 ) -> str:
-    """The SINGLE authoritative output language for one turn (de/en/es).
+    """The SINGLE authoritative output language for one turn (de/en/es/ja).
 
     Every spoken or written layer — the deep-brain reply, the ack-brain
     preamble, spawn announcements, every canned status / error / clarify /
@@ -495,6 +531,12 @@ def resolve_output_language(
     requested = detect_language_request(text)
     if requested:
         return requested
+    # Japanese is decided by script, before stickiness: the thin-turn rule
+    # counts Latin words, so a whole Japanese sentence would look "thin" and
+    # inherit the previous language. Canned phrases without a Japanese row
+    # fall back to English through ``localized``.
+    if is_japanese_text(text):
+        return "ja"
     conv = str(conversation_language or "").strip().lower()
     conv = conv if conv in _REPLY_PINS else ""
     if conv and len(_TOKEN_RE.findall(text or "")) <= _THIN_TURN_MAX_TOKENS:

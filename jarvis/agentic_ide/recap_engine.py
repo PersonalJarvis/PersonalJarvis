@@ -250,7 +250,7 @@ _DETAIL_SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
 # carries every locale [ui].language accepts and falls back to English for a
 # value a newer build introduced (AP-16: a newer install's key must not break
 # this one).
-_LANGUAGE_NAMES = {"en": "English", "de": "German", "es": "Spanish"}
+_LANGUAGE_NAMES = {"en": "English", "de": "German", "es": "Spanish", "ja": "Japanese"}
 
 # What the summarizer is asked for. Written for the reader it actually has:
 # somebody glancing across a grid of terminals who wants to know which pane

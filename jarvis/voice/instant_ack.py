@@ -52,7 +52,7 @@ from jarvis.brain.turn_planner import TurnPlan, TurnReason, is_lookup_shape
 
 log = logging.getLogger(__name__)
 
-_SUPPORTED_LANGUAGES = ("de", "en", "es")
+_SUPPORTED_LANGUAGES = ("de", "en", "es", "ja")
 _DEFAULT_LANGUAGE = "en"
 
 #: Grace window for SHORT work: speak only if the turn is still running
@@ -167,6 +167,18 @@ _POOLS: dict[WorkClass, dict[str, tuple[str, ...]]] = {
             "Estoy buscando información actual.",
             "Una búsqueda rápida, un momento.",
         ),
+        "ja": (
+            "\u30cd\u30c3\u30c8\u3067\u8abf\u3079\u3066\u3044\u307e\u3059\u3002",
+            (
+                "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001\u30aa\u30f3\u30e9"
+                "\u30a4\u30f3\u3067\u78ba\u8a8d\u3057\u307e\u3059\u3002"
+            ),
+            "\u6700\u65b0\u306e\u60c5\u5831\u3092\u53d6\u3063\u3066\u304d\u307e\u3059\u3002",
+            (
+                "\u3055\u3063\u3068\u691c\u7d22\u3057\u307e\u3059\u3001\u5c11\u3005\u304a\u5f85"
+                "\u3061\u304f\u3060\u3055\u3044\u3002"
+            ),
+        ),
     },
     WorkClass.PERSONAL: {
         "de": (  # i18n-allow: localized runtime voice output
@@ -187,6 +199,18 @@ _POOLS: dict[WorkClass, dict[str, tuple[str, ...]]] = {
             "Busco eso en tus datos.",
             "Reviso lo que tengo tuyo sobre eso.",
         ),
+        "ja": (
+            (
+                "\u3042\u306a\u305f\u306e\u8a18\u9332\u3092\u78ba\u8a8d\u3057\u3066\u3044\u307e"
+                "\u3059\u3002"
+            ),
+            (
+                "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001\u624b\u5143\u306e"
+                "\u60c5\u5831\u3092\u898b\u3066\u3044\u307e\u3059\u3002"
+            ),
+            "\u305d\u3061\u3089\u306e\u8cc7\u6599\u304b\u3089\u63a2\u3057\u307e\u3059\u3002",
+            "\u8a18\u9332\u3092\u898b\u3066\u307f\u307e\u3059\u3002",
+        ),
     },
     WorkClass.SCREEN: {
         "de": (  # i18n-allow: localized runtime voice output
@@ -206,6 +230,18 @@ _POOLS: dict[WorkClass, dict[str, tuple[str, ...]]] = {
             "Un momento, reviso la pantalla.",
             "Tomo la pantalla un momento.",
             "Veo qué hay en pantalla.",
+        ),
+        "ja": (
+            "\u753b\u9762\u3092\u898b\u3066\u3044\u307e\u3059\u3002",
+            (
+                "\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3001\u753b\u9762\u3092"
+                "\u78ba\u8a8d\u3057\u307e\u3059\u3002"
+            ),
+            "\u753b\u9762\u3092\u8aad\u307f\u53d6\u3063\u3066\u3044\u307e\u3059\u3002",
+            (
+                "\u4eca\u3001\u753b\u9762\u3092\u30c1\u30a7\u30c3\u30af\u3057\u3066\u3044\u307e"
+                "\u3059\u3002"
+            ),
         ),
     },
     # ``{agent}`` is the wake-word-derived agent brand ("<Name>-Agent"),
@@ -229,9 +265,18 @@ _POOLS: dict[WorkClass, dict[str, tuple[str, ...]]] = {
             "Pongo a un {agent} en ello.",
             "Eso queda con un {agent} desde ahora.",
         ),
+        "ja": (
+            "{agent}\u306b\u4efb\u305b\u307e\u3059\u3002",
+            (
+                "{agent}\u304c\u5f15\u304d\u53d7\u3051\u307e\u3059\u3002\u7d42\u308f\u3063\u305f"
+                "\u3089\u5831\u544a\u3057\u307e\u3059\u3002"
+            ),
+            "{agent}\u306b\u6e21\u3057\u307e\u3057\u305f\u3002",
+            "{agent}\u304c\u4f5c\u696d\u3092\u59cb\u3081\u307e\u3059\u3002",
+        ),
     },
     # ACTION: deliberately empty — an action ack must reference the request.
-    WorkClass.ACTION: {"de": (), "en": (), "es": ()},
+    WorkClass.ACTION: {"de": (), "en": (), "es": (), "ja": ()},
 }
 
 # No-repeat memory per (class, language): back-to-back acks never share a
@@ -1050,6 +1095,11 @@ _PROGRESS_POOLS: dict[ToolActivity, dict[str, tuple[str, ...]]] = {
             "La búsqueda sigue en marcha.",
             "La consulta en línea necesita un momento más.",
         ),
+        "ja": (
+            "\u307e\u3060\u691c\u7d22\u3057\u3066\u3044\u307e\u3059\u3002",
+            "\u691c\u7d22\u306f\u307e\u3060\u7d9a\u3044\u3066\u3044\u307e\u3059\u3002",
+            "\u3082\u3046\u5c11\u3057\u3067\u8abf\u3079\u7d42\u308f\u308a\u307e\u3059\u3002",
+        ),
     },
     ToolActivity.READ: {
         "de": (  # i18n-allow: localized runtime voice output
@@ -1066,6 +1116,11 @@ _PROGRESS_POOLS: dict[ToolActivity, dict[str, tuple[str, ...]]] = {
             "Sigo leyendo tus registros.",
             "Todavía lo estoy revisando.",
             "Sigo con ello, un momento.",
+        ),
+        "ja": (
+            "\u307e\u3060\u8a18\u9332\u3092\u8aad\u3093\u3067\u3044\u307e\u3059\u3002",
+            "\u5f15\u304d\u7d9a\u304d\u78ba\u8a8d\u3057\u3066\u3044\u307e\u3059\u3002",
+            "\u3082\u3046\u5c11\u3057\u3067\u8aad\u307f\u7d42\u308f\u308a\u307e\u3059\u3002",
         ),
     },
     ToolActivity.SCREEN: {
@@ -1084,6 +1139,17 @@ _PROGRESS_POOLS: dict[ToolActivity, dict[str, tuple[str, ...]]] = {
             "El paso en pantalla sigue en marcha.",
             "Un momento más en la pantalla.",
         ),
+        "ja": (
+            "\u307e\u3060\u753b\u9762\u306e\u4f5c\u696d\u4e2d\u3067\u3059\u3002",
+            (
+                "\u753b\u9762\u306e\u51e6\u7406\u304c\u307e\u3060\u7d9a\u3044\u3066\u3044\u307e"
+                "\u3059\u3002"
+            ),
+            (
+                "\u3082\u3046\u5c11\u3057\u3067\u753b\u9762\u306e\u78ba\u8a8d\u304c\u7d42\u308f"
+                "\u308a\u307e\u3059\u3002"
+            ),
+        ),
     },
     ToolActivity.OTHER: {
         "de": (  # i18n-allow: localized runtime voice output
@@ -1101,9 +1167,17 @@ _PROGRESS_POOLS: dict[ToolActivity, dict[str, tuple[str, ...]]] = {
             "Un momento más.",
             "Ya casi está.",
         ),
+        "ja": (
+            "\u307e\u3060\u4f5c\u696d\u3057\u3066\u3044\u307e\u3059\u3002",
+            (
+                "\u5f15\u304d\u7d9a\u304d\u9032\u3081\u3066\u3044\u307e\u3059\u3001\u5c11\u3005"
+                "\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002"
+            ),
+            "\u3082\u3046\u5c11\u3057\u304b\u304b\u308a\u307e\u3059\u3002",
+        ),
     },
     # HANDOVER: no line of its own — the spawn reply states the handover.
-    ToolActivity.HANDOVER: {"de": (), "en": (), "es": ()},
+    ToolActivity.HANDOVER: {"de": (), "en": (), "es": (), "ja": ()},
 }
 
 _RECENT_PROGRESS: dict[tuple[ToolActivity, str], deque[str]] = {}
@@ -1231,7 +1305,7 @@ def start_chat_instant_ack(
 #: after the result, so a slow provider simply costs the ack, never the turn.
 CONTEXTUAL_BUDGET_MS = 700
 
-_LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
+_LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish", "ja": "Japanese"}
 
 
 def language_name(language: str) -> str:

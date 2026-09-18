@@ -29,6 +29,8 @@ from __future__ import annotations
 import logging
 import re
 
+from jarvis.core.turn_language import localized
+
 log = logging.getLogger(__name__)
 
 try:  # optional dependency — a minimal install may lack it (open-source doctrine)
@@ -148,9 +150,9 @@ def _spell_year(value: int, lang: str) -> str | None:
 
 
 def _spell_number_token(token: str, lang: str) -> str | None:
-    decimal_sep, thousands_sep = _SEPARATORS[lang]
+    decimal_sep, thousands_sep = localized(_SEPARATORS, lang)
     int_part, sep, frac_part = token.partition(decimal_sep)
-    if thousands_sep in int_part and not _GROUPED_INT_RE[lang].fullmatch(int_part):
+    if thousands_sep in int_part and not localized(_GROUPED_INT_RE, lang).fullmatch(int_part):
         # A separator that is not followed by an exact triple is not a thousands
         # separator. Stripping it would fuse a date or a version into one giant
         # integer, so leave the token for the reader instead.
@@ -177,11 +179,11 @@ def _spell_time(hour: str, minute: str, lang: str) -> str | None:
     if h_word is None:
         return None
     if int(minute) == 0:
-        return f"{h_word}{_TIME_JOIN_OCLOCK[lang]}"
+        return f"{h_word}{localized(_TIME_JOIN_OCLOCK, lang)}"
     m_word = _spell_value(int(minute), lang)
     if m_word is None:
         return None
-    return f"{h_word}{_TIME_JOIN[lang]}{m_word}"
+    return f"{h_word}{localized(_TIME_JOIN, lang)}{m_word}"
 
 
 def _spell_groups(groups: list[str], lang: str) -> str | None:
@@ -192,7 +194,7 @@ def _spell_groups(groups: list[str], lang: str) -> str | None:
         if word is None:
             return None
         words.append(word)
-    return _DOT_JOIN[lang].join(words)
+    return localized(_DOT_JOIN, lang).join(words)
 
 
 def _resolve_day_month(first: int, second: int) -> tuple[int, int] | None:
@@ -214,7 +216,7 @@ def _expand_year(raw: str) -> int:
 
 
 def _spell_date(day: int, month: int, year: int | None, lang: str, cue: str) -> str | None:
-    month_name = _MONTHS[lang][month - 1]
+    month_name = localized(_MONTHS, lang)[month - 1]
     if lang == "de":
         stem = _spell_value(day, "de", to="ordinal")
         if stem is None:
@@ -286,7 +288,7 @@ def _spell_dotted_token(token: str, lang: str, cue: str, at_end: bool) -> str | 
         and len(groups) == 2
         and len(groups[0]) <= 2
         and len(groups[1]) <= 2
-        and cue in _DATE_CUES[lang]
+        and cue in localized(_DATE_CUES, lang)
     ):
         day_month = _resolve_day_month(int(groups[0]), int(groups[1]))
         if day_month is not None:
@@ -297,7 +299,7 @@ def _spell_dotted_token(token: str, lang: str, cue: str, at_end: bool) -> str | 
 
     # An ordinary grouped number ("1.500" in German) or an English decimal
     # ("3.8") — one value, handed to the general speller.
-    if _SEPARATORS[lang][1] == "." and _GROUPED_INT_RE[lang].fullmatch(core):
+    if localized(_SEPARATORS, lang)[1] == "." and localized(_GROUPED_INT_RE, lang).fullmatch(core):
         spoken = _spell_number_token(core, lang)
         if spoken is not None:
             return spoken + tail

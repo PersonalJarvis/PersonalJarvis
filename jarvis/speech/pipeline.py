@@ -89,6 +89,7 @@ from jarvis.core.events import (
 from jarvis.core.protocols import AudioChunk, Transcript
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
+    localized,
     normalize_language_tag,
     resolve_output_language,
 )
@@ -8999,7 +9000,7 @@ class SpeechPipeline:
                             source_layer="speech.pipeline",
                             thread_id="voice",
                             role="system",
-                            text=_REALTIME_UNAVAILABLE_PHRASE[lang],
+                            text=localized(_REALTIME_UNAVAILABLE_PHRASE, lang),
                         )
                     )
                     log.warning(
@@ -16773,7 +16774,7 @@ class SpeechPipeline:
     async def _speak_realtime_unavailable(self) -> None:
         """Explain a duplex failure before continuing on the classic path."""
         lang = _phrase_lang(self._output_language(None, ""))
-        phrase = _REALTIME_UNAVAILABLE_PHRASE[lang]
+        phrase = localized(_REALTIME_UNAVAILABLE_PHRASE, lang)
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
             await self._speak(

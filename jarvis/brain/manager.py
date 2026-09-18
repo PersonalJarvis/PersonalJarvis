@@ -23,6 +23,7 @@ Architecture:
 """
 from __future__ import annotations
 
+from jarvis.core.turn_language import localized
 import ast
 import asyncio
 import base64
@@ -1860,8 +1861,8 @@ def _evidence_unfulfilled_answer(*, lang: str, domain: str = "") -> str:
         lang = DEFAULT_LOCALE
     label = _EVIDENCE_DOMAIN_LABELS.get(lang, {}).get(domain, "")
     if label:
-        return _EVIDENCE_UNFULFILLED_DOMAIN_PHRASES[lang].format(label=label)
-    return _EVIDENCE_UNFULFILLED_PHRASES[lang]
+        return localized(_EVIDENCE_UNFULFILLED_DOMAIN_PHRASES, lang).format(label=label)
+    return localized(_EVIDENCE_UNFULFILLED_PHRASES, lang)
 
 
 # Honest spoken fallback for a mandated WRITE (e.g. contact-upsert) that never
@@ -2095,9 +2096,9 @@ def _extract_leaked_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
 
 # Single source of truth for the reply-language vocabulary (Python ↔ REST ↔ TS).
 # "auto" = mirror the user's input language; the rest hard-pin that language.
-SUPPORTED_REPLY_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
+SUPPORTED_REPLY_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es", "ja")
 _REPLY_LANGS: frozenset[str] = frozenset(SUPPORTED_REPLY_LANGUAGES)
-_REPLY_LANG_NAMES: dict[str, str] = {"de": "German", "en": "English", "es": "Spanish"}
+_REPLY_LANG_NAMES: dict[str, str] = {"de": "German", "en": "English", "es": "Spanish", "ja": "Japanese"}
 
 # Spoken confirmation for a deterministic reply-language switch (the
 # voice_command_gate "language_switch" path). Keyed by target code and phrased
@@ -2109,6 +2110,10 @@ _LANG_SWITCH_CONFIRM: dict[str, str] = {
     "en": "Done — I'll reply in English from now on.",
     "es": "Listo — a partir de ahora respondo en español.",
     "auto": "Erledigt — ich passe meine Sprache ab jetzt automatisch deiner an.",
+    "ja": (
+        "\u308f\u304b\u308a\u307e\u3057\u305f\u3002\u3053\u308c\u304b\u3089\u306f\u65e5\u672c\u8a9e"
+        "\u3067\u304a\u7b54\u3048\u3057\u307e\u3059\u3002"
+    ),
 }
 
 # Spoken when the live reply-language switch applied but PERSIST failed (read-only
@@ -2118,6 +2123,11 @@ _LANG_SWITCH_CONFIRM_SESSION: dict[str, str] = {
     "de": "Für diese Sitzung antworte ich auf Deutsch — dauerhaft speichern hat nicht geklappt.",
     "en": "For this session I'll reply in English — saving it permanently didn't work.",
     "es": "Por esta sesión responderé en español — no pude guardarlo de forma permanente.",
+    "ja": (
+        "\u3053\u306e\u30bb\u30c3\u30b7\u30e7\u30f3\u3067\u306f\u65e5\u672c\u8a9e\u3067\u304a\u7b54"
+        "\u3048\u3057\u307e\u3059\u3002\u305f\u3060\u3001\u8a2d\u5b9a\u306e\u4fdd\u5b58\u306f\u3046"
+        "\u307e\u304f\u3044\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+    ),
 }
 
 # Local-model mode switch confirmations (jarvis/brain/local_mode_gate.py).

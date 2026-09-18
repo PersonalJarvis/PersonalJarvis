@@ -148,7 +148,7 @@ class PendingIdBody(BaseModel):
 class LanguageBody(BaseModel):
     # Constrained so a bad value (e.g. "zh") is rejected with 422 at the boundary
     # instead of being written to jarvis.toml and silently normalised to "auto".
-    reply_language: Literal["auto", "de", "en", "es"]
+    reply_language: Literal["auto", "de", "en", "es", "ja"]
 
 
 class SecretBody(BaseModel):
@@ -293,7 +293,7 @@ def put_language(body: LanguageBody, request: Request) -> dict[str, Any]:
     result = _apply_config_write(
         store, "brain.reply_language", body.reply_language, "control-api language switch"
     )
-    if body.reply_language in ("de", "en", "es"):
+    if body.reply_language in ("de", "en", "es", "ja"):
         ui = _apply_config_write(
             store, "ui.language", body.reply_language, "control-api language switch"
         )

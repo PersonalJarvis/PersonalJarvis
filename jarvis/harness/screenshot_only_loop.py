@@ -1978,6 +1978,7 @@ _PROOF_LANGUAGE_NAMES: dict[str, str] = {
     "de": "German",
     "en": "English",
     "es": "Spanish",
+    "ja": "Japanese",
 }
 
 

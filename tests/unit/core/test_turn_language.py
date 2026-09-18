@@ -516,8 +516,23 @@ def test_non_japanese_text_is_not_japanese(text: str) -> None:
     assert not is_japanese_text(text)
 
 
-def test_japanese_does_not_change_the_de_en_es_output_locale() -> None:
-    # Canned-phrase tables are keyed de/en/es; Japanese must not leak a new
-    # key into resolve_output_language.
-    locale = resolve_output_language("auto", None, "おはよう", default="en")  # i18n-allow
-    assert locale in {"de", "en", "es"}
+def test_japanese_text_speaks_japanese() -> None:
+    # "ohayou": Japanese is decided by script, even against an established
+    # conversation language (a Japanese sentence has no Latin "words", so the
+    # thin-turn stickiness must not claim it).
+    assert resolve_output_language("auto", None, "\u304a\u306f\u3088\u3046", default="en") == "ja"
+    assert (
+        resolve_output_language("auto", None, "\u304a\u306f\u3088\u3046", conversation_language="de") == "ja"
+    )
+
+
+def test_an_explicit_pin_still_wins_over_japanese_text() -> None:
+    assert resolve_output_language("de", None, "\u304a\u306f\u3088\u3046") == "de"
+
+
+def test_localized_falls_back_to_english_for_a_missing_locale() -> None:
+    from jarvis.core.turn_language import localized
+
+    table = {"de": "Moment", "en": "One moment", "es": "Un momento"}
+    assert localized(table, "ja") == "One moment"
+    assert localized(table, "de") == "Moment"

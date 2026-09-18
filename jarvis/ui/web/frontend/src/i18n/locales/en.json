@@ -3132,13 +3132,18 @@
       "es": {
         "label": "Español (Spanish)",
         "description": "Use Spanish for every label and button."
+      },
+      "ja": {
+        "label": "日本語 (Japanese)",
+        "description": "Use Japanese for every label and button."
       }
     },
     "reply_options": {
       "auto": "{name} mirrors whichever language you speak or type.",
       "en": "{name} answers in English.",
       "de": "{name} antwortet auf Deutsch.",
-      "es": "{name} responde en español."
+      "es": "{name} responde en español.",
+      "ja": "{name} replies in Japanese."
     },
     "stt_options": {
       "auto": "Detect the language you speak automatically.",
