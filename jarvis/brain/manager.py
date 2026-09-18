@@ -2120,6 +2120,33 @@ _LANG_SWITCH_CONFIRM_SESSION: dict[str, str] = {
     "es": "Por esta sesión responderé en español — no pude guardarlo de forma permanente.",
 }
 
+# Local-model mode switch confirmations (jarvis/brain/local_mode_gate.py).
+# Japanese is here because the switch is spoken on the keyless Japanese setup
+# the mode exists for; the other locales are the usual peers.
+_LOCAL_MODE_DONE: dict[str, dict[str, str]] = {
+    "developer": {
+        "ja": "開発モードに切り替えました。"
+        "モデルは {model} です。",
+        "en": "Developer mode is on. The model is {model}.",
+        "de": "Entwicklermodus ist an. Das Modell ist {model}.",  # i18n-allow
+        "es": "Modo desarrollador activado. El modelo es {model}.",
+    },
+    "normal": {
+        "ja": "通常モードに戻しました。"
+        "モデルは {model} です。",
+        "en": "Back to normal mode. The model is {model}.",
+        "de": "Zurueck im Normalmodus. Das Modell ist {model}.",  # i18n-allow
+        "es": "De vuelta al modo normal. El modelo es {model}.",
+    },
+}
+_LOCAL_MODE_FAILED: dict[str, str] = {
+    "ja": "モードを切り替えられませんでした。"
+    "必要なローカルモデルがありません。",
+    "en": "I could not switch the mode: the local model it needs is not installed.",
+    "de": "Ich konnte den Modus nicht wechseln: das lokale Modell fehlt.",  # i18n-allow
+    "es": "No pude cambiar el modo: falta el modelo local necesario.",
+}
+
 # Sub-agent (Heavy-Task worker) provider switch — the voice_command_gate
 # "subagent_switch" path. The gate returns the spoken provider word; this maps
 # it to a CANONICAL [brain.sub_jarvis].provider slug (the values are the only
@@ -3729,6 +3756,14 @@ class BrainManager:
             _override is None or not _override.system_extra
         ):
             advertised = self._stable_compact_tools(brain)
+            # A folder chat's own hands (read/edit/run in its project) are
+            # stable for the whole chat, so they join the surface after the
+            # frozen part — a coding chat on a local model can edit files.
+            # Only those this turn may actually run (plan mode filters them).
+            extra_names = getattr(_override, "tools_extra", None) or {}
+            folder_tools = {n: tools[n] for n in extra_names if n in tools}
+            if folder_tools:
+                advertised = {**advertised, **folder_tools}
             mandated = str(getattr(self, "_evidence_required_tool", "") or "")
             if mandated and mandated in tools and mandated not in advertised:
                 advertised = {**advertised, mandated: tools[mandated]}
@@ -4990,6 +5025,18 @@ class BrainManager:
         if persisted:
             return _LANG_SWITCH_CONFIRM.get(lang, _LANG_SWITCH_CONFIRM["de"])
         return _LANG_SWITCH_CONFIRM_SESSION.get(lang, _LANG_SWITCH_CONFIRM_SESSION["de"])
+
+    async def _apply_local_mode(self, mode: str) -> str:
+        """Switch the local model mode and say what happened, in the turn's language."""
+        from jarvis.local_models.modes import switch_mode
+
+        result = await switch_mode(mode, brain=self)
+        lang = "ja" if getattr(self, "_turn_japanese", False) else self._resolve_turn_lang()
+        if not result.get("ok"):
+            table = _LOCAL_MODE_FAILED
+            return table.get(lang, table["en"])
+        table = _LOCAL_MODE_DONE[result["mode"]]
+        return table.get(lang, table["en"]).format(model=result.get("model", ""))
 
     def _is_self_control_turn(self, text: str) -> bool:
         """Broad (class-level, NOT per-command) detector for a request to change
@@ -11168,6 +11215,23 @@ class BrainManager:
                     trace_id=turn_trace_id,
                 )
                 return confirmation
+
+        # Deterministic local-model mode switch ("developer mode" / "normal
+        # mode") — plain configuration, handled without the LLM like the
+        # language switch above; a small local model does not reliably pick a
+        # tool for it. See jarvis/brain/local_mode_gate.py.
+        from jarvis.brain.local_mode_gate import match_local_mode
+
+        local_mode = None if ide_owns_turn else match_local_mode(user_text)
+        if local_mode:
+            confirmation = await self._apply_local_mode(local_mode)
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=confirmation,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return confirmation
 
         # Deterministic sub-agent (Heavy-Task worker) provider switch — same
         # reasoning as the language switch: runs BEFORE the force-spawn/LLM path

@@ -915,3 +915,53 @@ async def test_hosted_brains_are_never_forced() -> None:
     loop = ToolUseLoop(brain, {"wiki-ingest": _RememberTool()}, _Executor())  # type: ignore[arg-type,dict-item]
     await loop.run([], user_utterance="remember that", evidence_required_tool="wiki-ingest")
     assert all(r.tool_choice is None for r in brain.requests)
+
+
+class _AnnouncesThenActsBrain:
+    """Round 1: announces a step and stops. Round 2: calls a tool. Round 3: reports."""
+
+    compact_prompt = True
+
+    def __init__(self) -> None:
+        self.requests: list[BrainRequest] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        n = len(self.requests)
+        if n == 1:
+            yield BrainDelta(content="Let me check the files first.")
+            yield BrainDelta(finish_reason="stop")
+        elif n == 2:
+            yield BrainDelta(tool_call={"id": "c1", "name": "dispatch_to_harness", "input": {}})
+            yield BrainDelta(finish_reason="tool_use")
+        else:
+            yield BrainDelta(content="Done: all tests pass.")
+            yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_project_chat_nudges_an_announced_step_into_action() -> None:
+    brain = _AnnouncesThenActsBrain()
+    executor = _Executor()
+    loop = ToolUseLoop(
+        brain,  # type: ignore[arg-type]
+        {"dispatch_to_harness": _Tool()},  # type: ignore[dict-item]
+        executor,  # type: ignore[arg-type]
+        tool_context={"cwd": "C:/project"},
+    )
+    agg = await loop.run([], user_utterance="continue the project")
+    assert len(executor.calls) == 1
+    assert "all tests pass" in agg.text
+
+
+@pytest.mark.asyncio
+async def test_without_a_project_folder_an_announcement_ends_the_turn() -> None:
+    brain = _AnnouncesThenActsBrain()
+    executor = _Executor()
+    loop = ToolUseLoop(
+        brain,  # type: ignore[arg-type]
+        {"dispatch_to_harness": _Tool()},  # type: ignore[dict-item]
+        executor,  # type: ignore[arg-type]
+    )
+    await loop.run([], user_utterance="hi")
+    assert executor.calls == [] and len(brain.requests) == 1

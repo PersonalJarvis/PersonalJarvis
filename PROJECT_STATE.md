@@ -15,8 +15,8 @@ Target box: Windows 11, RTX 3050 Laptop (4 GB VRAM), 16 GB RAM, Python 3.13 venv
 | 5 | PC control | PARTIAL: local brain opened Notepad via run_shell (live) |
 | 6 | Screen understanding | NOT STARTED (large existing base) |
 | 7 | Double-clap wake | DONE, live-verified via speaker playback (real claps: user to confirm) |
-| 8 | Model auto-switch / VRAM governor | NOT STARTED |
-| 9 | Developer Mode | NOT STARTED |
+| 8 | Model switch (normal 4B / developer 9B) | DONE for brain modes, live-verified; vision model not done |
+| 9 | Developer Mode | PARTIAL: project-chat loop live-verified on a sandbox; Unreal/Unity/Blender build loops not done |
 | 10 | Teacher Mode | NOT STARTED |
 | 11 | Hand tracking | NOT STARTED |
 | 12 | iPhone client | NOT STARTED |
@@ -308,7 +308,47 @@ Japanese and is fixed:
   Japanese command and spoken reply. Real hand claps not yet tested by a
   person.
 
+## Phase 8 — Local model modes (2026-09-18)
+
+- Normal = smallest installed GGUF (Qwen3.5-4B, full GPU, 32K ctx);
+  developer = largest (Qwen3.5-9B Q4_K_M, 2026-02, Apache-2.0).
+  Qwen2.5-Coder-7B was rejected: 2024 (repo rule: no defaults a year old).
+- One model resident at a time (router `--models-max 1`); switching unloads.
+- Switch: `jarvis/brain/local_mode_gate.py` (deterministic, ja/en/de, a mode
+  name AND a switch cue — "what is developer mode?" does not switch) ->
+  `jarvis/local_models/modes.py` (persists
+  `[brain.providers."local-openai"].model`, live-applies, prewarms). A tool
+  was not used: brain tools are the ADR-0011 ROUTER_TOOLS list.
+- Partial offload sized in layers from the GGUF header (`block_count`) and a
+  measured per-layer cost: 9B -> 21 GPU layers at 24K ctx. Measured 9B gen
+  speed on this box: llama.cpp `--fit` 4.1 tok/s, 22 layers 7.0 tok/s, 28
+  layers 5.6 tok/s (spills). Prefill ~200 tok/s -> ~50 s first turn.
+- Live: "開発モードに切り替えて" -> "開発モードに切り替えました。モデルは
+  Qwen3.5-9B-Q4_K_M です。" (0.1 s); mode survived an app restart.
+- RAM: with the 9B loaded free RAM dropped to ~0.4-1.6 GB on 16 GB. Workable
+  but tight; close other apps for developer work.
+
+## Phase 9 — Developer Mode (partial, 2026-09-18)
+
+- Uses the existing folder chat (agent-chat session with a cwd); the local
+  brain now sees the chat's folder tools (Read/Edit/Glob/Grep/RunCommand).
+- Live on a sandbox repo (unittest, pending TODO): "このプロジェクトの続きを
+  やって…git commitまでして" -> read TODO, ran tests (fail), edited calc.py,
+  re-ran (3/3 OK), git status/add/commit (27d25e9), reported in Japanese.
+  ~6.4 min incl. manual approvals of each command (accept-edits mode).
+- Bugs found and fixed on the way:
+  - `run_shell` ignored the chat's working directory (ran in the app dir).
+  - Package installs (pip/npm/winget/choco/Install-Module/...) ran without a
+    prompt; now escalated to ask like deletes. The first test run had
+    pip-installed 7 packages into the system Python unprompted — all 7 were
+    fresh installs and were uninstalled again.
+  - A small model announcing "I'll check the files first." ended the turn;
+    project chats now nudge it to act (max 2).
+- Not done: Unreal/Unity/Blender build+run+log loops (no .uproject exists on
+  this PC), "same fix max 3 times" guard, voice-only "Unrealの続き".
+
 ## Changelog
+- 2026-09-18: local model modes (4B/9B) + developer project-chat loop verified; run_shell cwd + install-confirmation fixes.
 - 2026-09-18: Phase 7 double-clap wake + opt-in spoken wake ack; install_voicevox.py syntax fix.
 - 2026-09-18: Japanese long-term memory save+recall verified across restart; PC op (Notepad) verified.
 - 2026-09-18: Phase 2 (ja STT) and Phase 3 (VOICEVOX TTS) live-verified; 3 pre-existing bugs fixed (vosk deadlock, STT busy drop, CJK sentence split).

@@ -623,6 +623,39 @@ def _is_stt_hallucinated(tool_name: str, args: Any) -> tuple[bool, str]:
     return False, ""
 
 
+#: How often a project-chat turn may be told to act on an announced step.
+_MAX_CONTINUATION_NUDGES = 2
+
+_CONTINUE_DIRECTIVE = (
+    "Continue: do the step you just announced now, using your tools. Keep "
+    "going until the task is finished, then report the result."
+)
+
+# The LAST sentence announces a next step instead of reporting one: Japanese
+# "... shimasu" intent endings and English "let me / I'll / next I".
+_NEXT_STEP_JA_RE = re.compile(
+    "(\u3057\u307e\u3059|\u3057\u307e\u3057\u3087\u3046|\u3066\u3044\u304d\u307e\u3059"
+    "|\u898b\u3066\u307f\u307e\u3059|\u307f\u307e\u3059)"
+    "(?:\u306d|\u3088)?"
+    "[\u3002\uff0e.!\uff01]?"
+    r"\s*$"
+)
+_NEXT_STEP_EN_RE = re.compile(
+    r"\b(let me(?! know)|i'll|i will|next,? i|now i'll|first,? i'll)\b[^.!?]*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _announces_next_step(text: str) -> bool:
+    """Whether ``text`` ends by announcing an action rather than a result."""
+    tail = (text or "").strip()
+    if not tail:
+        return False
+    parts = re.split(r"(?<=[.!?\u3002\uff01\uff1f])\s*", tail)
+    sentence = next((part for part in reversed(parts) if part.strip()), tail)
+    return bool(_NEXT_STEP_JA_RE.search(sentence) or _NEXT_STEP_EN_RE.search(sentence))
+
+
 class ToolUseLoop:
     """Loop until no more tool calls are pending or the budget is exhausted."""
 
@@ -960,6 +993,7 @@ class ToolUseLoop:
         tool_log: list[ToolRecord] = []
         verify_rounds = 0
         round_no = 0
+        continuation_nudges = 0
 
         def _progress() -> None:
             # Stall-timeout heartbeat (see ``on_progress`` in the docstring).
@@ -1097,6 +1131,29 @@ class ToolUseLoop:
                 late = self._drain_steer()
                 if late:
                     self._append_steer(current_messages, late)
+                    continue
+                if (
+                    continuation_nudges < _MAX_CONTINUATION_NUDGES
+                    and not deadline_forced
+                    and tools_payload
+                    and self._tool_context.get("cwd")
+                    and getattr(self._brain, "compact_prompt", False)
+                    and _announces_next_step(agg.text)
+                ):
+                    # A small local model in a project chat says what it will
+                    # do next ("I'll check the files first.") and stops. There
+                    # is no one to press "go on": ask it to do it now.
+                    continuation_nudges += 1
+                    log.info(
+                        "tool_use_loop: model announced a step without acting — "
+                        "continuation nudge %d/%d",
+                        continuation_nudges,
+                        _MAX_CONTINUATION_NUDGES,
+                    )
+                    current_messages.append(BrainMessage(role="assistant", content=agg.text))
+                    current_messages.append(
+                        BrainMessage(role="user", content=_CONTINUE_DIRECTIVE)
+                    )
                     continue
                 outcome = await self._run_verify(
                     user_utterance or _last_user_text(current_messages),

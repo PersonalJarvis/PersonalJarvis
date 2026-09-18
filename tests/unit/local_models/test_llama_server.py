@@ -19,6 +19,31 @@ def test_partial_fit_when_vram_is_short() -> None:
     assert ls.choose_tier(4400 * MB, 3900) == "fit"
 
 
+def test_partial_offload_is_sized_in_layers_when_the_count_is_known() -> None:
+    # Qwen3.5-9B Q4_K_M, 32 layers, idle 4 GB card: measured best was 22.
+    assert ls.choose_tier(5417 * MB, 3965, 32) == "layers:21"
+
+
+def test_presets_give_a_partial_model_the_smaller_context(tmp_path: Path) -> None:
+    text = ls.render_presets([tmp_path / "B.gguf"], {"B": "layers:21"}, ctx=32768)
+    assert "n-gpu-layers = 21" in text and f"ctx-size = {ls.PARTIAL_CTX}" in text
+
+
+def test_gguf_layer_count_is_read_from_the_header(tmp_path: Path) -> None:
+    import struct
+
+    key = b"qwen35.block_count"
+    blob = b"GGUF" + struct.pack("<I", 3) + struct.pack("<QQ", 0, 2)
+    other = b"general.name"
+    blob += struct.pack("<Q", len(other)) + other + struct.pack("<I", 8)
+    blob += struct.pack("<Q", 4) + b"test"
+    blob += struct.pack("<Q", len(key)) + key + struct.pack("<I", 4) + struct.pack("<I", 32)
+    path = tmp_path / "m.gguf"
+    path.write_bytes(blob)
+    assert ls.gguf_block_count(path) == 32
+    assert ls.gguf_block_count(tmp_path / "missing.gguf") is None
+
+
 def test_cpu_when_no_gpu_or_almost_no_free_vram() -> None:
     assert ls.choose_tier(2614 * MB, None) == "cpu"
     assert ls.choose_tier(2614 * MB, 600) == "cpu"

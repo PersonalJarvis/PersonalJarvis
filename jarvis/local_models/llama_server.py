@@ -151,20 +151,90 @@ def _settled_free_vram_mb(model_bytes: int, *, samples: int = 3, gap_s: float = 
     return best
 
 
-def choose_tier(model_bytes: int, free_mb: int | None) -> str:
-    """The strongest offload tier this model can use with ``free_mb`` of VRAM."""
+#: Partial offload, measured for Qwen3.5-9B Q4_K_M on a 4 GB card at 16K
+#: context: each GPU layer cost ~134 MB (0.8 of the file size per layer) on top
+#: of ~0.85-1 GB for KV cache and compute buffers; 22 layers were fastest (7.0-7.2
+#: tok/s) while llama.cpp's own ``--fit`` stopped at 2.9 GB and 4.1 tok/s, and
+#: pushing past the card spilled into shared memory and got slower again.
+_PARTIAL_BASE_MB = 850
+_PARTIAL_LAYER_FACTOR = 0.8
+#: Context for a partially offloaded model: every KV megabyte saved is a layer
+#: more on the GPU, and 24K still holds Jarvis's prompt plus a working turn.
+PARTIAL_CTX = 24576
+
+
+def choose_tier(model_bytes: int, free_mb: int | None, n_layers: int | None = None) -> str:
+    """The strongest offload tier this model can use with ``free_mb`` of VRAM.
+
+    ``full`` / ``layers:<n>`` (partial, sized from the measured per-layer cost
+    when the layer count is known) / ``fit`` (llama.cpp's fitter) / ``cpu``.
+    """
     if free_mb is None:
         return "cpu"
-    need = model_bytes // (1024 * 1024) + _RUNTIME_OVERHEAD_MB + _SAFETY_MARGIN_MB
+    model_mb = model_bytes // (1024 * 1024)
+    need = model_mb + _RUNTIME_OVERHEAD_MB + _SAFETY_MARGIN_MB
     if free_mb >= need:
         return "full"
     # Less than ~1 GB free makes partial offload slower than plain CPU.
-    return "fit" if free_mb >= 1024 else "cpu"
+    if free_mb < 1024:
+        return "cpu"
+    if n_layers:
+        per_layer = model_mb * _PARTIAL_LAYER_FACTOR / n_layers
+        layers = int((free_mb - _PARTIAL_BASE_MB - _SAFETY_MARGIN_MB) / per_layer)
+        if layers >= 1:
+            return f"layers:{min(layers, n_layers)}"
+    return "fit"
+
+
+def gguf_block_count(path: Path) -> int | None:
+    """``<arch>.block_count`` from a GGUF header (the model's layer count), or None."""
+    import struct
+
+    scalar = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) != b"GGUF":
+                return None
+            f.seek(4, 1)  # version
+            _tensors, n_kv = struct.unpack("<QQ", f.read(16))
+
+            def read_str() -> bytes:
+                (n,) = struct.unpack("<Q", f.read(8))
+                return f.read(n)
+
+            def skip(kind: int) -> None:
+                if kind in scalar:
+                    f.seek(scalar[kind], 1)
+                elif kind == 8:
+                    read_str()
+                elif kind == 9:
+                    (elem,) = struct.unpack("<I", f.read(4))
+                    (count,) = struct.unpack("<Q", f.read(8))
+                    if elem in scalar:
+                        f.seek(scalar[elem] * count, 1)
+                    else:
+                        for _ in range(count):
+                            skip(elem)
+                else:
+                    raise ValueError(f"unknown GGUF value type {kind}")
+
+            for _ in range(n_kv):
+                key = read_str().decode("utf-8", "replace")
+                (kind,) = struct.unpack("<I", f.read(4))
+                if key.endswith(".block_count") and kind in (4, 5, 10, 11):
+                    fmt = {4: "<I", 5: "<i", 10: "<Q", 11: "<q"}[kind]
+                    return int(struct.unpack(fmt, f.read(struct.calcsize(fmt)))[0])
+                skip(kind)
+    except (OSError, ValueError, struct.error) as exc:
+        log.info("llama-server: could not read the layer count of %s (%s)", path.name, exc)
+    return None
 
 
 def _tier_lines(tier: str) -> list[str]:
     if tier == "full":
         return ["n-gpu-layers = 99"]
+    if tier.startswith("layers:"):
+        return [f"n-gpu-layers = {tier.split(':', 1)[1]}"]
     if tier == "fit":
         return ["fit = on", f"fit-target = {_SAFETY_MARGIN_MB + 262}"]
     return ["n-gpu-layers = 0"]
@@ -177,7 +247,7 @@ def render_presets(models: list[Path], tiers: dict[str, str], ctx: int = DEFAULT
         lines = [
             f"[{path.stem}]",
             f"model = {path}",
-            f"ctx-size = {ctx}",
+            f"ctx-size = {ctx if tiers.get(path.stem, 'cpu') == 'full' else min(ctx, PARTIAL_CTX)}",
             "flash-attn = on",
             # One slot owns the whole window; a quantized KV cache halves it.
             "parallel = 1",
@@ -338,7 +408,9 @@ class LlamaServer:
             self._port = _pick_free_port()
         self._adopted = False
         free = _settled_free_vram_mb(max(p.stat().st_size for p in models))
-        self._tiers = {p.stem: choose_tier(p.stat().st_size, free) for p in models}
+        self._tiers = {
+            p.stem: choose_tier(p.stat().st_size, free, gguf_block_count(p)) for p in models
+        }
         target = warm_model if warm_model in self._tiers else models[0].stem
         for _attempt in range(len(OFFLOAD_TIERS)):
             self._spawn(binary, models)
@@ -355,7 +427,10 @@ class LlamaServer:
             current = self._tiers[target]
             if current == OFFLOAD_TIERS[-1]:
                 break
-            self._tiers[target] = OFFLOAD_TIERS[OFFLOAD_TIERS.index(current) + 1]
+            # A computed layer count that did not fit falls to llama.cpp's
+            # own fitter, then to the CPU.
+            ladder = "fit" if current.startswith("layers:") else current
+            self._tiers[target] = OFFLOAD_TIERS[OFFLOAD_TIERS.index(ladder) + 1]
             log.warning(
                 "llama-server: stepping %s down from %s to %s and restarting",
                 target, current, self._tiers[target],
