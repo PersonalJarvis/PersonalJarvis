@@ -814,6 +814,11 @@ call-contact = "jarvis.plugins.tool.call_contact:CallContactTool"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["jarvis*"]
+exclude = ["*.__pycache__", "*.__pycache__.*"]
+
+[tool.setuptools.exclude-package-data]
+# Resource globs must never distribute interpreter caches or their build paths.
+"*" = ["*.pyc", "*.pyo", "**/__pycache__/*"]
 
 [tool.setuptools.package-data]
 jarvis = [
