@@ -8,6 +8,36 @@ vi.mock("@/i18n", () => ({ useUiLanguage: () => "en" }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("goal-only Swarm entry", () => {
+  it("retains execution mode in form submissions and prevents selecting unavailable distributed capacity", async () => {
+    const submit = vi.fn(async (_spec: TeamCreate) => teamFixture());
+    const { rerender } = render(<CreateTeamForm capability={null} onCreated={() => {}} onSubmitTeam={submit} />);
+    fireEvent.change(screen.getByLabelText("What should this team accomplish?"), { target: { value: "Review a public dataset." } });
+    fireEvent.click(screen.getByText("Options · budget and access", { selector: "summary" }));
+    const mode = screen.getByRole("combobox", { name: "Execution mode" });
+    expect(mode.getAttribute("data-value")).toBe("auto");
+    fireEvent.keyDown(mode, { key: "ArrowDown" });
+    const options = screen.getByRole("listbox", { name: "Execution mode" });
+    const distributed = screen.getByRole("option", { name: "Distributed" });
+    expect(distributed.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(distributed);
+    expect(mode.getAttribute("data-value")).toBe("auto");
+    fireEvent.keyDown(options, { key: "End" });
+    fireEvent.keyDown(options, { key: "Enter" });
+    expect(mode.getAttribute("data-value")).toBe("local");
+    expect(document.activeElement).toBe(mode);
+    fireEvent.click(screen.getByRole("button", { name: "Clarify the goal" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit.mock.calls[0][0]).toMatchObject({ mode: "local", limits: { concurrency: 32 } });
+
+    rerender(<CreateTeamForm capability={{ distributed: { available: true } }} onCreated={() => {}} onSubmitTeam={submit} />);
+    fireEvent.click(mode);
+    fireEvent.click(screen.getByRole("option", { name: "Distributed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clarify the goal" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
+    expect(submit.mock.calls[1][0]).toMatchObject({ mode: "distributed", limits: { concurrency: 1000 } });
+    expect(submit.mock.calls[1][0].request_key).not.toBe(submit.mock.calls[0][0].request_key);
+  });
+
   it("prepares a natural goal without starting execution and retains its identity on retry", async () => {
     const onCreated = vi.fn();
     const requests: { path: string; body: Record<string, unknown> }[] = [];

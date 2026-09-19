@@ -840,6 +840,7 @@ class LocalSwarmService(Participation, Rechecks, Preparations):
                 await self.storage.call(queue_coordinators, store, controller)
                 active.append((store, controller))
             except (SwarmAccessError, SwarmConflictError):
+                # Discard lost authority; a later poll may reacquire a valid lease.
                 self._controllers.pop(team["id"], None)
             except Exception as exc:  # noqa: BLE001 - one corrupt/unavailable team cannot stop another
                 log.exception("Swarm team %s needs storage recovery", team["id"])
@@ -970,6 +971,7 @@ class LocalSwarmService(Participation, Rechecks, Preparations):
                     try:
                         await self._source_profile(source_id)
                     except SwarmAccessError:
+                        # Persist revocation when the ordinary source is no longer eligible.
                         await self.storage.call(store.revoke_member, controller, agent_id)
                     else:
                         source_ids.add(source_id)

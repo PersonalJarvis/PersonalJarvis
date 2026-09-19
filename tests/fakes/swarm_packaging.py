@@ -30,8 +30,16 @@ class BundleHooks:
         self.data.append(name)
         return [(f"{name}/data", name)]
 
-    def collect_dynamic_libs(self, name: str) -> list[tuple[str, str]]:
-        return [(f"{name}/{self.native}", name)]
+    def collect_dynamic_libs(
+        self,
+        name: str,
+        *,
+        search_patterns: list[str] | tuple[str, ...] = ("*.dll", "*.dylib", "lib*.so"),
+    ) -> list[tuple[str, str]]:
+        source = PurePosixPath(name) / self.native
+        if any(source.match(pattern) for pattern in search_patterns):
+            return [(str(source), str(source.parent))]
+        return []
 
 
 class BinaryWheel:

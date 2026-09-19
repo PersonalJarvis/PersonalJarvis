@@ -871,6 +871,7 @@ class StorageLifecycle:
             try:
                 store = self.registry.open(team_id, self.owner)
             except (SwarmStoreError, sqlite3.DatabaseError):
+                # Catalog-fenced deletion must remain possible for a corrupt store.
                 store = None
             if store is not None:
                 with store._tx(write=True) as connection:

@@ -20,6 +20,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
+// Keep this navigation contract independent of the live-profile endpoints.
+vi.mock("@/components/providers/LiveProfile", () => ({ LiveProfile: () => null }));
+
 // ApiKeysView reads the live `[voice].mode` (for the Pipeline|Realtime mode
 // switch) via useVoiceMode, which needs a QueryClientProvider — mocked here
 // exactly like the other ApiKeysView.*.test.tsx files. realtimeAvailable=true

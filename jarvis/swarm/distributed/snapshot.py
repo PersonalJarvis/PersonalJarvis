@@ -292,6 +292,7 @@ def validate_database_rows(registry, root, *, owner="local-user"):
             _load_rows(store, connection, root, manifest, versions)
             raise _ValidatedRollback("Snapshot constraints passed")
     except _ValidatedRollback:
+        # This sentinel deliberately rolls back a successful constraint-only dry run.
         return
     except SwarmConflictError as exc:
         raise SwarmStoreError(

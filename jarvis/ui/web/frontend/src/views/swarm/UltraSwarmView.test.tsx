@@ -73,7 +73,8 @@ describe("Swarm product controls without WebGL", () => {
     render(<UltraSwarmView />);
     await screen.findAllByText("alpha-lead");
     const sidebar = screen.getByRole("complementary", { name: "Teams" });
-    fireEvent.change(within(sidebar).getByLabelText("Filter by status"), { target: { value: "active" } });
+    fireEvent.click(within(sidebar).getByRole("combobox", { name: "Filter by status" }));
+    fireEvent.click(screen.getByRole("option", { name: "Active" }));
     const unavailable = within(sidebar).getByRole("button", { name: "Team beta Unavailable" });
     expect(unavailable.querySelector("[data-state]")).toBeNull();
     fireEvent.click(unavailable);

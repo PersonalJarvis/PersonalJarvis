@@ -21,6 +21,7 @@ import runpy
 import secrets
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,54 @@ from jarvis.core.installer_update import apply_installer
 _process_support = runpy.run_path(str(Path(__file__).with_name("_native_process.py")))
 contained_process = _process_support["contained_process"]
 ContainmentError = _process_support["ContainmentError"]
+_CLEANUP_TIMEOUT_S = 10.0
+
+
+class WorkspaceCleanupError(RuntimeError):
+    """The native smoke's files must remain available for cleanup diagnosis."""
+
+
+def remove_workspace(root: Path) -> None:
+    """Retry transient Windows file locks only after process containment drained."""
+    if not root.is_absolute() or not root.name.startswith("jarvis-native-smoke-"):
+        raise WorkspaceCleanupError("Refusing cleanup outside the native smoke workspace")
+    deadline = time.monotonic() + _CLEANUP_TIMEOUT_S
+
+    def remove_readonly(function, path, exc_info):
+        error = exc_info[1]
+        if os.name != "nt" or not isinstance(error, PermissionError):
+            raise error
+        target = Path(path)
+        if function not in {os.unlink, os.rmdir} or not target.resolve().is_relative_to(root):
+            raise error
+        attributes = target.stat(follow_symlinks=False)
+        if not attributes.st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
+            raise error
+        # Installer payloads can retain the DOS read-only bit. Change no ACLs,
+        # and do not mistake a mapped DLL's access denial for that attribute.
+        target.chmod(attributes.st_mode | stat.S_IWRITE)
+        function(path)
+
+    while True:
+        try:
+            if root.resolve(strict=True) != root:
+                raise WorkspaceCleanupError("The native smoke cleanup target changed")
+            # onerror keeps the supported Python 3.11 installer host compatible.
+            shutil.rmtree(root, onerror=remove_readonly)
+            return
+        except OSError as exc:
+            remaining = deadline - time.monotonic()
+            # A drained Job proves process ownership ended; Windows image section
+            # teardown or a scanner can still briefly deny deletion of a DLL.
+            if (
+                os.name != "nt"
+                or getattr(exc, "winerror", None) not in {5, 32, 33, 145}
+                or remaining <= 0
+            ):
+                raise WorkspaceCleanupError(
+                    f"Native file cleanup failed; workspace retained at {root}"
+                ) from exc
+            time.sleep(min(0.1, remaining))
 
 
 def isolated_environment(root: Path, port: int, control_key: str) -> dict[str, str]:
@@ -223,10 +272,12 @@ def smoke_workspace():
         yield root
     except ContainmentError as exc:
         removable = False
-        raise RuntimeError(f"Native process cleanup failed; workspace retained at {root}") from exc
+        raise WorkspaceCleanupError(
+            f"Native process cleanup failed; workspace retained at {root}"
+        ) from exc
     finally:
         if removable:
-            shutil.rmtree(root)
+            remove_workspace(root)
 
 
 def run(installer: Path, report: Path) -> dict:
@@ -236,58 +287,70 @@ def run(installer: Path, report: Path) -> dict:
         )
     installer = installer.resolve(strict=True)
     report.parent.mkdir(parents=True, exist_ok=True)
-    with smoke_workspace() as root:
-        with socket.socket() as reservation:
-            reservation.bind(("127.0.0.1", 0))
-            port = reservation.getsockname()[1]
-        key = secrets.token_urlsafe(32)
-        env = isolated_environment(root, port, key)
-        # The normal config writer owns even this disposable configuration.
-        _atomic_write(root / "jarvis.toml", f"[ui]\nadmin_api_port = {port}\n")
-        api = SwarmApi(port, key)
-        original = None
-        rounds = []
-        for index in range(2):
-            executable = install(installer, root, env)
-            log_path = report.with_name(f"native-smoke-{index + 1}.log")
-            with running_app(executable, root, env, log_path) as child:
-                wait_ready(api, child)
-                verify_capabilities(api.request("/api/swarm/capabilities"))
-                if original is None:
-                    original = api.request(
-                        "/api/swarm/teams",
-                        {
-                            "name": "Native installation persistence probe",
-                            "goal": "Preserve this unstarted team across installer replacement.",
-                            "request_key": "native-installation-probe",
-                            "policy": {"internet": False, "allow_dependencies": False},
-                        },
-                    )
-                    if not original.get("id") or not original.get("lead_id"):
-                        raise RuntimeError(
-                            "The installed API did not create a persistent team and lead"
+    with installer.open("rb") as payload:
+        digest = hashlib.file_digest(payload, "sha256").hexdigest()
+    result = {
+        "status": "running",
+        "platform": sys.platform,
+        "machine": platform.machine(),
+        "installer": installer.name,
+        "sha256": digest,
+        "profile": "disposable",
+        "provider_requests": 0,
+        "previous_public_release_upgrade": "not exercised",
+        "cleanup": "not confirmed",
+    }
+    report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    try:
+        with smoke_workspace() as root:
+            with socket.socket() as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                port = reservation.getsockname()[1]
+            key = secrets.token_urlsafe(32)
+            env = isolated_environment(root, port, key)
+            # The normal config writer owns even this disposable configuration.
+            _atomic_write(root / "jarvis.toml", f"[ui]\nadmin_api_port = {port}\n")
+            api = SwarmApi(port, key)
+            original = None
+            goal = "Preserve this unstarted team across installer replacement."
+            for index, phase in enumerate(("fresh_install", "same_artifact_replacement")):
+                executable = install(installer, root, env)
+                log_path = report.with_name(f"native-smoke-{index + 1}.log")
+                with running_app(executable, root, env, log_path) as child:
+                    wait_ready(api, child)
+                    verify_capabilities(api.request("/api/swarm/capabilities"))
+                    if original is None:
+                        original = api.request(
+                            "/api/swarm/teams",
+                            {
+                                "name": "Native installation persistence probe",
+                                "goal": goal,
+                                "request_key": "native-installation-probe",
+                                "policy": {"internet": False, "allow_dependencies": False},
+                            },
                         )
-                current = api.request(f"/api/swarm/teams/{original['id']}")
-                verify_identity(original, current)
-                teams = api.request("/api/swarm/teams")
-                if len(teams) != 1 or teams[0]["id"] != original["id"]:
-                    raise RuntimeError("Installer replacement duplicated or lost the isolated team")
-                rounds.append({"native_wasm": "pass", "persistent_team_and_lead": "pass"})
-        with installer.open("rb") as payload:
-            digest = hashlib.file_digest(payload, "sha256").hexdigest()
-        result = {
-            "platform": sys.platform,
-            "machine": platform.machine(),
-            "installer": installer.name,
-            "sha256": digest,
-            "fresh_install": rounds[0],
-            "same_artifact_replacement": rounds[1],
-            "profile": "disposable",
-            "provider_requests": 0,
-            "previous_public_release_upgrade": "not exercised",
-        }
+                        if not original.get("id") or not original.get("lead_id"):
+                            raise RuntimeError(
+                                "The installed API did not create a persistent team and lead"
+                            )
+                    current = api.request(f"/api/swarm/teams/{original['id']}")
+                    verify_identity(original, current)
+                    teams = api.request("/api/swarm/teams")
+                    if len(teams) != 1 or teams[0]["id"] != original["id"]:
+                        raise RuntimeError(
+                            "Installer replacement duplicated or lost the isolated team"
+                        )
+                result[phase] = {"native_wasm": "pass", "persistent_team_and_lead": "pass"}
+    except BaseException as exc:
+        result["status"] = "failed"
+        result["failure_type"] = type(exc).__name__
+        if isinstance(exc, WorkspaceCleanupError):
+            result["cleanup"] = "failed"
         report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-        return result
+        raise
+    result.update(status="pass", cleanup="pass")
+    report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return result
 
 
 def main() -> None:

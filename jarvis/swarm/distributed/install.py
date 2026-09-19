@@ -43,6 +43,7 @@ def driver_readiness() -> dict:
             ):
                 missing.append(distribution)
         except (ImportError, PackageNotFoundError, ValueError):
+            # Missing or invalid drivers are reported in the capability result below.
             missing.append(distribution)
     return {
         "available": not missing,

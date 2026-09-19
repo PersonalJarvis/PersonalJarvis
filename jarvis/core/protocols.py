@@ -205,7 +205,7 @@ class HarnessResult:
     artifacts: tuple[str, ...] = field(default_factory=tuple)
     cost_usd: float = 0.0
     duration_ms: int = 0
-    is_final: bool = False  # letztes Element im Stream
+    is_final: bool = False  # last element in the stream
 
 
 # ----------------------------------------------------------------------
@@ -221,7 +221,7 @@ class ExecutionContext:
     user_utterance: str
     config: dict[str, Any]
     memory_read: Any  # MemoryStore read-only handle
-    approved_by: str | None = None  # "auto" | "user" | None (falls tier=safe)
+    approved_by: str | None = None  # "auto" | "user" | None (when tier=safe)
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,7 +371,7 @@ class STTProvider(Protocol):
     async def stream_transcribe(
         self, audio: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[Transcript]:
-        """Inkrementelle Transkription mit partials + final."""
+        """Incremental transcription with partial and final results."""
         ...
 
 
@@ -433,7 +433,7 @@ class Harness(Protocol):
 
     name: str
     version: str
-    supports_versions: str  # PEP 440 specifier, z.B. ">=2.0,<3.0"
+    supports_versions: str  # PEP 440 specifier, e.g. ">=2.0,<3.0"
 
     async def health(self) -> bool:
         """Check whether the harness is available and callable."""
@@ -450,7 +450,7 @@ class Harness(Protocol):
 
 @runtime_checkable
 class Tool(Protocol):
-    """Einzelne Jarvis-Action (open_app, type_text, search_web, …)."""
+    """One Jarvis action (open_app, type_text, search_web, …)."""
 
     name: str
     schema: dict[str, Any]  # JSON schema for LLM tool use
@@ -594,10 +594,10 @@ class UIANode:
 
     role: str  # "Button", "Edit", "MenuItem", ...
     name: str  # UIA Name-Property
-    automation_id: str = ""  # AutomationId (stabiler als Name)
+    automation_id: str = ""  # AutomationId (more stable than Name)
     bounds: tuple[int, int, int, int] = (0, 0, 0, 0)  # x, y, w, h
     enabled: bool = True
-    parent_index: int = -1  # Index in der flachen Nodes-Liste
+    parent_index: int = -1  # Index in the flat node list
     value: str = ""  # L3: current text of an editable control
     is_password: bool = False  # secure/password edit -> redact, never read
     focused: bool = False  # holds keyboard focus (post-click verify)
@@ -752,7 +752,7 @@ class IntentClassifier(Protocol):
     name: str
 
     async def classify(self, utterance: str, *, ctx: ExecutionContext) -> IntentClassification:
-        """Klassifiziert `utterance` und liefert Intent + Konfidenz."""
+        """Classify utterance and return its intent and confidence."""
         ...
 
 

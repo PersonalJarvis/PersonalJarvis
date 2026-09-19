@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocaleChunk, useT } from "@/i18n";
+import { BrandedSelect } from "@/components/ui/select";
 
 type Source = { kind: string; form_fields?: Record<string, { label: string; kind: string; required: boolean; choices: string[] }> };
 
@@ -34,6 +35,9 @@ function SourceInputs({ taskId, source }: { taskId: string; source: Source }) {
   };
   const button = "rounded border border-border px-2 py-1 text-[11px] hover:bg-secondary disabled:opacity-50";
   const field = "w-full rounded border border-border bg-background p-1 text-[12px] text-foreground";
+  const missingRequiredChoice = Object.entries(source.form_fields ?? {}).some(
+    ([name, spec]) => spec.kind === "choice" && spec.required && !values[name],
+  );
   if (source.kind === "chat" || source.kind === "mcp" || source.kind === "workflow") return <span className="block text-[11px] text-muted-foreground">{label(`entry.${source.kind}`)}</span>;
   return <div className="mt-2 block space-y-2" data-testid="source-controls">
     <button type="button" className={button} onClick={() => setOpen((v) => !v)}>{label(listener ? "connection" : "input")}</button>
@@ -46,11 +50,11 @@ function SourceInputs({ taskId, source }: { taskId: string; source: Source }) {
         {["kafka", "rabbitmq", "mqtt", "redis"].includes(source.kind) && <button type="button" disabled={busy || info.data?.install?.status === "running"} className={button} onClick={() => void send("source-connection/install", "POST")}>{label(info.data?.install?.status === "running" ? "installing" : "install_support")}</button>}
       </>}
     </> : null}
-    {open && !listener ? <form onSubmit={(event) => { event.preventDefault(); void send("invoke", "POST", { payload: values }); }} className="space-y-2">
+    {open && !listener ? <form onSubmit={(event) => { event.preventDefault(); if (busy || missingRequiredChoice) return; void send("invoke", "POST", { payload: values }); }} className="space-y-2">
       {Object.entries(source.form_fields ?? {}).map(([name, spec]) => <label className="block text-[11px]" key={name}>{spec.label}
-        {spec.kind === "choice" ? <select className={field} required={spec.required} value={String(values[name] ?? "")} onChange={(e) => setValues((v) => ({ ...v, [name]: e.target.value }))}><option value="">—</option>{spec.choices.map((choice) => <option key={choice}>{choice}</option>)}</select> : <input className={field} type={spec.kind === "boolean" ? "checkbox" : spec.kind === "number" ? "number" : "text"} required={spec.required && spec.kind !== "boolean"} onChange={(e) => setValues((v) => ({ ...v, [name]: spec.kind === "boolean" ? e.target.checked : spec.kind === "number" ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value }))} />}
+        {spec.kind === "choice" ? <BrandedSelect className="w-full" ariaLabel={spec.label} value={String(values[name] ?? "")} onValueChange={(value) => setValues((v) => ({ ...v, [name]: value }))} options={[{ value: "", label: "—" }, ...spec.choices.map((choice) => ({ value: choice, label: choice }))]} /> : <input className={field} type={spec.kind === "boolean" ? "checkbox" : spec.kind === "number" ? "number" : "text"} required={spec.required && spec.kind !== "boolean"} onChange={(e) => setValues((v) => ({ ...v, [name]: spec.kind === "boolean" ? e.target.checked : spec.kind === "number" ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value }))} />}
       </label>)}
-      <button type="submit" className={button} disabled={busy}>{label("run")}</button>
+      <button type="submit" className={button} disabled={busy || missingRequiredChoice}>{label("run")}</button>
     </form> : null}
     {notice && <span role="status" className="block text-[11px]">{notice}</span>}
     {info.error && <span role="alert" className="block text-[11px] text-destructive">{label("connection_unavailable")}</span>}

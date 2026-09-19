@@ -12,6 +12,24 @@ function Inspector({ kind = "tasks", selected = "late-task", snapshot = snapshot
   return <SwarmInspector snapshot={snapshot} {...selection} onSelect={(nextKind, id) => setSelection({ kind: nextKind, selected: id })} awake />;
 }
 describe("Swarm evidence and relationship inspector", () => {
+  it("filters records with the themed status menu and restores all records", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify([
+      { id: "working", team_id: "alpha", title: "Current calculation", state: "running" },
+      { id: "done", team_id: "alpha", title: "Verified calculation", state: "succeeded" },
+    ])));
+    render(<Inspector selected="" />);
+    await screen.findByRole("button", { name: "Current calculation Running" });
+    const filter = screen.getByRole("combobox", { name: "Filter by status" });
+    fireEvent.click(filter);
+    fireEvent.click(screen.getByRole("option", { name: "Succeeded" }));
+    expect(screen.queryByRole("button", { name: "Current calculation Running" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Verified calculation Succeeded" })).toBeTruthy();
+    fireEvent.click(filter);
+    fireEvent.click(screen.getByRole("option", { name: "All" }));
+    expect(screen.getByRole("button", { name: "Current calculation Running" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Verified calculation Succeeded" })).toBeTruthy();
+  });
+
   it("loads the complete result and all evidence instead of the truncated live projection", async () => {
     const snapshot = snapshotFixture();
     const result = "Verified source-backed result. ".repeat(20);

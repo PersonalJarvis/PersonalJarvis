@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { BrandedSelect } from "@/components/ui/select";
 import { record, records, request, teamPath } from "./api";
 import { useSwarmText } from "./strings";
 import { SwarmRecheck, SwarmSkills } from "./SwarmSkills";
@@ -102,7 +103,10 @@ export function SwarmInspector({ snapshot, kind, selected, onSelect, awake }: {
   return <section className="swarm-panel" aria-label={t("inspect")}>
     <div className="swarm-tabs" aria-label={t("inspect")}>{KINDS.map(tab => <button key={tab} aria-pressed={kind === tab} onClick={() => onSelect(tab, "")}>{t(tab)}</button>)}</div>
     <div className="swarm-row"><label><span className="sr-only">{t("search")}</span><input placeholder={t("search")} value={search} onChange={e => setSearch(e.target.value)} /></label>
-      <div className="swarm-actions"><select aria-label={t("filter")} value={status} onChange={e => setStatus(e.target.value)}><option value="">{t("all")}</option>{[...new Set(visibleRows.map(item => item.state).filter((value): value is string => typeof value === "string"))].map(value => <option key={value} value={value}>{t(value)}</option>)}</select>
+      <div className="swarm-actions"><BrandedSelect ariaLabel={t("filter")} value={status} onValueChange={setStatus} className="w-auto min-w-32" options={[
+        { value: "", label: t("all") },
+        ...[...new Set(visibleRows.map(item => item.state).filter((value): value is string => typeof value === "string"))].map(value => ({ value, label: t(value) })),
+      ]} />
         <button disabled={loading} onClick={() => setRefresh(n => n + 1)}>{t("refresh")}</button></div></div>
     {error && <p className="swarm-error" role="alert">{error}</p>}{notice && <p role="status" className="swarm-notice">{notice}</p>}
     {kind === "reputation" && <p className="swarm-muted">{t("uncertainty")}</p>}

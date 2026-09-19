@@ -1,0 +1,133 @@
+{
+  "date": "2026-09-19",
+  "candidate": "9e99a8cceee088915815b2f7970874849ca57ad4",
+  "test_source": "tests/contract/test_swarm_distributed_faults.py",
+  "test_source_sha256": "2cb0f6d1c47bf694e7a95373455fe27bc944c005278994d71066aade794ef30a",
+  "scope": "Actual storage process faults and explicitly triggered provider lifecycle; no production changes",
+  "result": "Three unique fault/retention contract cases passed in independent test-runner executions",
+  "topology": [
+    {
+      "service": "codex-swarm-pg",
+      "image": "postgres:17-alpine",
+      "image_id": "sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+      "binding": "127.0.0.1:55434"
+    },
+    {
+      "service": "codex-swarm-redis",
+      "image": "redis:alpine",
+      "image_id": "sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241",
+      "binding": "127.0.0.1:56381"
+    },
+    {
+      "service": "codex-swarm-s3",
+      "image": "chrislusf/seaweedfs:latest",
+      "image_id": "sha256:08d516132314207d10c8e37cbffc1f32b147d870169688734cc61c6231625b62",
+      "binding": "127.0.0.1:58334"
+    }
+  ],
+  "sample": {
+    "redis_teams": 2,
+    "redis_tasks": 2,
+    "s3_teams": 2,
+    "s3_tasks": 2,
+    "lifecycle_teams": 2,
+    "lifecycle_objects": 2,
+    "real_model_calls": 0
+  },
+  "redis": {
+    "test": "test_literal_redis_restart_preserves_pg_results_and_acknowledgements",
+    "observations": {
+      "teams": 2,
+      "tasks": 2,
+      "committed_result_count": 1,
+      "verification_count": 1,
+      "unacknowledged_events_recovered": 7,
+      "durable_acknowledgement_retained_during_outage": true,
+      "cross_team_and_duplicate_broker_references_rejected": true,
+      "acknowledged_outbox_rows_pruned": 8
+    },
+    "stop_command_seconds": 0.8440000000009604,
+    "recovery_seconds": 1.2029999999995198,
+    "stop_through_healthy_seconds": 8.32799999999952,
+    "process_restart_verified": true,
+    "real_connection_failure_confirmed": true,
+    "append_only_persistence_kept_enabled": true
+  },
+  "s3": {
+    "test": "test_literal_s3_outage_keeps_unknown_quota_and_recovers_one_artifact",
+    "observations": {
+      "pg_heartbeat_and_checkpoint_seconds": 0.030999999999039574,
+      "teams": 2,
+      "tasks": 2,
+      "unknown_upload_reserved_bytes": 3,
+      "committed_artifacts_after_recovery": 2,
+      "artifact_bytes_after_recovery": 6,
+      "committed_result_count": 1,
+      "original_and_other_team_bytes_preserved": true,
+      "cross_team_read_rejected_during_outage": true
+    },
+    "stop_command_seconds": 2.688000000000102,
+    "recovery_seconds": 1.7340000000003783,
+    "stop_through_healthy_seconds": 17.79700000000048,
+    "process_restart_verified": true,
+    "real_connection_failure_confirmed": true
+  },
+  "lifecycle": {
+    "test": "test_real_s3_lifecycle_expires_only_deleted_team_prefix",
+    "observations": {
+      "teams": 2,
+      "objects_before": 2,
+      "expired_deleted_team_objects": 1,
+      "live_team_objects_preserved": 1,
+      "exact_remaining_object_listing_verified": true,
+      "lifecycle_worker_seconds": 0.4529999999995198,
+      "lifecycle_policy": "Exact deleted-team prefix; absolute expiration date already due",
+      "lifecycle_trigger": "Real SeaweedFS lifecycle worker invoked by test operator",
+      "scheduled_background_expiration_proven": false,
+      "deletion_precedes_object_expiration": true,
+      "lifecycle_worker_output": "buckets path: /buckets\nrunning shards 0-15 (event budget=500, runtime=10s, refresh=0s)…\nloaded lifecycle for 1 bucket(s)\nshards 0-15 complete; cursors checkpointed"
+    },
+    "run_3_pytest_passed": 1,
+    "run_3_pytest_seconds": 5.35
+  },
+  "qualification": [
+    "Run 1 mixed native/fault selection: 49 passed, 1 failed. The first 2 fault cases passed; the lifecycle helper used the HTTP endpoint and failed gRPC negotiation. Original log/XML preserved.",
+    "Run 2 corrected lifecycle endpoint: 1 passed, 6.20 seconds.",
+    "Run 3 exact remaining S3 object-list assertion: 1 passed, 5.35 seconds. No further production or test changes."
+  ],
+  "limits": [
+    "Real local disposable PostgreSQL, Redis and S3-compatible services; not a cloud-provider IAM, regional failover, distributed network partition or large-scale load proof.",
+    "Task/verifier inputs and application lease/outbox clocks are deterministic fixtures. All storage traffic, process restarts, object writes, lifecycle execution and elapsed timing are real.",
+    "Redis AOF remained enabled; no Redis flush occurred here. Previously verified lost-stream recovery is a separate contract.",
+    "Lifecycle policy targets only an already deleted team prefix. An explicit test operator invokes the real provider lifecycle worker. Automatic policy provisioning and scheduled background expiration were not proved.",
+    "S3 object visibility/removal is verified through reads and an exact listing. Physical disk compaction and provider billing reclamation are not measured.",
+    "No literal PostgreSQL process stop was added; prior database-disconnect rollback tests remain separate. No browser rendering/SLO or native installer claim is made."
+  ],
+  "final_owned_services_running": [
+    {
+      "service": "codex-swarm-pg",
+      "running": true
+    },
+    {
+      "service": "codex-swarm-redis",
+      "running": true
+    },
+    {
+      "service": "codex-swarm-s3",
+      "running": true
+    }
+  ],
+  "evidence": [
+    "run-1/test_literal_redis_restart_preserves_pg_results_and_acknowledgements.json",
+    "run-1/test_literal_s3_outage_keeps_unknown_quota_and_recovers_one_artifact.json",
+    "run-1/test_real_s3_lifecycle_expires_only_deleted_team_prefix.json",
+    "../swarm-native-and-fault-tests.log",
+    "../swarm-native-and-fault-tests.xml",
+    "run-2/lifecycle-only-tests.log",
+    "run-2/lifecycle-only-tests.xml",
+    "run-3/lifecycle-only-tests.log",
+    "run-3/lifecycle-only-tests.xml",
+    "run-3/test_real_s3_lifecycle_expires_only_deleted_team_prefix.json"
+  ]
+}
+

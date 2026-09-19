@@ -422,7 +422,7 @@
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. The native verification probe (GET /users/@me expecting id) is implemented, but no live grant has passed it yet.",
+          "detail": "Connected completion was not verified in this audit. The native verification probe for the authenticated Discord user (expecting an id) is implemented, but no live grant has passed it yet.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {

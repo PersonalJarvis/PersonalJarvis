@@ -55,6 +55,7 @@ type CategoryKey = ProviderTier | "subagents" | "jarvis-key" | "advanced";
 // does — it only ever works on a transcript that tier produced.
 const PIPELINE_TABS: CategoryKey[] = [
   "brain",
+  "computer-use",
   "tts",
   "stt",
   "dictation",
@@ -64,6 +65,7 @@ const PIPELINE_TABS: CategoryKey[] = [
 ];
 const REALTIME_TABS: CategoryKey[] = [
   "realtime",
+  "computer-use",
   "subagents",
   "jarvis-key",
   "advanced",

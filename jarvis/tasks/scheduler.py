@@ -277,6 +277,7 @@ class TaskScheduler:
                     task_id, payload, str(event.trace_id), source="source", lineage=path
                 )
             except ValueError:
+                # The source status below persists this rejection as blocked/payload_invalid.
                 status = "payload_invalid"
             if status not in {"queued", "duplicate", "filtered"}:
                 await self._store.sources.status(task_id, "blocked", status)
@@ -385,6 +386,7 @@ class TaskScheduler:
                 ):
                     await self._store.update_state(tid, "completed")
         except RoutineDeferred:
+            # Backpressure durably returns delivery to pending and schedules a retry.
             await self._store.hooks.mark(tid, delivery, "pending")
             self._hook_retry_at[tid] = time.monotonic() + 2
         except asyncio.CancelledError:

@@ -177,6 +177,7 @@ class JarvisClient:
         try:
             payload = json.loads(content) if content else None
         except ValueError:
+            # A bounded non-JSON control response is still returned or reported below.
             payload = content.decode("utf-8", errors="replace")
         if not 200 <= response.status_code < 300:
             detail = payload.get("detail", payload) if isinstance(payload, dict) else payload

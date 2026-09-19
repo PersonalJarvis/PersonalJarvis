@@ -28,7 +28,8 @@ NATIVE_SMOKE = runpy.run_path(str(ROOT / "packaging" / "verify_swarm_install.py"
     [
         ("windows", "wasmtime.dll", "psycopg_binary.libs/libpq-version.dll"),
         ("macos", "libwasmtime.dylib", "psycopg_binary/.dylibs/libpq.dylib"),
-        ("linux", "libwasmtime.so", "psycopg_binary.libs/libpq-version.so.5.18"),
+        ("linux", "linux-x86_64/_libwasmtime.so", "psycopg_binary.libs/libpq-version.so.5.18"),
+        ("linux-arm64", "linux-aarch64/_libwasmtime.so", "psycopg_binary.libs/libpq.so.5"),
     ],
 )
 def test_native_layout_clients_metadata_tls_and_s3_models(platform, wasmtime, postgres):
@@ -38,7 +39,8 @@ def test_native_layout_clients_metadata_tls_and_s3_models(platform, wasmtime, po
     assert (f"wheel/{postgres}", str(Path(postgres).parent).replace("\\", "/")) in bundle[
         "binaries"
     ]
-    assert (f"wasmtime/{wasmtime}", "wasmtime") in bundle["binaries"]
+    wasmtime_destination = str((Path("wasmtime") / wasmtime).parent).replace("\\", "/")
+    assert (f"wasmtime/{wasmtime}", wasmtime_destination) in bundle["binaries"]
     assert "psycopg_binary._psycopg" in bundle["hiddenimports"]
     assert {"psycopg", "psycopg_pool", "redis", "boto3", "botocore"} <= set(hooks.modules)
     assert {"psycopg-binary", "psycopg-pool", "certifi"} <= set(hooks.metadata)
@@ -90,6 +92,14 @@ def test_source_base_and_full_keep_distributed_infrastructure_optional():
 def test_missing_postgres_native_wheel_payload_aborts():
     with pytest.raises(SystemExit, match="native libraries"):
         MANIFEST["collect_swarm_bundle"](BundleHooks(), distribution_reader=lambda _: BinaryWheel())
+
+
+def test_missing_wasmtime_native_payload_aborts_with_postgres_present():
+    with pytest.raises(SystemExit, match="native libraries"):
+        MANIFEST["collect_swarm_bundle"](
+            BundleHooks(native="missing.txt"),
+            distribution_reader=lambda _: BinaryWheel("psycopg_binary.libs/libpq.so.5"),
+        )
 
 
 @pytest.mark.parametrize("target", ["windows", "macos", "linux"])

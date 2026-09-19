@@ -1,0 +1,1437 @@
+{
+  "utc": "2026-09-19T10:07:36.467804+00:00",
+  "provider_family": "grok",
+  "sources_sha256": {
+    "jarvis/swarm/service.py": "1e8b8504fb3b2ac17b38e1bdaf160421eda273599bdb793f2956378bf2d1e0b3",
+    "jarvis/swarm/worker.py": "e04f476068c94c89d7445c71d95d612cbd302b3a7b9baecbae6906c4e3ed79f6",
+    "jarvis/swarm/store.py": "89102664fa08f480fdabd209683c7fd64bc55bb13374ec74e09153c1d8c85e6e",
+    "jarvis/swarm/tools.py": "361001c1cd1a29df45de75d1559567cec46b6aac98f4b714878cabcd05f3fba4",
+    "jarvis/brain/swarm_factory.py": "4ebb25f8ff4a6719d941e0b789fa4f0cad587c7b82517375ec233207570ab90e"
+  },
+  "runs": [
+    {
+      "index": 1,
+      "requested_worker_tasks": 1,
+      "utc_started": "2026-09-19T10:06:12.163561+00:00",
+      "success": false,
+      "failure": "ValueError",
+      "instrumentation": "Scoped delegating provider and ToolExecutor wrappers; no synthetic response, tool result, usage or delay",
+      "team_id": "3fc7824907204667be48218b86cc6061",
+      "limits": {
+        "token_budget": "250000",
+        "monetary_limit_microusd": null,
+        "concurrency": 2,
+        "worker_limit": "2",
+        "runtime_seconds": 180,
+        "max_attempts": 1,
+        "max_output_tokens": 2048,
+        "max_tool_calls": 4
+      },
+      "service_shutdown_ms": 15.316200000597746,
+      "shutdown_succeeded": true,
+      "calls": [
+        {
+          "ordinal": 1,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10543.5762927,
+          "max_output_tokens": 2048,
+          "first_delta": 10546.5874932,
+          "finished_signal": true,
+          "usage_seen": true,
+          "exit": 10546.5889153,
+          "exit_reason": "stream_finished"
+        },
+        {
+          "ordinal": 2,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10545.9173691,
+          "max_output_tokens": 2048,
+          "first_delta": null,
+          "finished_signal": false,
+          "usage_seen": false,
+          "exit": 10550.2272113,
+          "exit_reason": "local_async_cancelled"
+        },
+        {
+          "ordinal": 3,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10547.223048,
+          "max_output_tokens": 2048,
+          "first_delta": 10550.187382,
+          "finished_signal": false,
+          "usage_seen": false,
+          "exit": 10550.2274179,
+          "exit_reason": "local_async_cancelled"
+        }
+      ],
+      "tools": [
+        {
+          "name": "run_javascript",
+          "entered": 10546.6262053,
+          "exit": 10547.181133,
+          "success": true
+        }
+      ],
+      "remaining_owned_workers": 0,
+      "remaining_owned_active_calls": 0,
+      "remaining_owned_active_tools": 0,
+      "persisted_final_accounting": {
+        "state": "canceled",
+        "reason": "User requested stop",
+        "tokens_used": "1017",
+        "tokens_reserved": "21365",
+        "cost_microusd": "2543",
+        "cost_reserved_microusd": "53413"
+      }
+    },
+    {
+      "index": 2,
+      "requested_worker_tasks": 1,
+      "utc_started": "2026-09-19T10:07:07.521831+00:00",
+      "success": true,
+      "failure": null,
+      "instrumentation": "Scoped delegating provider and ToolExecutor wrappers; no synthetic response, tool result, usage or delay",
+      "team_id": "cd87abcec2da4f94b30717eca540fe44",
+      "limits": {
+        "token_budget": "250000",
+        "monetary_limit_microusd": null,
+        "concurrency": 2,
+        "worker_limit": "2",
+        "runtime_seconds": 180,
+        "max_attempts": 1,
+        "max_output_tokens": 2048,
+        "max_tool_calls": 4
+      },
+      "before_stop": {
+        "at": 10605.4426237,
+        "state": "running",
+        "reason": "User requested start",
+        "tokens_used": "1057",
+        "tokens_reserved": "21483",
+        "cost_microusd": "2643",
+        "cost_reserved_microusd": "53708",
+        "reservations": [
+          {
+            "id": "84c9c6e8ab5a4921aa3afe7b5dfd56f5",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1057",
+            "actual_cost_microusd": "2643",
+            "created_at": 1789812430.5200143,
+            "closed_at": 1789812434.2166154
+          },
+          {
+            "id": "4809def6659645f98ae971734c65fa63",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "10995",
+            "cost_microusd": "27488",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812433.2989185,
+            "closed_at": null
+          },
+          {
+            "id": "d3469efa22bd4bf89cecfe0d7410f63a",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "10488",
+            "cost_microusd": "26220",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812434.709547,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 2,
+        "owned_active_calls": 2,
+        "owned_active_tools": 0,
+        "provider_call_count": 3,
+        "tool_call_count": 1
+      },
+      "stop_received": 10605.4426447,
+      "control_returned": 10605.4666144,
+      "after_control": {
+        "at": 10605.51207,
+        "state": "canceled",
+        "reason": "User requested stop",
+        "tokens_used": "1057",
+        "tokens_reserved": "21483",
+        "cost_microusd": "2643",
+        "cost_reserved_microusd": "53708",
+        "reservations": [
+          {
+            "id": "84c9c6e8ab5a4921aa3afe7b5dfd56f5",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1057",
+            "actual_cost_microusd": "2643",
+            "created_at": 1789812430.5200143,
+            "closed_at": 1789812434.2166154
+          },
+          {
+            "id": "4809def6659645f98ae971734c65fa63",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "10995",
+            "cost_microusd": "27488",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812433.2989185,
+            "closed_at": null
+          },
+          {
+            "id": "d3469efa22bd4bf89cecfe0d7410f63a",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "10488",
+            "cost_microusd": "26220",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812434.709547,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 0,
+        "owned_active_calls": 0,
+        "owned_active_tools": 0,
+        "provider_call_count": 3,
+        "tool_call_count": 1
+      },
+      "quiescent_at": 10605.5121126,
+      "after_quiescence": {
+        "at": 10605.5460867,
+        "state": "canceled",
+        "reason": "User requested stop",
+        "tokens_used": "1057",
+        "tokens_reserved": "21483",
+        "cost_microusd": "2643",
+        "cost_reserved_microusd": "53708",
+        "reservations": [
+          {
+            "id": "84c9c6e8ab5a4921aa3afe7b5dfd56f5",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1057",
+            "actual_cost_microusd": "2643",
+            "created_at": 1789812430.5200143,
+            "closed_at": 1789812434.2166154
+          },
+          {
+            "id": "4809def6659645f98ae971734c65fa63",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "10995",
+            "cost_microusd": "27488",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812433.2989185,
+            "closed_at": null
+          },
+          {
+            "id": "d3469efa22bd4bf89cecfe0d7410f63a",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "10488",
+            "cost_microusd": "26220",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812434.709547,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 0,
+        "owned_active_calls": 0,
+        "owned_active_tools": 0,
+        "provider_call_count": 3,
+        "tool_call_count": 1
+      },
+      "after_observation": {
+        "at": 10607.579967,
+        "state": "canceled",
+        "reason": "User requested stop",
+        "tokens_used": "1057",
+        "tokens_reserved": "21483",
+        "cost_microusd": "2643",
+        "cost_reserved_microusd": "53708",
+        "reservations": [
+          {
+            "id": "84c9c6e8ab5a4921aa3afe7b5dfd56f5",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1057",
+            "actual_cost_microusd": "2643",
+            "created_at": 1789812430.5200143,
+            "closed_at": 1789812434.2166154
+          },
+          {
+            "id": "4809def6659645f98ae971734c65fa63",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "10995",
+            "cost_microusd": "27488",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812433.2989185,
+            "closed_at": null
+          },
+          {
+            "id": "d3469efa22bd4bf89cecfe0d7410f63a",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "10488",
+            "cost_microusd": "26220",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812434.709547,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 0,
+        "owned_active_calls": 0,
+        "owned_active_tools": 0,
+        "provider_call_count": 3,
+        "tool_call_count": 1
+      },
+      "no_new_dispatch": true,
+      "no_new_tool_execution": true,
+      "stop_to_control_return_ms": 23.96969999972498,
+      "stop_to_owned_quiescence_ms": 69.46789999892644,
+      "service_shutdown_ms": 3.4271000004082453,
+      "shutdown_succeeded": true,
+      "calls": [
+        {
+          "ordinal": 1,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10598.4414175,
+          "max_output_tokens": 2048,
+          "first_delta": 10602.0671363,
+          "finished_signal": true,
+          "usage_seen": true,
+          "exit": 10602.0683482,
+          "exit_reason": "stream_finished"
+        },
+        {
+          "ordinal": 2,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10601.221448,
+          "max_output_tokens": 2048,
+          "first_delta": null,
+          "finished_signal": false,
+          "usage_seen": false,
+          "exit": 10605.4678276,
+          "exit_reason": "local_async_cancelled"
+        },
+        {
+          "ordinal": 3,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10602.6314656,
+          "max_output_tokens": 2048,
+          "first_delta": 10605.4144514,
+          "finished_signal": false,
+          "usage_seen": false,
+          "exit": 10605.4676626,
+          "exit_reason": "local_async_cancelled"
+        }
+      ],
+      "tools": [
+        {
+          "name": "run_javascript",
+          "entered": 10602.1653412,
+          "exit": 10602.5905453,
+          "success": true
+        }
+      ],
+      "remaining_owned_workers": 0,
+      "remaining_owned_active_calls": 0,
+      "remaining_owned_active_tools": 0,
+      "reconstructed_peak_reserved_tokens": 21483,
+      "reconstructed_peak_reserved_microusd": 53708,
+      "max_per_call_reserved_tokens": 10995,
+      "max_per_call_reserved_microusd": 27488
+    },
+    {
+      "index": 3,
+      "requested_worker_tasks": 2,
+      "utc_started": "2026-09-19T10:07:19.670020+00:00",
+      "success": true,
+      "failure": null,
+      "instrumentation": "Scoped delegating provider and ToolExecutor wrappers; no synthetic response, tool result, usage or delay",
+      "team_id": "b85ef69409b049afab02f17998f9c0b6",
+      "limits": {
+        "token_budget": "250000",
+        "monetary_limit_microusd": null,
+        "concurrency": 3,
+        "worker_limit": "3",
+        "runtime_seconds": 180,
+        "max_attempts": 1,
+        "max_output_tokens": 2048,
+        "max_tool_calls": 4
+      },
+      "before_stop": {
+        "at": 10613.9257806,
+        "state": "running",
+        "reason": "User requested start",
+        "tokens_used": "2120",
+        "tokens_reserved": "32278",
+        "cost_microusd": "5300",
+        "cost_reserved_microusd": "80695",
+        "reservations": [
+          {
+            "id": "0b6e3c1751a341269320c82cd5093c95",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1060",
+            "actual_cost_microusd": "2650",
+            "created_at": 1789812440.4553406,
+            "closed_at": 1789812443.160164
+          },
+          {
+            "id": "d7127588149e46b59ae28c51edb73015",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1060",
+            "actual_cost_microusd": "2650",
+            "created_at": 1789812440.5525272,
+            "closed_at": 1789812443.1533566
+          },
+          {
+            "id": "acf0e488a1c04ae6bf5e0f082df78da3",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812443.9270692,
+            "closed_at": null
+          },
+          {
+            "id": "e3e14f9b7491411b9ea8e4c1b6e3a50b",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812443.9534392,
+            "closed_at": null
+          },
+          {
+            "id": "37ff2b2c397d4afab3415391235d28fd",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "11278",
+            "cost_microusd": "28195",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812445.3646088,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 3,
+        "owned_active_calls": 3,
+        "owned_active_tools": 0,
+        "provider_call_count": 5,
+        "tool_call_count": 2
+      },
+      "stop_received": 10613.9257977,
+      "control_returned": 10613.9519299,
+      "after_control": {
+        "at": 10613.9885397,
+        "state": "canceled",
+        "reason": "User requested stop",
+        "tokens_used": "2120",
+        "tokens_reserved": "32278",
+        "cost_microusd": "5300",
+        "cost_reserved_microusd": "80695",
+        "reservations": [
+          {
+            "id": "0b6e3c1751a341269320c82cd5093c95",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1060",
+            "actual_cost_microusd": "2650",
+            "created_at": 1789812440.4553406,
+            "closed_at": 1789812443.160164
+          },
+          {
+            "id": "d7127588149e46b59ae28c51edb73015",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1060",
+            "actual_cost_microusd": "2650",
+            "created_at": 1789812440.5525272,
+            "closed_at": 1789812443.1533566
+          },
+          {
+            "id": "acf0e488a1c04ae6bf5e0f082df78da3",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812443.9270692,
+            "closed_at": null
+          },
+          {
+            "id": "e3e14f9b7491411b9ea8e4c1b6e3a50b",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812443.9534392,
+            "closed_at": null
+          },
+          {
+            "id": "37ff2b2c397d4afab3415391235d28fd",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "11278",
+            "cost_microusd": "28195",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812445.3646088,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 0,
+        "owned_active_calls": 0,
+        "owned_active_tools": 0,
+        "provider_call_count": 5,
+        "tool_call_count": 2
+      },
+      "quiescent_at": 10613.9885823,
+      "after_quiescence": {
+        "at": 10614.0161952,
+        "state": "canceled",
+        "reason": "User requested stop",
+        "tokens_used": "2120",
+        "tokens_reserved": "32278",
+        "cost_microusd": "5300",
+        "cost_reserved_microusd": "80695",
+        "reservations": [
+          {
+            "id": "0b6e3c1751a341269320c82cd5093c95",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1060",
+            "actual_cost_microusd": "2650",
+            "created_at": 1789812440.4553406,
+            "closed_at": 1789812443.160164
+          },
+          {
+            "id": "d7127588149e46b59ae28c51edb73015",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1060",
+            "actual_cost_microusd": "2650",
+            "created_at": 1789812440.5525272,
+            "closed_at": 1789812443.1533566
+          },
+          {
+            "id": "acf0e488a1c04ae6bf5e0f082df78da3",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812443.9270692,
+            "closed_at": null
+          },
+          {
+            "id": "e3e14f9b7491411b9ea8e4c1b6e3a50b",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812443.9534392,
+            "closed_at": null
+          },
+          {
+            "id": "37ff2b2c397d4afab3415391235d28fd",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "11278",
+            "cost_microusd": "28195",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812445.3646088,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 0,
+        "owned_active_calls": 0,
+        "owned_active_tools": 0,
+        "provider_call_count": 5,
+        "tool_call_count": 2
+      },
+      "after_observation": {
+        "at": 10616.0484581,
+        "state": "canceled",
+        "reason": "User requested stop",
+        "tokens_used": "2120",
+        "tokens_reserved": "32278",
+        "cost_microusd": "5300",
+        "cost_reserved_microusd": "80695",
+        "reservations": [
+          {
+            "id": "0b6e3c1751a341269320c82cd5093c95",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1060",
+            "actual_cost_microusd": "2650",
+            "created_at": 1789812440.4553406,
+            "closed_at": 1789812443.160164
+          },
+          {
+            "id": "d7127588149e46b59ae28c51edb73015",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1060",
+            "actual_cost_microusd": "2650",
+            "created_at": 1789812440.5525272,
+            "closed_at": 1789812443.1533566
+          },
+          {
+            "id": "acf0e488a1c04ae6bf5e0f082df78da3",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812443.9270692,
+            "closed_at": null
+          },
+          {
+            "id": "e3e14f9b7491411b9ea8e4c1b6e3a50b",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812443.9534392,
+            "closed_at": null
+          },
+          {
+            "id": "37ff2b2c397d4afab3415391235d28fd",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "11278",
+            "cost_microusd": "28195",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812445.3646088,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 0,
+        "owned_active_calls": 0,
+        "owned_active_tools": 0,
+        "provider_call_count": 5,
+        "tool_call_count": 2
+      },
+      "no_new_dispatch": true,
+      "no_new_tool_execution": true,
+      "stop_to_control_return_ms": 26.132200000574812,
+      "stop_to_owned_quiescence_ms": 62.78460000066843,
+      "service_shutdown_ms": 1.9174999997630948,
+      "shutdown_succeeded": true,
+      "calls": [
+        {
+          "ordinal": 1,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10608.3750157,
+          "max_output_tokens": 2048,
+          "first_delta": 10611.0696028,
+          "finished_signal": true,
+          "usage_seen": true,
+          "exit": 10611.0715697,
+          "exit_reason": "stream_finished"
+        },
+        {
+          "ordinal": 2,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10608.4728029,
+          "max_output_tokens": 2048,
+          "first_delta": 10611.0626051,
+          "finished_signal": true,
+          "usage_seen": true,
+          "exit": 10611.0651726,
+          "exit_reason": "stream_finished"
+        },
+        {
+          "ordinal": 3,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10611.8461474,
+          "max_output_tokens": 2048,
+          "first_delta": null,
+          "finished_signal": false,
+          "usage_seen": false,
+          "exit": 10613.9531448,
+          "exit_reason": "local_async_cancelled"
+        },
+        {
+          "ordinal": 4,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10611.8742185,
+          "max_output_tokens": 2048,
+          "first_delta": 10613.8972858,
+          "finished_signal": false,
+          "usage_seen": false,
+          "exit": 10613.9530225,
+          "exit_reason": "local_async_cancelled"
+        },
+        {
+          "ordinal": 5,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10613.28615,
+          "max_output_tokens": 2048,
+          "first_delta": null,
+          "finished_signal": false,
+          "usage_seen": false,
+          "exit": 10613.9533575,
+          "exit_reason": "local_async_cancelled"
+        }
+      ],
+      "tools": [
+        {
+          "name": "run_javascript",
+          "entered": 10611.0990421,
+          "exit": 10611.7997887,
+          "success": true
+        },
+        {
+          "name": "run_javascript",
+          "entered": 10611.1183819,
+          "exit": 10611.7707287,
+          "success": true
+        }
+      ],
+      "remaining_owned_workers": 0,
+      "remaining_owned_active_calls": 0,
+      "remaining_owned_active_tools": 0,
+      "reconstructed_peak_reserved_tokens": 32278,
+      "reconstructed_peak_reserved_microusd": 80695,
+      "max_per_call_reserved_tokens": 11278,
+      "max_per_call_reserved_microusd": 28195
+    },
+    {
+      "index": 4,
+      "requested_worker_tasks": 3,
+      "utc_started": "2026-09-19T10:07:28.133735+00:00",
+      "success": true,
+      "failure": null,
+      "instrumentation": "Scoped delegating provider and ToolExecutor wrappers; no synthetic response, tool result, usage or delay",
+      "team_id": "2752f7769411458ba8f49d42f476c411",
+      "limits": {
+        "token_budget": "250000",
+        "monetary_limit_microusd": null,
+        "concurrency": 4,
+        "worker_limit": "4",
+        "runtime_seconds": 180,
+        "max_attempts": 1,
+        "max_output_tokens": 2048,
+        "max_tool_calls": 4
+      },
+      "before_stop": {
+        "at": 10622.2734948,
+        "state": "running",
+        "reason": "User requested start",
+        "tokens_used": "2116",
+        "tokens_reserved": "42326",
+        "cost_microusd": "5290",
+        "cost_reserved_microusd": "105816",
+        "reservations": [
+          {
+            "id": "8b983e9c814443c3ab4a9b73cd86a93a",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1058",
+            "actual_cost_microusd": "2645",
+            "created_at": 1789812448.820594,
+            "closed_at": 1789812451.4497807
+          },
+          {
+            "id": "f2b38491985a4474994091beb83d0329",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812448.8508673,
+            "closed_at": null
+          },
+          {
+            "id": "e8de44f679374e6da4eaaa3b2bd6719e",
+            "task_id": "arithmetic-2",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1058",
+            "actual_cost_microusd": "2645",
+            "created_at": 1789812448.902502,
+            "closed_at": 1789812451.52809
+          },
+          {
+            "id": "dad108f672494509bc32b1714e427ca3",
+            "task_id": "arithmetic-2",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812452.1262932,
+            "closed_at": null
+          },
+          {
+            "id": "3f7f9e89406b480293d1e80a6c7febc5",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812452.1409085,
+            "closed_at": null
+          },
+          {
+            "id": "695885fe390a4269bf90daaad67daae2",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "11559",
+            "cost_microusd": "28898",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812453.648353,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 4,
+        "owned_active_calls": 4,
+        "owned_active_tools": 0,
+        "provider_call_count": 6,
+        "tool_call_count": 2
+      },
+      "stop_received": 10622.2735116,
+      "control_returned": 10622.2894829,
+      "after_control": {
+        "at": 10622.3439724,
+        "state": "canceled",
+        "reason": "User requested stop",
+        "tokens_used": "2116",
+        "tokens_reserved": "42326",
+        "cost_microusd": "5290",
+        "cost_reserved_microusd": "105816",
+        "reservations": [
+          {
+            "id": "8b983e9c814443c3ab4a9b73cd86a93a",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1058",
+            "actual_cost_microusd": "2645",
+            "created_at": 1789812448.820594,
+            "closed_at": 1789812451.4497807
+          },
+          {
+            "id": "f2b38491985a4474994091beb83d0329",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812448.8508673,
+            "closed_at": null
+          },
+          {
+            "id": "e8de44f679374e6da4eaaa3b2bd6719e",
+            "task_id": "arithmetic-2",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1058",
+            "actual_cost_microusd": "2645",
+            "created_at": 1789812448.902502,
+            "closed_at": 1789812451.52809
+          },
+          {
+            "id": "dad108f672494509bc32b1714e427ca3",
+            "task_id": "arithmetic-2",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812452.1262932,
+            "closed_at": null
+          },
+          {
+            "id": "3f7f9e89406b480293d1e80a6c7febc5",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812452.1409085,
+            "closed_at": null
+          },
+          {
+            "id": "695885fe390a4269bf90daaad67daae2",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "11559",
+            "cost_microusd": "28898",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812453.648353,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 0,
+        "owned_active_calls": 0,
+        "owned_active_tools": 0,
+        "provider_call_count": 6,
+        "tool_call_count": 2
+      },
+      "quiescent_at": 10622.3440115,
+      "after_quiescence": {
+        "at": 10622.3663807,
+        "state": "canceled",
+        "reason": "User requested stop",
+        "tokens_used": "2116",
+        "tokens_reserved": "42326",
+        "cost_microusd": "5290",
+        "cost_reserved_microusd": "105816",
+        "reservations": [
+          {
+            "id": "8b983e9c814443c3ab4a9b73cd86a93a",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1058",
+            "actual_cost_microusd": "2645",
+            "created_at": 1789812448.820594,
+            "closed_at": 1789812451.4497807
+          },
+          {
+            "id": "f2b38491985a4474994091beb83d0329",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812448.8508673,
+            "closed_at": null
+          },
+          {
+            "id": "e8de44f679374e6da4eaaa3b2bd6719e",
+            "task_id": "arithmetic-2",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1058",
+            "actual_cost_microusd": "2645",
+            "created_at": 1789812448.902502,
+            "closed_at": 1789812451.52809
+          },
+          {
+            "id": "dad108f672494509bc32b1714e427ca3",
+            "task_id": "arithmetic-2",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812452.1262932,
+            "closed_at": null
+          },
+          {
+            "id": "3f7f9e89406b480293d1e80a6c7febc5",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812452.1409085,
+            "closed_at": null
+          },
+          {
+            "id": "695885fe390a4269bf90daaad67daae2",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "11559",
+            "cost_microusd": "28898",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812453.648353,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 0,
+        "owned_active_calls": 0,
+        "owned_active_tools": 0,
+        "provider_call_count": 6,
+        "tool_call_count": 2
+      },
+      "after_observation": {
+        "at": 10624.3815961,
+        "state": "canceled",
+        "reason": "User requested stop",
+        "tokens_used": "2116",
+        "tokens_reserved": "42326",
+        "cost_microusd": "5290",
+        "cost_reserved_microusd": "105816",
+        "reservations": [
+          {
+            "id": "8b983e9c814443c3ab4a9b73cd86a93a",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1058",
+            "actual_cost_microusd": "2645",
+            "created_at": 1789812448.820594,
+            "closed_at": 1789812451.4497807
+          },
+          {
+            "id": "f2b38491985a4474994091beb83d0329",
+            "task_id": "arithmetic-0",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812448.8508673,
+            "closed_at": null
+          },
+          {
+            "id": "e8de44f679374e6da4eaaa3b2bd6719e",
+            "task_id": "arithmetic-2",
+            "task_fence": 1,
+            "tokens": "9767",
+            "cost_microusd": "24418",
+            "state": "closed",
+            "actual_tokens": "1058",
+            "actual_cost_microusd": "2645",
+            "created_at": 1789812448.902502,
+            "closed_at": 1789812451.52809
+          },
+          {
+            "id": "dad108f672494509bc32b1714e427ca3",
+            "task_id": "arithmetic-2",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812452.1262932,
+            "closed_at": null
+          },
+          {
+            "id": "3f7f9e89406b480293d1e80a6c7febc5",
+            "task_id": "arithmetic-1",
+            "task_fence": 1,
+            "tokens": "10500",
+            "cost_microusd": "26250",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812452.1409085,
+            "closed_at": null
+          },
+          {
+            "id": "695885fe390a4269bf90daaad67daae2",
+            "task_id": "__swarm_supervise_1",
+            "task_fence": 1,
+            "tokens": "11559",
+            "cost_microusd": "28898",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812453.648353,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 0,
+        "owned_active_calls": 0,
+        "owned_active_tools": 0,
+        "provider_call_count": 6,
+        "tool_call_count": 2
+      },
+      "no_new_dispatch": true,
+      "no_new_tool_execution": true,
+      "stop_to_control_return_ms": 15.971299999364419,
+      "stop_to_owned_quiescence_ms": 70.49989999904938,
+      "service_shutdown_ms": 2.741000000241911,
+      "shutdown_succeeded": true,
+      "calls": [
+        {
+          "ordinal": 1,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10616.7397401,
+          "max_output_tokens": 2048,
+          "first_delta": 10619.3598039,
+          "finished_signal": true,
+          "usage_seen": true,
+          "exit": 10619.3628523,
+          "exit_reason": "stream_finished"
+        },
+        {
+          "ordinal": 2,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10616.7698533,
+          "max_output_tokens": 2048,
+          "first_delta": null,
+          "finished_signal": false,
+          "usage_seen": false,
+          "exit": 10622.2901213,
+          "exit_reason": "local_async_cancelled"
+        },
+        {
+          "ordinal": 3,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10616.8213325,
+          "max_output_tokens": 2048,
+          "first_delta": 10619.4287451,
+          "finished_signal": true,
+          "usage_seen": true,
+          "exit": 10619.441349,
+          "exit_reason": "stream_finished"
+        },
+        {
+          "ordinal": 4,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10620.0454982,
+          "max_output_tokens": 2048,
+          "first_delta": 10622.2521821,
+          "finished_signal": false,
+          "usage_seen": false,
+          "exit": 10622.2903157,
+          "exit_reason": "local_async_cancelled"
+        },
+        {
+          "ordinal": 5,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10620.0613995,
+          "max_output_tokens": 2048,
+          "first_delta": null,
+          "finished_signal": false,
+          "usage_seen": false,
+          "exit": 10622.2902373,
+          "exit_reason": "local_async_cancelled"
+        },
+        {
+          "ordinal": 6,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10621.5678322,
+          "max_output_tokens": 2048,
+          "first_delta": null,
+          "finished_signal": false,
+          "usage_seen": false,
+          "exit": 10622.2903731,
+          "exit_reason": "local_async_cancelled"
+        }
+      ],
+      "tools": [
+        {
+          "name": "run_javascript",
+          "entered": 10619.3864416,
+          "exit": 10619.9686978,
+          "success": true
+        },
+        {
+          "name": "run_javascript",
+          "entered": 10619.4721031,
+          "exit": 10619.9983036,
+          "success": true
+        }
+      ],
+      "remaining_owned_workers": 0,
+      "remaining_owned_active_calls": 0,
+      "remaining_owned_active_tools": 0,
+      "reconstructed_peak_reserved_tokens": 42326,
+      "reconstructed_peak_reserved_microusd": 105816,
+      "max_per_call_reserved_tokens": 11559,
+      "max_per_call_reserved_microusd": 28898
+    },
+    {
+      "index": 5,
+      "type": "real_budget_exhaustion",
+      "utc": "2026-09-19T10:09:49.589646+00:00",
+      "limits": {
+        "token_budget": "12000",
+        "monetary_limit_microusd": null,
+        "concurrency": 3,
+        "worker_limit": "3",
+        "runtime_seconds": 90,
+        "max_attempts": 1,
+        "max_output_tokens": 2048,
+        "max_tool_calls": 32
+      },
+      "team_id": "b038fcc4f61f4d7bb088d230f2af0118",
+      "budget_rejected_at": 10761.4062843,
+      "at_rejection": {
+        "at": 10761.4264991,
+        "state": "running",
+        "reason": "User requested start",
+        "tokens_used": "0",
+        "tokens_reserved": "8792",
+        "cost_microusd": "0",
+        "cost_reserved_microusd": "21980",
+        "reservations": [
+          {
+            "id": "c59bc12a02a949fda01730c204c9ed4d",
+            "task_id": "work-1",
+            "task_fence": 1,
+            "tokens": "8792",
+            "cost_microusd": "21980",
+            "state": "reserved",
+            "actual_tokens": null,
+            "actual_cost_microusd": null,
+            "created_at": 1789812593.4449193,
+            "closed_at": null
+          }
+        ],
+        "owned_worker_tasks": 2,
+        "owned_active_calls": 1,
+        "owned_active_tools": 0,
+        "provider_call_count": 1,
+        "tool_call_count": 0
+      },
+      "quiescent_at": 10780.8625478,
+      "after_quiescence": {
+        "at": 10780.8984148,
+        "state": "blocked",
+        "reason": "Token budget exhausted",
+        "tokens_used": "1739",
+        "tokens_reserved": "0",
+        "cost_microusd": "4348",
+        "cost_reserved_microusd": "0",
+        "reservations": [
+          {
+            "id": "c59bc12a02a949fda01730c204c9ed4d",
+            "task_id": "work-1",
+            "task_fence": 1,
+            "tokens": "8792",
+            "cost_microusd": "21980",
+            "state": "closed",
+            "actual_tokens": "1739",
+            "actual_cost_microusd": "4348",
+            "created_at": 1789812593.4449193,
+            "closed_at": 1789812612.760917
+          }
+        ],
+        "owned_worker_tasks": 0,
+        "owned_active_calls": 0,
+        "owned_active_tools": 0,
+        "provider_call_count": 1,
+        "tool_call_count": 0
+      },
+      "after_observation": {
+        "at": 10782.9405977,
+        "state": "blocked",
+        "reason": "Token budget exhausted",
+        "tokens_used": "1739",
+        "tokens_reserved": "0",
+        "cost_microusd": "4348",
+        "cost_reserved_microusd": "0",
+        "reservations": [
+          {
+            "id": "c59bc12a02a949fda01730c204c9ed4d",
+            "task_id": "work-1",
+            "task_fence": 1,
+            "tokens": "8792",
+            "cost_microusd": "21980",
+            "state": "closed",
+            "actual_tokens": "1739",
+            "actual_cost_microusd": "4348",
+            "created_at": 1789812593.4449193,
+            "closed_at": 1789812612.760917
+          }
+        ],
+        "owned_worker_tasks": 0,
+        "owned_active_calls": 0,
+        "owned_active_tools": 0,
+        "provider_call_count": 1,
+        "tool_call_count": 0
+      },
+      "budget_to_owned_quiescence_ms": 19456.263500000205,
+      "no_new_dispatch": true,
+      "success": true,
+      "service_shutdown_ms": 75.9267000012187,
+      "remaining_owned_workers": 0,
+      "remaining_owned_active_calls": 0,
+      "calls": [
+        {
+          "ordinal": 1,
+          "provider": "grok",
+          "model": "grok-4.3",
+          "entered": 10761.3660889,
+          "max_output_tokens": 2048,
+          "first_delta": 10766.8752866,
+          "finished_signal": true,
+          "usage_seen": true,
+          "exit": 10780.6684335,
+          "exit_reason": "stream_finished"
+        }
+      ],
+      "tools": []
+    }
+  ],
+  "limitations": [
+    "Local stream/client cancellation does not prove upstream computation stopped or establish final provider billing.",
+    "Token and monetary reservations are conservative local estimates, not a provider-enforced hard billing ceiling.",
+    "Three small Windows-local measurements are observations, not a percentile or an upper-bound latency guarantee.",
+    "Only Grok is measured live; synthetic adapter tests cannot establish live cancellation for other families."
+  ],
+  "candidate_commit": "9e99a8cce",
+  "base_commit": "443f61d53",
+  "platform": {
+    "system": "Windows",
+    "python": "3.11.9",
+    "machine": ""
+  },
+  "helper_failures": [
+    {
+      "run": 1,
+      "failure": "Snapshot page limit 1000 exceeded maximum 200",
+      "effect": "Excluded from latency statistics; team stopped and runtime closed; live calls and reservations retained."
+    },
+    {
+      "run": "budget-preflight",
+      "failure": "Helper imported SwarmBudgetError from the wrong module",
+      "effect": "Failed before team creation or provider calls; original log retained. Corrected to the actual store exception."
+    }
+  ],
+  "summary": {
+    "valid_owner_stop_measurements": 3,
+    "owner_stop_to_quiescence_ms_min": 62.78460000066843,
+    "owner_stop_to_quiescence_ms_max": 70.49989999904938,
+    "peak_pending_tokens": 42326,
+    "peak_pending_cost_microusd": 105816,
+    "max_per_call_reserved_tokens": 11559,
+    "max_per_call_reserved_microusd": 28898,
+    "stop_observation_window_seconds": 2,
+    "budget_exhaustion_to_quiescence_ms": 19456.263500000205,
+    "remote_cancellation_observable": false,
+    "final_remote_billing_observable": false,
+    "synthetic_semantics_evidence": "Parent-owned integrated test wave: .tmp/swarm-integrated-tests.log/.xml; status must be verified independently."
+  },
+  "helpers_sha256": {
+    "measure.py": "7ab50c19a3e5fbcab34b2c39b08e9d7364ad901e486adb14ca8604d7bda61194",
+    "measure_budget.py": "9dc6a8972a3d73460f99cc95f6c5db83547a0bad7ae148eeafd9652bcde2249f",
+    "summarize.py": "5171d519ff0f4d1380ca0ad720aa3f509c2bc98c93912ae7b7ee6876afe51cb9"
+  }
+}

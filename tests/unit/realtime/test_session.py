@@ -313,6 +313,7 @@ class FakeToolBridge:
         self.transcripts = []
         self.calls = []
         self.closed = False
+        self.has_pending_confirmation = False
 
     def set_language(self, language):
         self.languages.append(language)

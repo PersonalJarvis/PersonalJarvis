@@ -32,6 +32,7 @@ async def _join_durable(job: asyncio.Task[Any]) -> Any:
         try:
             return await asyncio.shield(job)
         except asyncio.CancelledError:
+            # Keep the admission lock until the protected storage thread has finished.
             if job.done():
                 return job.result()
             # Repeated cancellation cannot release a generation's admission lock
@@ -395,6 +396,7 @@ class Rechecks:
                             "The computation and original verifier still agree.",
                         )
             except NotImplementedError as exc:
+                # Unsupported execution is persisted in the recheck verdict below.
                 state, reason = "unsupported", str(exc)
             except (SwarmStoreError, PermissionError, ValueError, OSError) as exc:
                 log.warning("Swarm contribution recheck unavailable: %s", type(exc).__name__)
@@ -402,6 +404,7 @@ class Rechecks:
                     "Evidence or execution is unavailable; repair storage or retry independently."
                 )
             except TimeoutError:
+                # Persist a timeout verdict after canceling the owned sandbox.
                 cancel.cancel("recheck_timeout")
                 reason = "The bounded recheck timed out; no agent fault inferred."
             except asyncio.CancelledError:

@@ -195,6 +195,7 @@ class WasmSandbox:
                     instance = linker.instantiate(store, module)
                     instance.exports(store)["_start"](store)
             except wasmtime.ExitTrap as exc:
+                # WASI exit, including exit(0), is a captured process result.
                 code = exc.code
             except wasmtime.Trap as exc:
                 code = 137
@@ -219,6 +220,7 @@ class WasmSandbox:
         try:
             value = json.loads(records[0])
         except (ValueError, RecursionError):
+            # Return the parse failure through the bounded execution result.
             return SandboxResult(None, stdout, "Sandbox result is invalid JSON", 1, 0)
         return SandboxResult(value, stdout, stderr, 0, 0)
 

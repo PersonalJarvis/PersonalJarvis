@@ -651,6 +651,8 @@ describe("ChatStage (agent chat)", () => {
     useAgentChatStore.setState({ activeSessionId: "s5", timeline });
     render(<ChatStage />);
 
+    fireEvent.click(within(screen.getByTestId("work-trace")).getByRole("button", { expanded: false }));
+
     const [shell, grep] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-tool]"));
     fireEvent.click(within(shell).getByRole("button"));
     // The full receipt is available on demand.
@@ -676,6 +678,8 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s9", timeline });
     render(<ChatStage />);
+
+    fireEvent.click(within(screen.getByTestId("work-trace")).getByRole("button", { expanded: false }));
 
     const tools = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-tool]"));
     expect(tools[0].textContent).toContain("Run command");

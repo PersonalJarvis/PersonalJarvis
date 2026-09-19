@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { BrandedSelect } from "@/components/ui/select";
 import { records, request, teamPath } from "./api";
 import { useSwarmText } from "./strings";
 import { terminalState, type AgentRecord, type TeamRecord } from "./types";
@@ -90,9 +91,10 @@ function Assignments({ team, onChanged }: { team: TeamRecord; onChanged: () => v
     <button disabled={loading || Boolean(busy)} onClick={() => { setError(""); setRefresh(n => n + 1); }}>{t("refresh")}</button>
     {loading && <p className="swarm-muted">{t("loading")}</p>}
     {!terminalState(team.state) && <form className="swarm-create" onSubmit={assign} aria-label={t("assignSpecialist")}>
-      <label>{t("chooseSpecialist")}<select required value={selected} onChange={event => setSelected(event.target.value)} disabled={loading || Boolean(busy)}>
-        <option value="">{t("chooseSpecialist")}</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}{source.title && ` · ${source.title}`}</option>)}
-      </select></label>
+      <label>{t("chooseSpecialist")}<BrandedSelect ariaLabel={t("chooseSpecialist")} value={selected} onValueChange={setSelected} disabled={loading || Boolean(busy)} options={[
+        { value: "", label: t("chooseSpecialist") },
+        ...sources.map(source => ({ value: source.id, label: `${source.name}${source.title ? ` · ${source.title}` : ""}` })),
+      ]} /></label>
       {!loading && !sources.length && <p className="swarm-muted">{t("noActiveSpecialists")}</p>}
       {selectedProfile && <p className="swarm-muted">{selectedProfile.focus.join(" · ")}</p>}
       <label>{t("authorizedInput")}<textarea rows={4} maxLength={16000} value={input} onChange={event => setInput(event.target.value)} disabled={Boolean(busy)} /></label>

@@ -38,6 +38,7 @@ def available(kind: str) -> bool:
     try:
         return find_spec(module) is not None
     except (ModuleNotFoundError, ValueError):
+        # Missing or invalid optional modules make this source capability unavailable.
         return False
 
 

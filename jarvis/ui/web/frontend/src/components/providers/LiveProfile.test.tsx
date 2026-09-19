@@ -21,8 +21,8 @@ it("requires an explicit thinking model and sends one coherent selection", async
           path.endsWith("options")
             ? {
                 models: [{ id: "chosen-model", label: "Chosen" }],
-                voices: ["gleam"],
-                efforts: ["medium"],
+                voices: ["gleam", "coral"],
+                efforts: ["", "medium", "high"],
               }
             : {
                 key_ready: true,
@@ -54,6 +54,10 @@ it("requires an explicit thinking model and sends one coherent selection", async
   fireEvent.change(screen.getByLabelText("live.thinking_model"), {
     target: { value: "chosen-model" },
   });
+  fireEvent.click(screen.getByRole("combobox", { name: "live.voice" }));
+  fireEvent.click(screen.getByRole("option", { name: "coral" }));
+  fireEvent.click(screen.getByRole("combobox", { name: "live.reasoning" }));
+  fireEvent.click(screen.getByRole("option", { name: "live.model_default" }));
   fireEvent.click(button);
   await waitFor(() => expect(requests).toHaveLength(1));
   expect(requests[0]).toMatchObject({
@@ -61,8 +65,9 @@ it("requires an explicit thinking model and sends one coherent selection", async
     body: {
       model: "gpt-live-1",
       backend_model: "chosen-model",
+      voice: "coral",
       configured: true,
-      reasoning_effort: "medium",
+      reasoning_effort: "",
       web_search: true,
     },
   });

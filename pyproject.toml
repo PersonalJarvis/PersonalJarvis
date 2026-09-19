@@ -556,7 +556,7 @@ gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"
 # production voice cannot live inside — a Cloud project has no preview cap.
 vertex-tts = "jarvis.plugins.tts.gemini_flash_tts:VertexTTS"
 grok-voice = "jarvis.plugins.tts.grok_voice_tts:GrokVoiceTTS"
-# Phase L.4 — Streaming-TTS mit niedriger TTFB.
+# Phase L.4 — Streaming TTS with low TTFB.
 cartesia = "jarvis.plugins.tts.cartesia_tts:CartesiaTTS"
 # OpenRouter cloud speech synthesis — reuses the shared openrouter_api_key.
 openrouter-tts = "jarvis.plugins.tts.openrouter_tts:OpenRouterTTS"

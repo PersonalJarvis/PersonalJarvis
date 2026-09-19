@@ -431,6 +431,7 @@ async def _durable(service: Any, function: Any, *args: Any, **kwargs: Any) -> An
             try:
                 await asyncio.shield(work)
             except asyncio.CancelledError:
+                # Drain the protected write before releasing this operation's fence.
                 continue
         # Retrieve any exception; the owning operation still remains canceled.
         if not work.cancelled():

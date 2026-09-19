@@ -594,15 +594,23 @@ async def swarm_world_stream(websocket: WebSocket, team_id: str) -> None:
     try:
         await service.team(team_id)
     except (PermissionError, ValueError, KeyError):
+        # Reject inaccessible teams through a policy close without exposing their identifiers.
         await websocket.close(code=1008)
         return
     await websocket.accept()
     group = websocket.query_params.get("group", "")[:100]
     after = websocket.query_params.get("after", "0")
     reader = asyncio.create_task(websocket.receive())
+    loop = asyncio.get_running_loop()
+    # A cursor follows an already fetched snapshot; pace the handshake as well.
+    next_snapshot_at = loop.time() + (0.5 if "after" in websocket.query_params else 0)
     try:
         first = True
         while True:
+            # Incoming client messages must never accelerate outbound projection.
+            delay = next_snapshot_at - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
             if reader.done():
                 event = reader.result()
                 if event["type"] == "websocket.disconnect":
@@ -617,7 +625,7 @@ async def swarm_world_stream(websocket: WebSocket, team_id: str) -> None:
                     raise ValueError("Swarm projection exceeded its transport budget")
                 await asyncio.wait_for(websocket.send_text(encoded), timeout=5)
                 after, first = str(revision), False
-            await asyncio.wait({reader}, timeout=0.5)
+            next_snapshot_at = loop.time() + 0.5
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 - every read/send failure terminates this subscriber

@@ -15,6 +15,7 @@ def _loopback(host: str | None) -> bool:
     try:
         return ipaddress.ip_address(host or "").is_loopback
     except ValueError:
+        # A DNS hostname is not a literal loopback address and must not bypass TLS.
         return False
 
 

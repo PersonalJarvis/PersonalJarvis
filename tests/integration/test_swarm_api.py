@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+import time
 from contextlib import asynccontextmanager
 from functools import partial
 
@@ -213,3 +214,30 @@ def test_surface_requires_authentication_before_entering_swarm_routes(api):
         == 401
     )
     assert not service.root.exists()
+
+
+def test_projection_handshake_and_client_messages_share_the_update_budget(api):
+    client, service, _ = api
+    team = create(client)
+    base = f"/api/swarm/teams/{team['id']}"
+    snapshot = client.get(f"{base}/world").json()
+    store = service.registry.open(team["id"])
+    controller = store.acquire_controller("projection-pacing-test")
+    assert controller is not None
+    received_at = [time.monotonic()]
+    revisions = []
+    with client.websocket_connect(f"{base}/ws?after={snapshot['revision']}") as socket:
+        for index in range(3):
+            store.append_event(controller, "test.projection", f"Projection {index}")
+            # Previously each received client message ended the pacing wait early.
+            socket.send_json({"type": "untrusted-client-message", "sequence": index})
+            frame = socket.receive_json()
+            received_at.append(time.monotonic())
+            revisions.append(int(frame["snapshot"]["revision"]))
+            assert frame["team_id"] == team["id"]
+    assert revisions == sorted(set(revisions))
+    # Only a lower bound: loaded CI hosts may legitimately deliver more slowly.
+    assert (
+        min(later - earlier for earlier, later in zip(received_at, received_at[1:], strict=False))
+        >= 0.45
+    )

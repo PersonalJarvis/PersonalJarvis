@@ -76,6 +76,7 @@ def select_evidence(
     try:
         output_hash = value_hash(parse_json_response(result))
     except ValueError:
+        # Non-JSON output cannot match a deterministic execution receipt.
         output_hash = ""
     receipts = [
         item for item in reversed(candidates) if is_runtime_receipt(records[item], actor=actor)
@@ -182,6 +183,7 @@ async def verify_contribution(
         try:
             value = parse_json_response(result)
         except ValueError:
+            # The failed parse becomes a durable rejected verification verdict.
             verdict = {
                 "accepted": False,
                 "reason": "Reply with only the JSON value expected by the original verifier.",

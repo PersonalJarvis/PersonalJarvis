@@ -3,7 +3,7 @@
  * scrollable engine context (RecommendedSetupPanel).
  *
  * The panel is a presentation-only hint (AP-21) for the REALTIME tab set: it
- * lists the maintainer's pick for Realtime / Tool Model / Jarvis-Agents, so it
+ * lists the maintainer's picks for Realtime and Jarvis-Agents, so it
  * renders ONLY while the Realtime tab set is being viewed (maintainer feedback
  * 2026-07-17: next to the Pipeline tabs it would point at tabs that are not on
  * screen). Each row navigates to the tab it names — VIEW-only navigation that
@@ -11,6 +11,9 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+
+// Profile editing has its own QueryClient-backed component tests.
+vi.mock("@/components/providers/LiveProfile", () => ({ LiveProfile: () => null }));
 
 // Mock the data hooks so the view renders deterministically, without a
 // network round-trip (same pattern as ApiKeysView.two-mode.test.tsx).
@@ -68,7 +71,7 @@ describe("ApiKeysView recommended-setup panel", () => {
     expect(screen.queryByTestId("recommended-setup-panel")).toBeNull();
   });
 
-  it("lists the three maintainer picks once the Realtime tab set is viewed", () => {
+  it("lists the current maintainer picks once the Realtime tab set is viewed", () => {
     render(<ApiKeysView />);
     openRealtimeView();
     expect(
@@ -76,9 +79,9 @@ describe("ApiKeysView recommended-setup panel", () => {
         .getByTestId("api-keys-provider-scroll")
         .contains(screen.getByTestId("recommended-setup-panel")),
     ).toBe(true);
-    expect(panel().getByText("OpenAI Realtime")).toBeTruthy();
-    expect(panel().getByText("Gemini 3.5 Flash")).toBeTruthy();
+    expect(panel().getByText("OpenAI GPT-Live")).toBeTruthy();
     expect(panel().getByText("ChatGPT or Claude Max subscription")).toBeTruthy();
+    expect(panel().getAllByRole("button")).toHaveLength(2);
   });
 
   it("keeps the segment buttons uniquely addressable (no /^realtime/i collision)", () => {
@@ -89,17 +92,20 @@ describe("ApiKeysView recommended-setup panel", () => {
     expect(screen.getAllByRole("button", { name: /^realtime/i })).toHaveLength(1);
   });
 
-  it("opens the Tool Model tab from its recommendation row", () => {
+  it("keeps the Tool Model tab reachable alongside the current recommendation rows", () => {
     render(<ApiKeysView />);
     openRealtimeView();
-    // Rows are addressed by stable testids, not their labels — the tab labels
-    // are i18n strings other work renames (e.g. Jarvis-Agents -> {name}-Agents).
-    fireEvent.click(screen.getByTestId("reco-row-computer-use"));
+    // GPT-Live has its own thinking-model settings. The global Computer-Use
+    // selection remains reachable without inventing a removed recommendation.
+    expect(screen.queryByTestId("reco-row-computer-use")).toBeNull();
+    putVoiceMode.mockClear();
+    fireEvent.click(screen.getByRole("tab", { name: /tool model/i }));
     expect(
       (screen.getByRole("tab", { name: /tool model/i }) as HTMLElement).getAttribute(
         "aria-selected",
       ),
     ).toBe("true");
+    expect(putVoiceMode).not.toHaveBeenCalled();
   });
 
   it("opens the agents tab from its recommendation row", () => {

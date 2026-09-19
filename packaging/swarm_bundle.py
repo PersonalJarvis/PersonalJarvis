@@ -76,7 +76,11 @@ def collect_swarm_bundle(hooks: Any, *, distribution_reader: Any = distribution)
     hiddenimports += ["psycopg_binary", "psycopg_binary.pq", "psycopg_binary._psycopg"]
     for name in ("certifi", "boto3", "botocore"):
         datas += hooks.collect_data_files(name)
-    binaries += hooks.collect_dynamic_libs("wasmtime")
+    # Wasmtime's Linux wheel uses ``_libwasmtime.so``; PyInstaller's default
+    # ``lib*.so`` glob misses it. Preserve the package's platform directory.
+    binaries += hooks.collect_dynamic_libs(
+        "wasmtime", search_patterns=["*.dll", "*.dylib", "*.so", "*.so.*"]
+    )
 
     postgres_binaries = []
     for entry in binary_wheel.files or ():

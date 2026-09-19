@@ -1,4 +1,5 @@
 import { useRef, useState, type FormEvent } from "react";
+import { BrandedSelect } from "@/components/ui/select";
 import { createPreparationTeam } from "./preparationApi";
 import { useSwarmText } from "./strings";
 import type { Capabilities, TeamCreate, TeamRecord } from "./types";
@@ -28,6 +29,7 @@ export function CreateTeamForm({ capability, onCreated, onClose, initial, onSubm
   const [goal, setGoal] = useState(initial?.goal ?? "");
   const [promptFile, setPromptFile] = useState("");
   const [money, setMoney] = useState("");
+  const [mode, setMode] = useState("auto");
   const distributed = capability?.distributed as { available?: boolean } | undefined;
   async function importPrompt(file?: File) {
     if (!file) return;
@@ -97,7 +99,11 @@ export function CreateTeamForm({ capability, onCreated, onClose, initial, onSubm
       <label>{t("concurrency")}<input name="concurrency" type="number" min={1} max={10000} placeholder={t("automatic")} /></label>
       <label>{t("workerLimit")}<input name="workers" inputMode="numeric" defaultValue="1000" required /></label>
       <label>{t("runtime")}<input name="runtime" type="number" min={1} max={525600} defaultValue={30} required /></label>
-      <label>{t("mode")}<select name="mode" defaultValue="auto"><option value="auto">{t("automatic")}</option><option value="local">{t("local")}</option><option value="distributed" disabled={!distributed?.available}>{t("distributed")}</option></select></label>
+      <label>{t("mode")}<input type="hidden" name="mode" value={mode} /><BrandedSelect ariaLabel={t("mode")} value={mode} onValueChange={setMode} options={[
+        { value: "auto", label: t("automatic") },
+        { value: "local", label: t("local") },
+        { value: "distributed", label: t("distributed"), disabled: !distributed?.available },
+      ]} /></label>
     </div>
     <label className="swarm-check"><input type="checkbox" checked={internet} onChange={e => setInternet(e.target.checked)} />{t("internet")}</label>
     {internet && <label>{t("domains")}<input name="domains" /></label>}

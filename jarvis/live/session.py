@@ -518,6 +518,7 @@ class LiveVoiceSession:
                         f"{self._wire_epoch}:{item['call_id']}", item["name"], arguments, revision
                     )
                 except (ValueError, TypeError):
+                    # The structured tool response reports invalid input without logging it.
                     result = {"success": False, "error": "Invalid function arguments."}
                 if self._closing:
                     return

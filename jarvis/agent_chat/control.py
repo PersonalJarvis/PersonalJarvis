@@ -707,6 +707,7 @@ class ChatControls:
                     if relevant(event):
                         return json.dumps(event["payload"], ensure_ascii=False)
         except TimeoutError:
+            # Bounded long-poll expiry reports that no new update has arrived.
             return "No background update yet. Check the existing task; do not submit it again."
         finally:
             self.service.unsubscribe(sid, queue)

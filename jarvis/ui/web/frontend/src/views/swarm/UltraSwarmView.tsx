@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { BrandedSelect } from "@/components/ui/select";
 import { useCanvasAwake } from "@/hooks/useCanvasAwake";
 import { useEventStore } from "@/store/events";
 import { requestConnect } from "@/lib/connectBudget";
@@ -203,7 +204,7 @@ export function UltraSwarmView() {
     {error && <p className="swarm-error" role="alert">{error} <button onClick={() => setRefresh(n => n + 1)}>{t("refresh")}</button></p>}
     <div className="swarm-layout"><aside className="swarm-sidebar" aria-label={t("teams")}>
       <div className="swarm-row"><h2>{t("teams")}</h2><button onClick={() => setRefresh(n => n + 1)} disabled={loading}>{t("refresh")}</button></div>
-      <select aria-label={t("filter")} value={filter} onChange={event => setFilter(event.target.value)}>{["all", "active", "history"].map(value => <option key={value} value={value}>{t(value)}</option>)}</select>
+      <BrandedSelect ariaLabel={t("filter")} value={filter} onValueChange={setFilter} options={["all", "active", "history"].map(value => ({ value, label: t(value) }))} />
       <div className="swarm-team-list" aria-busy={loading}>{filtered.map(team => <button className="swarm-team" key={team.id} aria-current={teamId === team.id} onClick={() => selectTeam(team.id)}><strong>{team.name}</strong><span className="swarm-state" data-state={isTeamUnavailable(team) ? undefined : team.state}>{t(isTeamUnavailable(team) ? "unavailable" : team.state)}</span></button>)}</div>
       <div className="swarm-pagination"><button disabled={!offset || loading} onClick={() => setOffset(n => Math.max(0, n - 50))}>{t("previous")}</button><button disabled={teams.length < 50 || loading} onClick={() => setOffset(n => n + 50)}>{t("next")}</button></div>
     </aside>

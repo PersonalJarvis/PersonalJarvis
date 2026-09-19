@@ -12,6 +12,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
+// Profile editing has its own QueryClient-backed component tests.
+vi.mock("@/components/providers/LiveProfile", () => ({ LiveProfile: () => null }));
+
 // Mock the data hooks so the view renders deterministically, without a
 // network round-trip.
 vi.mock("@/hooks/useProviders", () => ({

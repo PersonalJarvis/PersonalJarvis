@@ -137,6 +137,7 @@ class NativeClaudeGoal:
             try:
                 response = json.loads(probe.stdout)
             except ValueError:
+                # A non-JSON capability probe cannot establish native goal support.
                 return False
             if not isinstance(response, dict):
                 return False
@@ -385,6 +386,7 @@ class GoalRpc:
         try:
             await asyncio.wait_for(self.proc.wait(), timeout=3)
         except TimeoutError:
+            # Graceful termination exceeded its deadline; force termination and reap.
             self.proc.kill()
             await self.proc.wait()
 

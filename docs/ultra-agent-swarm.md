@@ -49,7 +49,18 @@ token totals across storage, APIs and the UI. When a canceled or interrupted
 request has no reliable final usage report, its reservation remains pending;
 the system must not invent zero usage or claim the unreported cost was free.
 
+In three measured Grok runs, explicit owner stop left no locally owned work
+after 63-71 ms; pending exposure stayed reserved. Exhausting a budget prevents
+new requests but lets already reserved calls settle, which took 19.46 seconds
+in the separate measured run. These observations do not prove that remote
+computation or billing stops at disconnection. See the [measurements and limits](verification/ultra-swarm-cancellation.md).
+
 ## Storage and recovery
+
+The [storage fault measurements](verification/ultra-swarm-storage-faults.md)
+cover real Redis restart, S3 outage/recovery and operator-triggered object expiry
+for a deleted team. Scheduled background expiry remains a separate deployment
+responsibility; these tests do not claim it was observed.
 
 Local Swarm data lives under `swarm/` inside the application's configured data
 directory. A team has its own database and object directory. Catalog creation
