@@ -74,6 +74,14 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
         "rerun <id>",
         "kill <id>",
     ),
+    "swarm": (
+        "list", "create <spec-file> --yes", "show <id>", "start <id> --yes",
+        "pause <id> --yes", "resume <id> --yes", "stop <id> --yes",
+        "cancel <id> --yes", "archive <id> --yes", "world <id>", "records <id> <kind>",
+        "export <id> --output <file> --yes", "restore <file> --request-key <key> --yes",
+        "storage <id>", "restores", "resume-restore <id> --yes",
+        "delete <id> --request-key <key> --yes", "retention <id> --yes",
+    ),
     "tasks": ("list", "get <id>", "create", "cancel <id>", "delete <id>"),
     "workflows": ("list", "show <id>", "create", "run <id>", "delete <id>", "run-history"),
     "sessions": (

@@ -945,6 +945,15 @@ def main(argv: list[str] | None = None) -> int:
     if not step_ui_bundle_check() and not args.dry_run:
         sys.exit(5)
 
+    if not args.dry_run:
+        from jarvis.core.config import load_config
+        from jarvis.swarm.runtime import prepare_install
+
+        # Covers both fresh source installs and the managed update transaction.
+        # Frozen bundles repeat existing-team migrations after server readiness.
+        prepare_install(load_config())
+        note("Ultra Agent Swarm storage and bundled execution runtime are ready.")
+
     # Summary FIRST, launch LAST: when the app window appears, the terminal
     # story is already told — and everything the first launch needs is on disk.
     step_summary(no_launch=args.no_launch, update=update, headless=args.headless)

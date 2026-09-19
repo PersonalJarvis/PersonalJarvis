@@ -3,6 +3,8 @@
 # Build the distributable macOS disk image for Personal Jarvis.
 #
 #   packaging/macos/build.sh
+#   Build environment: python3 -m pip install -e '.[desktop,dev,swarm-distributed]'
+#   The shared spec rejects missing Swarm drivers before freezing.
 #
 # Output (per the release contract):
 #   dist/installers/PersonalJarvis-macOS-arm64.dmg   on Apple Silicon

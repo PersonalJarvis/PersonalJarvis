@@ -54,6 +54,7 @@ export const VOICE_STATES: readonly VoiceState[] = [
 export type SectionId =
   | "chats"
   | "agents"
+  | "ultra-swarm"
   | "skills"
   | "plugins"
   | "docs"
@@ -110,6 +111,7 @@ export type SectionId =
 export const SECTION_IDS = [
   "chats",
   "agents",
+  "ultra-swarm",
   "skills",
   "plugins",
   "docs",
@@ -199,6 +201,7 @@ export function soloWindowFromSearch(search: string): boolean {
 export const SECTION_LABELS: Record<SectionId, string> = {
   chats: "Chats",
   agents: "Agents",
+  "ultra-swarm": "Ultra Agent Swarm",
   skills: "Skills",
   plugins: "Plugins",
   docs: "Docs",

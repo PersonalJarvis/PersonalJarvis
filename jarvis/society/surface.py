@@ -42,6 +42,7 @@ from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
 from .roster import AgentRecord, canonical_session_id
 from .runtime import current_runtime
+from .swarm_port import RequestSwarmTool
 
 log = logging.getLogger(__name__)
 
@@ -308,6 +309,7 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     tools.update(
         {
             MessageAgentTool.name: cast(Tool, MessageAgentTool(rt, agent_id)),
+            RequestSwarmTool.name: cast(Tool, RequestSwarmTool(rt, agent_id)),
             WikiNoteTool.name: cast(Tool, WikiNoteTool(rt, agent_id, vault_root=_vault_root(cfg))),
             MemoryRecallTool.name: cast(
                 Tool, MemoryRecallTool(rt, agent_id, vault_root=_vault_root(cfg))
@@ -506,9 +508,7 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
         # The briefing fills the cache before the override is built; a miss
         # means a turn without a briefing — keep the own hands, deny the rest
         # of the write paths the agent must not have.
-        return lambda tools: {
-            n: t for n, t in tools.items() if n.startswith(_OWN_PREFIX) or n not in _SOCIETY_DENIED
-        }
+        return lambda tools: {n: t for n, t in tools.items() if n.startswith(_OWN_PREFIX)}
 
     def _apply(tools: dict[str, Tool]) -> dict[str, Tool]:
         own = {

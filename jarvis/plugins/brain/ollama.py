@@ -157,6 +157,7 @@ class OllamaBrain:
     # sent screenshots (the vision resolver and the CU planner both gate on
     # ``supports_vision``).
     supports_tools: bool = True
+    scoped_execution_only: bool = True  # Never falls back to ambient agent/tool execution.
     supports_vision: bool = True
 
     def __init__(self, model: str | None = None) -> None:
@@ -400,7 +401,7 @@ class OllamaBrain:
                 log.warning(
                     "ollama: profile for %s unavailable, running the base model (%s)",
                     model,
-                    exc,
+                    type(exc).__name__,
                 )
                 run_model = model
         if opts.num_ctx:

@@ -19,6 +19,16 @@ from uuid import UUID
 from .chat_turn import ChatCompletion as ChatCompletion
 from .chat_turn import ChatTurn as ChatTurn
 from .chat_turn import current_chat_turn as current_chat_turn
+from .swarm_preparation import PreparationAnswers as PreparationAnswers
+from .swarm_preparation import PreparationBegin as PreparationBegin
+from .swarm_preparation import PreparationLaunch as PreparationLaunch
+from .swarm_preparation import PreparationPlan as PreparationPlan
+from .swarm_preparation import PreparationView as PreparationView
+from .swarm_types import CheckpointSnapshot as CheckpointSnapshot
+from .swarm_types import SwarmProfiles as SwarmProfiles
+from .swarm_types import SwarmRequests as SwarmRequests
+from .swarm_types import SwarmSandbox as SwarmSandbox
+from .swarm_types import SwarmService as SwarmService
 from .trigger_context import RoutineDeferred as RoutineDeferred
 from .trigger_context import current_trigger_path as current_trigger_path
 

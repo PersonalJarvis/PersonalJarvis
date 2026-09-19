@@ -120,12 +120,14 @@ def _to_openai_messages(
                             "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
                         },
                     })
+                    if isinstance(block.get("extra_content"), dict):
+                        tool_calls[-1]["extra_content"] = block["extra_content"]
             if tool_calls and assistant_tool_call_extra_content:
                 # Gemini 3 validates a thought signature on the first call in
                 # each reconstructed assistant tool step. Other compatible
                 # providers leave this unset. The caller owns the provider-
                 # specific payload; this shared adapter only preserves it.
-                tool_calls[0]["extra_content"] = assistant_tool_call_extra_content
+                tool_calls[0].setdefault("extra_content", assistant_tool_call_extra_content)
             entry: dict[str, Any] = {"role": "assistant", "content": "\n".join(text_parts) or None}
             if tool_calls:
                 entry["tool_calls"] = tool_calls
@@ -454,18 +456,23 @@ async def _stream_via_responses(
             if usage is not None:
                 details = getattr(usage, "input_tokens_details", None)
                 cached = int(getattr(details, "cached_tokens", 0) or 0)
-                usage_payload = {
-                    # The canonical cost contract (gemini.py does the same):
-                    # ``input_tokens`` is the UNCACHED share. OpenAI counts
-                    # cache hits inside its input figure; leaving them there
-                    # billed every hit at the full rate (2026-08-25).
-                    "input_tokens": max(
-                        int(getattr(usage, "input_tokens", 0) or 0) - cached, 0
-                    ),
-                    "output_tokens": int(
-                        getattr(usage, "output_tokens", 0) or 0
-                    ),
-                }
+                usage_payload = {}
+                # Missing counts are unknown, never fabricated zero usage. Input
+                # includes cached tokens; expose only its uncached share.
+                input_tokens = getattr(usage, "input_tokens", None)
+                output_tokens = getattr(usage, "output_tokens", None)
+                if (
+                    isinstance(input_tokens, int)
+                    and not isinstance(input_tokens, bool)
+                    and input_tokens >= 0
+                ):
+                    usage_payload["input_tokens"] = max(input_tokens - cached, 0)
+                if (
+                    isinstance(output_tokens, int)
+                    and not isinstance(output_tokens, bool)
+                    and output_tokens >= 0
+                ):
+                    usage_payload["output_tokens"] = output_tokens
                 if cached > 0:
                     usage_payload["cache_hit_tokens"] = cached
         elif etype in ("response.failed", "error"):
@@ -585,7 +592,7 @@ async def stream_complete(
             log.warning(
                 "openai SDK rejected '%s' (%s) — retrying without the kwarg.",
                 offender,
-                exc,
+                type(exc).__name__,
             )
             kwargs.pop(offender, None)
         except Exception as exc:  # noqa: BLE001 — inspect for the transport verdict
@@ -625,6 +632,9 @@ async def stream_complete(
                 slot = tool_buffer.setdefault(idx, {"id": "", "name": "", "arguments": ""})
                 if getattr(tc, "id", None):
                     slot["id"] = tc.id
+                extra_content = getattr(tc, "extra_content", None)
+                if isinstance(extra_content, dict):
+                    slot["extra_content"] = extra_content
                 fn = getattr(tc, "function", None)
                 if fn is not None:
                     if getattr(fn, "name", None):
@@ -640,11 +650,14 @@ async def stream_complete(
                         parsed = json.loads(buf["arguments"]) if buf["arguments"] else {}
                     except json.JSONDecodeError:
                         parsed = {}
-                    yield BrainDelta(tool_call={
+                    call = {
                         "id": buf["id"] or f"call_{idx}",
                         "name": reverse_name_map.get(buf["name"], buf["name"]),
                         "input": parsed,
-                    })
+                    }
+                    if "extra_content" in buf:
+                        call["extra_content"] = buf["extra_content"]
+                    yield BrainDelta(tool_call=call)
                 tool_buffer.clear()
                 yield BrainDelta(finish_reason=finish)
 
@@ -657,12 +670,22 @@ async def stream_complete(
             # whether a prompt-cache change works or what a turn really cost.
             details = getattr(usage, "prompt_tokens_details", None)
             cached = int(getattr(details, "cached_tokens", 0) or 0)
-            usage_payload = {
-                # ``prompt_tokens`` INCLUDES the cached share; the contract
-                # wants the uncached one (see the Responses path above).
-                "input_tokens": max(int(getattr(usage, "prompt_tokens", 0) or 0) - cached, 0),
-                "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
-            }
+            usage_payload = {}
+            # Preserve missing counts as unknown for conservative accounting.
+            input_tokens = getattr(usage, "prompt_tokens", None)
+            output_tokens = getattr(usage, "completion_tokens", None)
+            if (
+                isinstance(input_tokens, int)
+                and not isinstance(input_tokens, bool)
+                and input_tokens >= 0
+            ):
+                usage_payload["input_tokens"] = max(input_tokens - cached, 0)
+            if (
+                isinstance(output_tokens, int)
+                and not isinstance(output_tokens, bool)
+                and output_tokens >= 0
+            ):
+                usage_payload["output_tokens"] = output_tokens
             if cached > 0:
                 usage_payload["cache_hit_tokens"] = cached
             yield BrainDelta(usage=usage_payload)

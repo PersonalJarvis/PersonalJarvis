@@ -63,6 +63,8 @@ dependencies = [
     # malformed vision JSON; without it the repair path silently degrades on
     # every fresh install (found 2026-07-18, was never declared).
     "json-repair>=0.30",
+    # Deterministic Swarm tool schema validation is part of the base local runtime.
+    "jsonschema>=4.23,<5",
     # cryptography stopped publishing the wheels these two targets need, and
     # not at the same release: win_arm64 ends at 46.0.3, and the macosx
     # universal2 wheel that covers Intel macOS ends at 48.0.1. Re-verified
@@ -178,6 +180,9 @@ dependencies = [
     "opentelemetry-sdk>=1.28",
     "prometheus-client>=0.21",
     "httpx>=0.27",
+    # Swarm egress uses a validating DNS resolver; generated JS runs in WASI.
+    "aiohttp>=3.14.3,<4",
+    "wasmtime==48.0.0",
     # 9.14.4 newly requires Brotli, which has no Windows ARM64 wheel. 9.14.3
     # retains the same key-free multi-engine search surface without that native
     # dependency; bump only when the full target matrix proves the replacement.
@@ -256,6 +261,14 @@ Discord = "https://discord.gg/x7USduHxbc"
 [project.optional-dependencies]
 # Optional message transports; the base application remains headless-friendly.
 trigger-streams = ["aiokafka>=0.12,<1", "aio-pika>=9,<10", "paho-mqtt>=2.1,<3", "redis>=5,<9"]
+# Opt-in distributed Swarm authority/delivery/objects. Local teams need none.
+swarm-distributed = [
+    "psycopg[binary,pool]>=3.3.5,<4",
+    "psycopg-pool>=3.3.1,<4",
+    "redis>=7.4.1,<8",
+    "boto3>=1.43.91,<2",
+    "certifi>=2026.7.22",
+]
 dev = [
     # Pull the runtime extras the test suite exercises. The local-voice + desktop
     # packages were base dependencies until the cloud-first split; tests still
@@ -268,6 +281,8 @@ dev = [
     "hypothesis>=6.100",
     "ruff>=0.7",
     "mypy>=1.13",
+    "types-jsonschema>=4.23",
+    "types-psutil>=6.0",
     "pyinstaller>=6.11",
 ]
 # "Everything" in one shot — the ONE advertised install profile (design spec
@@ -819,6 +834,8 @@ include = ["jarvis*"]
 
 [tool.setuptools.package-data]
 jarvis = [
+    "swarm/vendor/*.wasm",
+    "swarm/vendor/*.txt",
     "ui/web/dist/**/*",
     "ui/web/dist/*",
     "assets/**/*",

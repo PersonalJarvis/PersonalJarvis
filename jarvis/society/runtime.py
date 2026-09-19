@@ -125,6 +125,7 @@ class SocietyRuntime:
         event_publish: Callable[[Any], Any] | None = None,
         app_bus: Any = None,
         task_services: Callable[[], tuple[Any, Any]] | None = None,
+        swarm_requests: Callable[[], Any] | None = None,
     ) -> None:
         self._data_dir = Path(data_dir)
         self.coding_request_lock = asyncio.Lock()
@@ -141,6 +142,7 @@ class SocietyRuntime:
         self._get_chat = chat_service or (lambda: None)
         self._get_cfg = cfg or (lambda: None)
         self.task_services = task_services or (lambda: (None, None))
+        self.swarm_requests = swarm_requests
         self._seed_starter_team = seed_starter_team
         self._watchers: set[asyncio.Task[None]] = set()
         self.store = SocietyStore(self._data_dir / _DB_NAME)
