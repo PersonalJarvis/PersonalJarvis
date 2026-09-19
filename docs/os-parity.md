@@ -12,7 +12,10 @@ available. See [the design and proof](agent-society/self-learning.md).
 Windows contracts and a Linux container contract run passed, including real Linux
 symlink isolation. A fresh temporary workspace with one Grok key demonstrated
 learning across a full runtime restart and isolation from another agent. Native
-macOS execution remains unverified; portable support is implemented, not emulated.
+macOS CI also passed the realtime and private-learning contracts (55 passed,
+two capability skips) at `dc053c1d0`. The
+[native macOS job](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/35435846490/job/105878237409)
+provides the execution evidence; this does not claim physical audio-device testing.
 
 ## Prepaid search hop (2026-09-17, T2)
 
