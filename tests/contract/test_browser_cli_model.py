@@ -46,7 +46,9 @@ def cli(monkeypatch):
     from jarvis import grok_build_auth
     from jarvis.agent_chat import browser_model, runner_cli
 
-    state = SimpleNamespace(events=[], calls=[], closed=0)
+    state = SimpleNamespace(
+        events=[], calls=[], closed=0, selected_home=Path("/selected-account").resolve()
+    )
     monkeypatch.setattr(runner_cli, "grok_argv_prefix", lambda: ["grok-test"])
     monkeypatch.setattr(
         runner_cli,
@@ -116,6 +118,7 @@ async def test_inference_uses_isolated_subscription_and_denies_all_tools(cli):
         system="Return JSON",
         tools=(),
     )
+    cli.events[-1]["usage"].update(cache_read_input_tokens=5, cache_creation_input_tokens=2)
     deltas = [d async for d in GrokBrowserModel("selected-model").complete(req)]
     assert "".join(d.content or "" for d in deltas) == '{"ok": true}'
     args, kwargs, path, text = cli.calls[0]
@@ -128,10 +131,12 @@ async def test_inference_uses_isolated_subscription_and_denies_all_tools(cli):
     assert "XAI_API_KEY" not in kwargs["env"] and "JARVIS_CONTROL_API_KEY" not in kwargs["env"]
     assert kwargs["env"]["GROK_HOME"].endswith(".grok")
     assert kwargs["env"]["HOME"] == kwargs["env"]["USERPROFILE"] == str(path.parent)
-    assert kwargs["env"]["GROK_AUTH_PATH"] == str(Path("/selected-account") / "auth.json")
+    assert kwargs["env"]["GROK_AUTH_PATH"] == str(cli.selected_home / "auth.json")
     assert not path.exists()
     assert cli.closed == 1
     assert deltas[-1].usage["output_tokens"] == 4
+    assert deltas[-1].usage["input_tokens"] == 5
+    assert deltas[-1].usage["cache_hit_tokens"] == 5
 
 
 async def test_model_tool_attempt_fails_closed_and_reaps_its_process(cli):

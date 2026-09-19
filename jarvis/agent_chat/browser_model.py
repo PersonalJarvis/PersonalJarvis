@@ -123,7 +123,9 @@ class GrokBrowserModel:
                 await asyncio.gather(writing, return_exceptions=True)
                 raise
             env = await asyncio.to_thread(_account_env, "grok-build")
-            source_home = Path(env.get("GROK_HOME") or grok_home())
+            source_home = await asyncio.to_thread(
+                lambda: Path(env.get("GROK_HOME") or grok_home()).expanduser().resolve()
+            )
             connected, mode, _ = await asyncio.to_thread(grok_build_login_in, source_home)
             if not connected or mode != "subscription":
                 raise RuntimeError("Connect a Grok Build subscription in API Keys first.")
