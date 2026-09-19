@@ -10,7 +10,14 @@
  * (2) the setMode call pattern for both availability states.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+
+function renderKeys(ui: ReactElement = <ApiKeysView />) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 // Mock the data hooks so the view renders deterministically, without a
 // network round-trip.
@@ -71,7 +78,7 @@ afterEach(() => {
 
 describe("ApiKeysView two-mode", () => {
   it("keeps the mode switch in the header and scrolls its context with providers", () => {
-    render(<ApiKeysView />);
+    renderKeys();
 
     const headerControl = screen.getByTestId("voice-engine-header-control");
     const providerScroll = screen.getByTestId("api-keys-provider-scroll");
@@ -87,7 +94,7 @@ describe("ApiKeysView two-mode", () => {
   });
 
   it("always shows the one-mode-only API-keys hint in the engine context", () => {
-    render(<ApiKeysView />);
+    renderKeys();
     const hint = screen.getByTestId("voice-engine-keys-hint");
     expect(screen.getByTestId("voice-engine-context").contains(hint)).toBe(true);
     // The load-bearing message: which keys you need depends on the SELECTED mode.
@@ -97,7 +104,7 @@ describe("ApiKeysView two-mode", () => {
   });
 
   it("defaults to Pipeline mode showing Brain/Voice/Subagents tabs, no Realtime tab", () => {
-    render(<ApiKeysView />);
+    renderKeys();
     expect(screen.getByRole("tab", { name: /brain/i })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /voice output/i })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /voice input/i })).toBeTruthy();
@@ -110,7 +117,7 @@ describe("ApiKeysView two-mode", () => {
   });
 
   it("shows the segmented Pipeline|Realtime switch with an Active badge on the live mode", () => {
-    render(<ApiKeysView />);
+    renderKeys();
     const pipelineSegment = screen.getByRole("button", { name: /pipeline/i });
     const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
     expect(pipelineSegment).toBeTruthy();
@@ -122,7 +129,7 @@ describe("ApiKeysView two-mode", () => {
   });
 
   it("marks Realtime as recommended and Pipeline as not recommended", () => {
-    render(<ApiKeysView />);
+    renderKeys();
     const pipelineSegment = screen.getByRole("button", { name: /pipeline/i });
     const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
     expect(pipelineSegment.textContent).toMatch(/not recommended/i);
@@ -131,7 +138,7 @@ describe("ApiKeysView two-mode", () => {
   });
 
   it("keeps the highlighted header segment aligned with the selected provider view", () => {
-    render(<ApiKeysView />);
+    renderKeys();
     const thumb = screen.getByTestId("voice-engine-selection-thumb");
 
     expect(thumb.style.transform).toBe("translateX(100%)");
@@ -143,7 +150,7 @@ describe("ApiKeysView two-mode", () => {
   });
 
   it("shows a research-preview disclaimer when Realtime is selected", () => {
-    render(<ApiKeysView />);
+    renderKeys();
     fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
     // The caveat is a tag with the full sentence for assistive tech, so the
     // phrase appears more than once — what matters is that it is on screen.
@@ -155,7 +162,7 @@ describe("ApiKeysView two-mode", () => {
     mockSessionActive = true;
     mockActiveSessionMode = "pipeline";
 
-    render(<ApiKeysView />);
+    renderKeys();
 
     expect(screen.getByTestId("voice-engine-runtime-status").textContent).toMatch(
       /fell back to Pipeline/i,
@@ -163,7 +170,7 @@ describe("ApiKeysView two-mode", () => {
   });
 
   it("switching to Realtime mode shows only Realtime/Subagents/Advanced and persists voice-mode (available)", () => {
-    render(<ApiKeysView />);
+    renderKeys();
     fireEvent.click(screen.getByRole("button", { name: /^realtime/i })); // the segment
 
     expect(screen.getByRole("tab", { name: /realtime/i })).toBeTruthy();
@@ -180,7 +187,7 @@ describe("ApiKeysView two-mode", () => {
   });
 
   it("switching back to Pipeline restores the five pipeline tabs and always persists voice-mode", () => {
-    render(<ApiKeysView />);
+    renderKeys();
     fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
     putVoiceMode.mockClear();
     fireEvent.click(screen.getByRole("button", { name: /pipeline/i }));
@@ -196,7 +203,7 @@ describe("ApiKeysView two-mode — realtime unavailable (no key in any family)",
   it("does not label unavailable configured Realtime as live", () => {
     mockVoiceMode = "realtime";
     mockRealtimeAvailable = false;
-    render(<ApiKeysView />);
+    renderKeys();
 
     const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
     expect(realtimeSegment.textContent).not.toMatch(/active/i);
@@ -206,7 +213,7 @@ describe("ApiKeysView two-mode — realtime unavailable (no key in any family)",
 
   it("switching to Realtime still switches the view, but does NOT persist voice-mode", () => {
     mockRealtimeAvailable = false;
-    render(<ApiKeysView />);
+    renderKeys();
     fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
 
     // The view still switches, so the user can add a key from the Realtime tab.
@@ -217,7 +224,7 @@ describe("ApiKeysView two-mode — realtime unavailable (no key in any family)",
 
   it("switching back to Pipeline still persists voice-mode even when realtime is unavailable", () => {
     mockRealtimeAvailable = false;
-    render(<ApiKeysView />);
+    renderKeys();
     fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
     putVoiceMode.mockClear();
     fireEvent.click(screen.getByRole("button", { name: /pipeline/i }));
