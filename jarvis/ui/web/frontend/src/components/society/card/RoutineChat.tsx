@@ -31,7 +31,7 @@ export default function RoutineChat({ target, onClose }: { target: RoutineChatTa
 
 function HistoricalExecution({ target }: { target: RoutineChatTarget }) {
   const t = useT();
-  const [snapshot, setSnapshot] = useState<{ name: string; items: TimelineItem[] } | null>(null);
+  const [snapshot, setSnapshot] = useState<{ name: string; items: TimelineItem[]; resultInChat: boolean } | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
     let alive = true;
@@ -40,7 +40,8 @@ function HistoricalExecution({ target }: { target: RoutineChatTarget }) {
       const selected = legacyRoutineEvents(events, target);
       const items = displayItems(reduceEvents(EMPTY_TIMELINE, selected).items).map((item) => item.type === "turn"
         ? { ...item, blocks: item.blocks.map((block) => block.kind === "tool" ? { ...block, approval: null } : block) } : item);
-      setSnapshot({ name: session.title, items });
+      const replies = items.flatMap((item) => item.type === "turn" ? item.blocks.flatMap((block) => block.kind === "text" ? [block.text] : []) : []).join("\n");
+      setSnapshot({ name: session.title, items, resultInChat: Boolean(target.result?.trim() && replies.includes(target.result.trim())) });
     }).catch((err) => { if (alive) setError(err instanceof Error ? err.message : String(err)); });
     return () => { alive = false; };
   }, [target]);
@@ -51,8 +52,11 @@ function HistoricalExecution({ target }: { target: RoutineChatTarget }) {
       {snapshot?.items.length ? <AgentTimeline items={snapshot.items} assistantName={snapshot.name} providerLabel={(id) => id} onDecide={async () => { /* Historical approvals are hidden; this transcript cannot act. */ }} /> : null}
       {(snapshot?.items.length === 0 || error) && <>
         <p className="text-sm text-muted-foreground">{t("society.routine_detail.trace_unavailable")}</p>
-        {target.result && <ChatMarkdown text={target.result} />}
       </>}
+      {(snapshot || error) && target.result && !snapshot?.resultInChat && <section className="space-y-2 border-t border-border pt-3" data-testid="routine-saved-result">
+        <h4 className="text-xs font-medium text-muted-foreground">{t("society.routine_detail.saved_result")}</h4>
+        <ChatMarkdown text={target.result} />
+      </section>}
     </div>
     <p className="shrink-0 border-t border-border pt-3 text-xs text-muted-foreground">{t("society.routine_detail.historical_chat")}</p>
   </>;

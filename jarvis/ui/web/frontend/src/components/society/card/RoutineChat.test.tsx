@@ -35,6 +35,15 @@ test("an old execution loads its own turn without opening a writable main chat",
   expect(screen.queryByRole("textbox")).toBeNull();
   expect(fetcher).toHaveBeenCalledOnce();
   expect(fetcher.mock.calls[0]).toEqual(["/api/agent-chat/sessions/society%3Amail"]);
+  // An old task could succeed through a fallback after its chat attempt failed.
+  expect(screen.getByTestId("routine-saved-result").textContent).toContain("Saved result");
+});
+
+test("does not duplicate a saved result already present in the selected conversation", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ session: { title: "Mail" }, events }))));
+  render(<RoutineChat target={{ ...target, result: "FIRST ONLY" }} onClose={() => {}} />);
+  await screen.findByTestId("selected-transcript");
+  expect(screen.queryByTestId("routine-saved-result")).toBeNull();
 });
 
 test("a missing historical turn shows only that execution's saved result", async () => {

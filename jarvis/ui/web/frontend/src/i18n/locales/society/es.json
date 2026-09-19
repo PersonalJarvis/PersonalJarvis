@@ -2,6 +2,7 @@
   "society": {
     "routine_detail": {
       "back_to_agent": "Volver al chat del agente",
+      "saved_result": "Resultado guardado de la ejecución",
       "historical_chat": "Esta ejecución antigua se guardó en el chat principal del agente. Aquí se muestra solo esta ejecución, en modo de lectura.",
       "trace_unavailable": "No hay una transcripción coincidente para esta ejecución. Su resultado guardado se muestra abajo, si está disponible.",
       "latest_chat": "Abrir último chat",
