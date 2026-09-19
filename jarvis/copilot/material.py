@@ -237,6 +237,76 @@ def quality_check(deck: Deck, order: str, pptx: Path | None, pdf: Path | None) -
     return checks
 
 
+def build(deck: Deck, order: str, folder: Path) -> tuple[list[Check], str]:
+    """Render PPTX + PDF into ``folder``, check them, save deck + result.
+
+    Returns the checks and the report text. Also records ``folder`` as the
+    latest deck so a later "fix page N" finds it, even after a restart.
+    """
+    pptx, pdf = folder / "deck.pptx", folder / "deck.pdf"
+    pptx_err = render_pptx(deck, pptx)
+    pdf_err = render_pdf(deck, pdf)
+    checks = quality_check(deck, order, None if pptx_err else pptx, None if pdf_err else pdf)
+    notes = "\n".join(e for e in (pptx_err, pdf_err) if e)
+    summary = report(checks) + (f"\n{notes}" if notes else "")
+    (folder / "quality.txt").write_text(summary, encoding="utf-8")
+    payload = {
+        "order": order,
+        "title": deck.title,
+        "subtitle": deck.subtitle,
+        "slides": deck.slides,
+    }
+    (folder / "deck.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    (folder.parent / "latest.txt").write_text(str(folder), encoding="utf-8")
+    return checks, summary
+
+
+def load_latest() -> tuple[Deck, str, Path] | None:
+    """The most recent deck, its order and folder; None if there is none."""
+    pointer = user_data_dir() / "materials" / "latest.txt"
+    try:
+        folder = Path(pointer.read_text(encoding="utf-8").strip())
+        data = json.loads((folder / "deck.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    deck = Deck(data.get("title", ""), data.get("subtitle", ""), list(data.get("slides") or []))
+    return deck, str(data.get("order", "")), folder
+
+
+REVISE_SYSTEM = (
+    "You edit one slide of a presentation. Reply with JSON only: "
+    '{{"title": str, "bullets": [str, ...]}}. Apply the instruction to the slide, '
+    "keep at most 6 short bullets, write in {language}, and do not add facts "
+    "that are not already there unless the instruction asks for them."
+)
+
+
+def revise_prompt(deck: Deck, page: int, instruction: str) -> str:
+    """Prompt for page ``page`` (1 = title page, as in the PPTX/PDF)."""
+    if page == 1:
+        slide = {"title": deck.title, "bullets": [deck.subtitle] if deck.subtitle else []}
+    else:
+        slide = deck.slides[page - 2]
+    return (
+        f"Slide (page {page}): {json.dumps(slide, ensure_ascii=False)}\nInstruction: {instruction}"
+    )
+
+
+def apply_revision(deck: Deck, page: int, text: str) -> Deck:
+    """Replace page ``page`` with the model's JSON; raises ValueError if unusable."""
+    start, end = (text or "").find("{"), (text or "").rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("the model returned no JSON slide")
+    data = json.loads(text[start : end + 1])
+    title = str(data.get("title") or "").strip()
+    bullets = [str(b).strip() for b in (data.get("bullets") or []) if str(b).strip()]
+    if page == 1:
+        return Deck(title or deck.title, bullets[0] if bullets else deck.subtitle, deck.slides)
+    slides = list(deck.slides)
+    slides[page - 2] = {"title": title or slides[page - 2]["title"], "bullets": bullets}
+    return Deck(deck.title, deck.subtitle, slides)
+
+
 def report(checks: list[Check]) -> str:
     lines = [
         f"{'OK ' if c.ok else 'NG '} {c.name}" + (f": {c.detail}" if c.detail else "")

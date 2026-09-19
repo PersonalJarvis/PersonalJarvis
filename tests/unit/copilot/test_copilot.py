@@ -105,3 +105,48 @@ def test_repeated_sequence_becomes_a_candidate() -> None:
 def test_no_repetition_no_candidate() -> None:
     segs = [workflow.Segment(a, "", i * 10, i * 10 + 5) for i, a in enumerate(["a", "b", "c"])]
     assert workflow.analyse(segs).candidates == []
+
+
+def test_revision_replaces_only_that_page() -> None:
+    deck = _deck(3)
+    new = material.apply_revision(deck, 3, '{"title": "S1b", "bullets": ["short"]}')
+    assert new.slides[1] == {"title": "S1b", "bullets": ["short"]}
+    assert new.slides[0] == deck.slides[0] and new.slides[2] == deck.slides[2]
+    title = material.apply_revision(deck, 1, '{"title": "New", "bullets": ["Sub"]}')
+    assert title.title == "New" and title.subtitle == "Sub"
+
+
+def test_build_then_load_latest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(material, "user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(material, "render_pdf", lambda deck, path: "no browser in test")
+    folder = material.output_dir("x")
+    material.build(_deck(2), "make 2 slides", folder)
+    latest = material.load_latest()
+    assert latest is not None
+    deck, order, where = latest
+    assert order == "make 2 slides" and where == folder and len(deck.slides) == 2
+
+
+def test_draft_is_marked_unreviewed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(workflow, "user_data_dir", lambda: tmp_path)
+    analysis = workflow.analyse(
+        [
+            workflow.Segment(a, "", i * 60, i * 60 + 50)
+            for i, a in enumerate(["excel", "outlook"] * 3)
+        ]
+    )
+    workflow.save_candidates(analysis)
+    assert workflow.load_candidates()[0].steps == analysis.candidates[0].steps
+    path = workflow.save_draft(1, "```powershell\nWrite-Output 1\n```")
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("# DRAFT") and "NOT run" in text and "Write-Output 1" in text
+    assert "```" not in text
+
+
+def test_risky_lines_are_commented_out() -> None:
+    script = "$m.Send()\nRemove-Item C:/x -Recurse\nWrite-Output ok\n# $m.Send()"
+    safe, blocked = workflow.neutralise(script)
+    assert blocked == 2
+    lines = safe.splitlines()
+    assert lines[0].startswith("# BLOCKED") and lines[1].startswith("# BLOCKED")
+    assert lines[2] == "Write-Output ok" and lines[3] == "# $m.Send()"

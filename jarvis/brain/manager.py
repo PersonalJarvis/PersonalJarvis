@@ -5126,19 +5126,28 @@ class BrainManager:
                 )
                 deck = material.parse_outline(text)
                 folder = material.output_dir()
-                pptx, pdf = folder / "deck.pptx", folder / "deck.pdf"
-                pptx_err = await _asyncio.to_thread(material.render_pptx, deck, pptx)
-                pdf_err = await _asyncio.to_thread(material.render_pdf, deck, pdf)
-                checks = material.quality_check(
-                    deck, cmd.text, None if pptx_err else pptx, None if pdf_err else pdf
-                )
-                notes = "\n".join(e for e in (pptx_err, pdf_err) if e)
-                summary = material.report(checks) + (f"\n{notes}" if notes else "")
-                (folder / "quality.txt").write_text(summary, encoding="utf-8")
-                passed = sum(c.ok for c in checks)
+                checks, summary = await _asyncio.to_thread(material.build, deck, cmd.text, folder)
                 head = reply(
                     "material_done", lang, slides=len(deck.slides),
-                    passed=passed, total=len(checks), folder=folder,
+                    passed=sum(c.ok for c in checks), total=len(checks), folder=folder,
+                )
+                return f"{head}\n\n{summary}"
+            if cmd.kind == "material_revise":
+                latest = material.load_latest()
+                if latest is None:
+                    return reply("material_none", lang)
+                deck, order, folder = latest
+                if not 1 <= cmd.number <= len(deck.slides) + 1:
+                    return reply("material_no_page", lang, page=cmd.number, pages=len(deck.slides) + 1)
+                text = await self._teacher_complete(
+                    material.REVISE_SYSTEM.format(language=_language_name(lang)),
+                    material.revise_prompt(deck, cmd.number, cmd.text),
+                )
+                deck = material.apply_revision(deck, cmd.number, text)
+                checks, summary = await _asyncio.to_thread(material.build, deck, order, folder)
+                head = reply(
+                    "material_revised", lang, page=cmd.number,
+                    passed=sum(c.ok for c in checks), total=len(checks), folder=folder,
                 )
                 return f"{head}\n\n{summary}"
             if cmd.kind == "workflow_start":
@@ -5162,9 +5171,20 @@ class BrainManager:
                     return reply("wf_not_running", lang)
                 self._wf_observer = None
                 segments = await _asyncio.to_thread(observer.stop)
-                text = workflow.report(workflow.analyse(segments), lang)
+                analysis = workflow.analyse(segments)
+                workflow.save_candidates(analysis)
+                text = workflow.report(analysis, lang)
                 path = workflow.save_report(text)
                 return reply("wf_done", lang, path=path, report=text)
+            if cmd.kind == "workflow_draft":
+                candidates = workflow.load_candidates()
+                if not 1 <= cmd.number <= len(candidates):
+                    return reply("wf_no_candidate", lang, n=cmd.number, count=len(candidates))
+                text = await self._teacher_complete(
+                    workflow.DRAFT_SYSTEM, workflow.draft_prompt(candidates[cmd.number - 1])
+                )
+                path = workflow.save_draft(cmd.number, text)
+                return reply("wf_drafted", lang, n=cmd.number, path=path)
         except Exception as exc:  # noqa: BLE001 - reported to the user, never a crash
             log.warning("copilot %s failed: %s", cmd.kind, exc)
             return reply("material_failed", lang, error=str(exc)[:200])

@@ -77,6 +77,57 @@ _R: dict[str, dict[str, str]] = {
             "\u305f\u3002\n\n{report}"
         ),
     },
+    "material_none": {
+        "en": "There is no deck yet. Ask me to make one first.",
+        "ja": (
+            "\u307e\u3060\u8cc7\u6599\u304c\u3042\u308a\u307e\u305b\u3093\u3002"
+            "\u5148\u306b\u8cc7\u6599\u3092\u4f5c\u308b\u3088\u3046\u983c\u3093"
+            "\u3067\u304f\u3060\u3055\u3044\u3002"
+        ),
+    },
+    "material_no_page": {
+        "en": "The deck has {pages} pages; there is no page {page}.",
+        "ja": (
+            "\u8cc7\u6599\u306f\u5168{pages}\u30da\u30fc\u30b8\u3067\u3059"
+            "\u3002{page}\u30da\u30fc\u30b8\u76ee\u306f\u3042\u308a\u307e\u305b"
+            "\u3093\u3002"
+        ),
+    },
+    "material_revised": {
+        "en": (
+            "Page {page} revised. Quality check {passed}/{total} passed. Files:"
+            " {folder}. Nothing was sent."
+        ),
+        "ja": (
+            "{page}\u30da\u30fc\u30b8\u76ee\u3092\u76f4\u3057\u307e\u3057\u305f"
+            "\u3002\u54c1\u8cea\u30c1\u30a7\u30c3\u30af\u306f{total}\u9805"
+            "\u76ee\u4e2d{passed}\u9805\u76ee\u5408\u683c\u3067\u3059\u3002"
+            "\u4fdd\u5b58\u5148\uff1a{folder}\u3002\u9001\u4fe1\u306f\u3057"
+            "\u3066\u3044\u307e\u305b\u3093\u3002"
+        ),
+    },
+    "wf_no_candidate": {
+        "en": "There is no candidate {n} (the last observation found {count}).",
+        "ja": (
+            "\u5019\u88dc{n}\u306f\u3042\u308a\u307e\u305b\u3093\uff08\u524d"
+            "\u56de\u306e\u89b3\u5bdf\u3067\u898b\u3064\u304b\u3063\u305f\u5019"
+            "\u88dc\u306f{count}\u4ef6\u3067\u3059\uff09\u3002"
+        ),
+    },
+    "wf_drafted": {
+        "en": (
+            "Draft script for candidate {n} saved to {path}. It was NOT run: re"
+            "ad it, fill the TODOs and run it yourself."
+        ),
+        "ja": (
+            "\u5019\u88dc{n}\u306e\u30b9\u30af\u30ea\u30d7\u30c8\u306e\u4e0b"
+            "\u66f8\u304d\u3092{path}\u306b\u4fdd\u5b58\u3057\u307e\u3057\u305f"
+            "\u3002\u5b9f\u884c\u306f\u3057\u3066\u3044\u307e\u305b\u3093\u3002"
+            "\u4e2d\u8eab\u3092\u78ba\u8a8d\u3057\u3001TODO\u3092\u57cb\u3081"
+            "\u3066\u304b\u3089\u3054\u81ea\u8eab\u3067\u5b9f\u884c\u3057\u3066"
+            "\u304f\u3060\u3055\u3044\u3002"
+        ),
+    },
 }
 
 

@@ -239,6 +239,98 @@ def report(a: Analysis, lang: str = "en") -> str:
     return "\n".join(lines)
 
 
+def _dir() -> Path:
+    path = user_data_dir() / "workflow"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def save_candidates(a: Analysis) -> None:
+    """Keep the latest candidates so "automate candidate N" works later."""
+    import json  # noqa: PLC0415
+
+    data = [
+        {
+            "steps": list(c.steps),
+            "repeats": c.repeats,
+            "seconds_each": c.seconds_each,
+            "approach": c.approach,
+        }
+        for c in a.candidates
+    ]
+    (_dir() / "candidates.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def load_candidates() -> list[Candidate]:
+    import json  # noqa: PLC0415
+
+    try:
+        data = json.loads((_dir() / "candidates.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [
+        Candidate(tuple(d["steps"]), int(d["repeats"]), float(d["seconds_each"]), d["approach"])
+        for d in data
+    ]
+
+
+DRAFT_SYSTEM = (
+    "You write a first draft of a Windows PowerShell script that automates a "
+    "repeated desktop workflow. Prefer the apps' own APIs, COM or CLI over "
+    "simulated clicks. Put every assumption and every value the user must fill "
+    "in as a clearly marked TODO comment. Never send mail, delete files, buy "
+    "anything or change system settings in the draft: leave such steps as "
+    "commented TODOs. Reply with the script only, in a ```powershell block."
+)
+
+
+def draft_prompt(c: Candidate) -> str:
+    return (
+        f"Observed workflow (app sequence): {' -> '.join(c.steps)}; repeated {c.repeats} "
+        f"times, about {c.seconds_each / 60:.1f} min each. Suggested approach: {c.approach}."
+    )
+
+
+#: Commands a draft must never run unreviewed: sending, deleting, shutting
+#: down, installing, changing system settings. Matching lines are commented out.
+_RISKY_RE = re.compile(
+    r"\.Send\s*\(|Send-MailMessage|Remove-Item|\bdel\b|\brmdir\b|Format-Volume|"
+    r"Stop-Computer|Restart-Computer|Set-ItemProperty\s+.*HKLM|Invoke-WebRequest|"
+    r"Invoke-RestMethod|Start-Process\s+.*\.exe|Install-|winget\s|choco\s",
+    re.I,
+)
+
+
+def neutralise(script: str) -> tuple[str, int]:
+    """Comment out risky lines; returns the script and how many were blocked."""
+    out, blocked = [], 0
+    for line in script.splitlines():
+        if line.lstrip().startswith("#") or not _RISKY_RE.search(line):
+            out.append(line)
+            continue
+        blocked += 1
+        out.append(f"# BLOCKED by Jarvis, review before enabling: {line.strip()}")
+    return "\n".join(out), blocked
+
+
+def save_draft(number: int, text: str) -> Path:
+    """Write the draft as a .ps1 that says it is unreviewed; never executed here."""
+    body = text
+    if "```" in text:
+        parts = text.split("```")
+        body = parts[1].split("\n", 1)[1] if len(parts) > 1 and "\n" in parts[1] else text
+    header = (
+        "# DRAFT written by Jarvis from an observed workflow. NOT reviewed, NOT run.\n"
+        "# Read every line and fill the TODOs before running it yourself.\n\n"
+    )
+    out = _dir() / f"{datetime.now().strftime('%Y%m%d-%H%M')}-candidate{number}.ps1"
+    safe, blocked = neutralise(body.strip())
+    if blocked:
+        header += f"# {blocked} risky line(s) were commented out below (marked BLOCKED).\n\n"
+    out.write_text(header + safe + "\n", encoding="utf-8")
+    return out
+
+
 def save_report(text: str) -> Path:
     path = user_data_dir() / "workflow"
     path.mkdir(parents=True, exist_ok=True)

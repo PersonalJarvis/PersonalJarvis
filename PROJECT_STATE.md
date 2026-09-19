@@ -437,8 +437,16 @@ Minimal, additive. Backup: tag `pre-three-features` (313e517).
   repeated app sequences as automation candidates with a suggested approach;
   report only (ja/en) to `<user_data>/workflow/`. Nothing is automated.
   VERIFIED live: 1-min observation reported real apps.
-- Not done: revising a deck by page ("make page 7 shorter"), building/running
-  an automation (would need the approval flow), mode dashboard UI.
+- Deck revision by page: "N peeji-me wo mijikaku shite" / "make page N
+  shorter" rewrites only that page (page 1 = title) on the latest deck
+  (`materials/latest.txt`, survives restarts), re-renders and re-checks.
+  VERIFIED live: page 3 shortened, other pages unchanged, 9/9.
+- Workflow draft: "kouho N wo jidouka shite" / "automate candidate N"
+  writes a PowerShell DRAFT from the saved candidates; risky lines (send,
+  delete, shutdown, install, web calls, HKLM writes) are commented out
+  deterministically. Jarvis never runs it: the human reviews and runs it.
+  VERIFIED live: 184-line draft, mail send left commented.
+- Not done: a dedicated mode dashboard UI.
 
 ## Changelog
 
