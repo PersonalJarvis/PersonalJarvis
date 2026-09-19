@@ -1054,6 +1054,7 @@ def _bundle_version(bundle: Path) -> str | None:
         with (bundle / "Contents" / "Info.plist").open("rb") as stream:
             version = plistlib.load(stream).get("CFBundleShortVersionString")
     except (OSError, ValueError, plistlib.InvalidFileException):
+        # Missing or malformed bundle metadata has no usable version to compare.
         return None
     return version if isinstance(version, str) else None
 

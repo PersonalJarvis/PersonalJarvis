@@ -707,6 +707,7 @@ class ChatControls:
                     if relevant(event):
                         return json.dumps(event["payload"], ensure_ascii=False)
         except TimeoutError:
+            # The returned message explicitly reports that the polling window elapsed.
             return "No background update yet. Check the existing task; do not submit it again."
         finally:
             self.service.unsubscribe(sid, queue)

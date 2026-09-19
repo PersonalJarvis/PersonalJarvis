@@ -233,7 +233,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     await waitFor(() =>
       // The redesign shortens the card title to just "Antigravity"; the
       // subscription billing now lives in the billing badge, not the title.
-      expect(screen.getByText("Antigravity")).toBeTruthy(),
+      expect(screen.getAllByText("Antigravity").length).toBeGreaterThan(0),
     );
 
     // The "Set active" control now lives ON the subscription card, so there is
@@ -298,7 +298,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     expect((connectBtn.closest("button") as HTMLButtonElement).disabled).toBe(true);
     // The install hint sits in the row body; open the row first. The row
     // has no login yet, so the click only opens it — no switch.
-    fireEvent.click(screen.getByText("Antigravity"));
+    fireEvent.click(screen.getByRole("button", { name: /^Antigravity/ }));
     expect(
       await screen.findByText("Install Antigravity or the Gemini CLI before connecting."),
     ).toBeTruthy();

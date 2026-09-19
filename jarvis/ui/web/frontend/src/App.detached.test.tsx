@@ -54,6 +54,10 @@ vi.mock("@/components/layout/VoiceWarmingBanner", () => ({
 vi.mock("@/components/voice/SubscriptionRealtimeTransportBroker", () => ({
   SubscriptionRealtimeTransportBroker: () => null,
 }));
+vi.mock("@/components/voice/BrowserRealtimeControl", () => ({
+  BrowserRealtimeControl: () => null,
+  hasEmbeddedDesktopBridge: () => false,
+}));
 vi.mock("@/components/ToastLayer", () => ({ ToastLayer: () => null }));
 vi.mock("@/components/EditContextMenu", () => ({ EditContextMenu: () => null }));
 vi.mock("@/components/JarvisDock", () => ({ JarvisDock: () => null }));

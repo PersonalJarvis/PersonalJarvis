@@ -4,7 +4,7 @@ import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentch
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
  * 2026-09-02): bubbles, a time stamp, one pill-shaped composer with a "+"
- * for files and voice, the model and the thinking effort — and nothing else.
+ * for files and voice, and the model — and nothing else.
  *
  * For Jarvis the column speaks to the SAME store the front page and the
  * voice stage use (`useAgentChatStore`, the "jarvis" surface): one history,
@@ -346,7 +346,6 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
     <div className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-border px-3 py-2">
       <div className="flex min-w-0 items-center gap-2">
         <ModelPicker />
-        <EffortPicker />
       </div>
       <JarvisModeSwitch mode={mode} onPick={pickMode} />
       <div className="flex items-center justify-end">
@@ -555,41 +554,6 @@ function ModelPicker() {
           </ul>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function EffortPicker() {
-  const t = useT();
-  const draft = useAgentChat((s) => s.draft);
-  const providerById = useAgentChat((s) => s.providerById);
-  const setDraft = useAgentChat((s) => s.setDraft);
-  const locks = useAgentChat((s) => s.locks);
-  const provider = providerById(draft.provider);
-  const levels = provider?.effort_levels ?? [];
-  if (levels.length === 0) return null;
-  return (
-    <div role="radiogroup" aria-label={t("society.chat.effort")} className="inline-flex rounded-full border border-border p-0.5">
-      {levels.map((level) => {
-        const value = level || "";
-        const on = (draft.effort || "") === value;
-        return (
-          <button
-            key={level || "default"}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            disabled={Boolean(locks?.effort)}
-            onClick={() => void setDraft({ effort: value })}
-            className={cn(
-              "rounded-full px-2 py-0.5 text-xs capitalize transition-colors disabled:opacity-60",
-              on ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {level || t("society.chat.effort_default")}
-          </button>
-        );
-      })}
     </div>
   );
 }

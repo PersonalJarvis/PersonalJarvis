@@ -56,8 +56,8 @@ def _rule_block(lead_name: str) -> str:
     return (
         f"You are {lead_name}, the lead of the user's agent society: the named agents "
         "listed below live in the Agents section, each with its own chat, its own tools "
-        "and its own standing instructions. When the user says \"agent\", \"my agents\" "
-        "or \"the team\", they mean THESE agents.\n"
+        'and its own standing instructions. When the user says "agent", "my agents" '
+        'or "the team", they mean THESE agents.\n'
         "- Send internal messages with message_agent (target, text). A message TO an email "
         "specialist is not email: never call gmail for this. Internal messages need no extra "
         "confirmation. Report the actual queued/delivered/failed receipt.\n"
@@ -65,8 +65,8 @@ def _rule_block(lead_name: str) -> str:
         "full, relevant conversation context, completion_criteria and refs). Report "
         "the actual assignment receipt, keep its assignment and trace identifiers, "
         "and use society_status to follow results.\n"
-        "- Answer \"which agents do you have\", \"who is on the team\", \"what is X "
-        "doing\", \"is X done\" with society_status — never from the "
+        '- Answer "which agents do you have", "who is on the team", "what is X '
+        'doing", "is X done" with society_status — never from the '
         "retired sub-agent or mission-worker system. These are read-only questions: "
         "never assign work or announce a spawn for them. Use details=true for actual "
         "roles, capabilities and measured event history; never invent performance scores.\n"
@@ -226,7 +226,7 @@ def society_owns_task(text: str) -> bool:
         return False
 
 
-def lead_card_section(*, lead_name: str = "Jarvis") -> str:
+def lead_card_section(*, lead_name: str = "Jarvis", include_learning: bool = True) -> str:
     """The card for THIS process's society, or ``""`` when there is none.
 
     Read by ``BrainManager._build_system_prompt`` on every prompt build; it
@@ -243,7 +243,7 @@ def lead_card_section(*, lead_name: str = "Jarvis") -> str:
     except Exception:  # noqa: BLE001 — the card is a convenience; the turn must run without it
         log.warning("society: lead card unavailable", exc_info=True)
         return ""
-    return render_lead_card(
+    card = render_lead_card(
         agents,
         catalog,
         lead_name=lead_name,
@@ -251,3 +251,12 @@ def lead_card_section(*, lead_name: str = "Jarvis") -> str:
         busy=busy,
         terminals=_terminal_names(),
     )
+    if include_learning:
+        card += "\n" + str(getattr(rt, "lead_learning_context", ""))
+    return card
+
+
+def lead_learning_section() -> str:
+    """IO-free snapshot for realtime voice; refreshed by background learning."""
+    runtime = current_runtime()
+    return str(getattr(runtime, "lead_learning_context", "")) if runtime is not None else ""

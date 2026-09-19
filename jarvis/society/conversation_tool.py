@@ -143,4 +143,5 @@ class RoutineInvokeTool:
             )
             return ToolResult(status in {"queued", "duplicate", "filtered"}, {"status": status})
         except ValueError as exc:
+            # ToolResult carries the validation failure back through the normal tool channel.
             return ToolResult(False, {}, str(exc))

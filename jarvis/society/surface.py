@@ -575,7 +575,27 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     return (
         build_briefing(agent, catalog, roster, browser=browser, learned=learned, memory=memory)
         + context
+        + "\n"
+        + await private_learning_context(session, agent_id)
     )
+
+
+async def private_learning_context(session: Any, agent_id: str) -> str:
+    from jarvis.core.protocols import current_chat_turn
+
+    from .experience import receipt_for
+
+    runtime = current_runtime()
+    if runtime is None:
+        return ""
+    turn = current_chat_turn.get()
+    query = turn.user_text if turn is not None else ""
+    receipt = receipt_for(session.session_id, turn.turn_id) if turn is not None else ""
+    try:
+        return await runtime.learning_context(agent_id, query=query, receipt=receipt)
+    except Exception:
+        log.warning("society: private learning context unavailable for %s", agent_id, exc_info=True)
+        return ""
 
 
 # ------------------------------------------------------------------ briefing

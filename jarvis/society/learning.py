@@ -85,12 +85,17 @@ class AgentSkills:
     """One agent's private skill namespace and its registry (lazy, no watcher)."""
 
     def __init__(self, data_dir: Path, agent_id: str) -> None:
+        from .experience import agent_directory
+
         self.agent_id = agent_id
-        self.root = Path(data_dir) / "society" / agent_id / "skills"
+        self.root = agent_directory(data_dir, agent_id) / "skills"
         self._registry: Any | None = None
 
     @property
     def registry(self) -> Any:
+        from .experience import reject_link
+
+        reject_link(self.root)
         if self._registry is None:
             from jarvis.skills.registry import SkillRegistry
 
@@ -112,7 +117,10 @@ class AgentSkills:
 
     def get(self, slug: str) -> Any | None:
         try:
-            return self.registry.resolve(slug)
+            skill = self.registry.resolve(slug)
+            if skill is not None and not Path(skill.path).resolve().is_relative_to(self.root):
+                return None  # A linked skill outside this agent's namespace is not its memory.
+            return skill
         except Exception:  # noqa: BLE001 — unknown or broken
             return None
 
@@ -151,6 +159,8 @@ class AgentSkills:
     def summaries(self) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
         for skill in [*self.list_active(), *self.registry.list_drafts()]:
+            if not Path(skill.path).resolve().is_relative_to(self.root):
+                continue
             fm = getattr(skill, "frontmatter", None)
             name = str(getattr(fm, "name", None) or Path(str(skill.path)).parent.name)
             out.append(
