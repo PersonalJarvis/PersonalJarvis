@@ -25,6 +25,18 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("TopBar detach button", () => {
+  it("offers the Settings navigation toggle with its current state", () => {
+    useEventStore.setState({ activeSection: "profile" });
+    const onToggle = vi.fn();
+    const { rerender } = render(<TopBar settingsNavigation={{ open: false, onToggle }} />);
+    const toggle = screen.getByTestId("settings-sidebar-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledOnce();
+    rerender(<TopBar settingsNavigation={{ open: true, onToggle }} />);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("offers 'own window' on the detachable sections only", () => {
     render(<TopBar />);
     expect(screen.getByTestId("detach-view-button")).toBeTruthy();
