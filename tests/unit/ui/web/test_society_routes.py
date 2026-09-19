@@ -53,7 +53,11 @@ def client(tmp_path: Path):
     app.state.society = None
     app.state.society_factory = lambda: runtime
     with TestClient(app) as c:
-        yield c, manager
+        try:
+            yield c, manager
+        finally:
+            assert c.portal is not None
+            c.portal.call(runtime.close)
 
 
 def test_lead_is_seeded_and_listed(client):
