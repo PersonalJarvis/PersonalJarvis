@@ -22,6 +22,9 @@ import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentch
  * runner can drive. The header says so while voice is showing.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useRoutineNavigation } from "./routineNavigation";
+import { routineTaskId } from "./routineExecution";
+import { RoutineChatHost } from "./RoutineChatHost";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
@@ -136,7 +139,12 @@ export function itemsForOpenSession(
 }
 
 export function AgentChatPanel(props: AgentChatPanelProps) {
-  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: props.agent.name }}><AgentChatPanelContent {...props} /></PairConversationBoundary>;
+  const disconnect = useCallback(() => {
+    (props.agent.tier === "lead" ? useAgentChatStore : useSocietyChatStore).getState().disconnect();
+  }, [props.agent.tier]);
+  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: props.agent.name }}>
+    <RoutineChatHost agentId={props.agent.agentId} onOpen={disconnect}><AgentChatPanelContent {...props} /></RoutineChatHost>
+  </PairConversationBoundary>;
 }
 
 function AgentChatPanelContent({ agent, roster }: AgentChatPanelProps) {
@@ -610,6 +618,7 @@ export function Transcript({
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
   const t = useT();
+  const sessionId = useAgentChat((state) => state.activeSessionId);
   // Follow the newest while the view sits at the end — the rule every
   // conversation surface shares (hooks/useStickToBottom). This used to scroll
   // a bottom sentinel into view on `[items.length, busy]` only, so a
@@ -649,7 +658,7 @@ export function Transcript({
               {item.type === "internal" ? (
                 <AgentMessageActivity item={item} roster={roster} />
               ) : item.type === "user" ? (
-                <UserBubble item={item} />
+                <UserBubble item={item} agentId={agent.agentId} sessionId={sessionId ?? agent.chatSessionId ?? undefined} />
               ) : item.type === "turn" ? (
                 <TurnBubble item={item} onDecide={onDecide} />
               ) : item.type === "notice" ? (
@@ -877,13 +886,17 @@ function visibleUserText(text: string): string {
     .trimEnd();
 }
 
-export function UserBubble({ item }: { item: UserItem }) {
+export function UserBubble({ item, agentId, sessionId }: { item: UserItem; agentId?: string; sessionId?: string }) {
   const t = useT();
   const choices = messageChoices(item);
   const text = visibleUserText(item.text);
   if (item.origin === "control") return <div className="self-start px-1 py-2 text-xs text-muted-foreground">{t("slash.control_turn")}{item.attachments.map((file) => <span key={file.name} className="ml-2">{file.name}</span>)}</div>;
   const task = routineTask(item.text);
-  if (task !== null && item.attachments.length === 0) return <RoutineActivity task={task} original={item.text} />;
+  if (task !== null && item.attachments.length === 0) return <RoutineActivity task={task} original={item.text}
+    onOpen={agentId && sessionId ? () => useRoutineNavigation.getState().open({
+      agentId, sessionId, title: task.split(/\r?\n/)[0], timestamp: item.tsMs,
+      ...(!sessionId.includes(":routine:") ? { legacy: { taskId: routineTaskId(item.text)!, messageId: item.id } } : {}),
+    }) : undefined} />;
   return (
     <div className="flex min-w-0 max-w-[min(85%,42rem)] flex-col items-end gap-1 self-end">
       <div className="min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">

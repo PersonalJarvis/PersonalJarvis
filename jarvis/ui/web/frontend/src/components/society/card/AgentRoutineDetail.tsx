@@ -1,5 +1,5 @@
 /** The agent's routine editor, backed by the existing task scheduler. */
-import { lazy, Suspense, useState } from "react";
+import { useState } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Clock, Plus, X } from "lucide-react";
 import { useT } from "@/i18n";
@@ -10,15 +10,15 @@ import type { TaskDetail, TaskStep } from "@/views/automations/automationsModel"
 import { TriggerBuilder } from "./TriggerBuilder";
 import { WebhookConnection } from "./WebhookConnection";
 import { SourceControls } from "./SourceControls";
+import { useRoutineNavigation } from "../chat/routineNavigation";
 
 const field = "w-full rounded-lg border border-border bg-background px-3 py-2 text-[12px] text-foreground";
 const button = "rounded-md bg-secondary px-2.5 py-1.5 text-[12px] text-foreground hover:bg-secondary/70 disabled:opacity-50";
 const recurring = ["every", "calendar", "cron", "webhook", "event_hook", "source", "on_event"];
 const terminal = ["completed", "failed", "cancelled", "interrupted"];
 const timeKinds = ["every", "calendar", "cron"];
-const RoutineChat = lazy(() => import("./RoutineChat"));
 
-interface Run { id: string; timestamp: number; status: string; text: string; sessionId?: string }
+interface Run { id: string; taskId: string; timestamp: number; status: string; text: string; sessionId?: string; startedMs?: number; finishedMs?: number }
 
 /** New runs have explicit boundaries; retain older result/error records too. */
 export function routineRuns(taskId: string, steps: TaskStep[]): Run[] {
@@ -29,7 +29,7 @@ export function routineRuns(taskId: string, steps: TaskStep[]): Run[] {
     const text = String(step.payload.message ?? step.payload.text ?? "");
     if (event === "run_started") {
       if (current?.status === "running") current.status = "interrupted";
-      current = { id: `${taskId}:${step.seq}`, timestamp: step.timestamp_ns / 1e6, status: "running", text: "" };
+      current = { id: `${taskId}:${step.seq}`, taskId, timestamp: step.timestamp_ns / 1e6, startedMs: step.timestamp_ns / 1e6, status: "running", text: "" };
       runs.push(current);
     } else if (event === "routine_chat" && current && typeof step.payload.session_id === "string") {
       current.sessionId = step.payload.session_id;
@@ -37,11 +37,11 @@ export function routineRuns(taskId: string, steps: TaskStep[]): Run[] {
       current.text = text;
     } else if (["run_completed", "run_cancelled", "error", "deferred"].includes(String(event))) {
       const status = event === "run_completed" ? "completed" : event === "run_cancelled" ? "cancelled" : event === "deferred" ? "pending" : "failed";
-      if (current) { current.status = status; if (text) current.text = text; current = undefined; }
-      else runs.push({ id: `${taskId}:${step.seq}`, timestamp: step.timestamp_ns / 1e6, status, text });
+      if (current) { current.status = status; current.finishedMs = step.timestamp_ns / 1e6; if (text) current.text = text; current = undefined; }
+      else runs.push({ id: `${taskId}:${step.seq}`, taskId, timestamp: step.timestamp_ns / 1e6, finishedMs: step.timestamp_ns / 1e6, status, text });
     } else if (event === "agent_result") {
       // Legacy runners persisted the result before the final state transition.
-      runs.push({ id: `${taskId}:${step.seq}`, timestamp: step.timestamp_ns / 1e6, status: "legacy", text });
+      runs.push({ id: `${taskId}:${step.seq}`, taskId, timestamp: step.timestamp_ns / 1e6, finishedMs: step.timestamp_ns / 1e6, status: "legacy", text });
     }
   }
   return runs;
@@ -73,7 +73,7 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
+  const openChat = useRoutineNavigation((state) => state.open);
   const details = queries.map((query) => query.data);
   const first = details[0];
   const rawPrompt = String((first?.spec?.action as { prompt?: string } | undefined)?.prompt ?? "");
@@ -108,9 +108,13 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
     return null;
   };
 
-  if (chatSessionId) return <Suspense fallback={<p role="status">{t("tasks_view.loading_details")}</p>}>
-    <RoutineChat key={chatSessionId} sessionId={chatSessionId} onClose={() => setChatSessionId(null)} />
-  </Suspense>;
+  const openRun = (run: Run) => {
+    const ownChat = run.sessionId?.startsWith(`society:${agentId}:routine:${run.taskId}:`);
+    openChat({ agentId, sessionId: ownChat ? run.sessionId! : `society:${agentId}`,
+      title: saved.title, timestamp: run.timestamp, result: run.text,
+      ...(!ownChat ? { legacy: { taskId: run.taskId, startedMs: run.startedMs, finishedMs: run.finishedMs } } : {}),
+    });
+  };
 
   return <section className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-4 text-foreground" data-testid="agent-routine-detail">
     <button type="button" className="flex items-center gap-1 text-[12px] text-muted-foreground" disabled={pending} onClick={onClose}><ArrowLeft size={14} />{t("society.card.routines")}</button>
@@ -168,15 +172,11 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
     </div>
     <div className="space-y-2">
       <h4 className="text-[11px] text-muted-foreground">{label("history")}</h4>
-      {runs.find((run) => run.sessionId) && <button type="button" className={button} onClick={() => setChatSessionId(runs.find((run) => run.sessionId)!.sessionId!)}>{label("latest_chat")}</button>}
+      {runs.length > 0 && <button type="button" className={button} onClick={() => openRun(runs[0])}>{label("latest_chat")}</button>}
       {ready && runs.length === 0 && <p className="text-[12px] text-muted-foreground">{label("no_runs")}</p>}
-      {runs.map((run) => <details key={run.id} className="text-[12px]">
-        <summary className="flex cursor-pointer items-center justify-between gap-2 rounded py-1 hover:bg-secondary"><time dateTime={new Date(run.timestamp).toISOString()}>{new Date(run.timestamp).toLocaleString()}</time><span className="flex items-center gap-1" title={run.status === "legacy" ? label("legacy") : t(`tasks_view.state.${run.status}`)}>
+      {runs.map((run) => <button key={run.id} type="button" data-testid={`routine-run-${run.id}`} aria-label={`${label("open_chat")} · ${new Date(run.timestamp).toLocaleString()}`} onClick={() => openRun(run)} className="flex w-full cursor-pointer items-center justify-between gap-2 rounded py-1 text-left text-[12px] hover:bg-secondary focus-visible:outline focus-visible:outline-ring"><time dateTime={new Date(run.timestamp).toISOString()}>{new Date(run.timestamp).toLocaleString()}</time><span className="flex items-center gap-1" title={run.status === "legacy" ? label("legacy") : t(`tasks_view.state.${run.status}`)}>
           {run.status === "completed" ? <Check size={15} className="text-success" aria-label={t("tasks_view.state.completed")} /> : run.status === "failed" || run.status === "cancelled" ? <X size={15} className="text-destructive" aria-label={t(`tasks_view.state.${run.status}`)} /> : <Clock size={15} aria-label={run.status === "legacy" ? label("legacy") : t(`tasks_view.state.${run.status}`)} />}
-        </span></summary>
-        {run.sessionId && <button type="button" className={button} onClick={() => setChatSessionId(run.sessionId!)}>{label("open_chat")}</button>}
-        <p className="whitespace-pre-wrap break-words rounded bg-secondary p-2">{run.text || (run.status === "legacy" ? label("legacy") : t(`tasks_view.state.${run.status}`))}</p>
-      </details>)}
+        </span></button>)}
     </div>
   </section>;
 }

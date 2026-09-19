@@ -1,6 +1,9 @@
 {
   "society": {
     "routine_detail": {
+      "back_to_agent": "Back to agent chat",
+      "historical_chat": "This older execution was stored in the agent's main chat. Only this execution is shown here, read-only.",
+      "trace_unavailable": "No matching chat transcript is available for this execution. Its saved result is shown below when available.",
       "latest_chat": "Open latest chat",
       "open_chat": "Open chat",
       "background_chat": "Background execution",

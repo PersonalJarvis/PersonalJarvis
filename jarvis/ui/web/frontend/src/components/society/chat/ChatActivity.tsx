@@ -7,6 +7,7 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
+export { routineTask } from "./routineExecution";
 
 /** A quiet event in the conversation; details remain keyboard accessible. */
 export function ChatActivity({ label, icon, children, failed = false }: {
@@ -24,15 +25,12 @@ export function ChatActivity({ label, icon, children, failed = false }: {
   </div>;
 }
 
-/** Recognize only the scheduler's complete envelope; ordinary messages stay intact. */
-export function routineTask(text: string): string | null {
-  const envelope = /^Scheduled routine [^\s.]+\. Follow your CURRENT standing instructions(?: and permissions)?\.\r?\n(?:This execution has its own background chat with bypass permissions\.\r?\n)?Use your memory and conversation archive for prior results\. For information watches, check sources and dates, remember last-seen items, and report only meaningful new findings\.\r?\n\r?\n/;
-  const match = envelope.exec(text);
-  return match ? text.slice(match[0].length).trim() : null;
-}
-
-export function RoutineActivity({ task, original }: { task: string; original: string }) {
+export function RoutineActivity({ task, original, onOpen }: { task: string; original: string; onOpen?: () => void }) {
   const t = useT();
+  if (onOpen) return <button type="button" onClick={onOpen}
+    className="mx-auto my-3 flex max-w-[min(100%,36rem)] items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+    <Clock3 aria-hidden className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{t("society.chat.routine_check")} · {task.split(/\r?\n/)[0]}</span><ChevronRight aria-hidden className="h-3 w-3 shrink-0" />
+  </button>;
   return <ChatActivity label={<>{t("society.chat.routine_check")} · {task.split(/\r?\n/)[0]}</>} icon={<Clock3 aria-hidden className="h-3.5 w-3.5 shrink-0" />}>
     <ChatMarkdown text={task} />
     <details className="mt-2 text-xs"><summary className="cursor-pointer">{t("society.chat.activity_details")}</summary><p className="mt-2 whitespace-pre-wrap">{original}</p></details>

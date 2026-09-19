@@ -1,6 +1,9 @@
 {
   "society": {
     "routine_detail": {
+      "back_to_agent": "Zurück zum Agenten-Chat",
+      "historical_chat": "Diese ältere Ausführung wurde im Hauptchat des Agenten gespeichert. Hier siehst du nur diese Ausführung, schreibgeschützt.",
+      "trace_unavailable": "Für diese Ausführung ist kein passender Chatverlauf verfügbar. Falls vorhanden, wird unten ihr gespeichertes Ergebnis angezeigt.",
       "latest_chat": "Letzten Chat öffnen",
       "open_chat": "Chat öffnen",
       "background_chat": "Hintergrund-Ausführung",
