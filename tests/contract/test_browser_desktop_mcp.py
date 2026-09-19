@@ -238,3 +238,47 @@ async def test_failed_browser_mcp_preserves_partial_outcome_and_error_flag(monke
     assert body["result"] == partial
     assert body["error"] == "Model timed out after navigation"
     assert "Inspect current state" in body["retry"]
+
+
+async def test_cli_browser_retries_keep_the_user_turn_trace(monkeypatch):
+    import mcp.types as types
+
+    from jarvis.agent_chat.tool_context import register_turn, unregister_turn
+    from jarvis.core.protocols import ChatTurn, current_chat_turn
+    from jarvis.mcp import jarvis_tools_server as server
+
+    seen = []
+    tool = SimpleNamespace(
+        name="society_browser",
+        description="Browser",
+        risk_tier="monitor",
+        is_action_tool=True,
+        input_schema={"type": "object"},
+    )
+
+    async def execute(name, args, request):
+        seen.append(request.trace_id)
+        return ToolResult(True, {}, None)
+
+    monkeypatch.setattr(
+        server, "_gateway", lambda: SimpleNamespace(catalog=lambda: [tool], execute=execute)
+    )
+    instance = server.build_server()
+    request = types.CallToolRequest(
+        params=types.CallToolRequestParams(name="society_browser", arguments={"task": "Read"})
+    )
+    first, second = uuid4(), uuid4()
+    token = current_chat_turn.set(ChatTurn("chat", "first", "Read", True, str(first)))
+    ref = server.CHAT_SESSION_REF.set("chat")
+    registered = register_turn("chat")
+    try:
+        await instance.request_handlers[types.CallToolRequest](request)
+        await instance.request_handlers[types.CallToolRequest](request)
+        current_chat_turn.set(ChatTurn("chat", "second", "Try again", True, str(second)))
+        registered = register_turn("chat")
+        await instance.request_handlers[types.CallToolRequest](request)
+    finally:
+        unregister_turn("chat", registered)
+        server.CHAT_SESSION_REF.reset(ref)
+        current_chat_turn.reset(token)
+    assert seen == [first, first, second]
