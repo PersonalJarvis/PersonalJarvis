@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
     dependencies=[Depends(require_control_key_or_session)],
     summary="List Jarvis trigger families and available listener drivers",
 )
-async def trigger_catalog() -> dict[str, Any]:
+def trigger_catalog() -> dict[str, Any]:
     from jarvis.tasks.event_catalog import event_catalog
     from jarvis.tasks.source_catalog import catalog
 
@@ -158,6 +158,7 @@ async def install_source_support(task_id: UUID, request: Request) -> dict[str, A
                 if current and current.trigger.type == "source":
                     scheduler.sources.start(current)
         except Exception as exc:
+            # The status endpoint exposes this failure without retaining provider error bodies.
             request.app.state.source_install_status = {
                 "status": "error",
                 "detail": type(exc).__name__,

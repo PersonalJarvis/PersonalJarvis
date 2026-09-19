@@ -56,6 +56,7 @@ async def run_owned_routine(
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=0.25)
             except TimeoutError:
+                # This poll interval keeps cancellation and run completion responsive.
                 continue
             payload = event.get("payload") or {}
             if payload.get("turn_id") not in (None, turn_id):

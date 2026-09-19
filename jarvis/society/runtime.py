@@ -211,6 +211,7 @@ class SocietyRuntime:
         try:
             return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_s)
         except TimeoutError:
+            # Shared startup continues; this turn may use the degraded surface meanwhile.
             return False
 
     async def _start_for_context(self) -> bool:
