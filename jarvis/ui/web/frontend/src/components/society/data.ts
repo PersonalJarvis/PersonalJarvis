@@ -207,7 +207,13 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
   const tier = row.tier as AgentTier;
-  const figure = recipeFromAvatar(row.avatar) ?? defaultFigureFor(row.agent_id, tier);
+  const storedFigure = recipeFromAvatar(row.avatar);
+  const figure = storedFigure ?? defaultFigureFor(row.agent_id, tier);
+  // A portrait may be stored alongside an empty avatar recipe. Keep the
+  // deterministic world figure in that case instead of freezing a new look.
+  if (!storedFigure && typeof row.avatar?.portrait === "string") {
+    figure.portrait = row.avatar.portrait;
+  }
   const runState: AgentRunState =
     row.state === "paused" ? "paused" : ((row.run_state as AgentRunState | undefined) ?? "idle");
   return {
@@ -488,6 +494,27 @@ export function useUpdateAgentDescription() {
     },
     [client],
   );
+}
+
+/** Save a compact portrait without changing the agent's world figure. */
+export function useUpdateAgentPortrait() {
+  const client = useQueryClient();
+  return useCallback(async (agent: SocietyAgent, portrait: string | null): Promise<void> => {
+    const url = `/api/society/agents/${encodeURIComponent(agent.agentId)}`;
+    const current = await fetch(url);
+    if (!current.ok) throw new Error(`portrait ${current.status}`);
+    const body = await current.json() as { agent?: { avatar?: Record<string, unknown> } };
+    const avatar = { ...(body.agent?.avatar ?? {}) };
+    if (portrait) avatar.portrait = portrait;
+    else delete avatar.portrait;
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ avatar }),
+    });
+    if (!res.ok) throw new Error(`portrait ${res.status}`);
+    await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+  }, [client]);
 }
 
 /** Persist the roster choice and re-seat its canonical chat without losing history. */

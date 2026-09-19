@@ -51,6 +51,8 @@ export interface FigureRecipe {
   model?: string;
   /** The style the look was picked from — metadata for the creator, never read by the runtime. */
   style?: string;
+  /** Optional 2D portrait for compact UI; the world still renders this figure. */
+  portrait?: string;
 }
 
 /** The biped's default look — the built sheet's own strip, for a natural first figure. */
