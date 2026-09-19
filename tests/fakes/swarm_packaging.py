@@ -3,6 +3,9 @@
 import json
 import os
 import sys
+from contextlib import contextmanager
+from copy import deepcopy
+from hashlib import sha256
 from importlib.metadata import PackageNotFoundError
 from pathlib import PurePosixPath
 
@@ -96,3 +99,156 @@ class ObservedJob:
 
     def close(self):
         self.actual.close()
+
+
+class ScopedApiProvider:
+    scoped_execution_only = True
+    supports_tools = True
+
+
+class OfflineProviderRegistry:
+    def get_class(self, name):
+        if name == "fixture-api":
+            return ScopedApiProvider
+        if name == "ambient-agent":
+            return type("AmbientAgent", (), {"supports_tools": True})
+        raise KeyError(name)
+
+
+class NativeSmokeApi:
+    """Offline native-install API that retains accepted artifact provenance."""
+
+    def __init__(self):
+        from jarvis.core.swarm_types import SwarmActor, SwarmController
+        from jarvis.swarm.receipts import build_receipt, canonical, provenance
+
+        self.calls = []
+        self.teams = {}
+        self.final_state = "succeeded"
+        self.tokens_used = "900"
+        self.tokens_reserved = "0"
+        self.provider_ready = True
+        self.task = {
+            "id": "arithmetic",
+            "state": "succeeded",
+            "verification": "javascript",
+            "owner_id": "a" * 32,
+            "fence": 1,
+            "evidence": ["1" * 32, "2" * 32, "3" * 32],
+        }
+        actor = SwarmActor("b" * 32, "a" * 32, "offline-actor", "arithmetic", 1)
+        controller = SwarmController(actor.team_id, "offline-controller", 1, "offline-control")
+        self.artifact_bytes = b'{"count":4,"sum":40,"mean":10}'
+        self.artifacts = [
+            {
+                "id": "1" * 32,
+                "name": "statistics.json",
+                "task_id": "arithmetic",
+                "owner_id": actor.agent_id,
+                "team_id": actor.team_id,
+                "attempt_fence": 1,
+                "sha256": sha256(self.artifact_bytes).hexdigest(),
+                "provenance": {"origin": "worker-authored"},
+            }
+        ]
+        for index, kind in enumerate(("execution", "verification"), 2):
+            payload = (
+                {
+                    "script": "function main() { return 10; }",
+                    "inputs": {},
+                    "execution": {"output": 10, "stdout": "", "stderr": "", "exit_code": 0},
+                }
+                if kind == "execution"
+                else {
+                    "kind": "javascript",
+                    "accepted": True,
+                    "verifier_id": "independent-verifier",
+                    "contract_hash": "0" * 64,
+                }
+            )
+            receipt = build_receipt(controller, actor, kind, payload, ["1" * 32])
+            self.artifacts.append(
+                {
+                    "id": str(index) * 32,
+                    "name": kind,
+                    "task_id": "arithmetic",
+                    "owner_id": actor.agent_id,
+                    "team_id": actor.team_id,
+                    "attempt_fence": 1,
+                    "sha256": sha256(canonical(receipt).encode()).hexdigest(),
+                    "provenance": provenance(receipt),
+                }
+            )
+
+    def request(self, path, body=None):
+        self.calls.append((path, deepcopy(body)))
+        if path == "/api/swarm/capabilities":
+            return {
+                "local": True,
+                "sandbox": {"available": True, "kind": "wasmtime-quickjs"},
+                "providers": [
+                    {
+                        "id": "fixture-api",
+                        "available": self.provider_ready,
+                        "credential_present": self.provider_ready,
+                    }
+                ],
+            }
+        if path == "/api/swarm/teams":
+            if body is None:
+                return list(deepcopy(self.teams).values())
+            team_id = "b" * 32 if body.get("tasks") else "c" * 32
+            team = dict(
+                body,
+                id=team_id,
+                lead_id="lead",
+                version=1,
+                storage_generation="generation",
+                state="created",
+            )
+            self.teams[team_id] = team
+            return deepcopy(team)
+        team_id = path.split("/")[4]
+        if path.endswith("/start"):
+            self.teams[team_id].update(
+                state=self.final_state,
+                tokens_used=self.tokens_used,
+                tokens_reserved=self.tokens_reserved,
+            )
+            return deepcopy(self.teams[team_id])
+        if path.endswith("/cancel"):
+            self.teams[team_id]["state"] = "canceled"
+            return deepcopy(self.teams[team_id])
+        if path.endswith("/tasks/record/arithmetic"):
+            return deepcopy(self.task)
+        if path.endswith("/artifacts?limit=200"):
+            return deepcopy(self.artifacts)
+        return deepcopy(self.teams[team_id])
+
+    def download(self, path, *, maximum):
+        assert maximum == 4096
+        self.calls.append((path, None))
+        return self.artifact_bytes
+
+
+class NativeSmokeHarness:
+    """Record process environments without starting an installer or provider."""
+
+    def __init__(self):
+        self.api = NativeSmokeApi()
+        self.installer_environments = []
+        self.app_environments = []
+        self.live_output = []
+
+    def install(self, installer, root, env):
+        self.installer_environments.append(dict(env))
+        return root / "application"
+
+    @contextmanager
+    def running_app(self, executable, root, env, log_path, *, live=False):
+        self.app_environments.append(dict(env))
+        self.live_output.append(live)
+        yield self
+
+    def poll(self):
+        return None

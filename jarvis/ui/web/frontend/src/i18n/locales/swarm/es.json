@@ -293,5 +293,18 @@
   "distributedDeleteHint": "Los objetos del almacenamiento distribuido siguen la política de retención de tu bucket después de eliminar este equipo.",
   "decisions": "Decisiones",
   "checkpoints": "Historial de puntos de control",
-  "openCheckpoint": "Abrir punto de control"
+  "openCheckpoint": "Abrir punto de control",
+  "yourResult": "Tu resultado",
+  "resultAccepted": "La entrega final se completó y se comprobó con respecto al objetivo acordado.",
+  "downloadResult": "Descargar resumen del resultado",
+  "resultFiles": "Tus archivos",
+  "previewFile": "Vista previa",
+  "closePreview": "Cerrar vista previa",
+  "inspectCompletedWork": "Ver el trabajo completado",
+  "inspectAllFiles": "Ver todos los archivos y pruebas",
+  "resultFilesLimited": "Esta es una selección limitada de los archivos aceptados. Consulta todos los archivos y pruebas para ver el registro completo.",
+  "resultUnavailable": "Esta ejecución no tiene una entrega final verificada guardada. Puedes consultar el trabajo completado y sus archivos.",
+  "resultChanged": "La ejecución guardada ha cambiado. Actualiza para cargar el resultado actual.",
+  "resultPreviewUnavailable": "La vista previa no está disponible. Descarga el archivo para leerlo.",
+  "resultSummaryTruncated": "El resultado largo se ha abreviado aquí; descarga el resumen."
 }

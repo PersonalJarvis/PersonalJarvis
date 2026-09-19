@@ -293,5 +293,18 @@
   "distributedDeleteHint": "Objekte im verteilten Speicher folgen nach dem Entfernen dieses Teams den Aufbewahrungsregeln deines Buckets.",
   "decisions": "Entscheidungen",
   "checkpoints": "Checkpoint-Verlauf",
-  "openCheckpoint": "Checkpoint öffnen"
+  "openCheckpoint": "Checkpoint öffnen",
+  "yourResult": "Dein Ergebnis",
+  "resultAccepted": "Das Endergebnis wurde erstellt und anhand des vereinbarten Ziels geprüft.",
+  "downloadResult": "Ergebniszusammenfassung herunterladen",
+  "resultFiles": "Deine Dateien",
+  "previewFile": "Vorschau",
+  "closePreview": "Vorschau schließen",
+  "inspectCompletedWork": "Erledigte Arbeit ansehen",
+  "inspectAllFiles": "Alle Dateien und Nachweise ansehen",
+  "resultFilesLimited": "Hier siehst du eine begrenzte Auswahl der akzeptierten Dateien. Alle Dateien und Nachweise findest du in der vollständigen Ansicht.",
+  "resultUnavailable": "Für diesen Lauf ist kein geprüftes Endergebnis gespeichert. Du kannst die erledigte Arbeit und die Dateien weiterhin ansehen.",
+  "resultChanged": "Der gespeicherte Lauf hat sich geändert. Aktualisiere die Ansicht, um das aktuelle Ergebnis zu laden.",
+  "resultPreviewUnavailable": "Die Vorschau ist nicht verfügbar. Lade die Datei herunter, um sie zu lesen.",
+  "resultSummaryTruncated": "Das lange Ergebnis ist hier gekürzt. Lade die Zusammenfassung herunter."
 }

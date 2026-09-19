@@ -293,5 +293,18 @@
   "distributedDeleteHint": "Objects in distributed storage follow your bucket's retention policy after this team is removed.",
   "decisions": "Decisions",
   "checkpoints": "Checkpoint history",
-  "openCheckpoint": "Open checkpoint"
+  "openCheckpoint": "Open checkpoint",
+  "yourResult": "Your result",
+  "resultAccepted": "Final delivery completed and checked against the agreed goal.",
+  "downloadResult": "Download result summary",
+  "resultFiles": "Your files",
+  "previewFile": "Preview",
+  "closePreview": "Close preview",
+  "inspectCompletedWork": "Inspect completed work",
+  "inspectAllFiles": "See all files and evidence",
+  "resultFilesLimited": "This is a limited selection of the accepted files. See all files and evidence for the full record.",
+  "resultUnavailable": "This run has no saved, verified final delivery. You can still inspect its completed work and files.",
+  "resultChanged": "The saved run changed. Refresh to load its current result.",
+  "resultPreviewUnavailable": "Preview is unavailable. Download the file to read it.",
+  "resultSummaryTruncated": "Long result shortened here; download the summary."
 }

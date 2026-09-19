@@ -29,7 +29,20 @@ on:
   push:
     tags:
       - "v*.*.*"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      live_provider_verification:
+        description: "Run bounded one-key Swarm arithmetic proof (requires SWARM_INSTALL_TEST_KEY)"
+        type: boolean
+        default: false
+      live_provider:
+        description: "Supported scoped API provider ID; required only for live proof"
+        type: string
+        default: ""
+      live_model:
+        description: "Optional model ID for live proof; empty uses the provider default"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -130,7 +143,12 @@ jobs:
 
       - name: Verify installed Swarm and native replacement
         shell: pwsh
-        run: python packaging/verify_swarm_install.py --installer dist/installers/PersonalJarvis-Setup-x64.exe --report dist/native-smoke/report.json
+        env:
+          SWARM_INSTALL_LIVE_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.live_provider_verification && 'true' || 'false' }}
+          SWARM_INSTALL_LIVE_PROVIDER: ${{ inputs.live_provider }}
+          SWARM_INSTALL_LIVE_MODEL: ${{ inputs.live_model }}
+          SWARM_INSTALL_TEST_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.live_provider_verification && secrets.SWARM_INSTALL_TEST_KEY || '' }}
+        run: python packaging/verify_swarm_install.py --installer dist/installers/PersonalJarvis-Setup-x64.exe --report dist/native-smoke/report.json --live-from-environment
 
       - name: Upload native verification evidence
         if: always()
@@ -202,7 +220,12 @@ jobs:
 
       - name: Verify installed Swarm and native replacement
         shell: bash
-        run: python packaging/verify_swarm_install.py --installer dist/installers/PersonalJarvis-macOS-${{ matrix.arch }}.dmg --report dist/native-smoke/report.json
+        env:
+          SWARM_INSTALL_LIVE_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.live_provider_verification && 'true' || 'false' }}
+          SWARM_INSTALL_LIVE_PROVIDER: ${{ inputs.live_provider }}
+          SWARM_INSTALL_LIVE_MODEL: ${{ inputs.live_model }}
+          SWARM_INSTALL_TEST_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.live_provider_verification && secrets.SWARM_INSTALL_TEST_KEY || '' }}
+        run: python packaging/verify_swarm_install.py --installer dist/installers/PersonalJarvis-macOS-${{ matrix.arch }}.dmg --report dist/native-smoke/report.json --live-from-environment
 
       - name: Upload native verification evidence
         if: always()
@@ -259,7 +282,12 @@ jobs:
 
       - name: Verify installed Swarm and native replacement
         shell: bash
-        run: python packaging/verify_swarm_install.py --installer dist/installers/PersonalJarvis-Linux-x86_64.AppImage --report dist/native-smoke/report.json
+        env:
+          SWARM_INSTALL_LIVE_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.live_provider_verification && 'true' || 'false' }}
+          SWARM_INSTALL_LIVE_PROVIDER: ${{ inputs.live_provider }}
+          SWARM_INSTALL_LIVE_MODEL: ${{ inputs.live_model }}
+          SWARM_INSTALL_TEST_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.live_provider_verification && secrets.SWARM_INSTALL_TEST_KEY || '' }}
+        run: python packaging/verify_swarm_install.py --installer dist/installers/PersonalJarvis-Linux-x86_64.AppImage --report dist/native-smoke/report.json --live-from-environment
 
       - name: Upload native verification evidence
         if: always()

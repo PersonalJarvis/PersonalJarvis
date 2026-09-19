@@ -1,0 +1,40 @@
+{
+  "passed": true,
+  "run_id": "20260919T134721761330Z",
+  "proof_sha256": "b463b25d2d14dbfcc55093cf98dda6411d4402f72b29922673e958f26ccd03e6",
+  "samples": [
+    {
+      "trial": 0,
+      "derived_peak_calls": 32,
+      "common_32_call_overlap_seconds": 0.26390729999911855,
+      "durable_running_attempt_roles": {
+        "worker": 31,
+        "lead": 1,
+        "coordinator": 0
+      },
+      "recomputed_all_task_p95_seconds": 0.5377929210662842
+    },
+    {
+      "trial": 1,
+      "derived_peak_calls": 32,
+      "common_32_call_overlap_seconds": 0.2687721000002057,
+      "durable_running_attempt_roles": {
+        "worker": 31,
+        "lead": 1,
+        "coordinator": 0
+      },
+      "recomputed_all_task_p95_seconds": 0.7415895462036133
+    },
+    {
+      "trial": 2,
+      "derived_peak_calls": 32,
+      "common_32_call_overlap_seconds": 0.26803839999774937,
+      "durable_running_attempt_roles": {
+        "worker": 31,
+        "lead": 1,
+        "coordinator": 0
+      },
+      "recomputed_all_task_p95_seconds": 0.7999467849731445
+    }
+  ]
+}

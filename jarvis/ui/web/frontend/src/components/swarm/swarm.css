@@ -38,6 +38,18 @@
 .swarm-state[data-state=running], .swarm-state[data-state=succeeded] { color:hsl(var(--primary)); }
 .swarm-state[data-state=failed], .swarm-state[data-state=blocked] { color:hsl(var(--destructive)); }
 .swarm-main { min-width:0; display:grid; gap:16px; }
+.swarm-result { display:grid; gap:14px; margin:14px 0; border-color:hsl(var(--primary)/.3); }
+.swarm-result-text, .swarm-result-preview pre { max-height:480px; overflow:auto; overflow-wrap:anywhere; font-size:14px; }
+.swarm-result-text p, .swarm-result-text pre, .swarm-result-text ul, .swarm-result-text ol { margin:10px 0; }
+.swarm-result-text ul, .swarm-result-text ol { padding-left:22px; list-style:revert; }
+.swarm-result-text pre, .swarm-result-preview pre { white-space:pre-wrap; padding:12px; background:hsl(var(--muted)/.3); border-radius:8px; }
+.swarm-result-text h1, .swarm-result-text h2, .swarm-result-text h3 { font-size:16px; margin:12px 0 6px; }
+.swarm-result-text td, .swarm-result-text th { border:1px solid hsl(var(--border)); padding:6px 10px; text-align:left; }
+.swarm-result a { color:hsl(var(--primary)); text-decoration:underline; text-underline-offset:3px; }
+.swarm-result-download { justify-self:start; font-weight:600; }
+.swarm-result-files { display:grid; gap:8px; margin-top:8px; }
+.swarm-result-files li { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; padding:12px; border:1px solid hsl(var(--border)); border-radius:8px; }
+.swarm-result-files strong { overflow-wrap:anywhere; min-width:0; }
 .swarm-panel { border:1px solid hsl(var(--border)); border-radius:12px; padding:18px; min-width:0; background:hsl(var(--card)); }
 .swarm-goal { white-space:pre-wrap; overflow-wrap:anywhere; max-height:130px; overflow:auto; font-size:13px; margin:10px 0; }
 .swarm-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }

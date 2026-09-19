@@ -37,6 +37,16 @@ agent assignments, task dependencies, tool activity and recent durable events.
 Select an agent, task or event to inspect its evidence. This default view needs
 no WebGL; the existing 3D view is optional. Neither view invents progress.
 
+Completed runs show their final response and accepted files near the top of the
+team view. Preview or download a file directly; the full summary and detailed
+work remain available after archiving.
+
+The [local dispatch measurements](verification/ultra-swarm-local-dispatch.md)
+exercise 31 worker calls plus the persistent lead within the 32-call local limit.
+The [browser measurements](verification/ultra-swarm-ui-performance.md) cover
+individual nodes, grouped views, slow consumers and reconnect. Synthetic workload
+results are separate from real-provider throughput or research quality.
+
 Generated JavaScript runs in a fresh Wasm instance using the bundled QuickJS
 interpreter. It has bounded memory, fuel, time and output, and inherits no host
 filesystem, environment variables, subprocesses or sockets. Internet access

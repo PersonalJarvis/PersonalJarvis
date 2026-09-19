@@ -11,6 +11,7 @@ import { SpecialistAssignments } from "@/components/swarm/SpecialistAssignments"
 import { SwarmRequests } from "@/components/swarm/SwarmRequests";
 import { SwarmStorage } from "@/components/swarm/SwarmStorage";
 import { SwarmPreparation } from "@/components/swarm/SwarmPreparation";
+import { SwarmResult } from "@/components/swarm/SwarmResult";
 import { useSwarmText } from "@/components/swarm/strings";
 import { useSwarmWorld } from "@/components/swarm/useSwarmWorld";
 import { SwarmSimulation } from "@/components/swarm/SwarmSimulation";
@@ -92,6 +93,7 @@ function TeamWorkspace({ teamId, catalogTeam, capability, onTeam, onRecheck, onR
         <p className="swarm-goal">{details?.goal}</p>
         {details?.acceptance && <details><summary>{t("acceptance")}</summary><p className="swarm-goal">{details.acceptance}</p></details>}
         {team.reason && <p className="swarm-notice">{t("reason")}: {team.reason}</p>}
+        <SwarmResult team={team} awake={awake} onInspect={chooseRecord} />
         <details key={preparationRequired ? "preparation-limits" : "execution-limits"} className="swarm-run-details" open={!preparationRequired}><summary>{t("runDetails")}</summary>
         <div className="swarm-metrics">
           <div className="swarm-metric"><span className="swarm-muted">{t("budget")}</span><strong>{exactCount(team.tokens_used)} / {exactCount(team.limits.token_budget)}</strong>
