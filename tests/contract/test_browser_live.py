@@ -660,3 +660,30 @@ async def test_login_profile_survives_restart_and_stays_with_its_agent(live, sit
         assert ("/account?other", False) in PageHandler.profile_requests
     finally:
         await live.close()
+
+
+async def test_crashed_worker_recovers_without_touching_the_other_agent(live):
+    import psutil
+
+    one = SimpleNamespace(agent_id="crash", model="", browser_allowed_domains=[])
+    two = SimpleNamespace(agent_id="survivor", model="", browser_allowed_domains=[])
+    try:
+        old, _ = await live.subscribe(one)
+        survivor, _ = await live.subscribe(two)
+        children = await asyncio.to_thread(
+            lambda: psutil.Process(old.proc.pid).children(recursive=True)
+        )
+        old.proc.kill()  # Only this disposable test worker; containment owns its children.
+        await asyncio.wait_for(old.proc.wait(), 10)
+        await asyncio.wait_for(old.readers[0], 10)
+        assert old.closed
+        recovered, frames = await live.subscribe(one)
+        while (await asyncio.wait_for(frames.get(), 5))["kind"] != "frame":
+            pass  # Drain initial state until real recovered pixels arrive.
+        assert recovered.proc.pid != old.proc.pid
+        assert await live.ensure(two) is survivor
+        assert not survivor.closed and survivor.proc.returncode is None
+        _, alive = await asyncio.to_thread(psutil.wait_procs, children, timeout=10)
+        assert not alive
+    finally:
+        await live.close()
