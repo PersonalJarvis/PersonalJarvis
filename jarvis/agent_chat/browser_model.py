@@ -60,6 +60,8 @@ class GrokBrowserModel:
     def command(self, directory: Path, prompt: Path, effort: str = "") -> list[str]:
         from jarvis.agent_chat.runner_cli import grok_argv_prefix
 
+        # An empty Grok allowlist inherits every tool. Resolve one known tool
+        # then remove it, and explicitly remove server-hosted searches too.
         argv = [
             *grok_argv_prefix(),
             "--no-auto-update",
@@ -67,7 +69,9 @@ class GrokBrowserModel:
             "--cwd",
             str(directory),
             "--tools",
-            "",
+            "read_file",
+            "--disallowed-tools",
+            "read_file,web_search,x_search",
             "--deny",
             "*",
             "--disable-web-search",

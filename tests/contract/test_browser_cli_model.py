@@ -123,6 +123,8 @@ async def test_inference_uses_isolated_subscription_and_denies_all_tools(cli):
     assert "".join(d.content or "" for d in deltas) == '{"ok": true}'
     args, kwargs, path, text = cli.calls[0]
     assert args[args.index("--deny") + 1] == "*"
+    assert args[args.index("--tools") + 1] == "read_file"
+    assert args[args.index("--disallowed-tools") + 1] == "read_file,web_search,x_search"
     assert args[args.index("--permission-mode") + 1] == "dontAsk"
     assert "--always-approve" not in args
     assert "--disable-web-search" in args and "--no-subagents" in args
