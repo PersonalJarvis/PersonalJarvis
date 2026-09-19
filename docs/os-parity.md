@@ -1,5 +1,19 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Private agent learning (2026-09-19, T3)
+
+Jarvis chat/voice and Society agents share a provider-independent learning loop
+with private files and independent review queues. All OSes use the same portable
+implementation; the existing `filelock` backend selects the OS lock implementation.
+No GPU, audio device, native UI or extra API key is required. An unavailable review
+provider leaves a durable retry receipt while deterministic failure warnings remain
+available. See [the design and proof](agent-society/self-learning.md).
+
+Windows contracts and a Linux container contract run passed, including real Linux
+symlink isolation. A fresh temporary workspace with one Grok key demonstrated
+learning across a full runtime restart and isolation from another agent. Native
+macOS execution remains unverified; portable support is implemented, not emulated.
+
 ## Prepaid search hop (2026-09-17, T2)
 
 `search_web` may use an optional Apifare HTTP hop

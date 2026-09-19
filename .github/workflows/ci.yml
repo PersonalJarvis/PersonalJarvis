@@ -793,6 +793,7 @@ jobs:
           python -m pytest
           tests/contract/test_realtime_provider_contract.py
           tests/contract/test_realtime_reliability_gate.py
+          tests/contract/test_agent_learning_loop.py
           -q -p no:cacheprovider
 
   realtime-slim:
@@ -829,6 +830,7 @@ jobs:
           python -m pytest
           tests/contract/test_realtime_provider_contract.py
           tests/contract/test_realtime_reliability_gate.py
+          tests/contract/test_agent_learning_loop.py
           -q -p no:cacheprovider
 
   realtime-soak:

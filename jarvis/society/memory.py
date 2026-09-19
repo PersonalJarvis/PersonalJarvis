@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -105,7 +106,18 @@ def atomic_write(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
-        os.replace(tmp, path)
+            handle.flush()
+            os.fsync(handle.fileno())
+        for attempt in range(6):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                # A concurrent reader or antivirus can briefly deny replacement.
+                # Keep the old file intact and retry only this atomic commit.
+                time.sleep(0.01 * 2**attempt)
     except Exception:
         try:
             os.unlink(tmp)
@@ -152,8 +164,8 @@ def _contains_secret(text: str) -> bool:
 
         return bool(contains_secret(text))
     except Exception:  # noqa: BLE001 — a missing guard never opens the door
-        log.debug("society memory: secret guard unavailable, refusing nothing", exc_info=True)
-        return False
+        log.warning("society memory: secret guard unavailable; refusing the write", exc_info=True)
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,14 +196,16 @@ class SocietyMemory:
 
     def root(self, override: Path | None = None) -> Path:
         if override is not None:
-            return Path(override)
+            return Path(override).resolve()
         if self._vault_root is not None:
-            return Path(self._vault_root())
+            return Path(self._vault_root()).resolve()
         return resolve_society_vault(self._runtime._get_cfg())  # noqa: SLF001 — the runtime owns its config getter
 
     @staticmethod
     def namespace(root: Path, agent_id: str) -> Path:
-        return root / "society" / agent_id
+        from .experience import agent_directory
+
+        return agent_directory(root, agent_id)
 
     @staticmethod
     def shared_dir(root: Path) -> Path:
@@ -250,28 +264,43 @@ class SocietyMemory:
             raise MemoryRefused("memory never holds a secret")
         vault = self.root(root)
         path = self.namespace(vault, agent.agent_id) / "memory.md"
-        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-        if not existing:
-            existing = (
-                self._frontmatter(f"{agent.name} — memory", agent.agent_id, "agent", trace) + "\n"
-            )
+        import asyncio
+
+        from filelock import FileLock
+
         from .notebook import change, parse, render
 
-        _, body = _parse(existing)
-        prefix = existing[: len(existing) - len(body)] if body else existing
-        try:
-            entries = change(
-                parse(body),
-                text,
-                operation=operation,
-                entry_id=entry_id,
-                old_text=old_text,
-                importance=max(0, min(10, int(importance))),
-                origin=self._origin(origin),
-            )
-        except (ValueError, KeyError, TypeError) as exc:
-            raise MemoryRefused(str(exc)) from exc
-        atomic_write(path, prefix + "\n" + render(entries))
+        def write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.resolve() != path.absolute():
+                raise MemoryRefused("linked memory pages are not allowed")
+            lock_path = path.with_suffix(".lock")
+            if lock_path.resolve() != lock_path.absolute():
+                raise MemoryRefused("linked memory locks are not allowed")
+            with FileLock(lock_path, timeout=5):
+                existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+                if not existing:
+                    existing = (
+                        self._frontmatter(f"{agent.name} — memory", agent.agent_id, "agent", trace)
+                        + "\n"
+                    )
+                _, body = _parse(existing)
+                prefix = existing[: len(existing) - len(body)] if body else existing
+                try:
+                    entries = change(
+                        parse(body),
+                        text,
+                        operation=operation,
+                        entry_id=entry_id,
+                        old_text=old_text,
+                        importance=max(0, min(10, int(importance))),
+                        origin=self._origin(origin),
+                    )
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise MemoryRefused(str(exc)) from exc
+                atomic_write(path, prefix + "\n" + render(entries))
+
+        await asyncio.to_thread(write)
         rel = path.relative_to(vault).as_posix()
         await self._stage(agent, rel, self._origin(origin), trace, text[:280])
         await self._touch(agent, "remember", {"path": rel, "scope": "own"})
@@ -390,6 +419,9 @@ class SocietyMemory:
         """The briefing's ``## Your memory`` section. Byte-stable between writes."""
         vault = self.root(root)
         page = self.namespace(vault, agent.agent_id) / "memory.md"
+        from .experience import reject_link
+
+        reject_link(page)
         lines = ["## Your memory"]
         if page.is_file():
             _, body = _parse(page.read_text(encoding="utf-8"))
@@ -412,6 +444,9 @@ class SocietyMemory:
         from .notebook import parse
 
         path = self.namespace(self.root(), agent.agent_id) / "memory.md"
+        from .experience import reject_link
+
+        reject_link(path)
         if not path.is_file():
             return False
         _, body = _parse(path.read_text(encoding="utf-8"))
@@ -576,6 +611,8 @@ class SocietyMemory:
             return []
         pages: list[_Page] = []
         for path in sorted(folder.rglob("*.md")):
+            if path.resolve() != path.absolute():
+                continue  # Never follow a link into another agent's private notes.
             if path.name.startswith(".") or path.name == "README.md":
                 continue
             try:
