@@ -16,16 +16,31 @@ async def main():
     events = []
     live_runner.emit = lambda kind, **data: events.append({"kind": kind, **data})
     worker = live_runner.Worker()
+    read_text = Path.read_text
+    port_lock_retries = 0
+
+    def temporarily_locked(path, *args, **kwargs):
+        nonlocal port_lock_retries
+        if path.name == "DevToolsActivePort" and port_lock_retries < 2:
+            port_lock_retries += 1
+            raise PermissionError("Chromium is publishing its port file")
+        return read_text(path, *args, **kwargs)
+
     try:
         profile = Path(sys.argv[2])
-        await worker.start(
-            {
-                "profile_dir": str(profile),
-                "workspace": str(profile / "workspace"),
-                "executable": sys.argv[1],
-                "allowed_domains": [],
-            }
-        )
+        Path.read_text = temporarily_locked
+        try:
+            await worker.start(
+                {
+                    "profile_dir": str(profile),
+                    "workspace": str(profile / "workspace"),
+                    "executable": sys.argv[1],
+                    "allowed_domains": [],
+                }
+            )
+        finally:
+            Path.read_text = read_text
+        assert port_lock_retries == 2
         assert worker.browser is None  # First pixels need no agent engine.
         await worker.ensure_browser()
         await worker.page.goto("about:blank")

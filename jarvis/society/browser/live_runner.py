@@ -188,8 +188,9 @@ class Worker:
                         if not 0 < port < 65536:
                             raise ValueError("Invalid browser debugging port")
                         break
-                    except (FileNotFoundError, IndexError, ValueError):
-                        # A missing or partially written file is normal during launch.
+                    except (FileNotFoundError, PermissionError, IndexError, ValueError):
+                        # Chromium can briefly hold an exclusive Windows handle
+                        # while publishing this file; the startup deadline still applies.
                         await asyncio.sleep(0.05)
             cdp_url = f"http://127.0.0.1:{port}"
         self.browser_args = {"cdp_url": cdp_url, "allowed_domains": args.get("allowed_domains")}
