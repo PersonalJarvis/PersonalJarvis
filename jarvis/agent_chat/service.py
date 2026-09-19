@@ -669,6 +669,10 @@ class AgentChatService:
                     ),
                 )
             finally:
+                if session.surface in ("jarvis", "society"):
+                    from jarvis.society.browser.tool import stop_chat_browser
+
+                    await stop_chat_browser(session_id)
                 self._running.pop(session_id, None)
                 stored_session = self.store.get_session(session_id)
                 set_chat_read_only(

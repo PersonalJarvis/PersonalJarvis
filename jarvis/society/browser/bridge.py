@@ -155,7 +155,18 @@ async def execute_live(
                 if (
                     attempt == 0
                     and any(m.images for m in request.messages)
-                    and ("support image" in detail or "image input" in detail)
+                    and (
+                        not getattr(brain, "supports_vision", True)
+                        or any(
+                            marker in detail
+                            for marker in (
+                                "support image",
+                                "image input",
+                                "cannot see images",
+                                "does not support vision",
+                            )
+                        )
+                    )
                 ):
                     vision_available = False
                     text = ""
@@ -257,8 +268,7 @@ async def execute_live(
     if read_only:
         task = (
             "READ-ONLY: use navigation, reading and extraction only; "
-            "no clicks, inputs, uploads or writes. "
-            + task
+            "no clicks, inputs, uploads or writes. " + task
         )
     workspace = (Path(runtime.data_dir) / "society" / caller.agent_id / "workspace").resolve()
     files = []

@@ -1,12 +1,14 @@
 """Actual Browser-Use/Chromium checks; opt in with an isolated installed runtime."""
 
 from __future__ import annotations
+
 import asyncio
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+
 import pytest
 
 from jarvis.society.browser import install
@@ -20,14 +22,21 @@ pytestmark = pytest.mark.skipif(
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows widgets")
 def test_native_mouse_routes_text_to_the_webpage_widget(tmp_path):
     import subprocess
+
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
     result = subprocess.run(
-        [os.environ["JARVIS_BROWSER_TEST_PYTHON"],
-         str(Path(__file__).with_name("native_window_probe.py")),
-         os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"], str(tmp_path / "profile")],
-        env=install.worker_env(tmp_path), capture_output=True, encoding="utf-8",
-        timeout=30, creationflags=NO_WINDOW_CREATIONFLAGS,
+        [
+            os.environ["JARVIS_BROWSER_TEST_PYTHON"],
+            str(Path(__file__).with_name("native_window_probe.py")),
+            os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"],
+            str(tmp_path / "profile"),
+        ],
+        env=install.worker_env(tmp_path),
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert '"badge": true' in result.stdout
@@ -35,14 +44,21 @@ def test_native_mouse_routes_text_to_the_webpage_widget(tmp_path):
 
 def test_actual_browser_click_emits_pointer_telemetry(tmp_path):
     import subprocess
+
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
     result = subprocess.run(
-        [os.environ["JARVIS_BROWSER_TEST_PYTHON"],
-         str(Path(__file__).with_name("browser_pointer_probe.py")),
-         os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"], str(tmp_path / "profile")],
-        env=install.worker_env(tmp_path), capture_output=True, encoding="utf-8",
-        timeout=40, creationflags=NO_WINDOW_CREATIONFLAGS,
+        [
+            os.environ["JARVIS_BROWSER_TEST_PYTHON"],
+            str(Path(__file__).with_name("browser_pointer_probe.py")),
+            os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"],
+            str(tmp_path / "profile"),
+        ],
+        env=install.worker_env(tmp_path),
+        capture_output=True,
+        encoding="utf-8",
+        timeout=40,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert '"clicked": true' in result.stdout
@@ -60,7 +76,8 @@ class PageHandler(BaseHTTPRequestHandler):
         body = b"""<!doctype html><title>Live browser fixture</title>
         <input aria-label="Name"><a href="/download">Download fixture</a>
         <form method="POST" action="/upload" enctype="multipart/form-data">
-        <input type="file" name="attachment" aria-label="Upload" onchange="this.form.requestSubmit()"></form>
+        <input type="file" name="attachment" aria-label="Upload"
+        onchange="this.form.requestSubmit()"></form>
         <h1 id="counter">0</h1>
         <script>let n=0;function paint(){document.querySelector('#counter').textContent=++n;
         document.body.style.background=n%2?'#fdd':'#ddf';requestAnimationFrame(paint)}
@@ -161,7 +178,9 @@ async def test_viewer_replaces_idle_legacy_page_session(live):
 
 @pytest.mark.skipif(os.name != "nt", reason="requires the native Windows window transport")
 async def test_native_chrome_toolbar_keyboard_and_agent_handoff(live, site):
-    agent = SimpleNamespace(agent_id="native", model="", browser_allowed_domains=["http*://127.0.0.1"])
+    agent = SimpleNamespace(
+        agent_id="native", model="", browser_allowed_domains=["http*://127.0.0.1"]
+    )
     try:
         session, queue = await live.subscribe(agent)
         while True:
@@ -194,8 +213,8 @@ async def test_native_chrome_toolbar_keyboard_and_agent_handoff(live, site):
 
 
 async def test_takeover_pauses_and_resumes_the_same_browser_job(live, site):
-    import json
     import contextvars
+    import json
 
     agent = SimpleNamespace(
         agent_id="paused", model="", browser_allowed_domains=["http*://127.0.0.1"]
@@ -344,7 +363,7 @@ async def test_agent_download_is_a_current_task_workspace_artifact(live, site):
         )
         path = Path(result["artifacts"][0])
         assert path.is_relative_to(live.data_dir / "society" / "files" / "workspace")
-        assert path.read_bytes() == b"isolated browser download"
+        assert await asyncio.to_thread(path.read_bytes) == b"isolated browser download"
         again = await live.run(
             agent,
             task="Finish without downloading",
@@ -518,4 +537,74 @@ async def test_idle_animation_stream_soak(live, site, record_property):
         assert len(changed) >= duration * 5
         assert not session.run_lock.locked()
     finally:
+        await live.close()
+
+
+async def test_finished_chat_releases_real_browser_for_the_next_task(live, monkeypatch):
+    import json
+
+    from jarvis.society.browser.tool import stop_chat_browser
+
+    agent = SimpleNamespace(agent_id="orphan", model="", browser_allowed_domains=[])
+    thinking = asyncio.Event()
+    release = asyncio.Event()
+
+    async def model(payload):
+        if payload["schema"].get("title") == "JudgementResult":
+            return {"ok": True, "text": json.dumps({"verdict": True, "reasoning": "Finished"})}
+        thinking.set()
+        await release.wait()
+        return {
+            "ok": True,
+            "text": json.dumps(
+                {
+                    "thinking": "",
+                    "evaluation_previous_goal": "Ready",
+                    "memory": "",
+                    "next_goal": "Finish",
+                    "action": [{"done": {"text": "Finished", "success": True}}],
+                }
+            ),
+        }
+
+    async def apply(payload):
+        await payload["apply"]()
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "jarvis.society.runtime.current_runtime",
+        lambda: SimpleNamespace(browser=SimpleNamespace(live=live)),
+    )
+    job = asyncio.create_task(
+        live.run(
+            agent,
+            task="Wait",
+            max_steps=2,
+            llm=model,
+            action=apply,
+            vision=False,
+            chat_session_id="ended",
+        )
+    )
+    try:
+        await asyncio.wait_for(thinking.wait(), 45)
+        await stop_chat_browser("ended")
+        await asyncio.wait_for(asyncio.gather(job, return_exceptions=True), 5)
+        assert not live.sessions[agent.agent_id].run_lock.locked()
+        assert not live.sessions[agent.agent_id].closed
+        release.set()
+        result = await live.run(
+            agent,
+            task="Finish",
+            max_steps=2,
+            llm=model,
+            action=apply,
+            vision=False,
+            chat_session_id="next",
+        )
+        assert result["ok"]
+    finally:
+        release.set()
+        job.cancel()
+        await asyncio.gather(job, return_exceptions=True)
         await live.close()
