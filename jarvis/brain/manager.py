@@ -3215,6 +3215,11 @@ class BrainManager:
         self, name: str, fallback: str | None = None
     ) -> str | None:
         """Resolve an explicit Tool Model pin before a caller's model choice."""
+        from jarvis.core.model_selection import operation_model, worker_selection
+
+        selection = operation_model.get() or worker_selection(self._config)
+        if selection is not None and selection.provider == name:
+            return selection.model or fallback or get_tier_default_model("worker", name)
         cfg = self._provider_cfg(name)
         if cfg is None:
             return fallback or get_tier_default_model("router", name)
@@ -3228,6 +3233,11 @@ class BrainManager:
 
     def _tool_model_provider(self) -> str:
         """Return the canonical Tool Model provider or its legacy fallback."""
+        from jarvis.core.model_selection import operation_model, worker_selection
+
+        selection = operation_model.get() or worker_selection(self._config)
+        if selection is not None:
+            return selection.provider
         try:
             brain_cfg = self._config.brain
             canonical = getattr(brain_cfg, "tool_model", None)
@@ -3433,6 +3443,12 @@ class BrainManager:
         self, chain: list[tuple[str, str | None]]
     ) -> list[tuple[str, str | None]]:
         """Filter a delegated turn to tool-capable cross-family candidates."""
+        from jarvis.core.model_selection import operation_model, worker_selection
+
+        selection = operation_model.get() or worker_selection(self._config)
+        if selection is not None:
+            # A selected subscription must not silently turn into metered API usage.
+            return [(selection.provider, selection.model)]
         configured = self._tool_model_provider()
         candidates = list(chain)
         if configured and configured != "auto":
@@ -13350,6 +13366,32 @@ class BrainManager:
         trace_id: UUID | None = None,
         prefer_api: bool = False,
     ) -> str:
+        """Keep the selected agent and billing account for the entire scheduled turn."""
+        from jarvis.core.model_selection import (
+            operation_model,
+            use_operation_model,
+            worker_selection,
+        )
+
+        selected = operation_model.get() or worker_selection(self._config)
+        with use_operation_model(selected):
+            return await self._run_task_with_selection(
+                prompt=prompt,
+                allowed_tools=allowed_tools,
+                model_tier=model_tier,
+                trace_id=trace_id,
+                prefer_api=prefer_api,
+            )
+
+    async def _run_task_with_selection(
+        self,
+        *,
+        prompt: str,
+        allowed_tools: tuple[str, ...] = (),
+        model_tier: str = "auto",
+        trace_id: UUID | None = None,
+        prefer_api: bool = False,
+    ) -> str:
         """Run one isolated agentic turn for a scheduled task.
 
         The turn sees ONLY the allowlisted tools and runs with an EMPTY
@@ -13360,9 +13402,10 @@ class BrainManager:
         actions still hit the approval gate (which, with no human present,
         means they block until the unattended-approval wave wires Option B).
 
-        Provider order (BUG-212): the Tool Model leads, then every other
-        credential-ready, tool-capable provider of a different family — see
-        :meth:`_task_provider_chain`. A credential / credit / rate-limit
+        An explicit agent selection stays fixed, including subscription tasks.
+        Until migration selects an agent, the legacy credential-ready provider
+        chain remains available — see :meth:`_task_provider_chain`.
+        A credential / credit / rate-limit
         error (401/402/403/429 — the same classes the chat path dead-lists
         or cools down) moves the SAME turn on to the next candidate; any
         other error propagates so the runner records it in ``last_error``.
@@ -13377,6 +13420,14 @@ class BrainManager:
         del prefer_api
         intent = "deep" if model_tier == "deep" else "fast"
         tools = self._select_task_tools(allowed_tools)
+        from jarvis.core.model_selection import operation_model, worker_selection
+        from jarvis.core.task_agent import run_selected, subscription_seat
+
+        selected = operation_model.get() or worker_selection(self._config)
+        if selected is not None and subscription_seat(selected.provider) is not None:
+            return await run_selected(
+                selection=selected, prompt=prompt, tool_names=tuple(tools), trace_id=trace_id
+            )
         # The per-turn context (date/time, awareness, wiki) rides on the user
         # message in cache-optimized mode; without it a scheduled turn did not
         # know what day it was (BUG-212 — the morning brief prompts say "the
@@ -13444,6 +13495,11 @@ class BrainManager:
         an unattended background turn. Capped so an unattended run cannot
         walk a long chain for minutes.
         """
+        from jarvis.core.model_selection import operation_model, worker_selection
+
+        selected = operation_model.get() or worker_selection(self._config)
+        if selected is not None:
+            return [(selected.provider, selected.model)]
         try:
             ready = self._hoist_tool_model(self._tool_model_base_chain())
         except Exception:  # noqa: BLE001 — a broken probe must not kill the task

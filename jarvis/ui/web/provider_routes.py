@@ -674,6 +674,7 @@ def _spec_to_payload(
         # Unstable provider protocol: the card explains the fallback before a
         # user activates it. Presentation only, never a runtime provider gate.
         "experimental": spec.experimental,
+        "configuration_surface": spec.configuration_surface,
         # Dictation-polish cards only: the value ``[dictation].polish_provider``
         # actually stores. The card id and the polish FAMILY id differ ("groq"
         # is already the brain card), so a client pinning this tier must send

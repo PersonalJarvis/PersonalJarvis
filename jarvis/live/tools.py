@@ -17,6 +17,15 @@ from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL
 
 log = logging.getLogger(__name__)
 
+# A session.started event includes its declarations. Keep room for prompts and
+# history inside the 64 KiB message limit of smaller WebRTC clients.
+_CATALOG_BYTE_BUDGET = 24_000
+_DISCOVERY_PAGE_SIZE = 8
+
+
+def _wire_size(value: Any) -> int:
+    return len(json.dumps(value).encode("utf-8"))
+
 
 def take_images(result: dict) -> list[dict]:
     """Separate actual image inputs from text function outputs and stored receipts."""
@@ -78,6 +87,18 @@ class LiveTools:
         read = getattr(self.gateway, "voice_catalog", self.gateway.catalog)
         return read()
 
+    def accept_new_input(self) -> None:
+        """New requests get a fresh token; running work keeps its cancelled token."""
+        if self.cancel_token.is_cancelled():
+            self.cancel_token = CancelToken()
+        self.accepting = True
+
+    async def cancel_work(self) -> None:
+        self.cancel_token.cancel("user_cancelled")
+        self.accepting = False
+        self.revision += 1
+        await self._cancel_confirmations()
+
     def declarations(self) -> list[dict]:
         definitions = [
             function(
@@ -88,8 +109,9 @@ class LiveTools:
             ),
             function(
                 "discover_tools",
-                "Find Jarvis tools and their complete input schemas. Empty query lists all tools.",
-                {"query": {"type": "string"}},
+                "Find Jarvis tools and their complete input schemas. Empty query browses all "
+                "tools. Pass next_offset as offset to read the next page.",
+                {"query": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}},
                 ["query"],
             ),
             function(
@@ -105,18 +127,22 @@ class LiveTools:
                 ["approval_id"],
             ),
         ]
-        # Stable ordering helps cache reuse. Discovery keeps the rest reachable.
-        for descriptor in sorted(self.catalog(), key=lambda d: d.name)[:48]:
+        # Count alone is insufficient: an imported tool may carry a large schema.
+        used_bytes = _wire_size(definitions)
+        for descriptor in sorted(self.catalog(), key=lambda d: d.name):
             alias = "jarvis_" + hashlib.sha256(descriptor.name.encode()).hexdigest()[:20]
+            definition = {
+                "type": "function",
+                "name": alias,
+                "description": f"{descriptor.name}: {descriptor.description}",
+                "parameters": descriptor.input_schema,
+            }
+            size = _wire_size(definition) + 2
+            if len(definitions) >= 52 or used_bytes + size > _CATALOG_BYTE_BUDGET:
+                continue
+            used_bytes += size
             self._names[alias] = descriptor.name
-            definitions.append(
-                {
-                    "type": "function",
-                    "name": alias,
-                    "description": f"{descriptor.name}: {descriptor.description}",
-                    "parameters": descriptor.input_schema,
-                }
-            )
+            definitions.append(definition)
         return definitions
 
     async def execute(self, call_id: str, name: str, args: dict, revision: int) -> dict:
@@ -159,6 +185,15 @@ class LiveTools:
             return result
 
     async def _execute(self, name: str, args: dict, revision: int) -> dict:
+        operation_token = self.cancel_token
+        if operation_token.is_cancelled():
+            return {"success": False, "status": "cancelled"}
+        if revision != self.revision:
+            return {
+                "success": False,
+                "status": "superseded",
+                "error": "The request changed before execution. Re-evaluate the latest user input.",
+            }
         if ":" in name:
             prefix, suffix = name.split(":", 1)
             if prefix.isidentifier() and (
@@ -175,16 +210,29 @@ class LiveTools:
         if name == "end_call":
             self.end_requested = True
             return {"success": True, "status": "closing_voice"}
-        if self.cancel_token.is_cancelled():
-            return {"success": False, "status": "cancelled"}
         if name == "discover_tools":
             query = str(args.get("query", "")).casefold().split()
+            matches = [
+                d
+                for d in sorted(self.catalog(), key=lambda d: d.name)
+                if all(word in (d.name + " " + d.description).casefold() for word in query)
+            ]
+            offset = max(0, int(args.get("offset", 0)))
+            page: list[dict] = []
+            for descriptor in matches[offset : offset + _DISCOVERY_PAGE_SIZE]:
+                item = {
+                    "name": descriptor.name,
+                    "description": descriptor.description,
+                    "parameters": descriptor.input_schema,
+                }
+                if page and _wire_size([*page, item]) > _CATALOG_BYTE_BUDGET:
+                    break
+                page.append(item)
+            next_offset = offset + len(page)
             return {
-                "tools": [
-                    {"name": d.name, "description": d.description, "parameters": d.input_schema}
-                    for d in self.catalog()
-                    if all(word in (d.name + " " + d.description).casefold() for word in query)
-                ]
+                "tools": page,
+                "total": len(matches),
+                "next_offset": next_offset if next_offset < len(matches) else None,
             }
         if name == "confirm_action":
             from jarvis.voice.echo_confirmation import classify_response
@@ -238,12 +286,6 @@ class LiveTools:
         import jsonschema  # type: ignore[import-untyped]
 
         jsonschema.validate(args, descriptor.input_schema)
-        if revision != self.revision:
-            return {
-                "success": False,
-                "status": "superseded",
-                "error": "The request changed before execution. Re-evaluate the latest user input.",
-            }
         trace = uuid4()
         from jarvis.core.model_selection import ModelSelection, use_operation_model
 
@@ -264,6 +306,9 @@ class LiveTools:
                 }
             result = await self.gateway.execute(canonical, args, self._request(trace))
         if result.error == VOICE_CONFIRM_SENTINEL:
+            if operation_token.is_cancelled() or revision != self.revision:
+                await self.gateway.cancel_pending(trace)
+                return {"success": False, "status": "superseded"}
             if not self.accepting:
                 await self.gateway.cancel_pending(trace)
                 return {"success": False, "status": "voice_closed_before_confirmation"}
@@ -314,6 +359,10 @@ class LiveTools:
 
     async def close(self) -> None:
         self.accepting = False
-        for trace, _, _, _ in self._pending.values():
-            await self.gateway.cancel_pending(trace)
+        await self._cancel_confirmations()
+
+    async def _cancel_confirmations(self) -> None:
+        pending = tuple(self._pending.values())
         self._pending.clear()
+        for trace, _, _, _ in pending:
+            await self.gateway.cancel_pending(trace)

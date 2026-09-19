@@ -270,7 +270,7 @@ export function Sidebar({
   // every unconfigured section would light up and the bar would never be calm.
   const { health: sectionHealth } = useSectionHealth();
   const apikeysHasError = useMemo(
-    () => Object.values(sectionHealth).some((h) => h?.status === "error"),
+    () => Object.entries(sectionHealth).some(([section, health]) => section !== "computer-use" && health?.status === "error"),
     [sectionHealth],
   );
   // The footer card IS the button that opens API Keys, so its dot carries that

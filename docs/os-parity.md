@@ -16,9 +16,11 @@ transports. Browser audio is selected by provider capability and owns echo
 cancellation on desktop and remote surfaces. OS-specific capture and actuation
 remain behind the existing screen/desktop adapters and ToolExecutor.
 
-Windows contract tests, an OpenAI API synthetic tool-and-audio test, and a Python
-3.11 Linux-container contract run passed. Native macOS audio, native Linux audio,
-fresh installations, long-call recovery and comparative latency remain unverified.
+Windows contract tests, OpenAI/Gemini synthetic tool-and-audio recovery probes,
+and a fresh Python 3.11 slim installation passed. The Linux installation boots
+without PortAudio and passes the 34 Live contract cases plus an isolated OpenAI
+one-key synthetic tool/reconnect probe. Native-device audio, fresh desktop
+installations, long-call recovery and comparative latency remain unverified.
 See [the continuous voice architecture](gpt-live.md).
 
 ## Full Chrome window preview (2026-09-12, T3; acceptance open)

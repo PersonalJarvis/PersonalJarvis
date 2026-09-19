@@ -38,6 +38,7 @@ class FakeAudioContext {
 
 class FakePeerConnection {
   static instances: FakePeerConnection[] = [];
+  static offerSdp = "offer-sdp";
   iceGatheringState: RTCIceGatheringState = "complete";
   localDescription: RTCSessionDescription | null = null;
   remoteDescriptions: RTCSessionDescriptionInit[] = [];
@@ -52,7 +53,7 @@ class FakePeerConnection {
     FakePeerConnection.instances.push(this);
   }
 
-  createOffer = vi.fn(async () => ({ type: "offer" as const, sdp: "offer-sdp" }));
+  createOffer = vi.fn(async () => ({ type: "offer" as const, sdp: FakePeerConnection.offerSdp }));
   setLocalDescription = vi.fn(async (description: RTCSessionDescriptionInit) => {
     this.localDescription = description as RTCSessionDescription;
   });
@@ -122,6 +123,7 @@ describe("realtime audio client", () => {
       clearTimeout: globalThis.clearTimeout,
     });
     FakePeerConnection.instances = [];
+    FakePeerConnection.offerSdp = "offer-sdp";
     FakeWebSocket.instances = [];
     FakeAudioNode.instances = [];
     wsFakes.mintWsTicket.mockClear();
@@ -238,6 +240,8 @@ describe("realtime audio client", () => {
 
   it("sends a WebRTC offer and applies the matching answer while PCM stays active", async () => {
     const { track } = installVoiceBrowserFakes();
+    const offerSdp = "v=0\r\no=- 123 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n";
+    FakePeerConnection.offerSdp = offerSdp;
     const client = new RealtimeAudioClient({}, { requiresWebRtcOffer: true });
     const connecting = client.connect();
 
@@ -248,7 +252,7 @@ describe("realtime audio client", () => {
     expect(start).toMatchObject({
       type: "audio_start",
       sample_rate: 48_000,
-      webrtc_offer_sdp: "offer-sdp",
+      webrtc_offer_sdp: offerSdp,
     });
     expect(FakePeerConnection.instances[0].addTransceiver).toHaveBeenCalledWith(
       "audio",

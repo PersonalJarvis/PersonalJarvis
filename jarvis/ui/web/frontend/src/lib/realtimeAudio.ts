@@ -135,7 +135,8 @@ export class RealtimeWebRtcTransport {
     await waitForIceGathering(peer);
     if (this.peer !== peer) return null;
     const sdp = peer.localDescription?.sdp ?? offer.sdp ?? "";
-    return sdp.trim() || null;
+    // SDP is a wire format: the terminal CRLF is required by Live's parser.
+    return sdp.trim() ? sdp : null;
   }
 
   async applyAnswer(sdp: string): Promise<void> {

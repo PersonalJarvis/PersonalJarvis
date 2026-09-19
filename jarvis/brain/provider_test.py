@@ -391,6 +391,35 @@ async def _default_realtime_probe(spec: Any, cfg: Any, *, timeout_s: float) -> f
         provider = (
             from_runtime_config(cfg) if callable(from_runtime_config) else provider_cls()
         )
+    if getattr(provider, "continuous_conversation", False):
+        from jarvis.core.protocols import ContinuousVoiceStart
+        from jarvis.live.recovery import connection_permit
+
+        profile = cfg.live
+        config = profile.session_config(language="en", tools=[])
+        config["instructions"] = "Connection validation only. Do not speak."
+        await connection_permit()
+
+        async def continuous_probe() -> float:
+            started = perf_counter()
+            session = await provider.open_session(ContinuousVoiceStart(session=config))
+            try:
+                while True:
+                    event = await session.receive()
+                    if event.get("type") == "session.started":
+                        latency_ms = (perf_counter() - started) * 1000.0
+                        await session.send({"type": "session.close"})
+                        return latency_ms
+                    if event.get("type") in {"error", "session.closed"}:
+                        raise RuntimeError(
+                            "Continuous voice rejected the selected session. "
+                            "Check the Live model, voice and thinking-model settings."
+                        )
+            finally:
+                await session.close()
+
+        return await asyncio.wait_for(continuous_probe(), timeout=timeout_s)
+
     session_config = RealtimeSessionConfig(
         instructions="Connection validation only. Do not respond until audio arrives.",
         language="en",

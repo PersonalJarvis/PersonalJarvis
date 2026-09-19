@@ -17,6 +17,12 @@ Text chat and background work follow the active Agents selection. The OpenAI
 voice thinking model is also used for voice-triggered computer control without
 another model key. Connected services retain their own credentials.
 
+Voice setup is a single provider panel with a shared credential, conversation
+settings and thinking/tool settings. Inspecting a provider does not activate it;
+the Live profile saves its provider and model together. The separate Tool Model
+tab and inline computer-control model pickers are removed. Saving only refreshes
+the affected voice queries and preserves a draft when a key becomes available.
+
 ## Execution and media
 
 The `jarvis/live` package separates the provider connection, transcript stream,
@@ -37,26 +43,68 @@ and already-started work can finish after speech closes. Subscription tasks use
 the same gateway with a scoped tool grant; unsupported isolation is reported
 instead of silently using another account.
 
+An explicit task cancellation invalidates queued calls and pending approvals.
+The next user request gets a new cancellation token, while interrupted work
+retains its cancelled token. Scheduled turns keep their starting agent selection
+through settings changes, including nested computer-control calls.
+
 Transcripts keep their original fragments and timestamps. The legacy archive
 stores one compatibility group at close, not a fabricated provider turn boundary.
 Voice duration updates are cumulative snapshots. Backend completion, generated
 speech and actual playback are separate states.
 
+## WebRTC wire limits
+
+SDP offers and answers retain their terminal CRLF through browser and server
+validation. Trimming an otherwise valid offer was reproduced as HTTP 400 from
+Live, while the unchanged offer was accepted.
+
+The initial tool declarations have both a count and a 24 KB JSON budget. A count
+limit alone allowed large imported schemas to overflow a 64 KiB RTC data-channel
+message before `session.started`. Discovery returns pages with `next_offset`;
+the full catalog remains reachable through discovery and `call_tool`.
+
 ## Qualification
 
 Synthetic live API probes have exercised tool execution, response continuation
 and spoken results on OpenAI and Gemini. Contract tests run on Windows and in a
-headless Python 3.11 Linux container. These checks do not establish native audio
-parity or release readiness. Native macOS/Linux audio, fresh installations,
-long-session recovery and comparative latency still require qualification.
+headless Python 3.11 Linux container. A fresh base wheel installation on
+`python:3.11-slim` boots a healthy API without PortAudio. An isolated OpenAI
+synthetic probe using exactly one credential also passes there, including a
+forced reconnect and exactly one tool execution. These checks do not establish
+native audio parity or release readiness. Native-device audio, fresh desktop
+installations, long-session recovery and comparative latency still require qualification.
 
-Transport failures currently stop the call. Automatic reconnection with restored
-conversation state still needs implementation and verification before full migration.
+Safe transport failures reconnect with jitter and a shared connection budget.
+Recovery restores bounded conversation history and completed tool receipts;
+it never replays buffered microphone audio. New actions wait for fresh user
+input. Pending approvals, running actions or uncertain outcomes prevent automatic
+reconnection. Missing final usage remains marked unconfirmed across reconnects.
+
+Synthetic OpenAI and Gemini probes have recovered from forced connection loss,
+spoken the previous verified result and kept the tool execution count at one.
+These probes do not replace long-call or native-device qualification.
 
 Run `python scripts/verify_gpt_live.py --run-live` for the opt-in OpenAI synthetic
 probe. The test uses configured credentials and incurs normal API usage; it
 captures neither microphone nor screen data. Gemini is selectable with
 `--provider gemini --model gemini-3.1-flash-live-preview`.
+Add `--reconnect` to verify recovery after a forced connection loss.
+
+The architecture decision and remaining acceptance requirements are recorded in
+[ADR-0036](adr/0036-continuous-voice-and-agent-selection.md).
+
+The settings form has been inspected in light and dark themes. Its provider
+test uses the continuous session contract and waits for `session.started`;
+browser-owned media no longer waits for the legacy desktop offer broker.
+The separate Live profile owns model and voice selection without duplicate
+legacy pickers on the provider card.
+
+A synthetic check through the running application's authenticated `/ws/audio`
+route now establishes WebRTC, receives `session.started`, completes the real
+read-only `describe-app-settings` tool through the gateway and receives spoken
+confirmation as non-silent RTP audio. It captures no microphone or screen data.
+The transport checks do not replace physical device and acoustic-echo tests.
 
 References: [OpenAI architecture](https://developers.openai.com/api/docs/guides/live),
 [delegation](https://developers.openai.com/api/docs/guides/live-delegation),
