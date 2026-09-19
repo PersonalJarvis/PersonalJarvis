@@ -477,6 +477,7 @@ async def test_jarvis_chat_receives_controller_without_becoming_a_coding_cli(rig
 
     session = SimpleNamespace(
         session_id="lead-chat", surface="jarvis", permission_mode="ask", cwd=str(tmp_path),
+        provider="openai", model="fake-model",
     )
     rig[3]._get_chat = lambda: SimpleNamespace(store=SimpleNamespace(
         get_session=lambda session_id: session if session_id == session.session_id else None,
