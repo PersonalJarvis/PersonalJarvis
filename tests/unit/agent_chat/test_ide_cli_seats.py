@@ -705,3 +705,140 @@ def test_a_cli_that_dies_silently_reports_its_exit_code(
     assert _kinds(events) == ["turn_finished"]
     finished = events[-1]["payload"]
     assert finished["status"] == "error" and "exited with code 3" in finished["error"]
+
+
+_GROK_CANCELLED_TOOL = {
+    "type": "assistant",
+    "message": {
+        "id": "m1",
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "tu1",
+                "name": "run_terminal_command",
+                "input": {"command": "echo hi", "description": "Extract connection status"},
+            }
+        ],
+    },
+    "session_id": "sess-recover",
+}
+_GROK_CANCELLED_RESULT = {
+    "type": "user",
+    "message": {
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "tu1",
+                "is_error": True,
+                "content": [
+                    {
+                        "type": "content",
+                        "content": {
+                            "type": "text",
+                            "text": "User cancelled the execution of tool 'run_terminal_command'",
+                        },
+                    }
+                ],
+            }
+        ]
+    },
+}
+_GROK_CANCELLED_END = {
+    "type": "result",
+    "subtype": "error",
+    "is_error": True,
+    "session_id": "sess-recover",
+    "usage": {"input_tokens": 10, "output_tokens": 4},
+    "total_cost_usd": 0.01,
+}
+_GROK_RECOVERED_TEXT = {
+    "type": "assistant",
+    "message": {
+        "id": "m2",
+        "content": [{"type": "text", "text": "X is connected; GitHub still needs a login."}],
+    },
+    "session_id": "sess-recover",
+}
+_GROK_RECOVERED_END = {
+    "type": "result",
+    "subtype": "success",
+    "is_error": False,
+    "result": "X is connected; GitHub still needs a login.",
+    "session_id": "sess-recover",
+    "usage": {"input_tokens": 12, "output_tokens": 8},
+    "total_cost_usd": 0.02,
+}
+
+
+def test_a_cancelled_tool_resumes_instead_of_failing_the_turn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Print-mode Grok used to abort the whole chat after one cancelled tool."""
+    fail = rc.CliPlan(
+        _fake_cli([_GROK_CANCELLED_TOOL, _GROK_CANCELLED_RESULT, _GROK_CANCELLED_END]),
+        dict(os.environ),
+        None,
+        "claude",
+        "sess-recover",
+    )
+    ok = rc.CliPlan(
+        _fake_cli([_GROK_RECOVERED_TEXT, _GROK_RECOVERED_END]),
+        dict(os.environ),
+        None,
+        "claude",
+        "sess-recover",
+    )
+    prompts: list[str] = []
+    resumes: list[str | None] = []
+
+    def planner(**kwargs: object) -> rc.CliPlan:
+        prompts.append(str(kwargs["prompt"]))
+        raw = kwargs.get("resume")
+        resumes.append(raw if isinstance(raw, str) or raw is None else None)
+        return fail if len(prompts) == 1 else ok
+
+    monkeypatch.setitem(rc._PLANNERS, "grok-cli", planner)
+    events: list[dict] = []
+
+    async def emit(ev: dict) -> None:
+        events.append(ev)
+
+    async def ask(*_: object) -> str:
+        return "deny"
+
+    session = AgentChatSession(
+        session_id="s1",
+        title="",
+        provider="grok-build",
+        model="",
+        effort="",
+        cwd=str(tmp_path),
+        permission_mode="",
+        vendor_session=None,
+        created_ms=0,
+        updated_ms=0,
+        message_count=0,
+        preview="",
+    )
+    handle = TurnHandle(
+        session=session, turn_id="t1", emit=emit, request_approval=ask, cancel=asyncio.Event()
+    )
+    vendor = asyncio.run(rc.run_cli_turn(handle, "Which accounts are connected?", "grok-cli"))
+    assert vendor == "sess-recover"
+    assert len(prompts) == 2
+    assert "Which accounts are connected?" in prompts[0]
+    assert "User cancelled the execution" in prompts[1]
+    assert "keep going" in prompts[1].lower() or "not the end of the task" in prompts[1]
+    assert resumes[1] == "sess-recover"
+    assert _kinds(events) == [
+        "tool_call",
+        "tool_result",
+        "assistant_text",
+        "turn_finished",
+    ]
+    assert events[1]["payload"]["is_error"]
+    assert "X is connected" in events[2]["payload"]["text"]
+    finished = events[-1]["payload"]
+    assert finished["status"] == "done" and finished["error"] is None
+    assert finished["usage"]["input_tokens"] == 22
+    assert finished["cost_usd"] == pytest.approx(0.03)

@@ -154,6 +154,7 @@ class TurnHandle:
     surface: str = "agent"
     stance: str = ""
     tools_disabled: bool = False
+    gateway_only: bool = False
     output_language: str = ""
     goal_turn: bool = False
     control_service: Any = None

@@ -15,6 +15,7 @@ Contract under test:
   4. Status honesty: all-empty merges to ``empty``, all-unavailable to
      ``unavailable``.
 """
+
 from __future__ import annotations
 
 from uuid import uuid4
@@ -44,15 +45,13 @@ async def test_variants_run_and_merge_deduplicated(
 ) -> None:
     seen: list[str] = []
 
-    async def fake_run_search(query, max_results, *, client, searcher=None):
+    async def fake_run_search(query, max_results, *, client, searcher=None, apifare_key=""):
         seen.append(query)
         by_query = {
             "bugatti divo for sale europe": [_hit("https://a.example"), _hit("https://b.example")],
             "bugatti divo kaufen": [_hit("https://a.example"), _hit("https://c.example")],
         }
-        return SearchOutcome(
-            results=by_query.get(query, []), backend="ddg_serp", status="ok"
-        )
+        return SearchOutcome(results=by_query.get(query, []), backend="ddg_serp", status="ok")
 
     monkeypatch.setattr(search_web, "run_search", fake_run_search)
     tool = search_web.SearchWebTool()
@@ -84,10 +83,11 @@ async def test_variant_list_is_bounded_and_deduplicated(
 ) -> None:
     seen: list[str] = []
 
-    async def fake_run_search(query, max_results, *, client, searcher=None):
+    async def fake_run_search(query, max_results, *, client, searcher=None, apifare_key=""):
         seen.append(query)
-        return SearchOutcome(results=[_hit(f"https://{len(seen)}.example")],
-                             backend="ddg_serp", status="ok")
+        return SearchOutcome(
+            results=[_hit(f"https://{len(seen)}.example")], backend="ddg_serp", status="ok"
+        )
 
     monkeypatch.setattr(search_web, "run_search", fake_run_search)
     tool = search_web.SearchWebTool()
@@ -109,9 +109,10 @@ async def test_variant_list_is_bounded_and_deduplicated(
 async def test_single_query_output_shape_is_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_run_search(query, max_results, *, client, searcher=None):
-        return SearchOutcome(results=[_hit("https://only.example")],
-                             backend="ddg_serp", status="ok")
+    async def fake_run_search(query, max_results, *, client, searcher=None, apifare_key=""):
+        return SearchOutcome(
+            results=[_hit("https://only.example")], backend="ddg_serp", status="ok"
+        )
 
     monkeypatch.setattr(search_web, "run_search", fake_run_search)
     tool = search_web.SearchWebTool()
@@ -136,11 +137,9 @@ async def test_merged_status_stays_honest(
 ) -> None:
     calls: list[str] = []
 
-    async def fake_run_search(query, max_results, *, client, searcher=None):
+    async def fake_run_search(query, max_results, *, client, searcher=None, apifare_key=""):
         calls.append(query)
-        return SearchOutcome(
-            results=[], backend="ddg", status=statuses[len(calls) - 1]
-        )
+        return SearchOutcome(results=[], backend="ddg", status=statuses[len(calls) - 1])
 
     monkeypatch.setattr(search_web, "run_search", fake_run_search)
     tool = search_web.SearchWebTool()

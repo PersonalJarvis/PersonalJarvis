@@ -79,10 +79,10 @@ export function waveformPhase(
  * says native desktop actions are unavailable. That prevents two concurrent
  * capture streams while still making a headless VPS usable entirely in-app.
  */
-export function BrowserRealtimeControl() {
+export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: boolean } = {}) {
   const t = useT();
   const capabilities = useCapabilities();
-  const { mode, realtimeAvailable, requiresWebRtcOffer, startBudgetMs } =
+  const { mode, realtimeAvailable, requiresWebRtcOffer, startBudgetMs, browserAudio } =
     useVoiceMode();
   const setVoice = useEventStore((store) => store.setVoice);
   const setTranscription = useEventStore((store) => store.setTranscription);
@@ -105,6 +105,8 @@ export function BrowserRealtimeControl() {
   // repaint a five-segment meter.
   const levelRef = useRef(0);
   const clientRef = useRef<RealtimeAudioClient | null>(null);
+  const events = useEventStore((store) => store.events);
+  const handledRequest = useRef<string | null>(null);
   const connectionGenerationRef = useRef(0);
   // A progress/preamble surface line is not the end of the turn. After the
   // browser finishes speaking it, tts_end must restore thinking — not
@@ -113,7 +115,7 @@ export function BrowserRealtimeControl() {
   const resumeThinkingAfterSpeechRef = useRef(false);
   const browserSurface = Boolean(
     capabilities.data &&
-      (capabilities.data.native_file_actions === false || !hasEmbeddedDesktopBridge()),
+      (browserAudio || capabilities.data.native_file_actions === false || !hasEmbeddedDesktopBridge()),
   );
   const visible = browserSurface && mode === "realtime";
   const supportIssue = visible ? browserRealtimeSupportIssue() : null;
@@ -199,6 +201,7 @@ export function BrowserRealtimeControl() {
             (typeof payload.error === "string" ? payload.error.trim() : "") ||
             (typeof payload.reason === "string" ? payload.reason.trim() : "");
           if (status === "audio_ready") {
+            setState("connected");
             const provider =
               typeof payload.provider === "string" ? payload.provider : "";
             if (provider) setEffectiveProvider(provider);
@@ -245,8 +248,13 @@ export function BrowserRealtimeControl() {
             // The session ended through a voice hang-up command or end_call.
             // Release the microphone and return to idle.
             void stop();
+          } else if (status === "reconnecting") {
+            setState("connecting");
+            setVoice("connecting");
           } else if (status === "thinking") {
             setVoice("thinking");
+          } else if (status === "speaking" || status === "listening") {
+            setVoice(status);
           } else if (status === "turn_complete" || status === "tts_end") {
             if (
               status === "tts_end" &&
@@ -266,6 +274,8 @@ export function BrowserRealtimeControl() {
           ) {
             setError(t("sidebar.realtime_browser_tts_unavailable"));
             setVoice("listening");
+          } else if (status === "audio_closed") {
+            void stop();
           } else if (status === "provider_error" || status === "disconnected") {
             clientRef.current = null;
             void client.disconnect();
@@ -277,7 +287,7 @@ export function BrowserRealtimeControl() {
           }
         },
       },
-      { requiresWebRtcOffer, startBudgetMs },
+      { requiresWebRtcOffer, startBudgetMs, browserAudio },
     );
     clientRef.current = client;
     try {
@@ -303,6 +313,7 @@ export function BrowserRealtimeControl() {
     pushToast,
     realtimeAvailable,
     requiresWebRtcOffer,
+    browserAudio,
     setTranscription,
     setVoice,
     startBudgetMs,
@@ -311,6 +322,16 @@ export function BrowserRealtimeControl() {
     supportMessage,
     t,
   ]);
+
+  useEffect(() => {
+    if (!browserAudio) return;
+    const event = [...events].reverse().find(e => e.name === "BrowserVoiceRequested");
+    if (!event || event.id === handledRequest.current || Date.now() - event.ts > 45_000) return;
+    handledRequest.current = event.id;
+    const action = (event.payload as { action?: string })?.action;
+    if (action === "start" && document.visibilityState === "visible") void start();
+    if (action === "stop") void stop();
+  }, [events, browserAudio, start, stop]);
 
   useEffect(() => {
     // This surface owns BOTH directions while it is live: it holds the
@@ -337,7 +358,18 @@ export function BrowserRealtimeControl() {
     [],
   );
 
-  if (!visible) return null;
+  if (visible && controlOnly && state === "error") {
+    return (
+      <aside role="alert" className="fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-lg">
+        <p className="text-sm">{error || t("sidebar.realtime_error")}</p>
+        <a className="mt-3 block text-sm underline" href={window.location.origin} target="_blank" rel="noopener noreferrer">
+          {t("live.open_browser")}
+        </a>
+        <Button className="mt-3" variant="outline" onClick={() => void stop()}>{t("common.close")}</Button>
+      </aside>
+    );
+  }
+  if (!visible || controlOnly) return null;
 
   const connected = state === "connected";
   const connecting = state === "connecting";

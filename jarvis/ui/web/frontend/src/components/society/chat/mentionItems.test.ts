@@ -74,6 +74,16 @@ function cap(over: Partial<Capability> & Pick<Capability, "id">): Capability {
 }
 
 describe("buildMentionCatalog", () => {
+  it("treats a marketplace-connected plugin as connected even before tools load", () => {
+    const catalog = buildMentionCatalog([], [], [], [
+      { id: "agentmail", display_name: "AgentMail", description: "Inbox", status: "connected" },
+    ]);
+    expect(filterMentions(catalog, "")[0]).toMatchObject({
+      connected: true, label: "AgentMail", value: "agentmail",
+    });
+    expect(filterMentions(catalog, "agent")[0]?.connected).toBe(true);
+  });
+
   it("keeps installed but disconnected community plugins searchable", () => {
     const catalog = buildMentionCatalog([], [], [], [{ id: "todo_fox", display_name: "Todo Fox", description: "Tasks" }]);
     expect(filterMentions(catalog, "")).toEqual([]);
@@ -253,6 +263,82 @@ describe("filterMentions", () => {
 
   it("a disconnected plugin still appears once it is searched for", () => {
     expect(filterMentions(items, "notion").map((i) => i.value)).toEqual(["notion"]);
+  });
+
+  it("does not pick an MCP Drive tool when searching for Google Workspace", () => {
+    const catalog = buildMentionCatalog(
+      [],
+      [
+        cap({
+          id: "cli:gws",
+          label: "Google Workspace CLI",
+          one_liner: "Google Workspace: Gmail, Drive, Docs, Sheets, Calendar, Tasks, Chat, Slides.",
+        }),
+        cap({
+          id: "mcp:notebooklm-mcp/notebook_add_drive",
+          label: "notebooklm-mcp/notebook_add_drive",
+          one_liner: "Add Google Drive document as source.",
+        }),
+        cap({
+          id: "mcp:notebooklm-mcp/notebook_list",
+          label: "notebooklm-mcp/notebook_list",
+          one_liner: "List notebooks.",
+        }),
+      ],
+    );
+    const values = (q: string) => filterMentions(catalog, q).map((item) => item.value);
+    expect(values("google")[0]).toBe("gws");
+    expect(values("google")).not.toContain("notebooklm-mcp/notebook_add_drive");
+    expect(values("workspace")[0]).toBe("gws");
+    expect(values("google-workspace")[0]).toBe("gws");
+    expect(values("gws")[0]).toBe("gws");
+    expect(values("notebook_add_drive")[0]).toBe("notebooklm-mcp/notebook_add_drive");
+  });
+
+  it("still finds a CLI when only the short tag is labelled, via the product words", () => {
+    const catalog = buildMentionCatalog(
+      [],
+      [
+        cap({
+          id: "cli:gws",
+          label: "gws",
+          one_liner: "Google Workspace CLI — Google Workspace: Gmail, Drive, Docs.",
+        }),
+        cap({
+          id: "mcp:notebooklm-mcp/notebook_add_drive",
+          one_liner: "Add Google Drive document as source.",
+        }),
+        cap({
+          id: "mcp:notebooklm-mcp/notebook_list",
+          one_liner: "List notebooks.",
+        }),
+      ],
+    );
+    expect(filterMentions(catalog, "google")[0]?.value).toBe("gws");
+    expect(filterMentions(catalog, "google").map((item) => item.value)).not.toContain(
+      "notebooklm-mcp/notebook_add_drive",
+    );
+  });
+
+  it("a single letter only matches tags and labels starting with it", () => {
+    const catalog = buildMentionCatalog(
+      [agent({ agentId: "nala", name: "Nala", title: "X-Marketing Lead & Growth Specialist" })],
+      [
+        cap({ id: "plugin:x", label: "X (Twitter)", one_liner: "Read posts and mentions" }),
+        cap({ id: "plugin:dropbox", label: "Dropbox", one_liner: "Find files" }),
+      ],
+      [
+        { name: "codex", display_name: "Codex", installed: true, version: null, install_command: null },
+        {
+          name: "grok-build", display_name: "Grok Build",
+          description: "xAI's terminal coding agent",
+          installed: true, version: null, install_command: null,
+        },
+      ],
+    );
+    expect(filterMentions(catalog, "x").map((i) => i.value)).toEqual(["x"]);
+    expect(filterMentions(catalog, "g").map((i) => i.value)).toEqual(["grok-build"]);
+    expect(filterMentions(catalog, "d").map((i) => i.value)).toEqual(["dropbox"]);
   });
 });
 

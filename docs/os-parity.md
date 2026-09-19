@@ -16,6 +16,27 @@ Verified live on Windows only (RTX 3050 Laptop 4 GB). macOS and Linux have the
 code paths and installers but no live evidence yet; a headless box without the
 binaries simply has no local brain/voice (capability probe, boot unaffected).
 
+## Prepaid search hop (2026-09-17, T2)
+
+`search_web` may use an optional Apifare HTTP hop
+(`POST https://apifare.com/v1/call/dataforseo`) when a token is stored.
+Windows, macOS and Linux share the same `httpx` path; a missing token or a
+402/error degrades to the existing key-free DuckDuckGo chain. No OS-specific
+code. Tests: `tests/unit/plugins/tool/test_search_backends.py` (MockTransport).
+Live Apifare account consent is not part of this change.
+
+## GPT-Live migration (acceptance pending)
+
+The new continuous voice core uses portable Python, SQLite and WebRTC/WebSocket
+transports. Browser audio is selected by provider capability and owns echo
+cancellation on desktop and remote surfaces. OS-specific capture and actuation
+remain behind the existing screen/desktop adapters and ToolExecutor.
+
+Windows contract tests, an OpenAI API synthetic tool-and-audio test, and a Python
+3.11 Linux-container contract run passed. Native macOS audio, native Linux audio,
+fresh installations, long-call recovery and comparative latency remain unverified.
+See [the continuous voice architecture](gpt-live.md).
+
 ## Full Chrome window preview (2026-09-12, T3; acceptance open)
 
 Windows interactive sessions now capture the owned Chrome window with Windows

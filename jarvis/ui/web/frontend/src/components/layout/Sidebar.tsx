@@ -1,9 +1,8 @@
 import {
   Loader2,
+  MessageSquare,
   Mic,
   ChevronDown,
-  ChevronRight,
-  Folder,
   MoreHorizontal,
   Store,
   UserCircle2,
@@ -12,8 +11,8 @@ import {
   Plus,
 } from "lucide-react";
 import {
-  NAV_FOOTER_ITEMS,
   NAV_GROUPS,
+  SETTINGS_HUB_IDS,
   presentNavItem,
   resolveNavLabel,
   type NavItem,
@@ -23,10 +22,9 @@ import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
-import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { clsx } from "clsx";
 import { cn } from "@/lib/utils";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
@@ -37,6 +35,8 @@ import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
 import { useAppInstance } from "@/hooks/useAppInstance";
 import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
+import * as Dialog from "@radix-ui/react-dialog";
+import { startNewVoiceRun } from "@/lib/chatsApi";
 
 /*
  * Why `clsx` and not `cn` on the rows below.
@@ -180,10 +180,7 @@ export function Sidebar({
   // confused; the default app shows nothing here.
   const appInstance = useAppInstance();
   const devTag = appInstance?.isDev ? appInstance.name.toUpperCase() : null;
-  // "+ New" starts a new conversation of the KIND you are looking at: on the
-  // chat surface an empty agent chat, on the voice stage a fresh voice run.
-  // Sending someone standing in Voice to the chat page is what the one button
-  // used to do, and it read as the button being broken.
+  // New chat offers both conversation types independently of the current view.
   const { newChat } = useConversations();
   const newAgentChat = useAgentChatStore((s) => s.newChat);
   const setSurface = useHomeStore((s) => s.setSurface);
@@ -227,38 +224,41 @@ export function Sidebar({
   const ideWorkspaceOpen = useIdeChatStore((s) => s.workspaces.length > 0);
   const onIdeSection = IDE_SECTIONS.includes(active);
   const chatFace = onIdeSection && ideWorkspaceOpen && ideView === "chat";
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const profileRef = useRef<HTMLDivElement>(null);
-  const profileButtonRef = useRef<HTMLButtonElement>(null);
+  const [newChatOpen, setNewChatOpen] = useState(false);
+  const [startingVoice, setStartingVoice] = useState(false);
+  const startingVoiceRef = useRef(false);
   const identity = usePublishIdentity();
-  useEffect(() => {
-    setProfileOpen(false);
-  }, [active]);
-  useEffect(() => {
-    if (!profileOpen) return;
-    const dismiss = (event: PointerEvent) => {
-      if (!profileRef.current?.contains(event.target as Node)) setProfileOpen(false);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setProfileOpen(false);
-        profileButtonRef.current?.focus();
-      }
-    };
-    document.addEventListener("pointerdown", dismiss);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("pointerdown", dismiss);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [profileOpen]);
   const startNewChat = () => {
     newChat();
     newAgentChat();
     setSurface("chat");
     setActive("chats");
+    setNewChatOpen(false);
+  };
+  const startVoiceChat = async () => {
+    if (startingVoiceRef.current) return;
+    startingVoiceRef.current = true;
+    setStartingVoice(true);
+    try {
+      await startNewVoiceRun();
+      newAgentChat();
+      const events = useEventStore.getState();
+      events.setActiveConversation("voice", null);
+      events.setMessages([]);
+      events.seedThinkingTraces({});
+      events.setTranscription("", true);
+      useHomeStore.getState().resetTranscript();
+      useHomeStore.setState({ freshVoicePending: false });
+      setSurface("voice");
+      setActive("chats");
+      setNewChatOpen(false);
+    } catch {
+      useEventStore.getState().pushToast("error", `${t("sidebar.new_voice_chat")}: ${t("voice_state.error")}`);
+    } finally {
+      startingVoiceRef.current = false;
+      setStartingVoice(false);
+    }
   };
   // Shared readiness derivation (same source the banner + chat empty-state use).
   const { connected, voiceWarming, bootWarming, warming } = useVoiceReadiness();
@@ -277,10 +277,6 @@ export function Sidebar({
   // page's verdict rather than a decorative grey mark. Three honest states:
   // something is failing, something has answered, or nothing has reported yet
   // — a fresh install must not claim green before a single provider replied.
-  const providersAnswering = useMemo(
-    () => Object.values(sectionHealth).some((h) => h?.status === "ok"),
-    [sectionHealth],
-  );
   // A connected marketplace plugin whose token was revoked/expired (needs_reauth)
   // — surfaced as an amber dot on the row that fronts Plugins ("Skills & Tools"),
   // so a dead connection is visible app-wide, not only on the Plugins page. The
@@ -302,15 +298,10 @@ export function Sidebar({
     s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
   );
 
-  // Read before the status line because BOTH depend on it now: the footer card
-  // follows the VOICE MODE rather than the pipeline brain (in realtime mode the
-  // pipeline brain is dormant, and showing it there misled the user —
-  // "OpenRouter" while Gemini Live was doing all the talking), and the status
-  // line needs its connecting phase. Same resolver as the mission-deck header
-  // and orb (`useVoiceEngineDisplay`): a live session outranks the configured
-  // pick so a mid-call cross-family fallback is visible (AP-22).
+  // Read for the status line's connecting phase. Same resolver as the
+  // mission-deck header and orb (`useVoiceMode`): a negotiating realtime
+  // transport outranks the pipeline's own state.
   const voiceMode = useVoiceMode();
-  const engine = useVoiceEngineDisplay();
 
   // The window connects in ~1s but the voice feature warms up ~20s in the
   // background. During that gap show a "Voice starting…" spinner instead of the
@@ -335,19 +326,8 @@ export function Sidebar({
         ? t("voice_state.connecting")
         : t(`voice_state.${voiceState}`);
 
-  const realtimeFooter = engine.tier === "realtime";
-  const footerLabel = realtimeFooter
-    ? t("sidebar.realtime_label")
-    : t("sidebar.brain_label");
-  const footerTooltip = realtimeFooter
-    ? t("sidebar.realtime_tooltip")
-    : t("sidebar.brain_tooltip");
-  const footerProvider = engine.providerLabel;
-  const footerModel = engine.model;
-
   // Dragged past the snap point the sidebar becomes a rail of icons. Everything
-  // that only makes sense with a label beside it — the wake-word hint, the
-  // realtime control, the brain card's provider and model — steps aside; the
+  // that only makes sense with a label beside it steps aside; the
   // navigation itself never does, because losing it would make the rail a dead
   // end rather than a narrow sidebar.
   // Two independent ways into the rail: the explicit toggle, and dragging the
@@ -359,10 +339,19 @@ export function Sidebar({
   const findItem = (id: string) => allItems.find((item) => item.id === id)!;
   const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis", "agentic-ide"];
   const toolItems = toolIds.map(findItem);
-  const profileItems = [...NAV_GROUPS[3], ...NAV_GROUPS[4], ...NAV_FOOTER_ITEMS];
-  const primaryIds = ["chats", "agents", "tasks", "plugins", "marketplace"];
-  const assignedIds = new Set([...primaryIds, ...toolIds, ...profileItems.map((item) => item.id)]);
+  // Artifacts ("visualization") sits directly in the main list where the
+  // retired "Jarvis Tools" folder used to be — it was the only entry hiding
+  // behind "Show more" that users reached for daily, while the tools folder
+  // duplicated exactly what "Show more" already lists.
+  const primaryIds = ["chats", "agents", "dictation", "visualization", "tasks", "plugins", "marketplace"];
+  // The Settings hub owns its entries — they live in the hub's left
+  // navigation now, so "Show more" must not list them a second time. The set
+  // itself is named once in `navGroups` (`SETTINGS_HUB_IDS`).
+  const assignedIds = new Set([...primaryIds, ...toolIds, ...SETTINGS_HUB_IDS]);
   const moreItems = [...toolItems, ...allItems.filter((item) => !assignedIds.has(item.id))];
+  // Lit while any hub section is on screen — the profile button IS the hub's
+  // entry point now, so it carries the "you are here" state for all of them.
+  const hubActive = (SETTINGS_HUB_IDS as readonly string[]).includes(active);
   const rowClass = "flex min-h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const renderRow = (raw: NavItem, compact = railed) => {
     const item = presentNavItem(raw, surface);
@@ -373,7 +362,7 @@ export function Sidebar({
       alert={item.id === "apikeys" && apikeysHasError} alertTitle={t("sidebar.apikeys_alert")}
       warn={item.id === "plugins" ? pluginsNeedReconnect : item.id === "local-models" && localModelsNeedAttention}
       warnTitle={item.id === "local-models" ? localModelsHealth?.detail || localModelsHealth?.reason || undefined : pluginWarnTitle}
-      onClick={() => { setActive(item.id); setProfileOpen(false); }} />;
+      onClick={() => { setActive(item.id); }} />;
   };
 
   return (
@@ -509,30 +498,37 @@ export function Sidebar({
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
         <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
           <ul className="space-y-1">
-            <li><button type="button" onClick={startNewChat} data-testid="sidebar-new-chat"
+            <li><Dialog.Root open={newChatOpen} onOpenChange={(open) => { if (!startingVoiceRef.current) setNewChatOpen(open); }}>
+              <Dialog.Trigger asChild><button type="button" data-testid="sidebar-new-chat"
               aria-label={t("sidebar.new_chat")} title={t("sidebar.new_chat")} className={rowClass}>
               <Plus aria-hidden className="h-4 w-4 shrink-0" />
               {!railed && <span>{t("sidebar.new_chat")}</span>}
-            </button></li>
+              </button></Dialog.Trigger>
+              <Dialog.Portal>
+                <Dialog.Overlay className="fixed inset-0 z-[80] bg-background/80 backdrop-blur-sm" />
+                <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[90] w-[min(360px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl">
+                  <Dialog.Title className="mb-4 text-lg font-semibold">{t("sidebar.new_chat")}</Dialog.Title>
+                  <div className="space-y-2">
+                    <button type="button" data-testid="new-text-chat" disabled={startingVoice} onClick={startNewChat} className={cn(rowClass, "border border-border py-3 disabled:opacity-50")}>
+                      <MessageSquare aria-hidden className="h-5 w-5" />{t("sidebar.surface_chat")}
+                    </button>
+                    <button type="button" data-testid="new-voice-chat" disabled={startingVoice} onClick={() => void startVoiceChat()} className={cn(rowClass, "border border-border py-3 disabled:opacity-50")}>
+                      {startingVoice ? <Loader2 aria-hidden className="h-5 w-5 animate-spin" /> : <Mic aria-hidden className="h-5 w-5" />}{t("sidebar.new_voice_chat")}
+                    </button>
+                  </div>
+                  <Dialog.Close disabled={startingVoice} className={cn(rowClass, "mt-3 justify-center disabled:opacity-50")}>{t("common.cancel")}</Dialog.Close>
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root></li>
             {renderRow(findItem("agents"))}
-            <NavRow item={{ ...findItem("chats"), icon: Mic }} label="Jarvis Voice" compact={railed}
-              active={active === "chats" && surface === "voice"}
-              onClick={() => { setSurface("voice"); setActive("chats"); }} />
+            {renderRow(findItem("dictation"))}
           </ul>
-          <button type="button" onClick={() => { setToolsOpen(!toolsOpen); setMoreOpen(false); }}
-            aria-expanded={toolsOpen} aria-controls="sidebar-tools" title={t("sidebar.jarvis_tools")}
-            data-testid="sidebar-tools-toggle" className={cn(rowClass, toolItems.some((item) => (item.matchIds ?? [item.id]).includes(active)) && "jarvis-nav-active bg-secondary text-foreground")}>
-            <Folder aria-hidden className="h-4 w-4 shrink-0" />
-            {!railed && <><span className="flex-1 text-left">{t("sidebar.jarvis_tools")}</span><ChevronDown className={cn("h-3.5 w-3.5", toolsOpen && "rotate-180")} /></>}
-          </button>
-          {toolsOpen && <ul id="sidebar-tools" className={cn("space-y-1", !railed && "ml-3 border-l border-border pl-1")}>
-            {toolItems.map((item) => renderRow(item))}
-          </ul>}
           <ul className="space-y-1">
+            {renderRow(findItem("visualization"))}
             {renderRow({ ...findItem("tasks"), labelKey: "sidebar.scheduled" })}
             {renderRow({ ...findItem("plugins"), labelKey: "sidebar.extensions_label" })}
           </ul>
-          <button type="button" onClick={() => { setMoreOpen(!moreOpen); setToolsOpen(false); }} aria-expanded={moreOpen}
+          <button type="button" onClick={() => { setMoreOpen(!moreOpen); }} aria-expanded={moreOpen}
             aria-controls="sidebar-more" title={t("sidebar.more")} data-testid="sidebar-more-toggle" className={rowClass}>
             <MoreHorizontal aria-hidden className="h-4 w-4 shrink-0" />
             {!railed && <span>{t(moreOpen ? "sidebar.show_less" : "sidebar.more")}</span>}
@@ -544,14 +540,17 @@ export function Sidebar({
         </section>}
       </div>
 
-      <div ref={profileRef} className="relative shrink-0 border-t border-border p-2"
-        onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node)) setProfileOpen(false);
-        }}>
+      {/* The footer is one button now, not a popup: it opens the Settings hub
+          on the Profile tab. The hub carries every former popup entry
+          (Profile, {name}.md, Contacts, Spend, Socials, API Keys, Local
+          models, Settings, Wallpaper, Feedback) in its own left navigation.
+          The attention dot stays — a failing provider, or a local setup that
+          needs care, must be visible without opening anything. */}
+      <div className="shrink-0 border-t border-border p-2">
         <div className={cn("flex items-center gap-1", railed && "flex-col")}>
-          <button ref={profileButtonRef} type="button" onClick={() => setProfileOpen(!profileOpen)}
-            aria-expanded={profileOpen} aria-controls="sidebar-profile-panel" title={t("nav.profile")}
-            data-testid="sidebar-profile-toggle" className={cn(rowClass, "min-w-0 flex-1")}>
+          <button type="button" onClick={() => setActive("profile")} title={t("nav.profile")}
+            data-testid="sidebar-profile-toggle"
+            className={cn(rowClass, "min-w-0 flex-1", hubActive && "jarvis-nav-active bg-secondary text-foreground")}>
             <span className="relative shrink-0">
               <UserCircle2 aria-hidden className="h-7 w-7" />
               {(apikeysHasError || localModelsNeedAttention) && <span data-testid="sidebar-profile-attention"
@@ -566,74 +565,6 @@ export function Sidebar({
             <Store aria-hidden className="h-5 w-5" />
           </button>
         </div>
-        {profileOpen && <div id="sidebar-profile-panel" data-testid="sidebar-profile-panel"
-          className="absolute bottom-full left-2 z-50 mb-2 w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-border bg-card p-2 shadow-xl">
-          <div className="max-h-[65vh] overflow-y-auto scrollbar-jarvis">
-            <ul className="space-y-0.5">{profileItems.map((item) => renderRow(item, false))}</ul>
-          </div>
-        <button
-          type="button"
-          onClick={() => setActive("apikeys")}
-          data-testid="sidebar-brain-card"
-          className={cn(
-            "group flex w-full items-center rounded-lg border border-border bg-card text-left transition-colors hover:border-border-strong",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
-            "mt-2 gap-3 p-3",
-          )}
-          // On the rail the card shrinks to its status dot, so everything it
-          // would have said moves into the hover text — otherwise the dot is a
-          // button with no stated purpose.
-          title={
-            railed
-              ? `${footerLabel}: ${footerProvider}${footerModel ? ` · ${footerModel}` : ""} — ${footerTooltip}`
-              : footerTooltip
-          }
-        >
-          {/* Not decoration: the dot is this button's destination reporting in
-              — red when a configured provider is failing, green once one has
-              actually answered, neutral until any of them has. On the rail it
-              is the whole card, which is why it has to mean something. */}
-          <div
-            data-testid="sidebar-footer-health"
-            className={cn(
-              "h-2 w-2 shrink-0 rounded-full",
-              apikeysHasError
-                ? "bg-destructive"
-                : providersAnswering
-                  ? "bg-success"
-                  : "bg-muted-foreground",
-            )}
-          />
-          {(
-          <div className="flex-1 min-w-0">
-            <div
-              className="text-xs uppercase tracking-wide text-foreground-faint"
-              data-testid="sidebar-footer-tier"
-            >
-              {footerLabel}
-            </div>
-            <div className="truncate text-base font-medium text-foreground-strong">
-              {footerProvider}
-            </div>
-            {/* The model id actually in use (e.g. "claude-opus-4-8", or the
-                realtime model in realtime mode) — the user asked to see WHICH
-                model is in use, not just the provider. */}
-            {footerModel && (
-              <div
-                className="truncate text-sm text-muted-foreground"
-                title={footerModel}
-                data-testid="sidebar-brain-model"
-              >
-                {footerModel}
-              </div>
-            )}
-          </div>
-          )}
-          {(
-            <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-          )}
-        </button>
-        </div>}
       </div>
     </aside>
   );

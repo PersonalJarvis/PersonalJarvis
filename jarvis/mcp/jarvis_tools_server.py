@@ -60,6 +60,10 @@ def approval_snapshot() -> dict[str, Any]:
     session_id = CHAT_SESSION_REF.get()
     if not session_id:
         return {}
+    from jarvis.core.task_agent import scope_for
+
+    if scope_for(session_id) is not None:
+        return {"approval_surface": "unattended", "approval_ref": f"agent-chat:{session_id}"}
     return {
         "approval_surface": "interactive",
         "approval_ref": f"agent-chat:{session_id}",
@@ -126,9 +130,16 @@ def _wire_catalog(entries: list[Any]) -> dict[str, Any]:
 
 
 async def _session_wire_catalog() -> dict[str, Any]:
+    from jarvis.core.task_agent import scope_for
+
     session_id = CHAT_SESSION_REF.get()
     scoped = getattr(_gateway(), "session_catalog", None)
     entries = list(await scoped(session_id)) if session_id and callable(scoped) else offered_tools()
+    task_scope = scope_for(session_id)
+    if session_id and session_id.startswith("task-") and task_scope is None:
+        return {}
+    if task_scope is not None:
+        entries = [entry for entry in entries if entry.name in task_scope.names]
     return _wire_catalog(entries)
 
 
@@ -236,8 +247,15 @@ def build_server() -> Any:
             name = str(entry.name)
             with restore_turn(CHAT_SESSION_REF.get()):
                 turn = current_chat_turn.get()
+                from jarvis.core.task_agent import scope_for
+
+                task_scope = scope_for(CHAT_SESSION_REF.get())
+                if (CHAT_SESSION_REF.get() or "").startswith("task-") and task_scope is None:
+                    return [types.TextContent(type="text", text="The task grant has expired.")]
+                if task_scope is not None and name not in task_scope.names:
+                    return [types.TextContent(type="text", text="Tool outside the task grant.")]
                 request = SupervisorToolRequest(
-                    trace_id=uuid4(),
+                    trace_id=task_scope.trace_id if task_scope else uuid4(),
                     origin=CHAT_ORIGIN,
                     user_utterance=turn.user_text if turn else "",
                     rationale="agent chat tool call",

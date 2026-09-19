@@ -21,7 +21,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 from uuid import uuid4
 
 from jarvis.core.protocols import CodingSessionGateway
@@ -61,6 +61,23 @@ _LEAD_BLOCKED: dict[str, str] = {
     "en": "{name} got stuck: {text}",
     "es": "{name} se quedó atascado: {text}",
 }
+
+#: What the person hears when an agent answers Jarvis directly (SAY / QUERY /
+#: ANSWER / PROPOSE to the lead). Previously these envelopes were only queued
+#: into the Jarvis chat inbox and projected onto the island — voice stayed
+#: silent after the "X ist dran, ich sage Bescheid" ack (live 2026-09-09).
+_LEAD_MESSAGE: dict[str, str] = {
+    "de": "{name} meldet: {text}",  # i18n-allow: spoken completion
+    "en": "{name} reports: {text}",
+    "es": "{name} informa: {text}",
+}
+
+#: Board types that are somebody TALKING to the lead. RESULT stays out: chat
+#: runs announce it via report_to_lead and mission runs via MissionAnnouncer —
+#: announcing it here as well would speak every completion twice.
+_LEAD_INCOMING_TYPES: Final[frozenset[MsgType]] = frozenset(
+    {MsgType.SAY, MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE}
+)
 
 _current: SocietyRuntime | None = None
 
@@ -170,6 +187,7 @@ class SocietyRuntime:
         self._start_lock = asyncio.Lock()
         self._delivery_task: asyncio.Task[None] | None = None
         self._delivery_unsubscribe: Callable[[], None] | None = None
+        self._lead_incoming_unsubscribe: Callable[[], None] | None = None
         self._started = False
         self._context_start_task: asyncio.Task[bool] | None = None
 
@@ -208,6 +226,7 @@ class SocietyRuntime:
             self.scheduler._budget = self._get_budget()  # noqa: SLF001 — the runtime owns its scheduler
             self.scheduler.attach()
             self._delivery_unsubscribe = self.store.bus.subscribe_all(self._delivery_failed)
+            self._lead_incoming_unsubscribe = self.store.bus.subscribe_all(self._on_lead_incoming)
             bus = self._get_mission_bus()
             if bus is not None:
                 self.bridge.attach(bus)
@@ -246,6 +265,126 @@ class SocietyRuntime:
                 await svc.message_status(session_id, original.event_id, "failed", error=env.text)
             break
 
+    async def _on_lead_incoming(self, env: SocietyEnvelope) -> None:
+        """Announce replies to a specific request from Jarvis.
+
+        Direct agent chats and unsolicited board messages stay silent. A past
+        assignment to the same agent is not permission to speak a new chat.
+        Assignment completions retain their report_to_lead announcement.
+        """
+        try:
+            if env.to_agent != LEAD_AGENT_ID or env.msg_type not in _LEAD_INCOMING_TYPES:
+                return
+            if env.from_agent in (LEAD_AGENT_ID, "user", "scheduler"):
+                return
+            sender = await self.roster.get(env.from_agent)
+            if sender is None:
+                return
+            requests = await self.store.events_for_trace(env.trace_id)
+            if not any(
+                request.from_agent == LEAD_AGENT_ID
+                and request.to_agent == env.from_agent
+                and request.msg_type in (MsgType.SAY, MsgType.QUERY, MsgType.ASSIGN)
+                and request.event_id == env.parent_event_id
+                for request in requests
+            ):
+                return
+            await self.announce_lead_message(sender, env)
+        except Exception:  # noqa: BLE001 - a silent message is a lost courtesy, not a lost result
+            log.warning("society: lead incoming announcement failed", exc_info=True)
+
+    async def _lead_message_lang(self, env: SocietyEnvelope) -> str:
+        """The spoken language for an agent's message to the lead.
+
+        The envelope itself carries no lang (only ASSIGN does), so follow the
+        trace back to the lead's order and reuse its lang; fall back to "en"
+        and let the pipeline's authoritative resolver decide.
+        """
+        lang = str(env.payload.get("lang") or "").strip().lower()
+        if lang in _LEAD_MESSAGE:
+            return lang
+        try:
+            for event in await self.store.events_for_trace(env.trace_id):
+                candidate = str(event.payload.get("lang") or "").strip().lower()
+                if candidate in _LEAD_MESSAGE:
+                    return candidate
+            # An ANSWER rarely shares its trace with the lead's order (the
+            # assignment turn runs without incoming context), so fall back to
+            # the newest assignment Jarvis sent this agent — its lang is the
+            # turn language the ack already spoke.
+            latest = await self.store.latest_assignment_for_agent(
+                env.from_agent, from_agent=LEAD_AGENT_ID
+            )
+            if latest is not None:
+                candidate = str(latest.payload.get("lang") or "").strip().lower()
+                if candidate in _LEAD_MESSAGE:
+                    return candidate
+        except Exception:  # noqa: BLE001 - the lang hint is best-effort only
+            log.debug("society: lead message lang lookup failed", exc_info=True)
+        return "en"
+
+    async def announce_lead_message(self, sender: AgentRecord, env: SocietyEnvelope) -> None:
+        """Close the loop on an agent talking back to Jarvis: tell the person.
+
+        Twin of report_to_lead for conversational envelopes (SAY / QUERY /
+        ANSWER / PROPOSE): the text goes where the order came from — spoken
+        as a completion announcement on the app bus (the TTS pipeline and
+        the realtime session both read AnnouncementRequested) and posted as
+        a notice into the newest front-page chat. Neither leg may fail the run.
+        """
+        summary = " ".join(str(env.text or "").split())
+        if not summary:
+            return
+        lang = await self._lead_message_lang(env)
+        line = _LEAD_MESSAGE.get(lang, _LEAD_MESSAGE["en"])
+        text = line.format(name=sender.name, text=summary[:400])
+        svc = self._get_chat()
+        post = getattr(svc, "post_notice", None)
+        if svc is not None and post is not None:
+            try:
+                sessions = svc.store.list_sessions(limit=1, surface="jarvis")
+                if sessions:
+                    await post(
+                        sessions[0].session_id,
+                        {
+                            "kind": "society_message",
+                            "agent_id": sender.agent_id,
+                            "agent_name": sender.name,
+                            "msg_type": str(env.msg_type).lower(),
+                            "status": "done",
+                            "text": summary[:1000],
+                            "session_id": sender.session_id,
+                            "trace_id": env.trace_id,
+                        },
+                    )
+            except Exception:  # noqa: BLE001 - chat notice is a courtesy; voice still runs
+                log.warning(
+                    "society: incoming message notice for the lead chat failed", exc_info=True
+                )
+        if self._publish_event is None:
+            return
+        try:
+            from jarvis.core.events import AnnouncementRequested
+
+            maybe = self._publish_event(
+                AnnouncementRequested(
+                    source_layer="society.lead",
+                    text=text,
+                    priority="normal",
+                    language=lang,
+                    kind="completion",
+                    detail=(
+                        f"agent={sender.agent_id} "
+                        f"trace={env.trace_id} "
+                        f"msg={str(env.msg_type).lower()}"
+                    ),
+                )
+            )
+            if asyncio.iscoroutine(maybe):
+                await maybe
+        except Exception:  # noqa: BLE001 - a silent message is a lost courtesy, not a lost result
+            log.warning("society: incoming message announcement for the lead failed", exc_info=True)
+
     async def _deliver_pending(self) -> None:
         """Recover committed messages and retry busy chats without opening sockets."""
         while True:
@@ -280,6 +419,9 @@ class SocietyRuntime:
         if self._delivery_unsubscribe is not None:
             self._delivery_unsubscribe()
             self._delivery_unsubscribe = None
+        if self._lead_incoming_unsubscribe is not None:
+            self._lead_incoming_unsubscribe()
+            self._lead_incoming_unsubscribe = None
         await self.browser.close()
         for task in list(self._watchers):
             task.cancel()

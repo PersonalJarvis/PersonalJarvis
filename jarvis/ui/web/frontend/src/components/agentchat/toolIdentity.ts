@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { McpLogo } from "@/components/extensions/McpLogo";
 import { CLI_VENDOR_LOGOS, cliVendor } from "@/lib/cliVendors";
+import { bundledPluginLogo } from "@/lib/pluginLogos";
 import type { ToolCategory, ToolChoice } from "./toolChoices";
 
 type Palette = readonly [string, string];
@@ -97,6 +98,8 @@ const BRANDS: Record<string, Brand> = {
   antigravity: { palette: BLUE, aliases: ["agy"] },
   ollama: { palette: NEUTRAL, mark: "mono" },
   nvidia: { palette: GREEN },
+  amd_gpu: { palette: NEUTRAL, mark: "mono", aliases: ["amd-gpu"] },
+  agentmail: { palette: NEUTRAL, aliases: ["agent-mail"] },
   groq: { palette: ["#b14628", "#ffaa8e"], mark: "mono" },
   elevenlabs: { palette: NEUTRAL, mark: "mono" },
   cartesia: { palette: GREEN },
@@ -126,7 +129,9 @@ function assetFor(key: string, preferCli = false): string | undefined {
   if (preferCli && cli) return cli;
   return (
     BRANDS[key]?.asset ||
+    bundledPluginLogo(key) ||
     assets[`../../assets/brands/${key}.svg`] ||
+    assets[`../../assets/brands/${key}.png`] ||
     assets[`../../assets/tool-brands/${key}.svg`] ||
     assets[`../../assets/providers/${key}.svg`] ||
     assets[`../../assets/providers/${key}.png`] ||

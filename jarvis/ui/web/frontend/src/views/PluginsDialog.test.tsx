@@ -44,6 +44,19 @@ it("groups all plugins in product category order and keeps installed filtering f
   expect(screen.queryByRole("button", { name: "GitHub" })).toBeNull();
 });
 
+it("opens the category list without dismissing the tab strip", async () => {
+  setup();
+  await screen.findByRole("button", { name: "Gmail" });
+  const dialog = screen.getByTestId("plugin-catalog-dialog");
+  fireEvent.click(screen.getByTestId("plugin-window-category"));
+  expect(await screen.findByRole("option", { name: "All categories" })).toBeDefined();
+  expect(screen.getByRole("option", { name: "Developer" })).toBeDefined();
+  expect(screen.getByRole("option", { name: "Calendar & Mail" })).toBeDefined();
+  expect(screen.getByRole("tab", { name: "Plugins" })).toBeDefined();
+  expect(screen.getByRole("tab", { name: "Skills" })).toBeDefined();
+  expect(dialog.scrollTop).toBe(0);
+});
+
 it("closes credential setup with Escape without closing the plugin window", async () => {
   const { onClose } = setup();
   const github = await screen.findByRole("button", { name: "GitHub" });

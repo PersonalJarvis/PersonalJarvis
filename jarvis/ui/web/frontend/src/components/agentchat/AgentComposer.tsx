@@ -187,6 +187,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   }, fieldRef);
 
   const running = runningTurn(timeline) !== null;
+  const live = running || busy;
 
   async function onSend() {
     const sessionAtSend = activeSessionId;
@@ -708,7 +709,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         >
           {dictating ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
         </button>
-        {running && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
+        {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
           <button
             type="button"
             onClick={() => void cancel()}

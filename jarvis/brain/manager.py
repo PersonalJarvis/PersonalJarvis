@@ -13744,15 +13744,17 @@ class BrainManager:
         instance is cached per manager and only ever reaches the task's own
         dispatcher — never the router surface.
         """
+        from jarvis.clis.capability_provider import equivalent_grants  # noqa: PLC0415
         from jarvis.tasks.templates import grant_matches  # noqa: PLC0415
 
         if not allowed_tools:
             return {}
+        grants = equivalent_grants(allowed_tools)
         selected = {
             name: tool for name, tool in self._tools.items()
-            if any(grant_matches(grant, name) for grant in allowed_tools)
+            if any(grant_matches(grant, name) for grant in grants)
         }
-        for grant in allowed_tools:
+        for grant in grants:
             if grant in selected or grant not in _TASK_ONLY_TOOLS:
                 continue
             tool = self._load_task_only_tool(grant)
@@ -13791,6 +13793,7 @@ class BrainManager:
         allowed_tools: tuple[str, ...] = (),
         model_tier: str = "auto",
         trace_id: UUID | None = None,
+        prefer_api: bool = False,
     ) -> str:
         """Run one isolated agentic turn for a scheduled task.
 
@@ -13810,8 +13813,13 @@ class BrainManager:
         other error propagates so the runner records it in ``last_error``.
         The persistent active provider is never switched.
 
+        ``prefer_api`` is accepted so a routine whose owner seat already
+        failed (a CLI without Jarvis tools) can retry here without a
+        TypeError. This path is already the API provider chain.
+
         Returns the final assistant text.
         """
+        del prefer_api
         intent = "deep" if model_tier == "deep" else "fast"
         tools = self._select_task_tools(allowed_tools)
         # The per-turn context (date/time, awareness, wiki) rides on the user
@@ -13941,10 +13949,11 @@ def _scheduled_turn_context(turn_context: str, tools: dict[str, Any]) -> str:
     names = ", ".join(sorted(tools)) or "none"
     block = (
         "[Scheduled run — unattended] This turn runs on a schedule with no one "
-        f"listening. The only tools that exist in this turn are: {names}. Skills, "
-        "CLIs and any other tool the instructions mention are NOT available here — "
-        "do not call them. Do not ask questions or request permission; work with "
-        "the tools listed and answer with the finished result."
+        f"listening. The only tools that exist in this turn are: {names}. Do not "
+        "call any other tool. If more than one listed tool can do the job, use "
+        "whichever is connected and returns data — do not stop because the first "
+        "name you tried is missing. Do not ask questions or request permission; "
+        "work with the tools listed and answer with the finished result."
     )
     return f"{turn_context}\n\n{block}" if turn_context else block
 

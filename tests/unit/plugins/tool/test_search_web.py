@@ -5,6 +5,7 @@ pin run_search and the settings loader so they exercise the tool's contract
 (output shape, status passthrough, honest 'unavailable' detail) without any
 network or config/keyring access.
 """
+
 from __future__ import annotations
 
 from uuid import uuid4
@@ -28,10 +29,13 @@ def _ctx() -> ExecutionContext:
 
 
 async def test_execute_returns_real_results(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_run_search(query, max_results, *, client, searcher=None):
+    async def fake_run_search(query, max_results, *, client, searcher=None, apifare_key=""):
         return SearchOutcome(
             results=[{"title": "Billboard", "snippet": "chart", "url": "u"}],
-            backend="ddg_serp", status="ok")
+            backend="ddg_serp",
+            status="ok",
+        )
+
     monkeypatch.setattr(search_web, "run_search", fake_run_search)
     result = await SearchWebTool().execute({"query": "top ten songs"}, _ctx())
     assert result.success is True
@@ -42,8 +46,9 @@ async def test_execute_returns_real_results(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 async def test_execute_unavailable_surfaces_detail(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_run_search(query, max_results, *, client, searcher=None):
+    async def fake_run_search(query, max_results, *, client, searcher=None, apifare_key=""):
         return SearchOutcome(results=[], backend="ddg", status="unavailable")
+
     monkeypatch.setattr(search_web, "run_search", fake_run_search)
     result = await SearchWebTool().execute({"query": "top ten songs"}, _ctx())
     assert result.success is True
@@ -52,8 +57,9 @@ async def test_execute_unavailable_surfaces_detail(monkeypatch: pytest.MonkeyPat
 
 
 async def test_execute_empty_has_no_detail(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_run_search(query, max_results, *, client, searcher=None):
+    async def fake_run_search(query, max_results, *, client, searcher=None, apifare_key=""):
         return SearchOutcome(results=[], backend="ddg", status="empty")
+
     monkeypatch.setattr(search_web, "run_search", fake_run_search)
     result = await SearchWebTool().execute({"query": "asdfqwer"}, _ctx())
     assert result.success is True
@@ -73,11 +79,20 @@ async def test_execute_ok_carries_synthesis_instruction(
     raw hits aloud. Live forensic 2026-06-28 (voice Turn 4): Gemini read a whole
     DuckDuckGo result list verbatim — titles, dates, 'Weitere Ergebnisse von
     www.gutefrage.net' — instead of answering the question."""
-    async def fake_run_search(query, max_results, *, client, searcher=None):
+
+    async def fake_run_search(query, max_results, *, client, searcher=None, apifare_key=""):
         return SearchOutcome(
-            results=[{"title": "Notenschluessel", "snippet": "43 bis 34,5 = Note 2",
-                      "url": "https://www.gutefrage.net/x"}],
-            backend="ddg_serp", status="ok")
+            results=[
+                {
+                    "title": "Notenschluessel",
+                    "snippet": "43 bis 34,5 = Note 2",
+                    "url": "https://www.gutefrage.net/x",
+                }
+            ],
+            backend="ddg_serp",
+            status="ok",
+        )
+
     monkeypatch.setattr(search_web, "run_search", fake_run_search)
     result = await SearchWebTool().execute({"query": "wie viele punkte note 1"}, _ctx())
     instr = (result.output.get("answer_instruction") or "").lower()
@@ -90,8 +105,27 @@ async def test_execute_ok_carries_synthesis_instruction(
 async def test_execute_empty_has_no_synthesis_instruction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_run_search(query, max_results, *, client, searcher=None):
+    async def fake_run_search(query, max_results, *, client, searcher=None, apifare_key=""):
         return SearchOutcome(results=[], backend="ddg", status="empty")
+
     monkeypatch.setattr(search_web, "run_search", fake_run_search)
     result = await SearchWebTool().execute({"query": "asdfqwer"}, _ctx())
     assert "answer_instruction" not in result.output
+
+
+async def test_execute_forwards_apifare_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, str] = {}
+
+    async def fake_run_search(query, max_results, *, client, searcher=None, apifare_key=""):
+        seen["key"] = apifare_key
+        return SearchOutcome(
+            results=[{"title": "t", "snippet": "s", "url": "u"}],
+            backend="apifare",
+            status="ok",
+        )
+
+    monkeypatch.setattr(search_web, "run_search", fake_run_search)
+    monkeypatch.setattr(search_web, "_load_apifare_key", lambda: "tok")
+    result = await SearchWebTool().execute({"query": "q"}, _ctx())
+    assert seen["key"] == "tok"
+    assert result.output["backend"] == "apifare"

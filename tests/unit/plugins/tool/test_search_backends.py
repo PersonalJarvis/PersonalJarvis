@@ -1,17 +1,20 @@
 """Unit tests for the web-search backends.
 
-Covers the real-SERP backend, the Instant-Answer fallback, and run_search's
-SERP-first / Instant-fallback ordering with honest status. No real network —
-SERP uses an injected synchronous searcher, Instant uses httpx.MockTransport.
-Backed by the 2026-06-15 "top ten songs" forensic: the old Instant-Answer-only
-backend returned 202/empty for every freshness query.
+Covers the real-SERP backend, the Instant-Answer fallback, the optional
+prepaid Apifare hop, and run_search's ordering with honest status. No real
+network — SERP uses an injected synchronous searcher, HTTP backends use
+httpx.MockTransport. Backed by the 2026-06-15 "top ten songs" forensic: the
+old Instant-Answer-only backend returned 202/empty for every freshness query.
 """
+
 from __future__ import annotations
 
 import httpx
 
 from jarvis.plugins.tool.search_backends import (
+    _APIFARE_CALL_URL,
     _default_ddgs_searcher,
+    apifare_search,
     ddg_instant_search,
     ddg_serp_search,
     run_search,
@@ -23,14 +26,20 @@ def _client(handler) -> httpx.AsyncClient:
 
 
 _ABSTRACT = {
-    "Heading": "Python", "AbstractText": "A programming language.",
-    "AbstractURL": "https://en.wikipedia.org/wiki/Python", "RelatedTopics": [],
+    "Heading": "Python",
+    "AbstractText": "A programming language.",
+    "AbstractURL": "https://en.wikipedia.org/wiki/Python",
+    "RelatedTopics": [],
 }
 
 
 def _serp_rows(query: str, max_results: int) -> list[dict[str, str]]:
     return [
-        {"title": "Billboard Hot 100", "body": "This week's chart...", "href": "https://billboard.com/"},
+        {
+            "title": "Billboard Hot 100",
+            "body": "This week's chart...",
+            "href": "https://billboard.com/",
+        },
         {"title": "Top 10 songs", "body": "Current top ten...", "href": "https://example.com/"},
     ]
 
@@ -38,6 +47,7 @@ def _serp_rows(query: str, max_results: int) -> list[dict[str, str]]:
 # ---------------------------------------------------------------------------
 # Instant Answer (encyclopedic fallback)
 # ---------------------------------------------------------------------------
+
 
 async def test_ddg_instant_parses_abstract() -> None:
     async with _client(lambda r: httpx.Response(200, json=_ABSTRACT)) as client:
@@ -57,6 +67,7 @@ async def test_ddg_instant_202_empty_body_is_empty_not_unavailable() -> None:
 async def test_ddg_instant_transport_error_is_unavailable() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("boom")
+
     async with _client(handler) as client:
         outcome = await ddg_instant_search("python", 5, client)
     assert outcome.status == "unavailable"
@@ -65,6 +76,7 @@ async def test_ddg_instant_transport_error_is_unavailable() -> None:
 # ---------------------------------------------------------------------------
 # Real DuckDuckGo SERP
 # ---------------------------------------------------------------------------
+
 
 async def test_ddg_serp_maps_library_rows() -> None:
     outcome = await ddg_serp_search("top ten songs", 5, searcher=_serp_rows)
@@ -81,6 +93,7 @@ async def test_ddg_serp_empty_is_empty() -> None:
 async def test_ddg_serp_library_missing_is_unavailable() -> None:
     def boom(query: str, max_results: int) -> list[dict[str, str]]:
         raise RuntimeError("ddgs not installed")
+
     outcome = await ddg_serp_search("python", 5, searcher=boom)
     assert outcome.status == "unavailable"
 
@@ -88,6 +101,7 @@ async def test_ddg_serp_library_missing_is_unavailable() -> None:
 # ---------------------------------------------------------------------------
 # Real-library searcher: must NOT inherit ddgs "auto" mode
 # ---------------------------------------------------------------------------
+
 
 def test_default_searcher_pins_fast_backends_and_bounded_timeout(monkeypatch) -> None:
     """The real-library searcher must pin an explicit, fast backend list and a
@@ -151,8 +165,15 @@ def test_default_searcher_pins_fast_backends_and_bounded_timeout(monkeypatch) ->
     # per-call warning, quietly shrinking the pool. Valid set per ddgs 9.14.x;
     # re-validate when bumping the dependency.
     _VALID_DDGS_TEXT_BACKENDS = {
-        "brave", "duckduckgo", "google", "grokipedia",
-        "mojeek", "startpage", "wikipedia", "yahoo", "yandex",
+        "brave",
+        "duckduckgo",
+        "google",
+        "grokipedia",
+        "mojeek",
+        "startpage",
+        "wikipedia",
+        "yahoo",
+        "yandex",
     }
     unknown = parts - _VALID_DDGS_TEXT_BACKENDS
     assert not unknown, f"unknown ddgs text backend(s) would be dropped: {unknown}"
@@ -162,10 +183,12 @@ def test_default_searcher_pins_fast_backends_and_bounded_timeout(monkeypatch) ->
 # run_search: SERP first, Instant fallback, honest status
 # ---------------------------------------------------------------------------
 
+
 async def test_run_search_prefers_real_serp() -> None:
     # SERP has results → returned directly; Instant (httpx) never consulted.
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError("Instant must not be called when SERP succeeds")
+
     async with _client(handler) as client:
         outcome = await run_search("top ten songs", 5, client=client, searcher=_serp_rows)
     assert outcome.status == "ok"
@@ -192,6 +215,135 @@ async def test_run_search_unavailable_when_both_fail() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("down")
+
     async with _client(handler) as client:
         outcome = await run_search("python", 5, client=client, searcher=boom_searcher)
     assert outcome.status == "unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Prepaid Apifare hop
+# ---------------------------------------------------------------------------
+
+_APIFARE_HITS = {
+    "results": [
+        {
+            "title": "Billboard Hot 100",
+            "url": "https://billboard.com/",
+            "description": "This week's chart...",
+            "position": 1,
+        },
+        {
+            "title": "Top 10 songs",
+            "link": "https://example.com/",
+            "snippet": "Current top ten...",
+            "position": 2,
+        },
+    ]
+}
+
+
+async def test_apifare_maps_organic_results() -> None:
+    async with _client(lambda r: httpx.Response(200, json=_APIFARE_HITS)) as client:
+        outcome = await apifare_search("top ten songs", 5, client, "k")
+    assert outcome.status == "ok"
+    assert outcome.backend == "apifare"
+    assert outcome.results[0]["url"] == "https://billboard.com/"
+    assert outcome.results[0]["snippet"] == "This week's chart..."
+    assert outcome.results[1]["url"] == "https://example.com/"
+
+
+async def test_apifare_nested_organic_payload() -> None:
+    body = {"data": {"organic": [{"title": "A", "url": "https://a.example", "body": "s"}]}}
+    async with _client(lambda r: httpx.Response(200, json=body)) as client:
+        outcome = await apifare_search("q", 5, client, "k")
+    assert outcome.status == "ok"
+    assert outcome.results[0]["title"] == "A"
+
+
+async def test_apifare_http_error_is_unavailable() -> None:
+    async with _client(lambda r: httpx.Response(500, json={"error": "x"})) as client:
+        outcome = await apifare_search("x", 5, client, "k")
+    assert outcome.status == "unavailable"
+    assert outcome.results == []
+
+
+async def test_apifare_402_is_unavailable() -> None:
+    async with _client(lambda r: httpx.Response(402, json={"error": "PAYMENT_REQUIRED"})) as client:
+        outcome = await apifare_search("x", 5, client, "k")
+    assert outcome.status == "unavailable"
+
+
+async def test_apifare_empty_key_is_unavailable() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("must not call Apifare without a token")
+
+    async with _client(handler) as client:
+        outcome = await apifare_search("x", 5, client, "  ")
+    assert outcome.status == "unavailable"
+
+
+async def test_apifare_posts_to_dataforseo() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("Authorization")
+        seen["body"] = request.read()
+        return httpx.Response(200, json=_APIFARE_HITS)
+
+    async with _client(handler) as client:
+        await apifare_search("top ten songs", 5, client, "k")
+    assert seen["url"] == _APIFARE_CALL_URL
+    assert seen["auth"] == "Bearer k"
+    assert b"top ten songs" in seen["body"]  # type: ignore[operator]
+
+
+async def test_run_search_prefers_apifare_when_key_present() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json=_APIFARE_HITS)
+        raise AssertionError("Instant must not run when Apifare succeeds")
+
+    def boom_searcher(query: str, max_results: int) -> list[dict[str, str]]:
+        raise AssertionError("SERP must not run when Apifare succeeds")
+
+    async with _client(handler) as client:
+        outcome = await run_search(
+            "top ten songs",
+            5,
+            client=client,
+            searcher=boom_searcher,
+            apifare_key="k",
+        )
+    assert outcome.status == "ok"
+    assert outcome.backend == "apifare"
+
+
+async def test_run_search_skips_apifare_without_key() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            raise AssertionError("Apifare must not be called without a token")
+        raise AssertionError("Instant must not run when SERP succeeds")
+
+    async with _client(handler) as client:
+        outcome = await run_search("top ten songs", 5, client=client, searcher=_serp_rows)
+    assert outcome.backend == "ddg_serp"
+
+
+async def test_run_search_falls_back_to_serp_when_apifare_unavailable() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(402, json={"error": "PAYMENT_REQUIRED"})
+        raise AssertionError("Instant must not run when SERP succeeds")
+
+    async with _client(handler) as client:
+        outcome = await run_search(
+            "top ten songs",
+            5,
+            client=client,
+            searcher=_serp_rows,
+            apifare_key="k",
+        )
+    assert outcome.status == "ok"
+    assert outcome.backend == "ddg_serp"

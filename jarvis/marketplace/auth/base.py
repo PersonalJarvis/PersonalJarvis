@@ -40,6 +40,11 @@ class AuthSession:
     kind: SessionKind
     # Browser-redirect kinds: open this URL in the user's default browser.
     open_url: str | None = None
+    # Browser-redirect kinds: the exact loopback/hosted address the provider
+    # must call back with ?code=&state=. Surfaced so the UI can show what it
+    # is waiting for (and what a self-registered provider app must allow)
+    # instead of spinning silently when the provider never calls back.
+    redirect_uri: str | None = None
     # Device-flow only: code the user types on `verification_uri`.
     user_code: str | None = None
     verification_uri: str | None = None

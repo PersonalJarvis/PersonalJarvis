@@ -257,3 +257,30 @@ export const NAV_GROUPS: NavItem[][] = [
 export const NAV_FOOTER_ITEMS: NavItem[] = [
   { id: "feedback", labelKey: "nav.feedback", icon: MessageSquareWarning },
 ];
+
+/**
+ * Every section id rendered inside the Settings hub (`SettingsHubView`).
+ *
+ * The ids keep their meaning — deep links, voice commands, the deck and the
+ * detached-window registry all still name them — only the STAGE changed: the
+ * router mounts the hub for any of them and the hub selects the matching tab.
+ * Imported by the sidebar (which highlights its profile entry while one of
+ * these is active and keeps them out of "Show more") and by the hub itself,
+ * so the set is named exactly once.
+ */
+export const SETTINGS_HUB_IDS: readonly SectionId[] = [
+  "settings",
+  "taskbar",
+  "languages",
+  "profile",
+  "agent-instructions",
+  "contacts",
+  "socials",
+  "apikeys",
+  "telephony",
+  "telephony-setup",
+  "local-models",
+  "wallpaper",
+  "costs",
+  "feedback",
+];

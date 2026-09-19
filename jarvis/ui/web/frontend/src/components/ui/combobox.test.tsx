@@ -144,6 +144,72 @@ describe("Combobox panel placement", () => {
     expect(panel.style.top).toBe("");
     expect(parseInt(panel.style.maxHeight, 10)).toBeGreaterThanOrEqual(160);
   });
+
+  it("measures against a transformed dialog instead of the viewport, so the list sits under the trigger", async () => {
+    // PluginsDialog (and every centred Radix sheet) uses translate(-50%,-50%)
+    // plus overflow:hidden. Viewport coordinates inside that box paint the
+    // list far below the trigger; focusing it then scrolls the tab strip away.
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(900);
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(1200);
+    render(
+      <div
+        role="dialog"
+        data-testid="host-dialog"
+        style={{
+          position: "fixed",
+          transform: "translate(-50%, -50%)",
+          overflow: "hidden",
+          width: 800,
+          height: 780,
+        }}
+      >
+        <Combobox
+          value="alpha"
+          groups={GROUPS}
+          onChange={() => {}}
+          ariaLabel="Pick"
+          testId="trapped"
+        />
+      </div>,
+    );
+    const host = screen.getByTestId("host-dialog");
+    const trigger = screen.getByTestId("trapped");
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({
+      top: 60,
+      bottom: 840,
+      left: 200,
+      right: 1000,
+      width: 800,
+      height: 780,
+      x: 200,
+      y: 60,
+      toJSON: () => ({}),
+    } as DOMRect);
+    Object.defineProperty(host, "clientLeft", { value: 0 });
+    Object.defineProperty(host, "clientTop", { value: 0 });
+    Object.defineProperty(host, "clientWidth", { value: 800 });
+    Object.defineProperty(host, "clientHeight", { value: 780 });
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      top: 220,
+      bottom: 248,
+      left: 240,
+      right: 400,
+      width: 160,
+      height: 28,
+      x: 240,
+      y: 220,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    fireEvent.click(trigger);
+    const panel = await screen.findByTestId("trapped-panel");
+    // trigger.bottom + 6 - host.top = 248 + 6 - 60 = 194, not the viewport 254.
+    expect(panel.style.top).toBe("194px");
+    expect(panel.style.left).toBe("40px");
+    expect(panel.className).toContain("absolute");
+    expect(panel.className).not.toMatch(/(?:^|\s)fixed(?:\s|$)/);
+    expect(host.scrollTop).toBe(0);
+  });
 });
 
 describe("Combobox inside a modal dialog", () => {

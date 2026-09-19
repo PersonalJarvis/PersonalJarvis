@@ -15,6 +15,8 @@ from jarvis.agent_chat.runner_api import messages_from_events
 from jarvis.agent_chat.runner_cli import (
     _ClaudeState,
     _CodexState,
+    _content_text,
+    _tool_abort_is_recoverable,
     translate_claude_line,
     translate_codex_line,
 )
@@ -287,6 +289,53 @@ def test_claude_stream_translation_streams_then_finalizes():
     assert st.cost_usd == 0.01 and st.usage == {"output_tokens": 5} and st.status == "done"
 
 
+def test_grok_cancelled_tool_payload_is_readable_and_recoverable() -> None:
+    """Print-mode Grok wraps a cancelled tool as nested ``content`` blocks.
+
+    The chat used to show raw JSON and then mark the whole turn Failed, so
+    the model never got a second round (live Bot ersteller, 2026-09-17).
+    """
+    nested = [
+        {
+            "type": "content",
+            "content": {
+                "type": "text",
+                "text": "User cancelled the execution of tool 'run_terminal_command'",
+            },
+        }
+    ]
+    text = _content_text(nested)
+    assert "User cancelled the execution of tool" in text
+    assert _tool_abort_is_recoverable(text)
+    assert not _tool_abort_is_recoverable("exited with code 3")
+    assert not _tool_abort_is_recoverable(None)
+
+    st = _ClaudeState(turn_id="t")
+    events = translate_claude_line(
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tu1",
+                        "is_error": True,
+                        "content": nested,
+                    }
+                ]
+            },
+        },
+        st,
+    )
+    assert events[0]["payload"]["is_error"]
+    assert "User cancelled" in events[0]["payload"]["output"]
+    assert st.last_tool_error is not None and "User cancelled" in st.last_tool_error
+
+    translate_claude_line({"type": "result", "subtype": "error", "is_error": True}, st)
+    assert st.status == "error"
+    assert st.error is not None and _tool_abort_is_recoverable(st.error)
+
+
 def test_streamed_text_counts_as_an_answer_so_the_result_line_never_repeats_it():
     """A turn cut short must not print its answer a second time.
 
@@ -555,7 +604,10 @@ def test_an_old_cli_seated_jarvis_chat_moves_to_its_api_twin(tmp_path):
 
     moved = store.get_session(codex.session_id)
     assert (moved.provider, moved.model) == ("openai", "")
-    assert (store.get_session(shared.session_id).provider, store.get_session(shared.session_id).model) == (
+    assert (
+        store.get_session(shared.session_id).provider,
+        store.get_session(shared.session_id).model,
+    ) == (
         "openai",
         "gpt-5.5",
     )
