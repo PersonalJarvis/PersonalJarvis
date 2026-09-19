@@ -18,7 +18,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from jarvis.core.protocols import ChatCompletion, Tool
 
@@ -151,6 +151,18 @@ def _jarvis_tools(_cfg: Any, _brain: Any, session: Any) -> dict[str, Tool]:
     stance = "plan" if getattr(session, "permission_mode", "") == "plan" else "ask"
     tools = folder_tools(Path(getattr(session, "cwd", "") or _chat_workspace()), stance=stance)
     tools.update(lead_browser_tools(session))
+    from jarvis.society.agent_tools import MemoryRecallTool, WikiNoteTool
+    from jarvis.society.learning import RunLearnedSkillTool
+    from jarvis.society.runtime import current_runtime
+
+    runtime = current_runtime()
+    if runtime is not None:
+        for tool in (
+            MemoryRecallTool(runtime, "jarvis"),
+            WikiNoteTool(runtime, "jarvis"),
+            RunLearnedSkillTool(runtime, "jarvis"),
+        ):
+            tools[tool.name] = cast(Tool, tool)
     return tools
 
 
@@ -159,6 +171,27 @@ async def _society_extra(cfg: Any, brain: Any, session: Any) -> str:
     from jarvis.society.surface import society_system_extra
 
     return await society_system_extra(cfg, brain, session)
+
+
+async def _jarvis_extra(cfg: Any, brain: Any, session: Any) -> str:
+    import asyncio
+
+    from jarvis.society.lead_card import lead_card_section
+    from jarvis.society.runtime import current_runtime
+    from jarvis.society.surface import private_learning_context
+
+    runtime = current_runtime()
+    if runtime is None:
+        return ""
+    agent = await runtime.roster.get("jarvis")
+    memory = await asyncio.to_thread(runtime.memory.head, agent) if agent is not None else ""
+    return "\n".join(
+        (
+            lead_card_section(include_learning=False),
+            memory,
+            await private_learning_context(session, "jarvis"),
+        )
+    )
 
 
 def _society_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, Tool]] | None:
@@ -221,6 +254,8 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         ladder=_JARVIS_LADDER,
         uses_stance=True,
         session_tools=_jarvis_tools,
+        session_system_extra=_jarvis_extra,
+        turn_completed=_society_completed,
         # Not the home directory: this surface hands out the folder tools, and
         # the read-only four are tier ``safe`` — they run without a card. The
         # composer hides the chip here (a person talks to Jarvis, they do not

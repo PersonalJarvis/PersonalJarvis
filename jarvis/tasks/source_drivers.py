@@ -41,11 +41,13 @@ def decode(value: bytes | str) -> Any:
     try:
         text = value.decode("utf-8") if isinstance(value, bytes) else value
     except UnicodeDecodeError:
+        # Binary payloads are preserved losslessly as base64 instead of discarded.
         assert isinstance(value, bytes)
         return {"encoding": "base64", "value": base64.b64encode(value).decode("ascii")}
     try:
         return json.loads(text)
     except ValueError:
+        # Source protocols also allow plain text; preserve it without requiring JSON.
         return text
 
 
@@ -411,6 +413,7 @@ async def listen_mqtt(
             try:
                 message = await asyncio.wait_for(messages.get(), timeout=1)
             except TimeoutError:
+                # Periodic polling allows the stop event to end an otherwise idle listener.
                 continue
             if message is None:
                 raise ConnectionError("MQTT disconnected")

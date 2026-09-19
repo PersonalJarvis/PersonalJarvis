@@ -1,3 +1,4 @@
+import { renderWithQueryClient as render } from "@/test/queryRender";
 /**
  * Component tests for the Pipeline|Realtime segmented switch on the
  * API-Keys screen.
@@ -10,7 +11,7 @@
  * (2) the setMode call pattern for both availability states.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 
 // Mock the data hooks so the view renders deterministically, without a
 // network round-trip.

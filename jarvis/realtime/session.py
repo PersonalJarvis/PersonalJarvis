@@ -3137,16 +3137,9 @@ class RealtimeVoiceSession:
             return ()
 
     def _society_directive(self) -> str:
-        """Tell the live model which of the user's agents exist, by name.
+        """Expose the current team and Jarvis' own cached learning without IO."""
+        from jarvis.society.lead_card import lead_learning_section
 
-        The society twin of ``_workspace_directive``. Asked "welche Agents hast
-        du?" with a freshly created Gmail agent on the island, the live model
-        answered from the retired sub-agent system, and "Gmail agent, check my
-        inbox" went native because the name was typed into the Agents section
-        by the user and no vocabulary could hold it (2026-09-03). Names and the
-        routing rule only: the team card with each agent's hands lives with
-        the orchestrator, which owns delegate_to_agent and society_status.
-        """
         names = self._society_agent_names()
         roster = ", ".join(names) if names else "not loaded; use society_status to verify"
         return (
@@ -3173,7 +3166,8 @@ class RealtimeVoiceSession:
             "one is doing: call your action function — the orchestrator holds "
             "the team card and delegates. Never answer that you do not know who "
             "that is, never guess what an agent is doing, and never say an agent "
-            "has been told anything unless your action function reported it."
+            "has been told anything unless your action function reported it.\n"
+            + lead_learning_section()
         )
 
     def _workspace_directive(self) -> str:
