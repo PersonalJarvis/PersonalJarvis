@@ -214,7 +214,7 @@ class TestListMutableSettings:
         by_path = {entry["path"]: entry for entry in result.output}
         assert by_path["tts.speed"]["value_type"] == "float"
         assert by_path["ui.language"]["value_type"] == "enum"
-        assert set(by_path["ui.language"]["allowed_values"]) == {"en", "de", "es"}
+        assert set(by_path["ui.language"]["allowed_values"]) == {"en", "de", "es", "ja"}
 
     def test_current_values_match_fixture(self, tools: dict[str, Any]) -> None:
         result = _exec(tools["list_mutable_settings"], {})

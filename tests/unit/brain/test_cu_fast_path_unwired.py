@@ -133,8 +133,8 @@ def test_cu_not_wired_is_translated_in_every_locale() -> None:
     from jarvis.voice.action_phrases import _PHRASES
 
     variants = _PHRASES["cu_not_wired"]
-    assert set(variants) == {"de", "en", "es"}
-    assert len(set(variants.values())) == 3, f"a locale was left untranslated: {variants}"
+    assert set(variants) == {"de", "en", "es", "ja"}
+    assert len(set(variants.values())) == 4, f"a locale was left untranslated: {variants}"
     # The actionable half must survive translation in every locale.
     assert all("computer_use.enabled" in text for text in variants.values())
 

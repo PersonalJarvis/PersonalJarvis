@@ -470,6 +470,16 @@ document it is, a generated page renders inside a sandbox, a picture appears at 
 Files are downloadable from there. This replaced the old Outputs section; there is no second
 list of runs anywhere.
 
+### Copilot: slide decks, lessons, workflow
+
+Three features you start by saying so. **Material**: "make a slide deck about ..." turns an
+order into a PPTX and a PDF plus a quality check (needs `pip install .[material]` for the
+PPTX; the PDF is printed by the Edge/Chrome already on the machine). Nothing is sent: you
+review and deliver. **Teacher**: plan a lesson, let Jarvis listen silently during it, ask
+for a summary, get a report at the end. **Workflow**: "start observing my work" records only
+which app is in front (no keystrokes, no screenshots); "stop observing my work" reports time
+per app and repeated app sequences as automation ideas. It automates nothing by itself.
+
 ### Spend
 
 What you have actually paid, per provider, per model and per job. The app meters its own

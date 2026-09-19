@@ -278,7 +278,7 @@ dev = [
 # native-engine-minimal floor for CI and tiny headless servers; users are pointed
 # at [full].
 full = [
-    "personal-jarvis[desktop,desktop-macos,telephony,channels,local-voice]",
+    "personal-jarvis[desktop,desktop-macos,telephony,channels,local-voice,material]",
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the
@@ -297,6 +297,12 @@ telephony = [
 # Discord runs fine headless on a VPS, so this is intentionally NOT in [desktop].
 channels = [
     "discord.py>=2,<3",
+]
+# Material decks (jarvis/copilot/material.py): the PPTX writer. Pure Python on
+# lxml + Pillow, both already base dependencies. Without it Material still
+# prints the PDF and reports the missing PPTX.
+material = [
+    "python-pptx>=1.0,<2",
 ]
 # Desktop / tray / overlay extras. Cloud-first doctrine (CLAUDE.md): the base
 # install must boot on a headless Linux VPS without these. Windows-only

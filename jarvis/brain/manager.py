@@ -5109,6 +5109,67 @@ class BrainManager:
             return reply("failed", lang, error=str(exc)[:200])
         return ""
 
+    async def _handle_copilot_command(self, cmd: Any) -> str:
+        """Material deck / workflow observation (jarvis/copilot). Never raises."""
+        import asyncio as _asyncio
+        import sys as _sys
+
+        from jarvis.copilot import material, workflow
+        from jarvis.copilot.replies import reply
+        from jarvis.teacher.lesson import _language_name
+
+        lang = "ja" if getattr(self, "_turn_japanese", False) else self._resolve_turn_lang()
+        try:
+            if cmd.kind == "material":
+                text = await self._teacher_complete(
+                    material.outline_system(cmd.text, _language_name(lang)), cmd.text
+                )
+                deck = material.parse_outline(text)
+                folder = material.output_dir()
+                pptx, pdf = folder / "deck.pptx", folder / "deck.pdf"
+                pptx_err = await _asyncio.to_thread(material.render_pptx, deck, pptx)
+                pdf_err = await _asyncio.to_thread(material.render_pdf, deck, pdf)
+                checks = material.quality_check(
+                    deck, cmd.text, None if pptx_err else pptx, None if pdf_err else pdf
+                )
+                notes = "\n".join(e for e in (pptx_err, pdf_err) if e)
+                summary = material.report(checks) + (f"\n{notes}" if notes else "")
+                (folder / "quality.txt").write_text(summary, encoding="utf-8")
+                passed = sum(c.ok for c in checks)
+                head = reply(
+                    "material_done", lang, slides=len(deck.slides),
+                    passed=passed, total=len(checks), folder=folder,
+                )
+                return f"{head}\n\n{summary}"
+            if cmd.kind == "workflow_start":
+                if getattr(self, "_wf_observer", None) is not None:
+                    return reply("wf_already", lang)
+                if _sys.platform != "win32":
+                    return reply("wf_unavailable", lang)
+                privacy = None
+                try:
+                    from jarvis.awareness.privacy import PrivacyFilter
+
+                    privacy = PrivacyFilter(self._config.awareness)
+                except Exception:  # noqa: BLE001 - without it titles are still local-only
+                    log.debug("workflow: privacy filter unavailable", exc_info=True)
+                self._wf_observer = workflow.Observer(privacy)
+                self._wf_observer.start()
+                return reply("wf_started", lang)
+            if cmd.kind == "workflow_stop":
+                observer = getattr(self, "_wf_observer", None)
+                if observer is None:
+                    return reply("wf_not_running", lang)
+                self._wf_observer = None
+                segments = await _asyncio.to_thread(observer.stop)
+                text = workflow.report(workflow.analyse(segments), lang)
+                path = workflow.save_report(text)
+                return reply("wf_done", lang, path=path, report=text)
+        except Exception as exc:  # noqa: BLE001 - reported to the user, never a crash
+            log.warning("copilot %s failed: %s", cmd.kind, exc)
+            return reply("material_failed", lang, error=str(exc)[:200])
+        return ""
+
     async def _apply_local_mode(self, mode: str) -> str:
         """Switch the local model mode and say what happened, in the turn's language."""
         from jarvis.local_models.modes import switch_mode
@@ -11333,6 +11394,24 @@ class BrainManager:
                     trace_id=turn_trace_id,
                 )
                 return reply_text
+            if lesson is None:
+                # Material decks and workflow observation (jarvis/copilot).
+                try:
+                    from jarvis.copilot.gate import match_copilot_command
+
+                    copilot_cmd = match_copilot_command(user_text)
+                except Exception:  # noqa: BLE001 - a broken feature never blocks a turn
+                    log.warning("copilot gate unavailable", exc_info=True)
+                    copilot_cmd = None
+                if copilot_cmd is not None:
+                    reply_text = await self._handle_copilot_command(copilot_cmd)
+                    await self._record_response_side_effects(
+                        user_text=user_text,
+                        response_text=reply_text,
+                        use_history=use_history,
+                        trace_id=turn_trace_id,
+                    )
+                    return reply_text
             if lesson is not None:
                 lesson.add(user_text)
                 # Deliberately silent: the pipeline treats a suppressed turn

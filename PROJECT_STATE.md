@@ -411,7 +411,38 @@ Japanese and is fixed:
   HTTP and the desktop port are unreachable from the LAN.
 - Open: a real iPhone scan (first visit shows a certificate warning).
 
+## Copilot features: Material / Teacher / Workflow (2026-09-19)
+
+Minimal, additive. Backup: tag `pre-three-features` (313e517).
+
+- **Wiring**: one deterministic gate in `BrainManager._generate_untagged`
+  next to the teacher gate (`jarvis/copilot/gate.py`), handler
+  `_handle_copilot_command`. No new router tool, no new service; any failure
+  becomes a reply, never a crashed turn (gate import is guarded too).
+- **Material** (`jarvis/copilot/material.py`): "... shiryou wo tsukutte" /
+  "make a slide deck ...". Active brain writes a JSON outline -> python-pptx
+  (new optional extra `[material]`, ~0.5 MB, on existing lxml/Pillow) ->
+  PDF printed by the local Edge/Chrome headless (no new dependency; temp dir
+  auto-deleted) -> 9 deterministic checks (count vs order, titles, empty,
+  bullets/slide, text length, duplicates, PPTX re-opens, PDF written).
+  Output `<user_data>/materials/<stamp>/`. Nothing is sent (human delivers).
+  VERIFIED live: 5-slide Japanese science deck, 35 s on the local 4B, 9/9,
+  PDF with Yu Gothic embedded.
+- **Teacher**: existing `jarvis/teacher` (plan -> live silent record +
+  summaries -> report); tests pass, unchanged.
+- **Workflow** (`jarvis/copilot/workflow.py`): "sagyou no kansatsu wo
+  kaishi/shuuryou" / "start/stop observing my work". Foreground app + title
+  every 3 s (awareness PrivacyFilter drops blocked/browser titles), no keys,
+  no screenshots, in memory only, auto-stop after 8 h. Stop -> time per app +
+  repeated app sequences as automation candidates with a suggested approach;
+  report only (ja/en) to `<user_data>/workflow/`. Nothing is automated.
+  VERIFIED live: 1-min observation reported real apps.
+- Not done: revising a deck by page ("make page 7 shorter"), building/running
+  an automation (would need the approval flow), mode dashboard UI.
+
 ## Changelog
+
+- 2026-09-19: Japanese UI/reply language; Copilot Material + Workflow (Teacher reused).
 
 - 2026-09-18: Emergency stop (ja voice, ESC hold, open palm), doctor local-stack check, Phase 6 local vision.
 - 2026-09-18: Teacher Mode (plan / in-class listening + summary / report) verified via chat.
