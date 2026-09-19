@@ -13,12 +13,15 @@ import json
 import logging
 import random
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
 from jarvis.core.events import AgenticIdePaneActivity
 
 from .delivery import IncomingMessage
+from .shutdown import AdmissionGate, cancel_and_join
 from .store import day_start_ms
 
 log = logging.getLogger(__name__)
@@ -72,6 +75,23 @@ class CodingSupervision:
         self.changed = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         self.attached = False
+        self._accepting = True
+        self._assignment_gate = AdmissionGate("Society coding assignment")
+
+    def stop_admission(self) -> None:
+        self._accepting = False
+        self._assignment_gate.accepting = False
+
+    def resume_admission(self) -> None:
+        self._accepting = True
+        self._assignment_gate.accepting = True
+
+    @asynccontextmanager
+    async def _assignment_admission(self) -> AsyncIterator[None]:
+        async with self._assignment_gate.admit() as admitted:
+            if not admitted:
+                raise RuntimeError("Society is shutting down; no coding assignment was sent.")
+            yield
 
     async def start(self) -> None:
         for key, raw in (await self.runtime.store.meta_prefix(PREFIX)).items():
@@ -104,6 +124,8 @@ class CodingSupervision:
             self._ensure_loop()
 
     def _ensure_loop(self) -> None:
+        if not self._accepting:
+            return
         if self.bus is not None and not self.attached:
             self.bus.subscribe(AgenticIdePaneActivity, self._activity)
             self.attached = True
@@ -116,13 +138,14 @@ class CodingSupervision:
             self.changed.set()  # Never wait on a model or file read inside EventBus.publish.
 
     async def close(self) -> None:
+        self.stop_admission()
         if self.attached:
             self.bus.unsubscribe(AgenticIdePaneActivity, self._activity)
             self.attached = False
         if self.task is not None:
-            self.task.cancel()
-            await asyncio.gather(self.task, return_exceptions=True)
+            await cancel_and_join([self.task], "Society coding supervisor")
             self.task = None
+        await self._assignment_gate.quiesce()
 
     @staticmethod
     def key(args: dict[str, Any]) -> str:
@@ -144,12 +167,20 @@ class CodingSupervision:
     async def assign(
         self, agent_id: str, session_id: str, args: dict[str, Any], *, trace_id: str = ""
     ) -> dict[str, Any]:
+        async with self._assignment_admission():
+            return await self._assign(agent_id, session_id, args, trace_id=trace_id)
+
+    async def _assign(
+        self, agent_id: str, session_id: str, args: dict[str, Any], *, trace_id: str
+    ) -> dict[str, Any]:
         service = self.runtime.chat_service()
         if service is None or service.store.get_session(session_id) is None:
             raise ValueError("The supervising chat is unavailable; no assignment was sent.")
         prompt = assignment_prompt(args)
         key = self.key(args)
         async with self.lock:
+            if not self._accepting:
+                raise RuntimeError("Society is shutting down; no coding assignment was sent.")
             if key in self.rows and self.rows[key]["state"] != "finished":
                 raise ValueError(
                     "This pane already has a supervisor. Read supervision status first."
@@ -179,7 +210,9 @@ class CodingSupervision:
             )
         except BaseException:
             # A cancelled/crashed delivery remains inspectable and is never replayed.
-            await self._pause_notice(key, "Assignment delivery interrupted. Inspect before resuming.")
+            await self._pause_notice(
+                key, "Assignment delivery interrupted. Inspect before resuming."
+            )
             self._ensure_loop()
             raise
         row.update(
@@ -219,6 +252,8 @@ class CodingSupervision:
             if action == "supervision":
                 return self.public(row)
             if action == "resume":
+                if not self._accepting:
+                    raise RuntimeError("Society is shutting down; supervision stays paused.")
                 if row["state"] != "paused":
                     raise ValueError("Only a paused supervision can be resumed.")
                 row.update(
@@ -325,6 +360,8 @@ class CodingSupervision:
                 continue  # Local fallback covers missed activity events and process restoration.
 
     async def tick(self, key: str) -> None:
+        if not self._accepting:
+            return
         row = self.rows[key]
         if row.get("notice"):
             service = self.runtime.chat_service()
@@ -354,6 +391,7 @@ class CodingSupervision:
             if budget is not None:
                 budget.assert_under_limit(row["trace_id"])
         except Exception as exc:
+            # The pause notice persists the reason and informs the user.
             await self._pause_notice(key, f"Budget limit: {exc}")
             return
         if agent.daily_budget_usd > 0:
@@ -433,7 +471,7 @@ class CodingSupervision:
             return
         if busy:
             return  # Keep the latest event pending; never interrupt the user's active turn.
-        if row["state"] != "running" or row["revision"] != revision:
+        if not self._accepting or row["state"] != "running" or row["revision"] != revision:
             return
         incoming = IncomingMessage(**row["outbox"])
         await service.send(row["session_id"], incoming.prompt, incoming=incoming, direct_user=False)

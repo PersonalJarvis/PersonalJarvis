@@ -30,7 +30,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any, Final
 
 from .delivery import DeliveryBusy
@@ -39,6 +40,7 @@ from .events import USER_ACTOR as _USER
 from .events import MsgType, SocietyEnvelope, Tier
 from .failure_reasons import FailureReason, classify_error, retry_action
 from .roster import AgentRecord, AgentState, Roster
+from .shutdown import AdmissionGate
 from .store import SocietyStore, day_start_ms
 
 log = logging.getLogger(__name__)
@@ -96,6 +98,8 @@ class SocietyScheduler:
         #: run_id → agent_id of work the scheduler started and has not seen end.
         self._running: dict[str, str] = {}
         self._unsubscribe: Callable[[], None] | None = None
+        self._accepting = True
+        self._admission_gate = AdmissionGate("Society scheduler")
 
     # ------------------------------------------------------------ wiring
 
@@ -108,6 +112,25 @@ class SocietyScheduler:
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
+
+    def stop_admission(self) -> None:
+        """Fence new work without removing result observers or queued messages."""
+        self._accepting = False
+        self._admission_gate.accepting = False
+
+    def resume_admission(self) -> None:
+        """The owning runtime calls this only when reopening after full close."""
+        self._accepting = True
+        self._admission_gate.accepting = True
+
+    async def quiesce(self) -> None:
+        self.stop_admission()
+        await self._admission_gate.quiesce()
+
+    @asynccontextmanager
+    async def _admission(self) -> AsyncIterator[bool]:
+        async with self._admission_gate.admit() as admitted:
+            yield admitted
 
     @property
     def running(self) -> dict[str, str]:
@@ -134,7 +157,9 @@ class SocietyScheduler:
         if env.from_agent == _SCHEDULER:
             return
         if env.msg_type is MsgType.ASSIGN:
-            await self._on_assign(env)
+            async with self._admission() as admitted:
+                if admitted:
+                    await self._on_assign(env)
         elif env.msg_type is MsgType.RESULT:
             await self._on_result(env)
         elif env.msg_type in _DELIVERED and env.to_agent and env.to_agent != _USER:
@@ -281,30 +306,41 @@ class SocietyScheduler:
                     break
         next_owner = env.payload.get("next_owner")
         if isinstance(next_owner, str) and next_owner and self._deliver is not None:
-            target = await self._resolve_target(env.model_copy(update={"to_agent": next_owner}))
-            if isinstance(target, AgentRecord):
-                await self._deliver(target, env)
+            async with self._admission() as admitted:
+                if admitted:
+                    target = await self._resolve_target(
+                        env.model_copy(update={"to_agent": next_owner})
+                    )
+                    if isinstance(target, AgentRecord):
+                        await self._deliver(target, env)
 
     async def drain_deliveries(self) -> None:
         """FIFO per recipient. Busy recipients never block other conversations."""
-        if self._delivery_lock.locked():
+        if not self._accepting or self._delivery_lock.locked():
             return
-        async with self._delivery_lock:
-            busy: set[str | None] = set()
-            for env in await self._store.pending_deliveries():
-                if env.to_agent in busy:
-                    receive = getattr(self._deliver, "receive", None)
-                    target = await self._resolve_target(env)
-                    if receive is not None and isinstance(target, AgentRecord):
-                        try:
-                            await receive(target, env)
-                        except DeliveryBusy:
-                            pass  # No chat service yet; the durable queue will retry.
-                        except Exception:
-                            log.warning("society: queued receipt projection failed", exc_info=True)
-                    continue
-                if not await self._on_deliver(env):
-                    busy.add(env.to_agent)
+        async with self._admission() as admitted:
+            if not admitted:
+                return
+            async with self._delivery_lock:
+                busy: set[str | None] = set()
+                for env in await self._store.pending_deliveries():
+                    if not self._accepting:
+                        break  # Preserve unattempted durable deliveries for the next startup.
+                    if env.to_agent in busy:
+                        receive = getattr(self._deliver, "receive", None)
+                        target = await self._resolve_target(env)
+                        if receive is not None and isinstance(target, AgentRecord):
+                            try:
+                                await receive(target, env)
+                            except DeliveryBusy:
+                                pass  # No chat service yet; the durable queue will retry.
+                            except Exception:
+                                log.warning(
+                                    "society: queued receipt projection failed", exc_info=True
+                                )
+                        continue
+                    if not await self._on_deliver(env):
+                        busy.add(env.to_agent)
 
     async def _on_deliver(self, env: SocietyEnvelope) -> bool:
         if await self._store.delivery_status(env.event_id) != "queued":
@@ -327,6 +363,7 @@ class SocietyScheduler:
         try:
             await self._deliver(target, env)
         except DeliveryBusy:
+            # Transient backpressure keeps the durable delivery pending for a later retry.
             return False
         except Exception as exc:  # noqa: BLE001 — persist the failure and report it
             await self._store.mark_delivery(env.event_id, "failed", str(exc))

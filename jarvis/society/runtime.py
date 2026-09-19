@@ -41,6 +41,7 @@ from .rooms import Rooms
 from .roster import LEAD_AGENT_ID, AgentRecord, Roster
 from .scheduler import DeliverHook, SocietyScheduler
 from .seeds import seed_first_run
+from .shutdown import cancel_and_join
 from .store import SocietyStore
 from .world_feed import WorldFeed
 
@@ -145,6 +146,7 @@ class SocietyRuntime:
         self.swarm_requests = swarm_requests
         self._seed_starter_team = seed_starter_team
         self._watchers: set[asyncio.Task[None]] = set()
+        self._producers: set[asyncio.Task[Any]] = set()
         self.store = SocietyStore(self._data_dir / _DB_NAME)
         self.roster = Roster(self.store)
         self.rooms = Rooms(self.store)
@@ -192,6 +194,11 @@ class SocietyRuntime:
         self._lead_incoming_unsubscribe: Callable[[], None] | None = None
         self._started = False
         self._context_start_task: asyncio.Task[bool] | None = None
+        self._start_tasks: set[asyncio.Task[Any]] = set()
+        self._quiesce_lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
+        self._quiescing = False
+        self._closed = False
 
     # ------------------------------------------------------------ lifecycle
 
@@ -201,6 +208,8 @@ class SocietyRuntime:
         Voice/chat may continue while storage is slow. One owned task does the
         work; close cancels and reaps it before dismantling runtime components.
         """
+        if self._quiescing and not self._closed:
+            return False
         if self._started:
             return True
         task = self._context_start_task
@@ -210,6 +219,8 @@ class SocietyRuntime:
         try:
             return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_s)
         except TimeoutError:
+            # The optional context deadline leaves shielded startup running;
+            # _start_for_context owns and logs any eventual startup failure.
             return False
 
     async def _start_for_context(self) -> bool:
@@ -221,7 +232,27 @@ class SocietyRuntime:
         return True
 
     async def ensure_started(self) -> SocietyRuntime:
+        if self._quiescing and not self._closed:
+            raise RuntimeError("Society is shutting down; retry after restart.")
+        owner = asyncio.current_task()
+        assert owner is not None
+        self._start_tasks.add(owner)
+        try:
+            return await self._ensure_started()
+        finally:
+            self._start_tasks.discard(owner)
+
+    async def _ensure_started(self) -> SocietyRuntime:
         async with self._start_lock:
+            if self._quiescing and not self._closed:
+                raise RuntimeError("Society is shutting down; retry after restart.")
+            if self._closed:
+                self.conversations = ConversationArchive(
+                    self._data_dir / "society-conversations.db"
+                )
+                self.scheduler.resume_admission()
+                self.coding_supervision.resume_admission()
+                self._closed = self._quiescing = False
             if self._started:
                 return self
             await self.store.open()
@@ -408,16 +439,34 @@ class SocietyRuntime:
         """The live app config the chat binding reads provider defaults from."""
         return self._get_cfg()
 
-    async def close(self) -> None:
-        await self.coding_supervision.close()
-        if self._context_start_task is not None:
-            self._context_start_task.cancel()
-            await asyncio.gather(self._context_start_task, return_exceptions=True)
+    async def quiesce(self) -> None:
+        """Stop new work before chat drain; keep durable result writers alive."""
+        if self._closed:
+            return
+        self._quiescing = True
+        self.scheduler.stop_admission()
+        self.coding_supervision.stop_admission()
+        async with self._quiesce_lock:
+            starts = set(self._start_tasks)
+            if self._context_start_task is not None:
+                starts.add(self._context_start_task)
+            await cancel_and_join(starts, "Society startup")
             self._context_start_task = None
-        if self._delivery_task is not None:
-            self._delivery_task.cancel()
-            await asyncio.gather(self._delivery_task, return_exceptions=True)
-            self._delivery_task = None
+            await self.coding_supervision.close()
+            if self._delivery_task is not None:
+                await cancel_and_join([self._delivery_task], "Society delivery recovery")
+                self._delivery_task = None
+            await cancel_and_join(self._producers, "Society background producers")
+            await self.scheduler.quiesce()
+
+    async def close(self) -> None:
+        async with self._close_lock:
+            if self._closed:
+                return
+            await self._close_owned()
+
+    async def _close_owned(self) -> None:
+        await self.quiesce()
         if self._delivery_unsubscribe is not None:
             self._delivery_unsubscribe()
             self._delivery_unsubscribe = None
@@ -425,10 +474,7 @@ class SocietyRuntime:
             self._lead_incoming_unsubscribe()
             self._lead_incoming_unsubscribe = None
         await self.browser.close()
-        for task in list(self._watchers):
-            task.cancel()
-        if self._watchers:
-            await asyncio.gather(*list(self._watchers), return_exceptions=True)
+        await cancel_and_join(self._watchers, "Society result writers")
         self._watchers.clear()
         self.conversations.close()
         self.scheduler.detach()
@@ -438,6 +484,7 @@ class SocietyRuntime:
         self.world_feed.detach()
         await self.store.close()
         self._started = False
+        self._closed = True
         if current_runtime() is self:
             set_current_runtime(None)
 
@@ -471,11 +518,14 @@ class SocietyRuntime:
             # proposal). Reviewing them again wastes a model call and can
             # duplicate a standing instruction as a conflicting memory.
             return
-        if self.conversations.queue_review(
-            session.session_id,
-            completion.turn.turn_id,
-            events,
-            direct_user=completion.turn.direct_user,
+        if (
+            self.conversations.queue_review(
+                session.session_id,
+                completion.turn.turn_id,
+                events,
+                direct_user=completion.turn.direct_user,
+            )
+            and not self._quiescing
         ):
             self.background(self.recover_reviews())
 
@@ -484,6 +534,8 @@ class SocietyRuntime:
 
         async with self._review_lock:
             for pending in self.conversations.pending_reviews():
+                if self._quiescing:
+                    return  # The durable review remains pending for a completed restart.
                 try:
                     if await review_turn(self, pending):
                         self.conversations.finish_review(pending["session"], pending["turn_id"])
@@ -495,7 +547,11 @@ class SocietyRuntime:
         own body reports failures — nothing here swallows them)."""
         task = asyncio.create_task(coro)
         self._watchers.add(task)
+        self._producers.add(task)
         task.add_done_callback(self._watchers.discard)
+        task.add_done_callback(self._producers.discard)
+        if self._quiescing:
+            task.cancel()
         return task
 
     async def post_chat_notice(self, agent: AgentRecord, payload: dict[str, Any]) -> None:
@@ -682,8 +738,10 @@ class SocietyRuntime:
         except asyncio.CancelledError:
             return
         finally:
-            svc.unsubscribe(session_id, queue)
-        self.scheduler.note_run_ended(run_id)
+            try:
+                svc.unsubscribe(session_id, queue)
+            finally:
+                self.scheduler.note_run_ended(run_id)
         summary = (final_text or error or "turn finished").strip()
         try:
             await self.store.append_and_publish(
@@ -716,10 +774,8 @@ class SocietyRuntime:
             status=status,
             origin="web" if used_browser else "agent",
         )
-        if not getattr(svc, "supports_turn_completion", False):
-            learner = asyncio.create_task(self._learn(target, digest))
-            self._watchers.add(learner)
-            learner.add_done_callback(self._watchers.discard)
+        if not self._quiescing and not getattr(svc, "supports_turn_completion", False):
+            self.background(self._learn(target, digest))
 
     # ------------------------------------------------------------ the lead
 

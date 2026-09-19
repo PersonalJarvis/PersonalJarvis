@@ -99,6 +99,8 @@ class WebServer:
     def __init__(self, cfg: JarvisConfig, bus: EventBus | None = None) -> None:
         self.cfg = cfg
         self._browser_prepare_task: asyncio.Task[None] | None = None
+        self._stopping = False
+        self._shutdown_complete = False
         self.bus = bus if bus is not None else get_default_bus()
         self._clients: dict[str, WebSocket] = {}
         self._client_send_locks: dict[str, asyncio.Lock] = {}
@@ -2495,6 +2497,11 @@ class WebServer:
         """
         import uvicorn
 
+        if self._stopping and not self._shutdown_complete:
+            raise RuntimeError("Server shutdown is incomplete; finish it before restarting.")
+        self._stopping = False
+        self._shutdown_complete = False
+
         # Boot profiling (opt-in via JARVIS_BOOT_PROFILE=1; zero behavior change
         # otherwise). Emits one machine-readable ``[BOOT_PROFILE] <phase>=<ms>``
         # line per phase to stdout so the boot-timing harness
@@ -2982,7 +2989,7 @@ class WebServer:
             recover_missions=_is_primary,
             tts_speak_fn=None,  # TTS wiring comes from DesktopApp once voice is live
             brain_caller=None,  # The decomposer runs in heuristic-only mode
-            # Welle-4 Y: pass the speech bus through for MissionAnnouncer, so
+            # Wave-4 Y: pass the speech bus through for MissionAnnouncer, so
             # mission-completion events land as AnnouncementRequested on the
             # global bus — pipeline._on_announcement subscribes there.
             speech_bus=self.bus,
@@ -3016,7 +3023,7 @@ class WebServer:
         self._missions_voice_listener = result["voice_listener"]
         self._missions_cleanup_task = result["cleanup_task"]
 
-        # Welle-4 wiring: the spawn_worker tool in the brain needs both the
+        # Wave-4 wiring: the spawn_worker tool in the brain needs both the
         # MissionManager AND the Kontrollierer. The brain is built in
         # DesktopApp._start_speech_and_orb via build_default_brain() — the
         # singleton setters make both available there (lazy resolve via
@@ -3065,7 +3072,7 @@ class WebServer:
         if ws_mgr is not None:
             result["manager"].bus.subscribe_all(ws_mgr.fanout)
 
-        # Welle-4 follow-up: bridge MissionBus -> SubAgentRegistry so the
+        # Wave-4 follow-up: bridge MissionBus -> SubAgentRegistry so the
         # Sub-Agents board lights up. The legacy publishers for
         # JarvisAgentTaskStarted/Completed were removed in the migration; without
         # this hook the dashboard stays empty even while missions are flowing.
@@ -3588,7 +3595,7 @@ class WebServer:
         self.app.state.channel_chat_bridge = bridge
 
         if "telegram" in manager.started():
-            logger.info("Friends-Stack live: Telegram-Channel aktiv")
+            logger.info("Friends-Stack live: Telegram channel active")
         else:
             errs = manager.start_errors().get("telegram")
             if errs:
@@ -3666,6 +3673,8 @@ class WebServer:
 
         service = getattr(self.app.state, "swarm", None)
         if service is None:
+            if getattr(self, "_stopping", False):
+                raise RuntimeError("Swarm cannot start while the server is shutting down.")
             service = build_service(self.cfg, control_bus=self.bus)
             from jarvis.society.swarm_port import SocietySwarmProfiles
 
@@ -3699,6 +3708,8 @@ class WebServer:
 
         if getattr(state, "society", None) is not None:
             return state.society
+        if getattr(self, "_stopping", False):
+            raise RuntimeError("Society cannot start while the server is shutting down.")
 
         def _manager() -> Any | None:
             return getattr(state, "mission_manager", None)
@@ -3787,13 +3798,16 @@ class WebServer:
         return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
     async def stop(self) -> None:
+        if self._shutdown_complete:
+            return
+        self._stopping = True
+        society = getattr(self.app.state, "society", None)
+        if society is not None:
+            await society.quiesce()
         if self._browser_prepare_task is not None:
             self._browser_prepare_task.cancel()
             await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
             self._browser_prepare_task = None
-        society = getattr(self.app.state, "society", None)
-        if society is not None:
-            await society.browser.close()
         swarm_recovery = getattr(self, "_swarm_recovery_task", None)
         if swarm_recovery is not None:
             swarm_recovery.cancel()
@@ -3801,6 +3815,7 @@ class WebServer:
         swarm = getattr(self.app.state, "swarm", None)
         if swarm is not None:
             await swarm.stop()
+            self.app.state.swarm = None
         self._mic_level_sessions.clear()
         self._stop_mic_level_bridge()
 
@@ -4098,6 +4113,18 @@ class WebServer:
         self._server = None
         self._serve_task = None
 
+        # Swarm collectors, mission/chat completion and HTTP handlers can all
+        # write Society state. Drain those owners before closing its subscriptions
+        # and SQLite connection; closing only the browser leaks a worker thread.
+        society = getattr(self.app.state, "society", None)
+        if society is not None:
+            try:
+                await society.close()
+            except Exception as exc:  # noqa: BLE001 - other shared owners still need cleanup
+                logger.opt(exception=exc).warning("Society runtime shutdown failed")
+            else:
+                self.app.state.society = None
+
         # Browser/desktop realtime owners must release their ephemeral threads
         # before their shared process is reaped. Keep this unconditional: a
         # failed startup can complete the Codex handshake before uvicorn marks
@@ -4108,6 +4135,8 @@ class WebServer:
             await close_shared_codex_app_servers()
         except Exception as exc:  # noqa: BLE001 - shutdown continues best-effort
             logger.opt(exception=exc).warning("Codex subscription app-server cleanup failed")
+            return
+        self._shutdown_complete = getattr(self.app.state, "society", None) is None
 
     @property
     def running(self) -> bool:
