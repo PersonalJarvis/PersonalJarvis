@@ -88,8 +88,10 @@ available. No Windows SYSTEM service or server-side graphics renderer is added.
 Local work cannot continue when its execution host is stopped or asleep.
 
 Windows native closure/reopening and a real draft continuing after window
-destruction have been measured. Direct tray-menu interaction, other native OSes,
-host sleep/reboot, a fresh single-key install and final graphics/performance
+destruction have been measured. A clean installed wheel in an isolated Linux
+venv also completed real station work with one Gemini key, no display, graphics
+GPU, browser or Blender, and retained the result after clean process shutdown.
+Direct tray-menu interaction, other native OSes, host sleep/reboot and final graphics/performance
 acceptance are still open; the private issue tracker retains the full ledger.
 
 ## Restart recovery
@@ -108,6 +110,14 @@ after five seconds; it cannot publish a late station owner. The server retains
 the Mars stop latch and task references, completes independent browser, chat,
 plugin, watcher, terminal and server teardown, then reports the incomplete Mars
 cleanup. A Mars timeout must not leave those unrelated resources running.
+
+Society teardown also fences lazy creation before its first await, rejects late
+roster requests, and releases the complete runtime and SQLite connection.
+Browser cleanup retains ownership and terminates its children even when graceful
+shutdown is cancelled. These paths have real-process and startup-race regressions.
+In the installed Linux navigation run, boot took 6.013 seconds and graceful exit
+took 1.823 seconds; the separate single-key draft run exited in 0.916 seconds.
+These are observations of those runs, not latency guarantees.
 
 Acknowledged queued requests are checked against current agent authority before
 dispatch. Previously owned work receives a new fence and an interruption event;
