@@ -8,6 +8,7 @@ import en from "@/i18n/locales/society/en.json";
 
 // Transcript rendering is covered separately; this suite exercises lazy lifecycle.
 vi.mock("@/components/agentchat/AgentTimeline", () => ({ AgentTimeline: () => null }));
+vi.mock("../chat/ChatActivity", () => ({ routineTask: () => null }));
 
 vi.mock("@/i18n", () => ({
   useLocaleChunk: () => {},
@@ -63,14 +64,16 @@ test("opens only the selected execution socket and releases it on return", async
   expect(sockets).toHaveLength(0);
   expect(fetcher.mock.calls.some(([url]) => url.includes("agent-chat"))).toBe(false);
   fireEvent.click(screen.getByText("Open latest chat"));
-  await screen.findByTestId("routine-chat");
+  // Cold module transformation includes the real dialog and socket store.
+  await screen.findByTestId("routine-chat", {}, { timeout: 10000 });
+  expect(screen.getByRole("dialog", { name: "Background execution" })).toBeTruthy();
   expect(sockets).toHaveLength(1);
   expect(decodeURIComponent(sockets[0].url)).toContain(sid);
   fireEvent.click(screen.getByRole("button", { name: "Execution history" }));
   await screen.findByTestId("agent-routine-detail");
   expect(sockets[0].close).toHaveBeenCalledOnce();
   expect(fetcher.mock.calls.some(([url]) => url.endsWith("/cancel"))).toBe(false);
-});
+}, 15000);
 
 test("pauses every timing, tests once, and requires a delete confirmation", async () => {
   const { fetcher, onClose } = setup(true);

@@ -1,5 +1,6 @@
 /** Mounted only for the execution the user opens; owns and releases its socket. */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { ArrowLeft, Send, Square } from "lucide-react";
 import { AgentTimeline } from "@/components/agentchat/AgentTimeline";
 import { runningTurn } from "@/components/agentchat/reduce";
@@ -7,6 +8,7 @@ import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreCon
 import { createAgentChatStore } from "@/store/agentChat";
 import { useStickToBottom } from "@/hooks/useStickToBottom";
 import { useT } from "@/i18n";
+import { routineTask } from "../chat/ChatActivity";
 
 export default function RoutineChat({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const t = useT();
@@ -14,6 +16,8 @@ export default function RoutineChat({ sessionId, onClose }: { sessionId: string;
   const [store] = useState(() => createAgentChatStore("society", "routine"));
   const timeline = store((state) => state.timeline);
   const items = timeline.items;
+  const visibleItems = useMemo(() => items.map((item) => item.type === "user"
+    ? { ...item, text: routineTask(item.text) ?? item.text } : item), [items]);
   const session = store((state) => state.activeSession);
   const busy = store((state) => state.busy);
   const socketState = store((state) => state.socketState);
@@ -28,7 +32,11 @@ export default function RoutineChat({ sessionId, onClose }: { sessionId: string;
     return () => store.getState().disconnect();
   }, [sessionId, store]);
 
-  return <AgentChatStoreProvider store={store}>
+  return <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}><Dialog.Portal>
+    <Dialog.Overlay className="fixed inset-0 z-[80] bg-scrim/60" />
+    <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[90] flex h-[88vh] max-h-[960px] w-[calc(100%-2rem)] max-w-4xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-background p-4 shadow-float focus:outline-none sm:p-6">
+    <Dialog.Title className="sr-only">{label("background_chat")}</Dialog.Title>
+    <AgentChatStoreProvider store={store}>
     <section className="flex min-h-0 flex-1 flex-col text-foreground" data-testid="routine-chat" data-session-id={sessionId}>
       <header className="flex shrink-0 items-center justify-between gap-2 pb-3">
         <button type="button" className="flex items-center gap-1 text-[12px] text-muted-foreground" onClick={onClose}><ArrowLeft size={14} />{label("history")}</button>
@@ -36,7 +44,7 @@ export default function RoutineChat({ sessionId, onClose }: { sessionId: string;
       </header>
       <div ref={scroll.rootRef} className="min-h-0 flex-1 overflow-y-auto px-1"><div ref={scroll.contentRef} className="space-y-3">
         {!ready && !error && <p role="status" className="text-[12px]">{t("tasks_view.loading_details")}</p>}
-        <AgentTimeline items={items} assistantName={session?.title.split(" · ")[0] ?? ""} providerLabel={(id) => id} onDecide={store.getState().decide} />
+        <AgentTimeline items={visibleItems} assistantName={session?.title.split(" · ")[0] ?? ""} providerLabel={(id) => id} onDecide={store.getState().decide} />
       </div></div>
       {error && <p role="alert" className="text-[12px] text-destructive">{error}</p>}
       <form className="mt-3 flex shrink-0 items-end gap-2" onSubmit={(event) => {
@@ -49,5 +57,5 @@ export default function RoutineChat({ sessionId, onClose }: { sessionId: string;
           : <button type="submit" className="rounded p-2 hover:bg-secondary disabled:opacity-50" disabled={!ready || !message.trim()} aria-label={label("send")}><Send size={16} /></button>}
       </form>
     </section>
-  </AgentChatStoreProvider>;
+  </AgentChatStoreProvider></Dialog.Content></Dialog.Portal></Dialog.Root>;
 }
