@@ -13,7 +13,7 @@ it.each(catalog.plugins.map((plugin) => plugin.id))("ships local artwork for %s"
   expect(logo).not.toMatch(/^https?:/);
 });
 
-it.each(["onenote", "onedrive", "azure", "google_cloud", "stripe", "cloudflare", "agentmail"])(
+it.each(["onenote", "onedrive", "azure", "google_cloud", "google-cloud", "stripe", "cloudflare", "agentmail"])(
   "never substitutes an external glyph for the reported missing %s brand", (id) => {
     expect(bundledPluginLogo(id)).toMatch(/(?:\.svg|\.png|\.ico|^data:)/);
   },

@@ -850,6 +850,13 @@ def plan_codex(
     # Jarvis' own tools over streamable-HTTP MCP, mounted for this run only —
     # the person's ~/.codex/config.toml is never touched.
     argv += jarvis_harness.codex_config_args(identity.session_id if identity else None)
+    if identity is not None:
+        # A Jarvis seat must use the browser and connections visible in Jarvis.
+        # Inheriting the coding CLI's plugins gives it a second, unrelated
+        # browser whose actions never appear in the agent's live viewer.
+        argv += ["--ignore-user-config", "--ignore-rules"]
+        for feature in ("browser_use", "plugins", "computer_use", "apps", "web_search_request"):
+            argv += ["--disable", feature]
     # The TUI's presets, spelled out for ``exec`` (codex 0.149): Read only /
     # Auto (workspace-write) / Full access (``--yolo``), plus "approve for
     # me" — Codex's own reviewer model decides what would have asked you,

@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 import uuid
 from collections.abc import Callable
@@ -406,11 +407,17 @@ class AgentChatService:
             selection = worker_selection(getattr(manager, "_config", None))
             if selection is not None:
                 provider, selected_runner = subscription_seat(selection.provider) or (
-                    selection.provider, "brain"
+                    selection.provider,
+                    "brain",
                 )
                 if (session.provider, session.model) != (provider, selection.model or ""):
-                    session = replace(session, provider=provider, model=selection.model or "",
-                                      vendor_session=None, effort=selection.reasoning_effort)
+                    session = replace(
+                        session,
+                        provider=provider,
+                        model=selection.model or "",
+                        vendor_session=None,
+                        effort=selection.reasoning_effort,
+                    )
                     self.store.reseat_session(session_id, provider=provider, model=session.model)
         if (
             session.surface in ("jarvis", "society")
@@ -418,8 +425,6 @@ class AgentChatService:
             and incoming is None
             and not control_owned
         ):
-            import re
-
             from .control_types import COMMANDS
 
             command = re.match(r"^/([a-z]+)(?:\s|$)", text.strip())
@@ -453,6 +458,13 @@ class AgentChatService:
         # What the turn receives; ``text`` stays what the person typed so the
         # timeline shows their sentence rather than a page of extracted PDF.
         prompt = chat_attachments.compose(text, attached)
+        # Agent cards serialize Add selections as capability pins. Translate the
+        # browser pin to the same validated receipt used by the root composer.
+        if session.surface == "jarvis" and any(
+            "core:browser" in {item.strip() for item in match.split(",")}
+            for match in re.findall(r"(?m)^\[tools:\s*([^\]\r\n]+)\]\s*$", text)
+        ):
+            tool_choices = list(dict.fromkeys([*(tool_choices or []), "tool:society_browser"]))
         selected = []
         if tool_choices:
             if session.surface != "jarvis":
@@ -499,7 +511,11 @@ class AgentChatService:
                         ),
                         # What the person typed, when it differs from the prompt.
                         # Absent on an ordinary message, so nothing changes there.
-                        **({"typed": display_text if display_text is not None else text} if attached or display_text is not None else {}),
+                        **(
+                            {"typed": display_text if display_text is not None else text}
+                            if attached or display_text is not None
+                            else {}
+                        ),
                         **(
                             {
                                 "attachments": [
@@ -561,7 +577,11 @@ class AgentChatService:
 
         async def _body() -> None:
             origin = ChatTurn(
-                session_id, turn_id, display_text if display_text is not None else text, direct_user and incoming is None, str(handle.trace_id)
+                session_id,
+                turn_id,
+                display_text if display_text is not None else text,
+                direct_user and incoming is None,
+                str(handle.trace_id),
             )
             origin_token = current_chat_turn.set(origin)
             try:
@@ -579,6 +599,8 @@ class AgentChatService:
                             **({"tool_choices": selected} if selected else {}),
                         )
                 elif supports_cli_runner(runner):
+                    from jarvis.agent_chat.tool_catalog import selection_briefing
+
                     # A CLI runs AS Jarvis — its own tools over MCP, its calls
                     # answered by the chat's approval card — only where the
                     # surface both is Jarvis and seats a CLI at all. The front
@@ -589,7 +611,7 @@ class AgentChatService:
                     as_jarvis = kit.brain_runner and kit.cli_seats
                     vendor = await run_cli_turn(
                         handle,
-                        prompt,
+                        prompt + selection_briefing(selected),
                         runner,
                         identity=as_jarvis,
                         bridge=self._bridge_for(bus) if as_jarvis else None,
@@ -647,6 +669,10 @@ class AgentChatService:
                     ),
                 )
             finally:
+                if session.surface in ("jarvis", "society"):
+                    from jarvis.society.browser.tool import stop_chat_browser
+
+                    await stop_chat_browser(session_id)
                 self._running.pop(session_id, None)
                 stored_session = self.store.get_session(session_id)
                 set_chat_read_only(

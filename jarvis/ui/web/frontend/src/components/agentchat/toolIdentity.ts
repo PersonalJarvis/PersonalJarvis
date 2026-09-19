@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { McpLogo } from "@/components/extensions/McpLogo";
 import { CLI_VENDOR_LOGOS, cliVendor } from "@/lib/cliVendors";
-import { bundledPluginLogo } from "@/lib/pluginLogos";
+import { brandIdVariants, bundledPluginLogo, isRasterLogo } from "@/lib/pluginLogos";
 import type { ToolCategory, ToolChoice } from "./toolChoices";
 
 type Palette = readonly [string, string];
@@ -70,10 +70,10 @@ const BRANDS: Record<string, Brand> = {
   todoist: { palette: ["#b12d27", "#ff9c92"] },
   vercel: { palette: NEUTRAL, mark: "mono" },
   youtube_music: { palette: ["#bb2424", "#ff9494"], aliases: ["youtube-music", "ytmusic", "youtube"] },
-  stripe: { palette: VIOLET, mark: "mono" },
-  cloudflare: { palette: ["#a84c14", "#ffb276"], mark: "mono", aliases: ["wrangler"] },
-  figma: { palette: ["#9c3a28", "#ffa18e"], mark: "mono" },
-  gitlab: { palette: ["#a8441a", "#ffad83"], mark: "mono", aliases: ["glab"] },
+  stripe: { palette: VIOLET },
+  cloudflare: { palette: ["#a84c14", "#ffb276"], aliases: ["wrangler"] },
+  figma: { palette: ["#9c3a28", "#ffa18e"] },
+  gitlab: { palette: ["#a8441a", "#ffad83"], aliases: ["glab"] },
   docker: { palette: BLUE, mark: "colour" },
   aws: { palette: ["#a15b00", "#f0b429"], mark: "mono" },
   azure: { palette: BLUE, aliases: ["az"] },
@@ -94,7 +94,7 @@ const BRANDS: Record<string, Brand> = {
   openrouter: { palette: NEUTRAL, mark: "mono" },
   claude: { palette: ["#a04f31", "#e6aa89"], aliases: ["anthropic", "claude-code"] },
   gemini: { palette: BLUE },
-  "google-cloud": { palette: BLUE, aliases: ["gcloud", "vertex"] },
+  "google-cloud": { palette: BLUE, aliases: ["gcloud", "vertex", "google_cloud"] },
   antigravity: { palette: BLUE, aliases: ["agy"] },
   ollama: { palette: NEUTRAL, mark: "mono" },
   nvidia: { palette: GREEN },
@@ -124,19 +124,22 @@ const assets = import.meta.glob("../../assets/{brands,providers,tool-brands,clis
 }) as Record<string, string>;
 
 function assetFor(key: string, preferCli = false): string | undefined {
-  const cliFile = CLI_VENDOR_LOGOS[key]?.file ?? `${key}.svg`;
-  const cli = assets[`../../assets/clis/${cliFile}`] || assets[`../../assets/clis/${key}.svg`];
-  if (preferCli && cli) return cli;
-  return (
-    BRANDS[key]?.asset ||
-    bundledPluginLogo(key) ||
-    assets[`../../assets/brands/${key}.svg`] ||
-    assets[`../../assets/brands/${key}.png`] ||
-    assets[`../../assets/tool-brands/${key}.svg`] ||
-    assets[`../../assets/providers/${key}.svg`] ||
-    assets[`../../assets/providers/${key}.png`] ||
-    cli
-  );
+  for (const id of brandIdVariants(key)) {
+    const cliFile = CLI_VENDOR_LOGOS[id]?.file ?? `${id}.svg`;
+    const cli = assets[`../../assets/clis/${cliFile}`] || assets[`../../assets/clis/${id}.svg`];
+    if (preferCli && cli) return cli;
+    const found =
+      BRANDS[id]?.asset ||
+      bundledPluginLogo(id) ||
+      assets[`../../assets/brands/${id}.svg`] ||
+      assets[`../../assets/brands/${id}.png`] ||
+      assets[`../../assets/tool-brands/${id}.svg`] ||
+      assets[`../../assets/providers/${id}.svg`] ||
+      assets[`../../assets/providers/${id}.png`] ||
+      cli;
+    if (found) return found;
+  }
+  return undefined;
 }
 
 const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -220,7 +223,7 @@ export function toolIdentity(row: ToolChoice) {
     (row.brand && brandFor(row.brand)) ||
     [row.id, row.group, row.skill, row.label].map((s) => brandFor(s || "")).find(Boolean) ||
     cliName;
-  const brand = key ? BRANDS[key] : undefined;
+  const brand = key ? BRANDS[key] ?? BRANDS[key.replace(/-/g, "_")] ?? BRANDS[key.replace(/_/g, "-")] : undefined;
   const palette = brand?.palette ?? CATEGORY_PALETTES[row.category];
   const words = `${row.id} ${row.skill} ${row.label}`.toLowerCase().replace(/[_:-]/g, " ");
   const Glyph =
@@ -228,10 +231,16 @@ export function toolIdentity(row: ToolChoice) {
       ? McpLogo
       : (DETAIL_ICONS.find(([pattern]) => pattern.test(words))?.[1] ??
         CATEGORY_ICONS[row.category]);
-  const mark = preferCli && key && CLI_VENDOR_LOGOS[key] ? CLI_VENDOR_LOGOS[key].render : (brand?.mark ?? "colour");
+  const logo = key ? assetFor(key, preferCli) : undefined;
+  const mark =
+    isRasterLogo(logo)
+      ? "colour"
+      : preferCli && key && CLI_VENDOR_LOGOS[key]
+        ? CLI_VENDOR_LOGOS[key].render
+        : (brand?.mark ?? "colour");
   return {
     key,
-    logo: key ? assetFor(key, preferCli) : undefined,
+    logo,
     mark,
     palette,
     Glyph,

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useSocietyShell } from "@/store/societyShell";
 import { setMapFullscreen } from "@/lib/mapFullscreen";
+import { LAST_AGENT_STORAGE_KEY } from "./lastAgent";
 import { SocietyView } from "./SocietyView";
 
 vi.mock("@/lib/mapFullscreen", () => ({ setMapFullscreen: vi.fn(async () => undefined) }));
@@ -25,7 +26,10 @@ vi.mock("@/components/society/roster/RosterRail", () => ({ RosterRail: () => <di
 vi.mock("@/components/society/card/BuildingCardOverlay", () => ({ BuildingCardOverlay: () => null }));
 vi.mock("@/components/society/create/CreateAgentDialog", () => ({ CreateAgentDialog: ({ open, onClose }: any) => open ? <button onClick={onClose}>Close creator</button> : null }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.removeItem(LAST_AGENT_STORAGE_KEY);
+});
 
 it("defaults to the embedded Agents workspace even with a saved legacy ledger preference", () => {
   localStorage.setItem("jarvis.agents.mode.v2", "ledger");
@@ -48,6 +52,17 @@ it("switches to Map and back without losing the selected agent or draft", async 
   expect(screen.getByText("Specialist")).toBeTruthy();
   expect(screen.getByLabelText("Draft")).toBe(draft);
   expect(draft.value).toBe("Unsent message");
+});
+
+it("restores the most recently selected agent after the view is remounted", () => {
+  const firstVisit = render(<SocietyView />);
+  fireEvent.click(screen.getByText("Select specialist"));
+  expect(localStorage.getItem(LAST_AGENT_STORAGE_KEY)).toBe("specialist");
+
+  firstVisit.unmount();
+  render(<SocietyView />);
+
+  expect(screen.getByText("Specialist")).toBeTruthy();
 });
 
 it("opens map selections in Agents and keeps creation available", async () => {

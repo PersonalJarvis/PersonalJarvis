@@ -33,7 +33,7 @@ import json
 import logging
 from contextvars import ContextVar
 from typing import Any, Final
-from uuid import uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 log = logging.getLogger(__name__)
 
@@ -220,7 +220,7 @@ def build_server() -> Any:
         return tools
 
     @server.call_tool()  # type: ignore[misc, no-untyped-call]
-    async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[Any]:
+    async def _call_tool(name: str, arguments: dict[str, Any] | None) -> Any:
         from jarvis.core.protocols import SupervisorToolRequest, current_chat_turn
 
         gateway = _gateway()
@@ -254,8 +254,16 @@ def build_server() -> Any:
                     return [types.TextContent(type="text", text="The task grant has expired.")]
                 if task_scope is not None and name not in task_scope.names:
                     return [types.TextContent(type="text", text="Tool outside the task grant.")]
+                trace_id = task_scope.trace_id if task_scope else uuid4()
+                if name == "society_browser" and turn is not None and task_scope is None:
+                    try:
+                        trace_id = UUID(str(turn.trace_id))
+                    except ValueError:
+                        # Older callers can omit the UUID, but the session/turn
+                        # identity still keeps denial effective across retries.
+                        trace_id = uuid5(NAMESPACE_URL, f"jarvis:{turn.session_id}:{turn.turn_id}")
                 request = SupervisorToolRequest(
-                    trace_id=task_scope.trace_id if task_scope else uuid4(),
+                    trace_id=trace_id,
                     origin=CHAT_ORIGIN,
                     user_utterance=turn.user_text if turn else "",
                     rationale="agent chat tool call",
@@ -267,6 +275,26 @@ def build_server() -> Any:
             return [
                 types.TextContent(type="text", text=f"Tool failed: {type(exc).__name__}: {exc}")
             ]
+        if name == "society_browser":
+            success = bool(getattr(result, "success", False))
+            text = _render(result)
+            if not success:
+                # A partial browser run may already have submitted a form.
+                # Preserve its observed outcome so a planner can inspect the
+                # current page instead of blindly repeating a side effect.
+                text = json.dumps(
+                    {
+                        "ok": False,
+                        "error": getattr(result, "error", None),
+                        "result": getattr(result, "output", None),
+                        "retry": "Inspect current state before repeating any action.",
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=text)], isError=not success
+            )
         return [types.TextContent(type="text", text=_render(result))]
 
     return server
