@@ -5053,12 +5053,13 @@ class BrainManager:
         agg = await aggregate(brain.complete(req))
         return (agg.text or "").strip()
 
-    async def _handle_teacher_command(self, cmd: Any) -> str:
+    async def _handle_teacher_command(self, cmd: Any, lang: str | None = None) -> str:
         """Run one teacher-mode command and return what to say/show."""
         from jarvis.teacher import lesson as lessons
         from jarvis.teacher.replies import reply
 
-        lang = "ja" if getattr(self, "_turn_japanese", False) else self._resolve_turn_lang()
+        if lang is None:
+            lang = "ja" if getattr(self, "_turn_japanese", False) else self._resolve_turn_lang()
         language = lessons._language_name(lang)
         current = getattr(self, "_lesson", None)
         try:
@@ -5109,7 +5110,7 @@ class BrainManager:
             return reply("failed", lang, error=str(exc)[:200])
         return ""
 
-    async def _handle_copilot_command(self, cmd: Any) -> str:
+    async def _handle_copilot_command(self, cmd: Any, lang: str | None = None) -> str:
         """Material deck / workflow observation (jarvis/copilot). Never raises."""
         import asyncio as _asyncio
         import sys as _sys
@@ -5118,7 +5119,8 @@ class BrainManager:
         from jarvis.copilot.replies import reply
         from jarvis.teacher.lesson import _language_name
 
-        lang = "ja" if getattr(self, "_turn_japanese", False) else self._resolve_turn_lang()
+        if lang is None:
+            lang = "ja" if getattr(self, "_turn_japanese", False) else self._resolve_turn_lang()
         try:
             if cmd.kind == "material":
                 text = await self._teacher_complete(

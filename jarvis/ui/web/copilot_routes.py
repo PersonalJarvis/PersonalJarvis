@@ -32,6 +32,22 @@ def _area(name: str) -> Path:
     return user_data_dir() / name
 
 
+def _read_pptx(path: Path) -> tuple[str, int]:
+    """(title, content slide count) of a deck made before deck.json existed."""
+    try:
+        from pptx import Presentation  # noqa: PLC0415 - optional [material] extra
+
+        prs = Presentation(str(path))
+    except Exception:  # noqa: BLE001 - no python-pptx or no readable file: unknown
+        log.debug("copilot: %s not readable as PPTX", path)
+        return "", 0
+    slides = list(prs.slides)
+    title = ""
+    if slides and slides[0].shapes.title is not None:
+        title = slides[0].shapes.title.text
+    return title, max(len(slides) - 1, 0)
+
+
 def _materials() -> list[dict[str, Any]]:
     root = _area("materials")
     if not root.is_dir():
@@ -49,12 +65,15 @@ def _materials() -> list[dict[str, Any]]:
         except OSError:
             log.debug("copilot: %s has no quality.txt", folder.name)
         lines = [ln for ln in quality.splitlines() if ln[:2] in ("OK", "NG")]
+        title, slides = deck.get("title", ""), len(deck.get("slides") or [])
+        if not deck:
+            title, slides = _read_pptx(folder / "deck.pptx")
         out.append(
             {
                 "id": folder.name,
-                "title": deck.get("title", ""),
+                "title": title,
                 "order": deck.get("order", ""),
-                "slides": len(deck.get("slides") or []),
+                "slides": slides,
                 "passed": sum(ln.startswith("OK") for ln in lines),
                 "total": len(lines),
                 "quality": quality,
@@ -125,16 +144,16 @@ async def run(body: RunBody, request: Request) -> dict[str, Any]:
     brain = getattr(request.app.state, "brain", None)
     if brain is None:
         raise HTTPException(status_code=503, detail="The assistant is not ready yet.")
-    # The handlers pick their reply language from the turn; a button has no
-    # spoken turn, so the UI language stands in for it.
-    brain._turn_japanese = body.language == "ja"
+    # A button has no spoken turn to take the language from: the UI language
+    # decides the reply language.
+    lang = body.language if body.language in ("de", "en", "es", "ja") else "en"
     lesson = getattr(brain, "_lesson", None)
     teacher = match_teacher_command(body.text, lesson_active=lesson is not None)
     if teacher is not None:
-        return {"reply": await brain._handle_teacher_command(teacher)}
+        return {"reply": await brain._handle_teacher_command(teacher, lang)}
     cmd = match_copilot_command(body.text)
     if cmd is not None:
-        return {"reply": await brain._handle_copilot_command(cmd)}
+        return {"reply": await brain._handle_copilot_command(cmd, lang)}
     raise HTTPException(status_code=400, detail="Not a copilot command.")
 
 
