@@ -11,9 +11,10 @@ vi.mock("@/components/society/data", () => ({ useSocietyRoster: () => ({ data: {
   { agentId: "lead", name: "Lead", tier: "lead", state: "idle" },
   { agentId: "specialist", name: "Specialist", tier: "specialist", state: "idle" },
 ] }, isLoading: false }) }));
-vi.mock("@/views/JarvisAgentsView", () => ({ JarvisAgentsView: ({ onSelectAgent, onOpenAgents }: any) => (
-  <div data-testid="map"><button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button></div>
+vi.mock("@/views/JarvisAgentsView", () => ({ JarvisAgentsView: ({ onSelectAgent, onOpenAgents, onMarsSelectionChange }: any) => (
+  <div data-testid="map"><button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button><div data-mars-ui><input aria-label="Mars draft" /></div><div data-mars-mode="player"><button>Player viewport</button></div><div data-mars-mode="follow"><button>Follow viewport</button></div><button onClick={() => onMarsSelectionChange(false)}>Previous world</button><button onClick={() => onMarsSelectionChange(true)}>Mars world</button></div>
 ) }));
+vi.mock("@/components/society/mars/MarsStationPanel", () => ({ MarsStationPanel: ({ onClose }: any) => <aside aria-label="Mars station"><button onClick={onClose}>Close station</button></aside> }));
 vi.mock("@/components/society/card/AgentCardOverlay", () => ({ AgentCardOverlay: ({ agent, embedded, onSelectAgent, onCreate }: any) => (
   <div data-testid="workspace" data-embedded={String(embedded)}>
     <span>{agent.name}</span><input aria-label="Draft" />
@@ -25,7 +26,8 @@ vi.mock("@/components/society/roster/RosterRail", () => ({ RosterRail: () => <di
 vi.mock("@/components/society/card/BuildingCardOverlay", () => ({ BuildingCardOverlay: () => null }));
 vi.mock("@/components/society/create/CreateAgentDialog", () => ({ CreateAgentDialog: ({ open, onClose }: any) => open ? <button onClick={onClose}>Close creator</button> : null }));
 
-afterEach(cleanup);
+const initialUrl = window.location.href;
+afterEach(() => { cleanup(); window.history.replaceState(null, "", initialUrl); });
 
 it("defaults to the embedded Agents workspace even with a saved legacy ledger preference", () => {
   localStorage.setItem("jarvis.agents.mode.v2", "ledger");
@@ -79,4 +81,68 @@ it("requests fullscreen for Map and leaves it on Escape", async () => {
   fireEvent.keyDown(document, { key: "Escape" });
   expect(setMapFullscreen).toHaveBeenLastCalledWith(false);
   expect(screen.queryByTestId("map")).toBeNull();
+});
+
+it("keeps Mars station controls reachable without mounting a renderer", async () => {
+  window.history.replaceState(null, "", "?view=agents&world=mars");
+  render(<SocietyView />);
+  fireEvent.click(screen.getByRole("button", { name: "society.mars.station_title" }));
+  expect(await screen.findByRole("complementary", { name: "Mars station" })).toBeTruthy();
+  expect(screen.queryByTestId("map")).toBeNull();
+  expect(screen.getByTestId("workspace")).toBeTruthy();
+  fireEvent.click(screen.getByText("Close station"));
+  expect(screen.queryByRole("complementary", { name: "Mars station" })).toBeNull();
+});
+
+it("does not discard a Mars form when Escape belongs to its input", async () => {
+  render(<SocietyView />);
+  fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
+  const field = await screen.findByLabelText("Mars draft");
+  fireEvent.change(field, { target: { value: "Unsent station draft" } });
+  fireEvent.keyDown(field, { key: "Escape" });
+  expect(screen.getByTestId("map")).toBeTruthy();
+  expect((field as HTMLInputElement).value).toBe("Unsent station draft");
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByTestId("map")).toBeNull();
+});
+
+it.each(["Mars draft", "Player viewport", "Follow viewport"])("preserves focused %s when the browser exits fullscreen without a keydown", async (target) => {
+  render(<SocietyView />);
+  fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
+  const field = await screen.findByLabelText("Mars draft");
+  fireEvent.change(field, { target: { value: "Unsent station draft" } });
+  const focused = target === "Mars draft" ? field : screen.getByText(target);
+  focused.focus();
+  expect(document.fullscreenElement).toBeFalsy();
+  fireEvent(document, new Event("fullscreenchange"));
+  expect(screen.getByTestId("map")).toBeTruthy();
+  expect(screen.getByLabelText("Mars draft")).toBe(field);
+  expect((field as HTMLInputElement).value).toBe("Unsent station draft");
+  fireEvent.click(screen.getByRole("tab", { name: "society.roster.title" }));
+  expect(screen.queryByTestId("map")).toBeNull();
+});
+
+it("still leaves the ordinary map when browser fullscreen exits", async () => {
+  render(<SocietyView />);
+  fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
+  await screen.findByTestId("map");
+  fireEvent(document, new Event("fullscreenchange"));
+  expect(screen.queryByTestId("map")).toBeNull();
+});
+
+it("clears the open station when Mars is deselected, including a later opt-in", async () => {
+  window.history.replaceState(null, "", "?view=agents&world=mars");
+  render(<SocietyView />);
+  fireEvent.click(screen.getByRole("button", { name: "society.mars.station_title" }));
+  await screen.findByRole("complementary", { name: "Mars station" });
+  fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
+  fireEvent.click(await screen.findByText("Previous world"));
+  fireEvent.click(screen.getByRole("tab", { name: "society.roster.title" }));
+  expect(screen.queryByRole("complementary", { name: "Mars station" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "society.mars.station_title" })).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
+  fireEvent.click(await screen.findByText("Mars world"));
+  fireEvent.click(screen.getByRole("tab", { name: "society.roster.title" }));
+  expect(screen.getByRole("button", { name: "society.mars.station_title" })).toBeTruthy();
+  expect(screen.queryByRole("complementary", { name: "Mars station" })).toBeNull();
 });

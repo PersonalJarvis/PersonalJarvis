@@ -20,12 +20,23 @@ import { CanvasActivity } from "@/hooks/useCanvasAwake";
 const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
 );
+const MarsStationPanel = lazy(() => import("@/components/society/mars/MarsStationPanel").then((m) => ({ default: m.MarsStationPanel })));
+
+function isProtectedMarsInteraction(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest("[data-mars-ui], [data-mars-mode='player'], [data-mars-mode='follow']"));
+}
 
 export function SocietyView() {
   useModelMenuData();
   const t = useT();
   useLocaleChunk("society");
   const [mode, setMode] = useState<"agents" | "world">("agents");
+  const [marsStationOpen, setMarsStationOpen] = useState(false);
+  const [marsSelected, setMarsSelected] = useState(() => new URLSearchParams(window.location.search).get("world") === "mars");
+  const onMarsSelectionChange = useCallback((selected: boolean) => {
+    setMarsSelected(selected);
+    if (!selected) setMarsStationOpen(false);
+  }, []);
   const roster = useSocietyRoster();
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data]);
   const sample = roster.data?.sample ?? true;
@@ -64,10 +75,12 @@ export function SocietyView() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && mode === "world" && !openPlace && !creating) switchMode("agents");
+      if (event.key === "Escape" && !event.defaultPrevented && !isProtectedMarsInteraction(event.target) && mode === "world" && !openPlace && !creating) switchMode("agents");
     };
     const onFullscreen = () => {
-      if (!document.fullscreenElement && !inDesktopShell()) setMode("agents");
+      // Browser Escape can exit fullscreen without delivering a page keydown.
+      // Preserve the map's focused form/player until its own controls leave it.
+      if (!document.fullscreenElement && !inDesktopShell() && !isProtectedMarsInteraction(document.activeElement)) setMode("agents");
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("fullscreenchange", onFullscreen);
@@ -103,7 +116,7 @@ export function SocietyView() {
   );
 
   return (
-    <div className={mode === "world" ? "fixed inset-0 z-30 flex flex-col bg-background" : "flex h-full min-h-0 w-full flex-col"} data-testid="society-view">
+    <div className={mode === "world" ? "fixed inset-0 z-30 flex flex-col bg-background" : "relative flex h-full min-h-0 w-full flex-col"} data-testid="society-view">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="jarvis-shell-surface flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
           <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -117,6 +130,7 @@ export function SocietyView() {
             </span>
           </div>
           {modeSwitch}
+          {mode === "agents" && marsSelected && <button type="button" onClick={() => setMarsStationOpen(true)} className="rounded border border-border px-2 py-1 text-xs text-foreground">{t("society.mars.station_title")}</button>}
           <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
             <CodingModeBadge />
             <TopBarActions />
@@ -128,7 +142,7 @@ export function SocietyView() {
           <div className="min-w-0 flex-1">
             <CanvasActivity.Provider value={!openPlace && !creating}>
               <Suspense fallback={null}>
-                <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("agents")} />
+                <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("agents")} onMarsSelectionChange={onMarsSelectionChange} />
               </Suspense>
             </CanvasActivity.Provider>
           </div>
@@ -155,6 +169,9 @@ export function SocietyView() {
         }}
       />
       <CreateAgentDialog open={creating} onClose={() => setCreating(false)} onCreated={onCreated} />
+      {mode === "agents" && marsSelected && marsStationOpen && <div className="absolute right-4 top-14 z-40 max-h-[calc(100%-4rem)] w-[min(26rem,calc(100%-2rem))] overflow-auto" data-mars-ui>
+        <Suspense fallback={null}><MarsStationPanel onClose={() => setMarsStationOpen(false)} onOpenAgent={(id) => { setOpenAgentId(id); setMarsStationOpen(false); }} /></Suspense>
+      </div>}
     </div>
   );
 }

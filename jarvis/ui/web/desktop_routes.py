@@ -43,6 +43,33 @@ class DetachBody(BaseModel):
     view: str = Field(min_length=1, max_length=64)
 
 
+class BackgroundBody(BaseModel):
+    enabled: bool = Field(strict=True)
+
+
+@router.get("/background", operation_id="background_status")
+async def window_background_status(request: Request) -> dict[str, Any]:
+    """Read the explicit window-close background policy and native availability."""
+    desktop = getattr(request.app.state, "desktop_app", None)
+    getter = getattr(desktop, "get_background_status", None)
+    if not callable(getter):
+        return {
+            "available": False, "reason": "headless_host", "enabled": True,
+            "mode": "background", "window_open": False,
+        }
+    return await asyncio.to_thread(getter)
+
+
+@router.post("/background", operation_id="background_set")
+async def window_background_set(body: BackgroundBody, request: Request) -> dict[str, Any]:
+    """Opt into background work for this session; explicit Quit still stops the app."""
+    desktop = getattr(request.app.state, "desktop_app", None)
+    setter = getattr(desktop, "set_background_mode", None)
+    if not callable(setter):
+        return await window_background_status(request)
+    return await asyncio.to_thread(setter, body.enabled)
+
+
 def _solo_url_path(view: str) -> str:
     """Relative solo URL for a view — the SPA catch-all serves it anywhere."""
     return f"/?view={view}&solo=1"

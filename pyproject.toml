@@ -816,6 +816,11 @@ call-contact = "jarvis.plugins.tool.call_contact:CallContactTool"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["jarvis*"]
+exclude = ["*.__pycache__", "*.__pycache__.*"]
+
+[tool.setuptools.exclude-package-data]
+# Resource globs must never distribute interpreter caches or their build paths.
+"*" = ["*.pyc", "*.pyo", "**/__pycache__/*"]
 
 [tool.setuptools.package-data]
 jarvis = [
@@ -844,6 +849,7 @@ jarvis = [
     "brain/JARVIS_PERSONA.md",
     "skills/safe_imports.txt",
     "core/review/verdict_schema.json",
+    "society/mars/definition.json",
     # Seed catalogs (CLI tools / skills / marketplace plugins) — named
     # explicitly rather than a repo-wide "**/*.json" glob, which would also
     # sweep in jarvis/ui/web/frontend's SOURCE config (package.json,

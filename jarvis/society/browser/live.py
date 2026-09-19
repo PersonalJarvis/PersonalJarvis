@@ -21,6 +21,7 @@ from . import install
 log = logging.getLogger(__name__)
 RPC = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 MAX_LINE = 8 * 1024 * 1024
+_FORCED_CLOSE_TIMEOUT_S = 2.0
 
 
 class LiveUpdates:
@@ -189,29 +190,50 @@ class LiveSession:
             self.stderr_tail = (self.stderr_tail + chunk.decode("utf-8", "replace"))[-4000:]
 
     async def close(self) -> None:
-        if not self.closed:
-            try:
-                await self.command("shutdown", timeout=2)
-            except Exception:
-                log.debug("Browser graceful shutdown unavailable", exc_info=True)
-        if self.proc.stdin:
-            self.proc.stdin.close()
-        for task in list(self.tasks):
-            task.cancel()
-        await asyncio.gather(*self.tasks, return_exceptions=True)
         try:
+            if not self.closed:
+                try:
+                    await self.command("shutdown", timeout=2)
+                except Exception:
+                    log.debug("Browser graceful shutdown unavailable", exc_info=True)
+            if self.proc.stdin:
+                self.proc.stdin.close()
+            for task in list(self.tasks):
+                task.cancel()
             await asyncio.wait_for(self.proc.wait(), timeout=5)
         except TimeoutError:
             log.debug("Browser graceful shutdown timed out; closing its process tree")
-            self.tree.close()
-            if self.proc.returncode is None:
-                self.proc.kill()
-            await self.proc.wait()
-        self.tree.close()
-        for task in self.readers:
-            task.cancel()
-        await asyncio.gather(*self.readers, return_exceptions=True)
-        self.closed = True
+        finally:
+            # Cancellation can arrive during either graceful wait. Release the
+            # containment handle and terminate the owned worker before awaiting
+            # anything else, then bound the process/task joins independently.
+            self.closed = True
+            try:
+                self.tree.close()
+            finally:
+                if self.proc.returncode is None:
+                    try:
+                        self.proc.kill()
+                    except ProcessLookupError:
+                        pass  # The containment close already reaped this worker.
+                    except OSError as exc:
+                        log.warning("Browser worker termination failed: %s", type(exc).__name__)
+                if self.proc.stdin:
+                    self.proc.stdin.close()
+                tasks = set(self.tasks) | set(self.readers)
+                for task in tasks:
+                    task.cancel()
+                reaping = asyncio.create_task(self.proc.wait())
+                done, pending = await asyncio.wait(
+                    tasks | {reaping}, timeout=_FORCED_CLOSE_TIMEOUT_S
+                )
+                for task in done:
+                    if not task.cancelled() and (error := task.exception()) is not None:
+                        log.warning("Browser cleanup task failed: %s", type(error).__name__)
+                if pending:
+                    # Keep reader/RPC handles available for a later close retry.
+                    reaping.cancel()
+                    raise TimeoutError("browser process cleanup incomplete")
 
 
 class LiveSessions:
@@ -223,6 +245,7 @@ class LiveSessions:
         self.executor: Any = None
         self.cdp_url = "http://127.0.0.1:9222"
         self.idle_tasks: dict[str, asyncio.Task] = {}
+        self._closing_tasks: dict[str, asyncio.Task[None]] = {}
         self.stopped_turns: dict[tuple[str, str], None] = {}
 
     def stop_turn(self, agent_id: str, trace_id: str) -> None:
@@ -449,9 +472,48 @@ class LiveSessions:
                     self.release_when_idle(session)
 
     async def close(self) -> None:
-        for task in self.idle_tasks.values():
+        idle = list(self.idle_tasks.values())
+        for task in idle:
             task.cancel()
-        await asyncio.gather(*self.idle_tasks.values(), return_exceptions=True)
-        self.idle_tasks.clear()
-        await asyncio.gather(*(s.close() for s in self.sessions.values()), return_exceptions=True)
-        self.sessions.clear()
+        sessions = list(self.sessions.items())
+        closing = []
+        for key, session in sessions:
+            task = self._closing_tasks.get(key)
+            if task is None or task.done():
+                task = asyncio.create_task(session.close())
+                self._closing_tasks[key] = task
+            closing.append(task)
+        owned = set(idle) | set(closing)
+        try:
+            if owned:
+                # Unlike gather, wait returns immediately on caller cancellation,
+                # so a reluctant idle/RPC task cannot defeat the server deadline.
+                _done, pending = await asyncio.wait(owned, timeout=9)
+                if pending:
+                    raise TimeoutError("browser sessions shutdown incomplete")
+            for task in closing:
+                task.result()
+        finally:
+            pending = {task for task in owned if not task.done()}
+            for task in pending:
+                task.cancel()
+            if pending:
+                _done, pending = await asyncio.wait(pending, timeout=3)
+            for task in owned:
+                if task.done() and not task.cancelled() and task.exception() is not None:
+                    log.warning("Browser owner cleanup failed: %s", type(task.exception()).__name__)
+            for key, task in list(self.idle_tasks.items()):
+                if task.done():
+                    self.idle_tasks.pop(key, None)
+            for (key, session), task in zip(sessions, closing, strict=True):
+                if task.done():
+                    self._closing_tasks.pop(key, None)
+                if (
+                    task.done()
+                    and (task.cancelled() or task.exception() is None)
+                    and session.proc.returncode is not None
+                    and all(job.done() for job in (*session.tasks, *session.readers))
+                ):
+                    self.sessions.pop(key, None)
+            if pending:
+                raise TimeoutError("browser sessions cleanup incomplete")

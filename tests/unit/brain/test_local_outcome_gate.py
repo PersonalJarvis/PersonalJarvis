@@ -132,3 +132,66 @@ def test_directive_names_the_tool_and_forbids_the_refusal() -> None:
     # explicitly outlaw the "no tool" refusal the live bug produced.
     assert "run_shell" in RUN_SHELL_OUTCOME_DIRECTIVE
     assert "NEVER claim you lack a tool" in RUN_SHELL_OUTCOME_DIRECTIVE
+
+
+FICTIONAL_DRAFT_ASSIGNMENT = (
+    "[assignment from the user]\n"
+    "Prepare a communication draft for review. Do not send or publish it.\n\n"
+    "Draft a 450-word internal update for an imaginary Mars research team about "
+    "preparing a communications outpost for its first test. Include a subject, "
+    "purpose, five practical checks, risks still to verify, and a clear next action. "
+    "This is a fictional draft for review only. Do not send, publish, browse, "
+    "run commands, or change files.\n"
+    "When you are done, end with a handoff: what is done, where the output is, "
+    "what evidence you used, what remains open, who should own the next step."
+)
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        FICTIONAL_DRAFT_ASSIGNMENT,
+        "Do not run commands or change files. When done explain what remains open.",
+        "Write a fictional report. Don't send, publish, run commands, or change files.",
+        "Write a short report without running shell commands or changing files.",
+        "Do not create a folder, copy files, or run a script.",
+        "Never run commands or create files.",
+        "Do not run `python script.py`.",
+        "Explain `python script.py` without running it.",
+        "The subject is files. List the remaining questions.",
+        "Erstelle keinen Ordner und kopiere keine Dateien.",  # i18n-allow
+        "Die Datei nicht loeschen.",  # i18n-allow
+        "Loesch die Datei nicht.",  # i18n-allow
+        "How do I create a folder? Show the commands, do not run them.",
+        "Use the mouse. Create a folder named drafts on my desktop.",
+        "How do I create a folder? Please list the commands and explain them.",
+    ],
+)
+def test_prohibited_actions_and_unrelated_clauses_do_not_mandate(utterance: str) -> None:
+    assert resolve_local_outcome_mandate(utterance) is None
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Create a folder named drafts on my desktop. Do not publish it.",
+        "Do not delete the file; copy it to a backup folder instead.",
+        "Do not delete files, but create a folder named backup.",
+        "Create a folder and do not delete existing files.",
+        "Create a folder without deleting existing files.",
+        "Do not send an email. Create a folder named drafts on the desktop.",
+        "Do not rename the file. Copy the file notes.txt to a backup folder.",
+        "Loesch die Datei nicht; kopier die Datei in einen anderen Ordner.",  # i18n-allow
+        "List all files not ending in .tmp.",
+        'Create a folder named "not needed" on my desktop.',
+        "Create a folder named 'not needed' on my desktop.",
+        "Create a folder named `do not delete` on my desktop.",
+        "Do not delete anything, and create a folder named backup.",
+        "How do I create a folder? Now actually create a folder named drafts.",
+        "Do not use the mouse. Create a folder named drafts on my desktop.",
+        "Run `python script.py`",
+        'Execute "python script.py"',
+    ],
+)
+def test_positive_actions_survive_a_separate_prohibition(utterance: str) -> None:
+    assert resolve_local_outcome_mandate(utterance) == ("run_shell", RUN_SHELL_OUTCOME_DIRECTIVE)

@@ -531,6 +531,11 @@ async def run_brain_turn(
             await emit(
                 "assistant_text", {"turn_id": turn_id, "message_id": message_id, "text": answer}
             )
+        # Keep the safe explanation visible, but distinguish provider success
+        # from an answer rejected by the execution/evidence backstop.
+        if override.receipt.guard_failure:
+            status = "error"
+            error = override.receipt.failure_reason or "guarded_response"
     await finish(status, override.receipt.usage(), error)
 
 

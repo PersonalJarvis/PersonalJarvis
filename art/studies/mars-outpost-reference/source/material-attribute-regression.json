@@ -1,0 +1,66 @@
+{
+  "kind": "source-and-buffer-regression-evidence",
+  "blender_version": "5.0.1",
+  "invalid_export_sha256": "c9076e247f6a762c06efde5767a8ecc7dd29167f8c43b5accf868620cf0c0ca5",
+  "cause": "Retained UV-layer RNA handle became stale when the color custom-data layer was allocated; later UV writes overwrote color values.",
+  "minimal_probe": {
+    "intended_color": [
+      0.2,
+      0.3,
+      0.4,
+      1
+    ],
+    "stale_handle_result": [
+      [
+        0.2,
+        0.3,
+        21,
+        31
+      ],
+      [
+        22,
+        32,
+        0.4,
+        1
+      ],
+      [
+        0.2,
+        0.3,
+        0.4,
+        1
+      ]
+    ],
+    "reacquired_handles_result": [
+      [
+        0.2,
+        0.3,
+        0.4,
+        1
+      ],
+      [
+        0.2,
+        0.3,
+        0.4,
+        1
+      ],
+      [
+        0.2,
+        0.3,
+        0.4,
+        1
+      ]
+    ]
+  },
+  "invalid_export_rejected": "COLOR_0 outside linear [0, 1] in Batched ceramic",
+  "corrected_export_sha256": "c697b08e0b49ad462be7b2e32230183ebb5bb1c2956d21580dc71bd9e95c802e",
+  "corrected_numeric_validation": {
+    "colored_primitives": 13,
+    "linear_color_range": [
+      0.03191685676574707,
+      0.7687839865684509
+    ],
+    "uv_abs_max": 244.27207946777344
+  },
+  "geometry_changed": false,
+  "runtime_visual_approval": "pending"
+}

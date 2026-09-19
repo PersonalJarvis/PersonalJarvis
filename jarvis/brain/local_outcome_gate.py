@@ -194,6 +194,49 @@ RUN_SHELL_TIMER_DIRECTIVE = (
 )
 
 
+# Preserve filename dots and coordinated prohibitions: commas alone must not
+# turn "do not send, run commands, or change files" into positive requests.
+_TASK_CLAUSE_RE = re.compile(
+    r"[;!?\r\n]+|(?<!\d)\.(?=\s|$)|"
+    r"\b(?:but|however|instead(?!\s+of)|aber|sondern|stattdessen)\b|"  # i18n-allow
+    r",\s+(?:and|und)\s+(?=(?:please\s+|bitte\s+)?"  # i18n-allow
+    + _FS_VERB_RE.pattern + r")"
+)
+_QUOTED_LITERAL_RE = re.compile(
+    r'''(?<!\w)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`)'''
+)
+_COMMAND_LITERAL_PREFIX_RE = re.compile(
+    r"\b(?:run|execute|launch|fuehre|starte)\s+(?:(?:the|this|following)\s+)?$",  # i18n-allow
+    re.IGNORECASE,
+)
+_NEGATED_TASK_RE = re.compile(
+    r"\b(?:do\s+not|does\s+not|did\s+not|don['\u2019]t|never|without|avoid|"
+    r"instead\s+of|not(?=\s+(?:create|delete|remove|copy|move|rename|run|execute|open)\b)|"
+    r"nicht|keine?\w*|ohne|vermeide\w*)\b"  # i18n-allow
+)
+_ACTION_BOUNDARY_RE = re.compile(r",|\b(?:and|und)\b")  # i18n-allow
+_EXPLANATORY_FOLLOWUP_RE = re.compile(
+    r"^\s*(?:(?:and|then|please)\s+)*(?:show|list|explain|describe|give|include|"
+    r"write|outline|provide|read)\b|"
+    r"^\s*(?:(?:und|dann|bitte)\s+)*(?:zeig\w*|erklaer\w*|liste\w*|beschreib\w*)\b"  # i18n-allow
+)
+
+
+def _positive_task_prefix(clause: str) -> str:
+    """Keep an earlier positive action, never the following prohibited list."""
+    negative = _NEGATED_TASK_RE.search(clause)
+    if negative is None:
+        return clause
+    prefix = clause[:negative.start()]
+    marker = negative.group()
+    if marker == "nicht" or marker.startswith("kein"):
+        # German postposed negation also negates its preceding action.
+        # English noun filters such as "files not ending in .tmp" do not.
+        boundaries = list(_ACTION_BOUNDARY_RE.finditer(prefix))
+        return prefix[:boundaries[-1].start()] if boundaries else ""
+    return prefix
+
+
 def resolve_local_outcome_mandate(utterance: str) -> tuple[str, str] | None:
     """Map a local file/folder/system request to ``(tool_name, directive)``.
 
@@ -207,30 +250,45 @@ def resolve_local_outcome_mandate(utterance: str) -> tuple[str, str] | None:
     # Whisper artefacts, not commands.
     if len(raw) < 6:
         return None
-    t = _normalize(raw)
-    if _HOWTO_DEFINITION_RE.search(t):
+    # A quoted filename or example is a literal, not an instruction/context
+    # marker. Preserve apostrophes inside words such as "don't".
+    def mask_literal(match: re.Match[str]) -> str:
+        # An explicit "run <quoted command>" still names an executable object.
+        # Its contents remain shielded from negation and vehicle detection.
+        prefix = _normalize(raw[:match.start()])
+        return " command " if _COMMAND_LITERAL_PREFIX_RE.search(prefix) else " quoted_literal "
+
+    normalized = _normalize(_QUOTED_LITERAL_RE.sub(mask_literal, raw))
+    tasks = [_positive_task_prefix(clause).strip() for clause in _TASK_CLAUSE_RE.split(normalized)]
+    # An explicitly selected vehicle governs the subsequent action, even
+    # across a sentence boundary ("Use the mouse. Create a folder.").
+    if any(_GUI_VEHICLE_RE.search(task) or _OTHER_VEHICLE_RE.search(task) for task in tasks):
         return None
-    if _GUI_VEHICLE_RE.search(t) or _OTHER_VEHICLE_RE.search(t):
-        return None
-    if _CLOUD_STORAGE_RE.search(t):
-        return None
-    if _FOREIGN_DOMAIN_RE.search(t):
-        return None
-    # External dispatch ("schick … per Mail") — checked on the RAW text,
-    # the detector does its own normalisation.
-    if requires_external_integration(raw):
-        return None
-    # Timer class first: a timer noun plus a set/stop verb or a bare duration
-    # ("Timer 10 Minuten"). Independent of the file-system nouns below.
-    if _TIMER_OBJECT_RE.search(t) and (
-        _TIMER_VERB_RE.search(t) or _DURATION_RE.search(t)
-    ):
-        return ("run_shell", RUN_SHELL_TIMER_DIRECTIVE)
-    if not _FS_OBJECT_RE.search(t):
-        return None
-    if not _FS_VERB_RE.search(t):
-        return None
-    return ("run_shell", RUN_SHELL_OUTCOME_DIRECTIVE)
+    explanatory = False
+    for t in tasks:
+        # Resolve each task independently. A verb in the handoff footer must
+        # not borrow "files" from an earlier prohibition or quoted subject.
+        if not t:
+            continue
+        if _HOWTO_DEFINITION_RE.search(t):
+            explanatory = True
+            continue
+        # "Show the commands" following a how-to question requests content,
+        # not execution. An independent imperative ("Now create a folder")
+        # still reaches the normal action detector.
+        if explanatory and _EXPLANATORY_FOLLOWUP_RE.search(t):
+            continue
+        if _CLOUD_STORAGE_RE.search(t) or _FOREIGN_DOMAIN_RE.search(t):
+            continue
+        if requires_external_integration(t):
+            continue
+        if _TIMER_OBJECT_RE.search(t) and (
+            _TIMER_VERB_RE.search(t) or _DURATION_RE.search(t)
+        ):
+            return ("run_shell", RUN_SHELL_TIMER_DIRECTIVE)
+        if _FS_OBJECT_RE.search(t) and _FS_VERB_RE.search(t):
+            return ("run_shell", RUN_SHELL_OUTCOME_DIRECTIVE)
+    return None
 
 
 __all__ = [

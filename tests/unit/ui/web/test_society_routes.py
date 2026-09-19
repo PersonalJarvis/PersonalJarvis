@@ -53,7 +53,11 @@ def client(tmp_path: Path):
     app.state.society = None
     app.state.society_factory = lambda: runtime
     with TestClient(app) as c:
-        yield c, manager
+        try:
+            yield c, manager
+        finally:
+            assert c.portal is not None
+            c.portal.call(runtime.close)
 
 
 def test_lead_is_seeded_and_listed(client):
@@ -85,7 +89,7 @@ def test_create_derives_focus_and_rules(client):
     assert again["created"] is False
 
 
-def test_patch_rederives_focus_on_description_change(client):
+def test_patch_preserves_and_extends_focus_on_description_change(client):
     c, _ = client
     c.post("/api/society/agents", json={"name": "Scout", "description": "Research on the web."})
     first = c.get("/api/society/agents/scout").json()["agent"]
@@ -93,7 +97,7 @@ def test_patch_rederives_focus_on_description_change(client):
     patched = c.patch(
         "/api/society/agents/scout", json={"description": "Handle my mail inbox."}
     ).json()["agent"]
-    assert patched["focus"] == ["plugin:gmail"]
+    assert patched["focus"] == ["core:search-web", "plugin:gmail"]
     explicit = c.patch("/api/society/agents/scout", json={"focus": []}).json()["agent"]
     assert explicit["focus"] == []
 
@@ -179,7 +183,7 @@ def test_kill_switch_round_trip(client):
 def test_capabilities_catalog_hides_dispatch(client):
     c, _ = client
     ids = [r["id"] for r in c.get("/api/society/capabilities").json()["capabilities"]]
-    assert ids == ["plugin:gmail", "core:search-web"]
+    assert ids == ["plugin:gmail", "core:browser", "core:coding-session", "core:search-web"]
 
 
 def test_rooms_over_rest(client):

@@ -52,9 +52,43 @@ _DEFAULT_ADMIN_PORT = 47821
 #: from a process inside a Windows Job Object dies with its parent — the
 #: window closes and nothing comes back (BUG-181).
 _CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+_desktop_launch_args: tuple[str, ...] = ()
 
 
-def build_launch_command(executable: str) -> list[str]:
+def remember_desktop_launch_args(
+    *,
+    port: int | None,
+    dev: bool,
+    no_lock: bool,
+) -> None:
+    """Retain parsed session overrides without persisting them into user config."""
+    global _desktop_launch_args
+    _desktop_launch_args = _desktop_overrides(port=port, dev=dev, no_lock=no_lock)
+
+
+def desktop_launch_args() -> tuple[str, ...]:
+    """Return the current desktop's overrides from the canonical helper module."""
+    return _desktop_launch_args
+
+
+def _desktop_overrides(*, port: int | None, dev: bool, no_lock: bool) -> tuple[str, ...]:
+    args: list[str] = []
+    if port is not None:
+        if not 1 <= port <= 65535:
+            raise ValueError("Desktop port must be between 1 and 65535")
+        args.extend(("--port", str(port)))
+    if dev:
+        args.append("--dev")
+    if no_lock:
+        args.append("--no-lock")
+    return tuple(args)
+
+
+def build_launch_command(
+    executable: str,
+    *,
+    launcher_args: tuple[str, ...] = (),
+) -> list[str]:
     """Argv that boots a fresh desktop app through its stable OS identity.
 
     A macOS desktop restart always re-enters through LaunchServices so it can
@@ -65,7 +99,8 @@ def build_launch_command(executable: str) -> list[str]:
     from jarvis.core.instance import current_instance
 
     identity = current_instance()
-    fallback = [executable, "-m", LAUNCHER_MODULE, *identity.launcher_args]
+    args = (*identity.launcher_args, *launcher_args)
+    fallback = [executable, "-m", LAUNCHER_MODULE, *args]
     if sys.platform == "darwin" and not identity.is_default:
         # The bundle is the DEFAULT app's stable identity and LaunchServices
         # does not carry ``JARVIS_INSTANCE`` into it — re-entering through it
@@ -87,12 +122,12 @@ def build_launch_command(executable: str) -> list[str]:
                 logging.getLogger(__name__).error(
                     "macOS restart target is missing or invalid: %s", bundle
                 )
-            return macos_launch_services_command(bundle, wait_for_exit=True)
+            return macos_launch_services_command(bundle, wait_for_exit=True, arguments=args)
         except Exception:  # noqa: BLE001 - preserve stable identity fail-closed
             logging.getLogger(__name__).exception(
                 "Could not validate the macOS restart bundle; using its canonical path"
             )
-            return ["/usr/bin/open", "-W", "-a", str(bundle)]
+            return ["/usr/bin/open", "-W", "-a", str(bundle), *(["--args", *args] if args else [])]
     if sys.platform == "win32":
         branded = _existing_branded_launcher()
         if branded is not None:
@@ -100,7 +135,7 @@ def build_launch_command(executable: str) -> list[str]:
             # process. Spawning ``python -m launcher`` used to re-exec through
             # this copy and exit; the helper treated that exit as a bounce and
             # started two more copies that raced the first (BUG-181).
-            return [str(branded), "-m", LAUNCHER_MODULE, *identity.launcher_args]
+            return [str(branded), "-m", LAUNCHER_MODULE, *args]
     return fallback
 
 
@@ -327,6 +362,7 @@ def _desktop_is_serving(
     cwd: str | Path | None = None,
     host: str = "127.0.0.1",
     timeout: float = 0.25,
+    port: int | None = None,
     _connect=None,
 ) -> bool:
     """True when something is already accepting on this instance's admin port.
@@ -339,7 +375,7 @@ def _desktop_is_serving(
     import socket
 
     connect = _connect or socket.create_connection
-    port = _restart_admin_port(cwd)
+    port = port if port is not None else _restart_admin_port(cwd)
     try:
         with connect((host, port), timeout=timeout):
             return True
@@ -779,8 +815,30 @@ def main(
     except ValueError:
         return 2
     cwd = argv[1]
+    # Only supported desktop overrides cross this process boundary. The
+    # instance identity still comes from the inherited instance environment.
+    import argparse  # noqa: PLC0415
+
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--dev", action="store_true")
+    parser.add_argument("--no-lock", action="store_true")
+    try:
+        options = parser.parse_args(argv[2:])
+        launcher_args = _desktop_overrides(
+            port=options.port,
+            dev=options.dev,
+            no_lock=options.no_lock,
+        )
+    except (SystemExit, ValueError):
+        logging.getLogger(__name__).error("Invalid desktop restart overrides")
+        return 2
     _report = _report or _report_restart_failure
-    serving = _serving if _serving is not None else (lambda: _desktop_is_serving(cwd=cwd))
+    serving = (
+        _serving
+        if _serving is not None
+        else (lambda: _desktop_is_serving(cwd=cwd, port=options.port))
+    )
 
     try:
         from jarvis.ui.desktop_log import _install_desktop_log_sink, desktop_log_path
@@ -790,7 +848,7 @@ def main(
     except Exception:  # noqa: BLE001, S110 — a mute helper is what we had before
         pass
 
-    cmd = build_launch_command(sys.executable)
+    cmd = build_launch_command(sys.executable, launcher_args=launcher_args)
     env = _apply_branded_launch_env(fresh_user_env(), cmd)
 
     update_finalized = False

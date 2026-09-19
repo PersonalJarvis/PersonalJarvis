@@ -35,14 +35,19 @@ def test_tray_start_is_noop_without_display(monkeypatch, caplog) -> None:
 class _FakeDetachedIcon:
     """Records the ctor kwargs + run_detached()/stop() calls."""
 
+    HAS_MENU = True
+
     def __init__(self, name: str, **kwargs) -> None:
         self.name = name
         self.kwargs = kwargs
         self.run_detached_calls = 0
         self.stop_calls = 0
+        self.visible = False
 
-    def run_detached(self) -> None:
+    def run_detached(self, setup=None) -> None:
         self.run_detached_calls += 1
+        if setup is not None:
+            setup(self)
 
     def stop(self) -> None:
         self.stop_calls += 1
@@ -111,7 +116,7 @@ def test_tray_start_on_macos_main_thread_runs_detached(monkeypatch) -> None:
     monkeypatch.setattr(tray_mod, "display_present", lambda: True, raising=False)
     monkeypatch.setattr(tray_mod, "_make_icon", lambda state, size=64: object())
     nsapp = _install_fake_darwin_modules(monkeypatch, _FakeDetachedIcon)
-    t = JarvisTray()
+    t = JarvisTray(native_presence=lambda icon: True)
     t.start()
     assert t._thread is None  # no jarvis-tray worker thread on darwin
     icon = t._icon
@@ -119,11 +124,13 @@ def test_tray_start_on_macos_main_thread_runs_detached(monkeypatch) -> None:
     assert icon.kwargs["darwin_nsapplication"] is nsapp
     assert icon.run_detached_calls == 1
     assert t._darwin_detached is True
+    assert t.ready is True
     # stop() must reach the detached icon through the main-thread marshal.
     t.stop()
     assert icon.stop_calls == 1
     assert t._icon is None
     assert t._darwin_detached is False
+    assert t.ready is False
 
 
 def test_tray_start_on_macos_main_thread_degrades_when_icon_ctor_raises(
