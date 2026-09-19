@@ -92,6 +92,12 @@ live probe demonstrates one controlled project-specific planning improvement.
 - Windows Society/chat/realtime regression: 888 passed, three environment skips.
   The outdated API-only seat assertions and incomplete realtime confirmation
   doubles are corrected; all 15 previously reported baseline failures are resolved.
+- The expanded parallel Python verification passed 1,189 tests with three skips.
+  CI preserves its test selection and passing-count floor, distributing complete
+  test files across four workers to avoid the serial suite's job timeout.
+- Frontend verification passed all 4,338 tests and the production build. Stale
+  composer, folded-trace and GPT-Live fixtures were updated; themed dropdowns
+  retain required-choice validation. CLI gates and their 317 focused tests pass.
 - The portable install gate passes all 24 advertised CPython/OS/architecture
   cells. `uv.lock` matches the existing project version and declared dependency
   constraints, including the PDF version already pinned in `requirements.txt`.
