@@ -84,6 +84,11 @@ live probe demonstrates one controlled project-specific planning improvement.
 - Live observation: Grok returned `UNKNOWN` before learning,
   `validate_larch_manifest` after a user correction and full runtime restart,
   and `UNKNOWN` for another agent. One lesson was persisted; no reviews remained.
+  The same proof passed after installing the application into a fresh Linux
+  container with preinstalled portable dependencies and providing only one Grok
+  credential through stdin. No host data directory or credential files were mounted.
+  This probe caught and fixed a reviewer edge case: a user correction classified
+  as an unexecuted skill now becomes grounded feedback instead of being discarded.
 - Focused Windows verification: 336 passed, two environment skips. The broader
   Society/chat/realtime selection produced 864 passes, three skips and 15 failures;
   all 15 failures were reproduced using the unchanged baseline modules. They
